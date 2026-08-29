@@ -76,6 +76,7 @@ const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
+const cursorInstanceId = ProviderInstanceId.make("cursor");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
@@ -751,7 +752,7 @@ it.effect("queues sendTurn behind handoff and routes the turn only to the commit
   }).pipe(Effect.provide(harness.layer));
 });
 
-it.effect("queues recovery-capable interrupt behind handoff without restarting source", () => {
+it.effect("queues interrupt behind handoff without restarting source", () => {
   const harness = makeCompatibleCodexSwitchHarness();
   return Effect.gen(function* () {
     const provider = yield* ProviderService.ProviderService;
@@ -796,6 +797,59 @@ it.effect("queues recovery-capable interrupt behind handoff without restarting s
     assert.equal(harness.source.startSession.mock.calls.length, 0);
     assert.equal(harness.source.interruptTurn.mock.calls.length, 0);
     assert.deepEqual(harness.target.interruptTurn.mock.calls, [[threadId, undefined]]);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("queues interactive responses behind handoff and routes them to the target", () => {
+  const harness = makeCompatibleCodexSwitchHarness();
+  return Effect.gen(function* () {
+    const provider = yield* ProviderService.ProviderService;
+    const threadId = asThreadId("thread-codex-response-handoff-race");
+    yield* startCodexSwitchSource({
+      provider,
+      threadId,
+      sourceInstanceId: harness.sourceInstanceId,
+    });
+    harness.source.respondToRequest.mockClear();
+    harness.target.respondToRequest.mockClear();
+    const sourceStopEntered = yield* Deferred.make<void>();
+    const releaseSource = yield* Deferred.make<void>();
+    const originalStop = harness.source.stopSession.getMockImplementation();
+    assert.exists(originalStop);
+    harness.source.stopSession.mockImplementation((stoppedThreadId) =>
+      Deferred.succeed(sourceStopEntered, undefined).pipe(
+        Effect.andThen(Deferred.await(releaseSource)),
+        Effect.andThen(originalStop(stoppedThreadId)),
+      ),
+    );
+
+    const switchFiber = yield* Effect.forkChild(
+      switchCodexTarget({
+        provider,
+        threadId,
+        targetInstanceId: harness.targetInstanceId,
+      }),
+    );
+    yield* Deferred.await(sourceStopEntered);
+    const responseFiber = yield* Effect.forkChild(
+      provider.respondToRequest({
+        threadId,
+        requestId: asRequestId("request-during-codex-handoff"),
+        decision: "accept",
+      }),
+    );
+    yield* Effect.yieldNow;
+    assert.equal(harness.source.respondToRequest.mock.calls.length, 0);
+    assert.equal(harness.target.respondToRequest.mock.calls.length, 0);
+
+    yield* Deferred.succeed(releaseSource, undefined);
+    yield* Fiber.join(switchFiber);
+    yield* Fiber.join(responseFiber);
+
+    assert.equal(harness.source.respondToRequest.mock.calls.length, 0);
+    assert.deepEqual(harness.target.respondToRequest.mock.calls, [
+      [threadId, asRequestId("request-during-codex-handoff"), "accept"],
+    ]);
   }).pipe(Effect.provide(harness.layer));
 });
 
@@ -1299,6 +1353,95 @@ it.effect("stops the Codex target when target binding persistence fails", () => 
     assert.equal(binding?.providerInstanceId, harness.sourceInstanceId);
     assert.equal(binding?.status, "stopped");
     assert.deepEqual(binding?.resumeCursor, { threadId: `native-${threadId}` });
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("blocks source recovery until a provisional Codex target is released", () => {
+  const harness = makeCompatibleCodexSwitchHarness();
+  return Effect.gen(function* () {
+    const provider = yield* ProviderService.ProviderService;
+    const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+    const threadId = asThreadId("thread-codex-binding-and-cleanup-failure");
+    yield* startCodexSwitchSource({
+      provider,
+      threadId,
+      sourceInstanceId: harness.sourceInstanceId,
+    });
+    harness.source.startSession.mockClear();
+    harness.source.sendTurn.mockClear();
+    harness.target.stopSession.mockClear();
+    const originalTargetStop = harness.target.stopSession.getMockImplementation();
+    assert.exists(originalTargetStop);
+    harness.target.stopSession.mockImplementation(() =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: CODEX_DRIVER,
+          method: "stopSession",
+          detail: "Injected provisional target cleanup failure.",
+        }),
+      ),
+    );
+    harness.failTargetCommit();
+
+    const switchExit = yield* Effect.exit(
+      switchCodexTarget({
+        provider,
+        threadId,
+        targetInstanceId: harness.targetInstanceId,
+      }),
+    );
+    assert.isTrue(Exit.isFailure(switchExit));
+    assert.isFalse(yield* harness.source.hasSession(threadId));
+    assert.isTrue(yield* harness.target.hasSession(threadId));
+
+    const blockedSend = yield* Effect.exit(
+      provider.sendTurn({
+        threadId,
+        input: "must not recover while target release is unproven",
+      }),
+    );
+    assert.isTrue(Exit.isFailure(blockedSend));
+    assert.equal(harness.source.startSession.mock.calls.length, 0);
+    assert.equal(harness.source.sendTurn.mock.calls.length, 0);
+    assert.isTrue(yield* harness.target.hasSession(threadId));
+    const blockedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+    assert.equal(blockedBinding?.providerInstanceId, harness.sourceInstanceId);
+    assert.equal(blockedBinding?.status, "stopped");
+    assert.deepEqual(blockedBinding?.resumeCursor, { threadId: `native-${threadId}` });
+
+    const blockedStart = yield* Effect.exit(
+      provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: harness.sourceInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      }),
+    );
+    assert.isTrue(Exit.isFailure(blockedStart));
+    assert.equal(harness.source.startSession.mock.calls.length, 0);
+    assert.isTrue(yield* harness.target.hasSession(threadId));
+
+    harness.target.stopSession.mockImplementation(originalTargetStop);
+    const recovered = yield* provider.startSession(threadId, {
+      provider: CODEX_DRIVER,
+      providerInstanceId: harness.sourceInstanceId,
+      threadId,
+      runtimeMode: "full-access",
+    });
+    yield* provider.sendTurn({
+      threadId,
+      input: "recover only after target release",
+    });
+
+    assert.equal(harness.target.stopSession.mock.calls.length, 4);
+    assert.isFalse(yield* harness.target.hasSession(threadId));
+    assert.equal(harness.source.startSession.mock.calls.length, 1);
+    assert.equal(harness.source.sendTurn.mock.calls.length, 1);
+    assert.deepEqual(recovered.resumeCursor, { threadId: `native-${threadId}` });
+    const recoveredBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+    assert.equal(recoveredBinding?.providerInstanceId, harness.sourceInstanceId);
+    assert.equal(recoveredBinding?.status, "running");
+    assert.deepEqual(recoveredBinding?.resumeCursor, { threadId: `native-${threadId}` });
   }).pipe(Effect.provide(harness.layer));
 });
 
@@ -1898,6 +2041,58 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("replaces non-Codex bindings with Codex without entering native handoff", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const sources = [
+        {
+          name: "claude",
+          driver: CLAUDE_AGENT_DRIVER,
+          instanceId: claudeAgentInstanceId,
+          adapter: routing.claude,
+        },
+        {
+          name: "cursor",
+          driver: CURSOR_DRIVER,
+          instanceId: cursorInstanceId,
+          adapter: routing.cursor,
+        },
+      ] as const;
+
+      for (const source of sources) {
+        const threadId = asThreadId(`thread-${source.name}-to-codex`);
+        yield* provider.startSession(threadId, {
+          provider: source.driver,
+          providerInstanceId: source.instanceId,
+          threadId,
+          cwd: `/tmp/${source.name}-to-codex`,
+          runtimeMode: "full-access",
+          resumeCursor: { opaque: `${source.name}-resume-state` },
+        });
+        source.adapter.stopSession.mockClear();
+        routing.codex.startSession.mockClear();
+
+        const codexSession = yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId,
+          cwd: `/tmp/${source.name}-to-codex`,
+          runtimeMode: "full-access",
+        });
+
+        assert.equal(codexSession.providerInstanceId, codexInstanceId);
+        assert.deepEqual(source.adapter.stopSession.mock.calls, [[threadId]]);
+        assert.equal(routing.codex.startSession.mock.calls.length, 1);
+        assert.equal(routing.codex.startSession.mock.calls[0]?.[0]?.resumeCursor, undefined);
+        const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+        assert.equal(binding?.provider, CODEX_DRIVER);
+        assert.equal(binding?.providerInstanceId, codexInstanceId);
+        yield* provider.stopSession({ threadId });
+      }
+    }),
+  );
+
   it.effect("routes provider operations and rollback conversation", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -2619,6 +2814,173 @@ routing.layer("ProviderServiceLive routing", (it) => {
           assert.notEqual(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
         }
       }
+    }),
+  );
+
+  it.effect("does not start a second writer when interrupt races stopped-session recovery", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const recoveryStarted = yield* Deferred.make<void>();
+      const releaseRecovery = yield* Deferred.make<void>();
+      const threadId = asThreadId("thread-stopped-send-interrupt-race");
+      const initial = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* provider.stopSession({ threadId });
+
+      routing.codex.startSession.mockClear();
+      routing.codex.interruptTurn.mockClear();
+      const originalStart = routing.codex.startSession.getMockImplementation();
+      assert.exists(originalStart);
+      routing.codex.startSession.mockImplementationOnce((input) =>
+        Deferred.succeed(recoveryStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseRecovery)),
+          Effect.andThen(originalStart(input)),
+        ),
+      );
+
+      const sendFiber = yield* provider
+        .sendTurn({
+          threadId,
+          input: "recover exactly one writer",
+          attachments: [],
+        })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(recoveryStarted);
+
+      const interruptExit = yield* Effect.exit(provider.interruptTurn({ threadId }));
+      assert.isTrue(Exit.isFailure(interruptExit));
+      assert.equal(routing.codex.startSession.mock.calls.length, 1);
+      assert.equal(routing.codex.interruptTurn.mock.calls.length, 0);
+
+      yield* Deferred.succeed(releaseRecovery, undefined);
+      const sendExit = yield* Fiber.join(sendFiber);
+      assert.isTrue(Exit.isSuccess(sendExit));
+      assert.equal(routing.codex.startSession.mock.calls.length, 1);
+      assert.deepEqual(
+        routing.codex.startSession.mock.calls[0]?.[0]?.resumeCursor,
+        initial.resumeCursor,
+      );
+      const activeSessions = (yield* routing.codex.listSessions()).filter(
+        (session) => session.threadId === threadId,
+      );
+      assert.equal(activeSessions.length, 1);
+      const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      assert.equal(binding?.providerInstanceId, codexInstanceId);
+      assert.equal(binding?.status, "running");
+      assert.deepEqual(binding?.resumeCursor, initial.resumeCursor);
+    }),
+  );
+
+  it.effect("delivers approval and user-input responses while a send is blocked", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-interactive-send-responses");
+      yield* provider.startSession(threadId, {
+        provider: CURSOR_DRIVER,
+        providerInstanceId: cursorInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const approvalSendStarted = yield* Deferred.make<void>();
+      const approvalAnswered = yield* Deferred.make<void>();
+      routing.cursor.sendTurn.mockImplementationOnce(() =>
+        Deferred.succeed(approvalSendStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(approvalAnswered)),
+          Effect.as({ threadId, turnId: asTurnId("turn-approval-response") }),
+        ),
+      );
+      routing.cursor.respondToRequest.mockImplementationOnce(() =>
+        Deferred.succeed(approvalAnswered, undefined).pipe(Effect.asVoid),
+      );
+
+      const approvalSendFiber = yield* provider
+        .sendTurn({ threadId, input: "wait for approval", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(approvalSendStarted);
+      yield* provider.respondToRequest({
+        threadId,
+        requestId: asRequestId("request-while-send-blocked"),
+        decision: "accept",
+      });
+      yield* Fiber.join(approvalSendFiber);
+
+      const userInputSendStarted = yield* Deferred.make<void>();
+      const userInputAnswered = yield* Deferred.make<void>();
+      routing.cursor.sendTurn.mockImplementationOnce(() =>
+        Deferred.succeed(userInputSendStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(userInputAnswered)),
+          Effect.as({ threadId, turnId: asTurnId("turn-user-input-response") }),
+        ),
+      );
+      routing.cursor.respondToUserInput.mockImplementationOnce(() =>
+        Deferred.succeed(userInputAnswered, undefined).pipe(Effect.asVoid),
+      );
+
+      const userInputSendFiber = yield* provider
+        .sendTurn({ threadId, input: "wait for user input", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(userInputSendStarted);
+      yield* provider.respondToUserInput({
+        threadId,
+        requestId: asRequestId("user-input-while-send-blocked"),
+        answers: { choice: "continue" },
+      });
+      yield* Fiber.join(userInputSendFiber);
+
+      assert.deepEqual(routing.cursor.respondToRequest.mock.calls.at(-1), [
+        threadId,
+        asRequestId("request-while-send-blocked"),
+        "accept",
+      ]);
+      assert.deepEqual(routing.cursor.respondToUserInput.mock.calls.at(-1), [
+        threadId,
+        asRequestId("user-input-while-send-blocked"),
+        { choice: "continue" },
+      ]);
+    }),
+  );
+
+  it.effect("does not recover a stopped session to answer interactive requests", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-stopped-interactive-responses");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* provider.stopSession({ threadId });
+      routing.codex.startSession.mockClear();
+      routing.codex.respondToRequest.mockClear();
+      routing.codex.respondToUserInput.mockClear();
+
+      const approvalExit = yield* Effect.exit(
+        provider.respondToRequest({
+          threadId,
+          requestId: asRequestId("stopped-approval"),
+          decision: "accept",
+        }),
+      );
+      const userInputExit = yield* Effect.exit(
+        provider.respondToUserInput({
+          threadId,
+          requestId: asRequestId("stopped-user-input"),
+          answers: { choice: "continue" },
+        }),
+      );
+
+      assert.isTrue(Exit.isFailure(approvalExit));
+      assert.isTrue(Exit.isFailure(userInputExit));
+      assert.equal(routing.codex.startSession.mock.calls.length, 0);
+      assert.equal(routing.codex.respondToRequest.mock.calls.length, 0);
+      assert.equal(routing.codex.respondToUserInput.mock.calls.length, 0);
     }),
   );
 

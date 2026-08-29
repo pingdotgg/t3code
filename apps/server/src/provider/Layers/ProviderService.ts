@@ -497,6 +497,46 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     () => reconcileInstanceSubscriptions,
   ).pipe(Effect.forkScoped);
 
+  const stopStaleSessionsForThread = Effect.fn("stopStaleSessionsForThread")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly currentInstanceId: ProviderInstanceId;
+    readonly failOnError?: boolean;
+  }) {
+    const currentAdapters = yield* getAdapterEntries;
+    yield* Effect.forEach(
+      currentAdapters,
+      ([instanceId, adapter]) =>
+        instanceId === input.currentInstanceId
+          ? Effect.void
+          : Effect.gen(function* () {
+              const hasSession = yield* adapter.hasSession(input.threadId);
+              if (!hasSession) {
+                return;
+              }
+
+              const stop = adapter.stopSession(input.threadId).pipe(
+                Effect.tap(() =>
+                  analytics.record("provider.session.stopped", {
+                    provider: adapter.provider,
+                  }),
+                ),
+              );
+              yield* input.failOnError
+                ? stop
+                : stop.pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("provider.session.stop-stale-failed", {
+                        threadId: input.threadId,
+                        provider: adapter.provider,
+                        cause,
+                      }),
+                    ),
+                  );
+            }),
+      { discard: true },
+    );
+  });
+
   const recoverSessionForThread = Effect.fn("recoverSessionForThread")(function* (input: {
     readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
     readonly operation: string;
@@ -541,6 +581,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           input.operation,
           `Cannot recover thread '${input.binding.threadId}' because no provider resume state is persisted.`,
         );
+      }
+
+      if (input.binding.provider === "codex") {
+        // A previous Codex handoff may have started another instance before
+        // its binding commit or cleanup failed. Prove every non-owner writer
+        // is gone before recovering the persisted owner.
+        yield* stopStaleSessionsForThread({
+          threadId: input.binding.threadId,
+          currentInstanceId: bindingInstanceId,
+          failOnError: true,
+        });
       }
 
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
@@ -636,46 +687,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     } as const;
   });
 
-  const stopStaleSessionsForThread = Effect.fn("stopStaleSessionsForThread")(function* (input: {
-    readonly threadId: ThreadId;
-    readonly currentInstanceId: ProviderInstanceId;
-    readonly failOnError?: boolean;
-  }) {
-    const currentAdapters = yield* getAdapterEntries;
-    yield* Effect.forEach(
-      currentAdapters,
-      ([instanceId, adapter]) =>
-        instanceId === input.currentInstanceId
-          ? Effect.void
-          : Effect.gen(function* () {
-              const hasSession = yield* adapter.hasSession(input.threadId);
-              if (!hasSession) {
-                return;
-              }
-
-              const stop = adapter.stopSession(input.threadId).pipe(
-                Effect.tap(() =>
-                  analytics.record("provider.session.stopped", {
-                    provider: adapter.provider,
-                  }),
-                ),
-              );
-              yield* input.failOnError
-                ? stop
-                : stop.pipe(
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning("provider.session.stop-stale-failed", {
-                        threadId: input.threadId,
-                        provider: adapter.provider,
-                        cause,
-                      }),
-                    ),
-                  );
-            }),
-      { discard: true },
-    );
-  });
-
   const startSession: ProviderServiceMethod<"startSession"> = Effect.fn("startSession")(
     function* (threadId, rawInput) {
       const parsed = yield* decodeInputOrValidationError({
@@ -722,6 +733,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           const sourceInstanceId = persistedBinding?.providerInstanceId;
           const isCodexInstanceChange =
             resolvedProvider === "codex" &&
+            persistedBinding?.provider === "codex" &&
             sourceInstanceId !== undefined &&
             sourceInstanceId !== resolvedInstanceId;
 
@@ -821,14 +833,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             yield* clearMcpSession(threadId);
           }
 
-          if (handoffNativeThreadId !== undefined) {
-            yield* stopStaleSessionsForThread({
-              threadId,
-              currentInstanceId: resolvedInstanceId,
-              failOnError: true,
-            });
-          }
-
           const effectiveResumeCursor =
             handoffResumeCursor ??
             input.resumeCursor ??
@@ -841,6 +845,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             (persistedBinding?.providerInstanceId === resolvedInstanceId
               ? readPersistedCwd(persistedBinding.runtimePayload)
               : undefined);
+          const effectiveCodexNativeThreadId =
+            resolvedProvider === "codex"
+              ? readCodexNativeThreadId(effectiveResumeCursor)
+              : undefined;
+          if (effectiveCodexNativeThreadId !== undefined) {
+            yield* stopStaleSessionsForThread({
+              threadId,
+              currentInstanceId: resolvedInstanceId,
+              failOnError: true,
+            });
+          }
           yield* Effect.annotateCurrentSpan({
             "provider.kind": resolvedProvider,
             "provider.resume_cursor.source":
@@ -900,7 +915,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             );
           }
 
-          if (handoffNativeThreadId === undefined) {
+          if (effectiveCodexNativeThreadId === undefined) {
             yield* stopStaleSessionsForThread({
               threadId,
               currentInstanceId: resolvedInstanceId,
@@ -1082,8 +1097,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           const routed = yield* resolveRoutableSession({
             threadId: input.threadId,
             operation: "ProviderService.interruptTurn",
-            allowRecovery: true,
+            allowRecovery: false,
           });
+          if (!routed.isActive) {
+            return yield* toValidationError(
+              "ProviderService.interruptTurn",
+              `Cannot interrupt thread '${input.threadId}' because its provider session is not active.`,
+            );
+          }
           metricProvider = routed.adapter.provider;
           yield* Effect.annotateCurrentSpan({
             "provider.operation": "interrupt-turn",
@@ -1116,14 +1137,20 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         payload: rawInput,
       });
       let metricProvider = "unknown";
-      return yield* withThreadLock(
+      return yield* withThreadRoutingLock(
         input.threadId,
         Effect.gen(function* () {
           const routed = yield* resolveRoutableSession({
             threadId: input.threadId,
             operation: "ProviderService.respondToRequest",
-            allowRecovery: true,
+            allowRecovery: false,
           });
+          if (!routed.isActive) {
+            return yield* toValidationError(
+              "ProviderService.respondToRequest",
+              `Cannot answer request '${input.requestId}' because thread '${input.threadId}' has no active provider session.`,
+            );
+          }
           metricProvider = routed.adapter.provider;
           yield* Effect.annotateCurrentSpan({
             "provider.operation": "respond-to-request",
@@ -1158,14 +1185,20 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       payload: rawInput,
     });
     let metricProvider = "unknown";
-    return yield* withThreadLock(
+    return yield* withThreadRoutingLock(
       input.threadId,
       Effect.gen(function* () {
         const routed = yield* resolveRoutableSession({
           threadId: input.threadId,
           operation: "ProviderService.respondToUserInput",
-          allowRecovery: true,
+          allowRecovery: false,
         });
+        if (!routed.isActive) {
+          return yield* toValidationError(
+            "ProviderService.respondToUserInput",
+            `Cannot answer user input '${input.requestId}' because thread '${input.threadId}' has no active provider session.`,
+          );
+        }
         metricProvider = routed.adapter.provider;
         yield* Effect.annotateCurrentSpan({
           "provider.operation": "respond-to-user-input",
