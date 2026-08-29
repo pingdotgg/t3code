@@ -643,7 +643,7 @@ function threadDetail(projection: OrchestrationV2ThreadProjection): Orchestrator
     snoozedUntil: iso(projection.thread.snoozedUntil),
     snoozedAt: iso(projection.thread.snoozedAt),
     readState: readState({
-      completedAt: projection.runs.findLast((run) => run.status === "completed")?.completedAt,
+      completedAt: latest?.completedAt,
       lastVisitedAt: projection.thread.lastVisitedAt,
     }),
     lastVisitedAt: iso(projection.thread.lastVisitedAt),
@@ -665,7 +665,7 @@ function organizationState(
     snoozedAt: iso(projection.thread.snoozedAt),
     archivedAt: iso(projection.thread.archivedAt),
     readState: readState({
-      completedAt: projection.runs.findLast((run) => run.status === "completed")?.completedAt,
+      completedAt: latestRun(projection)?.completedAt,
       lastVisitedAt: projection.thread.lastVisitedAt,
     }),
     lastVisitedAt: iso(projection.thread.lastVisitedAt),
@@ -698,7 +698,7 @@ function organizationCommand(input: {
     case "unsettle":
       return { type: "thread.unsettle", ...base, reason: "user" };
     case "archive":
-      return { type: "thread.archive", ...base };
+      return { type: "thread.archive", ...base, requireNoPendingRuntimeRequests: true };
     case "unarchive":
       return { type: "thread.unarchive", ...base };
     case "mark_read":
@@ -1683,12 +1683,13 @@ const make = Effect.gen(function* () {
           )
           .filter(
             (thread) =>
-              input.settled === undefined ||
-              (thread.settledOverride === "settled") === input.settled,
+              input.explicitlySettled === undefined ||
+              (thread.settledOverride === "settled") === input.explicitlySettled,
           )
           .filter(
             (thread) =>
-              input.snoozed === undefined || (thread.snoozedUntil != null) === input.snoozed,
+              input.hasSnoozeMarker === undefined ||
+              (thread.snoozedUntil != null) === input.hasSnoozeMarker,
           )
           .filter(
             (thread) =>
@@ -1780,15 +1781,6 @@ const make = Effect.gen(function* () {
           (item, index) =>
             Effect.gen(function* () {
               const { target } = yield* loadScopedThread(scope, item.threadId);
-              if (
-                item.action.type === "archive" &&
-                target.runtimeRequests.some((request) => request.status === "pending")
-              ) {
-                return yield* failure(
-                  "orchestration_error",
-                  `Thread ${item.threadId} has a pending approval or user-input request and cannot be archived.`,
-                );
-              }
               yield* threadManagement
                 .dispatch(
                   organizationCommand({

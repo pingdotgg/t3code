@@ -265,12 +265,16 @@ retry the request.
 
 Lists durable thread shells in the calling thread's project, newest first.
 Callers can filter by title, run status, archive state, pin state, explicit
-settlement, snooze state, unread completion, linked pull request, and whether
+settlement, stored snooze marker, unread completion, linked pull request, and whether
 app-owned sub-agent threads are included. Results include raw organization
 timestamps, pin order, read state, linked pull request, branch, and workspace
 path. Results are bounded and offset-paginated. The server pages shell
 snapshots, including archived shells when requested, without loading thread
 transcripts. Deleted threads and threads from other projects are never exposed.
+`explicitlySettled` checks only `settledOverride`; it does not reproduce
+client-local automatic settlement. `hasSnoozeMarker` reports stored snooze
+timestamps, which remain after timer expiry or an early wake and do not mean
+the sidebar still hides the thread.
 
 ### `t3_thread_read`
 

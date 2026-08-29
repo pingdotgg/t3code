@@ -140,6 +140,8 @@ describe("orchestrator MCP contracts", () => {
       decodeThreadListInput({
         statuses: ["running", "completed"],
         includeSubagents: false,
+        explicitlySettled: true,
+        hasSnoozeMarker: false,
         limit: 25,
       }).statuses,
     ).toEqual(["running", "completed"]);

@@ -296,8 +296,18 @@ export const OrchestratorMcpThreadListInput = Schema.Struct({
   includeSubagents: Schema.optional(Schema.Boolean),
   archived: Schema.optional(Schema.Boolean),
   pinned: Schema.optional(Schema.Boolean),
-  settled: Schema.optional(Schema.Boolean),
-  snoozed: Schema.optional(Schema.Boolean),
+  explicitlySettled: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Filter the raw settledOverride field only. This does not include client-derived automatic settlement.",
+    }),
+  ),
+  hasSnoozeMarker: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Filter whether raw snooze timestamps are stored. A true value can be expired or woken and does not guarantee the sidebar currently hides the thread.",
+    }),
+  ),
   unread: Schema.optional(Schema.Boolean),
   hasLinkedPullRequest: Schema.optional(Schema.Boolean),
   cursor: Schema.optional(NonNegativeInt),

@@ -309,7 +309,7 @@ describe("OrchestratorMcpService", () => {
         title: "Archived agent work",
         createdBy: "user",
         creationSource: "web",
-        status: "completed",
+        status: "failed",
         activityRunStatus: null,
         latestRunId: RunId.make("run:mcp-list-archived"),
         latestRunCompletedAt: completedAt,
@@ -388,9 +388,16 @@ describe("OrchestratorMcpService", () => {
           snoozedUntil: now,
           snoozedAt: now,
           archivedAt: null,
-          lastVisitedAt: null,
+          lastVisitedAt: DateTime.makeUnsafe("2026-08-29T11:00:00.000Z"),
         },
-        runs: [],
+        runs: [
+          {
+            id: RunId.make("run:mcp-organize-cancelled"),
+            ordinal: 1,
+            status: "cancelled",
+            completedAt: now,
+          },
+        ],
         runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection);
       const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
@@ -449,8 +456,100 @@ describe("OrchestratorMcpService", () => {
           settledOverride: "active",
           settledAt: null,
           snoozedUntil: null,
+          readState: "unread",
         });
         assert.equal((yield* Ref.get(dispatched)).length, 1);
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+    }),
+  );
+
+  it.effect("uses only the latest run completion watermark for read state", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:mcp-read-latest-run");
+      const projectId = ProjectId.make("project:mcp-read-latest-run");
+      const createdAt = DateTime.makeUnsafe("2026-08-29T09:00:00.000Z");
+      const completedAt = DateTime.makeUnsafe("2026-08-29T11:00:00.000Z");
+      const activeAt = DateTime.makeUnsafe("2026-08-29T12:00:00.000Z");
+      const projection = {
+        thread: {
+          id: threadId,
+          projectId,
+          title: "Latest run watermark",
+          createdBy: "user",
+          creationSource: "web",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          linkedPullRequest: null,
+          lineage: { parentThreadId: null, relationshipToParent: null },
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          snoozedUntil: null,
+          snoozedAt: null,
+          pinnedAt: null,
+          pinOrderKey: null,
+          lastVisitedAt: DateTime.makeUnsafe("2026-08-29T10:00:00.000Z"),
+          createdAt,
+          updatedAt: activeAt,
+        },
+        runs: [
+          {
+            id: RunId.make("run:mcp-read-completed"),
+            ordinal: 1,
+            status: "completed",
+            completedAt,
+            requestedAt: createdAt,
+            startedAt: createdAt,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5.6-sol",
+            },
+          },
+          {
+            id: RunId.make("run:mcp-read-running"),
+            ordinal: 2,
+            status: "running",
+            completedAt: null,
+            requestedAt: activeAt,
+            startedAt: activeAt,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5.6-sol",
+            },
+          },
+        ],
+        runtimeRequests: [],
+        visibleTurnItems: [],
+        messages: [],
+        subagents: [],
+        contextTransfers: [],
+        updatedAt: activeAt,
+      } as unknown as OrchestrationV2ThreadProjection;
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService)({
+          getThreadProjection: () => Effect.succeed(projection),
+        }),
+        Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ScheduledTaskService)({}),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-read-latest-run"),
+        threadId,
+        providerSessionId: "provider-session:mcp-read-latest-run",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const result = yield* service.readThread(scope, { threadId });
+        assert.equal(result.thread.latestRunId, "run:mcp-read-running");
+        assert.equal(result.thread.readState, "read");
       }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
     }),
   );

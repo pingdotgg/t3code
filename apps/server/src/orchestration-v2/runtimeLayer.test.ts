@@ -16,6 +16,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -1308,6 +1309,66 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       const afterPromotion = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(afterPromotion.runs.find((run) => run.id === queuedRun.id)?.status, "cancelled");
+    }),
+  );
+
+  it.effect("atomically rejects constrained archive when a runtime request is pending", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-constrained-archive-thread");
+      const now = yield* DateTime.now;
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-constrained-archive-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-constrained-archive-project"),
+        title: "Constrained archive",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:runtime-layer-constrained-archive-request"),
+            type: "runtime-request.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: RuntimeRequestId.make("request:runtime-layer-constrained-archive"),
+              nodeId: NodeId.make("node:runtime-layer-constrained-archive"),
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: "user_input",
+              status: "pending",
+              responseCapability: { type: "not_resumable", reason: "test request" },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          },
+        ],
+      });
+
+      const error = yield* orchestrator
+        .dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("runtime-layer-constrained-archive"),
+          threadId,
+          requireNoPendingRuntimeRequests: true,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "OrchestratorDispatchError");
+      assert.match(error.message, /archive/);
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNull(projection.thread.archivedAt);
+      assert.equal(projection.runtimeRequests[0]?.status, "pending");
     }),
   );
 
