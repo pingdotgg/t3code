@@ -107,6 +107,9 @@ export class AuthSessionRepository extends Context.Service<
     readonly createReplacingActive: (
       input: CreateReplacingActiveAuthSessionInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
+    readonly createIfAbsent: (
+      input: CreateAuthSessionInput,
+    ) => Effect.Effect<void, AuthSessionRepositoryError>;
     readonly getById: (
       input: GetAuthSessionByIdInput,
     ) => Effect.Effect<Option.Option<AuthSessionRecord>, AuthSessionRepositoryError>;
@@ -203,10 +206,11 @@ function toPersistenceSqlOrDecodeError(
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  const createSessionRow = SqlSchema.void({
-    Request: CreateAuthSessionInput,
-    execute: (input) =>
-      sql`
+  const insertSessionRow = (ignoreExisting: boolean) =>
+    SqlSchema.void({
+      Request: CreateAuthSessionInput,
+      execute: (input) =>
+        sql`
         INSERT INTO auth_sessions (
           session_id,
           subject,
@@ -237,8 +241,11 @@ export const make = Effect.gen(function* () {
           ${input.expiresAt},
           NULL
         )
+        ${ignoreExisting ? sql`ON CONFLICT(session_id) DO NOTHING` : sql``}
       `,
-  });
+    });
+  const createSessionRow = insertSessionRow(false);
+  const createSessionRowIfAbsent = insertSessionRow(true);
 
   const getSessionRowById = SqlSchema.findOneOption({
     Request: GetAuthSessionByIdInput,
@@ -392,6 +399,17 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  const createIfAbsent: AuthSessionRepository["Service"]["createIfAbsent"] = (input) =>
+    createSessionRowIfAbsent(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.createIfAbsent:query",
+          "AuthSessionRepository.createIfAbsent:encodeRequest",
+          { sessionId: input.sessionId },
+        ),
+      ),
+    );
+
   const getById: AuthSessionRepository["Service"]["getById"] = (input) =>
     getSessionRowById(input).pipe(
       Effect.mapError(
@@ -492,6 +510,7 @@ export const make = Effect.gen(function* () {
   return {
     create,
     createReplacingActive,
+    createIfAbsent,
     getById,
     listActive,
     revoke,

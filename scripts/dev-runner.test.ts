@@ -138,6 +138,27 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   });
 
   describe("createDevRunnerEnv", () => {
+    it.effect("forwards the reusable auth token to web dev and removes it for desktop", () =>
+      Effect.gen(function* () {
+        const input = {
+          baseEnv: { T3CODE_DEV_AUTH_TOKEN: "reusable-dev-auth-token-that-is-long-enough" },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        } as const;
+        const web = yield* createDevRunnerEnv({ ...input, mode: "dev" });
+        const desktop = yield* createDevRunnerEnv({ ...input, mode: "dev:desktop" });
+
+        assert.equal(web.T3CODE_DEV_AUTH_TOKEN, input.baseEnv.T3CODE_DEV_AUTH_TOKEN);
+        assert.equal(desktop.T3CODE_DEV_AUTH_TOKEN, undefined);
+      }),
+    );
     it.effect("leaves the shared home implicit and disables browser auto-open", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
