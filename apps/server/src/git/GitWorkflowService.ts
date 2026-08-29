@@ -139,6 +139,7 @@ function nonRepositoryStatus(): VcsStatusResult {
 function nonRepositoryListRefs(): VcsListRefsResult {
   return {
     refs: [],
+    worktrees: [],
     isRepo: false,
     hasPrimaryRemote: false,
     nextCursor: null,

@@ -4,6 +4,7 @@ import {
   type OrchestrationV2ThreadShell,
   type ProjectId,
   type VcsRef,
+  type VcsWorktreeCheckout,
   WorktreeMcpFailure,
   type WorktreeMcpContinuationStatus,
   type WorktreeMcpHandoffInput,
@@ -16,6 +17,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -63,6 +65,7 @@ const asOperationFailed = (prefix: string) =>
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const threadManagement = yield* ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
@@ -123,15 +126,23 @@ const make = Effect.gen(function* () {
 
   const normalizePath = (value: string) => path.normalize(path.resolve(value));
 
-  const threadWorkspacePath = (
+  const canonicalizePath = (value: string) => {
+    const normalized = normalizePath(value);
+    return fileSystem.realPath(normalized).pipe(Effect.orElseSucceed(() => normalized));
+  };
+
+  const threadWorkspacePath = Effect.fn("WorktreeMcpService.threadWorkspacePath")(function* (
     thread: Pick<OrchestrationV2ThreadShell, "worktreePath">,
     projectWorkspaceRoot: string,
-  ) => normalizePath(thread.worktreePath ?? projectWorkspaceRoot);
+  ) {
+    return yield* canonicalizePath(thread.worktreePath ?? projectWorkspaceRoot);
+  });
 
   const loadRefs = Effect.fn("WorktreeMcpService.loadRefs")(function* (
     projectWorkspaceRoot: string,
   ) {
     const refs: Array<VcsRef> = [];
+    let worktrees: ReadonlyArray<VcsWorktreeCheckout> = [];
     let cursor: number | undefined;
     let firstPage = true;
     do {
@@ -152,10 +163,11 @@ const make = Effect.gen(function* () {
         );
       }
       refs.push(...page.refs);
+      if (firstPage) worktrees = page.worktrees;
       cursor = page.nextCursor ?? undefined;
       firstPage = false;
     } while (cursor !== undefined);
-    return refs;
+    return { refs, worktrees };
   });
 
   const loadProjectThreads = (
@@ -518,9 +530,9 @@ const make = Effect.gen(function* () {
       yield* requireCapability(scope);
       const projection = yield* loadThread(scope);
       const project = yield* loadProject(scope, projection.thread.projectId);
-      const projectWorkspaceRoot = normalizePath(project.workspaceRoot);
+      const projectWorkspaceRoot = yield* canonicalizePath(project.workspaceRoot);
       const workspacePath = normalizePath(projection.thread.worktreePath ?? projectWorkspaceRoot);
-      const [defaultStartFromOrigin, actual, refs] = yield* Effect.all(
+      const [defaultStartFromOrigin, actual, inventory] = yield* Effect.all(
         [
           readDefaultStartFromOrigin,
           readWorkspaceStatus(workspacePath),
@@ -530,13 +542,10 @@ const make = Effect.gen(function* () {
       );
       const knownWorkspacePaths = new Set([
         projectWorkspaceRoot,
-        ...refs.flatMap((ref) =>
-          ref.isRemote === true || ref.worktreePath === null
-            ? []
-            : [normalizePath(ref.worktreePath)],
-        ),
+        ...inventory.worktrees.map((worktree) => worktree.path),
       ]);
-      const agreement = !knownWorkspacePaths.has(workspacePath)
+      const canonicalWorkspacePath = yield* canonicalizePath(workspacePath);
+      const agreement = !knownWorkspacePaths.has(canonicalWorkspacePath)
         ? "workspace_missing"
         : !actual.isRepo
           ? "not_repository"
@@ -555,7 +564,7 @@ const make = Effect.gen(function* () {
           worktreePath: projection.thread.worktreePath,
         },
         actualWorkspace: {
-          workspacePath,
+          workspacePath: canonicalWorkspacePath,
           isRepo: actual.isRepo,
           branch: actual.refName,
           hasWorkingTreeChanges: actual.hasWorkingTreeChanges,
@@ -572,17 +581,24 @@ const make = Effect.gen(function* () {
     yield* requireCapability(scope);
     const projection = yield* loadThread(scope);
     const project = yield* loadProject(scope, projection.thread.projectId);
-    const projectWorkspaceRoot = normalizePath(project.workspaceRoot);
-    const [refs, threads] = yield* Effect.all(
+    const projectWorkspaceRoot = yield* canonicalizePath(project.workspaceRoot);
+    const [inventory, threads] = yield* Effect.all(
       [loadRefs(projectWorkspaceRoot), loadProjectThreads(projection.thread.projectId)],
       { concurrency: 2 },
     );
 
-    const branchByWorkspacePath = new Map<string, string | null>([[projectWorkspaceRoot, null]]);
-    for (const ref of refs) {
-      if (ref.isRemote === true || ref.worktreePath === null) continue;
-      branchByWorkspacePath.set(normalizePath(ref.worktreePath), ref.name);
+    const branchByWorkspacePath = new Map<string, string | null>();
+    for (const worktree of inventory.worktrees) {
+      branchByWorkspacePath.set(worktree.path, worktree.refName);
     }
+    if (!branchByWorkspacePath.has(projectWorkspaceRoot)) {
+      branchByWorkspacePath.set(projectWorkspaceRoot, null);
+    }
+    const threadWorkspaces = yield* Effect.forEach(threads, (thread) =>
+      threadWorkspacePath(thread, projectWorkspaceRoot).pipe(
+        Effect.map((workspacePath) => [thread, workspacePath] as const),
+      ),
+    );
 
     const worktrees = yield* Effect.forEach(
       [...branchByWorkspacePath.entries()],
@@ -595,11 +611,9 @@ const make = Effect.gen(function* () {
             isRepo: actual.isRepo,
             isProjectRoot: workspacePath === projectWorkspaceRoot,
             hasWorkingTreeChanges: actual.hasWorkingTreeChanges,
-            bindings: threads
-              .filter(
-                (thread) => threadWorkspacePath(thread, projectWorkspaceRoot) === workspacePath,
-              )
-              .map((thread) => ({
+            bindings: threadWorkspaces
+              .filter(([, threadPath]) => threadPath === workspacePath)
+              .map(([thread]) => ({
                 threadId: thread.id,
                 title: thread.title,
                 status: thread.status,
@@ -630,6 +644,7 @@ export const layer: Layer.Layer<
   WorktreeMcpService,
   never,
   | Crypto.Crypto
+  | FileSystem.FileSystem
   | Path.Path
   | ThreadManagementService
   | ProjectService.ProjectService

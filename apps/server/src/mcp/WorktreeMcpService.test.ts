@@ -117,6 +117,10 @@ interface HarnessOptions {
     readonly isDefault: boolean;
     readonly worktreePath: string | null;
   }>;
+  readonly worktrees?: ReadonlyArray<{
+    readonly path: string;
+    readonly refName: string | null;
+  }>;
   readonly workspaceStatuses?: Readonly<Record<string, { branch: string | null; dirty?: boolean }>>;
   readonly projectThreads?: ReadonlyArray<{
     readonly id: ThreadId;
@@ -269,30 +273,34 @@ const makeHarness = (options: HarnessOptions = {}) => {
             ),
           ),
   );
-  const listRefs = vi.fn((input: { readonly query?: string | undefined }) =>
-    Effect.succeed({
-      refs:
-        options.refs !== undefined
-          ? options.refs.filter(
-              (ref) => input.query === undefined || ref.name.includes(input.query),
-            )
-          : options.existingBranchWorktreePath === undefined
-            ? []
-            : [
-                {
-                  name: input.query ?? "",
-                  current: false,
-                  isDefault: false,
-                  worktreePath: options.existingBranchWorktreePath,
-                },
-              ],
+  const listRefs = vi.fn((input: { readonly query?: string | undefined }) => {
+    const refs =
+      options.refs !== undefined
+        ? options.refs.filter((ref) => input.query === undefined || ref.name.includes(input.query))
+        : options.existingBranchWorktreePath === undefined
+          ? []
+          : [
+              {
+                name: input.query ?? "",
+                current: false,
+                isDefault: false,
+                worktreePath: options.existingBranchWorktreePath,
+              },
+            ];
+    return Effect.succeed({
+      refs,
+      worktrees:
+        options.worktrees ??
+        refs.flatMap((ref) =>
+          ref.worktreePath === null ? [] : [{ path: ref.worktreePath, refName: ref.name }],
+        ),
       isRepo: true,
       hasPrimaryRemote: true,
       nextCursor: null,
       totalCount:
         options.refs?.length ?? (options.existingBranchWorktreePath === undefined ? 0 : 1),
-    }),
-  );
+    });
+  });
   const workspaceStatuses = new Map(
     Object.entries(
       options.workspaceStatuses ?? {
@@ -309,7 +317,11 @@ const makeHarness = (options: HarnessOptions = {}) => {
       hasPrimaryRemote: true,
       isDefaultRef: false,
       refName:
-        current?.branch ?? (options.currentBranch === undefined ? "dev" : options.currentBranch),
+        current === undefined
+          ? options.currentBranch === undefined
+            ? "dev"
+            : options.currentBranch
+          : current.branch,
       hasWorkingTreeChanges: current?.dirty ?? false,
       workingTree: { files: [], insertions: 0, deletions: 0 },
     });
@@ -1185,6 +1197,32 @@ describe("t3_worktree_list", () => {
           ],
         },
       ]);
+    });
+  });
+
+  it.effect("includes detached worktrees without inventing a branch label", () => {
+    const detachedPath = "/worktrees/project/detached";
+    const harness = makeHarness({
+      worktrees: [
+        { path: workspaceRoot, refName: "dev" },
+        { path: detachedPath, refName: null },
+      ],
+      workspaceStatuses: {
+        [workspaceRoot]: { branch: "dev" },
+        [detachedPath]: { branch: null },
+      },
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness);
+      expect(result.worktrees).toContainEqual({
+        path: detachedPath,
+        branch: null,
+        actualBranch: null,
+        isRepo: true,
+        isProjectRoot: false,
+        hasWorkingTreeChanges: false,
+        bindings: [],
+      });
     });
   });
 });

@@ -1559,6 +1559,32 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
+    it.effect("lists canonical attached and detached worktrees through a symlinked checkout", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
+        const detachedPath = pathService.join(worktreesRoot, "detached");
+        const linksRoot = yield* makeTmpDir("git-vcs-driver-links-");
+        const checkoutLink = pathService.join(linksRoot, "checkout");
+        yield* git(cwd, ["worktree", "add", "--detach", detachedPath, "HEAD"]);
+        yield* fileSystem.symlink(cwd, checkoutLink);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const refs = yield* driver.listRefs({ cwd: checkoutLink, refresh: true });
+
+        assert.deepEqual(
+          refs.worktrees.toSorted((left, right) => left.path.localeCompare(right.path)),
+          [
+            { path: yield* fileSystem.realPath(cwd), refName: initialBranch },
+            { path: yield* fileSystem.realPath(detachedPath), refName: null },
+          ].toSorted((left, right) => left.path.localeCompare(right.path)),
+        );
+      }),
+    );
+
     // NTFS rejects a newline in a file name, so there is nothing to preserve there.
     it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
       "preserves newline characters in worktree paths when listing refs",
@@ -1567,6 +1593,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           const cwd = yield* makeTmpDir();
           yield* initRepoWithCommit(cwd);
           const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
+          const fileSystem = yield* FileSystem.FileSystem;
           const pathService = yield* Path.Path;
           const worktreePath = pathService.join(worktreesRoot, "linked\nworktree");
           const driver = yield* GitVcsDriver.GitVcsDriver;

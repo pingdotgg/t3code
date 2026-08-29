@@ -73,10 +73,11 @@ uses the project's instructions and recent commit subjects.
 ### Let an agent inspect its checkout
 
 Agents running through T3 Code can inspect the checkout recorded on their thread and compare it
-with Git's actual branch. They can also list the project root and existing worktrees, including
-dirty state and the durable branch and worktree path recorded for other threads using each
-checkout. These read paths apply only to the calling thread's current project and do not create,
-remove, prune, or revive worktrees.
+with Git's actual branch. They can also list the project root and Git-registered worktrees,
+including detached checkouts, dirty state, and the durable branch and worktree path recorded for
+other threads using each checkout. Git resolves symlinked checkout paths through the repository's
+real worktree inventory. These read paths apply only to the calling thread's current project and
+do not create, remove, prune, or revive worktrees.
 
 ## Review and merge
 

@@ -47,7 +47,7 @@ export const WorktreeStatusTool = Tool.make("t3_worktree_status", {
 
 export const WorktreeListTool = Tool.make("t3_worktree_list", {
   description:
-    "List the calling thread's project root and existing branch-backed git worktrees. Each entry includes the actual checked-out branch, dirty state, and threads bound to that checkout with their recorded branch and worktree path. It does not create, remove, prune, or repair worktrees.",
+    "List the calling thread's project root and Git-registered worktrees, including detached checkouts. Paths are canonicalized from Git's repository identity. Each entry includes the actual checked-out branch, dirty state, and threads bound to that checkout with their recorded branch and worktree path. It does not create, remove, prune, or repair worktrees.",
   success: WorktreeMcpListResult,
   failure: WorktreeMcpFailure,
   failureMode: "return",

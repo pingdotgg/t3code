@@ -320,10 +320,12 @@ worktree, non-repository path, or branch mismatch is visible without changing ei
 
 ### `t3_worktree_list`
 
-Lists the project root and existing branch-backed worktrees in the calling thread's current
-project. Each entry includes its listed and actual branch, dirty state, and threads bound to the
-checkout. Bindings keep each thread's recorded branch and worktree path separate from the actual
-checkout. The tool does not create, remove, prune, or repair worktrees.
+Lists the project root and every Git-registered worktree in the calling thread's current project,
+including detached checkouts. Git's canonical common-directory inventory and real paths determine
+repository membership, so symlinked paths and saved branch labels are not treated as proof. Each
+entry includes its listed and actual branch, dirty state, and threads bound to the checkout.
+Bindings keep each thread's recorded branch and worktree path separate from the actual checkout.
+The tool does not create, remove, prune, or repair worktrees.
 
 ## Delegated Task Lifecycle
 
