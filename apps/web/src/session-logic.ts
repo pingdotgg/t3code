@@ -615,11 +615,13 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
  * Builds the web timeline in the exact order committed by `visibleTurnItems`.
  * Committed rows are presented directly from their projected item. Queued
  * input is absent by construction until dispatch creates its user turn item.
- * Optimistic messages are the only client-owned entries appended afterward.
+ * Persistent client-owned messages are inserted by timestamp without sorting
+ * the canonical sequence. True optimistic sends remain appended afterward.
  */
 export function deriveTimelineEntriesFromVisibleTurnItems(input: {
   readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly optimisticMessages: ReadonlyArray<ChatMessage>;
+  readonly anchoredMessages?: ReadonlyArray<ChatMessage>;
   readonly attachmentUrlById?: ReadonlyMap<string, string>;
   readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
   readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
@@ -762,8 +764,29 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
     });
   }
 
+  const retainedMessageIds = new Set(committedMessageIds);
+  for (const message of input.anchoredMessages ?? []) {
+    if (retainedMessageIds.has(message.id)) continue;
+    retainedMessageIds.add(message.id);
+    const entry: TimelineEntry = {
+      id: message.id,
+      kind: "message",
+      createdAt: message.createdAt,
+      message,
+    };
+    const insertionIndex = entries.findIndex(
+      (candidate) => candidate.createdAt > message.createdAt,
+    );
+    if (insertionIndex === -1) {
+      entries.push(entry);
+    } else {
+      entries.splice(insertionIndex, 0, entry);
+    }
+  }
+
   for (const message of input.optimisticMessages) {
-    if (message.inputIntent !== "queued_turn" && !committedMessageIds.has(message.id)) {
+    if (message.inputIntent !== "queued_turn" && !retainedMessageIds.has(message.id)) {
+      retainedMessageIds.add(message.id);
       entries.push({
         id: message.id,
         kind: "message",

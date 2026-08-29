@@ -756,6 +756,7 @@ export function buildThreadFeed(
   visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
   options?: {
     readonly localMessages?: ReadonlyArray<OrchestrationMessage>;
+    readonly anchoredMessages?: ReadonlyArray<OrchestrationMessage>;
   },
 ): ThreadFeedEntry[] {
   const entries: RawThreadFeedEntry[] = [];
@@ -806,24 +807,40 @@ export function buildThreadFeed(
       activity,
     });
   }
-  for (const message of options?.localMessages ?? []) {
-    entries.push({
-      type: "message",
+  const retainedMessageIds = new Set(
+    entries.flatMap((entry) => (entry.type === "message" ? [entry.id] : [])),
+  );
+  const appendLocalMessage = (message: OrchestrationMessage): RawThreadFeedEntry => ({
+    type: "message",
+    id: message.id,
+    createdAt: message.createdAt,
+    message: {
       id: message.id,
+      role: message.role === "assistant" ? "assistant" : "user",
+      text: message.text,
+      attachments: message.attachments ?? [],
+      runId: null,
+      streaming: message.streaming,
+      visibility: "local",
+      sourceThreadId: ThreadId.make("local-feedback"),
       createdAt: message.createdAt,
-      message: {
-        id: message.id,
-        role: message.role === "assistant" ? "assistant" : "user",
-        text: message.text,
-        attachments: message.attachments ?? [],
-        runId: null,
-        streaming: message.streaming,
-        visibility: "local",
-        sourceThreadId: ThreadId.make("local-feedback"),
-        createdAt: message.createdAt,
-        updatedAt: message.updatedAt,
-      },
-    });
+      updatedAt: message.updatedAt,
+    },
+  });
+  for (const message of options?.anchoredMessages ?? []) {
+    if (retainedMessageIds.has(message.id)) continue;
+    retainedMessageIds.add(message.id);
+    const entry = appendLocalMessage(message);
+    const insertionIndex = entries.findIndex(
+      (candidate) => candidate.createdAt > message.createdAt,
+    );
+    if (insertionIndex === -1) entries.push(entry);
+    else entries.splice(insertionIndex, 0, entry);
+  }
+  for (const message of options?.localMessages ?? []) {
+    if (retainedMessageIds.has(message.id)) continue;
+    retainedMessageIds.add(message.id);
+    entries.push(appendLocalMessage(message));
   }
   return groupAdjacentActivities(entries);
 }
