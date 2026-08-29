@@ -557,6 +557,56 @@ function startLifecycleRuntime() {
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("maps Codex goal lifecycle notifications into canonical thread events", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-goal-updated"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "thread/goal/updated",
+        threadId: asThreadId("thread-1"),
+        payload: {
+          threadId: "provider-thread-1",
+          goal: {
+            threadId: "provider-thread-1",
+            objective: "Keep watching CI",
+            status: "active",
+            createdAt: 1,
+            updatedAt: 2,
+            timeUsedSeconds: 3,
+            tokensUsed: 4,
+            tokenBudget: 100,
+          },
+        },
+      });
+      yield* runtime.emit({
+        id: asEventId("evt-goal-cleared"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "thread/goal/cleared",
+        threadId: asThreadId("thread-1"),
+        payload: { threadId: "provider-thread-1" },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["thread.goal.updated", "thread.goal.cleared"],
+      );
+      if (events[0]?.type === "thread.goal.updated") {
+        NodeAssert.equal(events[0].payload.objective, "Keep watching CI");
+        NodeAssert.equal(events[0].payload.status, "active");
+      }
+    }),
+  );
+
   it.effect("carries child model metadata through every task event", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
