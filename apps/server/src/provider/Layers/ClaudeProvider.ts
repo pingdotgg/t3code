@@ -617,7 +617,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
       // This is a noninteractive health check, so IDE discovery cannot add any
       // useful capability data. Skipping it also avoids Claude spawning a
       // Windows `tasklist | findstr` process tree on every periodic refresh.
-      FORCE_CODE_TERMINAL: "1",
+      FORCE_CODE_TERMINAL: undefined,
       CLAUDE_CODE_AUTO_CONNECT_IDE: "0",
       CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: "1",
     },
