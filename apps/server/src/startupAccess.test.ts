@@ -43,7 +43,7 @@ it("resolves wildcard hosts to a concrete external interface when one is availab
     ],
   });
 
-  expect(connectionString).toBe("http://0.0.0.0:3773");
+  expect(connectionString).toBe("http://192.168.1.42:3773");
 });
 
 it("prefers the actual bound port when an http server address is available", () => {
