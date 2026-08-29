@@ -273,8 +273,9 @@ snapshots, including archived shells when requested, without loading thread
 transcripts. Deleted threads and threads from other projects are never exposed.
 `explicitlySettled` checks only `settledOverride`; it does not reproduce
 client-local automatic settlement. `hasSnoozeMarker` reports stored snooze
-timestamps, which remain after timer expiry or an early wake and do not mean
-the sidebar still hides the thread.
+timestamps. Timer expiry and derived raised-hand wakes leave those timestamps
+in place, so a marker does not mean the sidebar still hides the thread. Explicit
+unsnooze operations and new user messages clear the marker.
 
 ### `t3_thread_read`
 

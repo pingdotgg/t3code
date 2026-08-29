@@ -1773,9 +1773,9 @@ const make = Effect.gen(function* () {
         yield* requireCapability(scope);
         const key = yield* requestKey(input.clientRequestId);
         const items =
-          "items" in input
+          input.items !== undefined
             ? input.items
-            : [{ threadId: input.threadId ?? scope.threadId, action: input.action }];
+            : [{ threadId: input.threadId ?? scope.threadId, action: input.action! }];
         const outcomes = yield* Effect.forEach(
           items,
           (item, index) =>

@@ -475,20 +475,29 @@ export const OrchestratorMcpThreadOrganizeItem = Schema.Struct({
 });
 export type OrchestratorMcpThreadOrganizeItem = typeof OrchestratorMcpThreadOrganizeItem.Type;
 
-export const OrchestratorMcpThreadOrganizeInput = Schema.Union([
-  Schema.Struct({
-    threadId: Schema.optional(ThreadId),
-    action: OrchestratorMcpThreadOrganizeAction,
-    clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
-  }),
-  Schema.Struct({
-    items: Schema.Array(OrchestratorMcpThreadOrganizeItem).check(
+export const OrchestratorMcpThreadOrganizeInput = Schema.Struct({
+  threadId: Schema.optional(ThreadId),
+  action: Schema.optional(OrchestratorMcpThreadOrganizeAction),
+  items: Schema.optional(
+    Schema.Array(OrchestratorMcpThreadOrganizeItem).check(
       Schema.isMinLength(1),
       Schema.isMaxLength(20),
     ),
-    clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  ),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+}).check(
+  Schema.makeFilter((input) => {
+    const hasAction = input.action !== undefined;
+    const hasItems = input.items !== undefined;
+    if (hasAction === hasItems) {
+      return "Provide exactly one of action or items.";
+    }
+    if (hasItems && input.threadId !== undefined) {
+      return "threadId is accepted only with a single action; batch items carry their own IDs.";
+    }
+    return true;
   }),
-]);
+);
 export type OrchestratorMcpThreadOrganizeInput = typeof OrchestratorMcpThreadOrganizeInput.Type;
 
 export const OrchestratorMcpThreadOrganizationState = Schema.Struct({
