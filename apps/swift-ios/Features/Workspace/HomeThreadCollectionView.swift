@@ -649,7 +649,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     }
                 )
             }
-            let copyActions = ThreadCopyModel.actions(
+            let copyActions = ThreadCopyModel.menuActions(
                 for: thread,
                 context: context.copyContext
             )

@@ -27,6 +27,31 @@ final class ThreadCopyActionsTests: XCTestCase {
         XCTAssertTrue(actions.allSatisfy(\.isAvailable))
     }
 
+    func testMenuActionsMatchElectronCopyItems() {
+        let thread = FeatureThread(
+            id: "thread-1",
+            wireID: "thread-1",
+            projectID: "project-1",
+            environmentID: "environment-1",
+            title: "Copy values",
+            branch: "feature/copy-values",
+            worktreePath: "/worktrees/copy-values"
+        )
+
+        XCTAssertEqual(
+            ThreadCopyModel.menuActions(
+                for: thread,
+                context: context(
+                    projectName: "pingdotgg/t3code",
+                    projectWorkspaceRoot: "/work/t3code",
+                    environmentName: "Studio Mac",
+                    environmentID: "environment-1"
+                )
+            ).map(\.kind),
+            [.path, .branch, .threadID]
+        )
+    }
+
     func testPathFallsBackToProjectWorkspaceRoot() {
         let thread = FeatureThread(
             id: "thread-1",

@@ -53,6 +53,21 @@ struct ThreadCopyAction: Equatable, Sendable {
 }
 
 enum ThreadCopyModel {
+    /// The long-press row menu mirrors the Electron thread menu.
+    static func menuActions(
+        for thread: FeatureThread,
+        context: ThreadCopyContext
+    ) -> [ThreadCopyAction] {
+        actions(for: thread, context: context).filter { action in
+            switch action.kind {
+            case .path, .branch, .threadID:
+                true
+            case .project, .environment, .url:
+                false
+            }
+        }
+    }
+
     static func actions(
         for thread: FeatureThread,
         context: ThreadCopyContext
