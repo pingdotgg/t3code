@@ -23,32 +23,6 @@ On mobile, the model picker shows each OpenCode model's upstream provider, such 
 GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list
 when starting a thread or changing an existing thread's model.
 
-## Activity and task progress
-
-On web and desktop, the running timer stays attached to the composer while the agent works,
-including when you scroll through earlier messages. If the turn has tasks, the timer appears in
-the Tasks tab and expanded task list. The timer stays on the left, followed by the current task and
-its progress. Click the banner to expand or collapse the task list. The summary stays available
-while the agent works. Without tasks, the banner shows only the timer. The timer disappears when
-the turn finishes.
-
-While messages load or sync, that status temporarily replaces the timer and tasks.
-Task details and progress stay hidden until the thread is live again. Once syncing
-finishes, current tasks return and the timer reflects the turn's original start time.
-Long task lists scroll beneath their header, with a fade at each edge that has more content.
-
-Passive notices, such as an available server update, peek behind the activity banner.
-Hover over or activate the peeking edge to reveal them. Using the activity row or task
-controls leaves hidden notices collapsed. Expanding tasks keeps
-the task list attached to the timer. Errors, warnings, and updates in progress take the front
-position until resolved or dismissed.
-You can dismiss a failed server update and retry later in **Settings → Connections**.
-If another attempt fails, its notice appears again.
-
-Tool calls and status updates share expandable activity groups in the conversation. Task updates
-refresh the task list without adding separate "Plan updated" entries. Errors and agent links stay
-visible outside collapsed groups.
-
 ## Prompt stash
 
 Use the default shortcut, `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux, to stash the current
@@ -57,8 +31,6 @@ menu. Stashes that contain files must be restored in the environment where those
 uploaded. Stashed files stay uploaded on the server for 24 hours. If you restore an entry after
 that, the file comes back with **Attach again** next to it. Attach the file again or remove it, then
 send.
-
-The stash drawer closes automatically when you delete its last entry.
 
 ## Commands and skills
 
