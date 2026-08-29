@@ -108,6 +108,17 @@ export function refreshedSourceStep(source: BrowserImportSource | undefined): Wi
   return initialWizardStep(source);
 }
 
+/** Preserve the chosen source profile when a post-quit refresh still lists it. */
+export function refreshedSourceProfileDirectory(
+  currentDirectory: string,
+  source: BrowserImportSource,
+): string {
+  if (source.profiles.some((profile) => profile.directory === currentDirectory)) {
+    return currentDirectory;
+  }
+  return source.profiles[0]?.directory ?? "";
+}
+
 /**
  * Whether retrying could clear a failure. The keychain prompt can be approved
  * on a second try, and a read or session error may be transient; a missing key

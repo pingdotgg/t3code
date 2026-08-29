@@ -24,6 +24,7 @@ import {
   isRetryableReason,
   formatSkippedDomains,
   outcomeToStep,
+  refreshedSourceProfileDirectory,
   refreshedSourceStep,
   resolveWizardTarget,
   type ImportOutcome,
@@ -96,7 +97,9 @@ export function BrowserImportWizard({
       .then((refreshed) => {
         if (refreshed) {
           setSource(refreshed);
-          setSourceProfileDirectory(refreshed.profiles[0]?.directory ?? sourceProfileDirectory);
+          setSourceProfileDirectory((current) =>
+            refreshedSourceProfileDirectory(current, refreshed),
+          );
         }
         setStep(refreshedSourceStep(refreshed));
       })

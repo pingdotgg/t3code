@@ -8,6 +8,7 @@ import {
   isRetryableReason,
   formatSkippedDomains,
   outcomeToStep,
+  refreshedSourceProfileDirectory,
   refreshedSourceStep,
   resolveWizardTarget,
 } from "./browserImportWizard.logic";
@@ -102,6 +103,24 @@ describe("refreshedSourceStep", () => {
 
   it("blocks when the source vanished from the list", () => {
     expect(refreshedSourceStep(undefined)).toEqual({ step: "blocked", reason: "unknownSource" });
+  });
+});
+
+describe("refreshedSourceProfileDirectory", () => {
+  const refreshed = source({
+    profiles: [
+      { directory: "Default", name: "Personal" },
+      { directory: "Profile 2", name: "Work" },
+    ],
+  });
+
+  it("preserves a selected non-first profile after the browser quits", () => {
+    expect(refreshedSourceProfileDirectory("Profile 2", refreshed)).toBe("Profile 2");
+  });
+
+  it("falls back only when the old profile vanished and clears an empty result", () => {
+    expect(refreshedSourceProfileDirectory("Removed", refreshed)).toBe("Default");
+    expect(refreshedSourceProfileDirectory("Removed", source({ profiles: [] }))).toBe("");
   });
 });
 
