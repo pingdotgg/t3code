@@ -221,8 +221,8 @@ public struct FeatureSourceControlView: View {
         await load(force: true)
     }
 
-    /// `clearsError` is false when recovering after a failed action, so the
-    /// reason that action failed survives the refresh it triggers.
+    /// Action failures use `actionErrorMessage`; a successful recovery should
+    /// clear any stale load error from the inline status banner.
     private func load(force: Bool, clearsError: Bool = true) async {
         loadGeneration += 1
         statusGeneration += 1
@@ -305,7 +305,7 @@ public struct FeatureSourceControlView: View {
             // was still waiting on would otherwise never arrive: the screen
             // would keep withholding the pull-request actions until the user
             // reloaded by hand. Recover, without losing the reason above.
-            await load(force: false, clearsError: false)
+            await load(force: false)
         }
     }
 }
