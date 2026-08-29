@@ -135,6 +135,7 @@ import {
   orderItemsByPreferredIds,
   planPinnedReorder,
   reduceSidebarProjectScopeMenuState,
+  resolveActiveThreadOrder,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
@@ -468,7 +469,11 @@ function SortableThreadRow(props: {
     id: props.id,
     animateLayoutChanges: animateThreadLayoutChanges,
   });
-  return props.children({ listeners, setNodeRef, transform, transition, isDragging });
+  const bag = useMemo(
+    () => ({ listeners, setNodeRef, transform, transition, isDragging }),
+    [isDragging, listeners, setNodeRef, transform, transition],
+  );
+  return props.children(bag);
 }
 
 // One unsent draft session the user has invested content in. Two lines,
@@ -1146,6 +1151,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       onFocus={(event) => event.currentTarget.select()}
       onKeyDown={handleRenameKeyDown}
       onBlur={handleRenameBlur}
+      onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
       className="min-w-0 flex-1 rounded-sm border border-input bg-card px-1 text-sm font-medium text-card-foreground outline-none focus:border-foreground"
@@ -1737,6 +1743,7 @@ export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threadOrder = useUiStateStore((store) => store.threadOrder);
+  const threadOrderAnchorById = useUiStateStore((store) => store.threadOrderAnchorById);
   const reorderThreads = useUiStateStore((store) => store.reorderThreads);
   const threads = useThreadShells();
   const router = useRouter();
@@ -2183,13 +2190,30 @@ export default function Sidebar() {
       ),
     [defaultActiveThreads],
   );
-  const currentActiveThreadOrder = useMemo(() => {
-    const activeKeys = new Set(activeThreadKeys);
-    const savedOrder = threadOrder.filter((threadKey) => activeKeys.has(threadKey));
-    const savedKeys = new Set(savedOrder);
-    const newThreadKeys = activeThreadKeys.filter((threadKey) => !savedKeys.has(threadKey));
-    return [...newThreadKeys, ...savedOrder];
-  }, [activeThreadKeys, threadOrder]);
+  const activeThreadOrderAnchorById = useMemo(
+    () =>
+      Object.fromEntries(
+        defaultActiveThreads.map((thread) => [
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          thread.unsettledAt ?? thread.createdAt,
+        ]),
+      ),
+    [defaultActiveThreads],
+  );
+  const currentActiveThreadOrder = useMemo(
+    () =>
+      resolveActiveThreadOrder({
+        threads: activeThreadKeys.map((threadId) => ({
+          id: threadId,
+          orderAnchor: activeThreadOrderAnchorById[threadId]!,
+        })),
+        savedOrder: threadOrder,
+        savedOrderAnchorById: threadOrderAnchorById,
+      }),
+    [activeThreadKeys, activeThreadOrderAnchorById, threadOrder, threadOrderAnchorById],
+  );
+  const currentActiveThreadOrderRef = useRef(currentActiveThreadOrder);
+  currentActiveThreadOrderRef.current = currentActiveThreadOrder;
   const activeThreads = useMemo(
     () =>
       orderItemsByPreferredIds({
@@ -2826,9 +2850,9 @@ export default function Sidebar() {
       const activeKey = String(event.active.id);
       const overKey = event.over === null ? null : String(event.over.id);
       if (overKey === null || activeKey === overKey) return;
-      reorderThreads(currentActiveThreadOrder, activeKey, overKey);
+      reorderThreads(currentActiveThreadOrder, activeThreadOrderAnchorById, activeKey, overKey);
     },
-    [currentActiveThreadOrder, reorderThreads],
+    [activeThreadOrderAnchorById, currentActiveThreadOrder, reorderThreads],
   );
   // One snooze per thread at a time — same double-dispatch guard as settle.
   const snoozingThreadKeysRef = useRef(new Set<string>());
@@ -3095,6 +3119,7 @@ export default function Sidebar() {
         if (!thread) continue;
         const result = await deleteThread(scopeThreadRef(thread.environmentId, thread.id), {
           deletedThreadKeys,
+          preferredThreadKeys: currentActiveThreadOrderRef.current,
         });
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
@@ -3321,7 +3346,9 @@ export default function Sidebar() {
               );
               if (confirmed._tag === "Failure" || !confirmed.value) return;
             }
-            const result = await deleteThread(threadRef);
+            const result = await deleteThread(threadRef, {
+              preferredThreadKeys: currentActiveThreadOrderRef.current,
+            });
             if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
               toastManager.add(

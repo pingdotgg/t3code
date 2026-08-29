@@ -23,6 +23,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     threadOrder: [],
+    threadOrderAnchorById: {},
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -124,12 +125,24 @@ describe("uiStateStore pure functions", () => {
     const next = reorderThreads(
       state,
       ["thread-1", "thread-2", "thread-3"],
+      {
+        "thread-1": "2026-08-29T10:00:00.000Z",
+        "thread-2": "2026-08-29T11:00:00.000Z",
+        "thread-3": "2026-08-29T12:00:00.000Z",
+      },
       "thread-3",
       "thread-1",
     );
 
     expect(next.threadOrder).toEqual(["thread-3", "thread-1", "thread-2"]);
-    expect(reorderThreads(next, next.threadOrder, "thread-1", "thread-1")).toBe(next);
+    expect(next.threadOrderAnchorById).toEqual({
+      "thread-1": "2026-08-29T10:00:00.000Z",
+      "thread-2": "2026-08-29T11:00:00.000Z",
+      "thread-3": "2026-08-29T12:00:00.000Z",
+    });
+    expect(
+      reorderThreads(next, next.threadOrder, next.threadOrderAnchorById, "thread-1", "thread-1"),
+    ).toBe(next);
   });
 
   it("preserves hidden thread positions when reordering a filtered list", () => {
@@ -138,8 +151,17 @@ describe("uiStateStore pure functions", () => {
     });
 
     expect(
-      reorderThreads(state, ["visible-a", "visible-b", "visible-new"], "visible-new", "visible-a")
-        .threadOrder,
+      reorderThreads(
+        state,
+        ["visible-a", "visible-b", "visible-new"],
+        {
+          "visible-a": "2026-08-29T10:00:00.000Z",
+          "visible-b": "2026-08-29T11:00:00.000Z",
+          "visible-new": "2026-08-29T12:00:00.000Z",
+        },
+        "visible-new",
+        "visible-a",
+      ).threadOrder,
     ).toEqual(["hidden-a", "visible-new", "hidden-b", "visible-a", "inactive-a", "visible-b"]);
   });
 
@@ -182,6 +204,10 @@ describe("parsePersistedState", () => {
       },
       projectOrder: ["physical-b", "", "physical-a", "physical-b"],
       threadOrder: ["environment:thread-2", "", "environment:thread-1"],
+      threadOrderAnchorById: {
+        "environment:thread-1": "2026-08-29T10:00:00.000Z",
+        invalid: "not-a-date",
+      },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
         invalid: "not-a-date",
@@ -202,6 +228,9 @@ describe("parsePersistedState", () => {
       },
       projectOrder: ["physical-b", "physical-a"],
       threadOrder: ["environment:thread-2", "environment:thread-1"],
+      threadOrderAnchorById: {
+        "environment:thread-1": "2026-08-29T10:00:00.000Z",
+      },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -300,6 +329,9 @@ describe("uiStateStore persistence", () => {
       },
       projectOrder: ["physical-b", "physical-a"],
       threadOrder: ["environment:thread-2", "environment:thread-1"],
+      threadOrderAnchorById: {
+        "environment:thread-1": "2026-08-29T10:00:00.000Z",
+      },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -323,6 +355,9 @@ describe("uiStateStore persistence", () => {
       },
       projectOrder: ["physical-b", "physical-a"],
       threadOrder: ["environment:thread-2", "environment:thread-1"],
+      threadOrderAnchorById: {
+        "environment:thread-1": "2026-08-29T10:00:00.000Z",
+      },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },

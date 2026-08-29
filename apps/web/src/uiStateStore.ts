@@ -21,6 +21,7 @@ export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
   threadOrder?: string[];
+  threadOrderAnchorById?: Record<string, string>;
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -37,6 +38,7 @@ export interface UiProjectState {
 
 export interface UiThreadState {
   threadOrder: string[];
+  threadOrderAnchorById: Record<string, string>;
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
@@ -51,6 +53,7 @@ const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
   threadOrder: [],
+  threadOrderAnchorById: {},
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -129,6 +132,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     projectExpandedById,
     projectOrder,
     threadOrder: sanitizeStringArray(parsed.threadOrder),
+    threadOrderAnchorById: sanitizeTimestampRecord(parsed.threadOrderAnchorById),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -208,6 +212,7 @@ export function persistState(state: UiState): void {
         projectExpandedById,
         projectOrder: state.projectOrder,
         threadOrder: state.threadOrder,
+        threadOrderAnchorById: state.threadOrderAnchorById,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
@@ -345,6 +350,7 @@ export function setProjectExpanded(
 export function reorderThreads(
   state: UiState,
   currentThreadOrder: readonly string[],
+  currentThreadOrderAnchorById: Readonly<Record<string, string>>,
   draggedThreadId: string,
   targetThreadId: string,
 ): UiState {
@@ -368,10 +374,16 @@ export function reorderThreads(
     return reorderedVisibleThreads[nextVisibleIndex++]!;
   });
   threadOrder.push(...reorderedVisibleThreads.slice(nextVisibleIndex));
+  const threadOrderAnchorById = { ...state.threadOrderAnchorById };
+  for (const threadId of currentThreadOrder) {
+    const anchor = currentThreadOrderAnchorById[threadId];
+    if (anchor !== undefined) threadOrderAnchorById[threadId] = anchor;
+  }
 
   return {
     ...state,
     threadOrder,
+    threadOrderAnchorById,
   };
 }
 
@@ -427,6 +439,7 @@ interface UiStateStore extends UiState {
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderThreads: (
     currentThreadOrder: readonly string[],
+    currentThreadOrderAnchorById: Readonly<Record<string, string>>,
     draggedThreadId: string,
     targetThreadId: string,
   ) => void;
@@ -449,8 +462,21 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
-  reorderThreads: (currentThreadOrder, draggedThreadId, targetThreadId) =>
-    set((state) => reorderThreads(state, currentThreadOrder, draggedThreadId, targetThreadId)),
+  reorderThreads: (
+    currentThreadOrder,
+    currentThreadOrderAnchorById,
+    draggedThreadId,
+    targetThreadId,
+  ) =>
+    set((state) =>
+      reorderThreads(
+        state,
+        currentThreadOrder,
+        currentThreadOrderAnchorById,
+        draggedThreadId,
+        targetThreadId,
+      ),
+    ),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),

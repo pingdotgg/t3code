@@ -292,7 +292,13 @@ export function useThreadActions() {
   );
 
   const deleteThread = useCallback(
-    async (target: ScopedThreadRef, opts: { deletedThreadKeys?: ReadonlySet<string> } = {}) => {
+    async (
+      target: ScopedThreadRef,
+      opts: {
+        deletedThreadKeys?: ReadonlySet<string>;
+        preferredThreadKeys?: readonly string[];
+      } = {},
+    ) => {
       const resolved = resolveThreadTarget(target);
       if (!resolved) {
         // Thread not in main store (e.g. archived thread) — dispatch delete directly.
@@ -323,6 +329,10 @@ export function useThreadActions() {
               }),
             )
           : undefined;
+      const preferredThreadIds = opts.preferredThreadKeys?.flatMap((threadKey) => {
+        const ref = parseScopedThreadKey(threadKey);
+        return ref && ref.environmentId === threadRef.environmentId ? [ref.threadId] : [];
+      });
       const survivingThreads =
         deletedIds && deletedIds.size > 0
           ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
@@ -376,6 +386,7 @@ export function useThreadActions() {
         threads,
         deletedThreadId: threadRef.threadId,
         deletedThreadIds,
+        ...(preferredThreadIds ? { preferredThreadIds } : {}),
         sortOrder: sidebarThreadSortOrder,
       });
       const deleteResult = await deleteThreadMutation({
