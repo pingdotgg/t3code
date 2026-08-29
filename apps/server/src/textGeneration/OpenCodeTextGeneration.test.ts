@@ -11,6 +11,7 @@ import { beforeEach, expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
+import * as OpenCodeServerOwner from "../provider/OpenCodeServerOwner.ts";
 import * as OpenCodeTextGeneration from "./OpenCodeTextGeneration.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 
@@ -18,8 +19,11 @@ const runtimeMock = {
   state: {
     startCalls: [] as string[],
     promptUrls: [] as string[],
+    promptParts: [] as ReadonlyArray<unknown>[],
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
+    sessionCreateCalls: 0,
+    connectionError: undefined as Error | undefined,
     sessionCreateError: undefined as unknown,
     sessionResult: undefined as { data?: { id: string } } | undefined,
     promptRequestError: undefined as unknown,
@@ -30,8 +34,11 @@ const runtimeMock = {
   reset() {
     this.state.startCalls.length = 0;
     this.state.promptUrls.length = 0;
+    this.state.promptParts.length = 0;
     this.state.authHeaders.length = 0;
     this.state.closeCalls.length = 0;
+    this.state.sessionCreateCalls = 0;
+    this.state.connectionError = undefined;
     this.state.sessionCreateError = undefined;
     this.state.sessionResult = undefined;
     this.state.promptRequestError = undefined;
@@ -40,7 +47,7 @@ const runtimeMock = {
 };
 
 const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
-  startOpenCodeServerProcess: ({ binaryPath }) =>
+  startOpenCodeServerProcess: ({ binaryPath, serverPassword, environment }) =>
     Effect.gen(function* () {
       const index = runtimeMock.state.startCalls.length + 1;
       const url = `http://127.0.0.1:${4_300 + index}`;
@@ -52,29 +59,51 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
           runtimeMock.state.closeCalls.push(url);
         }),
       );
+      const effectiveServerPassword = OpenCodeRuntime.resolveOpenCodeServerPassword({
+        external: false,
+        ...(serverPassword !== undefined ? { serverPassword } : {}),
+        ...(environment !== undefined ? { environment } : {}),
+      });
       return {
         url,
+        ...(effectiveServerPassword !== undefined
+          ? { serverPassword: effectiveServerPassword }
+          : {}),
+        version: "1.14.19",
+        isRunning: Effect.succeed(true),
         exitCode: Effect.never,
       };
     }),
-  connectToOpenCodeServer: ({ serverUrl }) =>
-    Effect.succeed({
-      url: serverUrl ?? "http://127.0.0.1:4301",
-      exitCode: null,
-      external: Boolean(serverUrl),
-    }),
+  connectToOpenCodeServer: ({ serverUrl, serverPassword }) =>
+    runtimeMock.state.connectionError
+      ? Effect.fail(
+          new OpenCodeRuntime.OpenCodeRuntimeError({
+            operation: "global.health",
+            detail: runtimeMock.state.connectionError.message,
+            cause: runtimeMock.state.connectionError,
+          }),
+        )
+      : Effect.succeed({
+          url: serverUrl ?? "http://127.0.0.1:4301",
+          ...(serverPassword ? { serverPassword } : {}),
+          version: "1.14.19",
+          exitCode: null,
+          external: Boolean(serverUrl),
+        }),
   runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
   createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
     ({
       session: {
         create: async () => {
+          runtimeMock.state.sessionCreateCalls += 1;
           if (runtimeMock.state.sessionCreateError !== undefined) {
             throw runtimeMock.state.sessionCreateError;
           }
           return runtimeMock.state.sessionResult ?? { data: { id: `${baseUrl}/session` } };
         },
-        prompt: async () => {
+        prompt: async (input: { readonly parts: ReadonlyArray<unknown> }) => {
           runtimeMock.state.promptUrls.push(baseUrl);
+          runtimeMock.state.promptParts.push(input.parts);
           runtimeMock.state.authHeaders.push(
             serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
           );
@@ -160,18 +189,35 @@ const OpenCodeTextGenerationExistingServerTestLayer = Layer.succeed(
 const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
   binaryPath: "fake-opencode",
 });
+const LOCAL_AUTH_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
+  binaryPath: "fake-opencode",
+  serverPassword: "secret-password",
+});
 const EXISTING_SERVER_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
   binaryPath: "fake-opencode",
   serverUrl: "http://127.0.0.1:9999",
   serverPassword: "secret-password",
 });
+const EXTERNAL_SERVER_WITHOUT_AUTH_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
+  binaryPath: "fake-opencode",
+  serverUrl: "http://127.0.0.1:9999",
+});
 
 function withOpenCodeTextGeneration<A, E, R>(
   settings: OpenCodeSettings,
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  environment?: NodeJS.ProcessEnv,
 ) {
   return Effect.gen(function* () {
-    const textGeneration = yield* OpenCodeTextGeneration.makeOpenCodeTextGeneration(settings);
+    const serverOwner = yield* OpenCodeServerOwner.make({
+      binaryPath: settings.binaryPath,
+      directory: process.cwd(),
+      ...(settings.serverPassword ? { serverPassword: settings.serverPassword } : {}),
+      ...(environment ? { environment } : {}),
+    });
+    const textGeneration = yield* OpenCodeTextGeneration.makeOpenCodeTextGeneration(settings).pipe(
+      Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
+    );
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
@@ -187,6 +233,88 @@ const advanceIdleClock = Effect.gen(function* () {
 });
 
 it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
+  it.effect("excludes generic files from thread title generation", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [{ type: "text", text: '{"title":"Review uploaded report"}' }],
+          },
+        };
+
+        yield* textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Review these attachments.",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          attachments: [
+            {
+              type: "image",
+              id: "thread-image-attachment",
+              name: "screenshot.png",
+              mimeType: "image/png",
+              sizeBytes: 3,
+            },
+            {
+              type: "file",
+              id: "thread-report-attachment-pdf",
+              name: "report.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 42,
+            },
+          ],
+        });
+
+        expect(runtimeMock.state.promptParts[0]).toEqual([
+          expect.objectContaining({ type: "text" }),
+          expect.objectContaining({ type: "file", filename: "screenshot.png" }),
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("passes configured authentication to a locally spawned server", () =>
+    withOpenCodeTextGeneration(LOCAL_AUTH_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
+
+        expect(runtimeMock.state.startCalls).toEqual(["fake-opencode"]);
+        expect(runtimeMock.state.authHeaders).toEqual([
+          `Basic ${btoa("opencode:secret-password")}`,
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("uses an environment-only password for a locally spawned server", () =>
+    withOpenCodeTextGeneration(
+      DEFAULT_OPENCODE_SETTINGS,
+      (textGeneration) =>
+        Effect.gen(function* () {
+          yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
+
+          expect(runtimeMock.state.authHeaders).toEqual([
+            `Basic ${btoa("opencode:environment-password")}`,
+          ]);
+        }),
+      { OPENCODE_SERVER_PASSWORD: "environment-password" },
+    ),
+  );
+
+  it.effect("uses settings auth when the local environment password differs", () =>
+    withOpenCodeTextGeneration(
+      LOCAL_AUTH_OPENCODE_SETTINGS,
+      (textGeneration) =>
+        Effect.gen(function* () {
+          yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
+
+          expect(runtimeMock.state.authHeaders).toEqual([
+            `Basic ${btoa("opencode:secret-password")}`,
+          ]);
+        }),
+      { OPENCODE_SERVER_PASSWORD: "environment-password" },
+    ),
+  );
+
   it.effect("reuses a warm server across back-to-back requests and closes it after idling", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
@@ -418,6 +546,36 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
 it.layer(OpenCodeTextGenerationExistingServerTestLayer)(
   "OpenCodeTextGeneration with configured server URL",
   (it) => {
+    it.effect("does not send a local environment password to a configured server", () =>
+      withOpenCodeTextGeneration(
+        EXTERNAL_SERVER_WITHOUT_AUTH_OPENCODE_SETTINGS,
+        (textGeneration) =>
+          Effect.gen(function* () {
+            yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
+            expect(runtimeMock.state.authHeaders).toEqual([null]);
+          }),
+        { OPENCODE_SERVER_PASSWORD: "local-secret" },
+      ),
+    );
+
+    it.effect("does not create a session when the server version is unsupported", () =>
+      withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          runtimeMock.state.connectionError = new Error(
+            "OpenCode v1.14.18 is too old. Upgrade to v1.14.19 or newer.",
+          );
+
+          const error = yield* textGeneration
+            .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+            .pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(TextGenerationError);
+          expect(error.message).toContain("v1.14.18 is too old");
+          expect(runtimeMock.state.sessionCreateCalls).toBe(0);
+        }),
+      ),
+    );
+
     it.effect("reuses a configured OpenCode server URL without spawning or applying idle TTL", () =>
       withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
         Effect.gen(function* () {

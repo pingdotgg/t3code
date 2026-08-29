@@ -96,9 +96,19 @@ describe("ComposerTasksBadge", () => {
     );
 
     expect(markup).toContain('data-chat-composer-tasks-drawer="true"');
+    expect(markup).toContain('data-chat-composer-collapsed-controls="true"');
     expect(markup).not.toContain("data-variant");
     expect(markup).toContain('aria-expanded="true"');
+    expect(markup).toContain('aria-label="Collapse tasks. 1 of 3 complete."');
+    expect(markup).toContain('aria-label="Task list. 1 of 3 complete."');
     expect(markup).toContain('role="list"');
+    expect(markup).toContain('data-composer-tasks-list="true"');
+    expect(markup).toContain('tabindex="0"');
+    expect(markup).toContain("max-h-[min(24rem,40dvh)]");
+    expect(markup).toContain("overflow-y-auto");
+    expect(markup).toContain("overscroll-contain");
+    expect(markup).toContain("focus-visible:ring-2");
+    expect(markup).toContain("focus-visible:ring-inset");
     expect(markup).toContain("Inspect the composer");
     expect(markup).toContain('data-composer-task-duration="true"');
     expect(markup).toContain("ml-auto w-10");
@@ -107,11 +117,30 @@ describe("ComposerTasksBadge", () => {
     expect(markup).toContain("Attach task progress");
     expect(markup).toContain("Verify the result");
     expect(markup).toContain("lucide-list-todo");
+    expect(markup).toContain("lucide-chevron-down");
     expect(markup).toContain('aria-label="Dismiss tasks for this turn"');
-    expect(markup).not.toContain("lucide-chevron");
     expect(markup).not.toContain("bg-success");
     expect(markup).not.toContain("bg-primary");
     expect(markup).not.toContain("bg-muted-foreground/25");
+  });
+
+  it("keeps every long-list task inside the bounded scroll region", () => {
+    const longSteps = Array.from({ length: 20 }, (_, index) => ({
+      step: `Task ${index + 1}`,
+      status: index === 0 ? ("inProgress" as const) : ("pending" as const),
+    }));
+    const markup = renderToStaticMarkup(
+      <ComposerTasksDrawer
+        onCollapse={() => undefined}
+        onDismiss={() => undefined}
+        progress={{ step: "Task 1", completedSteps: 0, totalSteps: longSteps.length }}
+        steps={longSteps}
+      />,
+    );
+
+    const listStart = markup.indexOf('data-composer-tasks-list="true"');
+    expect(listStart).toBeGreaterThan(markup.indexOf('aria-label="Collapse tasks.'));
+    expect(markup.slice(listStart)).toContain("Task 20");
   });
 
   it("does not render an empty task count", () => {

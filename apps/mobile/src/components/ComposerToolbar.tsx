@@ -11,9 +11,6 @@ import {
   type ViewStyle,
 } from "react-native";
 
-import { useThemeColor } from "../lib/useThemeColor";
-import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-import { themeColorWithAlpha } from "../lib/mobileTheme";
 import { cn } from "../lib/cn";
 import { AppText as Text } from "./AppText";
 import { SymbolView } from "./AppSymbol";
@@ -42,10 +39,6 @@ export function ComposerInlineControl(props: {
   readonly chevronDirection?: "down" | "right";
   readonly showChevron?: boolean;
 }) {
-  const iconColor = useThemeColor(
-    props.emphasized || props.selected ? "--color-icon" : "--color-icon-muted",
-  );
-
   return (
     <Pressable
       accessibilityLabel={props.accessibilityLabel ?? props.label}
@@ -62,7 +55,14 @@ export function ComposerInlineControl(props: {
       {props.iconNode ? (
         <View className="size-4 shrink-0 items-center justify-center">{props.iconNode}</View>
       ) : props.icon ? (
-        <SymbolView name={props.icon} size={16} tintColor={iconColor} type="monochrome" />
+        <SymbolView
+          name={props.icon}
+          size={16}
+          tintColorClassName={
+            props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
+          }
+          type="monochrome"
+        />
       ) : null}
       <Text
         className={cn(
@@ -77,7 +77,9 @@ export function ComposerInlineControl(props: {
         <SymbolView
           name={props.chevronDirection === "right" ? "chevron.right" : "chevron.down"}
           size={10}
-          tintColor={iconColor}
+          tintColorClassName={
+            props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
+          }
           type="monochrome"
         />
       )}
@@ -111,8 +113,12 @@ export function ComposerToolbarRow(props: {
 
 export function ComposerToolbarScroller(props: {
   readonly children: ReactNode;
-  readonly fadeOpaque: string;
-  readonly fadeTransparent: string;
+  /** Only for non-Uniwind surfaces such as the native terminal palette. */
+  readonly fadeOpaque?: string;
+  /** Only for non-Uniwind surfaces such as the native terminal palette. */
+  readonly fadeTransparent?: string;
+  /** Semantic Uniwind surface behind the toolbar. Defaults to card. */
+  readonly fadeSurface?: "card" | "sheet";
   readonly contentPaddingRight?: number;
 }) {
   const [metrics, setMetrics] = useState({
@@ -170,27 +176,37 @@ export function ComposerToolbarScroller(props: {
       </ScrollView>
       {scrollEdges.showLeftFade ? (
         <View
+          className={cn(
+            "absolute inset-y-0 left-0",
+            props.fadeOpaque === undefined && "bg-linear-to-r to-transparent",
+            props.fadeOpaque === undefined &&
+              (props.fadeSurface === "sheet" ? "from-sheet" : "from-card"),
+          )}
           pointerEvents="none"
           style={{
-            bottom: 0,
-            experimental_backgroundImage: `linear-gradient(to right, ${props.fadeOpaque} 0%, ${props.fadeTransparent} 100%)`,
-            left: 0,
-            position: "absolute",
-            top: 0,
             width: COMPOSER_TOOLBAR_FADE_WIDTH,
+            experimental_backgroundImage:
+              props.fadeOpaque === undefined
+                ? undefined
+                : `linear-gradient(to right, ${props.fadeOpaque} 0%, ${props.fadeTransparent ?? "transparent"} 100%)`,
           }}
         />
       ) : null}
       {scrollEdges.showRightFade ? (
         <View
+          className={cn(
+            "absolute inset-y-0 right-0",
+            props.fadeOpaque === undefined && "bg-linear-to-r from-transparent",
+            props.fadeOpaque === undefined &&
+              (props.fadeSurface === "sheet" ? "to-sheet" : "to-card"),
+          )}
           pointerEvents="none"
           style={{
-            bottom: 0,
-            experimental_backgroundImage: `linear-gradient(to right, ${props.fadeTransparent} 0%, ${props.fadeOpaque} 100%)`,
-            position: "absolute",
-            right: 0,
-            top: 0,
             width: COMPOSER_TOOLBAR_FADE_WIDTH,
+            experimental_backgroundImage:
+              props.fadeOpaque === undefined
+                ? undefined
+                : `linear-gradient(to right, ${props.fadeTransparent ?? "transparent"} 0%, ${props.fadeOpaque} 100%)`,
           }}
         />
       ) : null}
@@ -214,30 +230,16 @@ export function ComposerToolbarButton(props: {
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
 }) {
-  const { themeAppearance } = useAppearancePreferences();
-  const isDarkMode = themeAppearance === "dark";
-  const iconColor = useThemeColor("--color-icon");
-  const iconSubtle = useThemeColor("--color-icon-subtle");
-  const primaryFg = useThemeColor("--color-primary-foreground");
-  const dangerFg = useThemeColor("--color-danger-foreground");
   const variant = props.variant ?? "default";
   const isCircle = !props.label && props.showChevron === false;
-  const defaultBorderColor = useThemeColor("--color-border-subtle");
-  const activeBorderColor = useThemeColor("--color-border");
-  const filledBorderColor =
-    variant === "danger"
-      ? themeColorWithAlpha(String(dangerFg), 0.14)
-      : props.disabled
-        ? defaultBorderColor
-        : themeColorWithAlpha(String(primaryFg), 0.18);
-  const iconTintColor =
+  const iconTintClassName =
     variant === "primary"
       ? props.disabled
-        ? iconSubtle
-        : primaryFg
+        ? "accent-icon-subtle"
+        : "accent-primary-foreground"
       : variant === "danger"
-        ? dangerFg
-        : iconColor;
+        ? "accent-danger-foreground"
+        : "accent-icon";
 
   return (
     <Pressable
@@ -250,7 +252,8 @@ export function ComposerToolbarButton(props: {
         // so callers can lift it with max-w-full — flex-filling pills in the
         // thread composer stretch to the row's edge. The numeric maxWidth
         // prop still wins via the inline style below.
-        "h-11 max-w-[172px] flex-row items-center justify-center rounded-full active:opacity-70",
+        "h-11 max-w-[172px] flex-row items-center justify-center rounded-full border active:opacity-70",
+        variant === "primary" && "shadow-lg shadow-adaptive-black-a10-a25 disabled:shadow-none",
         isCircle ? "w-11" : "gap-2 px-3.5",
         variant === "primary"
           ? props.disabled
@@ -261,24 +264,22 @@ export function ComposerToolbarButton(props: {
             : props.active
               ? "bg-subtle-strong"
               : "bg-subtle",
+        variant === "default"
+          ? props.active
+            ? "border-border"
+            : "border-border-subtle"
+          : variant === "danger"
+            ? "border-danger-border"
+            : props.disabled
+              ? "border-border-subtle"
+              : "border-primary-foreground/20",
         props.className,
       )}
       style={({ pressed }) => [
         {
-          borderColor:
-            variant === "default"
-              ? props.active
-                ? activeBorderColor
-                : defaultBorderColor
-              : filledBorderColor,
-          borderWidth: 1,
           maxWidth: props.maxWidth,
           minWidth: props.minWidth,
           opacity: props.disabled ? 0.55 : pressed ? 0.72 : 1,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: isDarkMode ? 3 : 2 },
-          shadowOpacity: props.disabled ? 0 : isDarkMode ? 0.24 : 0.08,
-          shadowRadius: isDarkMode ? 10 : 8,
         },
         props.style,
       ]}
@@ -286,7 +287,12 @@ export function ComposerToolbarButton(props: {
       {props.iconNode ? (
         <View className="h-4 w-4 items-center justify-center">{props.iconNode}</View>
       ) : props.icon ? (
-        <SymbolView name={props.icon} size={16} tintColor={iconTintColor} type="monochrome" />
+        <SymbolView
+          name={props.icon}
+          size={16}
+          tintColorClassName={iconTintClassName}
+          type="monochrome"
+        />
       ) : null}
       {props.label ? (
         <Text
@@ -306,7 +312,12 @@ export function ComposerToolbarButton(props: {
         </Text>
       ) : null}
       {props.showChevron === false ? null : (
-        <SymbolView name="chevron.down" size={11} tintColor={iconTintColor} type="monochrome" />
+        <SymbolView
+          name="chevron.down"
+          size={11}
+          tintColorClassName={iconTintClassName}
+          type="monochrome"
+        />
       )}
     </Pressable>
   );

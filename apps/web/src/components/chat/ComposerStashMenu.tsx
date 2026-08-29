@@ -1,4 +1,4 @@
-import { XIcon } from "lucide-react";
+import { FileIcon, XIcon } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -20,7 +20,13 @@ function stashEntrySnippet(entry: PromptStashEntry): string {
     return trimmed.length > SNIPPET_MAX_CHARS ? `${trimmed.slice(0, SNIPPET_MAX_CHARS)}…` : trimmed;
   }
   const imageCount = entry.attachments.length + entry.droppedImageNames.length;
-  return imageCount > 0 ? `(${imageCount} image${imageCount === 1 ? "" : "s"})` : "(empty)";
+  const fileCount = entry.files?.length ?? 0;
+  const attachmentCount = imageCount + fileCount;
+  if (attachmentCount === 0) {
+    return "(empty)";
+  }
+  const label = imageCount > 0 && fileCount > 0 ? "attachment" : fileCount > 0 ? "file" : "image";
+  return `(${attachmentCount} ${label}${attachmentCount === 1 ? "" : "s"})`;
 }
 
 /**
@@ -31,11 +37,12 @@ function stashEntrySnippet(entry: PromptStashEntry): string {
  */
 export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   entries: ReadonlyArray<PromptStashEntry>;
+  stashShortcutLabel: string | null;
   onRestore: (entry: PromptStashEntry) => void;
   onDelete: (entry: PromptStashEntry) => void;
   onClose: () => void;
 }) {
-  const { entries, onRestore, onDelete, onClose } = props;
+  const { entries, stashShortcutLabel, onRestore, onDelete, onClose } = props;
   const drawerRef = useRef<HTMLDivElement>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(entries[0]?.id ?? null);
 
@@ -128,7 +135,10 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
           <CommandGroup>
             {entries.length === 0 ? (
               <p className="px-3 py-1.5 text-secondary-label text-xs">
-                Nothing stashed yet. Press ⌘S with a prompt in the composer to stash it.
+                Nothing stashed yet.
+                {stashShortcutLabel
+                  ? ` Press ${stashShortcutLabel} with a prompt in the composer to stash it.`
+                  : null}
               </p>
             ) : (
               entries.map((entry) => (
@@ -174,6 +184,12 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
                           className="size-5 rounded border border-border/70 object-cover"
                         />
                       ))}
+                    </span>
+                  ) : null}
+                  {(entry.files?.length ?? 0) > 0 ? (
+                    <span className="flex shrink-0 items-center gap-1 text-secondary-label text-xs">
+                      <FileIcon className="size-3.5 text-secondary-label" />
+                      {entry.files!.length}
                     </span>
                   ) : null}
                   <span className="shrink-0 text-secondary-label text-xs max-sm:hidden">
