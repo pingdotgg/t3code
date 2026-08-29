@@ -306,6 +306,28 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         assert.strictEqual(snapshot.projection.turnItems[0]?.ordinal, 925);
         assert.strictEqual(snapshot.projection.turnItems.at(-1)?.ordinal, 1_000);
       }
+      const retainedRequestPlan = yield* sql<{ readonly detail: string }>`
+        EXPLAIN QUERY PLAN
+        WITH selected AS (
+          SELECT run_id, type
+          FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId}
+          ORDER BY ordinal DESC, turn_item_id DESC
+          LIMIT 77
+        )
+        SELECT request.payload_json
+        FROM orchestration_v2_projection_turn_items AS request
+        WHERE request.run_id IN (
+            SELECT run_id FROM selected
+            WHERE type = 'run_interrupt_result' AND run_id IS NOT NULL
+          )
+          AND request.type = 'run_interrupt_request'
+      `;
+      assert.isTrue(
+        retainedRequestPlan.some((row) =>
+          row.detail.includes("orchestration_v2_projection_turn_items_run_ordinal_idx"),
+        ),
+      );
 
       const older = yield* projectionStore.getThreadSnapshotWindow(threadId, {
         rowLimit: 76,
@@ -353,6 +375,381 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
           (left, right) => Number(left.split(":").at(-1)) - Number(right.split(":").at(-1)),
         ),
         Array.from({ length: 1_000 }, (_, index) => `turn-item:bounded-sql-history:${index + 1}`),
+      );
+
+      const hiddenRunId = RunId.make("run:bounded-sql-history:hidden-suffix");
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_runs (
+          run_id, thread_id, ordinal, provider, provider_thread_id, status,
+          requested_at, completed_at, payload_json
+        ) VALUES (
+          ${hiddenRunId}, ${threadId}, 1001, 'codex', NULL, 'rolled_back', ${nowIso}, ${nowIso},
+          ${encodeUnknownJsonString({
+            id: hiddenRunId,
+            threadId,
+            ordinal: 1001,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: "message:bounded-sql-history:hidden-suffix",
+            rootNodeId: "node:bounded-sql-history:hidden-suffix",
+            activeAttemptId: null,
+            status: "rolled_back",
+            requestedAt: nowIso,
+            startedAt: nowIso,
+            completedAt: nowIso,
+            checkpointId: null,
+            contextHandoffId: null,
+          })}
+        )
+      `;
+      for (let ordinal = 1_001; ordinal <= 1_100; ordinal += 1) {
+        const id = `turn-item:bounded-sql-history:hidden:${ordinal}`;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items (
+            turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json
+          ) VALUES (
+            ${id}, ${threadId}, ${hiddenRunId}, NULL, NULL, NULL, NULL, ${ordinal},
+            'command_execution', 'completed', ${nowIso},
+            ${encodeUnknownJsonString({
+              id,
+              threadId,
+              runId: hiddenRunId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: "rolled back",
+              input: "echo hidden",
+              output: "hidden",
+              exitCode: 0,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              updatedAt: nowIso,
+              type: "command_execution",
+            })}
+          )
+        `;
+      }
+
+      const hiddenSuffixSnapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+      });
+      const hiddenSuffixPage = buildBoundedThreadProjection({
+        projection: hiddenSuffixSnapshot.projection,
+        snapshotSequence: hiddenSuffixSnapshot.snapshotSequence,
+      });
+      assert.lengthOf(hiddenSuffixPage.projection.visibleTurnItems, 75);
+      assert.strictEqual(hiddenSuffixPage.latestLocalTurnOrdinal, 1_100);
+      assert.isTrue(hiddenSuffixPage.hasMoreHistory);
+      assert.isFalse(
+        hiddenSuffixPage.projection.visibleTurnItems.some((row) =>
+          String(row.sourceItemId).includes(":hidden:"),
+        ),
+      );
+      const hiddenSuffixCursor = hiddenSuffixPage.historyCursor;
+      assert.isNotNull(hiddenSuffixCursor);
+      const hiddenSuffixAnchor = TurnItemId.make(decodeThreadHistoryCursor(hiddenSuffixCursor!).si);
+      const hiddenSuffixOlderSnapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+        anchorItemId: hiddenSuffixAnchor,
+      });
+      const hiddenSuffixOlderPage = selectHistoryPageFromCursor({
+        items: hiddenSuffixOlderSnapshot.projection.visibleTurnItems,
+        cursor: hiddenSuffixCursor!,
+        snapshotSequence: hiddenSuffixOlderSnapshot.snapshotSequence,
+      });
+      assert.lengthOf(hiddenSuffixOlderPage.items, 75);
+      assert.isTrue(hiddenSuffixOlderPage.hasMoreHistory);
+
+      const cancelledRunId = RunId.make("run:bounded-sql-history:cancelled-suffix");
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_runs (
+          run_id, thread_id, ordinal, provider, provider_thread_id, status,
+          requested_at, completed_at, payload_json
+        ) VALUES (
+          ${cancelledRunId}, ${threadId}, 1002, 'codex', NULL, 'cancelled', ${nowIso}, ${nowIso},
+          ${encodeUnknownJsonString({
+            id: cancelledRunId,
+            threadId,
+            ordinal: 1002,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: "message:bounded-sql-history:cancelled-suffix",
+            rootNodeId: "node:bounded-sql-history:cancelled-suffix",
+            activeAttemptId: null,
+            status: "cancelled",
+            requestedAt: nowIso,
+            startedAt: nowIso,
+            completedAt: nowIso,
+            checkpointId: null,
+            contextHandoffId: null,
+          })}
+        )
+      `;
+      for (let ordinal = 1_101; ordinal <= 1_200; ordinal += 1) {
+        const id = `turn-item:bounded-sql-history:cancelled:${ordinal}`;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items (
+            turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json
+          ) VALUES (
+            ${id}, ${threadId}, ${cancelledRunId}, NULL, NULL, NULL, NULL, ${ordinal},
+            'user_message', 'completed', ${nowIso},
+            ${encodeUnknownJsonString({
+              createdBy: "user",
+              creationSource: "web",
+              id,
+              threadId,
+              runId: cancelledRunId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: "cancelled queued message",
+              startedAt: nowIso,
+              completedAt: nowIso,
+              updatedAt: nowIso,
+              type: "user_message",
+              messageId: `message:bounded-sql-history:cancelled:${ordinal}`,
+              inputIntent: "queued_turn",
+              text: "cancelled",
+              attachments: [],
+            })}
+          )
+        `;
+      }
+      const runlessQueuedId = "turn-item:bounded-sql-history:runless-queued";
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_turn_items (
+          turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          parent_item_id, ordinal, type, status, updated_at, payload_json
+        ) VALUES (
+          ${runlessQueuedId}, ${threadId}, NULL, NULL, NULL, NULL, NULL, 1201,
+          'user_message', 'completed', ${nowIso},
+          ${encodeUnknownJsonString({
+            createdBy: "user",
+            creationSource: "web",
+            id: runlessQueuedId,
+            threadId,
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1201,
+            status: "completed",
+            title: "runless queued message",
+            startedAt: nowIso,
+            completedAt: nowIso,
+            updatedAt: nowIso,
+            type: "user_message",
+            messageId: "message:bounded-sql-history:runless-queued",
+            inputIntent: "queued_turn",
+            text: "still visible",
+            attachments: [],
+          })}
+        )
+      `;
+      const laterCancelledId = "turn-item:bounded-sql-history:cancelled:1202";
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_turn_items (
+          turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          parent_item_id, ordinal, type, status, updated_at, payload_json
+        ) VALUES (
+          ${laterCancelledId}, ${threadId}, ${cancelledRunId}, NULL, NULL, NULL, NULL, 1202,
+          'user_message', 'completed', ${nowIso},
+          ${encodeUnknownJsonString({
+            createdBy: "user",
+            creationSource: "web",
+            id: laterCancelledId,
+            threadId,
+            runId: cancelledRunId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1202,
+            status: "completed",
+            title: "later cancelled queued message",
+            startedAt: nowIso,
+            completedAt: nowIso,
+            updatedAt: nowIso,
+            type: "user_message",
+            messageId: "message:bounded-sql-history:cancelled:1202",
+            inputIntent: "queued_turn",
+            text: "cancelled",
+            attachments: [],
+          })}
+        )
+      `;
+      const cancelledSuffixSnapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+      });
+      const cancelledSuffixPage = buildBoundedThreadProjection({
+        projection: cancelledSuffixSnapshot.projection,
+        snapshotSequence: cancelledSuffixSnapshot.snapshotSequence,
+      });
+      assert.strictEqual(cancelledSuffixPage.latestLocalTurnOrdinal, 1_202);
+      assert.lengthOf(cancelledSuffixPage.projection.visibleTurnItems, 75);
+      assert.isFalse(
+        cancelledSuffixPage.projection.visibleTurnItems.some((row) =>
+          String(row.sourceItemId).includes(":cancelled:"),
+        ),
+      );
+      assert.isTrue(
+        cancelledSuffixPage.projection.visibleTurnItems.some(
+          (row) => row.sourceItemId === runlessQueuedId,
+        ),
+      );
+
+      const interruptRunId = RunId.make("run:bounded-sql-history:interrupt");
+      const interruptNodeId = NodeId.make("node:bounded-sql-history:interrupt");
+      const interruptRequestId = TurnItemId.make("turn-item:bounded-sql-history:interrupt-request");
+      const interruptResultId = TurnItemId.make("turn-item:bounded-sql-history:interrupt-result");
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_runs (
+          run_id, thread_id, ordinal, provider, provider_thread_id, status,
+          requested_at, completed_at, payload_json
+        ) VALUES (
+          ${interruptRunId}, ${threadId}, 1003, 'codex', 'provider-thread:interrupt', 'completed',
+          ${nowIso}, ${nowIso},
+          ${encodeUnknownJsonString({
+            id: interruptRunId,
+            threadId,
+            ordinal: 1003,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: "provider-thread:interrupt",
+            userMessageId: "message:interrupt",
+            rootNodeId: interruptNodeId,
+            activeAttemptId: "attempt:bounded-sql-history:interrupt",
+            status: "completed",
+            requestedAt: nowIso,
+            startedAt: nowIso,
+            completedAt: nowIso,
+            checkpointId: null,
+            contextHandoffId: null,
+          })}
+        )
+      `;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_run_attempts (
+          attempt_id, thread_id, run_id, attempt_ordinal, root_node_id, provider,
+          provider_instance_id, provider_thread_id, provider_turn_id, status, payload_json
+        ) VALUES (
+          'attempt:bounded-sql-history:interrupt', ${threadId}, ${interruptRunId}, 1,
+          ${interruptNodeId}, 'codex', ${providerInstanceId}, 'provider-thread:interrupt', NULL,
+          'superseded',
+          ${encodeUnknownJsonString({
+            id: "attempt:bounded-sql-history:interrupt",
+            runId: interruptRunId,
+            attemptOrdinal: 1,
+            rootNodeId: interruptNodeId,
+            providerInstanceId,
+            providerThreadId: "provider-thread:interrupt",
+            providerTurnId: null,
+            reason: "initial",
+            status: "superseded",
+            startedAt: nowIso,
+            completedAt: nowIso,
+          })}
+        )
+      `;
+      const insertInterruptItem = (input: {
+        id: TurnItemId;
+        ordinal: number;
+        type: "run_interrupt_request" | "run_interrupt_result";
+      }) => sql`
+        INSERT INTO orchestration_v2_projection_turn_items (
+          turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          parent_item_id, ordinal, type, status, updated_at, payload_json
+        ) VALUES (
+          ${input.id}, ${threadId}, ${interruptRunId}, ${interruptNodeId}, NULL, NULL, NULL,
+          ${input.ordinal}, ${input.type}, 'completed', ${nowIso},
+          ${encodeUnknownJsonString({
+            id: input.id,
+            threadId,
+            runId: interruptRunId,
+            nodeId: interruptNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: input.ordinal,
+            status: "completed",
+            title: input.type,
+            message: input.type === "run_interrupt_request" ? "Stopping" : "Stopped",
+            startedAt: nowIso,
+            completedAt: nowIso,
+            updatedAt: nowIso,
+            type: input.type,
+          })}
+        )
+      `;
+      yield* insertInterruptItem({
+        id: interruptRequestId,
+        ordinal: 1_201,
+        type: "run_interrupt_request",
+      });
+      for (let ordinal = 1_202; ordinal <= 1_281; ordinal += 1) {
+        const id = `turn-item:bounded-sql-history:interrupt-filler:${ordinal}`;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items (
+            turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json
+          ) VALUES (
+            ${id}, ${threadId}, NULL, NULL, NULL, NULL, NULL, ${ordinal},
+            'command_execution', 'completed', ${nowIso},
+            ${encodeUnknownJsonString({
+              id,
+              threadId,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: "filler",
+              input: "echo filler",
+              output: "ok",
+              exitCode: 0,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              updatedAt: nowIso,
+              type: "command_execution",
+            })}
+          )
+        `;
+      }
+      yield* insertInterruptItem({
+        id: interruptResultId,
+        ordinal: 1_282,
+        type: "run_interrupt_result",
+      });
+
+      const interruptSnapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+      });
+      assert.isTrue(
+        interruptSnapshot.projection.turnItems.some((item) => item.id === interruptRequestId),
+      );
+      assert.isTrue(
+        interruptSnapshot.projection.visibleTurnItems.some(
+          (row) => row.sourceItemId === interruptResultId,
+        ),
       );
     }),
   );
@@ -1857,13 +2254,14 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       const nowIso = DateTime.formatIso(now);
       for (let index = 0; index < 300; index += 1) {
         const id = `turn-item:projection-fork-source-rollback:post-fork:${index}`;
+        const ordinal = index < 10 ? 190 + index : 300 + index;
         yield* sql`
           INSERT INTO orchestration_v2_projection_turn_items (
             turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
             parent_item_id, ordinal, type, status, updated_at, payload_json
           ) VALUES (
             ${id}, ${sourceThreadId}, ${sourceRun3Id}, ${sourceRun3NodeId},
-            ${sourceProviderThreadId}, NULL, NULL, ${300 + index}, 'command_execution',
+            ${sourceProviderThreadId}, NULL, NULL, ${ordinal}, 'command_execution',
             'completed', ${nowIso}, ${encodeUnknownJsonString({
               id,
               threadId: sourceThreadId,
@@ -1873,7 +2271,7 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
               providerTurnId: null,
               nativeItemRef: null,
               parentItemId: null,
-              ordinal: 300 + index,
+              ordinal,
               status: "completed",
               title: "post fork",
               input: "echo later",
@@ -2059,6 +2457,63 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
               completedAt: nowIso,
               updatedAt: nowIso,
               type: "command_execution",
+            })}
+          )
+        `;
+      }
+      const inheritedSupersededNodeId = NodeId.make(
+        "node:projection-fork-source-rollback:inherited-superseded",
+      );
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_run_attempts (
+          attempt_id, thread_id, run_id, attempt_ordinal, root_node_id, provider,
+          provider_instance_id, provider_thread_id, provider_turn_id, status, payload_json
+        ) VALUES (
+          'attempt:projection-fork-source-rollback:inherited-superseded',
+          ${sourceThreadId}, ${sourceRun2Id}, 2, ${inheritedSupersededNodeId}, 'codex',
+          ${providerInstanceId}, ${sourceProviderThreadId}, NULL, 'superseded',
+          ${encodeUnknownJsonString({
+            id: "attempt:projection-fork-source-rollback:inherited-superseded",
+            runId: sourceRun2Id,
+            attemptOrdinal: 2,
+            rootNodeId: inheritedSupersededNodeId,
+            providerInstanceId,
+            providerThreadId: sourceProviderThreadId,
+            providerTurnId: null,
+            reason: "retry",
+            status: "superseded",
+            startedAt: nowIso,
+            completedAt: nowIso,
+          })}
+        )
+      `;
+      for (let ordinal = 201; ordinal <= 300; ordinal += 1) {
+        const id = `turn-item:projection-fork-source-rollback:hidden-interrupt:${ordinal}`;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items (
+            turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json
+          ) VALUES (
+            ${id}, ${sourceThreadId}, ${sourceRun2Id}, ${inheritedSupersededNodeId},
+            ${sourceProviderThreadId}, NULL, NULL, ${ordinal}, 'run_interrupt_result',
+            'completed', ${nowIso},
+            ${encodeUnknownJsonString({
+              id,
+              threadId: sourceThreadId,
+              runId: sourceRun2Id,
+              nodeId: inheritedSupersededNodeId,
+              providerThreadId: sourceProviderThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: "Stopped",
+              message: "Stopped",
+              startedAt: nowIso,
+              completedAt: nowIso,
+              updatedAt: nowIso,
+              type: "run_interrupt_result",
             })}
           )
         `;
