@@ -63,6 +63,23 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("keeps legacy defaults disjoint from nondefault profile partitions", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+
+      // These share the same scope string: default environment `a::b`, and
+      // environment `a` with nondefault profile `b`.
+      const legacyDefault = yield* browserSessions.getPartition("a::b");
+      const nondefaultProfile = yield* browserSessions.getPartition("a::b", true, "profile");
+
+      assert.strictEqual(legacyDefault, "persist:t3code-preview-78f0be89237d77f7a70e");
+      assert.strictEqual(nondefaultProfile, "persist:t3code-preview-profile-78f0be89237d77f7a70e");
+      assert.notStrictEqual(nondefaultProfile, legacyDefault);
+      assert.isTrue(browserSessions.isPartition(legacyDefault));
+      assert.isTrue(browserSessions.isPartition(nondefaultProfile));
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("grants clipboard-sanitized-write through both the request and check handlers", () =>
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;

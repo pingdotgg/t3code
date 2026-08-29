@@ -46,8 +46,8 @@ describe("preview IPC methods", () => {
     const first = PreviewIpc.resolvePartitionScope("a", "b::c");
     const second = PreviewIpc.resolvePartitionScope("a::b", "c");
 
-    expect(first).toEqual({ scope: "a::b%3A%3Ac", persistent: true });
-    expect(second).toEqual({ scope: "a%3A%3Ab::c", persistent: true });
+    expect(first).toEqual({ scope: "a::b%3A%3Ac", persistent: true, namespace: "profile" });
+    expect(second).toEqual({ scope: "a%3A%3Ab::c", persistent: true, namespace: "profile" });
     expect(first.scope).not.toBe(second.scope);
   });
 
@@ -61,7 +61,11 @@ describe("preview IPC methods", () => {
     ).toEqual({ scope: "environment::legacy", persistent: true });
     expect(
       PreviewIpc.resolvePartitionScope("environment::legacy", INCOGNITO_BROWSER_PROFILE_ID),
-    ).toEqual({ scope: "environment%3A%3Alegacy::incognito", persistent: false });
+    ).toEqual({
+      scope: "environment%3A%3Alegacy::incognito",
+      persistent: false,
+      namespace: "profile",
+    });
   });
 
   effectIt.effect("rejects invalid webContents ids before resolving the preview service", () =>
