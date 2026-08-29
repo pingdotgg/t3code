@@ -851,7 +851,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const isWoke =
     wokeAtDate !== null &&
     (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
-    !(props.autoSettleMode === "change-request" && changeRequestAutoSettles(pr, { thread }));
+    !changeRequestAutoSettles(pr, {
+      autoSettleOnMerge: props.autoSettleOnMerge,
+      thread,
+    });
   // In-flight rows (working, or waiting on approval/input) fade as a whole:
   // there is nothing for the user to do yet, so prominence is reserved for
   // rows that need a human — done (unread), read-but-unsettled, failed, and
@@ -2163,7 +2166,7 @@ export default function Sidebar() {
         effectiveSettled(thread, {
           now,
           autoSettleAfterDays,
-          autoSettleMode,
+          autoSettleOnMerge,
           changeRequest,
         })
       ) {
@@ -2200,7 +2203,7 @@ export default function Sidebar() {
     };
   }, [
     autoSettleAfterDays,
-    autoSettleMode,
+    autoSettleOnMerge,
     changeRequestSnapshotByKey,
     nowMinute,
     scopedProjectKeys,

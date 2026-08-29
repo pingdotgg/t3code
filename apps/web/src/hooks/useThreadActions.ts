@@ -142,6 +142,9 @@ export async function requestThreadUnpinConfirmation(input: {
         "This will move the thread out of your pinned section.",
       ].join("\n"),
     ),
+  );
+}
+
 /**
  * Marks a thread unread. Servers with visited tracking own the unread marker
  * (thread.mark-unread rewinds the server-side visited watermark, syncing the
