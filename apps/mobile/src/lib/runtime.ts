@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Socket from "effect/unstable/socket/Socket";
@@ -9,12 +10,26 @@ import { managedRelayClientLayer } from "../features/cloud/managedRelayLayer";
 import { resolveCloudPublicConfig } from "../features/cloud/publicConfig";
 import { tracingLayer } from "../features/observability/tracing";
 import * as Persistence from "../persistence/layer";
+import { loadNativeWebSocketConstructor } from "./nativeWebSocket";
 
 function configuredRelayUrl(): string {
   return resolveCloudPublicConfig().relay.url ?? "http://relay.invalid";
 }
 
 const httpClientLayer = remoteHttpClientLayer(fetch);
+
+// iOS swaps in a URLSessionWebSocketTask-backed constructor so the socket
+// negotiates permessage-deflate (SocketRocket, behind the global WebSocket,
+// cannot). Android's global WebSocket (OkHttp) already negotiates it.
+const webSocketConstructorLayer: Layer.Layer<Socket.WebSocketConstructor> = Layer.unwrap(
+  Effect.promise(loadNativeWebSocketConstructor).pipe(
+    Effect.map((nativeConstructor) =>
+      nativeConstructor === null
+        ? Socket.layerWebSocketConstructorGlobal
+        : Layer.succeed(Socket.WebSocketConstructor, nativeConstructor),
+    ),
+  ),
+);
 
 type RuntimeLayerSource =
   | ReturnType<typeof managedRelayClientLayer>
@@ -26,7 +41,7 @@ type RuntimeLayerSource =
 
 const runtimeLayer = Layer.merge(
   managedRelayClientLayer(configuredRelayUrl()),
-  Socket.layerWebSocketConstructorGlobal,
+  webSocketConstructorLayer,
 ).pipe(
   Layer.provideMerge(cryptoLayer),
   Layer.provideMerge(httpClientLayer),
