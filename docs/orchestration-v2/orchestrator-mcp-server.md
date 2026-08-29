@@ -323,9 +323,14 @@ worktree, non-repository path, or branch mismatch is visible without changing ei
 Lists the project root and every Git-registered worktree in the calling thread's current project,
 including detached checkouts. Git's canonical common-directory inventory and real paths determine
 repository membership, so symlinked paths and saved branch labels are not treated as proof. Each
-entry includes its listed and actual branch, dirty state, and threads bound to the checkout.
+result distinguishes the project's configured execution directory from its canonical physical
+worktree root and Git common directory. Each entry includes its listed and actual branch, dirty
+state, and threads bound to the checkout.
 Bindings keep each thread's recorded branch and worktree path separate from the actual checkout.
-The tool does not create, remove, prune, or repair worktrees.
+Results are paginated before status reads, and each entry returns a bounded binding list with its
+full binding count. A missing or unreadable checkout remains in the page with an availability and
+error instead of failing discovery of the other worktrees. The tool does not create, remove,
+prune, or repair worktrees.
 
 ## Delegated Task Lifecycle
 

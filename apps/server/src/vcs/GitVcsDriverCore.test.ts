@@ -523,8 +523,12 @@ it.effect("ignores worktree metadata for directories that no longer exist", () =
       );
 
       const refs = yield* driver.listRefs({ cwd, refresh: true });
+      const inventory = yield* driver.listWorktrees(cwd);
 
       assert.equal(refs.refs.find((ref) => ref.name === "stale-worktree")?.worktreePath, null);
+      assert.deepEqual(inventory.worktrees, [
+        { path: missingWorktreePath, refName: "stale-worktree" },
+      ]);
     }),
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
@@ -1569,18 +1573,27 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const detachedPath = pathService.join(worktreesRoot, "detached");
         const linksRoot = yield* makeTmpDir("git-vcs-driver-links-");
         const checkoutLink = pathService.join(linksRoot, "checkout");
+        const nestedDirectory = pathService.join(cwd, "packages", "server");
+        yield* fileSystem.makeDirectory(nestedDirectory, { recursive: true });
         yield* git(cwd, ["worktree", "add", "--detach", detachedPath, "HEAD"]);
         yield* fileSystem.symlink(cwd, checkoutLink);
         const driver = yield* GitVcsDriver.GitVcsDriver;
 
-        const refs = yield* driver.listRefs({ cwd: checkoutLink, refresh: true });
+        const inventory = yield* driver.listWorktrees(
+          pathService.join(checkoutLink, "packages", "server"),
+        );
 
         assert.deepEqual(
-          refs.worktrees.toSorted((left, right) => left.path.localeCompare(right.path)),
+          inventory.worktrees.toSorted((left, right) => left.path.localeCompare(right.path)),
           [
             { path: yield* fileSystem.realPath(cwd), refName: initialBranch },
             { path: yield* fileSystem.realPath(detachedPath), refName: null },
           ].toSorted((left, right) => left.path.localeCompare(right.path)),
+        );
+        assert.equal(inventory.currentWorktreeRoot, yield* fileSystem.realPath(cwd));
+        assert.equal(
+          inventory.repositoryCommonDir,
+          yield* fileSystem.realPath(pathService.join(cwd, ".git")),
         );
       }),
     );

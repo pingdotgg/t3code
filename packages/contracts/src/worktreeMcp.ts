@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
  * Input for the `t3_worktree_handoff` MCP tool.
@@ -146,6 +146,13 @@ export const WorktreeMcpThreadBinding = Schema.Struct({
 });
 export type WorktreeMcpThreadBinding = typeof WorktreeMcpThreadBinding.Type;
 
+export const WorktreeMcpListInput = Schema.Struct({
+  cursor: Schema.optional(NonNegativeInt),
+  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(50))),
+  bindingLimit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(50))),
+});
+export type WorktreeMcpListInput = typeof WorktreeMcpListInput.Type;
+
 export const WorktreeMcpListEntry = Schema.Struct({
   path: TrimmedNonEmptyString,
   branch: Schema.NullOr(TrimmedNonEmptyString),
@@ -153,13 +160,20 @@ export const WorktreeMcpListEntry = Schema.Struct({
   isRepo: Schema.Boolean,
   isProjectRoot: Schema.Boolean,
   hasWorkingTreeChanges: Schema.Boolean,
+  availability: Schema.Literals(["available", "missing", "unreadable"]),
+  statusError: Schema.NullOr(Schema.String),
   bindings: Schema.Array(WorktreeMcpThreadBinding),
+  bindingCount: NonNegativeInt,
 });
 export type WorktreeMcpListEntry = typeof WorktreeMcpListEntry.Type;
 
 export const WorktreeMcpListResult = Schema.Struct({
   projectWorkspaceRoot: TrimmedNonEmptyString,
+  repositoryCommonDir: TrimmedNonEmptyString,
+  projectWorktreeRoot: TrimmedNonEmptyString,
   worktrees: Schema.Array(WorktreeMcpListEntry),
+  nextCursor: Schema.NullOr(NonNegativeInt),
+  total: NonNegativeInt,
 });
 export type WorktreeMcpListResult = typeof WorktreeMcpListResult.Type;
 

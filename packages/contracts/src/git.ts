@@ -89,11 +89,6 @@ const VcsWorktree = Schema.Struct({
   refName: TrimmedNonEmptyStringSchema,
 });
 
-export const VcsWorktreeCheckout = Schema.Struct({
-  path: TrimmedNonEmptyStringSchema,
-  refName: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
-});
-export type VcsWorktreeCheckout = typeof VcsWorktreeCheckout.Type;
 const GitResolvedPullRequest = Schema.Struct({
   number: PositiveInt,
   title: TrimmedNonEmptyStringSchema,
@@ -272,7 +267,6 @@ export type VcsStatusStreamEvent = typeof VcsStatusStreamEvent.Type;
 
 export const VcsListRefsResult = Schema.Struct({
   refs: Schema.Array(VcsRef),
-  worktrees: Schema.Array(VcsWorktreeCheckout),
   isRepo: Schema.Boolean,
   hasPrimaryRemote: Schema.Boolean,
   nextCursor: NonNegativeInt.pipe(Schema.NullOr),
