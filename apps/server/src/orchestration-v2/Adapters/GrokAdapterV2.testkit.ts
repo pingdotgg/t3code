@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { ServerConfig } from "../../config.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
@@ -36,6 +37,7 @@ export function makeGrokProviderAdapterRegistryReplayLayer(transcript: AcpReplay
       const path = yield* Path.Path;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const crypto = yield* Crypto.Crypto;
+      const hostPlatform = yield* HostProcessPlatform;
       const idAllocator = yield* IdAllocatorV2;
       const serverConfig = yield* ServerConfig;
       const replayDir = yield* fileSystem
@@ -51,6 +53,7 @@ export function makeGrokProviderAdapterRegistryReplayLayer(transcript: AcpReplay
         instanceId: GROK_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_GROK_SETTINGS,
         environment: {},
+        hostPlatform,
         childProcessSpawner,
         crypto,
         fileSystem,
