@@ -6692,14 +6692,6 @@ function ChatViewContent(props: ChatViewProps) {
 
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
-      // Independent of thread state: an org-restricted model is never
-      // selectable, and picking it would silently run the org default instead.
-      const unavailableReason = providerStatuses
-        .find((snapshot) => snapshot.instanceId === instanceId)
-        ?.models.find((candidate) => candidate.slug === model)?.unavailableReason;
-      if (unavailableReason) {
-        return unavailableReason;
-      }
       if (!activeThread) {
         return null;
       }

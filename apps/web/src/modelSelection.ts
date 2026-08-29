@@ -79,6 +79,7 @@ export interface AppModelOption {
   isDefault?: boolean;
   isLegacy?: boolean;
   isUnavailable?: boolean;
+  unavailableReason?: string;
 }
 
 function appendUnavailableOpenCodeSelection(
@@ -112,9 +113,13 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
   if (model.isDefault) option.isDefault = true;
   if (model.isLegacy) option.isLegacy = true;
   // A model the environment can't run (today: not entitled by the Claude
-  // account's organization) reuses the unavailable treatment, so the composer
-  // trigger stops presenting it as the model that will answer.
-  if (model.unavailableReason) option.isUnavailable = true;
+  // account's organization) reuses the unavailable treatment, so no picker
+  // presents it as the model that will answer. The reason rides along so every
+  // picker disables the row for the same stated cause.
+  if (model.unavailableReason) {
+    option.isUnavailable = true;
+    option.unavailableReason = model.unavailableReason;
+  }
   return option;
 }
 
