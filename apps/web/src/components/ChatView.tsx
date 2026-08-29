@@ -7172,7 +7172,7 @@ function ChatViewContent(props: ChatViewProps) {
                   >
                     <div
                       className={cn(
-                        "chat-composer-glass-shell relative mx-auto w-full max-w-3xl",
+                        "chat-composer-glass-shell chat-content-lane relative",
                         composerBannerItems.length > 0 && "chat-composer-glass-shell-attached",
                         showComposerContextStrip && "chat-composer-glass-shell-with-context",
                       )}
