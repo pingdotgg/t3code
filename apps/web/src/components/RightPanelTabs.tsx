@@ -110,6 +110,12 @@ export interface PullRequestTabStatus {
   isDraft: boolean;
 }
 
+export function shouldOpenDefaultBrowserProfileFromMenuClick(
+  pointerType: string | undefined,
+): boolean {
+  return pointerType !== "touch";
+}
+
 const SURFACE_DISABLED_REASONS = {
   browser: "Browser previews are only available in the T3 Code desktop app.",
   terminal: "Terminal surfaces are only available from a project thread.",
@@ -938,7 +944,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         <MenuSub key={action.label}>
                           <MenuSubTrigger
                             aria-keyshortcuts={action.shortcut}
-                            onClick={() => {
+                            onClick={(event) => {
+                              const pointerType =
+                                "pointerType" in event.nativeEvent &&
+                                typeof event.nativeEvent.pointerType === "string"
+                                  ? event.nativeEvent.pointerType
+                                  : undefined;
+                              // Touch has no hover path to the profile choices:
+                              // its first tap opens the submenu, then a profile
+                              // is selected there. Mouse click keeps the common
+                              // default-profile action at one click.
+                              if (!shouldOpenDefaultBrowserProfileFromMenuClick(pointerType))
+                                return;
                               setAddSurfaceMenuOpen(false);
                               action.onClick();
                             }}
