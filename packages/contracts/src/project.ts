@@ -122,6 +122,8 @@ export const ProjectMutation = Schema.Union([
     workspaceRoot: TrimmedNonEmptyString,
     createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
     defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+    defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
+    faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     scripts: Schema.optional(Schema.Array(ProjectScript)),
   }),
   Schema.Struct({

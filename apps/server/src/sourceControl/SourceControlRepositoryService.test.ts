@@ -3,15 +3,17 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError, SourceControlProviderError } from "@t3tools/contracts";
 
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./SourceControlRepositoryService.ts";
@@ -54,6 +56,10 @@ function processOutput(): GitVcsDriver.ExecuteGitResult {
   };
 }
 
+function processOutputWithStdout(stdout: string): GitVcsDriver.ExecuteGitResult {
+  return { ...processOutput(), stdout };
+}
+
 function makeLayer(input: {
   readonly provider?: SourceControlProvider.SourceControlProvider["Service"];
   readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
@@ -93,6 +99,23 @@ function makeLayer(input: {
         Layer.provideMerge(NodePath.layer),
       )
     : serviceLayer.pipe(Layer.provideMerge(NodeServices.layer));
+}
+
+function makeRealGitLayer() {
+  const gitLayer = GitVcsDriver.layer.pipe(
+    Layer.provide(VcsProcess.layer),
+    Layer.provide(NodeServices.layer),
+  );
+  return SourceControlRepositoryService.layer.pipe(
+    Layer.provide(
+      Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+        get: () => Effect.succeed(makeProvider()),
+      }),
+    ),
+    Layer.provideMerge(gitLayer),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-real-git-" })),
+    Layer.provideMerge(NodeServices.layer),
+  );
 }
 
 it.effect("looks up repositories through the requested provider without search", () => {
@@ -154,12 +177,20 @@ it.effect("preserves provider failures without deriving the repository message f
 it.effect("clones a looked-up repository into the requested destination", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
     const parent = yield* fs.makeTempDirectoryScoped({
       prefix: "t3-source-control-clone-parent-",
     });
-    const destinationPath = path.join(parent, "t3code");
+    const destinationPath = `${parent}/missing/nested/t3code`;
     const cloneCalls: Array<{ cwd: string; args: ReadonlyArray<string> }> = [];
+    const lookupCwds: Array<string> = [];
+    const provider = makeProvider({
+      getRepositoryCloneUrls: (input) =>
+        Effect.gen(function* () {
+          assert.strictEqual(yield* fs.exists(input.cwd).pipe(Effect.orDie), true);
+          lookupCwds.push(input.cwd);
+          return CLONE_URLS;
+        }),
+    });
 
     yield* Effect.gen(function* () {
       const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
@@ -177,7 +208,7 @@ it.effect("clones a looked-up repository into the requested destination", () =>
       });
       assert.deepStrictEqual(cloneCalls, [
         {
-          cwd: parent,
+          cwd: `${parent}/missing/nested`,
           args: ["clone", CLONE_URLS.url, "t3code"],
         },
       ]);
@@ -190,6 +221,253 @@ it.effect("clones a looked-up repository into the requested destination", () =>
                 cloneCalls.push({ cwd: input.cwd, args: input.args });
                 return processOutput();
               }),
+          },
+          provider,
+        }),
+      ),
+    );
+    assert.deepStrictEqual(lookupCwds, [`${parent}/missing/nested`]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("recovers a matching completed clone and rejects unrelated contents", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const parent = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-source-control-recover-clone-",
+    });
+    const matchingDestination = `${parent}/matching`;
+    const unrelatedDestination = `${parent}/unrelated`;
+    const wrongPortDestination = `${parent}/wrong-port`;
+    const wrongCaseDestination = `${parent}/wrong-case`;
+    const wrongUserDestination = `${parent}/wrong-user`;
+    const absoluteSshDestination = `${parent}/absolute-ssh`;
+    yield* fs.makeDirectory(matchingDestination);
+    yield* fs.makeDirectory(unrelatedDestination);
+    yield* fs.makeDirectory(wrongPortDestination);
+    yield* fs.makeDirectory(wrongCaseDestination);
+    yield* fs.makeDirectory(wrongUserDestination);
+    yield* fs.makeDirectory(absoluteSshDestination);
+    yield* fs.writeFileString(`${matchingDestination}/README.md`, "matching clone");
+    yield* fs.writeFileString(`${unrelatedDestination}/README.md`, "unrelated repository");
+    yield* fs.writeFileString(`${wrongPortDestination}/README.md`, "different port");
+    yield* fs.writeFileString(`${wrongCaseDestination}/README.md`, "different case");
+    yield* fs.writeFileString(`${wrongUserDestination}/README.md`, "different user");
+    yield* fs.writeFileString(`${absoluteSshDestination}/README.md`, "absolute SSH path");
+    const cloneCalls: Array<ReadonlyArray<string>> = [];
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const recovered = yield* service.cloneRepository({
+        remoteUrl: CLONE_URLS.url,
+        destinationPath: matchingDestination,
+      });
+      assert.strictEqual(recovered.cwd, matchingDestination);
+      assert.deepStrictEqual(cloneCalls, []);
+
+      const mismatch = yield* Effect.flip(
+        service.cloneRepository({
+          remoteUrl: CLONE_URLS.url,
+          destinationPath: unrelatedDestination,
+        }),
+      );
+      assert.strictEqual(
+        mismatch.detail,
+        "Destination path already exists and is not a clone of the requested repository.",
+      );
+
+      for (const [destinationPath, remoteUrl] of [
+        [wrongPortDestination, "https://git.example:8444/org/repo.git"],
+        [wrongCaseDestination, "https://git.example/org/repo.git"],
+        [wrongUserDestination, "bob@git.example:repo.git"],
+        [absoluteSshDestination, "git@git.example:repo.git"],
+      ] as const) {
+        const strictMismatch = yield* Effect.flip(
+          service.cloneRepository({ remoteUrl, destinationPath }),
+        );
+        assert.strictEqual(
+          strictMismatch.detail,
+          "Destination path already exists and is not a clone of the requested repository.",
+        );
+      }
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          git: {
+            execute: (input) => {
+              if (input.args[0] === "rev-parse") {
+                return Effect.succeed(
+                  processOutputWithStdout(
+                    input.cwd === matchingDestination ? matchingDestination : unrelatedDestination,
+                  ),
+                );
+              }
+              if (input.args[0] === "for-each-ref") {
+                return Effect.succeed(processOutputWithStdout(input.cwd));
+              }
+              if (input.args[0] === "status") return Effect.succeed(processOutput());
+              cloneCalls.push(input.args);
+              return Effect.succeed(processOutput());
+            },
+            readConfigValue: (cwd) =>
+              Effect.succeed(
+                cwd === matchingDestination
+                  ? CLONE_URLS.url
+                  : cwd === wrongPortDestination
+                    ? "https://git.example:8443/org/repo.git"
+                    : cwd === wrongCaseDestination
+                      ? "https://git.example/org/Repo.git"
+                      : cwd === wrongUserDestination
+                        ? "alice@git.example:repo.git"
+                        : cwd === absoluteSshDestination
+                          ? "ssh://git@git.example/repo.git"
+                          : "https://github.com/acme/other.git",
+              ),
+          },
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("recovers a real completed clone after a lost result and rejects unsafe adoption", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const parent = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-source-control-real-recovery-",
+    });
+    const sourcePath = `${parent}/source`;
+    const otherSourcePath = `${parent}/other-source`;
+    const destinationPath = `${parent}/destination`;
+    const incompletePath = `${parent}/incomplete`;
+    const unrelatedCleanPath = `${parent}/unrelated-clean`;
+
+    const initializeRepository = (cwd: string, contents: string) =>
+      Effect.gen(function* () {
+        yield* fs.makeDirectory(cwd);
+        yield* git.execute({ operation: "test.init", cwd, args: ["init"] });
+        yield* git.execute({
+          operation: "test.config.email",
+          cwd,
+          args: ["config", "user.email", "tests@t3.codes"],
+        });
+        yield* git.execute({
+          operation: "test.config.name",
+          cwd,
+          args: ["config", "user.name", "T3 Tests"],
+        });
+        yield* fs.writeFileString(`${cwd}/README.md`, contents);
+        yield* git.execute({ operation: "test.add", cwd, args: ["add", "README.md"] });
+        yield* git.execute({ operation: "test.commit", cwd, args: ["commit", "-m", "initial"] });
+      });
+
+    yield* initializeRepository(sourcePath, "source");
+    yield* initializeRepository(otherSourcePath, "other source");
+
+    const cloned = yield* service.cloneRepository({ remoteUrl: sourcePath, destinationPath });
+    assert.strictEqual(cloned.cwd, destinationPath);
+
+    // Simulate the caller losing the successful clone result before project registration.
+    const recovered = yield* service.cloneRepository({ remoteUrl: sourcePath, destinationPath });
+    assert.strictEqual(recovered.cwd, destinationPath);
+
+    const unrelated = yield* Effect.flip(
+      service.cloneRepository({ remoteUrl: otherSourcePath, destinationPath }),
+    );
+    assert.strictEqual(
+      unrelated.detail,
+      "Destination path already exists and is not a clone of the requested repository.",
+    );
+
+    yield* initializeRepository(unrelatedCleanPath, "unrelated history");
+    yield* git.execute({
+      operation: "test.unrelated.remote",
+      cwd: unrelatedCleanPath,
+      args: ["remote", "add", "origin", sourcePath],
+    });
+    const unrelatedHistory = yield* Effect.flip(
+      service.cloneRepository({ remoteUrl: sourcePath, destinationPath: unrelatedCleanPath }),
+    );
+    assert.strictEqual(
+      unrelatedHistory.detail,
+      "Destination path already exists and is not a clone of the requested repository.",
+    );
+
+    yield* git.execute({
+      operation: "test.incomplete.clone",
+      cwd: parent,
+      args: ["clone", "--no-checkout", sourcePath, "incomplete"],
+    });
+    const incomplete = yield* Effect.flip(
+      service.cloneRepository({ remoteUrl: sourcePath, destinationPath: incompletePath }),
+    );
+    assert.strictEqual(
+      incomplete.detail,
+      "Destination path already exists and is not a clone of the requested repository.",
+    );
+  }).pipe(Effect.provide(makeRealGitLayer())),
+);
+
+it.effect("serializes overlapping clones to one destination and reuses the verified result", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const parent = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-source-control-overlap-clone-",
+    });
+    const realParent = `${parent}/real`;
+    const aliasParent = `${parent}/alias`;
+    yield* fs.makeDirectory(realParent);
+    yield* fs.symlink(realParent, aliasParent);
+    const destinationPath = `${realParent}/t3code`;
+    const aliasDestinationPath = `${aliasParent}/t3code`;
+    const cloneEntered = yield* Deferred.make<void>();
+    const allowClone = yield* Deferred.make<void>();
+    let cloneCount = 0;
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const first = yield* Effect.forkChild(
+        service.cloneRepository({ remoteUrl: CLONE_URLS.url, destinationPath }),
+        { startImmediately: true },
+      );
+      yield* Deferred.await(cloneEntered);
+      const second = yield* Effect.forkChild(
+        service.cloneRepository({
+          remoteUrl: CLONE_URLS.url,
+          destinationPath: aliasDestinationPath,
+        }),
+        { startImmediately: true },
+      );
+      yield* Deferred.succeed(allowClone, undefined);
+      const results = yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+      assert.deepStrictEqual(
+        results.map((result) => result.cwd),
+        [destinationPath, aliasDestinationPath],
+      );
+      assert.strictEqual(cloneCount, 1);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          git: {
+            execute: (input) => {
+              if (input.args[0] === "clone") {
+                cloneCount += 1;
+                return fs
+                  .makeDirectory(destinationPath)
+                  .pipe(
+                    Effect.andThen(fs.writeFileString(`${destinationPath}/README.md`, "cloned")),
+                    Effect.andThen(Deferred.succeed(cloneEntered, undefined)),
+                    Effect.andThen(Deferred.await(allowClone)),
+                    Effect.as(processOutput()),
+                    Effect.orDie,
+                  );
+              }
+              if (input.args[0] === "status") return Effect.succeed(processOutput());
+              return Effect.succeed(processOutputWithStdout(destinationPath));
+            },
+            readConfigValue: () => Effect.succeed(CLONE_URLS.url),
           },
         }),
       ),

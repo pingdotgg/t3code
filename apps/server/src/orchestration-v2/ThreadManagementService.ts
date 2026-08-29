@@ -35,6 +35,7 @@ import {
   LegacyV1ThreadImporter,
   type LegacyV1ThreadImportError,
 } from "./LegacyV1ThreadImporter.ts";
+import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -265,6 +266,10 @@ export type ThreadManagementError = typeof ThreadManagementError.Type;
 type ThreadManagementFailure = ThreadManagementError | OrchestratorV2Error;
 
 export interface ThreadManagementServiceShape {
+  readonly withProjectMutationLock: <A, E, R>(
+    projectId: ProjectId,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
   readonly ensureLegacyTranscript: (
     threadId: ThreadId,
   ) => Effect.Effect<void, LegacyV1ThreadImportError>;
@@ -362,6 +367,7 @@ export function latestSteerableRun(
 const make = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;
   const legacyImporter = yield* LegacyV1ThreadImporter;
+  const projectMutations = yield* makeKeyedSerialExecutor<ProjectId>();
 
   const ensureLegacyTranscript = Effect.fn(
     "orchestrationV2.threadManagement.ensureLegacyTranscript",
@@ -657,6 +663,7 @@ const make = Effect.gen(function* () {
     });
 
   return ThreadManagementService.of({
+    withProjectMutationLock: projectMutations.withLock,
     ensureLegacyTranscript,
     dispatch,
     getThreadProjection,

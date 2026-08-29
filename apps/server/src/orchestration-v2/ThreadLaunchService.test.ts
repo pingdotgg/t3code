@@ -15,6 +15,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -69,6 +70,7 @@ const adapter = {
 } as ProviderAdapterV2Shape;
 
 interface HarnessOptions {
+  readonly getProjectById?: ProjectService.ProjectService["Service"]["getById"];
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
@@ -115,7 +117,9 @@ function makeHarness(options: HarnessOptions = {}) {
       bootstrap: () => Effect.die("unused"),
       update: () => Effect.die("unused"),
       delete: () => Effect.die("unused"),
-      getById: (id) => Effect.succeed(id === projectId ? Option.some(project) : Option.none()),
+      getById:
+        options.getProjectById ??
+        ((id) => Effect.succeed(id === projectId ? Option.some(project) : Option.none())),
       getByWorkspaceRoot: () => Effect.succeed(Option.some(project)),
       snapshot: Effect.die("unused"),
     }),
@@ -217,6 +221,52 @@ function waitUntil<E, R>(predicate: () => Effect.Effect<boolean, E, R>): Effect.
     assert.fail("Condition was not reached before timeout.");
   });
 }
+
+it.effect("claims a thread under the shared project mutation lock", () =>
+  Effect.gen(function* () {
+    const lockEntered = yield* Deferred.make<void>();
+    const releaseLock = yield* Deferred.make<void>();
+    const projectRead = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      getProjectById: (id) =>
+        Deferred.succeed(projectRead, undefined).pipe(
+          Effect.andThen(Effect.succeed(id === projectId ? Option.some(project) : Option.none())),
+        ),
+    });
+
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const blocker = yield* Effect.forkChild(
+        threads.withProjectMutationLock(
+          projectId,
+          Deferred.succeed(lockEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseLock)),
+          ),
+        ),
+        { startImmediately: true },
+      );
+      yield* Deferred.await(lockEntered);
+
+      const launchFiber = yield* Effect.forkChild(
+        launches.launch(
+          launchInput({
+            command: "command:launch:project-mutation-lock",
+            thread: "thread:launch:project-mutation-lock",
+          }),
+        ),
+        { startImmediately: true },
+      );
+      assert.isFalse(yield* Deferred.isDone(projectRead));
+
+      yield* Deferred.succeed(releaseLock, undefined);
+      yield* Fiber.join(blocker);
+      const launched = yield* Fiber.join(launchFiber);
+      assert.isTrue(yield* Deferred.isDone(projectRead));
+      assert.equal(launched.projection.thread.projectId, projectId);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
 
 it.effect("returns a visible preparing message while provisioning is still blocked", () =>
   Effect.gen(function* () {

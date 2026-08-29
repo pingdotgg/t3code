@@ -15,6 +15,7 @@ import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRu
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import { VcsStatusBroadcaster } from "../../../vcs/VcsStatusBroadcaster.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
@@ -28,6 +29,7 @@ const StubServicesLive = Layer.mergeAll(
   ServerSettings.layerTest({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
+  Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
   Layer.mock(VcsStatusBroadcaster)({}),
 );
 
@@ -114,6 +116,8 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       // than replacing them.
       expect(toolNames).toContain("preview_status");
       expect(toolNames).toContain("delegate_task");
+      expect(toolNames).toContain("t3_project_list");
+      expect(toolNames).toContain("t3_project_delete");
 
       // The handoff tool mutates thread state, reaches the network (origin
       // fetch), and runs project setup scripts, so its MCP hints must not

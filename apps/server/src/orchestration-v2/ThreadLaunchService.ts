@@ -436,69 +436,78 @@ export const make = Effect.gen(function* () {
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
     function* (input) {
-      const project = yield* projects.getById(input.projectId).pipe(
-        Effect.mapError(mapError(input, "resolve-project")),
-        Effect.flatMap(
-          Option.match({
-            onNone: () => Effect.fail(mapError(input, "resolve-project")("Project not found.")),
-            onSome: Effect.succeed,
+      const { project, launchReceipt, candidateThreadId, claimed } =
+        yield* threads.withProjectMutationLock(
+          input.projectId,
+          Effect.gen(function* () {
+            const project = yield* projects.getById(input.projectId).pipe(
+              Effect.mapError(mapError(input, "resolve-project")),
+              Effect.flatMap(
+                Option.match({
+                  onNone: () =>
+                    Effect.fail(mapError(input, "resolve-project")("Project not found.")),
+                  onSome: Effect.succeed,
+                }),
+              ),
+            );
+            if (input.reuseExistingThread === true && input.threadId === undefined) {
+              return yield* mapError(
+                input,
+                "update-thread",
+              )("Reusing an existing thread requires a thread id.");
+            }
+
+            const launchReceipt = yield* readReceipt(input, input.commandId);
+            const candidateThreadId =
+              input.threadId ??
+              (yield* ids.allocate
+                .thread({ projectId: input.projectId })
+                .pipe(Effect.mapError(mapError(input, "create-thread"))));
+
+            if (input.reuseExistingThread === true && Option.isNone(launchReceipt)) {
+              yield* validateReusableThread(input, candidateThreadId);
+            }
+
+            const initialBranch = input.workspaceStrategy.branch ?? null;
+            const initialWorktreePath =
+              input.workspaceStrategy.type === "existing_worktree"
+                ? input.workspaceStrategy.worktreePath
+                : null;
+            const claimDispatch =
+              input.reuseExistingThread === true
+                ? threads.dispatch({
+                    type: "thread.metadata.update",
+                    commandId: input.commandId,
+                    threadId: candidateThreadId,
+                  })
+                : threads.dispatch({
+                    type: "thread.create",
+                    commandId: input.commandId,
+                    threadId: candidateThreadId,
+                    projectId: input.projectId,
+                    title: input.title,
+                    modelSelection: input.modelSelection,
+                    runtimeMode: input.runtimeMode,
+                    interactionMode: input.interactionMode,
+                    branch: initialBranch,
+                    worktreePath: initialWorktreePath,
+                    createdBy: input.createdBy,
+                    creationSource: input.creationSource,
+                  });
+            const claimed = yield* claimDispatch.pipe(
+              Effect.mapError(
+                mapError(
+                  input,
+                  input.reuseExistingThread === true ? "update-thread" : "create-thread",
+                  candidateThreadId,
+                ),
+              ),
+            );
+            return { project, launchReceipt, candidateThreadId, claimed };
           }),
-        ),
-      );
-      if (input.reuseExistingThread === true && input.threadId === undefined) {
-        return yield* mapError(
-          input,
-          "update-thread",
-        )("Reusing an existing thread requires a thread id.");
-      }
-
-      const launchReceipt = yield* readReceipt(input, input.commandId);
-      return yield* Effect.gen(function* () {
-        const candidateThreadId =
-          input.threadId ??
-          (yield* ids.allocate
-            .thread({ projectId: input.projectId })
-            .pipe(Effect.mapError(mapError(input, "create-thread"))));
-
-        if (input.reuseExistingThread === true && Option.isNone(launchReceipt)) {
-          yield* validateReusableThread(input, candidateThreadId);
-        }
-
-        const initialBranch = input.workspaceStrategy.branch ?? null;
-        const initialWorktreePath =
-          input.workspaceStrategy.type === "existing_worktree"
-            ? input.workspaceStrategy.worktreePath
-            : null;
-        const claimDispatch =
-          input.reuseExistingThread === true
-            ? threads.dispatch({
-                type: "thread.metadata.update",
-                commandId: input.commandId,
-                threadId: candidateThreadId,
-              })
-            : threads.dispatch({
-                type: "thread.create",
-                commandId: input.commandId,
-                threadId: candidateThreadId,
-                projectId: input.projectId,
-                title: input.title,
-                modelSelection: input.modelSelection,
-                runtimeMode: input.runtimeMode,
-                interactionMode: input.interactionMode,
-                branch: initialBranch,
-                worktreePath: initialWorktreePath,
-                createdBy: input.createdBy,
-                creationSource: input.creationSource,
-              });
-        const claimed = yield* claimDispatch.pipe(
-          Effect.mapError(
-            mapError(
-              input,
-              input.reuseExistingThread === true ? "update-thread" : "create-thread",
-              candidateThreadId,
-            ),
-          ),
         );
+
+      return yield* Effect.gen(function* () {
         const threadId =
           claimed.storedEvents.find((stored) => stored.event.type.startsWith("thread."))?.event
             .threadId ?? candidateThreadId;

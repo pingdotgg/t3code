@@ -36,6 +36,8 @@ export interface ProjectCreateInput {
   readonly workspaceRoot: string;
   readonly createWorkspaceRootIfMissing?: boolean;
   readonly defaultModelSelection?: ModelSelection | null;
+  readonly defaultThreadEnvMode?: ThreadEnvMode | null;
+  readonly faviconPath?: string | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
 }
 
@@ -314,6 +316,8 @@ export const make = Effect.gen(function* () {
           title: input.title,
           workspaceRoot,
           defaultModelSelection: input.defaultModelSelection ?? null,
+          defaultThreadEnvMode: input.defaultThreadEnvMode ?? null,
+          faviconPath: input.faviconPath ?? null,
           scripts: [...(input.scripts ?? [])],
           createdAt: now,
         },
