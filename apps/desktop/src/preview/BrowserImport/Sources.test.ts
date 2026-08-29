@@ -60,6 +60,20 @@ const writeCookieDatabase = (file: string, count: number) =>
     database.close();
   });
 
+const writeFirefoxCookieDatabase = (
+  file: string,
+  defaultContainerCount: number,
+  containerCount: number,
+) =>
+  Effect.sync(() => {
+    const database = new NodeSqlite.DatabaseSync(file);
+    database.exec("create table moz_cookies (originAttributes text not null)");
+    const insert = database.prepare("insert into moz_cookies (originAttributes) values (?)");
+    for (let index = 0; index < defaultContainerCount; index += 1) insert.run("");
+    for (let index = 0; index < containerCount; index += 1) insert.run("^userContextId=2");
+    database.close();
+  });
+
 describe("isSourceRunning", () => {
   it.effect("reads Chromium's dangling SingletonLock symlink as a running browser", () =>
     run(
@@ -400,6 +414,46 @@ describe("listSourceProfiles Firefox fallback", () => {
       ),
     );
   }
+
+  it.effect("counts only importable cookies for declared and fallback profiles", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-firefox-counts-",
+        });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, { HOME: home }),
+          Effect.provideService(HostProcessPlatform, "darwin"),
+        );
+        const root = firefox.userDataDirectory(context)!;
+        const declaredDirectory = path.join(root, "Profiles", "declared.default");
+        yield* fileSystem.makeDirectory(declaredDirectory, { recursive: true });
+        yield* writeFirefoxCookieDatabase(path.join(declaredDirectory, "cookies.sqlite"), 2, 3);
+        yield* fileSystem.writeFileString(
+          path.join(root, "profiles.ini"),
+          ["[Profile0]", "Name=Declared", "IsRelative=1", "Path=Profiles/declared.default"].join(
+            "\n",
+          ),
+        );
+
+        assert.deepEqual(yield* listSourceProfiles(firefox, context), [
+          { directory: "Profiles/declared.default", name: "Declared", cookieCount: 2 },
+        ]);
+
+        yield* fileSystem.remove(path.join(root, "profiles.ini"));
+        const fallbackDirectory = path.join(root, "Profiles", "fallback.default");
+        yield* fileSystem.makeDirectory(fallbackDirectory, { recursive: true });
+        yield* writeFirefoxCookieDatabase(path.join(fallbackDirectory, "cookies.sqlite"), 1, 4);
+
+        assert.deepEqual(yield* listSourceProfiles(firefox, context), [
+          { directory: "Profiles/declared.default", name: "declared.default", cookieCount: 2 },
+          { directory: "Profiles/fallback.default", name: "fallback.default", cookieCount: 1 },
+        ]);
+      }),
+    ),
+  );
 });
 
 describe("isSourceRunning for Firefox", () => {

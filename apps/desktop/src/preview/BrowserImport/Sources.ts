@@ -329,10 +329,11 @@ const CookieCountRow = Schema.Struct({ count: Schema.Number });
 const decodeCookieCount = Schema.decodeUnknownEffect(Schema.Array(CookieCountRow));
 
 /**
- * How many cookies a profile holds, counted without decrypting anything — a
- * bare `COUNT(*)` needs no key. Best effort: a locked, missing or non-Chromium
- * database (Firefox's table is named differently, Safari's is not SQL) yields
- * `undefined` rather than failing the listing.
+ * How many importable cookies a profile holds, counted without decrypting
+ * anything. Firefox containers use identities Electron cannot represent, so
+ * its count uses the same default-container predicate as the reader. Best
+ * effort: a locked, missing or unexpected database yields `undefined` rather
+ * than failing the listing.
  */
 const countProfileCookies = Effect.fnUntraced(function* (
   definition: BrowserImportSourceDefinition,
@@ -343,7 +344,10 @@ const countProfileCookies = Effect.fnUntraced(function* (
   if (database === undefined) return undefined;
   return yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const rows = yield* sql`select count(*) as count from cookies`;
+    const rows =
+      definition.engine === "firefox"
+        ? yield* sql`select count(*) as count from moz_cookies where originAttributes = ''`
+        : yield* sql`select count(*) as count from cookies`;
     const [row] = yield* decodeCookieCount(rows);
     return row?.count;
   }).pipe(
@@ -387,7 +391,7 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
       Effect.map((ini) => parseFirefoxProfiles(ini, context.path, root)),
       Effect.orElseSucceed(() => [] as ReadonlyArray<BrowserImportSourceProfile>),
     );
-    if (declared.length > 0) return declared;
+    if (declared.length > 0) return yield* withCookieCounts(definition, context, declared);
 
     // Linux keeps profile directories directly under the Firefox root. macOS
     // and Windows put them in `Profiles/`.
@@ -405,7 +409,11 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
             Effect.map((exists) => (exists ? { directory, name: entry } : undefined)),
           );
     });
-    return found.filter((profile) => profile !== undefined);
+    return yield* withCookieCounts(
+      definition,
+      context,
+      found.filter((profile) => profile !== undefined),
+    );
   }
 
   const declared = yield* fileSystem.readFileString(context.path.join(root, "Local State")).pipe(
