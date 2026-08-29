@@ -167,7 +167,7 @@ describe("readChromiumCookieDatabase", () => {
         `;
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
 
-      const result = yield* readChromiumCookieDatabase(filename, key);
+      const result = yield* readChromiumCookieDatabase(filename, key, "darwin");
 
       expect(result.undecryptable).toBe(0);
       expect(result.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
@@ -208,7 +208,7 @@ describe("readChromiumCookieDatabase", () => {
           ('short.example', 'short', '', ${encryptV10("short value", key)}, '/', 0, 1, 0, 0)`;
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
 
-      const result = yield* readChromiumCookieDatabase(filename, key);
+      const result = yield* readChromiumCookieDatabase(filename, key, "darwin");
 
       expect(result.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
         { name: "valid", value: "kept" },
@@ -243,9 +243,44 @@ describe("readChromiumCookieDatabase", () => {
           ('legacy.example', 'legacy', '', ${encryptV10(value, key)}, '/', 0, 0, 0, 0)`;
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
 
-      const result = yield* readChromiumCookieDatabase(filename, key);
+      const result = yield* readChromiumCookieDatabase(filename, key, "darwin");
       expect(result.cookies[0]?.value).toBe(value);
       expect(result.undecryptable).toBe(0);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("treats unversioned encrypted values as legacy plaintext only on macOS", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-chromium-cookies-",
+      });
+      const filename = `${directory}/Cookies`;
+      const key = Buffer.from("0123456789abcdef");
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`create table meta (key text primary key, value integer not null)`;
+        yield* sql`insert into meta values ('version', 23)`;
+        yield* sql`
+          create table cookies (
+            host_key text not null, name text not null, value text not null,
+            encrypted_value blob not null, path text not null, expires_utc integer not null,
+            is_secure integer not null, is_httponly integer not null, samesite integer not null
+          )
+        `;
+        yield* sql`insert into cookies values
+          ('legacy.example', 'legacy', '', ${Buffer.from("legacy cleartext")}, '/', 0, 0, 0, 0)`;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+      const mac = yield* readChromiumCookieDatabase(filename, key, "darwin");
+      const linux = yield* readChromiumCookieDatabase(filename, key, "linux");
+
+      expect(mac.cookies[0]?.value).toBe("legacy cleartext");
+      expect(mac.undecryptable).toBe(0);
+      expect(linux.cookies).toEqual([]);
+      expect(linux.undecryptable).toBe(1);
+      expect(linux.undecryptableHosts).toEqual(["legacy.example"]);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

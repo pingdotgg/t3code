@@ -222,14 +222,25 @@ const decryptValue = (
   key: Buffer,
   domain: string,
   schemaVersion: number,
+  platform: NodeJS.Platform,
 ): string | null => {
   const buffer = Buffer.from(encrypted);
-  if (buffer.subarray(0, 3).toString("latin1") !== V10_PREFIX) return null;
+  const version = buffer.subarray(0, 3).toString("latin1");
 
   try {
-    const decipher = NodeCrypto.createDecipheriv("aes-128-cbc", key, AES_IV);
-    decipher.setAutoPadding(true);
-    let plaintext = Buffer.concat([decipher.update(buffer.subarray(3)), decipher.final()]);
+    let plaintext: Buffer;
+    if (version === V10_PREFIX) {
+      const decipher = NodeCrypto.createDecipheriv("aes-128-cbc", key, AES_IV);
+      decipher.setAutoPadding(true);
+      plaintext = Buffer.concat([decipher.update(buffer.subarray(3)), decipher.final()]);
+    } else if (platform === "darwin") {
+      // macOS OSCrypt explicitly treats an unversioned encrypted_value as
+      // legacy cleartext. This is platform-specific: Linux uses other version
+      // prefixes, which must not be widened into plaintext cookies.
+      plaintext = buffer;
+    } else {
+      return null;
+    }
     // Cookie schema 24 requires SHA-256(host_key) at the front of every
     // encrypted value. Treat a missing or mismatched binding as undecryptable;
     // older schemas stored arbitrary plaintext here, including long values
@@ -249,7 +260,7 @@ const decryptValue = (
 
 /** Reads and decodes one snapshotted Chromium cookie database. */
 export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiumCookieDatabase")(
-  function* (snapshotPath: string, key: Buffer) {
+  function* (snapshotPath: string, key: Buffer, platform: NodeJS.Platform) {
     const rows = yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const schemaVersion = yield* sql`select value from meta where key = 'version' limit 1`.pipe(
@@ -275,7 +286,7 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
       const value =
         row.encrypted_value.length === 0
           ? row.value
-          : decryptValue(row.encrypted_value, key, row.host_key, rows.schemaVersion);
+          : decryptValue(row.encrypted_value, key, row.host_key, rows.schemaVersion, platform);
       if (value === null) {
         undecryptable += 1;
         undecryptableHosts.add(bareHost(row.host_key));
@@ -359,7 +370,7 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
     ),
   );
 
-  return yield* readChromiumCookieDatabase(snapshotPath, key).pipe(
+  return yield* readChromiumCookieDatabase(snapshotPath, key, source.platform).pipe(
     Effect.mapError(
       (cause) =>
         new ChromiumCookieReadError({
