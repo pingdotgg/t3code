@@ -13,6 +13,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import {
   DEEP_LINK_CHANNEL,
+  DEEP_LINK_REQUEUE_CHANNEL,
   DEEP_LINK_SUBSCRIBE_CHANNEL,
   DEEP_LINK_UNSUBSCRIBE_CHANNEL,
 } from "../ipc/channels.ts";
@@ -264,6 +265,30 @@ export const make = Effect.gen(function* () {
         .pipe(
           Effect.catch((error) =>
             logWarning("deep link unsubscribe handler registration failed", {
+              message: error.message,
+            }),
+          ),
+        );
+
+      yield* ipc
+        .handle({
+          channel: DEEP_LINK_REQUEUE_CHANNEL,
+          handler: (raw) => {
+            const payload = raw as Record<string, unknown> | null;
+            if (
+              payload === null ||
+              typeof payload !== "object" ||
+              typeof payload.environmentId !== "string" ||
+              typeof payload.threadId !== "string"
+            ) {
+              return Effect.succeed(null);
+            }
+            return open({ environmentId: payload.environmentId, threadId: payload.threadId });
+          },
+        })
+        .pipe(
+          Effect.catch((error) =>
+            logWarning("deep link requeue handler registration failed", {
               message: error.message,
             }),
           ),

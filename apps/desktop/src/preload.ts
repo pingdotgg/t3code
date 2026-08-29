@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopThreadDeepLinkPayload,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
@@ -125,15 +126,19 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   onDeepLink: (listener) => {
     let active = true;
-    const deliver = (payload: unknown) => {
-      if (!active) return;
-      if (typeof payload !== "object" || payload === null) return;
+    const parsePayload = (payload: unknown): DesktopThreadDeepLinkPayload | null => {
+      if (typeof payload !== "object" || payload === null) return null;
       const { environmentId, threadId } = payload as {
         environmentId?: unknown;
         threadId?: unknown;
       };
-      if (typeof environmentId !== "string" || typeof threadId !== "string") return;
-      listener({ environmentId, threadId });
+      if (typeof environmentId !== "string" || typeof threadId !== "string") return null;
+      return { environmentId, threadId };
+    };
+    const deliver = (payload: unknown) => {
+      if (!active) return;
+      const parsed = parsePayload(payload);
+      if (parsed !== null) listener(parsed);
     };
     const wrappedListener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
       deliver(payload);
@@ -145,7 +150,16 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     // (cold start) — or null.
     ipcRenderer
       .invoke(IpcChannels.DEEP_LINK_SUBSCRIBE_CHANNEL)
-      .then(deliver)
+      .then((payload) => {
+        if (active) {
+          deliver(payload);
+          return;
+        }
+        const parsed = parsePayload(payload);
+        if (parsed !== null) {
+          ipcRenderer.invoke(IpcChannels.DEEP_LINK_REQUEUE_CHANNEL, parsed).catch(() => undefined);
+        }
+      })
       .catch(() => undefined);
     return () => {
       active = false;

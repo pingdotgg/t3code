@@ -6,6 +6,7 @@ import { vi } from "vite-plus/test";
 
 import {
   DEEP_LINK_CHANNEL,
+  DEEP_LINK_REQUEUE_CHANNEL,
   DEEP_LINK_SUBSCRIBE_CHANNEL,
   DEEP_LINK_UNSUBSCRIBE_CHANNEL,
 } from "../ipc/channels.ts";
@@ -257,6 +258,13 @@ const unsubscribeAs = (harness: TestHarness, fake: FakeSender) =>
     return yield* handler!(undefined, { sender: fake.sender });
   });
 
+const requeue = (harness: TestHarness, fake: FakeSender, payload: unknown) =>
+  Effect.gen(function* () {
+    const handler = harness.ipcHandlers.get(DEEP_LINK_REQUEUE_CHANNEL);
+    assert.isDefined(handler);
+    return yield* handler!(payload, { sender: fake.sender });
+  });
+
 // The OS listeners hand delivery to a fiber via runPromise; drain the
 // immediate queue twice so that fiber has finished before asserting.
 const settleDelivery = Effect.promise(
@@ -278,7 +286,7 @@ describe("DesktopDeepLink", () => {
       assert.deepEqual([...harness.listeners.keys()], ["open-url", "second-instance"]);
       assert.deepEqual(
         [...harness.ipcHandlers.keys()],
-        [DEEP_LINK_SUBSCRIBE_CHANNEL, DEEP_LINK_UNSUBSCRIBE_CHANNEL],
+        [DEEP_LINK_SUBSCRIBE_CHANNEL, DEEP_LINK_UNSUBSCRIBE_CHANNEL, DEEP_LINK_REQUEUE_CHANNEL],
       );
     });
   });
@@ -411,6 +419,22 @@ describe("DesktopDeepLink", () => {
 
       assert.equal(first.send.mock.calls.length, 0);
       assert.deepEqual(yield* subscribeAs(harness, second), PAYLOAD);
+    });
+  });
+
+  it.effect("requeues a buffered subscribe result after listener teardown", () => {
+    const harness = makeHarness();
+    const renderer = makeSender(7);
+    const next = makeSender(9);
+
+    return Effect.gen(function* () {
+      yield* configureWith(makeServices(harness));
+      yield* subscribeAs(harness, renderer);
+      yield* unsubscribeAs(harness, renderer);
+
+      yield* requeue(harness, renderer, PAYLOAD);
+
+      assert.deepEqual(yield* subscribeAs(harness, next), PAYLOAD);
     });
   });
 
