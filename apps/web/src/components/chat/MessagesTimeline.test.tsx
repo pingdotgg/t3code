@@ -237,6 +237,23 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("exposes message authors and nested markdown headings to screen readers", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry("# Request"),
+          { ...buildAssistantTimelineEntry("# Response"), id: "entry-2" },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('<h3 class="sr-only">You</h3>');
+    expect(markup).toContain('<h3 class="sr-only">T3 Code</h3>');
+    expect(markup).toContain('<h1 aria-level="4">Request</h1>');
+    expect(markup).toContain('<h1 aria-level="4">Response</h1>');
+  });
+
   it("renders a feedback command and its pending response as normal thread messages", () => {
     const submission = {
       id: MessageId.make("feedback-command"),

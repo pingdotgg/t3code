@@ -149,6 +149,12 @@ interface ChatMarkdownProps {
   lineBreaks?: boolean;
   /** Parse sanitized raw HTML instead of displaying its source text. */
   parseRawHtml?: boolean;
+  /** Shift heading levels in the accessibility tree without changing their visual style. */
+  headingLevelOffset?: number;
+}
+
+function shiftedHeadingLevel(level: number, offset: number | undefined): number | undefined {
+  return offset === undefined ? undefined : Math.min(6, level + offset);
 }
 
 export function canUseMarkdownFileShellActions(
@@ -1636,6 +1642,7 @@ function ChatMarkdown({
   className,
   lineBreaks = false,
   parseRawHtml = true,
+  headingLevelOffset,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -1943,6 +1950,24 @@ function ChatMarkdown({
     };
 
     return {
+      h1({ node: _node, ...props }) {
+        return <h1 {...props} aria-level={shiftedHeadingLevel(1, headingLevelOffset)} />;
+      },
+      h2({ node: _node, ...props }) {
+        return <h2 {...props} aria-level={shiftedHeadingLevel(2, headingLevelOffset)} />;
+      },
+      h3({ node: _node, ...props }) {
+        return <h3 {...props} aria-level={shiftedHeadingLevel(3, headingLevelOffset)} />;
+      },
+      h4({ node: _node, ...props }) {
+        return <h4 {...props} aria-level={shiftedHeadingLevel(4, headingLevelOffset)} />;
+      },
+      h5({ node: _node, ...props }) {
+        return <h5 {...props} aria-level={shiftedHeadingLevel(5, headingLevelOffset)} />;
+      },
+      h6({ node: _node, ...props }) {
+        return <h6 {...props} aria-level={shiftedHeadingLevel(6, headingLevelOffset)} />;
+      },
       p({ node: _node, children, ...props }) {
         return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
       },
@@ -2212,6 +2237,7 @@ function ChatMarkdown({
     cwd,
     diffThemeName,
     fileLinkParentSuffixByPath,
+    headingLevelOffset,
     inlineCodeFileLinkMetaByText,
     isStreaming,
     markdownFileLinkMetaByHref,
