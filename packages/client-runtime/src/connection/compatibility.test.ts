@@ -35,20 +35,23 @@ describe("orchestration protocol compatibility", () => {
     expect(socketUrl.searchParams.get("connectionMethod")).toBe("relay");
   });
 
-  it("treats missing metadata as protocol 1", () => {
+  it("blocks a host that predates negotiation with host-specific upgrade guidance", () => {
     const error = orchestrationProtocolCompatibilityError(descriptor());
-    if (Number(ORCHESTRATION_PROTOCOL_VERSION) === 1) {
-      expect(error).toBeNull();
-    } else {
-      expect(error).toMatchObject({ reason: "unsupported" });
-    }
+
+    expect(error).toMatchObject({ reason: "unsupported" });
+    expect(error?.message).toContain("Update T3 Code on Build Mac");
+    expect(error?.message).toContain(`protocol ${ORCHESTRATION_PROTOCOL_VERSION}`);
   });
 
-  it("blocks a different protocol before connecting", () => {
+  it("blocks a different explicit protocol instead of attempting to decode it", () => {
     const error = orchestrationProtocolCompatibilityError(
       descriptor(ORCHESTRATION_PROTOCOL_VERSION + 1),
     );
+
     expect(error).toMatchObject({ reason: "unsupported" });
-    expect(error?.message).toContain("This client is not supported");
+    expect(error?.message).toContain(
+      `host uses orchestration protocol ${ORCHESTRATION_PROTOCOL_VERSION + 1}`,
+    );
+    expect(error?.message).toContain(`client requires ${ORCHESTRATION_PROTOCOL_VERSION}`);
   });
 });
