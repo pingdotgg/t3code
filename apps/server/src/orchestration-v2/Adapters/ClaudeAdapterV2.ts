@@ -29,6 +29,8 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
+  type OrchestrationV2PlanArtifact,
+  type OrchestrationV2PlanStep,
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderRetry,
   type OrchestrationV2ProviderSession,
@@ -209,9 +211,9 @@ export const ClaudeProviderCapabilitiesV2 = {
     approvalsCanOriginateFromSubagents: false,
   },
   planning: {
-    emitsPlanUpdated: false,
-    emitsTodoList: false,
-    emitsProposedPlan: false,
+    emitsPlanUpdated: true,
+    emitsTodoList: true,
+    emitsProposedPlan: true,
     supportsStructuredQuestions: true,
     planDeltasHaveItemIds: false,
   },
@@ -2229,6 +2231,46 @@ export function claudeUserInputQuestions(
   });
 }
 
+export function claudeTodoSteps(input: unknown): ReadonlyArray<OrchestrationV2PlanStep> {
+  const value =
+    typeof input === "object" && input !== null && Reflect.get(input, "type") === "record"
+      ? Reflect.get(input, "value")
+      : input;
+  const todos =
+    typeof value === "object" && value !== null ? Reflect.get(value, "todos") : undefined;
+  if (!Array.isArray(todos)) return [];
+  return todos.flatMap((todo, index) => {
+    if (typeof todo !== "object" || todo === null) return [];
+    const text =
+      typeof Reflect.get(todo, "content") === "string"
+        ? String(Reflect.get(todo, "content")).trim()
+        : "";
+    if (text.length === 0) return [];
+    const nativeStatus = Reflect.get(todo, "status");
+    return [
+      {
+        id: `todo-${index}`,
+        text,
+        status:
+          nativeStatus === "completed"
+            ? "completed"
+            : nativeStatus === "in_progress"
+              ? "running"
+              : "pending",
+      },
+    ];
+  });
+}
+
+export function claudeProposedPlan(input: unknown): string | null {
+  const value =
+    typeof input === "object" && input !== null && Reflect.get(input, "type") === "record"
+      ? Reflect.get(input, "value")
+      : input;
+  const plan = typeof value === "object" && value !== null ? Reflect.get(value, "plan") : undefined;
+  return typeof plan === "string" && plan.trim().length > 0 ? plan.trim() : null;
+}
+
 export interface ClaudeAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: ClaudeSettings;
@@ -3322,6 +3364,105 @@ export function makeClaudeAdapterV2(
           }
         });
 
+        const emitClaudePlanProjection = Effect.fnUntraced(function* (input: {
+          readonly context: ActiveClaudeTurnContext;
+          readonly nativeItemId: string;
+          readonly kind: "todo_list" | "proposed_plan";
+          readonly steps?: ReadonlyArray<OrchestrationV2PlanStep>;
+          readonly markdown?: string;
+        }) {
+          const updatedAt = yield* DateTime.now;
+          const planId = yield* idAllocator.allocate.plan({
+            threadId: input.context.input.threadId,
+            runId: input.context.input.runId,
+            driver: CLAUDE_PROVIDER,
+          });
+          const nodeId = idAllocator.derive.nodeFromProviderItem({
+            driver: CLAUDE_PROVIDER,
+            nativeItemId: input.nativeItemId,
+          });
+          const nativeItemRef = {
+            driver: CLAUDE_PROVIDER,
+            nativeId: input.nativeItemId,
+            strength: "strong" as const,
+          };
+          const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
+          const plan: OrchestrationV2PlanArtifact =
+            input.kind === "todo_list"
+              ? {
+                  id: planId,
+                  threadId: input.context.input.threadId,
+                  runId: input.context.input.runId,
+                  nodeId,
+                  kind: "todo_list",
+                  status: "active",
+                  steps: [...(input.steps ?? [])],
+                }
+              : {
+                  id: planId,
+                  threadId: input.context.input.threadId,
+                  runId: input.context.input.runId,
+                  nodeId,
+                  kind: "proposed_plan",
+                  status: "draft",
+                  markdown: input.markdown ?? "",
+                };
+          const node: OrchestrationV2ExecutionNode = {
+            id: nodeId,
+            threadId: input.context.input.threadId,
+            runId: input.context.input.runId,
+            parentNodeId: input.context.input.rootNodeId,
+            rootNodeId: input.context.input.rootNodeId,
+            kind: input.kind === "todo_list" ? "todo_list" : "plan",
+            status: "completed",
+            countsForRun: false,
+            providerThreadId: input.context.input.providerThread.id,
+            providerTurnId: input.context.providerTurnId,
+            nativeItemRef,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: updatedAt,
+            completedAt: updatedAt,
+          };
+          const common = {
+            id: idAllocator.derive.turnItemFromProviderItem({
+              driver: CLAUDE_PROVIDER,
+              nativeItemId: input.nativeItemId,
+            }),
+            threadId: input.context.input.threadId,
+            runId: input.context.input.runId,
+            nodeId,
+            providerThreadId: input.context.input.providerThread.id,
+            providerTurnId: input.context.providerTurnId,
+            nativeItemRef,
+            parentItemId: null,
+            ordinal,
+            status: "completed" as const,
+            title: null,
+            startedAt: updatedAt,
+            completedAt: updatedAt,
+            updatedAt,
+          };
+          const turnItem: OrchestrationV2TurnItem =
+            input.kind === "todo_list"
+              ? { ...common, type: "todo_list", planId, steps: [...(input.steps ?? [])] }
+              : {
+                  ...common,
+                  type: "proposed_plan",
+                  planId,
+                  markdown: input.markdown ?? "",
+                  streaming: false,
+                };
+          yield* Effect.all(
+            [
+              emitProviderEvent({ type: "node.updated", driver: CLAUDE_PROVIDER, node }),
+              emitProviderEvent({ type: "plan.updated", driver: CLAUDE_PROVIDER, plan }),
+              emitProviderEvent({ type: "turn_item.updated", driver: CLAUDE_PROVIDER, turnItem }),
+            ],
+            { concurrency: 1 },
+          );
+        });
+
         const ensureToolCallStarted = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
@@ -4235,11 +4376,20 @@ export function makeClaudeAdapterV2(
             if (toolUse.name === "Agent") {
               continue;
             }
+            const nativeToolInput = claudeNativeToolInputFromUnknown(toolUse.input);
+            if (toolUse.name === "TodoWrite") {
+              yield* emitClaudePlanProjection({
+                context,
+                nativeItemId: toolUse.id,
+                kind: "todo_list",
+                steps: claudeTodoSteps(nativeToolInput),
+              }).pipe(Effect.orDie);
+            }
             yield* ensureToolCallStarted({
               context,
               nativeItemId: toolUse.id,
               toolName: toolUse.name,
-              toolInput: claudeNativeToolInputFromUnknown(toolUse.input),
+              toolInput: nativeToolInput,
               parentToolUseId: parentToolUseIdFromSdkMessage(message),
             });
           }
@@ -4487,6 +4637,24 @@ export function makeClaudeAdapterV2(
                   updatedInput: { questions: toolInput.questions, answers: resolvedAnswers },
                   toolUseID: callbackOptions.toolUseID,
                 } satisfies PermissionResult);
+          }
+
+          if (toolName === "ExitPlanMode") {
+            const markdown = claudeProposedPlan(nativeToolInput);
+            if (markdown !== null) {
+              yield* emitClaudePlanProjection({
+                context,
+                nativeItemId: nativeRequestId,
+                kind: "proposed_plan",
+                markdown,
+              });
+            }
+            return {
+              behavior: "deny",
+              message:
+                "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
           }
 
           if (
