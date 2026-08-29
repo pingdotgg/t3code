@@ -265,6 +265,7 @@ interface ActiveOpenCodeTurn {
   finalized: boolean;
   planId: PlanId | null;
   admissionGeneration: number;
+  admissionReconciliationGeneration: number | null;
   admissionPending: boolean;
   admissionAccepted: boolean;
   admissionMessageObserved: boolean;
@@ -311,11 +312,14 @@ export const reconcileOpenCodePromptAdmissionStatus = Effect.fn(
   generation: number,
   readStatus: Effect.Effect<"busy" | "idle" | "unknown">,
 ) {
+  if (admission.admissionGeneration !== generation || !admission.admissionPending) {
+    return "stale" as const;
+  }
   const status = yield* readStatus;
   if (admission.admissionGeneration !== generation || !admission.admissionPending) {
     return "stale" as const;
   }
-  admission.admissionPending = false;
+  if (status !== "unknown") admission.admissionPending = false;
   return status;
 });
 
@@ -2010,33 +2014,81 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           );
         });
 
+        const promptAdmissionIsCurrent = (
+          state: OpenCodeThreadState,
+          turn: ActiveOpenCodeTurn,
+          generation: number,
+        ) =>
+          state.activeTurn === turn &&
+          !turn.finalized &&
+          !turn.interrupted &&
+          turn.admissionPending &&
+          turn.admissionGeneration === generation;
+
+        const runPromptAdmissionReconciliation = Effect.fnUntraced(function* (
+          state: OpenCodeThreadState,
+          turn: ActiveOpenCodeTurn,
+          generation: number,
+        ) {
+          while (promptAdmissionIsCurrent(state, turn, generation)) {
+            const status = yield* reconcileOpenCodePromptAdmissionStatus(
+              turn,
+              generation,
+              sdkCall("session.status", { sessionID: state.nativeSessionId, generation }, () =>
+                client.session.status(),
+              ).pipe(
+                Effect.match({
+                  onFailure: () => "unknown" as const,
+                  onSuccess: (response) => {
+                    const statuses = unwrapData("session.status", response);
+                    const sessionStatus = statuses[state.nativeSessionId];
+                    return sessionStatus === undefined || sessionStatus.type === "idle"
+                      ? ("idle" as const)
+                      : ("busy" as const);
+                  },
+                }),
+              ),
+            );
+            if (
+              state.activeTurn !== turn ||
+              status === "stale" ||
+              turn.finalized ||
+              turn.interrupted ||
+              turn.admissionGeneration !== generation
+            ) {
+              return;
+            }
+            if (status === "idle") {
+              yield* finalizeTurn(state, turn, "completed");
+              return;
+            }
+            if (status === "busy") return;
+            yield* Effect.sleep("250 millis");
+          }
+        });
+
         const reconcilePromptAdmission = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
           turn: ActiveOpenCodeTurn,
         ) {
           const generation = turn.admissionGeneration;
-          const status = yield* reconcileOpenCodePromptAdmissionStatus(
-            turn,
-            generation,
-            sdkCall("session.status", { sessionID: state.nativeSessionId, generation }, () =>
-              client.session.status(),
-            ).pipe(
-              Effect.match({
-                onFailure: () => "unknown" as const,
-                onSuccess: (response) => {
-                  const statuses = unwrapData("session.status", response);
-                  const sessionStatus = statuses[state.nativeSessionId];
-                  return sessionStatus === undefined || sessionStatus.type === "idle"
-                    ? ("idle" as const)
-                    : ("busy" as const);
-                },
+          if (
+            !promptAdmissionIsCurrent(state, turn, generation) ||
+            turn.admissionReconciliationGeneration === generation
+          ) {
+            return;
+          }
+          turn.admissionReconciliationGeneration = generation;
+          yield* runPromptAdmissionReconciliation(state, turn, generation).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (turn.admissionReconciliationGeneration === generation) {
+                  turn.admissionReconciliationGeneration = null;
+                }
               }),
             ),
+            Effect.forkIn(scope),
           );
-          if (state.activeTurn !== turn || status === "stale") return;
-          if (status === "idle") {
-            yield* finalizeTurn(state, turn, turn.interrupted ? "interrupted" : "completed");
-          }
         });
 
         const createChildTurn = Effect.fnUntraced(function* (
@@ -2089,6 +2141,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             finalized: false,
             planId: null,
             admissionGeneration: 0,
+            admissionReconciliationGeneration: null,
             admissionPending: false,
             admissionAccepted: true,
             admissionMessageObserved: true,
@@ -2736,6 +2789,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 finalized: false,
                 planId: null,
                 admissionGeneration: state.nextAdmissionGeneration++,
+                admissionReconciliationGeneration: null,
                 admissionPending: true,
                 admissionAccepted: false,
                 admissionMessageObserved: false,

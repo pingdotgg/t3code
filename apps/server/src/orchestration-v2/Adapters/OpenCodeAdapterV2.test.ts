@@ -18,8 +18,10 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import type { OpenCodeRuntimeShape } from "../../provider/opencodeRuntime.ts";
@@ -127,6 +129,100 @@ function providerTurn(input: {
     completedAt: null,
   };
 }
+
+const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(function* (
+  suffix: string,
+  nativeSessionId: string,
+  client: object,
+) {
+  const idAllocator = yield* IdAllocatorV2;
+  const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
+  const threadId = ThreadId.make(`thread-opencode-${suffix}`);
+  const modelSelection = {
+    instanceId,
+    model: "anthropic/claude-sonnet",
+    options: [],
+  };
+  const policy = runtimePolicy("full-access", { cwd: "/workspace" });
+  const adapter = makeOpenCodeAdapterV2({
+    instanceId,
+    settings: OPEN_CODE_TEST_SETTINGS,
+    environment: {},
+    runtime: {
+      connectToOpenCodeServer: () => Effect.succeed({ url: "http://test.invalid", external: true }),
+      createOpenCodeSdkClient: () => client,
+    } as unknown as OpenCodeRuntimeShape,
+    idAllocator,
+    serverConfig: {
+      cwd: "/workspace",
+      attachmentsDir: "/tmp/attachments",
+    } as ServerConfig["Service"],
+  });
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make(`session-opencode-${suffix}`),
+    modelSelection,
+    runtimePolicy: policy,
+  });
+  const providerThread = yield* runtime.ensureThread({
+    threadId,
+    modelSelection,
+    runtimePolicy: policy,
+  });
+  const now = yield* DateTime.now;
+  const startTurn = () =>
+    runtime.startTurn({
+      appThread: {
+        id: threadId,
+        projectId: ProjectId.make(`project-opencode-${suffix}`),
+        title: suffix,
+        providerInstanceId: modelSelection.instanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+      threadId,
+      runId: RunId.make(`run-opencode-${suffix}`),
+      runOrdinal: 1,
+      providerTurnOrdinal: 1,
+      attemptId: RunAttemptId.make(`attempt-opencode-${suffix}`),
+      rootNodeId: NodeId.make(`node-opencode-${suffix}`),
+      providerThread,
+      message: {
+        createdBy: "user",
+        creationSource: "web",
+        messageId: MessageId.make(`message-opencode-${suffix}`),
+        text: "hello",
+        attachments: [],
+      },
+      modelSelection,
+      runtimePolicy: policy,
+    });
+  return {
+    nativeSessionId,
+    now,
+    policy,
+    providerThread,
+    runId: RunId.make(`run-opencode-${suffix}`),
+    runtime,
+    startTurn,
+    threadId,
+  };
+});
 
 describe("OpenCodeAdapterV2", () => {
   it.effect("keeps a newly admitted prompt alive across stale idle and delayed busy evidence", () =>
@@ -665,6 +761,202 @@ describe("OpenCodeAdapterV2", () => {
         assert.isFalse(admission.admissionPending);
       }
     }),
+  );
+
+  it.effect("keeps admission pending after a transient status failure", () =>
+    Effect.gen(function* () {
+      const admission = { admissionGeneration: 4, admissionPending: true };
+      assert.equal(
+        yield* reconcileOpenCodePromptAdmissionStatus(admission, 4, Effect.succeed("unknown")),
+        "unknown",
+      );
+      assert.isTrue(admission.admissionPending);
+      assert.equal(
+        yield* reconcileOpenCodePromptAdmissionStatus(admission, 4, Effect.succeed("idle")),
+        "idle",
+      );
+      assert.isFalse(admission.admissionPending);
+    }),
+  );
+
+  it.effect("retries a transient status failure without another idle event", () =>
+    Effect.gen(function* () {
+      const nativeSessionId = "native-opencode-status-retry";
+      const nativeEvents = asyncEventStream();
+      const promptRelease = promiseGate<void>();
+      const promptCalls = yield* Queue.unbounded<string>();
+      const statusCalls = yield* Queue.unbounded<number>();
+      let statusCallCount = 0;
+      const client = {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({
+            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+          }),
+          promptAsync: async (input: { readonly messageID?: string }) => {
+            Queue.offerUnsafe(promptCalls, input.messageID!);
+            await promptRelease.promise;
+            return { data: true };
+          },
+          status: async () => {
+            statusCallCount += 1;
+            Queue.offerUnsafe(statusCalls, statusCallCount);
+            if (statusCallCount === 1) throw new Error("transient status failure");
+            return { data: { [nativeSessionId]: { type: "idle" as const } } };
+          },
+          messages: async () => ({ data: [] }),
+          abort: async () => ({ data: true }),
+        },
+        mcp: { add: async () => ({ data: true }) },
+      };
+      const harness = yield* makeOpenCodeRuntimeHarness("status-retry", nativeSessionId, client);
+      const terminalEvents = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const start = yield* harness.startTurn().pipe(Effect.forkScoped);
+      const admissionMessageId = yield* Queue.take(promptCalls);
+
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: nativeSessionId, status: { type: "idle" } },
+        }),
+      );
+      promptRelease.resolve();
+      yield* Fiber.join(start);
+      const userMessage = {
+        type: "message.updated",
+        properties: {
+          sessionID: nativeSessionId,
+          info: {
+            id: admissionMessageId,
+            sessionID: nativeSessionId,
+            role: "user",
+            time: { created: DateTime.toEpochMillis(harness.now) },
+          },
+        },
+      };
+      yield* Effect.promise(() => nativeEvents.push(userMessage));
+      assert.equal(yield* Queue.take(statusCalls), 1);
+
+      yield* Effect.promise(() => nativeEvents.push(userMessage));
+      assert.equal(statusCallCount, 1, "duplicate events must share the generation's retry worker");
+      yield* TestClock.adjust("250 millis");
+      assert.equal(yield* Queue.take(statusCalls), 2);
+
+      const events = Array.from(yield* Fiber.join(terminalEvents));
+      const terminals = events.filter((event) => event.type === "turn.terminal");
+      assert.equal(statusCallCount, 2);
+      assert.lengthOf(terminals, 1);
+      assert.equal(terminals[0]?.status, "completed");
+      assert.isNull(terminals[0]?.failure ?? null);
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
+  it.effect("does not let a queued status retry adopt a newer steer generation", () =>
+    Effect.gen(function* () {
+      const nativeSessionId = "native-opencode-stale-status-retry";
+      const nativeEvents = asyncEventStream();
+      const firstPromptRelease = promiseGate<void>();
+      const promptCalls = yield* Queue.unbounded<string>();
+      const statusCalls = yield* Queue.unbounded<number>();
+      let promptCallCount = 0;
+      let statusCallCount = 0;
+      const client = {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({
+            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+          }),
+          promptAsync: async (input: { readonly messageID?: string }) => {
+            promptCallCount += 1;
+            Queue.offerUnsafe(promptCalls, input.messageID!);
+            if (promptCallCount === 1) {
+              await firstPromptRelease.promise;
+            }
+            return { data: true };
+          },
+          status: async () => {
+            statusCallCount += 1;
+            Queue.offerUnsafe(statusCalls, statusCallCount);
+            if (statusCallCount === 1) throw new Error("transient status failure");
+            return { data: { [nativeSessionId]: { type: "idle" as const } } };
+          },
+          messages: async () => ({ data: [] }),
+          abort: async () => ({ data: true }),
+        },
+        mcp: { add: async () => ({ data: true }) },
+      };
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "stale-status-retry",
+        nativeSessionId,
+        client,
+      );
+      const start = yield* harness.startTurn().pipe(Effect.forkScoped);
+      const firstAdmissionMessageId = yield* Queue.take(promptCalls);
+
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: nativeSessionId, status: { type: "idle" } },
+        }),
+      );
+      firstPromptRelease.resolve();
+      yield* Fiber.join(start);
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: nativeSessionId,
+            info: {
+              id: firstAdmissionMessageId,
+              sessionID: nativeSessionId,
+              role: "user",
+              time: { created: DateTime.toEpochMillis(harness.now) },
+            },
+          },
+        }),
+      );
+      assert.equal(yield* Queue.take(statusCalls), 1);
+
+      const running = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      const activeTurn = running.providerTurns.at(-1)!;
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: harness.runId,
+        providerThread: harness.providerThread,
+        providerTurnId: activeTurn.id,
+        message: {
+          messageId: MessageId.make("message-opencode-stale-status-retry-steer"),
+          text: "new generation",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      });
+      yield* Queue.take(promptCalls);
+      yield* TestClock.adjust("250 millis");
+
+      const afterRetry = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      assert.equal(statusCallCount, 1);
+      assert.equal(afterRetry.providerTurns.at(-1)?.status, "running");
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
 
   it.effect("ignores a delayed status reply after steering starts a newer admission", () =>
