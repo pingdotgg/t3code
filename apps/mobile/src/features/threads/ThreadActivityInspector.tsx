@@ -40,7 +40,7 @@ export function ThreadActivityInspector(props: {
 
   return (
     <View className="gap-3">
-      <View className="flex-row flex-wrap gap-x-4 gap-y-2 rounded-lg border border-neutral-300/50 bg-black/[0.025] p-2.5 dark:border-white/[0.1] dark:bg-white/[0.025]">
+      <View className="flex-row flex-wrap gap-x-4 gap-y-2 rounded-lg border border-adaptive-neutral-300-a60-white-a12 bg-adaptive-black-a2p5-white-a2p5 p-2.5">
         {model.fields.map((field) => (
           <View key={`${field.label}:${field.value}`} className="min-w-[42%] flex-1 gap-0.5">
             <Text className="font-t3-medium text-3xs uppercase tracking-wide text-foreground-muted opacity-60">
@@ -104,7 +104,7 @@ export function ThreadActivityInspector(props: {
                     }),
                   );
                 }}
-                className="min-h-9 flex-row items-center gap-2 rounded-md border border-neutral-300/50 px-2.5 py-1.5 dark:border-white/[0.1]"
+                className="min-h-9 flex-row items-center gap-2 rounded-md border border-adaptive-neutral-300-a60-white-a12 px-2.5 py-1.5"
               >
                 <SymbolView
                   name="doc.text"
@@ -131,7 +131,7 @@ export function ThreadActivityInspector(props: {
               key={link.url}
               accessibilityRole="link"
               onPress={() => void Linking.openURL(link.url)}
-              className="min-h-9 flex-row items-center gap-2 rounded-md border border-neutral-300/50 px-2.5 py-1.5 dark:border-white/[0.1]"
+              className="min-h-9 flex-row items-center gap-2 rounded-md border border-adaptive-neutral-300-a60-white-a12 px-2.5 py-1.5"
             >
               <SymbolView
                 name="arrow.up.right.square"
@@ -164,7 +164,7 @@ export function ThreadActivityInspector(props: {
               },
             }).finally(() => setRollingBack(false));
           }}
-          className="min-h-10 flex-row items-center justify-center gap-2 rounded-lg border border-neutral-300/60 px-3 py-2 dark:border-white/[0.12]"
+          className="min-h-10 flex-row items-center justify-center gap-2 rounded-lg border border-adaptive-neutral-300-a60-white-a12 px-3 py-2"
         >
           <SymbolView
             name={rollingBack ? "hourglass" : "arrow.counterclockwise"}
@@ -178,7 +178,7 @@ export function ThreadActivityInspector(props: {
         </Pressable>
       ) : null}
 
-      <View className="gap-1 border-t border-neutral-300/50 pt-2 dark:border-white/[0.1]">
+      <View className="gap-1 border-t border-adaptive-neutral-300-a60-white-a12 pt-2">
         <Text className="font-t3-medium text-3xs uppercase tracking-wide text-foreground-muted opacity-60">
           Structured details
         </Text>
