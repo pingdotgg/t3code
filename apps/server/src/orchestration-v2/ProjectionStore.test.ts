@@ -84,6 +84,227 @@ it("includes imported runless history when selecting fork context through a run"
 });
 
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
+  it.effect("reads a fixed SQL turn-item window for long histories and repeated clients", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      const threadId = ThreadId.make("thread:bounded-sql-history");
+      yield* projectionStore.apply({
+        id: EventId.make("event:bounded-sql-history:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:bounded-sql-history"),
+          title: "Bounded SQL history",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+
+      for (let ordinal = 1; ordinal <= 1_000; ordinal += 1) {
+        const id = `turn-item:bounded-sql-history:${ordinal}`;
+        const runId = `run:bounded-sql-history:${ordinal}`;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_runs (
+            run_id, thread_id, ordinal, provider, provider_thread_id, status,
+            requested_at, completed_at, payload_json
+          ) VALUES (
+            ${runId}, ${threadId}, ${ordinal}, 'codex', NULL, 'completed', ${nowIso}, ${nowIso},
+            ${encodeUnknownJsonString({
+              id: runId,
+              threadId,
+              ordinal,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: `message:bounded-sql-history:${ordinal}`,
+              rootNodeId: `node:bounded-sql-history:${ordinal}`,
+              activeAttemptId: null,
+              status: "completed",
+              requestedAt: nowIso,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              checkpointId: null,
+              contextHandoffId: null,
+            })}
+          )
+        `;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items (
+            turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json
+          ) VALUES (
+            ${id}, ${threadId}, ${runId}, NULL, NULL, NULL, NULL, ${ordinal},
+            'command_execution', 'completed', ${nowIso},
+            ${encodeUnknownJsonString({
+              id,
+              threadId,
+              runId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: `command ${ordinal}`,
+              input: `echo ${ordinal}`,
+              output: "ok",
+              exitCode: 0,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              updatedAt: nowIso,
+              type: "command_execution",
+            })}
+          )
+        `;
+      }
+
+      const snapshots = yield* Effect.all(
+        Array.from({ length: 4 }, () =>
+          projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 76 }),
+        ),
+        { concurrency: 4 },
+      );
+      for (const snapshot of snapshots) {
+        assert.lengthOf(snapshot.projection.turnItems, 76);
+        assert.lengthOf(snapshot.projection.runs, 76);
+        assert.lengthOf(snapshot.projection.visibleTurnItems, 76);
+        assert.strictEqual(snapshot.projection.turnItems[0]?.ordinal, 925);
+        assert.strictEqual(snapshot.projection.turnItems.at(-1)?.ordinal, 1_000);
+      }
+
+      const older = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 76,
+        anchorItemId: TurnItemId.make("turn-item:bounded-sql-history:925"),
+      });
+      assert.lengthOf(older.projection.turnItems, 76);
+      assert.lengthOf(older.projection.runs, 76);
+      assert.strictEqual(older.projection.turnItems[0]?.ordinal, 850);
+      assert.strictEqual(older.projection.turnItems.at(-1)?.ordinal, 925);
+    }),
+  );
+
+  it.effect("scopes actionable provider state to the requested bounded thread", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const projectId = ProjectId.make("project:bounded-provider-scope");
+      const targetThreadId = ThreadId.make("thread:bounded-provider-scope:target");
+      const unrelatedThreadId = ThreadId.make("thread:bounded-provider-scope:unrelated");
+      const makeThread = (threadId: ThreadId) => ({
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        id: threadId,
+        projectId,
+        title: String(threadId),
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      });
+      for (const threadId of [targetThreadId, unrelatedThreadId]) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:bounded-provider-scope:thread:${threadId}`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: makeThread(threadId),
+        });
+        const sessionId = ProviderSessionId.make(`provider-session:${threadId}`);
+        const providerThreadId = ProviderThreadId.make(`provider-thread:${threadId}`);
+        yield* projectionStore.apply({
+          id: EventId.make(`event:bounded-provider-scope:session:${threadId}`),
+          type: "provider-session.attached",
+          threadId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: sessionId,
+            driver,
+            providerInstanceId,
+            status: "running",
+            cwd: "/workspace",
+            model: modelSelection.model,
+            capabilities: CodexProviderCapabilitiesV2,
+            createdAt: now,
+            updatedAt: now,
+            lastError: null,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make(`event:bounded-provider-scope:provider-thread:${threadId}`),
+          type: "provider-thread.updated",
+          threadId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: providerThreadId,
+            driver,
+            providerInstanceId,
+            providerSessionId: sessionId,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "active",
+            firstRunOrdinal: null,
+            lastRunOrdinal: null,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+      }
+
+      const snapshot = yield* projectionStore.getThreadSnapshotWindow(targetThreadId, {
+        rowLimit: 10,
+      });
+
+      assert.deepEqual(
+        snapshot.projection.providerSessions.map((session) => session.id),
+        [ProviderSessionId.make(`provider-session:${targetThreadId}`)],
+      );
+      assert.deepEqual(
+        snapshot.projection.providerThreads.map((thread) => thread.id),
+        [ProviderThreadId.make(`provider-thread:${targetThreadId}`)],
+      );
+    }),
+  );
+
   it.effect("does not treat visited or marked-unread state as thread activity", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStoreV2;
@@ -1218,6 +1439,7 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
   it.effect("keeps fork visible items stable after a source run is rolled back", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
       const now = yield* DateTime.now;
       const projectId = ProjectId.make("project:projection-fork-source-rollback");
       const sourceThreadId = ThreadId.make("thread:projection-fork-source-rollback:source");
@@ -1230,8 +1452,10 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       );
       const sourceRun1Id = RunId.make("run:projection-fork-source-rollback:source:1");
       const sourceRun2Id = RunId.make("run:projection-fork-source-rollback:source:2");
+      const sourceRun3Id = RunId.make("run:projection-fork-source-rollback:source:3");
       const sourceRun1NodeId = NodeId.make("node:projection-fork-source-rollback:source:1");
       const sourceRun2NodeId = NodeId.make("node:projection-fork-source-rollback:source:2");
+      const sourceRun3NodeId = NodeId.make("node:projection-fork-source-rollback:source:3");
 
       yield* projectionStore.apply({
         id: EventId.make("event:projection-fork-source-rollback:source-thread"),
@@ -1449,6 +1673,307 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
           ["inherited", "user_message", "source two"],
           ["inherited", "assistant_message", "two"],
           ["synthetic", "fork", "Forked from conversation"],
+        ],
+      );
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:run-3"),
+        type: "run.updated",
+        threadId: sourceThreadId,
+        runId: sourceRun3Id,
+        nodeId: sourceRun3NodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: sourceRun3Id,
+          threadId: sourceThreadId,
+          ordinal: 4,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: sourceProviderThreadId,
+          userMessageId: MessageId.make("message:projection-fork-source-rollback:user:3"),
+          rootNodeId: sourceRun3NodeId,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      const nowIso = DateTime.formatIso(now);
+      for (let index = 0; index < 300; index += 1) {
+        const id = `turn-item:projection-fork-source-rollback:post-fork:${index}`;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items (
+            turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json
+          ) VALUES (
+            ${id}, ${sourceThreadId}, ${sourceRun3Id}, ${sourceRun3NodeId},
+            ${sourceProviderThreadId}, NULL, NULL, ${300 + index}, 'command_execution',
+            'completed', ${nowIso}, ${encodeUnknownJsonString({
+              id,
+              threadId: sourceThreadId,
+              runId: sourceRun3Id,
+              nodeId: sourceRun3NodeId,
+              providerThreadId: sourceProviderThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 300 + index,
+              status: "completed",
+              title: "post fork",
+              input: "echo later",
+              output: "later",
+              exitCode: 0,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              updatedAt: nowIso,
+              type: "command_execution",
+            })}
+          )
+        `;
+      }
+
+      const boundedFork = yield* projectionStore.getThreadSnapshotWindow(targetThreadId, {
+        rowLimit: 2,
+      });
+      assert.lengthOf(boundedFork.projection.turnItems, 0);
+      assert.deepEqual(
+        boundedFork.projection.visibleTurnItems.map((row) => [row.visibility, row.item.type]),
+        [
+          ["inherited", "user_message"],
+          ["inherited", "assistant_message"],
+          ["synthetic", "fork"],
+        ],
+      );
+      const parentPage = yield* projectionStore.getThreadSnapshotWindow(targetThreadId, {
+        rowLimit: 2,
+        anchorItemId: TurnItemId.make("turn-item:projection-fork-source-rollback:assistant:1"),
+      });
+      assert.deepEqual(
+        parentPage.projection.visibleTurnItems.map((row) =>
+          row.item.type === "user_message" || row.item.type === "assistant_message"
+            ? row.item.text
+            : row.item.type,
+        ),
+        ["source one", "one", "fork"],
+      );
+
+      const emptyBoundaryRunId = RunId.make(
+        "run:projection-fork-source-rollback:source:empty-boundary",
+      );
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:empty-boundary-run"),
+        type: "run.updated",
+        threadId: sourceThreadId,
+        runId: emptyBoundaryRunId,
+        nodeId: NodeId.make("node:projection-fork-source-rollback:source:empty-boundary"),
+        driver,
+        occurredAt: now,
+        payload: {
+          id: emptyBoundaryRunId,
+          threadId: sourceThreadId,
+          ordinal: 3,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: sourceProviderThreadId,
+          userMessageId: MessageId.make(
+            "message:projection-fork-source-rollback:user:empty-boundary",
+          ),
+          rootNodeId: NodeId.make("node:projection-fork-source-rollback:source:empty-boundary"),
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      yield* sql`
+        UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.forkedFrom.runId', ${emptyBoundaryRunId})
+        WHERE thread_id = ${targetThreadId}
+      `;
+      const emptyBoundaryFork = yield* projectionStore.getThreadSnapshotWindow(targetThreadId, {
+        rowLimit: 2,
+      });
+      assert.deepEqual(
+        emptyBoundaryFork.projection.visibleTurnItems.map((row) =>
+          row.item.type === "user_message" || row.item.type === "assistant_message"
+            ? row.item.text
+            : row.item.type,
+        ),
+        ["source two", "two", "fork"],
+      );
+      yield* sql`
+        UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.forkedFrom.runId', ${sourceRun2Id})
+        WHERE thread_id = ${targetThreadId}
+      `;
+
+      const targetRunId = RunId.make("run:projection-fork-source-rollback:target:1");
+      const targetNodeId = NodeId.make("node:projection-fork-source-rollback:target:1");
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:target-run"),
+        type: "run.updated",
+        threadId: targetThreadId,
+        runId: targetRunId,
+        nodeId: targetNodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: targetRunId,
+          threadId: targetThreadId,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: targetProviderThreadId,
+          userMessageId: MessageId.make("message:projection-fork-source-rollback:target:1"),
+          rootNodeId: targetNodeId,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      for (let ordinal = 1; ordinal <= 2; ordinal += 1) {
+        const id = `turn-item:projection-fork-source-rollback:target:${ordinal}`;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items (
+            turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json
+          ) VALUES (
+            ${id}, ${targetThreadId}, ${targetRunId}, ${targetNodeId}, ${targetProviderThreadId},
+            NULL, NULL, ${ordinal}, 'command_execution', 'completed', ${nowIso},
+            ${encodeUnknownJsonString({
+              id,
+              threadId: targetThreadId,
+              runId: targetRunId,
+              nodeId: targetNodeId,
+              providerThreadId: targetProviderThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: `target ${ordinal}`,
+              input: `echo target ${ordinal}`,
+              output: "target",
+              exitCode: 0,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              updatedAt: nowIso,
+              type: "command_execution",
+            })}
+          )
+        `;
+      }
+      const nestedThreadId = ThreadId.make("thread:projection-fork-source-rollback:nested");
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:nested-thread"),
+        type: "thread.created",
+        threadId: nestedThreadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: nestedThreadId,
+          projectId,
+          title: "Nested bounded fork",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: targetThreadId,
+            relationshipToParent: "fork",
+            rootThreadId: sourceThreadId,
+          },
+          forkedFrom: { type: "run", threadId: targetThreadId, runId: targetRunId },
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const boundedNested = yield* projectionStore.getThreadSnapshotWindow(nestedThreadId, {
+        rowLimit: 2,
+      });
+      assert.deepEqual(
+        boundedNested.projection.visibleTurnItems.map((row) => row.item.type),
+        ["fork", "command_execution", "command_execution", "fork"],
+      );
+
+      yield* sql`
+        DELETE FROM orchestration_v2_projection_turn_items
+        WHERE run_id IN (${sourceRun1Id}, ${sourceRun2Id})
+      `;
+      const importedItemId = "turn-item:projection-fork-source-rollback:legacy-import";
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_turn_items (
+          turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          parent_item_id, ordinal, type, status, updated_at, payload_json
+        ) VALUES (
+          ${importedItemId}, ${sourceThreadId}, NULL, NULL, NULL, NULL, NULL, 50,
+          'assistant_message', 'completed', ${nowIso}, ${encodeUnknownJsonString({
+            id: importedItemId,
+            threadId: sourceThreadId,
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 50,
+            status: "completed",
+            title: null,
+            startedAt: nowIso,
+            completedAt: nowIso,
+            updatedAt: nowIso,
+            type: "assistant_message",
+            messageId: MessageId.make("message:projection-fork-source-rollback:legacy-import"),
+            text: "legacy import before empty fork",
+            streaming: false,
+            historyOrigin: "v1_import",
+          })}
+        )
+      `;
+      yield* sql`
+        UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.historyOrigin', 'v1_import')
+        WHERE thread_id = ${sourceThreadId}
+      `;
+      yield* sql`
+        UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.forkedFrom.runId', ${emptyBoundaryRunId})
+        WHERE thread_id = ${targetThreadId}
+      `;
+      const importedEmptyBoundary = yield* projectionStore.getThreadSnapshotWindow(targetThreadId, {
+        rowLimit: 2,
+      });
+      assert.deepEqual(
+        importedEmptyBoundary.projection.visibleTurnItems.map((row) => [
+          row.visibility,
+          row.sourceThreadId,
+          row.item.type === "assistant_message" ? row.item.text : row.item.type,
+        ]),
+        [
+          ["inherited", sourceThreadId, "legacy import before empty fork"],
+          ["synthetic", sourceThreadId, "fork"],
+          ["local", targetThreadId, "command_execution"],
+          ["local", targetThreadId, "command_execution"],
         ],
       );
     }),
