@@ -15,6 +15,9 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../native/native-glass";
 const IOS_NATIVE_LEADING_TITLE_OFFSET = -6;
 const IPAD_NATIVE_LEADING_TITLE_OFFSET = 7;
 
+// Branding and connection status share an identity distinct from navigation buttons.
+export const BRAND_HEADER_ITEM_IDENTIFIER = "workspace-brand";
+
 /**
  * Horizontal correction applied to content rendered in the brand title slot,
  * shared with the connection-status swap so both align identically.
@@ -76,6 +79,7 @@ export function renderCompactBrandHeaderItems(): NativeStackHeaderItem[] {
     {
       element: <CompactBrandTitle nativeLeadingItem />,
       hidesSharedBackground: true,
+      identifier: BRAND_HEADER_ITEM_IDENTIFIER,
       type: "custom",
     },
   ];
