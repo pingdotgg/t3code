@@ -35,6 +35,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2UserInputQuestion,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2WebSearchResult,
@@ -42,6 +43,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderRequestKind,
+  type ProviderUserInputAnswers,
   type ProviderThreadId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -210,7 +212,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     emitsPlanUpdated: false,
     emitsTodoList: false,
     emitsProposedPlan: false,
-    supportsStructuredQuestions: false,
+    supportsStructuredQuestions: true,
     planDeltasHaveItemIds: false,
   },
   subagents: {
@@ -1897,6 +1899,19 @@ export const awaitClaudeApprovalDecision = Effect.fn("awaitClaudeApprovalDecisio
   return yield* Effect.raceFirst(Deferred.await(decision), cancellation);
 });
 
+const awaitClaudeUserInputAnswers = Effect.fn("awaitClaudeUserInputAnswers")(function* (
+  answers: Deferred.Deferred<ProviderUserInputAnswers>,
+  signal: AbortSignal,
+) {
+  const cancellation = Effect.callback<ProviderUserInputAnswers>((resume) => {
+    const abort = () => resume(Effect.succeed({}));
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    return Effect.sync(() => signal.removeEventListener("abort", abort));
+  });
+  return yield* Effect.raceFirst(Deferred.await(answers), cancellation);
+});
+
 /**
  * First user-facing error from a non-success result. "[ede_diagnostic] ..."
  * entries are CLI-internal telemetry (the CLI hides them from its own UI too),
@@ -2155,10 +2170,63 @@ function rememberPendingClaudeSubagentModel(
   }
 }
 
-interface PendingClaudeRuntimeRequest {
-  readonly requestId: OrchestrationV2RuntimeRequest["id"];
-  readonly requestKind: ProviderRequestKind;
-  readonly decision: Deferred.Deferred<ProviderApprovalDecision, never>;
+type PendingClaudeRuntimeRequest =
+  | {
+      readonly type: "approval";
+      readonly requestId: OrchestrationV2RuntimeRequest["id"];
+      readonly requestKind: ProviderRequestKind;
+      readonly decision: Deferred.Deferred<ProviderApprovalDecision, never>;
+    }
+  | {
+      readonly type: "user_input";
+      readonly requestId: OrchestrationV2RuntimeRequest["id"];
+      readonly answers: Deferred.Deferred<ProviderUserInputAnswers, never>;
+    };
+
+export function claudeUserInputQuestions(
+  input: unknown,
+): ReadonlyArray<OrchestrationV2UserInputQuestion> {
+  const value =
+    typeof input === "object" && input !== null && Reflect.get(input, "type") === "record"
+      ? Reflect.get(input, "value")
+      : input;
+  const questions =
+    typeof value === "object" && value !== null ? Reflect.get(value, "questions") : undefined;
+  if (!Array.isArray(questions)) return [];
+  return questions.flatMap((value: unknown, index: number) => {
+    if (typeof value !== "object" || value === null) return [];
+    const record = value as Record<string, unknown>;
+    const question = typeof record.question === "string" ? record.question.trim() : "";
+    if (question.length === 0) return [];
+    const header =
+      typeof record.header === "string" && record.header.trim().length > 0
+        ? record.header.trim()
+        : `Question ${index + 1}`;
+    const options = Array.isArray(record.options)
+      ? record.options.flatMap((option) => {
+          if (typeof option !== "object" || option === null) return [];
+          const optionRecord = option as Record<string, unknown>;
+          const label = typeof optionRecord.label === "string" ? optionRecord.label.trim() : "";
+          if (label.length === 0) return [];
+          return [
+            {
+              label,
+              description:
+                typeof optionRecord.description === "string" ? optionRecord.description.trim() : "",
+            },
+          ];
+        })
+      : [];
+    return [
+      {
+        id: question,
+        header,
+        question,
+        options,
+        multiSelect: record.multiSelect === true,
+      },
+    ];
+  });
 }
 
 export interface ClaudeAdapterV2Options {
@@ -3317,8 +3385,9 @@ export function makeClaudeAdapterV2(
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
           readonly nativeRequestId: string;
-          readonly requestKind: ProviderRequestKind;
+          readonly requestKind: OrchestrationV2RuntimeRequest["kind"];
           readonly prompt?: string;
+          readonly questions?: ReadonlyArray<OrchestrationV2UserInputQuestion>;
         }) {
           const createdAt = yield* DateTime.now;
           const requestId = yield* idAllocator.allocate.runtimeRequest({
@@ -3352,7 +3421,7 @@ export function makeClaudeAdapterV2(
               nativeItemId: input.nativeItemId,
             }),
             rootNodeId: input.context.input.rootNodeId,
-            kind: "approval_request",
+            kind: input.questions === undefined ? "approval_request" : "user_input_request",
             status: "waiting",
             countsForRun: false,
             providerThreadId: input.context.input.providerThread.id,
@@ -3396,10 +3465,18 @@ export function makeClaudeAdapterV2(
             startedAt: createdAt,
             completedAt: null,
             updatedAt: createdAt,
-            type: "approval_request",
-            requestId,
-            requestKind: input.requestKind,
-            ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+            ...(input.questions === undefined
+              ? {
+                  type: "approval_request" as const,
+                  requestId,
+                  requestKind: input.requestKind as ProviderRequestKind,
+                  ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+                }
+              : {
+                  type: "user_input_request" as const,
+                  requestId,
+                  questions: [...input.questions],
+                }),
           };
           return { node, request, turnItem };
         });
@@ -4349,6 +4426,81 @@ export function makeClaudeAdapterV2(
             });
           }
 
+          if (toolName === "AskUserQuestion") {
+            const questions = claudeUserInputQuestions(nativeToolInput);
+            const artifacts = yield* buildApprovalRequestArtifacts({
+              context,
+              nativeItemId: nativeRequestId,
+              nativeRequestId,
+              requestKind: "user_input",
+              questions,
+            });
+            const answers = yield* Deferred.make<ProviderUserInputAnswers, never>();
+            yield* Ref.update(pendingRuntimeRequests, (current) => {
+              const updated = new Map(current);
+              updated.set(String(artifacts.request.id), {
+                type: "user_input",
+                requestId: artifacts.request.id,
+                answers,
+              });
+              return updated;
+            });
+            yield* Effect.all(
+              [
+                emitProviderEvent({
+                  type: "node.updated",
+                  driver: CLAUDE_PROVIDER,
+                  node: artifacts.node,
+                }),
+                emitProviderEvent({
+                  type: "runtime_request.updated",
+                  driver: CLAUDE_PROVIDER,
+                  runtimeRequest: artifacts.request,
+                }),
+                emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: CLAUDE_PROVIDER,
+                  turnItem: artifacts.turnItem,
+                }),
+              ],
+              { concurrency: 1 },
+            );
+            const resolvedAnswers = yield* awaitClaudeUserInputAnswers(
+              answers,
+              callbackOptions.signal,
+            ).pipe(
+              Effect.ensuring(
+                Ref.update(pendingRuntimeRequests, (current) => {
+                  const updated = new Map(current);
+                  updated.delete(String(artifacts.request.id));
+                  return updated;
+                }),
+              ),
+            );
+            return callbackOptions.signal.aborted
+              ? ({
+                  behavior: "deny",
+                  message: "User cancelled tool execution.",
+                } satisfies PermissionResult)
+              : ({
+                  behavior: "allow",
+                  updatedInput: { questions: toolInput.questions, answers: resolvedAnswers },
+                  toolUseID: callbackOptions.toolUseID,
+                } satisfies PermissionResult);
+          }
+
+          if (
+            !shouldInstallClaudePermissionCallback(
+              claudeRuntimeQueryPolicyForRuntimePolicy(context.input.runtimePolicy),
+            )
+          ) {
+            return {
+              behavior: "allow",
+              updatedInput: toolInput,
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
+
           const requestKind = providerRequestKindFromClaudeTool(toolName);
           const prompt =
             callbackOptions.title ??
@@ -4366,6 +4518,7 @@ export function makeClaudeAdapterV2(
           yield* Ref.update(pendingRuntimeRequests, (current) => {
             const updated = new Map(current);
             updated.set(String(artifacts.request.id), {
+              type: "approval",
               requestId: artifacts.request.id,
               requestKind,
               decision,
@@ -4492,7 +4645,7 @@ export function makeClaudeAdapterV2(
                   : {
                       allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
                     }),
-                ...(shouldInstallClaudePermissionCallback(queryPolicy) ? { canUseTool } : {}),
+                canUseTool,
               }),
             })
             .pipe(
@@ -4971,6 +5124,10 @@ export function makeClaudeAdapterV2(
                     detail: `No pending Claude runtime request ${requestInput.requestId}.`,
                   }),
                 });
+              }
+              if (pending.type === "user_input") {
+                yield* Deferred.succeed(pending.answers, requestInput.answers ?? {});
+                return;
               }
               if (requestInput.decision === undefined) {
                 return yield* new ProviderAdapterRuntimeRequestResponseError({
