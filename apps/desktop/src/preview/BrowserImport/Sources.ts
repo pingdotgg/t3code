@@ -184,7 +184,7 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
 const entryExists = Effect.fnUntraced(function* (path: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.stat(path).pipe(
-    Effect.catchCause(() => fileSystem.readLink(path)),
+    Effect.catch(() => fileSystem.readLink(path)),
     Effect.as(true),
     Effect.orElseSucceed(() => false),
   );
