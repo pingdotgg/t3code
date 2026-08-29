@@ -104,7 +104,7 @@ export function BrowserImportWizard({
   };
 
   const recheckAfterQuit = () => {
-    setStep({ step: "importing" });
+    setStep({ step: "checking" });
     void onRefreshSource()
       .then((refreshed) => {
         if (refreshed) {
@@ -123,6 +123,8 @@ export function BrowserImportWizard({
           <QuitStep source={source} onCancel={onClose} onRechecked={recheckAfterQuit} />
         ) : step.step === "importing" ? (
           <ImportingStep />
+        ) : step.step === "checking" ? (
+          <CheckingStep sourceName={source.name} />
         ) : step.step === "done" ? (
           <DoneStep {...step} onClose={onClose} />
         ) : step.step === "blocked" ? (
@@ -329,10 +331,31 @@ function SelectableTile({
 
 function ImportingStep() {
   return (
-    <DialogPanel className="flex items-center gap-3 py-6">
-      <Spinner className="size-4 text-muted-foreground" />
-      <span className="text-sm text-muted-foreground">Importing cookies…</span>
-    </DialogPanel>
+    <>
+      <DialogHeader>
+        <DialogTitle>Importing cookies</DialogTitle>
+        <DialogDescription>This may take a moment.</DialogDescription>
+      </DialogHeader>
+      <DialogPanel className="flex items-center gap-3 py-6">
+        <Spinner className="size-4 text-muted-foreground" />
+        <span className="text-sm text-muted-foreground">Importing…</span>
+      </DialogPanel>
+    </>
+  );
+}
+
+function CheckingStep({ sourceName }: { readonly sourceName: string }) {
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Checking {sourceName}</DialogTitle>
+        <DialogDescription>Checking whether the browser has closed.</DialogDescription>
+      </DialogHeader>
+      <DialogPanel className="flex items-center gap-3 py-6">
+        <Spinner className="size-4 text-muted-foreground" />
+        <span className="text-sm text-muted-foreground">Checking…</span>
+      </DialogPanel>
+    </>
   );
 }
 

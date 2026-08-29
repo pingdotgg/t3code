@@ -22,6 +22,7 @@ export type ImportOutcome =
 export type WizardStep =
   | { readonly step: "quit" }
   | { readonly step: "configure" }
+  | { readonly step: "checking" }
   | { readonly step: "importing" }
   | {
       readonly step: "done";
