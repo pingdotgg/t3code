@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
+  ThreadId,
   TurnItemId,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
@@ -134,6 +135,9 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         anchorItemId?: Parameters<
           typeof threadManagement.getThreadSnapshotWindow
         >[1]["anchorItemId"],
+        anchorThreadId?: Parameters<
+          typeof threadManagement.getThreadSnapshotWindow
+        >[1]["anchorThreadId"],
       ) {
         return yield* threadManagement
           .getThreadSnapshotWindow(threadId, {
@@ -141,6 +145,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             // then needs one more row to prove another page exists.
             rowLimit: THREAD_HISTORY_PAGE_POLICY.maxItems + 2,
             ...(anchorItemId === undefined ? {} : { anchorItemId }),
+            ...(anchorThreadId === undefined ? {} : { anchorThreadId }),
           })
           .pipe(
             Effect.map((snapshot) => ({
@@ -221,7 +226,12 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             }
             return yield* failEnvironmentInternal("orchestration_thread_history_failed", cause);
           }
-          const snapshot = yield* loadThreadSnapshotWindow(args.params.threadId, anchorItemId);
+          const decodedCursor = decodeThreadHistoryCursor(args.query.cursor);
+          const snapshot = yield* loadThreadSnapshotWindow(
+            args.params.threadId,
+            anchorItemId,
+            ThreadId.make(decodedCursor.st),
+          );
           const pageOrError = selectHistoryPageFromCursorOrError({
             items: snapshot.projection.visibleTurnItems,
             cursor: args.query.cursor,
