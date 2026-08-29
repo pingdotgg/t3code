@@ -9,6 +9,7 @@
 import {
   BROWSER_PROFILE_MAX_COUNT,
   type BrowserProfile,
+  type EnvironmentId,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   BROWSER_RECORDING_FRAME_RATES,
   DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW,
@@ -81,6 +82,27 @@ import { searchableSetting } from "./settingsSearch";
 
 const FILL_VALUE = "fill";
 const RESPONSIVE_VALUE = "responsive";
+
+type BrowserProfileDataBridge = Pick<
+  NonNullable<typeof previewBridge>,
+  "clearCookies" | "clearCache"
+>;
+
+export async function clearBrowserProfileData(
+  bridge: BrowserProfileDataBridge | null,
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  profileId: string,
+): Promise<void> {
+  if (bridge === null || environmentIds.length === 0) {
+    throw new Error("Browser profile data is not available to clear.");
+  }
+  await Promise.all(
+    environmentIds.flatMap((environmentId) => [
+      bridge.clearCookies(environmentId, profileId),
+      bridge.clearCache(environmentId, profileId),
+    ]),
+  );
+}
 
 /**
  * The size a "Responsive" default falls back to when the user switches away
@@ -537,6 +559,8 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const updateSettings = useUpdatePrimarySettings();
   const environmentId = usePrimaryEnvironment()?.environmentId;
   const [profilePendingRemoval, setProfilePendingRemoval] = useState<BrowserProfile | null>(null);
+  const [profileRemovalError, setProfileRemovalError] = useState<string | null>(null);
+  const [profileRemovalInFlight, setProfileRemovalInFlight] = useState(false);
 
   const addProfile = () => {
     if (userProfiles.length >= BROWSER_PROFILE_MAX_COUNT) return;
@@ -561,19 +585,25 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     });
   };
 
-  const removeProfile = (id: string) => {
-    setProfilePendingRemoval(null);
+  const removeProfile = async (id: string) => {
+    setProfileRemovalError(null);
+    setProfileRemovalInFlight(true);
     // Drop the partition's data too, otherwise a removed profile's cookies
     // stay on disk with nothing in the UI pointing at them.
-    if (environmentId) {
-      void previewBridge?.clearCookies(environmentId, id).catch(() => undefined);
-      void previewBridge?.clearCache(environmentId, id).catch(() => undefined);
+    try {
+      await clearBrowserProfileData(previewBridge, environmentId ? [environmentId] : [], id);
+    } catch {
+      setProfileRemovalError("Profile data could not be deleted. Try again.");
+      setProfileRemovalInFlight(false);
+      return;
     }
     updateSettings({
       browserProfiles: userProfiles.filter((profile) => profile.id !== id),
       // Reassign the default rather than leaving it pointing at nothing.
       ...(defaultProfileId === id ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID } : {}),
     });
+    setProfileRemovalInFlight(false);
+    setProfilePendingRemoval(null);
   };
 
   return (
@@ -663,7 +693,10 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       <AlertDialog
         open={profilePendingRemoval !== null}
         onOpenChange={(open) => {
-          if (!open) setProfilePendingRemoval(null);
+          if (!open && !profileRemovalInFlight) {
+            setProfilePendingRemoval(null);
+            setProfileRemovalError(null);
+          }
         }}
       >
         <AlertDialogPopup>
@@ -673,16 +706,22 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
               Its cookies, logins, and cache are deleted with it. Tabs open in this profile move to
               the default one.
             </AlertDialogDescription>
+            {profileRemovalError ? (
+              <p aria-live="polite" className="text-sm text-destructive">
+                {profileRemovalError}
+              </p>
+            ) : null}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
             <Button
               variant="destructive"
+              disabled={profileRemovalInFlight}
               onClick={() => {
-                if (profilePendingRemoval) removeProfile(profilePendingRemoval.id);
+                if (profilePendingRemoval) void removeProfile(profilePendingRemoval.id);
               }}
             >
-              Remove profile
+              {profileRemovalInFlight ? "Removing…" : "Remove profile"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
