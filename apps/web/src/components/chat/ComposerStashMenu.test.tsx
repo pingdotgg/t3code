@@ -121,6 +121,7 @@ describe("ComposerStashMenu", () => {
             droppedImageNames: [],
           },
         ]}
+        stashShortcutLabel={null}
         onRestore={() => {}}
         onDelete={() => {}}
         onClose={() => {}}
