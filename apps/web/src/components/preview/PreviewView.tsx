@@ -63,6 +63,7 @@ import {
   useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -708,9 +709,12 @@ export function PreviewView({
             // `inline-flex` with `whitespace-nowrap` — `text-overflow` never
             // reaches a bare text node inside it, so the name would be cut off
             // at both ends with no ellipsis.
-            <Badge variant="outline" className="max-w-28 shrink-0" title={activeProfile.name}>
-              <span className="truncate">{activeProfile.name}</span>
-            </Badge>
+            <Tooltip>
+              <TooltipTrigger render={<Badge variant="outline" className="max-w-28 shrink-0" />}>
+                <span className="truncate">{activeProfile.name}</span>
+              </TooltipTrigger>
+              <TooltipPopup side="top">{activeProfile.name}</TooltipPopup>
+            </Tooltip>
           ) : null
         }
         trailingActions={
