@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
@@ -17,6 +18,8 @@ type CapturedCommand = {
 const secretToolLayer = (input: {
   readonly stdout?: string;
   readonly stderr?: string;
+  readonly stdoutStream?: Stream.Stream<Uint8Array>;
+  readonly stderrStream?: Stream.Stream<Uint8Array>;
   readonly exitCode?: number;
   readonly capture?: (command: CapturedCommand) => void;
 }) =>
@@ -31,8 +34,8 @@ const secretToolLayer = (input: {
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
           stdin: Sink.drain,
-          stdout: Stream.encodeText(Stream.make(input.stdout ?? "")),
-          stderr: Stream.encodeText(Stream.make(input.stderr ?? "")),
+          stdout: input.stdoutStream ?? Stream.encodeText(Stream.make(input.stdout ?? "")),
+          stderr: input.stderrStream ?? Stream.encodeText(Stream.make(input.stderr ?? "")),
           all: Stream.empty,
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
@@ -81,6 +84,24 @@ describe("Linux Chromium secrets", () => {
       const secret = yield* readLinuxSecret("chrome");
       expect(secret).toBe("linux-secret \t");
     }).pipe(Effect.provide(secretToolLayer({ stdout: "linux-secret \t\n" }))),
+  );
+
+  it.effect("drains stdout and stderr concurrently", () =>
+    Effect.gen(function* () {
+      const stderrDrainStarted = yield* Deferred.make<void>();
+      const stdout = Stream.fromEffect(Deferred.await(stderrDrainStarted)).pipe(
+        Stream.flatMap(() => Stream.encodeText(Stream.make("linux-secret\n"))),
+      );
+      const stderr = Stream.fromEffect(
+        Deferred.succeed(stderrDrainStarted, undefined),
+      ).pipe(Stream.drain);
+
+      const secret = yield* readLinuxSecret("chrome").pipe(
+        Effect.provide(secretToolLayer({ stdoutStream: stdout, stderrStream: stderr })),
+      );
+
+      expect(secret).toBe("linux-secret");
+    }),
   );
 
   it.effect("reports a denied unlock prompt as approval needed", () =>
