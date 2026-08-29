@@ -1,5 +1,9 @@
 import { it as effectIt } from "@effect/vitest";
-import { PreviewAutomationStatus } from "@t3tools/contracts";
+import {
+  DEFAULT_BROWSER_PROFILE_ID,
+  INCOGNITO_BROWSER_PROFILE_ID,
+  PreviewAutomationStatus,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -36,6 +40,28 @@ describe("preview IPC methods", () => {
   it("does not access the Electron session while the module loads", async () => {
     await expect(import("./preview.ts")).resolves.toBeDefined();
     expect(fromPartition).not.toHaveBeenCalled();
+  });
+
+  it("derives distinct partition scopes when identifiers contain the delimiter", () => {
+    const first = PreviewIpc.resolvePartitionScope("a", "b::c");
+    const second = PreviewIpc.resolvePartitionScope("a::b", "c");
+
+    expect(first).toEqual({ scope: "a::b%3A%3Ac", persistent: true });
+    expect(second).toEqual({ scope: "a%3A%3Ab::c", persistent: true });
+    expect(first.scope).not.toBe(second.scope);
+  });
+
+  it("keeps the legacy default partition scope and incognito persistence", () => {
+    expect(PreviewIpc.resolvePartitionScope("environment::legacy", undefined)).toEqual({
+      scope: "environment::legacy",
+      persistent: true,
+    });
+    expect(
+      PreviewIpc.resolvePartitionScope("environment::legacy", DEFAULT_BROWSER_PROFILE_ID),
+    ).toEqual({ scope: "environment::legacy", persistent: true });
+    expect(
+      PreviewIpc.resolvePartitionScope("environment::legacy", INCOGNITO_BROWSER_PROFILE_ID),
+    ).toEqual({ scope: "environment%3A%3Alegacy::incognito", persistent: false });
   });
 
   effectIt.effect("rejects invalid webContents ids before resolving the preview service", () =>

@@ -224,15 +224,17 @@ export const clearCache = DesktopIpc.makeIpcMethod({
  * existed, so upgrading does not strand anyone's existing logins in an
  * orphaned partition. Incognito derives a non-persistent partition.
  */
-function resolvePartitionScope(
+export function resolvePartitionScope(
   environmentId: string,
   profileId: string | undefined,
 ): { readonly scope: string; readonly persistent: boolean } {
   if (profileId === undefined || profileId === DEFAULT_BROWSER_PROFILE_ID) {
     return { scope: environmentId, persistent: true };
   }
+  // Encode each component independently so delimiters inside either id cannot
+  // make two distinct pairs hash to the same Electron partition.
   return {
-    scope: `${environmentId}::${profileId}`,
+    scope: `${encodeURIComponent(environmentId)}::${encodeURIComponent(profileId)}`,
     persistent: profileId !== INCOGNITO_BROWSER_PROFILE_ID,
   };
 }
