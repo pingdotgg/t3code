@@ -17,7 +17,6 @@ const THEME_INTEROP_ALLOWLIST = new Set([
   "features/home/HomeHeader.tsx",
   "features/review/ReviewSheet.tsx",
   "features/review/useNativeReviewDiffBridge.ts",
-  "features/settings/SettingsAutoSettleRouteScreen.tsx",
   "features/settings/SettingsEnvironmentsRouteScreen.tsx",
   "features/settings/appearance/components/AppearancePreviews.tsx",
   "features/settings/appearance/components/FontSizeSliderRow.tsx",

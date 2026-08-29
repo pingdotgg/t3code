@@ -31,15 +31,6 @@ export function projectGroupingModeFromToggle(
   return lastEnabledMode === "repository_path" ? "repository_path" : "repository";
 }
 
-export function hasChangedThreadSettlingSettings(
-  settings: Pick<UnifiedSettings, "sidebarAutoSettleMode" | "sidebarAutoSettleAfterDays">,
-): boolean {
-  return (
-    settings.sidebarAutoSettleMode !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleMode ||
-    settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
-  );
-}
-
 const LAST_ENABLED_PROJECT_GROUPING_MODE_KEY = "t3code:last-enabled-project-grouping-mode";
 
 export function readLastEnabledProjectGroupingMode(): SidebarProjectGroupingMode {

@@ -1,5 +1,5 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
-import type { OrchestrationThreadShell, SidebarAutoSettleMode } from "@t3tools/contracts";
+import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
 
@@ -46,22 +46,26 @@ function threadUserActivityAnchorAt(thread: ThreadActivitySource): string {
  * thread started at a worktree root whose PR already merged), and one older
  * than the user's latest engagement was already adjudicated — re-engaging a
  * thread whose PR merged is the user saying the conversation outlived the
- * PR. Missing or malformed timestamps keep the thread active: an automatic
- * transition must have enough evidence to be predictable.
+ * PR. Unknown timestamps keep the old always-settle behavior.
  */
 export function changeRequestAutoSettles(
   changeRequest: ChangeRequestSettleSource | null | undefined,
   options: {
+    readonly autoSettleOnMerge?: boolean | undefined;
     readonly thread?: ThreadActivitySource | null | undefined;
   } = {},
 ): boolean {
   if (changeRequest == null) return false;
-  const terminal = changeRequest.state === "closed" || changeRequest.state === "merged";
+  const terminal =
+    changeRequest.state === "closed" ||
+    (changeRequest.state === "merged" && options.autoSettleOnMerge !== false);
   if (!terminal) return false;
-  if (changeRequest.updatedAt == null || options.thread == null) return false;
+  if (changeRequest.updatedAt == null || options.thread == null) return true;
   const updatedAtMs = Date.parse(changeRequest.updatedAt);
   const anchorAtMs = Date.parse(threadUserActivityAnchorAt(options.thread));
-  if (Number.isNaN(updatedAtMs) || Number.isNaN(anchorAtMs)) return false;
+  // Malformed timestamps fall back to settling, matching servers that never
+  // report updatedAt.
+  if (Number.isNaN(updatedAtMs) || Number.isNaN(anchorAtMs)) return true;
   return updatedAtMs >= anchorAtMs;
 }
 
@@ -285,11 +289,11 @@ export function threadWokeAt(
  * queued turn) are checked first and hold a thread active regardless of any
  * override. Past the blockers, the explicit user override (thread.settle /
  * thread.unsettle commands, projected into settledOverride + settledAt)
- * wins in both directions. Without one, exactly one selected policy can
- * auto-settle: a merged/closed pull request whose terminal timestamp is the
- * thread's latest user event (see changeRequestAutoSettles), inactivity past
- * the configured window, or never. An open PR blocks the inactivity path.
- * The server
+ * wins in both directions; without one, a thread can auto-settle on a
+ * merged PR or always on a closed PR (both only while the terminal state is
+ * the thread's latest event, see changeRequestAutoSettles), or settles on
+ * inactivity past the window.
+ * An open PR blocks the inactivity path entirely. The server
  * un-settles on real activity (user message, session start, approval/
  * user-input request), so an override never goes stale silently.
  */
@@ -298,7 +302,7 @@ export function effectiveSettled(
   options: {
     readonly now: string;
     readonly autoSettleAfterDays: number | null;
-    readonly autoSettleMode: SidebarAutoSettleMode;
+    readonly autoSettleOnMerge?: boolean;
     readonly changeRequest?: ChangeRequestSettleSource | null;
   },
 ): boolean {
@@ -325,14 +329,18 @@ export function effectiveSettled(
   // "active" is the explicit keep-active pin: it suppresses auto-settle
   // until real activity clears it server-side.
   if (shell.settledOverride === "active") return false;
-  if (options.autoSettleMode === "never") return false;
-  if (options.autoSettleMode === "change-request") {
-    return changeRequestAutoSettles(options.changeRequest, { thread: shell });
+  if (
+    changeRequestAutoSettles(options.changeRequest, {
+      autoSettleOnMerge: options.autoSettleOnMerge,
+      thread: shell,
+    })
+  ) {
+    return true;
   }
   // An open PR is unfinished business regardless of how long the thread has
   // been quiet: review can take days, and hiding the thread would bury the
-  // work waiting on it. Only an explicit user settle resolves it while the
-  // inactivity policy is selected.
+  // work waiting on it. A configured merge, a close, or an explicit user
+  // settle resolves it.
   if (options.changeRequest?.state === "open") return false;
   if (options.autoSettleAfterDays === null) return false;
 
