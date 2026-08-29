@@ -35,6 +35,10 @@ provider turns. Same-provider Cursor forks use the orchestrator's portable full-
 handoff into a fresh Cursor agent. The SDK has in-process custom callback tools, but the V2 adapter
 intentionally uses the authenticated, thread-scoped MCP server instead.
 
+Portable handoffs summarize eligible timeline items and can omit the end of long messages. Read
+[Context in portable handoffs](./portable-handoffs.md) before using a fork for work whose exact
+instructions must carry forward.
+
 Cursor task events include an `agentId`, but the local SDK does not register that identifier as a
 resumable agent: `Agent.resume()` returns `AgentNotFoundError`. The adapter therefore does not attach
 a provider thread to native task projections or advertise subagent thread IDs. Sending a new message
