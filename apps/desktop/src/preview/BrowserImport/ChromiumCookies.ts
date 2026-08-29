@@ -83,6 +83,7 @@ export class ChromiumCookieReadError extends Schema.TaggedErrorClass<ChromiumCoo
 const CookieRow = Schema.Struct({
   host_key: Schema.String,
   name: Schema.String,
+  value: Schema.String,
   encrypted_value: Schema.Uint8Array,
   path: Schema.String,
   expires_seconds: Schema.Number,
@@ -221,7 +222,6 @@ const bareHost = (hostKey: string): string =>
 
 const decryptValue = (encrypted: Uint8Array, key: Buffer, domain: string): string | null => {
   const buffer = Buffer.from(encrypted);
-  if (buffer.length === 0) return "";
   if (buffer.subarray(0, 3).toString("latin1") !== V10_PREFIX) return null;
 
   try {
@@ -239,6 +239,58 @@ const decryptValue = (encrypted: Uint8Array, key: Buffer, domain: string): strin
     return null;
   }
 };
+
+/** Reads and decodes one snapshotted Chromium cookie database. */
+export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiumCookieDatabase")(
+  function* (snapshotPath: string, key: Buffer) {
+    const rows = yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const raw = yield* sql`
+      select host_key, name, value, encrypted_value, path,
+             expires_utc / 1000000 as expires_seconds,
+             is_secure, is_httponly, samesite
+        from cookies
+    `;
+      return yield* decodeCookieRows(raw);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })));
+
+    const cookies: ChromiumCookie[] = [];
+    let undecryptable = 0;
+    const undecryptableHosts = new Set<string>();
+    for (const row of rows) {
+      // Chromium stores legacy/plaintext cookies in `value` with an empty
+      // encrypted blob. Preserve an actually empty cookie by falling back to
+      // `value`, rather than treating every empty blob as the empty string.
+      const value =
+        row.encrypted_value.length === 0
+          ? row.value
+          : decryptValue(row.encrypted_value, key, row.host_key);
+      if (value === null) {
+        undecryptable += 1;
+        undecryptableHosts.add(bareHost(row.host_key));
+        continue;
+      }
+      const secure = row.is_secure === 1;
+      const scope = cookieScope(row.host_key, row.path, secure);
+      cookies.push({
+        url: scope.url,
+        name: row.name,
+        value,
+        domain: scope.domain,
+        path: row.path,
+        secure,
+        httpOnly: row.is_httponly === 1,
+        expirationDate: toUnixSeconds(row.expires_seconds),
+        sameSite: sameSiteFromColumn(row.samesite),
+      });
+    }
+    return {
+      cookies,
+      undecryptable,
+      undecryptableHosts: [...undecryptableHosts],
+    } satisfies CookieReadResult;
+  },
+);
 
 /**
  * What a reader produces: the cookies it could recover, and how many stored
@@ -296,17 +348,7 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
     ),
   );
 
-  const rows = yield* Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const raw = yield* sql`
-      select host_key, name, encrypted_value, path,
-             expires_utc / 1000000 as expires_seconds,
-             is_secure, is_httponly, samesite
-        from cookies
-    `;
-    return yield* decodeCookieRows(raw);
-  }).pipe(
-    Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })),
+  return yield* readChromiumCookieDatabase(snapshotPath, key).pipe(
     Effect.mapError(
       (cause) =>
         new ChromiumCookieReadError({
@@ -316,37 +358,4 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
         }),
     ),
   );
-
-  const cookies: ChromiumCookie[] = [];
-  // Counted, not swallowed. A row we hold no usable key for is a cookie the
-  // user does not get, and reporting an import that quietly dropped most of
-  // its rows as a clean success is the worst of the options.
-  let undecryptable = 0;
-  const undecryptableHosts = new Set<string>();
-  for (const row of rows) {
-    const value = decryptValue(row.encrypted_value, key, row.host_key);
-    if (value === null) {
-      undecryptable += 1;
-      undecryptableHosts.add(bareHost(row.host_key));
-      continue;
-    }
-    const secure = row.is_secure === 1;
-    const scope = cookieScope(row.host_key, row.path, secure);
-    cookies.push({
-      url: scope.url,
-      name: row.name,
-      value,
-      domain: scope.domain,
-      path: row.path,
-      secure,
-      httpOnly: row.is_httponly === 1,
-      expirationDate: toUnixSeconds(row.expires_seconds),
-      sameSite: sameSiteFromColumn(row.samesite),
-    });
-  }
-  return {
-    cookies,
-    undecryptable,
-    undecryptableHosts: [...undecryptableHosts],
-  } satisfies CookieReadResult;
 });
