@@ -125,6 +125,19 @@ interface HarnessOptions {
     readonly path: string;
     readonly refName: string | null;
   }>;
+  readonly worktreeInventories?: Readonly<
+    Record<
+      string,
+      {
+        readonly repositoryCommonDir: string;
+        readonly currentWorktreeRoot: string | null;
+        readonly worktrees: ReadonlyArray<{
+          readonly path: string;
+          readonly refName: string | null;
+        }>;
+      }
+    >
+  >;
   readonly projectWorktreeRoot?: string;
   readonly projectWorkspaceRoot?: string;
   readonly useRealNonRepositoryWorkflow?: boolean;
@@ -333,12 +346,15 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const listWorktrees = vi.fn((cwd: string) =>
     options.worktreeInventoryFailsFor?.has(cwd) === true
       ? (Effect.fail("simulated worktree inventory failure") as never)
-      : Effect.succeed({
-          repositoryCommonDir: "/repo/.git",
-          currentWorktreeRoot:
-            listedWorktrees.find((worktree) => worktree.path === cwd)?.path ?? projectWorktreeRoot,
-          worktrees: listedWorktrees,
-        }),
+      : Effect.succeed(
+          options.worktreeInventories?.[cwd] ?? {
+            repositoryCommonDir: "/repo/.git",
+            currentWorktreeRoot:
+              listedWorktrees.find((worktree) => worktree.path === cwd)?.path ??
+              projectWorktreeRoot,
+            worktrees: listedWorktrees,
+          },
+        ),
   );
   const workspaceStatuses = new Map(
     Object.entries(
@@ -1460,7 +1476,40 @@ describe("t3_worktree_list", () => {
         ],
       });
       expect(harness.localStatus).toHaveBeenCalledTimes(1);
-      expect(harness.listWorktrees).toHaveBeenCalledTimes(1);
+      expect(harness.listWorktrees).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it.effect("does not attribute a nested independent repository to the project worktree", () => {
+    const nestedPath = `${workspaceRoot}/vendor/independent`;
+    const harness = makeHarness({
+      worktrees: [{ path: workspaceRoot, refName: "dev" }],
+      projectThreads: [
+        {
+          id: threadId,
+          title: "Nested independent repository",
+          branch: "main",
+          worktreePath: nestedPath,
+        },
+      ],
+      worktreeInventories: {
+        [nestedPath]: {
+          repositoryCommonDir: `${nestedPath}/.git`,
+          currentWorktreeRoot: nestedPath,
+          worktrees: [{ path: nestedPath, refName: "main" }],
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness, { limit: 1 });
+
+      expect(result.worktrees[0]).toMatchObject({
+        path: workspaceRoot,
+        bindingCount: 0,
+        bindings: [],
+      });
+      expect(harness.localStatus).toHaveBeenCalledTimes(1);
+      expect(harness.listWorktrees).toHaveBeenCalledTimes(2);
     });
   });
 });

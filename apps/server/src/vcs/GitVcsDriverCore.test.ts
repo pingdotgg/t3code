@@ -1598,6 +1598,29 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("resolves a nested repository independently from its containing checkout", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const nestedDirectory = pathService.join(cwd, "vendor", "independent");
+        yield* fileSystem.makeDirectory(nestedDirectory, { recursive: true });
+        yield* initRepoWithCommit(nestedDirectory);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const outerInventory = yield* driver.listWorktrees(cwd);
+        const nestedInventory = yield* driver.listWorktrees(nestedDirectory);
+
+        assert.equal(outerInventory.currentWorktreeRoot, yield* fileSystem.realPath(cwd));
+        assert.equal(
+          nestedInventory.currentWorktreeRoot,
+          yield* fileSystem.realPath(nestedDirectory),
+        );
+        assert.notEqual(nestedInventory.repositoryCommonDir, outerInventory.repositoryCommonDir);
+      }),
+    );
+
     // NTFS rejects a newline in a file name, so there is nothing to preserve there.
     it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
       "preserves newline characters in worktree paths when listing refs",

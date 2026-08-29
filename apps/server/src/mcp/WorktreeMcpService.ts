@@ -132,25 +132,11 @@ const make = Effect.gen(function* () {
     return fileSystem.realPath(normalized).pipe(Effect.orElseSucceed(() => normalized));
   };
 
-  const isPathInside = (candidate: string, root: string) =>
-    candidate === root ||
-    (candidate.startsWith(root) &&
-      (root.endsWith("/") ||
-        root.endsWith("\\") ||
-        candidate[root.length] === "/" ||
-        candidate[root.length] === "\\"));
-
   const threadWorkspacePath = Effect.fn("WorktreeMcpService.threadWorkspacePath")(function* (
     thread: Pick<OrchestrationV2ThreadShell, "worktreePath">,
     projectWorkspaceRoot: string,
-    worktreeRoots: ReadonlyArray<string> = [projectWorkspaceRoot],
   ) {
-    const recordedPath = yield* canonicalizePath(thread.worktreePath ?? projectWorkspaceRoot);
-    return (
-      worktreeRoots
-        .filter((root) => isPathInside(recordedPath, root))
-        .toSorted((left, right) => right.length - left.length)[0] ?? recordedPath
-    );
+    return yield* canonicalizePath(thread.worktreePath ?? projectWorkspaceRoot);
   });
 
   const loadWorktrees = Effect.fn("WorktreeMcpService.loadWorktrees")(function* (
@@ -616,10 +602,42 @@ const make = Effect.gen(function* () {
         ? cursor + selectedWorktrees.length
         : null;
     const bindingLimit = input.bindingLimit ?? 20;
-    const threadWorkspaces = yield* Effect.forEach(threads, (thread) =>
-      threadWorkspacePath(thread, projectWorktreeRoot, [...branchByWorkspacePath.keys()]).pipe(
-        Effect.map((workspacePath) => [thread, workspacePath] as const),
+    const recordedThreadWorkspaces = yield* Effect.forEach(threads, (thread) =>
+      threadWorkspacePath(thread, projectWorktreeRoot).pipe(
+        Effect.map((recordedPath) => [thread, recordedPath] as const),
       ),
+    );
+    const unresolvedRecordedPaths = [
+      ...new Set(
+        recordedThreadWorkspaces
+          .map(([, recordedPath]) => recordedPath)
+          .filter((recordedPath) => !branchByWorkspacePath.has(recordedPath)),
+      ),
+    ];
+    const physicalRootByRecordedPath = new Map<string, string>();
+    yield* Effect.forEach(
+      unresolvedRecordedPaths,
+      (recordedPath) =>
+        Effect.option(loadWorktrees(recordedPath)).pipe(
+          Effect.map((candidateInventory) => {
+            if (
+              Option.isSome(candidateInventory) &&
+              candidateInventory.value.repositoryCommonDir === inventory.repositoryCommonDir &&
+              candidateInventory.value.currentWorktreeRoot !== null &&
+              branchByWorkspacePath.has(candidateInventory.value.currentWorktreeRoot)
+            ) {
+              physicalRootByRecordedPath.set(
+                recordedPath,
+                candidateInventory.value.currentWorktreeRoot,
+              );
+            }
+          }),
+        ),
+      { concurrency: 8 },
+    );
+    const threadWorkspaces = recordedThreadWorkspaces.map(
+      ([thread, recordedPath]) =>
+        [thread, physicalRootByRecordedPath.get(recordedPath) ?? recordedPath] as const,
     );
 
     const worktrees = yield* Effect.forEach(
