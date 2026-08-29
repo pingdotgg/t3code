@@ -126,6 +126,7 @@ export interface ProjectionStoreV2Shape {
     options: {
       readonly rowLimit: number;
       readonly anchorItemId?: TurnItemId | undefined;
+      readonly anchorThreadId?: ThreadId | undefined;
       readonly requiredRunId?: RunId | undefined;
     },
   ) => Effect.Effect<
@@ -2004,6 +2005,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly rowLimit: number;
         readonly anchorItemId?: TurnItemId | undefined;
         readonly requiredRunId?: RunId | undefined;
+        readonly suppressLocal?: boolean | undefined;
       },
     ) =>
       Effect.gen(function* () {
@@ -2422,10 +2424,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly rowLimit: number;
         readonly anchorItemId?: TurnItemId | undefined;
         readonly requiredRunId?: RunId | undefined;
+        readonly suppressLocal?: boolean | undefined;
+        readonly historyAnchor?:
+          | { readonly threadId: ThreadId; readonly itemId: TurnItemId }
+          | undefined;
       },
     ): Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error> =>
       Effect.gen(function* () {
-        const projection = yield* readCanonicalProjection(threadId, window);
+        const localWindow =
+          window?.suppressLocal === true ||
+          (window?.historyAnchor !== undefined && window.historyAnchor.threadId !== threadId)
+            ? { ...window, rowLimit: 0, anchorItemId: undefined }
+            : window;
+        const projection = yield* readCanonicalProjection(threadId, localWindow);
         const forkedFrom = projection.thread.forkedFrom;
         if (forkedFrom?.type !== "run" || seenThreadIds.has(forkedFrom.threadId)) {
           return withLocalVisibleTurnItems(projection);
@@ -2435,6 +2446,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           window === undefined
             ? undefined
             : yield* Effect.gen(function* () {
+                const historyAnchor = window.historyAnchor;
+                const anchorBelongsToSource = historyAnchor?.threadId === forkedFrom.threadId;
                 const rows = yield* sql<{ readonly turn_item_id: string }>`
                   WITH fork_run AS (
                     SELECT ordinal
@@ -2483,19 +2496,35 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       (SELECT ordinal FROM effective_boundary),
                       -1
                     )
-                    AND ordinal <= COALESCE(
-                      (SELECT ordinal FROM orchestration_v2_projection_turn_items
-                       WHERE turn_item_id = ${window.anchorItemId ?? null} LIMIT 1),
-                      9223372036854775807
+                    AND (
+                      ${anchorBelongsToSource ? 1 : 0} = 0
+                      OR ordinal <= COALESCE(
+                        (SELECT ordinal FROM orchestration_v2_projection_turn_items
+                         WHERE thread_id = ${forkedFrom.threadId}
+                           AND turn_item_id = ${historyAnchor?.itemId ?? null}
+                         LIMIT 1),
+                        (SELECT ordinal FROM effective_boundary),
+                        -1
+                      )
                     )
                   ORDER BY ordinal DESC, turn_item_id DESC
                   LIMIT 1
                 `;
                 const anchor = rows[0]?.turn_item_id;
+                const anchorIsInDescendant =
+                  historyAnchor !== undefined &&
+                  historyAnchor.threadId !== threadId &&
+                  historyAnchor.threadId !== forkedFrom.threadId;
                 return {
-                  rowLimit: anchor === undefined ? 0 : window.rowLimit,
+                  rowLimit: window.rowLimit,
                   requiredRunId: forkedFrom.runId,
-                  ...(anchor === undefined ? {} : { anchorItemId: TurnItemId.make(anchor) }),
+                  suppressLocal: anchor === undefined || anchorIsInDescendant,
+                  ...(anchor === undefined || anchorIsInDescendant
+                    ? {}
+                    : { anchorItemId: TurnItemId.make(anchor) }),
+                  ...(historyAnchor === undefined || historyAnchor.threadId === threadId
+                    ? {}
+                    : { historyAnchor }),
                 };
               });
 
@@ -2556,7 +2585,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const projection = yield* readProjection(threadId, new Set(), options);
+            const historyAnchor =
+              options.anchorItemId === undefined
+                ? undefined
+                : {
+                    itemId: options.anchorItemId,
+                    threadId:
+                      options.anchorThreadId ??
+                      (yield* sql<{ readonly thread_id: string }>`
+                        SELECT thread_id
+                        FROM orchestration_v2_projection_turn_items
+                        WHERE turn_item_id = ${options.anchorItemId}
+                        LIMIT 1
+                      `).map((row) => ThreadId.make(row.thread_id))[0] ??
+                      threadId,
+                  };
+            const projection = yield* readProjection(threadId, new Set(), {
+              rowLimit: options.rowLimit,
+              ...(historyAnchor?.threadId === threadId
+                ? { anchorItemId: historyAnchor.itemId }
+                : {}),
+              ...(historyAnchor === undefined ? {} : { historyAnchor }),
+            });
             const rows = yield* sql<{ readonly snapshot_sequence: number | null }>`
               SELECT MAX(sequence) AS snapshot_sequence
               FROM orchestration_events
