@@ -204,7 +204,21 @@ export function applyOrchestrationV2ProjectionEvent(
     case "provider-thread.updated":
       return { ...base, providerThreads: upsertEntity(base.providerThreads, event.payload) };
     case "provider-turn.updated":
-      return { ...base, providerTurns: upsertEntity(base.providerTurns, event.payload) };
+      return {
+        ...base,
+        providerTurns: upsertEntity(base.providerTurns, {
+          ...event.payload,
+          ...((event.payload.tokenUsage ??
+            base.providerTurns.find((turn) => turn.id === event.payload.id)?.tokenUsage) ===
+          undefined
+            ? {}
+            : {
+                tokenUsage:
+                  event.payload.tokenUsage ??
+                  base.providerTurns.find((turn) => turn.id === event.payload.id)?.tokenUsage,
+              }),
+        }),
+      };
     case "runtime-request.updated":
       return { ...base, runtimeRequests: upsertEntity(base.runtimeRequests, event.payload) };
     case "message.updated":
