@@ -31,7 +31,7 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
           : "File change";
 
   return (
-    <div
+    <span
       aria-label={fallbackLabel}
       className={cn("flex min-w-0 flex-1 items-center gap-2", className)}
       role="group"
@@ -54,6 +54,6 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
           1/{pendingCount}
         </span>
       ) : null}
-    </div>
+    </span>
   );
 });
