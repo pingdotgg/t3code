@@ -1229,7 +1229,7 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
-    func newTaskAvailabilityOnlyTreatsEnabledDisconnectedOrReconnectingEnvironmentsAsUnreachable() {
+    func newTaskAvailabilityOnlyTreatsEnabledDisconnectedEnvironmentsAsUnreachable() {
         let environments = [
             FeatureEnvironment(
                 id: "disconnected",
@@ -1269,9 +1269,12 @@ struct DailyUXNewTaskTests {
             ),
         ]
 
+        // Reconnecting stays excluded: HTTP fallback still serves work while
+        // the socket re-establishes, matching the sidebar's reconnecting
+        // treatment.
         #expect(
             DailyUXCreationContext.unreachableEnvironments(in: environments).map(\.id)
-                == ["disconnected", "reconnecting"]
+                == ["disconnected"]
         )
     }
 
