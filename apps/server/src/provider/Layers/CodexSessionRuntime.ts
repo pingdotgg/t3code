@@ -1304,18 +1304,29 @@ export const makeCodexSessionRuntime = (
     const sessionRef = yield* Ref.make<ProviderSession>(initialSession);
     const offerEvent = (event: ProviderEvent) => Queue.offer(events, event).pipe(Effect.asVoid);
 
-    const emitEvent = (event: Omit<ProviderEvent, "id" | "provider" | "createdAt">) =>
+    const makeEvent = (event: Omit<ProviderEvent, "id" | "provider" | "createdAt">) =>
       Effect.gen(function* () {
         const id = yield* randomUUIDv4("provider-event");
-        const providerEvent = {
+        return {
           id: EventId.make(id),
           provider: PROVIDER,
           ...(options.providerInstanceId ? { providerInstanceId: options.providerInstanceId } : {}),
           createdAt: yield* nowIso,
           ...event,
         } satisfies ProviderEvent;
+      });
+    const emitEvent = (event: Omit<ProviderEvent, "id" | "provider" | "createdAt">) =>
+      Effect.gen(function* () {
+        const providerEvent = yield* makeEvent(event);
         yield* offerEvent(providerEvent);
         return providerEvent;
+      });
+    const makeSessionEvent = (method: string, message: string) =>
+      makeEvent({
+        kind: "session",
+        threadId: options.threadId,
+        method,
+        message,
       });
     const emitSessionEvent = (method: string, message: string) =>
       emitEvent({
@@ -2345,7 +2356,10 @@ export const makeCodexSessionRuntime = (
         status: "closed",
         activeTurnId: undefined,
       });
-      const closedEvent = yield* emitSessionEvent("session/closed", "Session stopped");
+      // The adapter publishes the event returned by close after it has stopped
+      // the runtime event consumer. Keeping this event off the runtime queue
+      // prevents a normal stop from publishing the same lifecycle event twice.
+      const closedEvent = yield* makeSessionEvent("session/closed", "Session stopped");
       yield* Queue.shutdown(serverNotifications);
       yield* Queue.shutdown(events);
       return closedEvent;

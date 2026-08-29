@@ -160,6 +160,47 @@ const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-s
 const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollabMockPeer.sh");
 
 describe("CodexSessionRuntime collab integration", () => {
+  it.effect("returns one close event without also enqueuing it", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        notifications: [],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-close-event"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const queuedCloseEvents: Array<ProviderEvent> = [];
+      const queuedCloseEventsFiber = yield* runtime.events.pipe(
+        Stream.filter((event) => event.method === "session/closed"),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            queuedCloseEvents.push(event);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      const returnedCloseEvent = yield* runtime.close;
+      yield* Fiber.await(queuedCloseEventsFiber);
+
+      assert.equal(returnedCloseEvent.method, "session/closed");
+      assert.deepEqual(queuedCloseEvents, []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("looks up child model metadata once after activity registration", () =>
     Effect.gen(function* () {
       const script = {
