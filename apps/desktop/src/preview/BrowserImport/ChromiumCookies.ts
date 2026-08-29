@@ -93,6 +93,9 @@ const CookieRow = Schema.Struct({
 });
 
 const decodeCookieRows = Schema.decodeUnknownEffect(Schema.Array(CookieRow));
+const decodeSchemaVersion = Schema.decodeUnknownEffect(
+  Schema.Tuple([Schema.Struct({ value: Schema.Number })]),
+);
 
 /**
  * Chromium stores `SameSite` as an int; unspecified (-1) behaves as Lax in
@@ -214,7 +217,12 @@ export const cookieScope = (
 const bareHost = (hostKey: string): string =>
   hostKey.startsWith(".") ? hostKey.slice(1) : hostKey;
 
-const decryptValue = (encrypted: Uint8Array, key: Buffer, domain: string): string | null => {
+const decryptValue = (
+  encrypted: Uint8Array,
+  key: Buffer,
+  domain: string,
+  schemaVersion: number,
+): string | null => {
   const buffer = Buffer.from(encrypted);
   if (buffer.subarray(0, 3).toString("latin1") !== V10_PREFIX) return null;
 
@@ -222,10 +230,15 @@ const decryptValue = (encrypted: Uint8Array, key: Buffer, domain: string): strin
     const decipher = NodeCrypto.createDecipheriv("aes-128-cbc", key, AES_IV);
     decipher.setAutoPadding(true);
     let plaintext = Buffer.concat([decipher.update(buffer.subarray(3)), decipher.final()]);
-    // Chromium >= 127 prefixes the plaintext with SHA-256 of the host key to
-    // bind a cookie to its domain; strip it when present.
-    const domainHash = NodeCrypto.createHash("sha256").update(domain).digest();
-    if (plaintext.length >= 32 && plaintext.subarray(0, 32).equals(domainHash)) {
+    // Cookie schema 24 requires SHA-256(host_key) at the front of every
+    // encrypted value. Treat a missing or mismatched binding as undecryptable;
+    // older schemas stored arbitrary plaintext here, including long values
+    // whose first 32 bytes must not be interpreted as a hash.
+    if (schemaVersion >= 24) {
+      const domainHash = NodeCrypto.createHash("sha256").update(domain).digest();
+      if (plaintext.length < domainHash.length || !plaintext.subarray(0, 32).equals(domainHash)) {
+        return null;
+      }
       plaintext = plaintext.subarray(32);
     }
     return plaintext.toString("utf8");
@@ -239,26 +252,30 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
   function* (snapshotPath: string, key: Buffer) {
     const rows = yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      const schemaVersion = yield* sql`select value from meta where key = 'version' limit 1`.pipe(
+        Effect.flatMap(decodeSchemaVersion),
+        Effect.map(([row]) => row.value),
+      );
       const raw = yield* sql`
       select host_key, name, value, encrypted_value, path,
              expires_utc / 1000000 as expires_seconds,
              is_secure, is_httponly, samesite
         from cookies
     `;
-      return yield* decodeCookieRows(raw);
+      return { rows: yield* decodeCookieRows(raw), schemaVersion };
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })));
 
     const cookies: ChromiumCookie[] = [];
     let undecryptable = 0;
     const undecryptableHosts = new Set<string>();
-    for (const row of rows) {
+    for (const row of rows.rows) {
       // Chromium stores legacy/plaintext cookies in `value` with an empty
       // encrypted blob. Preserve an actually empty cookie by falling back to
       // `value`, rather than treating every empty blob as the empty string.
       const value =
         row.encrypted_value.length === 0
           ? row.value
-          : decryptValue(row.encrypted_value, key, row.host_key);
+          : decryptValue(row.encrypted_value, key, row.host_key, rows.schemaVersion);
       if (value === null) {
         undecryptable += 1;
         undecryptableHosts.add(bareHost(row.host_key));

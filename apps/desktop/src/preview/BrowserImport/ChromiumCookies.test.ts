@@ -16,7 +16,7 @@ import {
   snapshotCookieDatabase,
 } from "./ChromiumCookies.ts";
 
-const encryptV10 = (value: string, key: Buffer): Uint8Array => {
+const encryptV10 = (value: string | Buffer, key: Buffer): Uint8Array => {
   const cipher = NodeCrypto.createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
   return Buffer.concat([Buffer.from("v10"), cipher.update(value), cipher.final()]);
 };
@@ -138,6 +138,8 @@ describe("readChromiumCookieDatabase", () => {
 
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
+        yield* sql`create table meta (key text primary key, value integer not null)`;
+        yield* sql`insert into meta values ('version', 23)`;
         yield* sql`
           create table cookies (
             host_key text not null,
@@ -173,6 +175,77 @@ describe("readChromiumCookieDatabase", () => {
         { name: "encrypted", value: "stored encrypted" },
         { name: "empty", value: "" },
       ]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("enforces domain binding only for schema 24 and newer", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-chromium-cookies-",
+      });
+      const filename = `${directory}/Cookies`;
+      const key = Buffer.from("0123456789abcdef");
+      const boundValue = (host: string, value: string) =>
+        Buffer.concat([NodeCrypto.createHash("sha256").update(host).digest(), Buffer.from(value)]);
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`create table meta (key text primary key, value integer not null)`;
+        yield* sql`insert into meta values ('version', 24)`;
+        yield* sql`
+          create table cookies (
+            host_key text not null, name text not null, value text not null,
+            encrypted_value blob not null, path text not null, expires_utc integer not null,
+            is_secure integer not null, is_httponly integer not null, samesite integer not null
+          )
+        `;
+        yield* sql`insert into cookies values
+          ('bound.example', 'valid', '', ${encryptV10(boundValue("bound.example", "kept"), key)}, '/', 0, 1, 0, 0)`;
+        yield* sql`insert into cookies values
+          ('wrong.example', 'mismatch', '', ${encryptV10(boundValue("another.example", "drop"), key)}, '/', 0, 1, 0, 0)`;
+        yield* sql`insert into cookies values
+          ('short.example', 'short', '', ${encryptV10("short value", key)}, '/', 0, 1, 0, 0)`;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+      const result = yield* readChromiumCookieDatabase(filename, key);
+
+      expect(result.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
+        { name: "valid", value: "kept" },
+      ]);
+      expect(result.undecryptable).toBe(2);
+      expect(result.undecryptableHosts).toEqual(["wrong.example", "short.example"]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("preserves arbitrary long encrypted values from pre-24 schemas", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-chromium-cookies-",
+      });
+      const filename = `${directory}/Cookies`;
+      const key = Buffer.from("0123456789abcdef");
+      const value = "x".repeat(32) + " legacy value";
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`create table meta (key text primary key, value integer not null)`;
+        yield* sql`insert into meta values ('version', 23)`;
+        yield* sql`
+          create table cookies (
+            host_key text not null, name text not null, value text not null,
+            encrypted_value blob not null, path text not null, expires_utc integer not null,
+            is_secure integer not null, is_httponly integer not null, samesite integer not null
+          )
+        `;
+        yield* sql`insert into cookies values
+          ('legacy.example', 'legacy', '', ${encryptV10(value, key)}, '/', 0, 0, 0, 0)`;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+      const result = yield* readChromiumCookieDatabase(filename, key);
+      expect(result.cookies[0]?.value).toBe(value);
+      expect(result.undecryptable).toBe(0);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
