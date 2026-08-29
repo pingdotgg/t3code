@@ -2341,6 +2341,19 @@ function ChatViewContent(props: ChatViewProps) {
     threadError,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  // Optimistic stopping state for remote: mirrors isStoppingBackgroundWork so Stop
+  // gives immediate feedback even though session stays "running" until provider settles.
+  // See fix-remote-stop-no-feedback-stuck-thinking-7h3k9p2m (issue #8618).
+  const [isStoppingTurn, setIsStoppingTurn] = useState(false);
+  useEffect(() => {
+    if (!isWorking) {
+      setIsStoppingTurn(false);
+    }
+  }, [isWorking]);
+  useEffect(() => {
+    // Per-thread: switching threads must not leak Stopping... to B
+    setIsStoppingTurn(false);
+  }, [activeThreadId]);
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -5486,17 +5499,23 @@ function ChatViewContent(props: ChatViewProps) {
 
   const onInterrupt = async () => {
     if (!activeThread) return;
+    setIsStoppingTurn(true);
     const result = await interruptThreadTurn({
       environmentId,
       input: buildThreadTurnInterruptInput(activeThread),
     });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      setThreadError(
-        activeThread.id,
-        error instanceof Error ? error.message : "Failed to interrupt the current turn.",
-      );
+    if (result._tag === "Failure") {
+      setIsStoppingTurn(false);
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to interrupt the current turn.",
+        );
+      }
     }
+    // Success clears via isWorking effect when session leaves running; keep Stopping...
+    // visible during relay RTT so remote click is not silent.
   };
 
   const onRespondToApproval = useCallback(
