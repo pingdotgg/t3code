@@ -1,8 +1,5 @@
-import type { MobileThemeVariables } from "./mobileTheme";
-
-/** The existing T3 Code mobile palette, retained as the upgrade-safe default. */
-export const DEFAULT_MOBILE_THEME_VARIABLES = {
-  light: {
+{
+  "light": {
     "--color-screen": "#f2f2f7",
     "--color-sheet": "rgba(242, 242, 247, 0.98)",
     "--color-sheet-solid": "#f2f2f7",
@@ -67,9 +64,9 @@ export const DEFAULT_MOBILE_THEME_VARIABLES = {
     "--color-drawer-shadow": "rgba(0, 0, 0, 0.12)",
     "--color-dot-separator": "rgba(0, 0, 0, 0.2)",
     "--color-wordmark": "#262626",
-    "--color-chevron": "rgba(0, 0, 0, 0.2)",
+    "--color-chevron": "rgba(0, 0, 0, 0.2)"
   },
-  dark: {
+  "dark": {
     "--color-screen": "#0a0a0a",
     "--color-sheet": "rgba(14, 14, 14, 0.98)",
     "--color-sheet-solid": "#0e0e0e",
@@ -134,6 +131,6 @@ export const DEFAULT_MOBILE_THEME_VARIABLES = {
     "--color-drawer-shadow": "rgba(0, 0, 0, 0.32)",
     "--color-dot-separator": "rgba(255, 255, 255, 0.2)",
     "--color-wordmark": "#f5f5f5",
-    "--color-chevron": "rgba(255, 255, 255, 0.2)",
-  },
-} as const satisfies Readonly<Record<"light" | "dark", MobileThemeVariables>>;
+    "--color-chevron": "rgba(255, 255, 255, 0.2)"
+  }
+}
