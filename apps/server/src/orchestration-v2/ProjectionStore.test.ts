@@ -2027,6 +2027,42 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         `;
       }
       const nestedThreadId = ThreadId.make("thread:projection-fork-source-rollback:nested");
+      for (const ordinal of [
+        ...Array.from({ length: 99 }, (_, index) => index + 1),
+        ...Array.from({ length: 99 }, (_, index) => index + 101),
+      ]) {
+        const runId = ordinal < 100 ? sourceRun1Id : sourceRun2Id;
+        const id = `turn-item:projection-fork-source-rollback:lineage:${ordinal}`;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items (
+            turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json
+          ) VALUES (
+            ${id}, ${sourceThreadId}, ${runId}, NULL, NULL, NULL, NULL, ${ordinal},
+            'command_execution', 'completed', ${nowIso},
+            ${encodeUnknownJsonString({
+              id,
+              threadId: sourceThreadId,
+              runId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: `lineage ${ordinal}`,
+              input: "echo lineage",
+              output: "lineage",
+              exitCode: 0,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              updatedAt: nowIso,
+              type: "command_execution",
+            })}
+          )
+        `;
+      }
       yield* projectionStore.apply({
         id: EventId.make("event:projection-fork-source-rollback:nested-thread"),
         type: "thread.created",
@@ -2065,7 +2101,168 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       });
       assert.deepEqual(
         boundedNested.projection.visibleTurnItems.map((row) => row.item.type),
-        ["fork", "command_execution", "command_execution", "fork"],
+        [
+          "user_message",
+          "assistant_message",
+          "fork",
+          "command_execution",
+          "command_execution",
+          "fork",
+        ],
+      );
+
+      const nestedInitial = buildBoundedThreadProjection({
+        projection: yield* projectionStore
+          .getThreadSnapshotWindow(nestedThreadId, {
+            rowLimit: THREAD_HISTORY_PAGE_POLICY.maxItems + 2,
+          })
+          .pipe(Effect.map((snapshot) => snapshot.projection)),
+        snapshotSequence: 1,
+      });
+      const expectedNestedIds = (yield* projectionStore.getThreadProjection(
+        nestedThreadId,
+      )).visibleTurnItems.map((row) => String(row.sourceItemId));
+      const nestedIds = nestedInitial.projection.visibleTurnItems.map((row) =>
+        String(row.sourceItemId),
+      );
+      let nestedCursor = nestedInitial.historyCursor;
+      let nestedPages = 1;
+      while (nestedCursor !== null) {
+        const decoded = decodeThreadHistoryCursor(nestedCursor);
+        const snapshot = yield* projectionStore.getThreadSnapshotWindow(nestedThreadId, {
+          rowLimit: THREAD_HISTORY_PAGE_POLICY.maxItems + 2,
+          anchorItemId: TurnItemId.make(decoded.si),
+          anchorThreadId: ThreadId.make(decoded.st),
+        });
+        const page = selectHistoryPageFromCursor({
+          items: snapshot.projection.visibleTurnItems,
+          cursor: nestedCursor,
+          snapshotSequence: snapshot.snapshotSequence,
+        });
+        nestedIds.unshift(...page.items.map((row) => String(row.sourceItemId)));
+        nestedCursor = page.nextCursor;
+        nestedPages += 1;
+      }
+      assert.isAtLeast(nestedPages, 3);
+      assert.lengthOf(nestedIds, expectedNestedIds.length);
+      assert.deepEqual(nestedIds, expectedNestedIds);
+
+      const emptyMiddleThreadId = ThreadId.make(
+        "thread:projection-fork-source-rollback:empty-middle",
+      );
+      const emptyMiddleRunId = RunId.make("run:projection-fork-source-rollback:empty-middle");
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:empty-middle-thread"),
+        type: "thread.created",
+        threadId: emptyMiddleThreadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: emptyMiddleThreadId,
+          projectId,
+          title: "Empty middle fork",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: sourceThreadId,
+            relationshipToParent: "fork",
+            rootThreadId: sourceThreadId,
+          },
+          forkedFrom: { type: "run", threadId: sourceThreadId, runId: sourceRun2Id },
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:empty-middle-run"),
+        type: "run.updated",
+        threadId: emptyMiddleThreadId,
+        runId: emptyMiddleRunId,
+        nodeId: NodeId.make("node:projection-fork-source-rollback:empty-middle"),
+        driver,
+        occurredAt: now,
+        payload: {
+          id: emptyMiddleRunId,
+          threadId: emptyMiddleThreadId,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:projection-fork-source-rollback:empty-middle"),
+          rootNodeId: NodeId.make("node:projection-fork-source-rollback:empty-middle"),
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      const emptyLeafThreadId = ThreadId.make("thread:projection-fork-source-rollback:empty-leaf");
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-fork-source-rollback:empty-leaf-thread"),
+        type: "thread.created",
+        threadId: emptyLeafThreadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: emptyLeafThreadId,
+          projectId,
+          title: "Leaf after empty fork",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: emptyMiddleThreadId,
+            relationshipToParent: "fork",
+            rootThreadId: sourceThreadId,
+          },
+          forkedFrom: {
+            type: "run",
+            threadId: emptyMiddleThreadId,
+            runId: emptyMiddleRunId,
+          },
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const emptyMiddleSnapshot = yield* projectionStore.getThreadSnapshotWindow(
+        emptyLeafThreadId,
+        { rowLimit: 2 },
+      );
+      assert.deepEqual(
+        emptyMiddleSnapshot.projection.visibleTurnItems.map((row) => [
+          row.sourceThreadId,
+          row.item.type,
+        ]),
+        [
+          [sourceThreadId, "user_message"],
+          [sourceThreadId, "assistant_message"],
+          [sourceThreadId, "fork"],
+          [emptyMiddleThreadId, "fork"],
+        ],
       );
 
       yield* sql`
