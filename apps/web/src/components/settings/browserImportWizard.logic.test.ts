@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { BrowserImportSource } from "@t3tools/contracts";
 
 import {
+  canCloseWizard,
   initialWizardStep,
   initialTargetSelection,
   isRetryableReason,
@@ -46,6 +47,14 @@ describe("initialWizardStep", () => {
       step: "blocked",
       reason: "unsupportedPlatform",
     });
+  });
+});
+
+describe("canCloseWizard", () => {
+  it("keeps the wizard open while an import writes its target profile", () => {
+    expect(canCloseWizard({ step: "importing" })).toBe(false);
+    expect(canCloseWizard({ step: "configure" })).toBe(true);
+    expect(canCloseWizard({ step: "blocked", reason: "readFailed" })).toBe(true);
   });
 });
 

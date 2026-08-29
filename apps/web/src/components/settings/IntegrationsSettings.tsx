@@ -36,7 +36,7 @@ import {
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { InfoIcon, MoreVertical, Plus as PlusIcon } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { previewBridge } from "~/components/preview/previewBridge";
@@ -661,6 +661,8 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     environmentsReady,
     environments.length,
   );
+  const importInFlightRef = useRef(false);
+  const [importInFlight, setImportInFlight] = useState(false);
 
   const profiles = resolveBrowserProfiles(userProfiles);
   // Incognito is deliberately not a row — it holds nothing to manage — so the
@@ -672,6 +674,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     findBrowserProfile(listedProfiles, defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID;
 
   const createProfile = (baseName: string) => {
+    if (importInFlightRef.current) return undefined;
     const currentProfiles = getClientSettings().browserProfiles;
     const resolvedProfiles = resolveBrowserProfiles(currentProfiles);
     const taken = new Set(resolvedProfiles.map((profile) => profile.name));
@@ -683,6 +686,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   };
 
   const renameProfile = (id: string, next: string) => {
+    if (importInFlightRef.current) return;
     const name = next.trim().slice(0, BROWSER_PROFILE_NAME_MAX_LENGTH);
     if (name === "") return;
     const currentProfiles = getClientSettings().browserProfiles;
@@ -694,6 +698,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   };
 
   const clearProfileData = (id: string, name: string) => {
+    if (importInFlightRef.current) return;
     if (!previewBridge || !environmentsReady || environments.length === 0) {
       toastManager.add({
         type: "error",
@@ -716,6 +721,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   };
 
   const removeProfile = async (id: string) => {
+    if (importInFlightRef.current) return;
     if (!removalAvailable) {
       setProfileRemovalError("Connect to an environment before removing this profile.");
       return;
@@ -780,6 +786,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     input: { readonly sourceProfileDirectory: string; readonly target: WizardTarget },
   ): Promise<ImportOutcome> => {
     if (!environmentId || !previewBridge) return { kind: "blocked", reason: "sessionUnavailable" };
+    if (importInFlightRef.current) return { kind: "blocked", reason: "readFailed" };
+    importInFlightRef.current = true;
+    setImportInFlight(true);
     try {
       const result = await previewBridge.importBrowserCookies({
         environmentId,
@@ -789,13 +798,20 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       });
       let targetName: string;
       if (input.target.kind === "new") {
-        targetName = uniqueName(source.name);
+        const latestProfiles = getClientSettings().browserProfiles;
+        const taken = new Set(
+          resolveBrowserProfiles(latestProfiles).map((profile) => profile.name),
+        );
+        targetName = source.name;
+        for (let index = 2; taken.has(targetName); index += 1) {
+          targetName = `${source.name} ${index}`;
+        }
         // Registered only when something actually came over: an import that
         // found no cookies should not leave a new, empty profile behind.
         if (result.imported > 0) {
           updateSettings({
             browserProfiles: [
-              ...userProfiles,
+              ...latestProfiles,
               { id: input.target.profileId, name: targetName, kind: "persistent" as const },
             ],
           });
@@ -812,6 +828,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       };
     } catch (cause) {
       return { kind: "blocked", reason: importFailureReason(cause) };
+    } finally {
+      importInFlightRef.current = false;
+      setImportInFlight(false);
     }
   };
 
@@ -838,7 +857,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       description="Each profile has its own cookies and logins, so you can stay signed in to different accounts at once."
       control={
         <Menu onOpenChange={(open) => open && loadSources()}>
-          <MenuTrigger render={<Button size="sm" variant="outline" disabled={disabled} />}>
+          <MenuTrigger
+            render={<Button size="sm" variant="outline" disabled={disabled || importInFlight} />}
+          >
             <PlusIcon />
             Add profile
           </MenuTrigger>
@@ -902,7 +923,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                     size="sm"
                     className="w-full max-w-56"
                     aria-label={`Rename ${profile.name}`}
-                    disabled={disabled}
+                    disabled={disabled || importInFlight}
                     maxLength={BROWSER_PROFILE_NAME_MAX_LENGTH}
                     value={profile.name}
                     onCommit={(next) => renameProfile(profile.id, next)}
@@ -922,7 +943,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                     <Button
                       size="icon-sm"
                       variant="ghost-muted"
-                      disabled={disabled || !environmentsReady}
+                      disabled={disabled || !environmentsReady || importInFlight}
                       aria-label={`${profile.name} options`}
                     />
                   }

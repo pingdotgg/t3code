@@ -20,6 +20,7 @@ import { Spinner } from "../ui/spinner";
 import {
   initialWizardStep,
   initialTargetSelection,
+  canCloseWizard,
   isRetryableReason,
   formatSkippedDomains,
   outcomeToStep,
@@ -103,7 +104,7 @@ export function BrowserImportWizard({
   };
 
   return (
-    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+    <Dialog open onOpenChange={(open) => (open || !canCloseWizard(step) ? undefined : onClose())}>
       <DialogPopup className="max-w-lg">
         {step.step === "quit" ? (
           <QuitStep source={source} onCancel={onClose} onRechecked={recheckAfterQuit} />

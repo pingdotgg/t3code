@@ -68,6 +68,11 @@ export type WizardStep =
     }
   | { readonly step: "blocked"; readonly reason: BrowserImportFailureReason };
 
+/** The import owns its target partition until the write finishes. */
+export function canCloseWizard(step: WizardStep): boolean {
+  return step.step !== "importing";
+}
+
 /**
  * Where the wizard opens for a source. A running browser is the one thing we
  * know up front, from the source listing; everything else is discovered by
