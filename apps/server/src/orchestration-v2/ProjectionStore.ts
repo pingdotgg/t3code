@@ -2029,12 +2029,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ORDER BY ordinal ASC, turn_item_id ASC
               `
             : yield* sql<PayloadRow>`
-                SELECT payload_json
-                FROM (
-                  SELECT payload_json, ordinal, turn_item_id
-                  FROM orchestration_v2_projection_turn_items
-                  WHERE thread_id = ${threadId}
-                    AND ordinal <= COALESCE(
+                WITH eligible AS (
+                  SELECT item.payload_json, item.ordinal, item.turn_item_id,
+                    item.run_id, item.node_id, item.type
+                  FROM orchestration_v2_projection_turn_items AS item
+                  LEFT JOIN orchestration_v2_projection_runs AS run
+                    ON run.run_id = item.run_id
+                  WHERE item.thread_id = ${threadId}
+                    AND item.ordinal <= COALESCE(
                       (
                         SELECT ordinal
                         FROM orchestration_v2_projection_turn_items
@@ -2044,9 +2046,82 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       ),
                       9223372036854775807
                     )
+                    AND (
+                      ${window.requiredRunId ?? null} IS NOT NULL
+                      OR (
+                        (run.status IS NULL OR run.status <> 'rolled_back')
+                        AND NOT (
+                          item.type = 'user_message'
+                          AND json_extract(item.payload_json, '$.inputIntent') = 'queued_turn'
+                          AND run.status IS 'cancelled'
+                        )
+                      )
+                    )
+                    AND (
+                      ${window.requiredRunId ?? null} IS NULL
+                      OR (
+                        item.run_id IS NULL
+                        AND EXISTS (
+                          SELECT 1
+                          FROM orchestration_v2_projection_threads AS source_thread
+                          WHERE source_thread.thread_id = item.thread_id
+                            AND json_extract(source_thread.payload_json, '$.historyOrigin') = 'v1_import'
+                        )
+                      )
+                      OR run.ordinal <= (
+                        SELECT required_run.ordinal
+                        FROM orchestration_v2_projection_runs AS required_run
+                        WHERE required_run.thread_id = item.thread_id
+                          AND required_run.run_id = ${window.requiredRunId ?? null}
+                        LIMIT 1
+                      )
+                    )
+                    AND NOT (
+                      item.type = 'run_interrupt_result'
+                      AND EXISTS (
+                        SELECT 1
+                        FROM orchestration_v2_projection_run_attempts AS attempt
+                        WHERE attempt.run_id = item.run_id
+                          AND attempt.root_node_id = item.node_id
+                          AND attempt.status = 'superseded'
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM orchestration_v2_projection_turn_items AS request
+                        WHERE request.thread_id = item.thread_id
+                          AND request.run_id = item.run_id
+                          AND request.type = 'run_interrupt_request'
+                      )
+                    )
+                ), selected AS (
+                  SELECT payload_json, ordinal, turn_item_id, run_id, type
+                  FROM eligible
                   ORDER BY ordinal DESC, turn_item_id DESC
                   LIMIT ${window.rowLimit}
+                ), retained AS (
+                  SELECT payload_json, ordinal, turn_item_id FROM selected
+                  UNION
+                  SELECT request.payload_json, request.ordinal, request.turn_item_id
+                  FROM orchestration_v2_projection_turn_items AS request
+                  WHERE request.run_id IN (
+                      SELECT run_id FROM selected
+                      WHERE type = 'run_interrupt_result' AND run_id IS NOT NULL
+                    )
+                    AND request.type = 'run_interrupt_request'
+                  UNION
+                  SELECT latest.payload_json, latest.ordinal, latest.turn_item_id
+                  FROM (
+                    SELECT payload_json, ordinal, turn_item_id
+                    FROM orchestration_v2_projection_turn_items
+                    WHERE thread_id = ${threadId}
+                      AND ${window.anchorItemId ?? null} IS NULL
+                      AND ${window.requiredRunId ?? null} IS NULL
+                    ORDER BY ordinal DESC, turn_item_id DESC
+                    LIMIT 1
+                  ) AS latest
                 )
+                SELECT payload_json
+                FROM retained
                 ORDER BY ordinal ASC, turn_item_id ASC
               `;
         const cohortPayloads = boundedTurnItemRows.map((row) =>
@@ -2063,6 +2138,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const cohortNodeIds = cohortJson("nodeId");
         const cohortProviderThreadIds = cohortJson("providerThreadId");
         const cohortProviderTurnIds = cohortJson("providerTurnId");
+        const cohortMessageIds = cohortJson("messageId");
+        const cohortPlanIds = cohortJson("planId");
         const cohortCheckpointIds = cohortJson("checkpointId");
         const cohortHandoffIds = cohortJson("contextHandoffId");
 
@@ -2230,17 +2307,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE message.thread_id = ${threadId}
                   AND (
                     message.message_id IN (
-                      SELECT json_extract(item.payload_json, '$.messageId')
-                      FROM orchestration_v2_projection_turn_items AS item
-                      WHERE item.thread_id = ${threadId}
-                        AND item.ordinal <= COALESCE(
-                          (SELECT ordinal FROM orchestration_v2_projection_turn_items
-                           WHERE thread_id = ${threadId}
-                             AND turn_item_id = ${window.anchorItemId ?? null} LIMIT 1),
-                          9223372036854775807
-                        )
-                      ORDER BY item.ordinal DESC, item.turn_item_id DESC
-                      LIMIT ${window.rowLimit}
+                      SELECT value FROM json_each(${cohortMessageIds})
                     )
                     OR message.run_id IN (
                       SELECT run_id FROM orchestration_v2_projection_runs
@@ -2261,17 +2328,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND (
                     plan.status = 'active'
                     OR plan.plan_id IN (
-                      SELECT json_extract(item.payload_json, '$.planId')
-                      FROM orchestration_v2_projection_turn_items AS item
-                      WHERE item.thread_id = ${threadId}
-                        AND item.ordinal <= COALESCE(
-                          (SELECT ordinal FROM orchestration_v2_projection_turn_items
-                           WHERE thread_id = ${threadId}
-                             AND turn_item_id = ${window.anchorItemId ?? null} LIMIT 1),
-                          9223372036854775807
-                        )
-                      ORDER BY item.ordinal DESC, item.turn_item_id DESC
-                      LIMIT ${window.rowLimit}
+                      SELECT value FROM json_each(${cohortPlanIds})
                     )
                   )
                 ORDER BY plan_id ASC
@@ -2318,17 +2375,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND (
                     handoff.status IN ('pending', 'ready')
                     OR handoff.context_handoff_id IN (
-                      SELECT json_extract(item.payload_json, '$.contextHandoffId')
-                      FROM orchestration_v2_projection_turn_items AS item
-                      WHERE item.thread_id = ${threadId}
-                        AND item.ordinal <= COALESCE(
-                          (SELECT ordinal FROM orchestration_v2_projection_turn_items
-                           WHERE thread_id = ${threadId}
-                             AND turn_item_id = ${window.anchorItemId ?? null} LIMIT 1),
-                          9223372036854775807
-                        )
-                      ORDER BY item.ordinal DESC, item.turn_item_id DESC
-                      LIMIT ${window.rowLimit}
+                      SELECT value FROM json_each(${cohortHandoffIds})
                     )
                   )
                 ORDER BY rowid ASC
