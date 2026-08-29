@@ -38,6 +38,13 @@ import { ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
+  ComposerDictationCancelAction,
+  ComposerDictationPrimaryAction,
+  ComposerDictationStatus,
+} from "../voice-input/ComposerDictationControl";
+import { useVoiceInputController } from "../voice-input/useVoiceInputController";
+import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputController";
+import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
@@ -240,6 +247,7 @@ export function NewTaskDraftScreen(props: {
   // Cancel would otherwise abandon the screen while the task still starts.
   const composerMenu = useComposerCommandMenu({
     draftMessage: flow.prompt,
+    ownerKey: flow.draftKey,
     environmentId: selectedProject?.environmentId ?? null,
     projectCwd:
       (flow.workspaceMode === "worktree"
@@ -251,6 +259,19 @@ export function NewTaskDraftScreen(props: {
     onChangeDraftMessage: flow.setPrompt,
     onUpdateInteractionMode: flow.planModeEnabled ? flow.setInteractionMode : undefined,
   });
+  const voiceInput = useVoiceInputController({
+    ownerKey: flow.draftKey,
+    draftMessage: flow.prompt,
+    selection: composerMenu.selection,
+    disabled: isIncomingShareTransferPending || isImportingShare || flow.submitting,
+    onChangeDraftMessage: flow.setPrompt,
+    onChangeSelection: composerMenu.onSelectionChange,
+  });
+  const voicePresentation = resolveVoiceComposerPresentation(
+    voiceInput.state,
+    voiceInput.elapsedSeconds,
+  );
+  const isVoiceInputPresented = voicePresentation.statusLabel !== null;
   usePreventRemove(
     (isIncomingShareTransferPending && !isProjectPickerReturnActive) ||
       isCancellingShareImport ||
@@ -693,7 +714,7 @@ export function NewTaskDraftScreen(props: {
   const showBranchLoading = flow.branchesLoading && flow.availableBranches.length === 0;
 
   async function handlePickImages(): Promise<void> {
-    if (isComposerInteractionLocked) {
+    if (isComposerInteractionLocked || voiceInput.isBusy) {
       return;
     }
     const result = await pickComposerImages({ existingCount: flow.attachments.length });
@@ -710,7 +731,7 @@ export function NewTaskDraftScreen(props: {
   }
 
   async function handlePickFiles(): Promise<void> {
-    if (isComposerInteractionLocked) {
+    if (isComposerInteractionLocked || voiceInput.isBusy) {
       return;
     }
     const maxBytes =
@@ -755,6 +776,7 @@ export function NewTaskDraftScreen(props: {
   );
 
   async function handleStart(): Promise<void> {
+    if (voiceInput.blocksSubmission) return;
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
     if (!selectedProject || !draftKey) {
@@ -941,6 +963,7 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
+    !voiceInput.blocksSubmission &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
   const promptEditor = (
     <ComposerEditor
@@ -949,6 +972,7 @@ export function NewTaskDraftScreen(props: {
       // Focusing is a user action, so presenting the form sheet has one motion.
       autoFocus={false}
       editable={!isComposerInteractionLocked}
+      readOnly={voiceInput.freezesEditor}
       multiline
       scrollEnabled
       value={flow.prompt}
@@ -1028,7 +1052,7 @@ export function NewTaskDraftScreen(props: {
       <ComposerInlineControl
         accessibilityLabel={`Environment: ${selectedEnvironmentLabel}`}
         chevronDirection="right"
-        disabled={isComposerInteractionLocked}
+        disabled={isComposerInteractionLocked || voiceInput.isBusy}
         icon="desktopcomputer"
         label={`on ${selectedEnvironmentLabel}`}
         maxWidth={260}
@@ -1063,7 +1087,7 @@ export function NewTaskDraftScreen(props: {
       <ComposerInlineControl
         accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
         accessibilityLabel={workspaceLabel}
-        disabled={isComposerInteractionLocked}
+        disabled={isComposerInteractionLocked || voiceInput.isBusy}
         iconNode={
           <NewTaskWorkspaceIcon
             workspaceMode={flow.workspaceMode}
@@ -1127,64 +1151,90 @@ export function NewTaskDraftScreen(props: {
         {promptEditor}
 
         <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={4}>
-          <ComposerToolbarScroller contentPaddingRight={8} fadeSurface="sheet">
-            <ComposerToolbarButton
-              accessibilityLabel="Add attachment"
-              disabled={isComposerInteractionLocked}
-              icon="plus"
-              onPress={() => {
-                if (selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments) {
-                  Alert.alert("Add attachment", undefined, [
-                    { text: "Photos", onPress: () => void handlePickImages() },
-                    { text: "Files", onPress: () => void handlePickFiles() },
-                    { text: "Cancel", style: "cancel" },
-                  ]);
-                  return;
-                }
-                void handlePickImages();
-              }}
-              showChevron={false}
+          <ComposerDictationCancelAction
+            presentation={voicePresentation}
+            onCancel={voiceInput.cancel}
+          />
+          {isVoiceInputPresented ? (
+            <ComposerDictationStatus
+              presentation={voicePresentation}
+              onDismissError={voiceInput.cancel}
             />
-            <ComposerInlineControl
-              accessibilityLabel="Model and reasoning settings"
-              disabled={isComposerInteractionLocked}
-              emphasized
-              iconNode={
-                <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
-              }
-              label={flow.selectedModelOption?.label ?? "Choose model"}
-              maxWidth={152}
-              onPress={settingsSheetPresentation.open}
-            />
-            {flow.planModeEnabled ? (
-              <ComposerInlineControl
-                accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
-                accessibilityLabel={`Interaction mode: ${flow.interactionMode === "plan" ? "Plan" : "Build"}`}
+          ) : (
+            <ComposerToolbarScroller contentPaddingRight={8} fadeSurface="sheet">
+              <ComposerToolbarButton
+                accessibilityLabel="Add attachment"
                 disabled={isComposerInteractionLocked}
-                emphasized
-                icon={
-                  flow.interactionMode === "plan"
-                    ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
-                    : { ios: "hammer", android: "construction" }
-                }
-                label={flow.interactionMode === "plan" ? "Plan" : "Build"}
-                onPress={() =>
-                  flow.setInteractionMode(flow.interactionMode === "plan" ? "default" : "plan")
-                }
+                icon="plus"
+                onPress={() => {
+                  if (selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments) {
+                    Alert.alert("Add attachment", undefined, [
+                      { text: "Photos", onPress: () => void handlePickImages() },
+                      { text: "Files", onPress: () => void handlePickFiles() },
+                      { text: "Cancel", style: "cancel" },
+                    ]);
+                    return;
+                  }
+                  void handlePickImages();
+                }}
                 showChevron={false}
               />
-            ) : null}
-          </ComposerToolbarScroller>
-          <ComposerToolbarButton
-            accessibilityLabel={
-              flow.submitting ? "Starting task" : environmentConnected ? "Start task" : "Queue task"
-            }
-            disabled={!canStart}
-            icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
-            onPress={() => void handleStart()}
-            showChevron={false}
-            variant="primary"
+              <ComposerInlineControl
+                accessibilityLabel="Model and reasoning settings"
+                disabled={isComposerInteractionLocked}
+                emphasized
+                iconNode={
+                  <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
+                }
+                label={flow.selectedModelOption?.label ?? "Choose model"}
+                maxWidth={152}
+                onPress={settingsSheetPresentation.open}
+              />
+              {flow.planModeEnabled ? (
+                <ComposerInlineControl
+                  accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
+                  accessibilityLabel={`Interaction mode: ${flow.interactionMode === "plan" ? "Plan" : "Build"}`}
+                  disabled={isComposerInteractionLocked}
+                  emphasized
+                  icon={
+                    flow.interactionMode === "plan"
+                      ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
+                      : { ios: "hammer", android: "construction" }
+                  }
+                  label={flow.interactionMode === "plan" ? "Plan" : "Build"}
+                  onPress={() =>
+                    flow.setInteractionMode(flow.interactionMode === "plan" ? "default" : "plan")
+                  }
+                  showChevron={false}
+                />
+              ) : null}
+            </ComposerToolbarScroller>
+          )}
+          <ComposerDictationPrimaryAction
+            state={voiceInput.state}
+            presentation={voicePresentation}
+            isAvailable={voiceInput.isAvailable}
+            disabled={isIncomingShareTransferPending || isImportingShare || flow.submitting}
+            onStart={voiceInput.start}
+            onConfirm={voiceInput.stop}
+            onCancel={voiceInput.cancel}
           />
+          {voicePresentation.showsSend ? (
+            <ComposerToolbarButton
+              accessibilityLabel={
+                flow.submitting
+                  ? "Starting task"
+                  : environmentConnected
+                    ? "Start task"
+                    : "Queue task"
+              }
+              disabled={!canStart}
+              icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
+              onPress={() => void handleStart()}
+              showChevron={false}
+              variant="primary"
+            />
+          ) : null}
         </ComposerToolbarRow>
       </ComposerSurface>
     </View>

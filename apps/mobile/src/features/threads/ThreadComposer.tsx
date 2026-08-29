@@ -63,6 +63,13 @@ import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
+  ComposerDictationCancelAction,
+  ComposerDictationPrimaryAction,
+  ComposerDictationStatus,
+} from "../voice-input/ComposerDictationControl";
+import { useVoiceInputController } from "../voice-input/useVoiceInputController";
+import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputController";
+import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
 } from "./ThreadSettingsSheet";
@@ -297,13 +304,57 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
-  // Opening and presentation count as active so the composer stays expanded
-  // while focus moves between its native editor and the settings picker.
-  const isExpanded = isFocused || settingsSheetPresentation.isActive;
-  const canSend = hasContent;
+  const showStopAction =
+    props.selectedThread.session?.status === "running" ||
+    props.selectedThread.session?.status === "starting";
 
-  // Keep the parent's feed inset synchronized while the settings sheet keeps
-  // the composer expanded between editor focus events.
+  const sendLabel =
+    props.connectionState !== "connected" || props.queueCount > 0 ? "Queue" : "Send";
+  const currentModelSelection = props.selectedThread.modelSelection;
+  const currentRuntimeMode = props.selectedThread.runtimeMode;
+  const connectionStatus = composerConnectionStatus({
+    connectionError: props.connectionError,
+    connectionState: props.connectionState,
+    environmentLabel: props.environmentLabel,
+    threadSyncPhase: props.threadSyncPhase,
+  });
+  const selectedProviderStatus = useMemo(() => {
+    if (!props.serverConfig) return null;
+    return (
+      props.serverConfig.providers.find(
+        (p) => p.instanceId === props.selectedThread.modelSelection.instanceId,
+      ) ?? null
+    );
+  }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
+  const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+
+  const composerMenu = useComposerCommandMenu({
+    draftMessage: props.draftMessage,
+    ownerKey: composerOwnerKey,
+    environmentId: props.environmentId,
+    projectCwd: props.projectCwd,
+    selectedProviderStatus,
+    hasThread: true,
+    onChangeDraftMessage: props.onChangeDraftMessage,
+    onUpdateInteractionMode: props.onUpdateInteractionMode,
+  });
+  const voiceInput = useVoiceInputController({
+    ownerKey: composerOwnerKey,
+    draftMessage: props.draftMessage,
+    selection: composerMenu.selection,
+    onChangeDraftMessage: props.onChangeDraftMessage,
+    onChangeSelection: composerMenu.onSelectionChange,
+  });
+  const voicePresentation = resolveVoiceComposerPresentation(
+    voiceInput.state,
+    voiceInput.elapsedSeconds,
+  );
+  const isVoiceInputPresented = voicePresentation.statusLabel !== null;
+  const isExpanded = isFocused || settingsSheetPresentation.isActive || isVoiceInputPresented;
+  const canSend = hasContent && !voiceInput.blocksSubmission;
+
+  // Keep the parent's feed inset synchronized while settings or dictation
+  // keep the composer expanded between editor focus events.
   useEffect(() => {
     onExpandedChange?.(isExpanded);
   }, [isExpanded, onExpandedChange]);
@@ -332,46 +383,20 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
-    if (!settingsSheetPresentation.isActive) {
+    if (!settingsSheetPresentation.isActive && !isVoiceInputPresented) {
       onExpandedChange?.(false);
     }
     onEditorFocusChange?.(false);
-  }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.isActive]);
-  const showStopAction =
-    props.selectedThread.session?.status === "running" ||
-    props.selectedThread.session?.status === "starting";
-
-  const sendLabel =
-    props.connectionState !== "connected" || props.queueCount > 0 ? "Queue" : "Send";
-  const currentModelSelection = props.selectedThread.modelSelection;
-  const currentRuntimeMode = props.selectedThread.runtimeMode;
-  const connectionStatus = composerConnectionStatus({
-    connectionError: props.connectionError,
-    connectionState: props.connectionState,
-    environmentLabel: props.environmentLabel,
-    threadSyncPhase: props.threadSyncPhase,
-  });
-  const selectedProviderStatus = useMemo(() => {
-    if (!props.serverConfig) return null;
-    return (
-      props.serverConfig.providers.find(
-        (p) => p.instanceId === props.selectedThread.modelSelection.instanceId,
-      ) ?? null
-    );
-  }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
-
-  const composerMenu = useComposerCommandMenu({
-    draftMessage: props.draftMessage,
-    environmentId: props.environmentId,
-    projectCwd: props.projectCwd,
-    selectedProviderStatus,
-    hasThread: true,
-    onChangeDraftMessage: props.onChangeDraftMessage,
-    onUpdateInteractionMode: props.onUpdateInteractionMode,
-  });
+  }, [
+    isVoiceInputPresented,
+    onEditorFocusChange,
+    onExpandedChange,
+    settingsSheetPresentation.isActive,
+  ]);
   const { onSendMessage } = props;
 
   const handleSend = useCallback(async () => {
+    if (voiceInput.blocksSubmission) return;
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
@@ -398,6 +423,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.environmentLabel,
     props.selectedThread.id,
     props.selectedThread.title,
+    voiceInput.blocksSubmission,
   ]);
 
   // ── Model menu ───────────────────────────────────────────
@@ -426,7 +452,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       }),
     [currentModelOption?.capabilities, currentModelSelection.options],
   );
-  const settingsOwnerId = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  const settingsOwnerId = composerOwnerKey;
   const settingsRouteSession = useMemo<ExistingThreadSettingsRouteSession>(
     () => ({
       ownerId: settingsOwnerId,
@@ -572,6 +598,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 ref={inputRef}
                 multiline
                 value={props.draftMessage}
+                readOnly={voiceInput.freezesEditor}
                 skills={selectedProviderStatus?.skills ?? []}
                 selection={composerMenu.selection}
                 onChangeText={props.onChangeDraftMessage}
@@ -638,7 +665,21 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               </View>
             ) : null}
             {!isExpanded ? (
-              <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(100)}>
+              <Animated.View
+                className="flex-row items-center gap-1.5"
+                entering={FadeIn.duration(180)}
+                exiting={FadeOut.duration(100)}
+              >
+                {voiceInput.isAvailable ? (
+                  <ComposerDictationPrimaryAction
+                    state={voiceInput.state}
+                    presentation={voicePresentation}
+                    isAvailable={voiceInput.isAvailable}
+                    onStart={voiceInput.start}
+                    onConfirm={voiceInput.stop}
+                    onCancel={voiceInput.cancel}
+                  />
+                ) : null}
                 {showStopAction ? (
                   <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
                 ) : (
@@ -668,48 +709,69 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             }
           >
             <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={4}>
-              <View className="min-w-0 flex-1 flex-row items-center gap-2">
-                <ComposerToolbarButton
-                  accessibilityLabel="Add attachment"
-                  icon="plus"
-                  onPress={() => {
-                    if (props.serverConfig?.environment.capabilities.fileAttachments) {
-                      Alert.alert("Add attachment", undefined, [
-                        { text: "Photos", onPress: () => void props.onPickDraftImages() },
-                        { text: "Files", onPress: () => void props.onPickDraftFiles() },
-                        { text: "Cancel", style: "cancel" },
-                      ]);
-                      return;
-                    }
-                    void props.onPickDraftImages();
-                  }}
-                  showChevron={false}
+              <ComposerDictationCancelAction
+                presentation={voicePresentation}
+                onCancel={voiceInput.cancel}
+              />
+              {isVoiceInputPresented ? (
+                <ComposerDictationStatus
+                  presentation={voicePresentation}
+                  onDismissError={voiceInput.cancel}
                 />
-                <View className="min-w-0 flex-1" style={{ maxWidth: 152 }}>
-                  <ComposerInlineControl
-                    accessibilityLabel="Model and reasoning settings"
-                    emphasized
-                    iconNode={
-                      <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
-                    }
-                    label={currentModelOption?.label ?? currentModelSelection.model}
-                    maxWidth={152}
-                    onPress={openSettings}
+              ) : (
+                <View className="min-w-0 flex-1 flex-row items-center gap-2">
+                  <ComposerToolbarButton
+                    accessibilityLabel="Add attachment"
+                    icon="plus"
+                    onPress={() => {
+                      if (props.serverConfig?.environment.capabilities.fileAttachments) {
+                        Alert.alert("Add attachment", undefined, [
+                          { text: "Photos", onPress: () => void props.onPickDraftImages() },
+                          { text: "Files", onPress: () => void props.onPickDraftFiles() },
+                          { text: "Cancel", style: "cancel" },
+                        ]);
+                        return;
+                      }
+                      void props.onPickDraftImages();
+                    }}
+                    showChevron={false}
                   />
+                  <View className="min-w-0 flex-1" style={{ maxWidth: 152 }}>
+                    <ComposerInlineControl
+                      accessibilityLabel="Model and reasoning settings"
+                      emphasized
+                      iconNode={
+                        <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
+                      }
+                      label={currentModelOption?.label ?? currentModelSelection.model}
+                      maxWidth={152}
+                      onPress={openSettings}
+                    />
+                  </View>
                 </View>
-              </View>
+              )}
               <View className="shrink-0 flex-row items-center gap-2">
-                <ComposerToolbarButton
-                  accessibilityLabel={sendLabel}
-                  icon="arrow.up"
-                  variant="primary"
-                  disabled={!canSend}
-                  onPress={handleSend}
-                  showChevron={false}
+                <ComposerDictationPrimaryAction
+                  state={voiceInput.state}
+                  presentation={voicePresentation}
+                  isAvailable={voiceInput.isAvailable}
+                  onStart={voiceInput.start}
+                  onConfirm={voiceInput.stop}
+                  onCancel={voiceInput.cancel}
                 />
+                {voicePresentation.showsSend ? (
+                  <ComposerToolbarButton
+                    accessibilityLabel={sendLabel}
+                    icon="arrow.up"
+                    variant="primary"
+                    disabled={!canSend}
+                    onPress={handleSend}
+                    showChevron={false}
+                  />
+                ) : null}
                 {showStopAction ? (
                   <ComposerToolbarButton
-                    accessibilityLabel="Stop"
+                    accessibilityLabel="Stop agent"
                     icon="stop.fill"
                     variant="danger"
                     onPress={props.onStopThread}
