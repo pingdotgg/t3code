@@ -119,21 +119,17 @@ export function ComposerSurface(props: {
   /** Existing thread composers morph between pill and card layouts. */
   readonly animateLayout?: boolean;
 }) {
-  // Drop shadow lives on a wrapper: `overflow: "hidden"` on the surface itself
-  // (needed to clip content to the pill shape) would clip the shadow on iOS.
-  const shadowStyle: ViewStyle = {
-    borderRadius: props.style.borderRadius,
-    shadowOpacity: 1,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 10,
-  };
-
+  // A box shadow follows the rounded surface even when the glass is transparent.
+  // Keep it outside the clipped content so the shadow can extend past the edge.
   return (
     <Animated.View
-      className="shadow-adaptive-black-a15-a35"
+      className="shadow-[0_6px_28px] shadow-adaptive-black-a15-a35"
       layout={props.animateLayout === false ? undefined : COMPOSER_LAYOUT_TRANSITION}
-      style={shadowStyle}
+      style={{
+        borderRadius: props.style.borderRadius,
+        // Android versions before 9 do not support outset box shadows.
+        elevation: Platform.OS === "android" && Platform.Version < 28 ? 10 : undefined,
+      }}
     >
       <GlassSurface
         chrome="none"

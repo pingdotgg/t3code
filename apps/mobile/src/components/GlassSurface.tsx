@@ -13,7 +13,11 @@ import { withUniwind } from "uniwind";
 
 import { cn } from "../lib/cn";
 
-const ThemedGlassView = withUniwind(GlassView);
+// Explicit mappings keep the native glassEffectStyle enum out of style-array conversion.
+const ThemedGlassView = withUniwind(GlassView, {
+  style: { fromClassName: "className" },
+  tintColor: { fromClassName: "tintColorClassName", styleProperty: "accentColor" },
+});
 
 interface GlassSurfaceProps extends ViewProps {
   readonly children: ReactNode;
