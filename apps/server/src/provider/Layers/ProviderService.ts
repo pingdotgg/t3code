@@ -316,8 +316,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     options?.revokeMcpCredential ?? McpSessionRegistry.revokeActiveMcpThread;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const threadLockManager = yield* makeThreadLockManager();
+  const threadRoutingLockManager = yield* makeThreadLockManager();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const withThreadLock = threadLockManager.withLock;
+  const withThreadRoutingLock = threadRoutingLockManager.withLock;
+  const withSessionLock = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
+    withThreadLock(threadId, withThreadRoutingLock(threadId, effect));
   /**
    * Attach the `t3-code` MCP server to the session that is about to start.
    *
@@ -691,7 +695,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "provider.thread_id": threadId,
         "provider.runtime_mode": parsed.runtimeMode,
       });
-      return yield* withThreadLock(
+      return yield* withSessionLock(
         threadId,
         Effect.gen(function* () {
           const instanceInfo = yield* registry.getInstanceInfo(resolvedInstanceId);
@@ -1070,7 +1074,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         payload: rawInput,
       });
       let metricProvider = "unknown";
-      return yield* withThreadLock(
+      // Interrupt remains out of band from turn operations so it can cancel a
+      // blocked send. The routing lock still orders it behind session handoffs.
+      return yield* withThreadRoutingLock(
         input.threadId,
         Effect.gen(function* () {
           const routed = yield* resolveRoutableSession({
