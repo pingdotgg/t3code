@@ -6,6 +6,7 @@ import type {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ChatAttachmentId,
+  ChatFileAttachment,
   ChatImageAttachment,
   ClaudeSettings,
   EnvironmentId,
@@ -761,7 +762,7 @@ describe("ClaudeAdapterV2 approval cancellation", () => {
 });
 
 describe("ClaudeAdapterV2 attachments", () => {
-  it.effect("forwards persisted images on initial turns and live steering", () =>
+  it.effect("forwards images and references generic files on sends and steering", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -817,9 +818,22 @@ describe("ClaudeAdapterV2 attachments", () => {
           mimeType: "image/png",
           sizeBytes: 4,
         });
+        const document = ChatFileAttachment.make({
+          type: "file",
+          id: ChatAttachmentId.make(
+            "thread-claude-attachments-abcdefab-1234-1234-1234-123456789abc",
+          ),
+          name: "requirements.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 4,
+        });
         yield* fileSystem.writeFile(
           path.join(attachmentsDir, attachmentRelativePath(attachment)!),
           Uint8Array.from([1, 2, 3, 4]),
+        );
+        yield* fileSystem.writeFile(
+          path.join(attachmentsDir, attachmentRelativePath(document)!),
+          Uint8Array.from([5, 6, 7, 8]),
         );
         const attemptId = RunAttemptId.make("attempt-claude-attachments");
         const now = yield* DateTime.now;
@@ -831,7 +845,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             now,
             attemptId,
             text: "What's in this image?",
-            attachments: [attachment],
+            attachments: [attachment, document],
           }),
         );
 
@@ -847,10 +861,11 @@ describe("ClaudeAdapterV2 attachments", () => {
           attachmentsDir,
           attachmentRelativePath(attachment)!,
         );
+        const expectedDocumentPath = path.join(attachmentsDir, attachmentRelativePath(document)!);
         assert.deepEqual(offeredMessages[0]?.message.content, [
           {
             type: "text",
-            text: `Ultrathink:\nWhat's in this image?\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]`,
+            text: `Ultrathink:\nWhat's in this image?\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
           },
           expectedImageBlock,
         ]);
@@ -869,7 +884,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             creationSource: "web",
             messageId: MessageId.make("message-claude-attachments-steer"),
             text: "Focus on the diagram labels.",
-            attachments: [attachment],
+            attachments: [attachment, document],
           },
         });
 
@@ -877,7 +892,7 @@ describe("ClaudeAdapterV2 attachments", () => {
         assert.deepEqual(offeredMessages[1]?.message.content, [
           {
             type: "text",
-            text: `Ultrathink:\nFocus on the diagram labels.\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]`,
+            text: `Ultrathink:\nFocus on the diagram labels.\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
           },
           expectedImageBlock,
         ]);
