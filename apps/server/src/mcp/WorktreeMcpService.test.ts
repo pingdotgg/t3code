@@ -2084,6 +2084,155 @@ describe("t3_thread_checkout", () => {
     });
   });
 
+  it.effect("repairs a missing saved worktree by returning to the project root", () => {
+    const missingPath = "/worktrees/project/deleted";
+    const harness = makeHarness({
+      thread: { branch: "feature/deleted", worktreePath: missingPath },
+      refs: rootRefs,
+      worktrees: [{ path: workspaceRoot, refName: "dev" }],
+      workspaceStatuses: {
+        [workspaceRoot]: { branch: "dev" },
+        [missingPath]: { branch: null, isRepo: false },
+      },
+      worktreeInventoryFailsFor: new Set([missingPath]),
+    });
+    return Effect.gen(function* () {
+      const result = yield* runCheckout(harness, { target: { type: "project_root" } });
+
+      expect(result.previous).toMatchObject({
+        workspacePath: missingPath,
+        recordedBranch: "feature/deleted",
+        actualBranch: null,
+      });
+      expect(result.current).toMatchObject({
+        workspacePath: workspaceRoot,
+        recordedBranch: "dev",
+        recordedWorktreePath: null,
+        actualBranch: "dev",
+      });
+      expect(harness.switchRef).not.toHaveBeenCalled();
+      expect(harness.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          expectedBranch: "feature/deleted",
+          expectedWorktreePath: missingPath,
+          branch: "dev",
+          worktreePath: null,
+        }),
+      );
+    });
+  });
+
+  it.effect("repairs a missing saved worktree by reusing a listed checkout", () => {
+    const missingPath = "/worktrees/project/deleted";
+    const targetPath = "/worktrees/project/existing";
+    const harness = makeHarness({
+      thread: { branch: "feature/deleted", worktreePath: missingPath },
+      refs: [
+        rootRefs[0],
+        {
+          name: "feature/existing",
+          current: true,
+          isDefault: false,
+          worktreePath: targetPath,
+        },
+      ],
+      worktrees: [
+        { path: workspaceRoot, refName: "dev" },
+        { path: targetPath, refName: "feature/existing" },
+      ],
+      workspaceStatuses: {
+        [workspaceRoot]: { branch: "dev" },
+        [missingPath]: { branch: null, isRepo: false },
+        [targetPath]: { branch: "feature/existing" },
+      },
+      worktreeInventoryFailsFor: new Set([missingPath]),
+    });
+    return Effect.gen(function* () {
+      const result = yield* runCheckout(harness, {
+        target: { type: "worktree", path: targetPath },
+      });
+
+      expect(result.checkoutAction).toBe("reused");
+      expect(result.previous.workspacePath).toBe(missingPath);
+      expect(result.current).toMatchObject({
+        workspacePath: targetPath,
+        recordedBranch: "feature/existing",
+        recordedWorktreePath: targetPath,
+      });
+      expect(harness.switchRef).not.toHaveBeenCalled();
+    });
+  });
+
+  it.effect("repairs a missing saved worktree by creating from the healthy project root", () => {
+    const missingPath = "/worktrees/project/deleted";
+    const harness = makeHarness({
+      thread: { branch: "feature/deleted", worktreePath: missingPath },
+      refs: rootRefs,
+      worktrees: [{ path: workspaceRoot, refName: "dev" }],
+      workspaceStatuses: {
+        [workspaceRoot]: { branch: "dev" },
+        [missingPath]: { branch: null, isRepo: false },
+      },
+      worktreeInventoryFailsFor: new Set([missingPath]),
+    });
+    return Effect.gen(function* () {
+      const result = yield* runCheckout(harness, {
+        target: { type: "new_worktree", branch: "feature/recovered" },
+      });
+
+      expect(result.previous.actualBranch).toBeNull();
+      expect(result.current.recordedWorktreePath).toBe("/worktrees/project/feature/recovered");
+      expect(harness.createWorktree).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cwd: workspaceRoot,
+          refName: "dev",
+          newRefName: "feature/recovered",
+        }),
+      );
+      expect(harness.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          expectedBranch: "feature/deleted",
+          expectedWorktreePath: missingPath,
+        }),
+      );
+    });
+  });
+
+  it.effect("applies branch existence checks to project-root targets", () => {
+    const harness = makeHarness({
+      thread: { branch: "dev", worktreePath: null },
+      refs: rootRefs,
+      workspaceStatuses: { [workspaceRoot]: { branch: "dev" } },
+    });
+    return Effect.gen(function* () {
+      const existingExit = yield* Effect.exit(
+        runCheckout(harness, {
+          target: { type: "project_root", branch: "feature/checkout", create: true },
+        }),
+      );
+      expectTypedFailure(existingExit, {
+        _tag: "WorktreeMcpFailure",
+        code: "invalid_request",
+        message:
+          "Local branch 'feature/checkout' already exists. Omit target.create to check it out.",
+      });
+
+      const missingExit = yield* Effect.exit(
+        runCheckout(harness, {
+          target: { type: "project_root", branch: "feature/missing" },
+        }),
+      );
+      expectTypedFailure(missingExit, {
+        _tag: "WorktreeMcpFailure",
+        code: "invalid_request",
+        message:
+          "Branch or remote ref 'feature/missing' does not exist. Pass target.create=true to create a local branch from the project root.",
+      });
+      expect(harness.switchRef).not.toHaveBeenCalled();
+      expect(harness.createRef).not.toHaveBeenCalled();
+    });
+  });
+
   it.effect("creates a new worktree for an already attached thread", () => {
     const sourcePath = "/worktrees/project/source";
     const harness = makeHarness({

@@ -354,17 +354,44 @@ const make = Effect.gen(function* () {
 
     const project = yield* loadProject(scope, projection.thread.projectId);
     const projectCwd = yield* canonicalizePath(project.workspaceRoot);
-    const sourceCwd = yield* canonicalizePath(projection.thread.worktreePath ?? projectCwd);
-
-    if (projection.thread.worktreePath !== null) {
-      const inventory = yield* loadWorktrees(projectCwd);
-      const projectWorktreePaths = new Set(inventory.worktrees.map((worktree) => worktree.path));
-      if (!projectWorktreePaths.has(sourceCwd)) {
-        return yield* failure(
-          "scope_mismatch",
-          `Thread worktree '${projection.thread.worktreePath}' is not registered in project '${projection.thread.projectId}'.`,
-        );
-      }
+    const projectInventory = yield* loadWorktrees(projectCwd);
+    const projectWorktreeRoot = projectInventory.currentWorktreeRoot;
+    if (projectWorktreeRoot === null) {
+      return yield* failure(
+        "invalid_request",
+        `Git could not resolve the physical checkout for project '${projection.thread.projectId}'.`,
+      );
+    }
+    const recordedSourceCwd = yield* canonicalizePath(
+      projection.thread.worktreePath ?? projectWorktreeRoot,
+    );
+    const sourceInventory =
+      projection.thread.worktreePath === null
+        ? Option.some(projectInventory)
+        : yield* loadWorkspaceBindingInventory(recordedSourceCwd);
+    const sourceCwd = Option.match(sourceInventory, {
+      // A stale binding must not make recovery impossible. New worktree
+      // creation can safely resolve its base from the healthy project root;
+      // nothing reads from or mutates the missing old checkout.
+      onNone: () => projectWorktreeRoot,
+      onSome: (inventory) => inventory.currentWorktreeRoot,
+    });
+    if (
+      Option.isSome(sourceInventory) &&
+      (sourceInventory.value.repositoryCommonDir !== projectInventory.repositoryCommonDir ||
+        sourceCwd === null ||
+        !projectInventory.worktrees.some((worktree) => worktree.path === sourceCwd))
+    ) {
+      return yield* failure(
+        "scope_mismatch",
+        `Thread worktree '${projection.thread.worktreePath}' is not registered in project '${projection.thread.projectId}'.`,
+      );
+    }
+    if (sourceCwd === null) {
+      return yield* failure(
+        "invalid_request",
+        `Git could not resolve the physical checkout for thread '${scope.threadId}'.`,
+      );
     }
 
     if (input.path !== undefined && !path.isAbsolute(input.path)) {
@@ -959,7 +986,7 @@ const make = Effect.gen(function* () {
       projection.thread.worktreePath ?? projectWorkspaceRoot,
     );
     if (input.target.type === "new_worktree") {
-      const previousActual = yield* readWorkspaceStatus(recordedWorkspacePath);
+      const previousActualBranch = yield* readWorkspaceBranchOrNull(recordedWorkspacePath);
       const handoff = yield* performHandoff(
         scope,
         {
@@ -983,7 +1010,7 @@ const make = Effect.gen(function* () {
           workspacePath: recordedWorkspacePath,
           recordedBranch: projection.thread.branch,
           recordedWorktreePath: projection.thread.worktreePath,
-          actualBranch: previousActual.refName,
+          actualBranch: previousActualBranch,
         },
         current: {
           workspacePath: handoff.worktreePath,
@@ -993,7 +1020,7 @@ const make = Effect.gen(function* () {
         },
         checkoutAction: "created",
         workspaceChanged: true,
-        branchChanged: previousActual.refName !== handoff.branch,
+        branchChanged: previousActualBranch !== handoff.branch,
         continuation: handoff.continuation,
         setupScript: handoff.setupScript,
         callerTurnEnds: true,
@@ -1001,28 +1028,45 @@ const make = Effect.gen(function* () {
       } satisfies WorktreeMcpCheckoutResult;
     }
     const [inventory, currentInventory] = yield* Effect.all(
-      [loadWorktrees(projectWorkspaceRoot), loadWorktrees(recordedWorkspacePath)],
+      [loadWorktrees(projectWorkspaceRoot), loadWorkspaceBindingInventory(recordedWorkspacePath)],
       { concurrency: 2 },
     );
-    if (inventory.repositoryCommonDir !== currentInventory.repositoryCommonDir) {
+    if (
+      Option.isSome(currentInventory) &&
+      inventory.repositoryCommonDir !== currentInventory.value.repositoryCommonDir
+    ) {
       return yield* failure(
         "scope_mismatch",
         `Thread workspace '${recordedWorkspacePath}' does not belong to the calling thread's project repository.`,
       );
     }
     const projectWorktreeRoot = inventory.currentWorktreeRoot;
-    const currentWorkspacePath = currentInventory.currentWorktreeRoot;
-    if (projectWorktreeRoot === null || currentWorkspacePath === null) {
+    const currentWorkspacePath = Option.isSome(currentInventory)
+      ? currentInventory.value.currentWorktreeRoot
+      : null;
+    if (projectWorktreeRoot === null) {
       return yield* failure(
         "invalid_request",
-        "Git could not resolve the physical project or thread checkout.",
+        "Git could not resolve the physical project checkout.",
+      );
+    }
+    if (Option.isSome(currentInventory) && currentWorkspacePath === null) {
+      return yield* failure(
+        "invalid_request",
+        "Git could not resolve the physical thread checkout.",
       );
     }
     const [refs, threads, previousActual] = yield* Effect.all(
       [
         loadRefs(projectWorkspaceRoot),
         loadProjectThreads(projection.thread.projectId),
-        readWorkspaceStatus(currentWorkspacePath),
+        readWorkspaceStatus(recordedWorkspacePath).pipe(
+          Effect.orElseSucceed(() => ({
+            isRepo: false,
+            refName: null,
+            hasWorkingTreeChanges: false,
+          })),
+        ),
       ],
       { concurrency: 3 },
     );
@@ -1068,6 +1112,21 @@ const make = Effect.gen(function* () {
             "target.create requires target.branch when checking out the project root.",
           );
         }
+        if (requestedBranch !== undefined) {
+          selectedRef = localRefByName.get(requestedBranch) ?? remoteRefByName.get(requestedBranch);
+          if (createBranch && localRefByName.has(requestedBranch)) {
+            return yield* failure(
+              "invalid_request",
+              `Local branch '${requestedBranch}' already exists. Omit target.create to check it out.`,
+            );
+          }
+          if (!createBranch && selectedRef === undefined) {
+            return yield* failure(
+              "invalid_request",
+              `Branch or remote ref '${requestedBranch}' does not exist. Pass target.create=true to create a local branch from the project root.`,
+            );
+          }
+        }
         break;
       }
       case "branch": {
@@ -1095,9 +1154,10 @@ const make = Effect.gen(function* () {
           workspace === "project_root"
             ? projectWorktreeRoot
             : workspace === "current"
-              ? currentWorkspacePath
+              ? (currentWorkspacePath ?? recordedWorkspacePath)
               : (selectedWorktreePath ??
-                (projection.thread.worktreePath !== null && selectedRef?.isDefault === true
+                (currentWorkspacePath === null ||
+                (projection.thread.worktreePath !== null && selectedRef?.isDefault === true)
                   ? projectWorktreeRoot
                   : currentWorkspacePath));
         break;
@@ -1687,7 +1747,7 @@ const make = Effect.gen(function* () {
               })
             : ({ status: "skipped" } as const);
           const previous = {
-            workspacePath: currentWorkspacePath,
+            workspacePath: currentWorkspacePath ?? recordedWorkspacePath,
             recordedBranch: projection.thread.branch,
             recordedWorktreePath: projection.thread.worktreePath,
             actualBranch: previousActual.refName,
