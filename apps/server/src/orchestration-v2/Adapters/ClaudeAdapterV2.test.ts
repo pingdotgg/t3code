@@ -60,6 +60,7 @@ import {
   ClaudeProviderCapabilitiesV2,
   ClaudeAgentSdkQueryRunnerError,
   claudeEffectiveQueryPolicyKey,
+  claudeProviderTurnTokenUsage,
   claudeMcpQueryOverrides,
   claudeQueryMessages,
   claudeRuntimeQueryPolicyForRuntimePolicy,
@@ -668,6 +669,31 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       hasExtraArgs: true,
     });
     assert.notInclude(JSON.stringify(loggedClaudeQueryOptions(options)), "secret launch prompt");
+  });
+});
+
+describe("ClaudeAdapterV2 context usage", () => {
+  it("projects assistant usage against the selected context window", () => {
+    const usage = claudeProviderTurnTokenUsage(
+      {
+        input_tokens: 42_000,
+        cache_creation_input_tokens: 2_000,
+        cache_read_input_tokens: 5_000,
+        output_tokens: 1_000,
+      },
+      CLAUDE_TEST_MODEL_SELECTION,
+      "2026-08-29T00:00:00.000Z",
+    );
+
+    assert.deepEqual(usage, {
+      usedTokens: 50_000,
+      maxTokens: 200_000,
+      inputTokens: 49_000,
+      cachedInputTokens: 5_000,
+      outputTokens: 1_000,
+      reasoningOutputTokens: 0,
+      updatedAt: "2026-08-29T00:00:00.000Z",
+    });
   });
 });
 

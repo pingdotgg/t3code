@@ -2,6 +2,7 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadShellSnapshot,
@@ -137,6 +138,19 @@ function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, 
   const updated = [...items];
   updated[index] = next;
   return updated;
+}
+
+export function upsertProviderTurn(
+  turns: ReadonlyArray<OrchestrationV2ProviderTurn>,
+  next: OrchestrationV2ProviderTurn,
+): Array<OrchestrationV2ProviderTurn> {
+  const current = turns.find((turn) => turn.id === next.id);
+  return upsertById(turns, {
+    ...next,
+    ...((next.tokenUsage ?? current?.tokenUsage) === undefined
+      ? {}
+      : { tokenUsage: next.tokenUsage ?? current?.tokenUsage }),
+  });
 }
 
 function preserveDelegatedCompletion(
@@ -288,7 +302,7 @@ export function applyToProjection(
     case "provider-turn.updated":
       return {
         ...base,
-        providerTurns: upsertById(base.providerTurns, event.payload),
+        providerTurns: upsertProviderTurn(base.providerTurns, event.payload),
       };
     case "runtime-request.updated":
       return {
