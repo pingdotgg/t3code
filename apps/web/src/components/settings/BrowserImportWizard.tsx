@@ -19,26 +19,20 @@ import {
 import { Spinner } from "../ui/spinner";
 import {
   initialWizardStep,
+  initialTargetSelection,
   isRetryableReason,
   formatSkippedDomains,
   outcomeToStep,
   refreshedSourceStep,
+  resolveWizardTarget,
   type ImportOutcome,
+  type WizardTarget,
+  type WizardTargetProfile,
+  type WizardTargetSelection,
   type WizardStep,
 } from "./browserImportWizard.logic";
 
-/** A profile the import can land in. */
-export interface WizardTargetProfile {
-  readonly id: string;
-  readonly name: string;
-}
-
-/** The target the user picked: a brand-new profile, or an existing one. */
-export type WizardTarget =
-  | { readonly kind: "new"; readonly profileId: string }
-  | { readonly kind: "existing"; readonly profileId: string; readonly name: string };
-
-const NEW_TARGET_VALUE = "new";
+export type { WizardTarget } from "./browserImportWizard.logic";
 
 interface BrowserImportWizardProps {
   readonly source: BrowserImportSource;
@@ -80,8 +74,8 @@ export function BrowserImportWizard({
   const [sourceProfileDirectory, setSourceProfileDirectory] = useState(
     () => initialSource.profiles[0]?.directory ?? "",
   );
-  const [target, setTarget] = useState<string>(
-    canCreateProfile ? NEW_TARGET_VALUE : (targetProfiles[0]?.id ?? NEW_TARGET_VALUE),
+  const [target, setTarget] = useState<WizardTargetSelection>(() =>
+    initialTargetSelection(canCreateProfile, targetProfiles),
   );
   // Stable across retries so a keychain re-approval lands in one profile, not
   // a new one each time.
@@ -89,14 +83,7 @@ export function BrowserImportWizard({
 
   const runImport = () => {
     setStep({ step: "importing" });
-    const chosen: WizardTarget =
-      target === NEW_TARGET_VALUE
-        ? { kind: "new", profileId: newProfileId.current }
-        : {
-            kind: "existing",
-            profileId: target,
-            name: targetProfiles.find((profile) => profile.id === target)?.name ?? "",
-          };
+    const chosen = resolveWizardTarget(target, newProfileId.current, targetProfiles);
     void onImport({ sourceProfileDirectory, target: chosen })
       .then((outcome) => setStep(outcomeToStep(outcome)))
       .catch(() => setStep({ step: "blocked", reason: "readFailed" }));
@@ -195,8 +182,8 @@ type ConfigureStepProps = {
   readonly canCreateProfile: boolean;
   readonly sourceProfileDirectory: string;
   readonly onSourceProfileChange: (directory: string) => void;
-  readonly target: string;
-  readonly onTargetChange: (target: string) => void;
+  readonly target: WizardTargetSelection;
+  readonly onTargetChange: (target: WizardTargetSelection) => void;
   readonly onCancel: () => void;
   readonly onImport: () => void;
 };
@@ -245,19 +232,19 @@ function ConfigureStep({
             </p>
             {canCreateProfile ? (
               <SelectableTile
-                selected={target === NEW_TARGET_VALUE}
+                selected={target.kind === "new"}
                 title="New profile"
                 subtitle="Created for these cookies"
-                onSelect={() => onTargetChange(NEW_TARGET_VALUE)}
+                onSelect={() => onTargetChange({ kind: "new" })}
               />
             ) : null}
             {targetProfiles.map((profile) => (
               <SelectableTile
                 key={profile.id}
-                selected={target === profile.id}
+                selected={target.kind === "existing" && target.profileId === profile.id}
                 title={profile.name}
                 subtitle="Existing profile"
-                onSelect={() => onTargetChange(profile.id)}
+                onSelect={() => onTargetChange({ kind: "existing", profileId: profile.id })}
               />
             ))}
           </section>

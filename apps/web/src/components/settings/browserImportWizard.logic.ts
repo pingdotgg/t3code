@@ -1,5 +1,40 @@
 import type { BrowserImportFailureReason, BrowserImportSource } from "@t3tools/contracts";
 
+export interface WizardTargetProfile {
+  readonly id: string;
+  readonly name: string;
+}
+
+export type WizardTarget =
+  | { readonly kind: "new"; readonly profileId: string }
+  | { readonly kind: "existing"; readonly profileId: string; readonly name: string };
+
+export type WizardTargetSelection =
+  | { readonly kind: "new" }
+  | { readonly kind: "existing"; readonly profileId: string };
+
+export function initialTargetSelection(
+  canCreateProfile: boolean,
+  targetProfiles: ReadonlyArray<WizardTargetProfile>,
+): WizardTargetSelection {
+  if (canCreateProfile) return { kind: "new" };
+  const first = targetProfiles[0];
+  return first ? { kind: "existing", profileId: first.id } : { kind: "new" };
+}
+
+export function resolveWizardTarget(
+  selection: WizardTargetSelection,
+  newProfileId: string,
+  targetProfiles: ReadonlyArray<WizardTargetProfile>,
+): WizardTarget {
+  if (selection.kind === "new") return { kind: "new", profileId: newProfileId };
+  return {
+    kind: "existing",
+    profileId: selection.profileId,
+    name: targetProfiles.find((profile) => profile.id === selection.profileId)?.name ?? "",
+  };
+}
+
 /**
  * What the import wizard produces once it has actually tried to import. The
  * parent runs the import and classifies the result; the wizard only reacts to

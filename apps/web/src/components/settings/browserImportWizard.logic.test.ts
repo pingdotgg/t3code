@@ -3,11 +3,27 @@ import type { BrowserImportSource } from "@t3tools/contracts";
 
 import {
   initialWizardStep,
+  initialTargetSelection,
   isRetryableReason,
   formatSkippedDomains,
   outcomeToStep,
   refreshedSourceStep,
+  resolveWizardTarget,
 } from "./browserImportWizard.logic";
+
+describe("wizard target selection", () => {
+  it("treats an existing profile whose id is new as an existing target", () => {
+    const profiles = [{ id: "new", name: "Existing new" }];
+    const selection = initialTargetSelection(false, profiles);
+
+    expect(selection).toEqual({ kind: "existing", profileId: "new" });
+    expect(resolveWizardTarget(selection, "generated", profiles)).toEqual({
+      kind: "existing",
+      profileId: "new",
+      name: "Existing new",
+    });
+  });
+});
 
 const source = (over: Partial<BrowserImportSource> = {}): BrowserImportSource => ({
   id: "helium",
