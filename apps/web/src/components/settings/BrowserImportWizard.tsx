@@ -111,7 +111,7 @@ export function BrowserImportWizard({
 
   return (
     <Dialog open onOpenChange={(open) => (open || !canCloseWizard(step) ? undefined : onClose())}>
-      <DialogPopup className="max-w-lg">
+      <DialogPopup className="max-w-lg" showCloseButton={canCloseWizard(step)}>
         {step.step === "quit" ? (
           <QuitStep source={source} onCancel={onClose} onRechecked={recheckAfterQuit} />
         ) : step.step === "importing" ? (
