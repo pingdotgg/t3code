@@ -3,6 +3,7 @@ import type {
   SDKMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import type { AskUserQuestionInput } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ChatAttachmentId,
@@ -66,6 +67,7 @@ import {
   claudeMcpQueryOverrides,
   claudeQueryMessages,
   claudeRuntimeQueryPolicyForRuntimePolicy,
+  claudeSdkUserInputAnswers,
   claudeUserInputQuestions,
   claudeTodoSteps,
   claudeProposedPlan,
@@ -206,6 +208,14 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
         },
       ],
     );
+    const sdkAnswers: NonNullable<AskUserQuestionInput["answers"]> = claudeSdkUserInputAnswers({
+      "Which approach?": ["Simple", "Safe"],
+      "Deploy now?": "Yes",
+    });
+    assert.deepEqual(sdkAnswers, {
+      "Which approach?": "Simple, Safe",
+      "Deploy now?": "Yes",
+    });
     assert.isTrue(ClaudeProviderCapabilitiesV2.planning.supportsStructuredQuestions);
   });
 
@@ -990,7 +1000,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
                 multiSelect: true,
               },
             ],
-            answers: { [longQuestion]: ["Production", "Staging"] },
+            answers: { [longQuestion]: "Production, Staging" },
           },
           toolUseID: "tool-question-full-access",
         });
