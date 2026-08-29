@@ -132,11 +132,25 @@ const make = Effect.gen(function* () {
     return fileSystem.realPath(normalized).pipe(Effect.orElseSucceed(() => normalized));
   };
 
+  const isPathInside = (candidate: string, root: string) =>
+    candidate === root ||
+    (candidate.startsWith(root) &&
+      (root.endsWith("/") ||
+        root.endsWith("\\") ||
+        candidate[root.length] === "/" ||
+        candidate[root.length] === "\\"));
+
   const threadWorkspacePath = Effect.fn("WorktreeMcpService.threadWorkspacePath")(function* (
     thread: Pick<OrchestrationV2ThreadShell, "worktreePath">,
     projectWorkspaceRoot: string,
+    worktreeRoots: ReadonlyArray<string> = [projectWorkspaceRoot],
   ) {
-    return yield* canonicalizePath(thread.worktreePath ?? projectWorkspaceRoot);
+    const recordedPath = yield* canonicalizePath(thread.worktreePath ?? projectWorkspaceRoot);
+    return (
+      worktreeRoots
+        .filter((root) => isPathInside(recordedPath, root))
+        .toSorted((left, right) => right.length - left.length)[0] ?? recordedPath
+    );
   });
 
   const loadWorktrees = Effect.fn("WorktreeMcpService.loadWorktrees")(function* (
@@ -603,7 +617,7 @@ const make = Effect.gen(function* () {
         : null;
     const bindingLimit = input.bindingLimit ?? 20;
     const threadWorkspaces = yield* Effect.forEach(threads, (thread) =>
-      threadWorkspacePath(thread, projectWorktreeRoot).pipe(
+      threadWorkspacePath(thread, projectWorktreeRoot, [...branchByWorkspacePath.keys()]).pipe(
         Effect.map((workspacePath) => [thread, workspacePath] as const),
       ),
     );

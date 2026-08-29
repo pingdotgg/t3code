@@ -1431,6 +1431,38 @@ describe("t3_worktree_list", () => {
       expect(result.worktrees[0]?.bindings).toHaveLength(1);
     });
   });
+
+  it.effect("attributes a nested recorded cwd to its physical worktree root", () => {
+    const nestedPath = `${workspaceRoot}/packages/app`;
+    const harness = makeHarness({
+      worktrees: [{ path: workspaceRoot, refName: "dev" }],
+      projectThreads: [
+        {
+          id: threadId,
+          title: "Nested caller",
+          branch: "dev",
+          worktreePath: nestedPath,
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness, { limit: 1 });
+
+      expect(result.worktrees[0]).toMatchObject({
+        path: workspaceRoot,
+        bindingCount: 1,
+        bindings: [
+          {
+            threadId,
+            recordedWorktreePath: nestedPath,
+            callingThread: true,
+          },
+        ],
+      });
+      expect(harness.localStatus).toHaveBeenCalledTimes(1);
+      expect(harness.listWorktrees).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe("WorktreeMcpHandoffInput schema", () => {
