@@ -31,6 +31,8 @@ interface ComposerPrimaryActionsProps {
   /** Enter-to-send is disabled on mobile viewports, where stop would otherwise
    * be the only primary action and a running turn could not be steered. */
   showSendWhileRunning?: boolean;
+  /** Accessible label for the send button; defaults to "Send message". */
+  sendLabel?: string;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -72,6 +74,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   hasSendableContent,
   preserveComposerFocusOnPointerDown = false,
   showSendWhileRunning = false,
+  sendLabel = "Send message",
   onPreviousPendingQuestion,
   onInterrupt,
   onImplementPlanInNewThread,
@@ -246,7 +249,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 ? "Preparing worktree"
                 : isSendBusy
                   ? "Sending"
-                  : "Send message"
+                  : sendLabel
       }
     >
       {stageBackdropVariant ? (
