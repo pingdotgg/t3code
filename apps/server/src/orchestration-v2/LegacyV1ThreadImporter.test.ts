@@ -83,6 +83,12 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
           archived_at,
           settled_override,
           settled_at,
+          unsettled_at,
+          snoozed_until,
+          snoozed_at,
+          pinned_at,
+          pin_order_key,
+          linked_pull_request_json,
           deleted_at
         ) VALUES (
           ${threadId},
@@ -99,6 +105,12 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
           NULL,
           NULL,
           NULL,
+          '2026-01-03T12:00:00.000Z',
+          '2026-02-01T00:00:00.000Z',
+          '2026-01-04T00:00:00.000Z',
+          '2026-01-02T00:00:00.000Z',
+          'm',
+          '{"projectId":"project:legacy-import","repository":"pingdotgg/t3code","number":9000,"url":"https://github.com/pingdotgg/t3code/pull/9000"}',
           NULL
         )
       `;
@@ -182,6 +194,20 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
       assert.equal(shellProjection.thread.historyOrigin, "v1_import");
       assert.equal(shellProjection.thread.branch, "main");
       assert.equal(shellProjection.thread.worktreePath, "/tmp/legacy-project");
+      assert.deepEqual(
+        shellProjection.thread.pinnedAt,
+        DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
+      );
+      assert.equal(shellProjection.thread.pinOrderKey, "m");
+      assert.deepEqual(
+        shellProjection.thread.snoozedUntil,
+        DateTime.makeUnsafe("2026-02-01T00:00:00.000Z"),
+      );
+      assert.deepEqual(
+        shellProjection.thread.unsettledAt,
+        DateTime.makeUnsafe("2026-01-03T12:00:00.000Z"),
+      );
+      assert.equal(shellProjection.thread.linkedPullRequest?.number, 9000);
       const shellSnapshot = yield* projections.getShellSnapshot();
       assert.equal(
         shellSnapshot.threads.find((thread) => thread.id === threadId)?.historyOrigin,
@@ -251,6 +277,45 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
         ],
       );
 
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:legacy-import:explicit-unpin"),
+            type: "thread.unpinned",
+            threadId,
+            providerInstanceId: projection.thread.providerInstanceId,
+            occurredAt: renamedAt,
+            payload: { ...projection.thread, pinnedAt: null, pinOrderKey: null },
+          },
+        ],
+      });
+      yield* sql`
+        UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_remove(
+          payload_json,
+          '$.snoozedUntil',
+          '$.snoozedAt',
+          '$.unsettledAt',
+          '$.linkedPullRequest'
+        )
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepStrictEqual(yield* importer.reconcileShells, {
+        importedThreadCount: 1,
+        importedMessageCount: 0,
+      });
+      const repaired = yield* projections.getThreadProjection(threadId);
+      assert.isNull(repaired.thread.pinnedAt);
+      assert.isNull(repaired.thread.pinOrderKey);
+      assert.deepEqual(
+        repaired.thread.snoozedUntil,
+        DateTime.makeUnsafe("2026-02-01T00:00:00.000Z"),
+      );
+      assert.deepEqual(
+        repaired.thread.unsettledAt,
+        DateTime.makeUnsafe("2026-01-03T12:00:00.000Z"),
+      );
+      assert.equal(repaired.thread.linkedPullRequest?.number, 9000);
       const eventCountBeforeRetry = yield* sql<{ readonly count: number }>`
         SELECT COUNT(*) AS count
         FROM orchestration_events
