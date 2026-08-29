@@ -28,6 +28,7 @@ describe("isLegacyModel (bundled manifest)", () => {
         "gpt-5.6-sol",
         "gpt-daybreak-blue-latest",
         "gpt-daybreak-red-latest",
+        "z-ai/glm-5.3-flash",
         "gpt-5.4",
       ].map((model) => [model, isLegacyModel(BUNDLED_MODEL_MANIFEST, CODEX, model)]),
       [
@@ -36,6 +37,7 @@ describe("isLegacyModel (bundled manifest)", () => {
         ["gpt-5.6-sol", false],
         ["gpt-daybreak-blue-latest", false],
         ["gpt-daybreak-red-latest", false],
+        ["z-ai/glm-5.3-flash", false],
         ["gpt-5.4", true],
       ],
     );
