@@ -346,8 +346,8 @@ struct HomeThreadMetadataTests {
         let thread = FeatureThread(
             id: "thread",
             projectID: "project",
-            title: "Blank environment",
-            environmentID: "  "
+            environmentID: "  ",
+            title: "Blank environment"
         )
         let snapshot = FeatureSnapshot(
             environments: [
