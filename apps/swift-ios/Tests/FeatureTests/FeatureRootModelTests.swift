@@ -564,7 +564,12 @@ struct FeatureRootModelTests {
 
         #expect(model.snapshot.threads.first?.title == "Authoritative title")
         #expect(model.regeneratingTitleThreadIDs.isEmpty)
-        #expect(announcements == ["Regenerating title for Original title."])
+        #expect(
+            announcements == [
+                "Regenerating title for Original title.",
+                "Title regeneration completed for Authoritative title.",
+            ]
+        )
     }
 
     @Test
