@@ -14,10 +14,9 @@ import {
   formatDiagnosticsDescription,
   getChangedBrowserSettingLabels,
   getChangedTypographySettingLabels,
-  hasChangedBackgroundActivitySettings,
-  hasChangedThreadSettlingSettings,
-  isProjectGroupingEnabled,
   isSamePreviewViewport,
+  hasChangedBackgroundActivitySettings,
+  isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
 } from "./SettingsPanels.logic";
@@ -150,24 +149,6 @@ describe("project grouping toggle", () => {
   it("restores repository path grouping when the toggle is cycled", () => {
     expect(projectGroupingModeFromToggle(false, "repository_path")).toBe("separate");
     expect(projectGroupingModeFromToggle(true, "repository_path")).toBe("repository_path");
-  });
-});
-
-describe("thread settling settings restore", () => {
-  it("detects changes to the mode or the hidden inactivity window", () => {
-    expect(hasChangedThreadSettlingSettings(DEFAULT_UNIFIED_SETTINGS)).toBe(false);
-    expect(
-      hasChangedThreadSettlingSettings({
-        ...DEFAULT_UNIFIED_SETTINGS,
-        sidebarAutoSettleMode: "inactivity",
-      }),
-    ).toBe(true);
-    expect(
-      hasChangedThreadSettlingSettings({
-        ...DEFAULT_UNIFIED_SETTINGS,
-        sidebarAutoSettleAfterDays: 30,
-      }),
-    ).toBe(true);
   });
 });
 

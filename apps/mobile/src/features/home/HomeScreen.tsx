@@ -30,7 +30,6 @@ import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspace
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
-import { resolveMobileAutoSettlePreferences } from "../../persistence/mobile-preferences";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
@@ -209,9 +208,9 @@ export function HomeScreen(props: HomeScreenProps) {
   >(() => new Map());
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
-  const autoSettlePreferences = resolveMobileAutoSettlePreferences(
-    AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : {},
-  );
+  const autoSettleOnMerge =
+    !AsyncResult.isSuccess(preferencesResult) ||
+    preferencesResult.value.autoSettleOnMerge !== false;
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
@@ -679,8 +678,7 @@ export function HomeScreen(props: HomeScreenProps) {
       searchQuery: props.searchQuery,
       matchedThreadKeys,
       changeRequestByKey,
-      autoSettleAfterDays: autoSettlePreferences.autoSettleAfterDays,
-      autoSettleMode: autoSettlePreferences.autoSettleMode,
+      autoSettleOnMerge,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
@@ -692,8 +690,7 @@ export function HomeScreen(props: HomeScreenProps) {
     });
   }, [
     changeRequestByKey,
-    autoSettlePreferences.autoSettleAfterDays,
-    autoSettlePreferences.autoSettleMode,
+    autoSettleOnMerge,
     nowMinute,
     snoozeWakeTick,
     snoozedShelfExpanded,
