@@ -96,9 +96,10 @@ export const make = Effect.gen(function* () {
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
 
+  const modelHttpClient = HttpClient.followRedirects(5)(httpClient);
   const requestModel = async (url: string, signal?: AbortSignal) => {
     const response = await runPromise(
-      httpClient.get(url).pipe(Effect.flatMap(HttpClientResponse.filterStatusOk)),
+      modelHttpClient.get(url).pipe(Effect.flatMap(HttpClientResponse.filterStatusOk)),
       signal ? { signal } : undefined,
     );
     return {
