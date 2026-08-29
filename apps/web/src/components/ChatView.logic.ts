@@ -4,6 +4,7 @@ import {
   ProjectId,
   type MessageId,
   type ModelSelection,
+  type ProviderInteractionMode,
   type ProviderDriverKind,
   type ServerProvider,
   type ScopedProjectRef,
@@ -443,6 +444,22 @@ export function shouldShowBranchMismatchBanner(input: {
     return false;
   }
   return input.composerHasContent || input.wasShownForCurrentMismatch;
+}
+
+export function shouldShowPlanFollowUpPrompt(input: {
+  pendingUserInputCount: number;
+  interactionMode: ProviderInteractionMode;
+  latestTurnSettled: boolean;
+  hasActionableProposedPlan: boolean;
+  hasComposerAttachments: boolean;
+}): boolean {
+  return (
+    input.pendingUserInputCount === 0 &&
+    input.interactionMode === "plan" &&
+    input.latestTurnSettled &&
+    input.hasActionableProposedPlan &&
+    !input.hasComposerAttachments
+  );
 }
 
 // Session-scoped (module-level so it survives ChatView remounts, e.g. route

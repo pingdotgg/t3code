@@ -495,6 +495,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   // that only the persisted list is populated, hence max not sum.
   const attachmentCount =
     Math.max(composer.images.length, composer.persistedAttachments.length) +
+    composer.files.length +
     composer.terminalContexts.length +
     composer.elementContexts.length +
     composer.previewAnnotations.length +

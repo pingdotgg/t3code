@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
   deriveProjectGroupingOverrideKey,
@@ -733,7 +733,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           return;
         }
         const projectRef = scopeProjectRef(member.environmentId, member.id);
-        releaseProjectDraftUploads(projectRef);
+        releaseProjectDraftUploads(
+          projectRef,
+          memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
+        );
         const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
         if (projectDraftThread) {
           draftStore.clearDraftThread(projectDraftThread.draftId);

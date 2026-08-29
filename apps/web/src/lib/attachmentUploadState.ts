@@ -18,6 +18,11 @@ export type AttachmentUploadState =
       readonly status: "failed";
       readonly environmentId: EnvironmentId;
       readonly reason: string;
+      /**
+       * A pending upload the queue minted for this failed attempt. Retry and
+       * release delete it, so it must never carry a draft's persisted
+       * attachment id.
+       */
       readonly attachmentId?: string;
       readonly previous?: ReadyAttachmentUpload;
     };
@@ -40,10 +45,12 @@ export function attachmentUploadBlockReason(input: {
   }
 
   if (failed > 0) {
-    return failed === 1 ? "Retry or remove the failed image" : "Retry or remove the failed images";
+    return failed === 1
+      ? "Retry or remove the failed attachment"
+      : "Retry or remove the failed attachments";
   }
   if (pending > 0) {
-    return pending === 1 ? "Image still uploading" : "Images still uploading";
+    return pending === 1 ? "Attachment still uploading" : "Attachments still uploading";
   }
   return null;
 }

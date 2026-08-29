@@ -34,7 +34,7 @@ describe("attachmentUploadBlockReason", () => {
           "image-1": { status: "uploading", environmentId, progress: 0.5 },
         },
       }),
-    ).toBe("Images still uploading");
+    ).toBe("Attachments still uploading");
   });
 
   it("asks the user to retry or remove failed uploads", () => {
@@ -46,7 +46,7 @@ describe("attachmentUploadBlockReason", () => {
           "image-1": { status: "failed", environmentId, reason: "Upload failed" },
         },
       }),
-    ).toBe("Retry or remove the failed image");
+    ).toBe("Retry or remove the failed attachment");
   });
 
   it("does not accept an upload from another environment", () => {
@@ -62,7 +62,7 @@ describe("attachmentUploadBlockReason", () => {
           },
         },
       }),
-    ).toBe("Image still uploading");
+    ).toBe("Attachment still uploading");
   });
 });
 
