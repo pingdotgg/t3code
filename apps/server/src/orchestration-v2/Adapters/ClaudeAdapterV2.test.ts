@@ -65,6 +65,8 @@ import {
   claudeQueryMessages,
   claudeRuntimeQueryPolicyForRuntimePolicy,
   claudeUserInputQuestions,
+  claudeTodoSteps,
+  claudeProposedPlan,
   awaitClaudeApprovalDecision,
   loggedClaudeQueryOptions,
   makeClaudeAdapterV2,
@@ -180,6 +182,24 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       ],
     );
     assert.isTrue(ClaudeProviderCapabilitiesV2.planning.supportsStructuredQuestions);
+  });
+
+  it("normalizes Claude todo and proposed-plan tool input", () => {
+    assert.deepEqual(
+      claudeTodoSteps({
+        todos: [
+          { content: "Inspect", status: "completed" },
+          { content: "Implement", status: "in_progress" },
+        ],
+      }),
+      [
+        { id: "todo-0", text: "Inspect", status: "completed" },
+        { id: "todo-1", text: "Implement", status: "running" },
+      ],
+    );
+    assert.equal(claudeProposedPlan({ plan: "  # Plan\nShip it  " }), "# Plan\nShip it");
+    assert.isTrue(ClaudeProviderCapabilitiesV2.planning.emitsTodoList);
+    assert.isTrue(ClaudeProviderCapabilitiesV2.planning.emitsProposedPlan);
   });
 
   it("maps canonical read-only never policy to Claude dontAsk with read-only tools", () => {
