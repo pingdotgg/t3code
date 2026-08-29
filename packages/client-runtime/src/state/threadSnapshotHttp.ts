@@ -14,7 +14,11 @@ import {
   makeEnvironmentHttpApiClient,
   type RemoteEnvironmentRequestError,
 } from "../rpc/http.ts";
-import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
+import {
+  buildEnvironmentAuthHeaders,
+  withEnvironmentCredentials,
+  withOrchestrationProtocolHeader,
+} from "./environmentHttpAuth.ts";
 
 // Bounded so a pathologically slow endpoint cannot block the (cheaper) socket
 // fallback for long. The cached thread renders while this runs, so the wait only
@@ -76,7 +80,7 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
       input.prepared.httpAuthorization,
       client.orchestration.threadSnapshot({
         params: { threadId: input.threadId },
-        headers,
+        headers: withOrchestrationProtocolHeader(headers),
       }),
     ),
   );

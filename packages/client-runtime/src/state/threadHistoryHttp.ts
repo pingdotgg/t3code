@@ -6,7 +6,11 @@ import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiClient } from "../rpc/http.ts";
-import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
+import {
+  buildEnvironmentAuthHeaders,
+  withEnvironmentCredentials,
+  withOrchestrationProtocolHeader,
+} from "./environmentHttpAuth.ts";
 
 const DEFAULT_THREAD_HISTORY_TIMEOUT_MS = 6_000;
 
@@ -38,7 +42,7 @@ export const fetchEnvironmentThreadHistoryPage = Effect.fn(
       client.orchestration.threadHistoryPage({
         params: { threadId: input.threadId },
         query: { cursor: input.cursor },
-        headers,
+        headers: withOrchestrationProtocolHeader(headers),
       }),
     ),
   );

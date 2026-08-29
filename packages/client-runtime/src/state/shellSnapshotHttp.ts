@@ -10,7 +10,11 @@ import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiClient } from "../rpc/http.ts";
-import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
+import {
+  buildEnvironmentAuthHeaders,
+  withEnvironmentCredentials,
+  withOrchestrationProtocolHeader,
+} from "./environmentHttpAuth.ts";
 
 // Bounded so a pathologically slow endpoint cannot block the (cheaper) socket
 // fallback for long. The cached shell renders while this runs.
@@ -42,7 +46,7 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
     input.timeoutMs ?? DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS,
     withEnvironmentCredentials(
       input.prepared.httpAuthorization,
-      client.orchestration.shellSnapshot({ headers }),
+      client.orchestration.shellSnapshot({ headers: withOrchestrationProtocolHeader(headers) }),
     ),
   );
 });
