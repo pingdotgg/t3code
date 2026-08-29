@@ -25,17 +25,17 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
-import { GitManager } from "../../git/GitManager.ts";
-import { PullRequestService } from "../../pullRequest/PullRequestService.ts";
-import { ServerActivation } from "../../serverActivation.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
-import { OrchestrationCommandInvariantError } from "../Errors.ts";
+import { GitManager } from "../git/GitManager.ts";
+import { PullRequestService } from "../pullRequest/PullRequestService.ts";
+import { ServerActivation } from "../serverActivation.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
-} from "../Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
-import * as ThreadSettlementReactor from "../ThreadSettlementReactor.ts";
+} from "./Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import * as ThreadSettlementReactor from "./ThreadSettlementReactor.ts";
 
 const NOW = "2026-08-28T12:00:00.000Z";
 const PROJECT_ID = ProjectId.make("settlement-project");
