@@ -218,15 +218,25 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
-  it.effect("does nothing on other platforms or development builds", () => {
+  it.effect("preserves packaged launches while skipping development distro launchers", () => {
     const nonLinux = emptyRecording();
-    const development = emptyRecording();
+    const packagedDevelopment = emptyRecording();
+    const distroDevelopment = emptyRecording();
 
     return Effect.gen(function* () {
       yield* runRegister(nonLinux, { environment: { platform: "darwin" } });
-      yield* runRegister(development, { environment: { isDevelopment: true } });
+      yield* runRegister(packagedDevelopment, { environment: { isDevelopment: true } });
+      yield* runRegister(distroDevelopment, {
+        environment: {
+          isPackaged: false,
+          isDevelopment: true,
+          desktopExecutable: Option.some("/nix/store/t3code/bin/t3code-desktop"),
+        },
+      });
 
-      for (const recorded of [nonLinux, development]) {
+      assert.equal(packagedDevelopment.files.length, 1);
+      assert.equal(packagedDevelopment.commands.length, 1);
+      for (const recorded of [nonLinux, distroDevelopment]) {
         assert.deepEqual(recorded.directories, []);
         assert.deepEqual(recorded.files, []);
         assert.deepEqual(recorded.commands, []);
