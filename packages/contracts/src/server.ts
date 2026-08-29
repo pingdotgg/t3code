@@ -69,6 +69,12 @@ export const ServerProviderModel = Schema.Struct({
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  /**
+   * Set when the model is in the catalog but this environment cannot run it —
+   * today, a model the Claude account's organization has not entitled. Clients
+   * render the row disabled and show this string as the reason.
+   */
+  unavailableReason: Schema.optional(TrimmedNonEmptyString),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;

@@ -2610,6 +2610,14 @@ describe("ClaudeAdapterLive", () => {
         { type: "system", subtype: "plugin_install", session_id: "session", uuid: "pi" },
         { type: "system", subtype: "memory_recall", session_id: "session", uuid: "mr" },
         { type: "system", subtype: "elicitation_complete", session_id: "session", uuid: "ec" },
+        {
+          type: "system",
+          subtype: "informational",
+          content: "Transcript-only note.",
+          level: "info",
+          session_id: "session",
+          uuid: "info-quiet",
+        },
         { type: "prompt_suggestion", suggestion: "try this", session_id: "session", uuid: "ps" },
         {
           type: "system",
@@ -2632,6 +2640,17 @@ describe("ClaudeAdapterLive", () => {
         priority: "high",
         session_id: "session",
         uuid: "notif-high",
+      } as unknown as SDKMessage);
+      // Warning-level informational notices surface too: this is how the CLI
+      // reports that an org-restricted model was swapped for another one.
+      harness.query.emit({
+        type: "system",
+        subtype: "informational",
+        content:
+          'Model "claude-fable-5" is restricted by your organization\'s settings. Using claude-opus-5[1m] instead.',
+        level: "warning",
+        session_id: "session",
+        uuid: "info-warning",
       } as unknown as SDKMessage);
       // session_state_changed maps to the matching session states.
       for (const [state, uuid] of [
@@ -2663,10 +2682,15 @@ describe("ClaudeAdapterLive", () => {
       yield* Effect.yieldNow;
 
       const warnings = runtimeEvents.filter((event) => event.type === "runtime.warning");
-      // Exactly one warning: the high-priority notification. Nothing else.
+      // Only the high-priority notification and the warning-level
+      // informational. Nothing else, and neither quiet informational nor any
+      // undeclared subtype leaks through as an unknown-subtype row.
       assert.deepEqual(
         warnings.map((event) => event.payload.message),
-        ["context window nearly full"],
+        [
+          "context window nearly full",
+          'Model "claude-fable-5" is restricted by your organization\'s settings. Using claude-opus-5[1m] instead.',
+        ],
       );
       const sessionStates = runtimeEvents
         .filter((event) => event.type === "session.state.changed")

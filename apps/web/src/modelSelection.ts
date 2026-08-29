@@ -111,6 +111,10 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
   if (model.subProvider) option.subProvider = model.subProvider;
   if (model.isDefault) option.isDefault = true;
   if (model.isLegacy) option.isLegacy = true;
+  // A model the environment can't run (today: not entitled by the Claude
+  // account's organization) reuses the unavailable treatment, so the composer
+  // trigger stops presenting it as the model that will answer.
+  if (model.unavailableReason) option.isUnavailable = true;
   return option;
 }
 

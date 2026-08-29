@@ -40,6 +40,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
+import { readClaudeRestrictedModels } from "../Drivers/ClaudeEntitlements.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 
@@ -361,6 +362,25 @@ function getBuiltInClaudeModelsForVersion(
   });
 }
 
+/**
+ * Shown on models the organization has not entitled. Claude Code silently
+ * substitutes the org default for these, so the picker marks them unselectable
+ * instead of letting a pick land on a different model than the label promises.
+ */
+const ORG_RESTRICTED_MODEL_REASON = "Restricted by your organization.";
+
+function applyClaudeModelRestrictions(
+  models: ReadonlyArray<ServerProviderModel>,
+  restrictedModels: ReadonlySet<string>,
+): ReadonlyArray<ServerProviderModel> {
+  if (restrictedModels.size === 0) return models;
+  return models.map((model) =>
+    restrictedModels.has(model.slug)
+      ? { ...model, unavailableReason: ORG_RESTRICTED_MODEL_REASON }
+      : model,
+  );
+}
+
 function formatClaudeOpus5UpgradeMessage(version: string | null): string {
   const versionLabel = version ? `v${version}` : "the installed version";
   return `Claude Code ${versionLabel} is too old for Claude Opus 5. Upgrade to v${MINIMUM_CLAUDE_OPUS_5_VERSION} or newer to access it.`;
@@ -636,6 +656,12 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  /**
+   * API model ids the account's organization has disallowed. Read alongside
+   * the account probe so it shares the probe's cache and so provider snapshots
+   * stay a pure function of the probe result.
+   */
+  readonly restrictedModels: ReadonlySet<string>;
 };
 
 function parseClaudeInitializationCommands(
@@ -735,6 +761,7 @@ const probeClaudeCapabilities = (
       claudeSettings.binaryPath,
       claudeEnvironment,
     );
+    const restrictedModels = yield* readClaudeRestrictedModels(claudeSettings, environment, cwd);
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // Never yield — we only need initialization data, not a conversation.
@@ -765,6 +792,7 @@ const probeClaudeCapabilities = (
         tokenSource: account?.tokenSource,
         apiProvider: account?.apiProvider,
         slashCommands: parseClaudeInitializationCommands(init.commands),
+        restrictedModels,
       } satisfies ClaudeCapabilitiesProbe;
     });
   }).pipe(
@@ -902,7 +930,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const models = providerModelsFromSettings(
+  const versionedModels = providerModelsFromSettings(
     getBuiltInClaudeModelsForVersion(parsedVersion),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
@@ -931,11 +959,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
   if (!capabilities) {
+    // Without a probe there is no entitlement list, so nothing is marked
+    // restricted: an unknown org is treated as unrestrictive.
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
       checkedAt,
-      models,
+      models: versionedModels,
       slashCommands: dedupedSlashCommands,
       skills,
       probe: {
@@ -948,6 +978,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  const models = applyClaudeModelRestrictions(versionedModels, capabilities.restrictedModels);
   const authMetadata =
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
