@@ -124,7 +124,7 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
     }).pipe(
       Effect.as(true),
       Effect.tapError((error) => Effect.logDebug(error.message, { cause: error.cause })),
-      Effect.catchTag("BrowserCookieWriteError", () => Effect.succeed(false)),
+      Effect.catchTags({ BrowserCookieWriteError: () => Effect.succeed(false) }),
     );
     if (written) {
       imported += 1;
