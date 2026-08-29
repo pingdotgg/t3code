@@ -813,6 +813,7 @@ export function ProviderInstanceCard({
       </div>
     );
   }
+
   return (
     <div className="min-w-0 lg:flex lg:h-full lg:min-h-0 lg:flex-col">
       <div className="flex min-h-16 shrink-0 items-start justify-between gap-3 border-b border-border/70 px-4 py-3">
@@ -847,12 +848,28 @@ export function ProviderInstanceCard({
                       >
                         <ArrowUpCircleIcon className="size-3.5" />
                       </Button>
-                    ) : null}
-                    {onRunUpdate && updateCommand ? (
-                      <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                        <span aria-hidden className="h-px flex-1 bg-border" />
-                        or, update manually using
-                        <span aria-hidden className="h-px flex-1 bg-border" />
+                    }
+                  />
+                  <PopoverPopup
+                    side="bottom"
+                    align="start"
+                    className="w-[min(21rem,calc(100vw-1.5rem))] [--popup-width:min(21rem,calc(100vw-1.5rem))]"
+                  >
+                    <div className="grid min-w-0 gap-3">
+                      <div className="grid gap-0.5">
+                        <p className="text-[13px] font-semibold leading-tight text-foreground">
+                          Update available
+                        </p>
+                        <p
+                          className={cn(
+                            "text-xs leading-snug",
+                            versionAdvisory.emphasis === "strong"
+                              ? "text-warning"
+                              : "text-muted-foreground",
+                          )}
+                        >
+                          {versionAdvisory.detail}
+                        </p>
                       </div>
                       {onRunUpdate ? (
                         <Button
@@ -993,9 +1010,23 @@ export function ProviderInstanceCard({
             </div>
 
             <div>
+              {environmentFields.length > 0 ? (
+                <div className="mb-4 grid gap-3">
+                  {environmentFields.map((field) => (
+                    <ProviderEnvironmentFieldRow
+                      key={field.name}
+                      field={field}
+                      variable={readProviderEnvironmentVariable(instance.environment, field.name)}
+                      idPrefix={`provider-instance-${instanceId}`}
+                      onCommit={updateEnvironmentField}
+                      onRemove={removeEnvironmentField}
+                    />
+                  ))}
+                </div>
+              ) : null}
               <ProviderEnvironmentSection
-                environment={instance.environment ?? []}
-                onChange={updateEnvironment}
+                environment={genericEnvironment}
+                onChange={updateGenericEnvironment}
               />
             </div>
 
@@ -1028,133 +1059,6 @@ export function ProviderInstanceCard({
             className={cn("px-4 py-5 lg:h-full lg:min-h-0", readOnly && "opacity-50 select-none")}
             hidden={visibleTab !== "models"}
           >
-            <ProviderModelsSection
-              instanceId={instanceId}
-              driverKind={driverKind}
-              models={modelsForDisplay}
-              customModels={customModels}
-              hiddenModels={hiddenModels}
-              favoriteModels={favoriteModels}
-              modelOrder={modelOrder}
-              onChange={updateCustomModels}
-              onHiddenModelsChange={onHiddenModelsChange}
-              onFavoriteModelsChange={onFavoriteModelsChange}
-              onModelOrderChange={onModelOrderChange}
-            />
-          </div>
-          {showEditorStatus ? (
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-              <span>{summary.headline}</span>
-              {summary.detail ? <span>· {summary.detail}</span> : null}
-            </p>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="flex h-11 border-b border-border/70 px-1">
-        {driverOption !== undefined ? (
-          <button
-            type="button"
-            aria-pressed={visibleTab === "models"}
-            className={providerSettingsTabClassName(visibleTab === "models")}
-            onClick={() => setActiveTab("models")}
-          >
-            Models
-          </button>
-        ) : null}
-        <button
-          type="button"
-          aria-pressed={visibleTab === "configuration"}
-          className={providerSettingsTabClassName(visibleTab === "configuration")}
-          onClick={() => setActiveTab("configuration")}
-        >
-          Configuration
-        </button>
-      </div>
-
-      <div
-        inert={readOnly}
-        aria-disabled={readOnly || undefined}
-        className={cn("px-4 py-5", readOnly && "opacity-50 select-none")}
-      >
-        <div className="space-y-5" hidden={visibleTab !== "configuration"}>
-          <div>
-            <label htmlFor={`provider-instance-${instanceId}-display-name`} className="block">
-              <span className="text-xs font-medium text-foreground">Display name</span>
-              <DraftInput
-                id={`provider-instance-${instanceId}-display-name`}
-                className="mt-1.5"
-                value={instance.displayName ?? ""}
-                onCommit={updateDisplayName}
-                placeholder={driverOption?.label ?? "Instance label"}
-                spellCheck={false}
-              />
-              <span className="mt-1 block text-xs text-muted-foreground">
-                Optional label shown in the provider list.
-              </span>
-            </label>
-          </div>
-
-          <div>
-            <ProviderAccentColorPicker
-              displayName={displayName}
-              value={accentColor}
-              onCommit={updateAccentColor}
-              commitDelayMs={120}
-              description="Used to distinguish this instance in picker rails and model lists."
-            />
-          </div>
-          <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-            {environmentFields.length > 0 ? (
-              <div className="mb-4 grid gap-3">
-                {environmentFields.map((field) => (
-                  <ProviderEnvironmentFieldRow
-                    key={field.name}
-                    field={field}
-                    variable={readProviderEnvironmentVariable(instance.environment, field.name)}
-                    idPrefix={`provider-instance-${instanceId}`}
-                    onCommit={updateEnvironmentField}
-                    onRemove={removeEnvironmentField}
-                  />
-                ))}
-              </div>
-            ) : null}
-            <ProviderEnvironmentSection
-              environment={genericEnvironment}
-              onChange={updateGenericEnvironment}
-            />
-          </div>
-
-          <div>
-            <ProviderEnvironmentSection
-              environment={instance.environment ?? []}
-              onChange={updateEnvironment}
-            />
-          </div>
-
-          {driverOption ? (
-            <ProviderSettingsForm
-              definition={driverOption}
-              value={instance.config}
-              idPrefix={`provider-instance-${instanceId}`}
-              variant="card"
-              onChange={updateConfig}
-            />
-          ) : null}
-
-          {driverOption === undefined ? (
-            <div>
-              <p className="text-xs text-muted-foreground">
-                This instance uses a driver (
-                <code className="text-foreground">{String(instance.driver)}</code>) that is not
-                shipped with the current build. Configuration values are preserved but cannot be
-                edited from this surface.
-              </p>
-            </div>
-          ) : null}
-        </div>
-        {driverOption !== undefined ? (
-          <div className="px-4 py-5 lg:h-full lg:min-h-0" hidden={visibleTab !== "models"}>
             <ProviderModelsSection
               instanceId={instanceId}
               driverKind={driverKind}

@@ -617,6 +617,233 @@ describe("MessagesTimeline", () => {
     expect(onAnchorSizeChanged).toHaveBeenCalledWith(secondEntry.message.id, 240);
   });
 
+  it("does not reserve end space for a follow-up user message", () => {
+    const onAnchorReady = vi.fn();
+    const firstEntry = buildUserTimelineEntry("First prompt.");
+    const secondEntry = {
+      ...buildUserTimelineEntry("Newest prompt."),
+      id: "entry-2",
+      message: {
+        ...buildUserTimelineEntry("Newest prompt.").message,
+        id: MessageId.make("message-2"),
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        anchorMessageId={secondEntry.message.id}
+        onAnchorReady={onAnchorReady}
+        timelineEntries={[firstEntry, secondEntry]}
+      />,
+    );
+
+    expect(markup).not.toContain("data-anchor-index=");
+    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
+    expect(onAnchorReady).not.toHaveBeenCalled();
+  });
+
+  it("renders generic attachments as download links instead of image previews", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Read the report."),
+      message: {
+        ...buildUserTimelineEntry("Read the report.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "attachment-report-pdf",
+            name: "report.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 42,
+            previewUrl: "https://environment.test/api/assets/report.pdf",
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain(
+      '<a href="https://environment.test/api/assets/report.pdf" download="report.pdf" class="flex min-w-0 items-center gap-2 rounded-md py-1 text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
+    );
+    expect(markup).not.toContain('alt="report.pdf"');
+  });
+
+  it("renders a file download button without creating its URL in advance", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Read the report."),
+      message: {
+        ...buildUserTimelineEntry("Read the report.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "attachment-report-pdf",
+            name: "report.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 42,
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain(
+      '<button type="button" aria-label="Download report.pdf" class="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
+    );
+    expect(markup).not.toContain("href=");
+  });
+
+  it("does not download an optimistic file before the server supplies its attachment ID", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Read the report."),
+      message: {
+        ...buildUserTimelineEntry("Read the report.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "composer-local-report",
+            name: "report.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 42,
+            downloadable: false,
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain("report.pdf");
+    expect(markup).not.toContain('aria-label="Download report.pdf"');
+  });
+
+  it("renders unknown attachment types as inert rows instead of crashing", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Play the recording."),
+      message: {
+        ...buildUserTimelineEntry("Play the recording.").message,
+        attachments: [
+          {
+            // A newer server can introduce attachment types this build does
+            // not know. They ride the open contract member.
+            type: "recording",
+            id: "attachment-voice-memo",
+            name: "voice-memo.ogg",
+            mimeType: "audio/ogg",
+            sizeBytes: 42,
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain("voice-memo.ogg");
+    expect(markup).not.toContain('aria-label="Download voice-memo.ogg"');
+    expect(markup).not.toContain('alt="voice-memo.ogg"');
+    expect(markup).not.toContain("href=");
+  });
+
+  it("keeps reserved end space when tool work starts while reading history", () => {
+    const runId = RunId.make("run-with-active-tool");
+    const firstEntry = buildUserTimelineEntry("Run the command.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt={MESSAGE_CREATED_AT}
+        latestRun={{
+          runId,
+          status: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        anchorMessageId={firstEntry.message.id}
+        liveFollowEnabled={false}
+        timelineEntries={[
+          firstEntry,
+          {
+            id: "entry-active-tool",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-active-tool",
+              createdAt: MESSAGE_CREATED_AT,
+              runId,
+              label: "Run command",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "git status",
+              toolLifecycleStatus: "inProgress",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-anchor-index="0"');
+    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
+  });
+
+  it("hands end-following back to the list once the send anchor is released", () => {
+    const firstEntry = buildUserTimelineEntry("First prompt.");
+    const secondEntry = {
+      ...buildUserTimelineEntry("Newest prompt."),
+      id: "entry-2",
+      message: {
+        ...buildUserTimelineEntry("Newest prompt.").message,
+        id: MessageId.make("message-2"),
+      },
+    };
+    const timelineEntries = [firstEntry, secondEntry];
+
+    // While the send anchor holds the end space open, ChatView owns streaming
+    // scrolls and LegendList must not re-pin behind it.
+    expect(
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          anchorMessageId={firstEntry.message.id}
+          timelineEntries={timelineEntries}
+        />,
+      ),
+    ).not.toContain('data-maintain-scroll-at-end="enabled"');
+
+    // Dropping the anchor is what actually gives end-following back, so
+    // returning to the live edge has to release it — re-enabling live follow
+    // alone leaves nothing pinned to the stream.
+    expect(
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          anchorMessageId={null}
+          timelineEntries={timelineEntries}
+        />,
+      ),
+    ).toContain('data-maintain-scroll-at-end="enabled"');
+
+    // Reading history still wins over both.
+    expect(
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          anchorMessageId={null}
+          liveFollowEnabled={false}
+          timelineEntries={timelineEntries}
+        />,
+      ),
+    ).not.toContain('data-maintain-scroll-at-end="enabled"');
+  });
+
   it("renders collapse controls for long user messages", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
