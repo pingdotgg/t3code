@@ -1158,12 +1158,14 @@ function ThreadNavigationSidebarPane(
     return (
       <>
         <NativeStackScreenOptions
-          optionsVersion={nativeHeaderItems}
+          optionsVersion={[nativeHeaderItems, props.width]}
           options={{
             // Re-applies the shell's static brand slot with the
             // connection-status swap so reconnects surface in the header
             // instead of shifting the list.
             ...getConnectionAwareBrandHeaderOptions({
+              headerWidth: props.width,
+              trailingItemCount: nativeHeaderItems.length,
               onOpenEnvironments: props.onOpenEnvironmentSettings,
               fallbackTitleStyle: { fontSize: 18, fontWeight: "800" },
             }),
