@@ -163,35 +163,29 @@ const readMacKeychainPassword = Effect.fn("ChromiumCookies.readMacKeychainPasswo
 });
 
 /**
- * Chromium keeps the cookie DB open with WAL, and reading it in place can
- * observe a torn state. Copying first — including the sidecars — gives a
- * consistent snapshot without touching the browser's own files.
+ * Chromium keeps the cookie DB open with WAL. SQLite must create the snapshot
+ * itself so the main database and WAL are read from one transactionally
+ * consistent generation. Copying those files one after another can pair a
+ * newer database with an older WAL (or the reverse).
  *
  * Scoped: the temp directory is removed when the caller's scope closes.
  */
-const snapshotCookieDatabase = Effect.fn("ChromiumCookies.snapshotCookieDatabase")(function* (
-  cookiePath: string,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
+export const snapshotCookieDatabase = Effect.fn("ChromiumCookies.snapshotCookieDatabase")(
+  function* (cookiePath: string, tempPrefix = "t3code-cookie-import-") {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
 
-  const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-cookie-import-" });
-  const target = path.join(directory, "Cookies");
-  yield* fileSystem.copyFile(cookiePath, target);
-  // A sidecar only exists while the browser holds the database open, so an
-  // absent one is normal. Anything else — a permission error, a partial read —
-  // is not: SQLite would then open the snapshot without the write-ahead log
-  // and quietly return a cookie set missing its most recent transactions.
-  yield* Effect.forEach(["-wal", "-shm"], (suffix) =>
-    fileSystem.copyFile(`${cookiePath}${suffix}`, `${target}${suffix}`).pipe(
-      Effect.catchIf(
-        (error) => error.reason._tag === "NotFound",
-        () => Effect.void,
-      ),
-    ),
-  );
-  return target;
-});
+    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: tempPrefix });
+    const target = path.join(directory, "Cookies");
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`VACUUM INTO ${target}`;
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: cookiePath, readonly: true })));
+
+    return target;
+  },
+);
 
 /**
  * The URL and domain Electron should register a stored row under.
