@@ -40,6 +40,7 @@ import { layerWithOptions as providerSessionManagerLayerWithOptions } from "../P
 import { layer as providerSwitchServiceLayer } from "../ProviderSwitchService.ts";
 import { layer as providerTurnControlServiceLayer } from "../ProviderTurnControlService.ts";
 import { layer as providerTurnStartServiceLayer } from "../ProviderTurnStartService.ts";
+import { worktreeRepairDependenciesTestLayer } from "../ProviderTurnStartService.testkit.ts";
 import { layer as runExecutionServiceLayer } from "../RunExecutionService.ts";
 import { layer as runFinalizationServiceLayer } from "../RunFinalizationService.ts";
 import { ThreadTitleRegenerationService } from "../ThreadTitleRegenerationService.ts";
@@ -390,7 +391,10 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       ),
     ),
   );
-  const replayRuntime = Layer.merge(orchestratorProvided, effectWorkerProvided);
+  const replayRuntime = Layer.merge(orchestratorProvided, effectWorkerProvided).pipe(
+    Layer.provide(worktreeRepairDependenciesTestLayer),
+    Layer.provide(NodeServices.layer),
+  );
 
   // Build the daemon from the exact worker instance exposed alongside the
   // orchestrator. Keeping this acquisition in the replay layer makes the
