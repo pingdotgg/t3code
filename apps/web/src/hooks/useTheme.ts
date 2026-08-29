@@ -49,6 +49,17 @@ export function readThemeHalves(): ThemeHalves | null {
   return readStoredThemeHalves();
 }
 
+/**
+ * The stored mix as written, without resolvability pruning. Flows that
+ * rebuild the whole mix must capture this before a `setTheme` clears it: a
+ * published id resolves only once its set has streamed in, and treating "not
+ * resolvable yet" as "absent" silently rewrites that half.
+ */
+export function readThemeHalvesRaw(): { light?: string; dark?: string } {
+  if (typeof window === "undefined") return {};
+  return readStoredThemeHalvesRaw();
+}
+
 function readStoredThemeHalves(): ThemeHalves | null {
   if (typeof window === "undefined") return null;
   try {

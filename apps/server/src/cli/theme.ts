@@ -343,9 +343,9 @@ const publishThemeFile = Effect.fn(function* (input: {
 
   const destinationPath = path.join(input.themesDir, `${themeId}.json`);
   // Neither ends in `.json`, so the watcher never mistakes them for themes.
-  // The staging name carries the pid, so concurrent publishers of one id
-  // cannot unlink each other's half-written stage.
-  const backupPath = `${destinationPath}.rollback`;
+  // Both names carry the pid, so concurrent publishers of one id cannot
+  // unlink or restore over each other's staging and rollback copies.
+  const backupPath = `${destinationPath}.rollback-${process.pid}`;
   const stagingPath = `${destinationPath}.staging-${process.pid}`;
   yield* fs
     .makeDirectory(input.themesDir, { recursive: true })
@@ -410,10 +410,23 @@ const publishThemeFile = Effect.fn(function* (input: {
       // Usually already renamed away; a stray staging file is watcher-inert.
     }
     try {
-      if (hadPrevious) NodeFS.renameSync(backupPath, destinationPath);
-      // Removed only while it is still the exact file this process put
-      // there; a concurrent publisher's file is never unlinked.
-      else if (NodeFS.lstatSync(destinationPath).ino === stagedIno) {
+      // The destination is touched only while it is empty or still holds
+      // the exact file this process put there; a concurrent publisher's
+      // newer file wins, and this process's obsolete copy is discarded.
+      const destinationIno = (() => {
+        try {
+          return NodeFS.lstatSync(destinationPath).ino;
+        } catch {
+          return null;
+        }
+      })();
+      if (hadPrevious) {
+        if (destinationIno === null || destinationIno === stagedIno) {
+          NodeFS.renameSync(backupPath, destinationPath);
+        } else {
+          NodeFS.unlinkSync(backupPath);
+        }
+      } else if (destinationIno === stagedIno) {
         NodeFS.unlinkSync(destinationPath);
       }
     } catch {
