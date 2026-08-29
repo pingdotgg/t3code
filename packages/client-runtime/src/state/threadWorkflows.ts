@@ -1,4 +1,5 @@
 import type {
+  ChatAttachment,
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ThreadProjection,
@@ -20,6 +21,7 @@ const MERGE_BACK_BLOCKING_RUN_STATUSES = new Set<Run["status"]>([
 export interface QueuedThreadRun {
   readonly run: Run;
   readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
 }
 
 export interface ThreadQueueWorkflowState {
@@ -102,12 +104,14 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     (left, right) =>
       (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
       left.ordinal - right.ordinal,
-  ).map((run) => ({
-    run,
-    text:
-      projection.messages.find((message) => message.id === run.userMessageId)?.text ??
-      "Queued message",
-  }));
+  ).map((run) => {
+    const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+    return {
+      run,
+      text: message?.text ?? "Queued message",
+      attachments: message?.attachments ?? [],
+    };
+  });
 
   return {
     activeRun,

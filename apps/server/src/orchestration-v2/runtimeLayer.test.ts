@@ -1105,6 +1105,46 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
       assert.isUndefined(editedItem, "editing queue state must not create a timeline turn item");
 
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("runtime-layer-queued-edit-attachments"),
+        threadId,
+        runId: queuedRun.id,
+        text: "Updated queued text with an attachment.",
+        attachments: [
+          {
+            type: "image",
+            id: "runtime-layer-queued-edit-attachment",
+            name: "screenshot.png",
+            mimeType: "image/png",
+            sizeBytes: 128,
+          },
+        ],
+      });
+      const afterAttachmentEdit = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        afterAttachmentEdit.messages
+          .find((message) => message.id === queuedRun.userMessageId)
+          ?.attachments.map((attachment) => attachment.id),
+        ["runtime-layer-queued-edit-attachment"],
+      );
+
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("runtime-layer-queued-edit-text-only"),
+        threadId,
+        runId: queuedRun.id,
+        text: "Text-only edit keeps attachments.",
+      });
+      const afterTextOnlyEdit = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        afterTextOnlyEdit.messages
+          .find((message) => message.id === queuedRun.userMessageId)
+          ?.attachments.map((attachment) => attachment.id),
+        ["runtime-layer-queued-edit-attachment"],
+        "an edit without attachments must leave the stored attachments untouched",
+      );
+
       const emptyEditError = yield* orchestrator
         .dispatch({
           type: "queued-run.edit",

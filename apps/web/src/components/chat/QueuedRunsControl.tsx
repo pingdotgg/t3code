@@ -1,10 +1,15 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
-import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import type {
+  ChatAttachment as ContractChatAttachment,
+  EnvironmentId,
+  MessageId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
-  CheckIcon,
   Clock3Icon,
   CornerUpRightIcon,
   ListOrderedIcon,
@@ -13,17 +18,36 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
 import { useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
-import type { ChatMessage } from "../../types";
+import { isImageAttachment, type ChatMessage } from "../../types";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+export interface EditQueuedRunRequest {
+  readonly runId: RunId;
+  readonly messageId: MessageId;
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ContractChatAttachment>;
+}
+
+interface QueuedRowThumbnail {
+  readonly key: string;
+  readonly name: string;
+  readonly url: string | null;
+}
 
 export function QueuedRunsControl(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  readonly optimisticMessages: ReadonlyArray<Pick<ChatMessage, "id" | "inputIntent" | "text">>;
+  readonly optimisticMessages: ReadonlyArray<
+    Pick<ChatMessage, "id" | "inputIntent" | "text" | "attachments">
+  >;
+  /** Row currently loaded into the composer for editing; hidden from the list. */
+  readonly editingRunId: RunId | null;
+  readonly onEditQueuedRun: (request: EditQueuedRunRequest) => void;
 }) {
   const projection = useThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
@@ -31,36 +55,83 @@ export function QueuedRunsControl(props: {
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
-  const edit = useAtomCommand(threadEnvironment.editQueuedRun);
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
-  const [editing, setEditing] = useState<{ runId: RunId; draft: string } | null>(null);
   const workflow = useMemo(
     () => (projection ? deriveThreadQueueWorkflowState(projection) : null),
     [projection],
   );
   const queued = workflow?.queuedRuns ?? [];
   const activeRun = workflow?.activeRun ?? null;
+  const queuedImageAttachmentIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const { attachments } of workflow?.queuedRuns ?? []) {
+      for (const attachment of attachments) {
+        if (attachment.type === "image") ids.push(attachment.id);
+      }
+    }
+    return ids;
+  }, [workflow]);
+  const queuedImageAttachmentResources = useMemo(
+    () =>
+      queuedImageAttachmentIds.map((attachmentId) => ({
+        _tag: "attachment" as const,
+        attachmentId,
+      })),
+    [queuedImageAttachmentIds],
+  );
+  const queuedImageAttachmentUrls = useAssetUrls(
+    props.environmentId,
+    queuedImageAttachmentResources,
+  );
+  const queuedImageUrlById = useMemo(
+    () =>
+      new Map(
+        queuedImageAttachmentIds.flatMap((attachmentId, index) => {
+          const url = queuedImageAttachmentUrls[index];
+          return url ? [[attachmentId, url] as const] : [];
+        }),
+      ),
+    [queuedImageAttachmentIds, queuedImageAttachmentUrls],
+  );
   const committedQueuedMessageIds = new Set(queued.map(({ run }) => run.userMessageId));
   const optimisticQueued = props.optimisticMessages.filter(
     (message) =>
       message.inputIntent === "queued_turn" && !committedQueuedMessageIds.has(message.id),
   );
   const items = [
-    ...queued.map(({ run, text }, serverIndex) => ({
+    ...queued.map(({ run, text, attachments }, serverIndex) => ({
       key: run.id,
       runId: run.id,
+      messageId: run.userMessageId,
       serverIndex,
       text,
+      attachments,
+      thumbnails: attachments
+        .filter((attachment) => attachment.type === "image")
+        .map<QueuedRowThumbnail>((attachment) => ({
+          key: attachment.id,
+          name: attachment.name,
+          url: queuedImageUrlById.get(attachment.id) ?? null,
+        })),
       pending: false,
     })),
     ...optimisticQueued.map((message) => ({
       key: message.id,
       runId: null,
+      messageId: null,
       serverIndex: null,
       text: message.text,
+      attachments: [] as ReadonlyArray<ContractChatAttachment>,
+      thumbnails: (message.attachments ?? [])
+        .filter(isImageAttachment)
+        .map<QueuedRowThumbnail>((attachment) => ({
+          key: attachment.id,
+          name: attachment.name,
+          url: attachment.previewUrl ?? null,
+        })),
       pending: true,
     })),
-  ];
+  ].filter((item) => item.runId === null || item.runId !== props.editingRunId);
 
   if (items.length === 0) return null;
 
@@ -101,26 +172,6 @@ export function QueuedRunsControl(props: {
     }
   };
 
-  const saveEdit = async (runId: RunId, originalText: string) => {
-    if (editing === null || editing.runId !== runId) return;
-    const text = editing.draft.trim();
-    if (text.length === 0) return;
-    if (text === originalText) {
-      setEditing(null);
-      return;
-    }
-    setBusyRunId(runId);
-    try {
-      await edit({
-        environmentId: props.environmentId,
-        input: { threadId: props.threadId, runId, text },
-      });
-      setEditing(null);
-    } finally {
-      setBusyRunId(null);
-    }
-  };
-
   return (
     <section
       aria-label={`${items.length} queued message${items.length === 1 ? "" : "s"}`}
@@ -135,176 +186,142 @@ export function QueuedRunsControl(props: {
         </span>
       </header>
       <ol className="max-h-32 overflow-y-auto px-1">
-        {items.map((item, index) => {
-          const rowEditing =
-            item.runId !== null && editing !== null && editing.runId === item.runId
-              ? editing
-              : null;
-          return (
-            <li
-              key={item.key}
-              className="flex min-w-0 items-center gap-1 border-border/45 border-t py-1 first:border-t-0"
-            >
-              <span className="w-4 shrink-0 text-center text-[10px] tabular-nums text-muted-foreground/65">
-                {index + 1}
+        {items.map((item, index) => (
+          <li
+            key={item.key}
+            className="flex min-w-0 items-center gap-1 border-border/45 border-t py-1 first:border-t-0"
+          >
+            <span className="w-4 shrink-0 text-center text-[10px] tabular-nums text-muted-foreground/65">
+              {index + 1}
+            </span>
+            {item.pending ? (
+              <Clock3Icon
+                aria-label="Saving queued message"
+                className="size-3 shrink-0 text-muted-foreground/60"
+              />
+            ) : null}
+            {item.thumbnails.length > 0 ? (
+              <span className="flex shrink-0 items-center gap-0.5">
+                {item.thumbnails.map((thumbnail) => (
+                  <span
+                    key={thumbnail.key}
+                    className="size-5 overflow-hidden rounded border border-border/70 bg-background"
+                  >
+                    {thumbnail.url ? (
+                      <img
+                        src={thumbnail.url}
+                        alt={thumbnail.name}
+                        className="size-full object-cover"
+                      />
+                    ) : (
+                      <span aria-label={thumbnail.name} className="block size-full bg-muted/60" />
+                    )}
+                  </span>
+                ))}
               </span>
-              {item.pending ? (
-                <Clock3Icon
-                  aria-label="Saving queued message"
-                  className="size-3 shrink-0 text-muted-foreground/60"
-                />
-              ) : null}
-              {rowEditing !== null ? (
-                <>
-                  <input
-                    aria-label="Edit queued message"
-                    autoFocus
-                    className="min-w-0 flex-1 rounded-sm border border-border/60 bg-transparent px-1.5 py-0.5 text-xs outline-none focus:border-border"
-                    value={rowEditing.draft}
-                    onChange={(event) =>
-                      setEditing((current) =>
-                        current === null ? current : { ...current, draft: event.target.value },
-                      )
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        if (item.runId !== null) void saveEdit(item.runId, item.text);
-                      }
-                      if (event.key === "Escape") {
-                        event.preventDefault();
-                        setEditing(null);
-                      }
-                    }}
-                  />
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label="Save queued message"
-                    className="size-6 text-muted-foreground"
-                    disabled={busyRunId !== null || rowEditing.draft.trim().length === 0}
-                    onClick={() => {
-                      if (item.runId !== null) void saveEdit(item.runId, item.text);
-                    }}
-                  >
-                    <CheckIcon className="size-3" />
-                  </Button>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label="Cancel editing queued message"
-                    className="size-6 text-muted-foreground"
-                    disabled={busyRunId !== null}
-                    onClick={() => setEditing(null)}
-                  >
-                    <XIcon className="size-3" />
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Tooltip>
-                    <TooltipTrigger render={<span className="min-w-0 flex-1 truncate text-xs" />}>
-                      {item.text}
-                    </TooltipTrigger>
-                    <TooltipPopup side="top" className="max-w-96 break-words">
-                      {item.text}
-                    </TooltipPopup>
-                  </Tooltip>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label="Edit queued message"
-                    className="size-6 text-muted-foreground"
-                    disabled={item.runId === null || busyRunId !== null}
-                    onClick={() => {
-                      if (item.runId !== null) {
-                        setEditing({ runId: item.runId, draft: item.text });
-                      }
-                    }}
-                  >
-                    <PencilIcon className="size-3" />
-                  </Button>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label="Move queued message up"
-                    className="size-6 text-muted-foreground"
-                    disabled={
-                      item.runId === null ||
-                      item.serverIndex === null ||
-                      busyRunId !== null ||
-                      !workflow?.canReorder ||
-                      item.serverIndex === 0
-                    }
-                    onClick={() => {
-                      if (item.runId === null || item.serverIndex === null) {
-                        return;
-                      }
-                      void move(item.runId, queued[item.serverIndex - 1]?.run.id ?? null);
-                    }}
-                  >
-                    <ArrowUpIcon className="size-3" />
-                  </Button>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label="Move queued message down"
-                    className="size-6 text-muted-foreground"
-                    disabled={
-                      item.runId === null ||
-                      item.serverIndex === null ||
-                      busyRunId !== null ||
-                      !workflow?.canReorder ||
-                      item.serverIndex === queued.length - 1
-                    }
-                    onClick={() => {
-                      if (item.runId === null || item.serverIndex === null) {
-                        return;
-                      }
-                      void move(item.runId, queued[item.serverIndex + 2]?.run.id ?? null);
-                    }}
-                  >
-                    <ArrowDownIcon className="size-3" />
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground"
-                    disabled={
-                      item.runId === null || busyRunId !== null || !workflow?.canPromoteToSteer
-                    }
-                    title={
-                      activeRun === null
-                        ? "There is no active run to steer"
-                        : "Send as a steer instead"
-                    }
-                    onClick={() => {
-                      if (item.runId !== null) {
-                        void steer(item.runId);
-                      }
-                    }}
-                  >
-                    <CornerUpRightIcon className="size-3" />
-                    Steer
-                  </Button>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label="Remove queued message"
-                    className="size-6 text-muted-foreground"
-                    disabled={item.runId === null || busyRunId !== null}
-                    title="Remove from queue"
-                    onClick={() => {
-                      if (item.runId !== null) void remove(item.runId);
-                    }}
-                  >
-                    <XIcon className="size-3" />
-                  </Button>
-                </>
-              )}
-            </li>
-          );
-        })}
+            ) : null}
+            <Tooltip>
+              <TooltipTrigger render={<span className="min-w-0 flex-1 truncate text-xs" />}>
+                {item.text}
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="max-w-96 break-words">
+                {item.text}
+              </TooltipPopup>
+            </Tooltip>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Edit queued message"
+              className="size-6 text-muted-foreground"
+              disabled={item.runId === null || busyRunId !== null}
+              title="Edit in the composer"
+              onClick={() => {
+                if (item.runId !== null && item.messageId !== null) {
+                  props.onEditQueuedRun({
+                    runId: item.runId,
+                    messageId: item.messageId,
+                    text: item.text,
+                    attachments: item.attachments,
+                  });
+                }
+              }}
+            >
+              <PencilIcon className="size-3" />
+            </Button>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Move queued message up"
+              className="size-6 text-muted-foreground"
+              disabled={
+                item.runId === null ||
+                item.serverIndex === null ||
+                busyRunId !== null ||
+                !workflow?.canReorder ||
+                item.serverIndex === 0
+              }
+              onClick={() => {
+                if (item.runId === null || item.serverIndex === null) {
+                  return;
+                }
+                void move(item.runId, queued[item.serverIndex - 1]?.run.id ?? null);
+              }}
+            >
+              <ArrowUpIcon className="size-3" />
+            </Button>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Move queued message down"
+              className="size-6 text-muted-foreground"
+              disabled={
+                item.runId === null ||
+                item.serverIndex === null ||
+                busyRunId !== null ||
+                !workflow?.canReorder ||
+                item.serverIndex === queued.length - 1
+              }
+              onClick={() => {
+                if (item.runId === null || item.serverIndex === null) {
+                  return;
+                }
+                void move(item.runId, queued[item.serverIndex + 2]?.run.id ?? null);
+              }}
+            >
+              <ArrowDownIcon className="size-3" />
+            </Button>
+            <Button
+              size="xs"
+              variant="ghost"
+              className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground"
+              disabled={item.runId === null || busyRunId !== null || !workflow?.canPromoteToSteer}
+              title={
+                activeRun === null ? "There is no active run to steer" : "Send as a steer instead"
+              }
+              onClick={() => {
+                if (item.runId !== null) {
+                  void steer(item.runId);
+                }
+              }}
+            >
+              <CornerUpRightIcon className="size-3" />
+              Steer
+            </Button>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Remove queued message"
+              className="size-6 text-muted-foreground"
+              disabled={item.runId === null || busyRunId !== null}
+              title="Remove from queue"
+              onClick={() => {
+                if (item.runId !== null) void remove(item.runId);
+              }}
+            >
+              <XIcon className="size-3" />
+            </Button>
+          </li>
+        ))}
       </ol>
     </section>
   );

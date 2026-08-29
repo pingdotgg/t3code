@@ -21,7 +21,6 @@ vi.mock("../../state/entities", () => ({
 vi.mock("../../state/threads", () => ({
   threadEnvironment: {
     cancelQueuedRun: Symbol("cancelQueuedRun"),
-    editQueuedRun: Symbol("editQueuedRun"),
     promoteQueuedRun: Symbol("promoteQueuedRun"),
     reorderQueuedRun: Symbol("reorderQueuedRun"),
   },
@@ -29,6 +28,11 @@ vi.mock("../../state/threads", () => ({
 
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => async () => undefined,
+}));
+
+vi.mock("../../assets/assetUrls", () => ({
+  useAssetUrls: (_environmentId: never, resources: ReadonlyArray<{ attachmentId: string }>) =>
+    resources.map((resource) => `https://assets.test/${resource.attachmentId}`),
 }));
 
 import { QueuedRunsControl } from "./QueuedRunsControl";
@@ -61,6 +65,67 @@ describe("QueuedRunsControl automatic completion delivery", () => {
         environmentId={"environment:test" as never}
         optimisticMessages={[]}
         threadId={"thread:test" as never}
+        editingRunId={null}
+        onEditQueuedRun={() => undefined}
+      />,
+    );
+
+    expect(html).toBe("");
+  });
+});
+
+describe("QueuedRunsControl attachments and edit mode", () => {
+  const workflowWithAttachment = () => ({
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: true,
+    canReorder: true,
+    queuedRuns: [
+      {
+        run: { id: "run:queued", userMessageId: "message:queued" },
+        text: "Queued with a screenshot",
+        attachments: [
+          {
+            type: "image",
+            id: "attachment-1",
+            name: "screenshot.png",
+            mimeType: "image/png",
+            sizeBytes: 128,
+          },
+        ],
+      },
+    ],
+  });
+
+  it("renders an attachment thumbnail on the queued row", () => {
+    state.projection = { projection: { messages: [] } };
+    state.workflow = workflowWithAttachment();
+
+    const html = renderToStaticMarkup(
+      <QueuedRunsControl
+        environmentId={"environment:test" as never}
+        optimisticMessages={[]}
+        threadId={"thread:test" as never}
+        editingRunId={null}
+        onEditQueuedRun={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("https://assets.test/attachment-1");
+    expect(html).toContain("Queued with a screenshot");
+    expect(html).toContain("Edit queued message");
+  });
+
+  it("hides the row that is being edited in the composer", () => {
+    state.projection = { projection: { messages: [] } };
+    state.workflow = workflowWithAttachment();
+
+    const html = renderToStaticMarkup(
+      <QueuedRunsControl
+        environmentId={"environment:test" as never}
+        optimisticMessages={[]}
+        threadId={"thread:test" as never}
+        editingRunId={"run:queued" as never}
+        onEditQueuedRun={() => undefined}
       />,
     );
 
