@@ -48,6 +48,10 @@ import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
+  isProviderNativeImageAttachment,
+  providerMessageTextWithAttachmentPaths,
+} from "../AttachmentPrompt.ts";
+import {
   ProviderAdapterEnsureThreadError,
   ProviderAdapterForkThreadError,
   ProviderAdapterInterruptError,
@@ -2007,12 +2011,16 @@ export function makeCursorAdapterV2(
           turnInput: ProviderAdapterV2TurnInput,
         ) {
           const text = t3OrchestrationPromptForFirstRun({
-            prompt: turnInput.message.text,
+            prompt: providerMessageTextWithAttachmentPaths({
+              text: turnInput.message.text,
+              attachments: turnInput.message.attachments,
+              attachmentsDir: serverConfig.attachmentsDir,
+            }),
             runOrdinal: turnInput.runOrdinal,
             hasT3Mcp: cursorMcpServers(turnInput.threadId) !== undefined,
           });
           const images = yield* Effect.forEach(
-            turnInput.message.attachments,
+            turnInput.message.attachments.filter(isProviderNativeImageAttachment),
             (attachment: ChatAttachment) =>
               Effect.gen(function* () {
                 const path = resolveAttachmentPath({
@@ -2042,7 +2050,7 @@ export function makeCursorAdapterV2(
               }),
             { concurrency: 1 },
           );
-          if (turnInput.message.text.length === 0 && images.length === 0) {
+          if (text.length === 0 && images.length === 0) {
             return yield* new ProviderAdapterProtocolError({
               driver: CURSOR_PROVIDER,
               detail: "Cursor turn requires non-empty text or attachments.",

@@ -74,6 +74,7 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
+import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import {
   ProviderAdapterEnsureThreadError,
   ProviderAdapterForkThreadError,
@@ -1029,18 +1030,11 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   // The model's tools cannot dereference inlined pixels. Appending the
   // on-disk path is what lets a turn like "include this screenshot in the
   // PR" copy the actual file (the query grants attachmentsDir for reads).
-  const attachmentPathLines = input.attachments.flatMap((attachment) => {
-    const attachmentPath = resolveAttachmentPath({
-      attachmentsDir: input.attachmentsDir,
-      attachment,
-    });
-    return attachmentPath === null
-      ? []
-      : [`[Attached ${attachment.type} "${attachment.name}" is saved at: ${attachmentPath}]`];
+  const textWithAttachmentPaths = providerMessageTextWithAttachmentPaths({
+    text: input.text,
+    attachments: input.attachments,
+    attachmentsDir: input.attachmentsDir,
   });
-  const textWithAttachmentPaths = [input.text, attachmentPathLines.join("\n")]
-    .filter((part) => part.length > 0)
-    .join("\n\n");
 
   const content: Array<ClaudeUserContentBlock> = [];
   if (textWithAttachmentPaths.length > 0) {
@@ -1048,6 +1042,9 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   }
 
   for (const attachment of input.attachments) {
+    if (attachment.type === "file") {
+      continue;
+    }
     if (!isSupportedClaudeImageMimeType(attachment.mimeType)) {
       return yield* new ProviderAdapterProtocolError({
         driver: CLAUDE_PROVIDER,
