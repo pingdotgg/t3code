@@ -33,6 +33,7 @@ describe("renderMermaidSvg", () => {
       expect.objectContaining({
         startOnLoad: false,
         securityLevel: "strict",
+        suppressErrorRendering: true,
         theme: "dark",
       }),
     );

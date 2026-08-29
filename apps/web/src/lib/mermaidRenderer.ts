@@ -19,6 +19,9 @@ export async function renderMermaidSvg(source: string, theme: MermaidTheme): Pro
     mermaid.initialize({
       startOnLoad: false,
       securityLevel: "strict",
+      // Failed mermaid.render() otherwise leaves a temp error diagram on
+      // document.body (unique id per call, so later renders never reclaim it).
+      suppressErrorRendering: true,
       htmlLabels: false,
       theme: theme === "dark" ? "dark" : "neutral",
       flowchart: { useMaxWidth: false },
