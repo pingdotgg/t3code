@@ -1553,7 +1553,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             break;
           }
           case "provider-turn.updated": {
-            const payloadJson = yield* encodeProviderTurnPayload(event.payload);
+            const existingRows =
+              event.payload.tokenUsage === undefined
+                ? yield* sql<PayloadRow>`
+                    SELECT payload_json
+                    FROM orchestration_v2_projection_provider_turns
+                    WHERE provider_turn_id = ${event.payload.id}
+                    LIMIT 1
+                  `
+                : [];
+            const existing = existingRows[0];
+            const providerTurn =
+              existing === undefined
+                ? event.payload
+                : upsertProviderTurn(
+                    [yield* decodeProviderTurnPayload(existing.payload_json)],
+                    event.payload,
+                  )[0]!;
+            const payloadJson = yield* encodeProviderTurnPayload(providerTurn);
             const payload = parseEncodedPayload(payloadJson);
             yield* sql`
               INSERT INTO orchestration_v2_projection_provider_turns (
@@ -1571,11 +1588,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               VALUES (
                 ${event.payload.id},
                 ${event.threadId},
-                ${event.payload.providerThreadId},
-                ${event.payload.nodeId},
-                ${event.payload.runAttemptId},
-                ${event.payload.ordinal},
-                ${event.payload.status},
+                ${providerTurn.providerThreadId},
+                ${providerTurn.nodeId},
+                ${providerTurn.runAttemptId},
+                ${providerTurn.ordinal},
+                ${providerTurn.status},
                 ${nullableStringField(payload, "startedAt")},
                 ${nullableStringField(payload, "completedAt")},
                 ${payloadJson}
