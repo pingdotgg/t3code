@@ -111,7 +111,9 @@ export function outcomeToStep(outcome: ImportOutcome): WizardStep {
   // one could help.
   if (outcome.reason === "browserRunning") return { step: "quit" };
   if (outcome.reason === "needsFullDiskAccess") {
-    return { step: "fullDiskAccess", resume: "import" };
+    // The failed import already checked access, so explain that it is still
+    // denied instead of returning to an indistinguishable permission screen.
+    return { step: "fullDiskAccess", resume: "import", checked: true };
   }
   return { step: "blocked", reason: outcome.reason };
 }
