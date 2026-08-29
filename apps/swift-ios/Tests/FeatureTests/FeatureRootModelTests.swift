@@ -548,8 +548,15 @@ struct FeatureRootModelTests {
         await model.regenerateThreadTitle(thread.id)
         #expect(client.regeneratedTitleThreadIDs == [thread.id])
 
-        // A later authoritative snapshot still resolves the pending work.
+        // A later authoritative snapshot first confirms that the server saw
+        // the request, then resolves the pending work.
         client.titleRegenerationError = nil
+        var acknowledged = thread
+        acknowledged.isRegeneratingTitle = true
+        acknowledged.titleRegenerationRequestID = client.regeneratedTitleRequestIDs[0]
+        client.snapshot = FeatureSnapshot(threads: [acknowledged])
+        await model.reload()
+
         var completed = thread
         completed.title = "Authoritative title"
         client.snapshot = FeatureSnapshot(threads: [completed])
