@@ -252,10 +252,15 @@ const make = Effect.gen(function* () {
                             : yield* loadWorkspaceBindingInventory(thread.worktreePath);
                         if (
                           Option.isNone(inventory) ||
-                          inventory.value.repositoryCommonDir !== repositoryCommonDir ||
-                          inventory.value.currentWorktreeRoot === null
+                          inventory.value.repositoryCommonDir !== repositoryCommonDir
                         ) {
                           return [];
+                        }
+                        if (inventory.value.currentWorktreeRoot === null) {
+                          return yield* failure(
+                            "operation_failed",
+                            `Unable to resolve the physical checkout for possible owner thread '${thread.id}'.`,
+                          );
                         }
                         return [[thread, inventory.value.currentWorktreeRoot] as const];
                       }),

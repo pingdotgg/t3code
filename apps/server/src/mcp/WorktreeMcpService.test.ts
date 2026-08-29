@@ -2552,6 +2552,45 @@ describe("t3_thread_checkout", () => {
     });
   });
 
+  it.effect("fails closed when a same-repository owner has no physical checkout identity", () => {
+    const nestedProjectRoot = "/repo/packages/server";
+    const otherProjectId = ProjectId.make("project-null-checkout-owner");
+    const harness = makeHarness({
+      thread: { branch: "dev", worktreePath: null },
+      refs: rootRefs,
+      workspaceStatuses: {
+        [workspaceRoot]: { branch: "dev" },
+        [nestedProjectRoot]: { branch: "dev", isRepo: true },
+      },
+      worktreeInventories: {
+        [nestedProjectRoot]: {
+          repositoryCommonDir: "/repo/.git",
+          currentWorktreeRoot: null,
+          worktrees: [{ path: workspaceRoot, refName: "dev" }],
+        },
+      },
+      otherProjectThread: {
+        projectId: otherProjectId,
+        workspaceRoot: nestedProjectRoot,
+        id: ThreadId.make("thread-null-checkout-owner"),
+        title: "Unresolved checkout owner",
+        branch: "dev",
+        worktreePath: null,
+      },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        runCheckout(harness, {
+          target: { type: "branch", branch: "feature/checkout" },
+        }),
+      );
+
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "operation_failed" });
+      expect(harness.switchRef).not.toHaveBeenCalled();
+      expect(harness.dispatch).not.toHaveBeenCalled();
+    });
+  });
+
   it.effect("rejects a physical worktree retained by an archived thread", () => {
     const targetPath = "/worktrees/project/archived-owner";
     const harness = makeHarness({
