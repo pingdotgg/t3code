@@ -275,6 +275,7 @@ export interface ThreadManagementServiceShape {
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
   readonly getThreadSnapshot: OrchestratorV2["Service"]["getThreadSnapshot"];
+  readonly getThreadSnapshotWindow: OrchestratorV2["Service"]["getThreadSnapshotWindow"];
   readonly getProjectThread: (input: {
     readonly projectId: ProjectId;
     readonly threadId: ThreadId;
@@ -412,6 +413,13 @@ const make = Effect.gen(function* () {
   const getThreadSnapshot: ThreadManagementServiceShape["getThreadSnapshot"] = (threadId) =>
     ensureProjectionTranscript(threadId).pipe(
       Effect.andThen(orchestrator.getThreadSnapshot(threadId)),
+    );
+  const getThreadSnapshotWindow: ThreadManagementServiceShape["getThreadSnapshotWindow"] = (
+    threadId,
+    options,
+  ) =>
+    ensureProjectionTranscript(threadId).pipe(
+      Effect.andThen(orchestrator.getThreadSnapshotWindow(threadId, options)),
     );
 
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
@@ -647,6 +655,7 @@ const make = Effect.gen(function* () {
     dispatch,
     getThreadProjection,
     getThreadSnapshot,
+    getThreadSnapshotWindow,
     getProjectThread,
     getShellSnapshot: orchestrator.getShellSnapshot,
     getThreadShell: orchestrator.getThreadShell,
