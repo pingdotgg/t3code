@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - Hostname and signal 0 are the
+// platform boundary for interpreting Chromium's host-PID lock target.
 /**
  * Importable browser sources.
  *
@@ -16,6 +18,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as NodeOS from "node:os";
 
 /**
  * Where a source's files live, resolved once per call rather than read from
@@ -190,11 +193,52 @@ const entryExists = Effect.fnUntraced(function* (path: string) {
   );
 });
 
+type ProcessLivenessProbe = (pid: number) => Effect.Effect<boolean>;
+
+export const chromiumProcessIsAlive = (
+  pid: number,
+  signalProcess: (pid: number, signal: 0) => unknown = process.kill.bind(process),
+) =>
+  Effect.sync(() => {
+    try {
+      // Signal 0 performs a read-only existence/permission check.
+      signalProcess(pid, 0);
+      return true;
+    } catch (cause) {
+      // Only ESRCH positively proves the process is gone. Permission errors
+      // and unknown failures stay conservative so an active browser is never
+      // mistaken for a stale lock.
+      return (cause as NodeJS.ErrnoException).code !== "ESRCH";
+    }
+  });
+
+const processIsAlive: ProcessLivenessProbe = (pid) => chromiumProcessIsAlive(pid);
+
+/** Whether a Chromium `<host>-<pid>` lock target may still name its owner. */
+export const chromiumSingletonLockIsHeld = Effect.fnUntraced(function* (
+  target: string,
+  currentHost: string,
+  isProcessAlive: ProcessLivenessProbe,
+) {
+  const separator = target.lastIndexOf("-");
+  if (separator <= 0) return true;
+  const host = target.slice(0, separator);
+  const pidText = target.slice(separator + 1);
+  if (!/^\d+$/.test(pidText)) return true;
+  const pid = Number(pidText);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
+  // A PID is meaningful only on this host. A foreign hostname can come from a
+  // shared home directory, and cannot safely be declared stale from here.
+  if (host !== currentHost) return true;
+  return yield* isProcessAlive(pid);
+});
+
 /** Whether the browser is running, which leaves its cookie DB mid-write. */
 export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")(function* (
   definition: BrowserImportSourceDefinition,
   paths: SourcePaths,
 ) {
+  const fileSystem = yield* FileSystem.FileSystem;
   const lock = paths.path.join(definition.userDataDirectory(paths), "SingletonLock");
   // Chromium writes a `SingletonLock` symlink for as long as an instance holds
   // the profile. Its presence is a far cheaper and more targeted signal than
@@ -203,8 +247,15 @@ export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")
   // The link points at `<host>-<pid>`, a target that never exists, and both
   // `stat` and `exists` follow links — so they report every running browser as
   // closed, which would let an import read a live, mid-write database.
-  // `readLink` is the one probe that answers for the entry itself.
-  return yield* entryExists(lock);
+  // `readLink` is the one probe that answers for the entry itself. Chromium
+  // can leave this link behind after a crash, so a positively dead local PID
+  // is stale. Every ambiguous target or liveness result stays conservative.
+  return yield* fileSystem.readLink(lock).pipe(
+    Effect.flatMap((target) =>
+      chromiumSingletonLockIsHeld(target, NodeOS.hostname(), processIsAlive),
+    ),
+    Effect.catch((error) => Effect.succeed(error.reason._tag !== "NotFound")),
+  );
 });
 
 /**

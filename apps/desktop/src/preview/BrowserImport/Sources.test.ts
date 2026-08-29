@@ -11,6 +11,8 @@ import * as NodeSqlite from "node:sqlite";
 
 import {
   BROWSER_IMPORT_SOURCES,
+  chromiumProcessIsAlive,
+  chromiumSingletonLockIsHeld,
   cookieDatabasePath,
   isSourceInstalled,
   isSourceRunning,
@@ -63,6 +65,65 @@ describe("isSourceRunning", () => {
         assert.isTrue(yield* isSourceRunning(helium, paths));
       }),
     ),
+  );
+});
+
+describe("chromiumSingletonLockIsHeld", () => {
+  it.effect("ignores a positively dead PID on the current host", () =>
+    Effect.gen(function* () {
+      const checked: number[] = [];
+      const held = yield* chromiumSingletonLockIsHeld("current-host-4321", "current-host", (pid) =>
+        Effect.sync(() => {
+          checked.push(pid);
+          return false;
+        }),
+      );
+      assert.isFalse(held);
+      assert.deepEqual(checked, [4321]);
+    }),
+  );
+
+  it.effect("keeps a live PID on the current host", () =>
+    chromiumSingletonLockIsHeld("current-host-4321", "current-host", () =>
+      Effect.succeed(true),
+    ).pipe(Effect.tap((held) => Effect.sync(() => assert.isTrue(held)))),
+  );
+
+  it.effect("keeps foreign-host and malformed targets without probing a PID", () =>
+    Effect.gen(function* () {
+      let probes = 0;
+      const probe = (_pid: number) =>
+        Effect.sync(() => {
+          probes += 1;
+          return false;
+        });
+      assert.isTrue(yield* chromiumSingletonLockIsHeld("another-host-4321", "current-host", probe));
+      assert.isTrue(
+        yield* chromiumSingletonLockIsHeld("current-host-no-pid", "current-host", probe),
+      );
+      assert.isTrue(yield* chromiumSingletonLockIsHeld("current-host-0", "current-host", probe));
+      assert.strictEqual(probes, 0);
+    }),
+  );
+});
+
+describe("chromiumProcessIsAlive", () => {
+  it.effect("returns false only when signal 0 reports a missing process", () =>
+    Effect.gen(function* () {
+      const missing = Object.assign(new Error("missing"), { code: "ESRCH" });
+      const denied = Object.assign(new Error("denied"), { code: "EPERM" });
+      assert.isFalse(
+        yield* chromiumProcessIsAlive(4321, () => {
+          throw missing;
+        }),
+      );
+      assert.isTrue(
+        yield* chromiumProcessIsAlive(4321, () => {
+          throw denied;
+        }),
+      );
+      assert.isTrue(yield* chromiumProcessIsAlive(4321, () => true));
+    }),
   );
 });
 
