@@ -52,9 +52,21 @@ and container variants.
   use this layout; no per-notice breakpoints or offsets are needed. `Body` aligns freeform content
   such as questions to that same text column.
 
-`ComposerBannerStack` owns notice priority presentation, stack expansion, and
-animated dismissal. Its items supply title, description, actions, and optional
-composed child rows. `ComposerServerUpdateStatus` renders both progress and failure details
+`ChatComposer` composes the activity row and task content into `ComposerBannerStack`
+alongside notices supplied by `ChatView`. The stack owns ordering, placement, expansion,
+and animated dismissal. Errors, warnings, and entries with `priority="urgent"` come first,
+followed by `priority="activity"`, then passive notices. Ordering within each group is stable.
+Working, synchronization, and monitoring therefore keep passive update offers behind them.
+The front entry attaches to the composer; hidden entries reveal as separate floating cards.
+Only the peeking edge and revealed notices own the expansion hit area. Hovering or focusing
+the attached entry does not reveal notices. The peek is a keyboard- and touch-accessible
+button; Escape closes the notices and returns focus to it.
+Expanding tasks changes the activity entry's content without moving it out of the stack.
+
+Notice entries supply title, description, actions, and optional composed child rows.
+Content entries supply a React node, so the same stack can host task controls and lists
+without consumers managing their own card placement. Without notices, activity and task
+tabs still use `ComposerBanner.Dock`. `ComposerServerUpdateStatus` renders progress and failure details
 inline with the title. The line truncates at its end on narrow screens; hover, focus, or click
 to read the full status in a tooltip. The Settings presentation remains separate.
 Failed update notices can be dismissed without clearing the runtime failure in Settings.

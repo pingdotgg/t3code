@@ -1,5 +1,5 @@
 import { ListTodoIcon } from "lucide-react";
-import { memo } from "react";
+import { memo, type ComponentProps } from "react";
 
 import { formatDuration } from "../../session-logic";
 import { cn } from "~/lib/utils";
@@ -130,7 +130,7 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
     <ComposerBanner.Row
       render={<button type="button" />}
       aria-expanded={expanded}
-      aria-label={`Tasks: ${progress.completedSteps} of ${progress.totalSteps} complete. Current task: ${progress.step}`}
+      aria-label={`${expanded ? "Collapse tasks" : "Tasks"}: ${progress.completedSteps} of ${progress.totalSteps} complete. Current task: ${progress.step}`}
       data-composer-tasks-badge="true"
       onClick={onToggle}
       onPointerDown={(event) => event.preventDefault()}
@@ -152,32 +152,33 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
   );
 });
 
-export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
-  onCollapse,
+export const ComposerTasksContent = memo(function ComposerTasksContent({
+  expanded,
+  onToggle,
   progress,
   steps,
   activityStatus,
 }: {
-  readonly onCollapse: () => void;
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
   readonly activityStatus?: ComposerActivityStatus | undefined;
 }) {
   return (
-    <ComposerBanner.Attachment>
-      <ComposerBanner.Root
-        data-chat-composer-collapsed-controls="true"
-        data-chat-composer-tasks-drawer="true"
-      >
-        <ComposerBanner.Row
-          render={<button type="button" />}
-          aria-expanded="true"
-          aria-label={`Collapse tasks. ${progress.completedSteps} of ${progress.totalSteps} complete.`}
-          onClick={onCollapse}
-          onPointerDown={(event) => event.preventDefault()}
-        >
-          <TaskSummary expanded progress={progress} steps={steps} activityStatus={activityStatus} />
-        </ComposerBanner.Row>
+    <div
+      data-chat-composer-collapsed-controls="true"
+      data-chat-composer-tasks-drawer={expanded ? "true" : undefined}
+    >
+      <ComposerTasksBadge
+        expanded={expanded}
+        onToggle={onToggle}
+        placement="inline"
+        progress={progress}
+        steps={steps}
+        activityStatus={activityStatus}
+      />
+      {expanded ? (
         <ComposerBanner.Scroll data-composer-tasks-scroll="true">
           <ComposerBanner.Children
             render={<ul />}
@@ -225,6 +226,21 @@ export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
             ))}
           </ComposerBanner.Children>
         </ComposerBanner.Scroll>
+      ) : null}
+    </div>
+  );
+});
+
+export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
+  onCollapse,
+  ...props
+}: Omit<ComponentProps<typeof ComposerTasksContent>, "expanded" | "onToggle"> & {
+  readonly onCollapse: () => void;
+}) {
+  return (
+    <ComposerBanner.Attachment>
+      <ComposerBanner.Root>
+        <ComposerTasksContent {...props} expanded onToggle={onCollapse} />
       </ComposerBanner.Root>
     </ComposerBanner.Attachment>
   );

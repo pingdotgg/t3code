@@ -37,7 +37,11 @@ Task details and progress stay hidden until the thread is live again. Once synci
 finishes, current tasks return and the timer reflects the turn's original start time.
 Long task lists scroll beneath their header, with a fade at each edge that has more content.
 
-Notices stack above the activity row. Dismissing a notice keeps the timer and task progress visible.
+Passive notices, such as an available server update, peek behind the activity banner.
+Hover over or activate the peeking edge to reveal them. Using the activity row or task
+controls leaves hidden notices collapsed. Expanding tasks keeps
+the task list attached to the timer. Errors, warnings, and updates in progress take the front
+position until resolved or dismissed.
 You can dismiss a failed server update and retry later in **Settings → Connections**.
 If another attempt fails, its notice appears again.
 
