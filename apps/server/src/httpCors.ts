@@ -5,4 +5,12 @@ export const browserApiCorsAllowedHeaders = [
   "traceparent",
   "content-type",
   "dpop",
+  ORCHESTRATION_PROTOCOL_HEADER,
 ] as const;
+
+export const browserApiCorsHeaders = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": browserApiCorsAllowedMethods.join(", "),
+  "access-control-allow-headers": browserApiCorsAllowedHeaders.join(", "),
+} as const;
+import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
