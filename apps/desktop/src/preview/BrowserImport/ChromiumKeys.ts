@@ -188,9 +188,14 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
     // reach the keyring is not fatal — it just leaves those records skipped.
     const keyringSecret = request.linuxSecretApplication
       ? yield* readLinuxSecret(request.linuxSecretApplication).pipe(
-          // v10 remains importable when Secret Service is absent, locked, or
-          // does not contain a key for this browser.
-          Effect.orElseSucceed(() => undefined),
+          // v10 remains importable when Secret Service is absent or does not
+          // contain a key. An explicit denial/lock/cancel remains a consent
+          // failure rather than being silently downgraded.
+          Effect.catch((error) =>
+            error.reason === "needsKeychainApproval"
+              ? Effect.fail(error)
+              : Effect.succeed(undefined),
+          ),
         )
       : undefined;
     return {

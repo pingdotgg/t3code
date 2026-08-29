@@ -91,6 +91,38 @@ describe("Linux Chromium secrets", () => {
     }).pipe(Effect.provide(secretToolLayer({ stderr: "Permission denied", exitCode: 1 }))),
   );
 
+  it.effect("does not discard a denied unlock prompt while resolving keys", () =>
+    Effect.gen(function* () {
+      const error = yield* resolveChromiumKeys({
+        platform: "linux",
+        keychainService: undefined,
+        keychainAccount: undefined,
+        linuxSecretApplication: "brave",
+      }).pipe(Effect.flip);
+      expect(error.reason).toBe("needsKeychainApproval");
+    }).pipe(Effect.provide(secretToolLayer({ stderr: "Keyring is locked", exitCode: 1 }))),
+  );
+
+  it.effect("keeps the v10 fallback when the Secret Service backend is unavailable", () =>
+    Effect.gen(function* () {
+      const keys = yield* resolveChromiumKeys({
+        platform: "linux",
+        keychainService: undefined,
+        keychainAccount: undefined,
+        linuxSecretApplication: "chrome",
+      });
+      expect(keys.cbcV10).toHaveLength(16);
+      expect(keys.cbcV11).toBeUndefined();
+    }).pipe(
+      Effect.provide(
+        secretToolLayer({
+          stderr: "Cannot autolaunch D-Bus without X11 $DISPLAY",
+          exitCode: 1,
+        }),
+      ),
+    ),
+  );
+
   it.effect("keeps the v10 fallback when no matching v11 secret exists", () =>
     Effect.gen(function* () {
       const keys = yield* resolveChromiumKeys({
