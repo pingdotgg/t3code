@@ -1484,7 +1484,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects WebSocket-only turn bootstrap over HTTP with a typed error", () =>
+  it.effect("rejects WebSocket-only turn bootstrap at the HTTP schema", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
@@ -1521,18 +1521,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           createdAt,
         }),
       });
-      const body = (yield* response.json) as {
-        readonly _tag: string;
-        readonly code: string;
-        readonly reason: string;
-        readonly traceId: string;
-      };
-
       assert.equal(response.status, 400);
-      assert.equal(body._tag, "EnvironmentRequestInvalidError");
-      assert.equal(body.code, "invalid_request");
-      assert.equal(body.reason, "http_bootstrap_not_supported");
-      assert.equal(typeof body.traceId, "string");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

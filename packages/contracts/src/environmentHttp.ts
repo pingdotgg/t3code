@@ -32,8 +32,8 @@ import {
 } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
-  ClientOrchestrationCommand,
   DispatchResult,
+  HttpOrchestrationCommand,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
   OrchestrationThreadDetailSnapshot,
@@ -67,7 +67,6 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "invalid_scope",
   "scope_not_granted",
   "invalid_command",
-  "http_bootstrap_not_supported",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -532,7 +531,7 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
   .add(
     HttpApiEndpoint.post("dispatch", "/api/orchestration/dispatch", {
       headers: OptionalBearerHeaders,
-      payload: ClientOrchestrationCommand,
+      payload: HttpOrchestrationCommand,
       success: DispatchResult,
       error: EnvironmentOrchestrationDispatchErrors,
     }).middleware(EnvironmentAuthenticatedAuth),

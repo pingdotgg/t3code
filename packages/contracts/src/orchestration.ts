@@ -912,7 +912,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-const ClientThreadTurnStartCommand = Schema.Struct({
+const ClientThreadTurnStartCommandFields = {
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -926,9 +926,17 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
-  bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
+};
+
+const ClientThreadTurnStartCommand = Schema.Struct({
+  ...ClientThreadTurnStartCommandFields,
+  bootstrap: Schema.optional(ThreadTurnStartBootstrap),
+});
+
+const HttpThreadTurnStartCommand = Schema.Struct(ClientThreadTurnStartCommandFields).annotate({
+  parseOptions: { onExcessProperty: "error" },
 });
 
 const ThreadTurnInterruptCommand = Schema.Struct({
@@ -1032,6 +1040,33 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadSessionStopCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
+
+export const HttpOrchestrationCommand = Schema.Union([
+  ProjectCreateCommand,
+  ProjectMetaUpdateCommand,
+  ProjectDeleteCommand,
+  ThreadCreateCommand,
+  ThreadDeleteCommand,
+  ThreadArchiveCommand,
+  ThreadUnarchiveCommand,
+  ThreadSettleCommand,
+  ThreadUnsettleCommand,
+  ThreadSnoozeCommand,
+  ThreadUnsnoozeCommand,
+  ThreadPinCommand,
+  ThreadUnpinCommand,
+  ThreadPinReorderCommand,
+  ThreadMetaUpdateCommand,
+  ThreadRuntimeModeSetCommand,
+  ThreadInteractionModeSetCommand,
+  HttpThreadTurnStartCommand,
+  ThreadTurnInterruptCommand,
+  ThreadApprovalRespondCommand,
+  ThreadUserInputRespondCommand,
+  ThreadCheckpointRevertCommand,
+  ThreadSessionStopCommand,
+]);
+export type HttpOrchestrationCommand = typeof HttpOrchestrationCommand.Type;
 
 const ThreadSessionSetCommand = Schema.Struct({
   type: Schema.Literal("thread.session.set"),

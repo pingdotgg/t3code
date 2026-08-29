@@ -93,9 +93,6 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.dispatch")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          if (args.payload.type === "thread.turn.start" && args.payload.bootstrap !== undefined) {
-            return yield* failEnvironmentInvalidRequest("http_bootstrap_not_supported");
-          }
           const normalizedCommand = yield* normalizeDispatchCommand(args.payload).pipe(
             Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
           );
