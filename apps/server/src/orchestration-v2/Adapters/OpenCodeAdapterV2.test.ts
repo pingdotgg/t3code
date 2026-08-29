@@ -19,6 +19,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import type { OpenCodeRuntimeShape } from "../../provider/opencodeRuntime.ts";
@@ -136,6 +137,7 @@ describe("OpenCodeAdapterV2", () => {
       const promptStarted = promiseGate<void>();
       const steerPrompt = promiseGate<void>();
       const steerPromptStarted = promiseGate<void>();
+      const stopPromptStarted = promiseGate<void>();
       const statusCalled = promiseGate<void>();
       const steerStatusCalled = promiseGate<void>();
       const abortCalled = promiseGate<void>();
@@ -154,15 +156,25 @@ describe("OpenCodeAdapterV2", () => {
           create: async () => ({
             data: { id: "native-opencode-race", time: { created: 1, updated: 1 } },
           }),
-          promptAsync: async (input: { readonly messageID?: string }) => {
+          promptAsync: async (
+            input: { readonly messageID?: string },
+            options?: { readonly signal?: AbortSignal },
+          ) => {
             promptInputs.push(input);
             promptCalls += 1;
             if (promptCalls === 1) {
               promptStarted.resolve();
               await prompt.promise;
-            } else {
+            } else if (promptCalls === 2) {
               steerPromptStarted.resolve();
               await steerPrompt.promise;
+            } else {
+              stopPromptStarted.resolve();
+              await new Promise<void>((_resolve, reject) =>
+                options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), {
+                  once: true,
+                }),
+              );
             }
             return { data: true };
           },
@@ -380,11 +392,28 @@ describe("OpenCodeAdapterV2", () => {
         }),
       );
       yield* Effect.promise(() => steerStatusCalled.promise);
+      const pendingSteer = yield* runtime
+        .steerTurn({
+          threadId,
+          runId,
+          providerThread,
+          providerTurnId: activeTurn.id,
+          message: {
+            messageId: MessageId.make("message-opencode-stop-pending"),
+            text: "pending when stopped",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* Effect.promise(() => stopPromptStarted.promise);
       const interrupt = yield* runtime
         .interruptTurn({ providerThread, providerTurnId: activeTurn.id })
         .pipe(Effect.forkScoped);
       yield* Effect.promise(() => abortCalled.promise);
       yield* Fiber.join(interrupt);
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(pendingSteer)));
       const promptWhileStopping = yield* Effect.exit(
         runtime.steerTurn({
           threadId,
@@ -401,7 +430,7 @@ describe("OpenCodeAdapterV2", () => {
         }),
       );
       assert.isTrue(Exit.isFailure(promptWhileStopping));
-      assert.equal(promptCalls, 2);
+      assert.equal(promptCalls, 3);
       yield* Effect.promise(() =>
         nativeEvents.push({
           type: "session.status",
@@ -410,6 +439,168 @@ describe("OpenCodeAdapterV2", () => {
       );
       const interrupted = yield* runtime.readThreadSnapshot({ providerThread });
       assert.equal(interrupted.providerTurns.at(-1)?.status, "interrupted");
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
+  it.effect("interrupts an initial prompt while its SDK request is pending", () =>
+    Effect.gen(function* () {
+      const idAllocator = yield* IdAllocatorV2;
+      const nativeEvents = asyncEventStream();
+      const promptStarted = promiseGate<void>();
+      const abortCalled = promiseGate<void>();
+      let abortCalls = 0;
+      const client = {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({
+            data: { id: "native-opencode-initial-stop", time: { created: 1, updated: 1 } },
+          }),
+          promptAsync: async (_input: unknown, options?: { readonly signal?: AbortSignal }) => {
+            promptStarted.resolve();
+            await new Promise<void>((_resolve, reject) => {
+              const signal = options?.signal;
+              if (signal?.aborted) {
+                reject(signal.reason);
+                return;
+              }
+              signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+            });
+            return { data: true };
+          },
+          status: async () => ({
+            data: { "native-opencode-initial-stop": { type: "idle" as const } },
+          }),
+          messages: async () => ({ data: [] }),
+          abort: async () => {
+            abortCalls += 1;
+            abortCalled.resolve();
+            return { data: true };
+          },
+        },
+        mcp: { add: async () => ({ data: true }) },
+      };
+      const adapter = makeOpenCodeAdapterV2({
+        instanceId: ProviderInstanceId.make("opencode-initial-stop-test"),
+        settings: OPEN_CODE_TEST_SETTINGS,
+        environment: {},
+        runtime: {
+          connectToOpenCodeServer: () =>
+            Effect.succeed({ url: "http://test.invalid", external: true }),
+          createOpenCodeSdkClient: () => client,
+        } as unknown as OpenCodeRuntimeShape,
+        idAllocator,
+        serverConfig: {
+          cwd: "/workspace",
+          attachmentsDir: "/tmp/attachments",
+        } as ServerConfig["Service"],
+      });
+      const threadId = ThreadId.make("thread-opencode-initial-stop");
+      const providerSessionId = ProviderSessionId.make("session-opencode-initial-stop");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("opencode-initial-stop-test"),
+        model: "anthropic/claude-sonnet",
+        options: [],
+      };
+      const policy = runtimePolicy("full-access", { cwd: "/workspace" });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const terminalEvents = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const now = yield* DateTime.now;
+      const start = yield* runtime
+        .startTurn({
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("project-opencode-initial-stop"),
+            title: "initial stop",
+            providerInstanceId: modelSelection.instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdBy: "user",
+            creationSource: "web",
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          threadId,
+          runId: RunId.make("run-opencode-initial-stop"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("attempt-opencode-initial-stop"),
+          rootNodeId: NodeId.make("node-opencode-initial-stop"),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-opencode-initial-stop"),
+            text: "hello",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy: policy,
+        })
+        .pipe(Effect.forkScoped);
+
+      yield* Effect.promise(() => promptStarted.promise);
+      const running = yield* runtime.readThreadSnapshot({ providerThread });
+      const activeTurn = running.providerTurns.at(-1)!;
+      const interrupt = yield* runtime
+        .interruptTurn({ providerThread, providerTurnId: activeTurn.id })
+        .pipe(Effect.forkScoped);
+
+      yield* Effect.promise(() => abortCalled.promise);
+      yield* Fiber.join(start);
+      yield* Fiber.join(interrupt);
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: {
+            sessionID: "native-opencode-initial-stop",
+            status: { type: "idle" },
+          },
+        }),
+      );
+
+      const events = Array.from(yield* Fiber.join(terminalEvents));
+      const terminals = events.filter((event) => event.type === "turn.terminal");
+      assert.equal(abortCalls, 1);
+      assert.lengthOf(terminals, 1);
+      assert.equal(terminals[0]?.status, "interrupted");
+      assert.isNull(terminals[0]?.failure ?? null);
+      assert.isFalse(
+        events.some(
+          (event) =>
+            (event.type === "turn.terminal" && event.status === "failed") ||
+            (event.type === "provider_session.updated" && event.providerSession.status === "error"),
+        ),
+      );
     }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
 
