@@ -193,6 +193,49 @@ describe("resolveThreadListV2Status", () => {
       "ready",
     );
   });
+
+  it("shows the most specific background liveness after a turn settles", () => {
+    expect(
+      resolveThreadListV2Status(
+        makeThread({
+          id: ThreadId.make("monitoring"),
+          title: "monitoring",
+          backgroundLiveness: "monitoring",
+        }),
+      ),
+    ).toBe("monitoring");
+    expect(
+      resolveThreadListV2Status(
+        makeThread({
+          id: ThreadId.make("goal"),
+          title: "goal",
+          backgroundLiveness: "goal",
+        }),
+      ),
+    ).toBe("goal");
+  });
+
+  it("keeps an error above stale background liveness", () => {
+    expect(
+      resolveThreadListV2Status(
+        makeThread({
+          id: ThreadId.make("failed"),
+          title: "failed",
+          backgroundLiveness: "goal",
+          session: {
+            threadId: ThreadId.make("failed"),
+            status: "error",
+            providerName: "Codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: "failed",
+            updatedAt: NOW,
+          },
+        }),
+      ),
+    ).toBe("failed");
+  });
 });
 
 describe("resolveThreadListV2SwipeActions", () => {
