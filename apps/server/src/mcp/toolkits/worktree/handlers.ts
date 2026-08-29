@@ -17,6 +17,12 @@ const handlers = {
       const service = yield* WorktreeMcpService;
       return yield* service.status(scope);
     }),
+  t3_worktree_list: () =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext;
+      const service = yield* WorktreeMcpService;
+      return yield* service.listWorktrees(scope);
+    }),
 } satisfies Parameters<typeof WorktreeToolkit.toLayer>[0];
 
 export const WorktreeToolkitHandlersLive = WorktreeToolkit.toLayer(handlers);

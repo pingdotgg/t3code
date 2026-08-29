@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
  * Input for the `t3_worktree_handoff` MCP tool.
@@ -95,6 +95,28 @@ export const WorktreeMcpHandoffResult = Schema.Struct({
 });
 export type WorktreeMcpHandoffResult = typeof WorktreeMcpHandoffResult.Type;
 
+export const WorktreeMcpRecordedWorkspace = Schema.Struct({
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type WorktreeMcpRecordedWorkspace = typeof WorktreeMcpRecordedWorkspace.Type;
+
+export const WorktreeMcpActualWorkspace = Schema.Struct({
+  workspacePath: TrimmedNonEmptyString,
+  isRepo: Schema.Boolean,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  hasWorkingTreeChanges: Schema.Boolean,
+});
+export type WorktreeMcpActualWorkspace = typeof WorktreeMcpActualWorkspace.Type;
+
+export const WorktreeMcpWorkspaceAgreement = Schema.Literals([
+  "in_sync",
+  "branch_mismatch",
+  "workspace_missing",
+  "not_repository",
+]);
+export type WorktreeMcpWorkspaceAgreement = typeof WorktreeMcpWorkspaceAgreement.Type;
+
 export const WorktreeMcpStatusResult = Schema.Struct({
   attached: Schema.Boolean.annotate({
     description: "True when this thread is already attached to a git worktree.",
@@ -107,8 +129,39 @@ export const WorktreeMcpStatusResult = Schema.Struct({
   defaultStartFromOrigin: Schema.Boolean.annotate({
     description: "Server default used by t3_worktree_handoff when startFromOrigin is omitted.",
   }),
+  recordedWorkspace: WorktreeMcpRecordedWorkspace,
+  actualWorkspace: WorktreeMcpActualWorkspace,
+  agreement: WorktreeMcpWorkspaceAgreement,
 });
 export type WorktreeMcpStatusResult = typeof WorktreeMcpStatusResult.Type;
+
+export const WorktreeMcpThreadBinding = Schema.Struct({
+  threadId: ThreadId,
+  title: Schema.String,
+  status: TrimmedNonEmptyString,
+  recordedBranch: Schema.NullOr(TrimmedNonEmptyString),
+  recordedWorktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  active: Schema.Boolean,
+  callingThread: Schema.Boolean,
+});
+export type WorktreeMcpThreadBinding = typeof WorktreeMcpThreadBinding.Type;
+
+export const WorktreeMcpListEntry = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  actualBranch: Schema.NullOr(TrimmedNonEmptyString),
+  isRepo: Schema.Boolean,
+  isProjectRoot: Schema.Boolean,
+  hasWorkingTreeChanges: Schema.Boolean,
+  bindings: Schema.Array(WorktreeMcpThreadBinding),
+});
+export type WorktreeMcpListEntry = typeof WorktreeMcpListEntry.Type;
+
+export const WorktreeMcpListResult = Schema.Struct({
+  projectWorkspaceRoot: TrimmedNonEmptyString,
+  worktrees: Schema.Array(WorktreeMcpListEntry),
+});
+export type WorktreeMcpListResult = typeof WorktreeMcpListResult.Type;
 
 export class WorktreeMcpFailure extends Schema.TaggedErrorClass<WorktreeMcpFailure>()(
   "WorktreeMcpFailure",

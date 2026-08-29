@@ -140,7 +140,7 @@ selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+The server exposes orchestration and thread-scoped workspace tools.
 
 ### `orchestrator_capabilities`
 
@@ -312,6 +312,19 @@ Without `runId`, it selects the newest interruptible run. A terminal run is
 returned unchanged, and a thread with no active provider turn returns
 `no_active_run`.
 
+### `t3_worktree_status`
+
+Reads the calling thread's saved branch and worktree path, then reads Git status from that path.
+The result keeps recorded and actual state separate and reports whether they agree. A missing
+worktree, non-repository path, or branch mismatch is visible without changing either state.
+
+### `t3_worktree_list`
+
+Lists the project root and existing branch-backed worktrees in the calling thread's current
+project. Each entry includes its listed and actual branch, dirty state, and threads bound to the
+checkout. Bindings keep each thread's recorded branch and worktree path separate from the actual
+checkout. The tool does not create, remove, prune, or repair worktrees.
+
 ## Delegated Task Lifecycle
 
 The MCP server is a command ingress into V2. It does not call provider adapters
@@ -355,6 +368,8 @@ falls back to a terminal-status message when no assistant text exists.
 - General thread management is limited to the calling thread's project. Send
   additionally enforces the same runtime and interaction privilege ceiling as
   child creation.
+- Workspace discovery is limited to the calling thread's current project. It does not accept an
+  environment or cross-project target.
 - Provider instances must be enabled, installed, available, authenticated, and
   backed by a V2 adapter.
 - A requested model must be advertised by the selected provider when the

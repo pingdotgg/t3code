@@ -70,6 +70,14 @@ messages, review titles, and descriptions from your changes.
 Choose the writing style and model in **Settings → Source Control**. **Repository conventions**
 uses the project's instructions and recent commit subjects.
 
+### Let an agent inspect its checkout
+
+Agents running through T3 Code can inspect the checkout recorded on their thread and compare it
+with Git's actual branch. They can also list the project root and existing worktrees, including
+dirty state and the durable branch and worktree path recorded for other threads using each
+checkout. These read paths apply only to the calling thread's current project and do not create,
+remove, prune, or revive worktrees.
+
 ## Review and merge
 
 Open **Pull requests** to review changes and comments, request reviewers, check out a branch,

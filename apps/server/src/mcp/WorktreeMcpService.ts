@@ -1,11 +1,14 @@
 import {
   CommandId,
   MessageId,
+  type OrchestrationV2ThreadShell,
   type ProjectId,
+  type VcsRef,
   WorktreeMcpFailure,
   type WorktreeMcpContinuationStatus,
   type WorktreeMcpHandoffInput,
   type WorktreeMcpHandoffResult,
+  type WorktreeMcpListResult,
   type WorktreeMcpSetupScriptStatus,
   type WorktreeMcpStatusResult,
 } from "@t3tools/contracts";
@@ -35,6 +38,9 @@ export class WorktreeMcpService extends Context.Service<
     readonly status: (
       scope: McpInvocationScope,
     ) => Effect.Effect<WorktreeMcpStatusResult, WorktreeMcpFailure>;
+    readonly listWorktrees: (
+      scope: McpInvocationScope,
+    ) => Effect.Effect<WorktreeMcpListResult, WorktreeMcpFailure>;
   }
 >()("t3/mcp/WorktreeMcpService") {}
 
@@ -114,6 +120,58 @@ const make = Effect.gen(function* () {
     Effect.map((settings) => settings.newWorktreesStartFromOrigin),
     asOperationFailed("Unable to read server settings"),
   );
+
+  const normalizePath = (value: string) => path.normalize(path.resolve(value));
+
+  const threadWorkspacePath = (
+    thread: Pick<OrchestrationV2ThreadShell, "worktreePath">,
+    projectWorkspaceRoot: string,
+  ) => normalizePath(thread.worktreePath ?? projectWorkspaceRoot);
+
+  const loadRefs = Effect.fn("WorktreeMcpService.loadRefs")(function* (
+    projectWorkspaceRoot: string,
+  ) {
+    const refs: Array<VcsRef> = [];
+    let cursor: number | undefined;
+    let firstPage = true;
+    do {
+      const page = yield* gitWorkflow
+        .listRefs({
+          cwd: projectWorkspaceRoot,
+          refKind: "local",
+          includeMatchingRemoteRefs: false,
+          refresh: firstPage,
+          limit: 200,
+          ...(cursor === undefined ? {} : { cursor }),
+        })
+        .pipe(asOperationFailed("Unable to list project worktrees and branches"));
+      if (!page.isRepo) {
+        return yield* failure(
+          "invalid_request",
+          `Project workspace '${projectWorkspaceRoot}' is not a git repository.`,
+        );
+      }
+      refs.push(...page.refs);
+      cursor = page.nextCursor ?? undefined;
+      firstPage = false;
+    } while (cursor !== undefined);
+    return refs;
+  });
+
+  const loadProjectThreads = (
+    projectId: ProjectId,
+  ): Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, WorktreeMcpFailure> =>
+    threadManagement
+      .listProjectThreads({ projectId, includeSubagents: true })
+      .pipe(asOperationFailed(`Unable to list threads in project ${projectId}`));
+
+  const readWorkspaceStatus = (workspacePath: string) =>
+    gitWorkflow
+      .invalidateLocalStatus(workspacePath)
+      .pipe(
+        Effect.andThen(gitWorkflow.localStatus({ cwd: workspacePath })),
+        asOperationFailed(`Unable to read git status in '${workspacePath}'`),
+      );
 
   const handoffIds = (scope: McpInvocationScope) =>
     crypto.randomUUIDv4.pipe(
@@ -460,21 +518,112 @@ const make = Effect.gen(function* () {
       yield* requireCapability(scope);
       const projection = yield* loadThread(scope);
       const project = yield* loadProject(scope, projection.thread.projectId);
-
-      const defaultStartFromOrigin = yield* readDefaultStartFromOrigin;
+      const projectWorkspaceRoot = normalizePath(project.workspaceRoot);
+      const workspacePath = normalizePath(projection.thread.worktreePath ?? projectWorkspaceRoot);
+      const [defaultStartFromOrigin, actual, refs] = yield* Effect.all(
+        [
+          readDefaultStartFromOrigin,
+          readWorkspaceStatus(workspacePath),
+          loadRefs(projectWorkspaceRoot),
+        ],
+        { concurrency: 3 },
+      );
+      const knownWorkspacePaths = new Set([
+        projectWorkspaceRoot,
+        ...refs.flatMap((ref) =>
+          ref.isRemote === true || ref.worktreePath === null
+            ? []
+            : [normalizePath(ref.worktreePath)],
+        ),
+      ]);
+      const agreement = !knownWorkspacePaths.has(workspacePath)
+        ? "workspace_missing"
+        : !actual.isRepo
+          ? "not_repository"
+          : actual.refName !== projection.thread.branch
+            ? "branch_mismatch"
+            : "in_sync";
 
       const result: WorktreeMcpStatusResult = {
         attached: projection.thread.worktreePath !== null,
         worktreePath: projection.thread.worktreePath,
         branch: projection.thread.branch,
-        projectWorkspaceRoot: project.workspaceRoot,
+        projectWorkspaceRoot,
         defaultStartFromOrigin,
+        recordedWorkspace: {
+          branch: projection.thread.branch,
+          worktreePath: projection.thread.worktreePath,
+        },
+        actualWorkspace: {
+          workspacePath,
+          isRepo: actual.isRepo,
+          branch: actual.refName,
+          hasWorkingTreeChanges: actual.hasWorkingTreeChanges,
+        },
+        agreement,
       };
       return result;
     },
   );
 
-  return WorktreeMcpService.of({ handoff, status });
+  const listWorktrees: WorktreeMcpService["Service"]["listWorktrees"] = Effect.fn(
+    "WorktreeMcpService.listWorktrees",
+  )(function* (scope) {
+    yield* requireCapability(scope);
+    const projection = yield* loadThread(scope);
+    const project = yield* loadProject(scope, projection.thread.projectId);
+    const projectWorkspaceRoot = normalizePath(project.workspaceRoot);
+    const [refs, threads] = yield* Effect.all(
+      [loadRefs(projectWorkspaceRoot), loadProjectThreads(projection.thread.projectId)],
+      { concurrency: 2 },
+    );
+
+    const branchByWorkspacePath = new Map<string, string | null>([[projectWorkspaceRoot, null]]);
+    for (const ref of refs) {
+      if (ref.isRemote === true || ref.worktreePath === null) continue;
+      branchByWorkspacePath.set(normalizePath(ref.worktreePath), ref.name);
+    }
+
+    const worktrees = yield* Effect.forEach(
+      [...branchByWorkspacePath.entries()],
+      ([workspacePath, branch]) =>
+        readWorkspaceStatus(workspacePath).pipe(
+          Effect.map((actual) => ({
+            path: workspacePath,
+            branch,
+            actualBranch: actual.refName,
+            isRepo: actual.isRepo,
+            isProjectRoot: workspacePath === projectWorkspaceRoot,
+            hasWorkingTreeChanges: actual.hasWorkingTreeChanges,
+            bindings: threads
+              .filter(
+                (thread) => threadWorkspacePath(thread, projectWorkspaceRoot) === workspacePath,
+              )
+              .map((thread) => ({
+                threadId: thread.id,
+                title: thread.title,
+                status: thread.status,
+                recordedBranch: thread.branch,
+                recordedWorktreePath: thread.worktreePath,
+                active: thread.activeRunId !== null,
+                callingThread: thread.id === scope.threadId,
+              })),
+          })),
+        ),
+      { concurrency: 8 },
+    );
+
+    return {
+      projectWorkspaceRoot,
+      worktrees: worktrees.toSorted(
+        (left, right) =>
+          Number(right.isProjectRoot) - Number(left.isProjectRoot) ||
+          left.path.localeCompare(right.path),
+      ),
+    } satisfies WorktreeMcpListResult;
+  });
+
+  return WorktreeMcpService.of({ handoff, status, listWorktrees });
 });
 
 export const layer: Layer.Layer<

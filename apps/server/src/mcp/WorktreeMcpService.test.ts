@@ -111,6 +111,20 @@ interface HarnessOptions {
   readonly removeWorktreeFails?: boolean;
   readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
+  readonly refs?: ReadonlyArray<{
+    readonly name: string;
+    readonly current: boolean;
+    readonly isDefault: boolean;
+    readonly worktreePath: string | null;
+  }>;
+  readonly workspaceStatuses?: Readonly<Record<string, { branch: string | null; dirty?: boolean }>>;
+  readonly projectThreads?: ReadonlyArray<{
+    readonly id: ThreadId;
+    readonly title: string;
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
+    readonly active?: boolean;
+  }>;
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -196,6 +210,32 @@ const makeHarness = (options: HarnessOptions = {}) => {
             : Option.none(),
         ),
   );
+  const listProjectThreads = vi.fn(() =>
+    Effect.succeed(
+      (
+        options.projectThreads ?? [
+          {
+            id: threadId,
+            title: "Worktree test thread",
+            branch: thread?.branch ?? null,
+            worktreePath: thread?.worktreePath ?? null,
+          },
+        ]
+      ).map(
+        (item) =>
+          ({
+            id: item.id,
+            projectId,
+            title: item.title,
+            branch: item.branch,
+            worktreePath: item.worktreePath,
+            status: item.active === true ? "running" : "idle",
+            activeRunId: item.active === true ? "run-active" : null,
+            lineage: { relationshipToParent: "none" },
+          }) as never,
+      ),
+    ),
+  );
   const removeWorktree = vi.fn((_: unknown) =>
     options.removeWorktreeFails
       ? (Effect.fail("simulated worktree removal failure") as never)
@@ -232,32 +272,49 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const listRefs = vi.fn((input: { readonly query?: string | undefined }) =>
     Effect.succeed({
       refs:
-        options.existingBranchWorktreePath === undefined
-          ? []
-          : [
-              {
-                name: input.query ?? "",
-                current: false,
-                isDefault: false,
-                worktreePath: options.existingBranchWorktreePath,
-              },
-            ],
+        options.refs !== undefined
+          ? options.refs.filter(
+              (ref) => input.query === undefined || ref.name.includes(input.query),
+            )
+          : options.existingBranchWorktreePath === undefined
+            ? []
+            : [
+                {
+                  name: input.query ?? "",
+                  current: false,
+                  isDefault: false,
+                  worktreePath: options.existingBranchWorktreePath,
+                },
+              ],
       isRepo: true,
       hasPrimaryRemote: true,
       nextCursor: null,
-      totalCount: options.existingBranchWorktreePath === undefined ? 0 : 1,
+      totalCount:
+        options.refs?.length ?? (options.existingBranchWorktreePath === undefined ? 0 : 1),
     }),
   );
-  const localStatus = vi.fn((_: unknown) =>
-    Effect.succeed({
+  const workspaceStatuses = new Map(
+    Object.entries(
+      options.workspaceStatuses ?? {
+        [workspaceRoot]: {
+          branch: options.currentBranch === undefined ? "dev" : options.currentBranch,
+        },
+      },
+    ),
+  );
+  const localStatus = vi.fn((input: { readonly cwd: string }) => {
+    const current = workspaceStatuses.get(input.cwd);
+    return Effect.succeed({
       isRepo: options.notARepo !== true,
       hasPrimaryRemote: true,
       isDefaultRef: false,
-      refName: options.currentBranch === undefined ? "dev" : options.currentBranch,
-      hasWorkingTreeChanges: false,
+      refName:
+        current?.branch ?? (options.currentBranch === undefined ? "dev" : options.currentBranch),
+      hasWorkingTreeChanges: current?.dirty ?? false,
       workingTree: { files: [], insertions: 0, deletions: 0 },
-    }),
-  );
+    });
+  });
+  const invalidateLocalStatus = vi.fn((_: string) => Effect.void);
   const refreshStatus = vi.fn((_: string) => Effect.die("refreshStatus stub"));
   const runForThread = vi.fn((input: { readonly worktreePath: string }) => {
     switch (options.setupScript ?? "started") {
@@ -306,6 +363,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
         Layer.mock(ThreadManagementService)({
           dispatch,
           getThreadProjection,
+          listProjectThreads,
           sendToThread,
         } satisfies Partial<ThreadManagementService["Service"]>),
         Layer.mock(ProjectService.ProjectService)({
@@ -318,6 +376,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
           listRefs,
           listLocalBranchNames,
           localStatus,
+          invalidateLocalStatus,
           fetchRemote,
           resolveRemoteTrackingCommit,
           createWorktree,
@@ -346,6 +405,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
     removeWorktree,
     deleteLocalBranch,
     localStatus,
+    listRefs,
+    listProjectThreads,
     runForThread,
   };
 };
@@ -382,6 +443,12 @@ const runStatus = (harness: ReturnType<typeof makeHarness>) =>
   Effect.gen(function* () {
     const service = yield* WorktreeMcpService;
     return yield* service.status(harness.scope);
+  }).pipe(Effect.provide(harness.layer));
+
+const runList = (harness: ReturnType<typeof makeHarness>) =>
+  Effect.gen(function* () {
+    const service = yield* WorktreeMcpService;
+    return yield* service.listWorktrees(harness.scope);
   }).pipe(Effect.provide(harness.layer));
 
 describe("t3_worktree_handoff", () => {
@@ -972,30 +1039,50 @@ describe("t3_worktree_status", () => {
     const harness = makeHarness({ newWorktreesStartFromOrigin: true });
     return Effect.gen(function* () {
       const result = yield* runStatus(harness);
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         attached: false,
         worktreePath: null,
         branch: null,
         projectWorkspaceRoot: workspaceRoot,
         defaultStartFromOrigin: true,
+        recordedWorkspace: { branch: null, worktreePath: null },
+        actualWorkspace: {
+          workspacePath: workspaceRoot,
+          branch: "dev",
+          isRepo: true,
+          hasWorkingTreeChanges: false,
+        },
+        agreement: "branch_mismatch",
       });
     });
   });
 
   it.effect("reports an attached thread's worktree and branch", () => {
+    const worktreePath = "/worktrees/project/existing";
     const harness = makeHarness({
       thread: {
-        worktreePath: "/worktrees/project/existing",
+        worktreePath,
         branch: "feature/existing",
       },
+      refs: [
+        {
+          name: "feature/existing",
+          current: true,
+          isDefault: false,
+          worktreePath,
+        },
+      ],
+      workspaceStatuses: { [worktreePath]: { branch: "feature/existing" } },
     });
     return Effect.gen(function* () {
       const result = yield* runStatus(harness);
       expect(result).toMatchObject({
         attached: true,
-        worktreePath: "/worktrees/project/existing",
+        worktreePath,
         branch: "feature/existing",
         defaultStartFromOrigin: false,
+        actualWorkspace: { workspacePath: worktreePath, branch: "feature/existing", isRepo: true },
+        agreement: "in_sync",
       });
     });
   });
@@ -1021,6 +1108,83 @@ describe("t3_worktree_status", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(runStatus(harness));
       expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "project_not_found" });
+    });
+  });
+});
+
+describe("t3_worktree_list", () => {
+  it.effect("reports actual checkout state and durable thread bindings", () => {
+    const worktreePath = "/worktrees/project/feature-list";
+    const otherThreadId = ThreadId.make("thread-worktree-other");
+    const harness = makeHarness({
+      thread: { branch: "dev", worktreePath: null },
+      refs: [
+        { name: "dev", current: true, isDefault: true, worktreePath: workspaceRoot },
+        {
+          name: "feature/list",
+          current: false,
+          isDefault: false,
+          worktreePath,
+        },
+      ],
+      workspaceStatuses: {
+        [workspaceRoot]: { branch: "dev" },
+        [worktreePath]: { branch: "feature/list", dirty: true },
+      },
+      projectThreads: [
+        { id: threadId, title: "Caller", branch: "dev", worktreePath: null },
+        {
+          id: otherThreadId,
+          title: "Other thread",
+          branch: "feature/list",
+          worktreePath,
+          active: true,
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness);
+      expect(result.projectWorkspaceRoot).toBe(workspaceRoot);
+      expect(result.worktrees).toEqual([
+        {
+          path: workspaceRoot,
+          branch: "dev",
+          actualBranch: "dev",
+          isRepo: true,
+          isProjectRoot: true,
+          hasWorkingTreeChanges: false,
+          bindings: [
+            {
+              threadId,
+              title: "Caller",
+              status: "idle",
+              recordedBranch: "dev",
+              recordedWorktreePath: null,
+              active: false,
+              callingThread: true,
+            },
+          ],
+        },
+        {
+          path: worktreePath,
+          branch: "feature/list",
+          actualBranch: "feature/list",
+          isRepo: true,
+          isProjectRoot: false,
+          hasWorkingTreeChanges: true,
+          bindings: [
+            {
+              threadId: otherThreadId,
+              title: "Other thread",
+              status: "running",
+              recordedBranch: "feature/list",
+              recordedWorktreePath: worktreePath,
+              active: true,
+              callingThread: false,
+            },
+          ],
+        },
+      ]);
     });
   });
 });
