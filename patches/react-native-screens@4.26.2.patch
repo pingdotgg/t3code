@@ -159,7 +159,7 @@ index 8a41697223f6c4b5cb2dd6d450fc58cbb3b27536..309ba2f762068dcf452c172f7c7cbf2a
  
  NS_ASSUME_NONNULL_END
 diff --git a/ios/RNSScreenStackHeaderConfig.mm b/ios/RNSScreenStackHeaderConfig.mm
-index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338eff90c694 100644
+index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab60e185033 100644
 --- a/ios/RNSScreenStackHeaderConfig.mm
 +++ b/ios/RNSScreenStackHeaderConfig.mm
 @@ -24,11 +24,46 @@
@@ -294,7 +294,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338e
          break;
        }
        case RNSScreenStackHeaderSubviewTypeCenter:
-@@ -648,10 +693,453 @@ + (void)updateViewController:(UIViewController *)vc
+@@ -648,10 +693,470 @@ + (void)updateViewController:(UIViewController *)vc
    // This assignment should be done after `navitem.titleView = ...` assignment (iOS 16.0 bug).
    // See: https://github.com/software-mansion/react-native-screens/issues/1570 (comments)
    navitem.title = config.title;
@@ -323,21 +323,24 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338e
 +            navitem, &RNSAppliedLeadingHeaderItemsKey, @[ config, headerLeftConfigs, subviewLeftItems ])) {
 +      NSArray *items = [config barButtonItemsFromConfigs:config.headerLeftBarButtonItems
 +                                      withCurrentItems:subviewLeftItems
-+                                        navigationItem:navitem];
++                                        navigationItem:navitem
++                              allowsSearchBarPlacement:NO];
 +      navitem.leadingItemGroups = [config barButtonItemGroupsFromItems:items];
 +    }
 +    if (RNSUpdateHeaderItemsCache(
 +            navitem, &RNSAppliedTrailingHeaderItemsKey, @[ config, headerRightConfigs, subviewRightItems ])) {
 +      NSArray *items = [config barButtonItemsFromConfigs:config.headerRightBarButtonItems
 +                                      withCurrentItems:subviewRightItems
-+                                        navigationItem:navitem];
++                                        navigationItem:navitem
++                              allowsSearchBarPlacement:NO];
 +      navitem.trailingItemGroups = [config barButtonItemGroupsFromItems:items];
 +    }
 +    if (@available(iOS 26.0, *)) {
 +      if (RNSUpdateHeaderItemsCache(navitem, &RNSAppliedCenterHeaderItemsKey, @[ config, headerCenterConfigs ])) {
 +        NSArray *items = [config barButtonItemsFromConfigs:config.headerCenterBarButtonItems
 +                                        withCurrentItems:@[]
-+                                          navigationItem:navitem];
++                                          navigationItem:navitem
++                                allowsSearchBarPlacement:NO];
 +        navitem.centerItemGroups = [config barButtonItemGroupsFromItems:items];
 +      }
 +    }
@@ -346,20 +349,27 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338e
 +  {
 +    NSArray<UIBarButtonItem *> *leftBarButtonItems = [config barButtonItemsFromConfigs:config.headerLeftBarButtonItems
 +                                                                      withCurrentItems:subviewLeftItems
-+                                                                        navigationItem:navitem];
++                                                                        navigationItem:navitem
++                                                              allowsSearchBarPlacement:NO];
 +    NSArray<UIBarButtonItem *> *rightBarButtonItems = [config barButtonItemsFromConfigs:config.headerRightBarButtonItems
 +                                                                       withCurrentItems:subviewRightItems
-+                                                                         navigationItem:navitem];
++                                                                         navigationItem:navitem
++                                                               allowsSearchBarPlacement:NO];
 +    navitem.leftBarButtonItems = leftBarButtonItems;
 +    navitem.rightBarButtonItems = rightBarButtonItems;
 +  }
 +  NSDictionary<NSString *, id> *mailSearchToolbarConfig = nil;
++  NSMutableArray<NSDictionary<NSString *, id> *> *nonMailSearchToolbarConfigs = [NSMutableArray array];
 +  for (NSDictionary<NSString *, id> *toolbarConfig in config.headerToolbarItems) {
 +    if (toolbarConfig[@"mailSearchToolbar"]) {
-+      mailSearchToolbarConfig = toolbarConfig;
-+      break;
++      if (mailSearchToolbarConfig == nil) {
++        mailSearchToolbarConfig = toolbarConfig;
++      }
++    } else {
++      [nonMailSearchToolbarConfigs addObject:toolbarConfig];
 +    }
 +  }
++  NSArray<NSDictionary<NSString *, id> *> *navigationToolbarConfigs = [nonMailSearchToolbarConfigs copy];
 +  if (mailSearchToolbarConfig == nil) {
 +    for (NSDictionary<NSString *, id> *rightConfig in config.headerRightBarButtonItems) {
 +      if ([rightConfig[@"bottomMailSearchToolbar"] boolValue]) {
@@ -560,14 +570,6 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338e
 +          searchField.attributedPlaceholder =
 +              [[NSAttributedString alloc] initWithString:placeholder attributes:placeholderAttributes];
 +        }
-+        NSString *searchTextChangeId = mailSearchToolbarConfig[@"searchTextChangeId"];
-+        if (searchTextChangeId != nil) {
-+          [searchField addAction:[UIAction actionWithHandler:^(__kindof UIAction *_Nonnull action) {
-+                         UISearchTextField *field = (UISearchTextField *)action.sender;
-+                         emitButtonPress([NSString stringWithFormat:@"%@:%@", searchTextChangeId, field.text ?: @""]);
-+                       }]
-+              forControlEvents:UIControlEventEditingChanged];
-+        }
 +        searchField.borderStyle = UITextBorderStyleNone;
 +        searchField.font = searchFont;
 +        searchField.adjustsFontForContentSizeCategory = YES;
@@ -582,6 +584,25 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338e
 +          [searchField.centerYAnchor constraintEqualToAnchor:glassView.contentView.centerYAnchor],
 +          [searchField.heightAnchor constraintEqualToConstant:searchFieldHeight],
 +        ]];
++      }
++
++      NSString *searchTextChangeId = mailSearchToolbarConfig[@"searchTextChangeId"];
++      NSString *searchTextChangeActionIdentifier = @"org.react-native-screens.mail-search-toolbar.text-change";
++      if (resolvedSearchTextField != nil) {
++        [resolvedSearchTextField removeActionForIdentifier:searchTextChangeActionIdentifier
++                                          forControlEvents:UIControlEventEditingChanged];
++      }
++      if (searchTextChangeId != nil && resolvedSearchTextField != nil) {
++        [resolvedSearchTextField
++            addAction:[UIAction actionWithTitle:@""
++                                          image:nil
++                                     identifier:searchTextChangeActionIdentifier
++                                        handler:^(__kindof UIAction *_Nonnull action) {
++                                                  UITextField *field = (UITextField *)action.sender;
++                                                  emitButtonPress(
++                                                      [NSString stringWithFormat:@"%@:%@", searchTextChangeId, field.text ?: @""]);
++                                                }]
++            forControlEvents:UIControlEventEditingChanged];
 +      }
 +
 +      UIButton *filterButton = nil;
@@ -720,11 +741,6 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338e
 +#endif
 +  }
 +
-+  NSArray<NSDictionary<NSString *, id> *> *navigationToolbarConfigs = config.headerToolbarItems;
-+  if (mailSearchToolbarConfig != nil) {
-+    navigationToolbarConfigs = @[];
-+  }
-+
 +  NSArray *toolbarConfigsKey = navigationToolbarConfigs ?: @[];
 +  // Same reuse rule as the header item groups above (including the config
 +  // identity — cached toolbar items capture this config's event emitter).
@@ -738,7 +754,8 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338e
 +  if (!reuseToolbarItems) {
 +    NSArray<UIBarButtonItem *> *toolbarItems = [config barButtonItemsFromConfigs:navigationToolbarConfigs
 +                                                                 withCurrentItems:@[]
-+                                                                   navigationItem:navitem];
++                                                                   navigationItem:navitem
++                                                         allowsSearchBarPlacement:YES];
 +    if (toolbarItems.count > 0) {
 +      vc.toolbarItems = toolbarItems;
 +      [navctr setToolbarHidden:NO animated:animated];
@@ -752,15 +769,16 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338e
  
    // Setting navigation bar visibility is split to mitigate iOS 26 bug with bar button items
    // (setting nav bar visibility should be done after `navitem.*BarButtonItems`).
-@@ -784,6 +1272,7 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -784,6 +1289,8 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
  
  - (NSArray<UIBarButtonItem *> *)barButtonItemsFromConfigs:(NSArray<NSDictionary<NSString *, id> *> *)dicts
                                           withCurrentItems:(NSArray<UIBarButtonItem *> *)currentItems
 +                                           navigationItem:(UINavigationItem *)navitem
++                                 allowsSearchBarPlacement:(BOOL)allowsSearchBarPlacement
  {
    if (dicts.count == 0) {
      return currentItems;
-@@ -792,7 +1281,197 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -792,7 +1299,200 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
    [items addObjectsFromArray:currentItems];
    for (NSUInteger i = 0; i < dicts.count; i++) {
      NSDictionary *dict = dicts[i];
@@ -896,6 +914,9 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338e
 +      }
 +#endif
 +    } else if (dict[@"searchBarPlacement"]) {
++      if (!allowsSearchBarPlacement) {
++        continue;
++      }
 +#if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
 +      if (@available(iOS 26.0, *)) {
 +        NSNumber *width = dict[@"width"];
@@ -959,7 +980,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338e
        RNSBarButtonItem *item = [[RNSBarButtonItem alloc] initWithConfig:dict
            action:^(NSString *buttonId) {
              auto eventEmitter = std::static_pointer_cast<const facebook::react::RNSScreenStackHeaderConfigEventEmitter>(
-@@ -814,19 +1493,23 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -814,19 +1514,23 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
            }
            imageLoader:_imageLoader];
        NSNumber *index = dict[@"index"];
@@ -989,7 +1010,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338e
          [items insertObject:item atIndex:index.integerValue];
        } else {
          [items addObject:item];
-@@ -836,6 +1519,47 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -836,6 +1540,47 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
    return items;
  }
  
@@ -1037,7 +1058,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338e
  RNS_IGNORE_SUPER_CALL_BEGIN
  - (void)insertReactSubview:(RNSScreenStackHeaderSubview *)subview atIndex:(NSInteger)atIndex
  {
-@@ -1023,6 +1747,8 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
+@@ -1023,6 +1768,8 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
    }
  
    _title = RCTNSStringFromStringNilIfEmpty(newScreenProps.title);
@@ -1046,7 +1067,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338e
    if (newScreenProps.titleFontFamily != oldScreenProps.titleFontFamily) {
      _titleFontFamily = RCTNSStringFromStringNilIfEmpty(newScreenProps.titleFontFamily);
    }
-@@ -1048,6 +1774,7 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
+@@ -1048,6 +1795,7 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
    _disableBackButtonMenu = newScreenProps.disableBackButtonMenu;
    _backButtonDisplayMode =
        [RNSConvert UINavigationItemBackButtonDisplayModeFromCppEquivalent:newScreenProps.backButtonDisplayMode];
@@ -1054,7 +1075,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..d36bda28552e5ac75088e18d0fde338e
  
    if (newScreenProps.userInterfaceStyle != oldScreenProps.userInterfaceStyle) {
      _userInterfaceStyle = [RNSConvert UIUserInterfaceStyleFromCppEquivalent:newScreenProps.userInterfaceStyle];
-@@ -1094,6 +1821,30 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
+@@ -1094,6 +1842,30 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
      _headerRightBarButtonItems = array;
    }
  
@@ -1145,10 +1166,10 @@ index add33c4807e038dcd846f6c72b2fc472ded02809..9a7c7a8a775579c85de39f921e7a3622
  
  // Needed because of this: https://github.com/facebook/react-native/pull/37274
 diff --git a/lib/commonjs/components/ScreenStackHeaderConfig.js b/lib/commonjs/components/ScreenStackHeaderConfig.js
-index 8c509f2657105cfd86448347c1a01fb73651ff9e..d1f53322a7d2401852732ce46bfc6f32ba1aca64 100644
+index 8c509f2657105cfd86448347c1a01fb73651ff9e..5e3b5185c0ea33c6b98f5daed69239d2c0d0ce90 100644
 --- a/lib/commonjs/components/ScreenStackHeaderConfig.js
 +++ b/lib/commonjs/components/ScreenStackHeaderConfig.js
-@@ -26,18 +26,42 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
+@@ -26,17 +26,42 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
    } = (0, _EdgeInsetApplicationContext.useEdgeInsetApplication)(!props.hidden, props.disableTopInsetApplication ?? false, props.disableLeftInsetApplication ?? false, props.disableRightInsetApplication ?? false, props.disableBottomInsetApplication ?? false);
    const {
      headerLeftBarButtonItems,
@@ -1160,8 +1181,8 @@ index 8c509f2657105cfd86448347c1a01fb73651ff9e..d1f53322a7d2401852732ce46bfc6f32
    const preparedHeaderLeftBarButtonItems = headerLeftBarButtonItems && _utils.isHeaderBarButtonsAvailableForCurrentPlatform ? (0, _prepareHeaderBarButtonItems.prepareHeaderBarButtonItems)(headerLeftBarButtonItems, 'left') : undefined;
    const preparedHeaderRightBarButtonItems = headerRightBarButtonItems && _utils.isHeaderBarButtonsAvailableForCurrentPlatform ? (0, _prepareHeaderBarButtonItems.prepareHeaderBarButtonItems)(headerRightBarButtonItems, 'right') : undefined;
 -  const hasHeaderBarButtonItems = _utils.isHeaderBarButtonsAvailableForCurrentPlatform && (preparedHeaderLeftBarButtonItems?.length || preparedHeaderRightBarButtonItems?.length);
-+  const preparedHeaderCenterBarButtonItems = headerCenterBarButtonItems && _utils.isHeaderBarButtonsAvailableForCurrentPlatform ? (0, _prepareHeaderBarButtonItems.prepareHeaderBarButtonItems)(headerCenterBarButtonItems, 'right') : undefined;
-+  const preparedHeaderToolbarItems = headerToolbarItems && _utils.isHeaderBarButtonsAvailableForCurrentPlatform ? (0, _prepareHeaderBarButtonItems.prepareHeaderBarButtonItems)(headerToolbarItems, 'right') : undefined;
++  const preparedHeaderCenterBarButtonItems = headerCenterBarButtonItems && _utils.isHeaderBarButtonsAvailableForCurrentPlatform ? (0, _prepareHeaderBarButtonItems.prepareHeaderBarButtonItems)(headerCenterBarButtonItems, 'center') : undefined;
++  const preparedHeaderToolbarItems = headerToolbarItems && _utils.isHeaderBarButtonsAvailableForCurrentPlatform ? (0, _prepareHeaderBarButtonItems.prepareHeaderBarButtonItems)(headerToolbarItems, 'toolbar') : undefined;
 +  const hasHeaderBarButtonItems = _utils.isHeaderBarButtonsAvailableForCurrentPlatform && (preparedHeaderLeftBarButtonItems?.length || preparedHeaderRightBarButtonItems?.length || preparedHeaderCenterBarButtonItems?.length || preparedHeaderToolbarItems?.length);
  
    // Handle bar button item presses
@@ -1172,7 +1193,8 @@ index 8c509f2657105cfd86448347c1a01fb73651ff9e..d1f53322a7d2401852732ce46bfc6f32
 +    const pressedItem = allItems.find(item => item && 'buttonId' in item && item.buttonId === buttonId);
      if (pressedItem && pressedItem.type === 'button' && pressedItem.onPress) {
        pressedItem.onPress();
-     }
++      return;
++    }
 +    for (const item of allItems) {
 +      if (!item || item.type !== 'mailSearchToolbar') {
 +        continue;
@@ -1190,11 +1212,10 @@ index 8c509f2657105cfd86448347c1a01fb73651ff9e..d1f53322a7d2401852732ce46bfc6f32
 +        item.onSearchTextChange?.(buttonId.slice(searchTextChangePrefix.length));
 +        return;
 +      }
-+    }
+     }
    } : undefined;
  
-   // Handle bar button menu item presses by deep-searching nested menus
-@@ -59,7 +83,7 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
+@@ -59,7 +84,7 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
      };
  
      // Check each bar-button item with a menu
@@ -1203,7 +1224,7 @@ index 8c509f2657105cfd86448347c1a01fb73651ff9e..d1f53322a7d2401852732ce46bfc6f32
      for (const item of allItems) {
        if (item && item.type === 'menu' && item.menu) {
          const action = findInMenu(item.menu, event.nativeEvent.menuId);
-@@ -67,6 +91,15 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
+@@ -67,6 +92,15 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
            action.onPress();
            return;
          }
@@ -1219,7 +1240,7 @@ index 8c509f2657105cfd86448347c1a01fb73651ff9e..d1f53322a7d2401852732ce46bfc6f32
        }
      }
    } : undefined;
-@@ -74,6 +107,8 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
+@@ -74,6 +108,8 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
      userInterfaceStyle: props.experimental_userInterfaceStyle,
      headerLeftBarButtonItems: preparedHeaderLeftBarButtonItems,
      headerRightBarButtonItems: preparedHeaderRightBarButtonItems,
@@ -1229,20 +1250,49 @@ index 8c509f2657105cfd86448347c1a01fb73651ff9e..d1f53322a7d2401852732ce46bfc6f32
      onPressHeaderBarButtonMenuItem: onPressHeaderBarButtonMenuItem,
      ref: ref,
 diff --git a/lib/commonjs/components/helpers/prepareHeaderBarButtonItems.js b/lib/commonjs/components/helpers/prepareHeaderBarButtonItems.js
-index ab93f62e4a7049d63c6681cecbd6cf8b1d07ce10..b5ea122473b023f84eabdb1914aef09a28c6d525 100644
+index ab93f62e4a7049d63c6681cecbd6cf8b1d07ce10..9dca2ab640e92161eb647b819a989acd0d41d9fe 100644
 --- a/lib/commonjs/components/helpers/prepareHeaderBarButtonItems.js
 +++ b/lib/commonjs/components/helpers/prepareHeaderBarButtonItems.js
-@@ -41,10 +41,31 @@ const prepareMenu = (menu, index, side, path = '') => {
+@@ -5,7 +5,7 @@ Object.defineProperty(exports, "__esModule", {
+ });
+ exports.prepareHeaderBarButtonItems = void 0;
+ var _reactNative = require("react-native");
+-const prepareMenu = (menu, index, side, path = '') => {
++const prepareMenu = (menu, index, placement, path = '') => {
+   return {
+     ...menu,
+     items: menu.items.map((menuItem, menuIndex) => {
+@@ -26,7 +26,7 @@ const prepareMenu = (menu, index, side, path = '') => {
+           xcassetName,
+           imageSource,
+           templateSource,
+-          ...prepareMenu(menuItem, index, side, currentPath)
++          ...prepareMenu(menuItem, index, placement, currentPath)
+         };
+       }
+       return {
+@@ -35,16 +35,40 @@ const prepareMenu = (menu, index, side, path = '') => {
+         xcassetName,
+         imageSource,
+         templateSource,
+-        menuId: `${currentPath}-${index}-${side}`
++        menuId: `${currentPath}-${index}-${placement}`
+       };
+     })
    };
  };
- const prepareHeaderBarButtonItems = (barButtonItems, side) => {
+-const prepareHeaderBarButtonItems = (barButtonItems, side) => {
 -  return barButtonItems?.map((item, index) => {
++const prepareHeaderBarButtonItems = (barButtonItems, placement) => {
 +  const items = Array.isArray(barButtonItems) ? barButtonItems : barButtonItems && typeof barButtonItems === 'object' && 'type' in barButtonItems ? [barButtonItems] : undefined;
 +  return items?.map((item, index) => {
      if (item.type === 'spacing') {
        return item;
      }
 +    if (item.type === 'searchBarPlacement') {
++      if (placement !== 'toolbar') {
++        return null;
++      }
 +      return {
 +        ...item,
 +        searchBarPlacement: true
@@ -1258,18 +1308,40 @@ index ab93f62e4a7049d63c6681cecbd6cf8b1d07ce10..b5ea122473b023f84eabdb1914aef09a
 +      return {
 +        ...item,
 +        mailSearchToolbar: true,
-+        filterMenu: item.filterMenu ? prepareMenu(item.filterMenu, index, side, 'filter') : undefined,
-+        composeMenu: item.composeMenu ? prepareMenu(item.composeMenu, index, side, 'compose') : undefined
++        filterMenu: item.filterMenu ? prepareMenu(item.filterMenu, index, placement, 'filter') : undefined,
++        composeMenu: item.composeMenu ? prepareMenu(item.composeMenu, index, placement, 'compose') : undefined
 +      };
 +    }
      let imageSource, templateSource;
      if (item.icon?.type === 'imageSource') {
        imageSource = _reactNative.Image.resolveAssetSource(item.icon.imageSource);
+@@ -77,17 +101,17 @@ const prepareHeaderBarButtonItems = (barButtonItems, side) => {
+     if (item.type === 'button') {
+       return {
+         ...processedItem,
+-        buttonId: `${index}-${side}`
++        buttonId: `${index}-${placement}`
+       };
+     }
+     if (item.type === 'menu') {
+       return {
+         ...processedItem,
+-        menu: prepareMenu(item.menu, index, side)
++        menu: prepareMenu(item.menu, index, placement)
+       };
+     }
+     return null;
+-  });
++  }).filter(item => item !== null);
+ };
+ exports.prepareHeaderBarButtonItems = prepareHeaderBarButtonItems;
+ //# sourceMappingURL=prepareHeaderBarButtonItems.js.map
+\ No newline at end of file
 diff --git a/lib/module/components/ScreenStackHeaderConfig.js b/lib/module/components/ScreenStackHeaderConfig.js
-index 68e3ba6a78314aba908d07098bb6982d11e6ee80..05cb8563d3a7d3811860058df23bbd1f2f4bca00 100644
+index 68e3ba6a78314aba908d07098bb6982d11e6ee80..b787b3cf0284ffb81c80360a06c4059277bf4c1e 100644
 --- a/lib/module/components/ScreenStackHeaderConfig.js
 +++ b/lib/module/components/ScreenStackHeaderConfig.js
-@@ -22,18 +22,42 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
+@@ -22,17 +22,42 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
    } = useEdgeInsetApplication(!props.hidden, props.disableTopInsetApplication ?? false, props.disableLeftInsetApplication ?? false, props.disableRightInsetApplication ?? false, props.disableBottomInsetApplication ?? false);
    const {
      headerLeftBarButtonItems,
@@ -1281,8 +1353,8 @@ index 68e3ba6a78314aba908d07098bb6982d11e6ee80..05cb8563d3a7d3811860058df23bbd1f
    const preparedHeaderLeftBarButtonItems = headerLeftBarButtonItems && isHeaderBarButtonsAvailableForCurrentPlatform ? prepareHeaderBarButtonItems(headerLeftBarButtonItems, 'left') : undefined;
    const preparedHeaderRightBarButtonItems = headerRightBarButtonItems && isHeaderBarButtonsAvailableForCurrentPlatform ? prepareHeaderBarButtonItems(headerRightBarButtonItems, 'right') : undefined;
 -  const hasHeaderBarButtonItems = isHeaderBarButtonsAvailableForCurrentPlatform && (preparedHeaderLeftBarButtonItems?.length || preparedHeaderRightBarButtonItems?.length);
-+  const preparedHeaderCenterBarButtonItems = headerCenterBarButtonItems && isHeaderBarButtonsAvailableForCurrentPlatform ? prepareHeaderBarButtonItems(headerCenterBarButtonItems, 'right') : undefined;
-+  const preparedHeaderToolbarItems = headerToolbarItems && isHeaderBarButtonsAvailableForCurrentPlatform ? prepareHeaderBarButtonItems(headerToolbarItems, 'right') : undefined;
++  const preparedHeaderCenterBarButtonItems = headerCenterBarButtonItems && isHeaderBarButtonsAvailableForCurrentPlatform ? prepareHeaderBarButtonItems(headerCenterBarButtonItems, 'center') : undefined;
++  const preparedHeaderToolbarItems = headerToolbarItems && isHeaderBarButtonsAvailableForCurrentPlatform ? prepareHeaderBarButtonItems(headerToolbarItems, 'toolbar') : undefined;
 +  const hasHeaderBarButtonItems = isHeaderBarButtonsAvailableForCurrentPlatform && (preparedHeaderLeftBarButtonItems?.length || preparedHeaderRightBarButtonItems?.length || preparedHeaderCenterBarButtonItems?.length || preparedHeaderToolbarItems?.length);
  
    // Handle bar button item presses
@@ -1293,7 +1365,8 @@ index 68e3ba6a78314aba908d07098bb6982d11e6ee80..05cb8563d3a7d3811860058df23bbd1f
 +    const pressedItem = allItems.find(item => item && 'buttonId' in item && item.buttonId === buttonId);
      if (pressedItem && pressedItem.type === 'button' && pressedItem.onPress) {
        pressedItem.onPress();
-     }
++      return;
++    }
 +    for (const item of allItems) {
 +      if (!item || item.type !== 'mailSearchToolbar') {
 +        continue;
@@ -1311,11 +1384,10 @@ index 68e3ba6a78314aba908d07098bb6982d11e6ee80..05cb8563d3a7d3811860058df23bbd1f
 +        item.onSearchTextChange?.(buttonId.slice(searchTextChangePrefix.length));
 +        return;
 +      }
-+    }
+     }
    } : undefined;
  
-   // Handle bar button menu item presses by deep-searching nested menus
-@@ -55,7 +79,7 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
+@@ -55,7 +80,7 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
      };
  
      // Check each bar-button item with a menu
@@ -1324,7 +1396,7 @@ index 68e3ba6a78314aba908d07098bb6982d11e6ee80..05cb8563d3a7d3811860058df23bbd1f
      for (const item of allItems) {
        if (item && item.type === 'menu' && item.menu) {
          const action = findInMenu(item.menu, event.nativeEvent.menuId);
-@@ -63,6 +87,15 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
+@@ -63,6 +88,15 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
            action.onPress();
            return;
          }
@@ -1340,7 +1412,7 @@ index 68e3ba6a78314aba908d07098bb6982d11e6ee80..05cb8563d3a7d3811860058df23bbd1f
        }
      }
    } : undefined;
-@@ -70,6 +103,8 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
+@@ -70,6 +104,8 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
      userInterfaceStyle: props.experimental_userInterfaceStyle,
      headerLeftBarButtonItems: preparedHeaderLeftBarButtonItems,
      headerRightBarButtonItems: preparedHeaderRightBarButtonItems,
@@ -1350,20 +1422,47 @@ index 68e3ba6a78314aba908d07098bb6982d11e6ee80..05cb8563d3a7d3811860058df23bbd1f
      onPressHeaderBarButtonMenuItem: onPressHeaderBarButtonMenuItem,
      ref: ref,
 diff --git a/lib/module/components/helpers/prepareHeaderBarButtonItems.js b/lib/module/components/helpers/prepareHeaderBarButtonItems.js
-index 8a70ffd78617147418d628c03c580bb7ff9a8a72..8dbd0ba2ee61ee54d44cdf286a720ce26af01f26 100644
+index 8a70ffd78617147418d628c03c580bb7ff9a8a72..bca930372d2a7c3f8e0a35c3dcf28474f899f21c 100644
 --- a/lib/module/components/helpers/prepareHeaderBarButtonItems.js
 +++ b/lib/module/components/helpers/prepareHeaderBarButtonItems.js
-@@ -35,10 +35,31 @@ const prepareMenu = (menu, index, side, path = '') => {
+@@ -1,5 +1,5 @@
+ import { Image, processColor } from 'react-native';
+-const prepareMenu = (menu, index, side, path = '') => {
++const prepareMenu = (menu, index, placement, path = '') => {
+   return {
+     ...menu,
+     items: menu.items.map((menuItem, menuIndex) => {
+@@ -20,7 +20,7 @@ const prepareMenu = (menu, index, side, path = '') => {
+           xcassetName,
+           imageSource,
+           templateSource,
+-          ...prepareMenu(menuItem, index, side, currentPath)
++          ...prepareMenu(menuItem, index, placement, currentPath)
+         };
+       }
+       return {
+@@ -29,16 +29,40 @@ const prepareMenu = (menu, index, side, path = '') => {
+         xcassetName,
+         imageSource,
+         templateSource,
+-        menuId: `${currentPath}-${index}-${side}`
++        menuId: `${currentPath}-${index}-${placement}`
+       };
+     })
    };
  };
- export const prepareHeaderBarButtonItems = (barButtonItems, side) => {
+-export const prepareHeaderBarButtonItems = (barButtonItems, side) => {
 -  return barButtonItems?.map((item, index) => {
++export const prepareHeaderBarButtonItems = (barButtonItems, placement) => {
 +  const items = Array.isArray(barButtonItems) ? barButtonItems : barButtonItems && typeof barButtonItems === 'object' && 'type' in barButtonItems ? [barButtonItems] : undefined;
 +  return items?.map((item, index) => {
      if (item.type === 'spacing') {
        return item;
      }
 +    if (item.type === 'searchBarPlacement') {
++      if (placement !== 'toolbar') {
++        return null;
++      }
 +      return {
 +        ...item,
 +        searchBarPlacement: true
@@ -1379,13 +1478,53 @@ index 8a70ffd78617147418d628c03c580bb7ff9a8a72..8dbd0ba2ee61ee54d44cdf286a720ce2
 +      return {
 +        ...item,
 +        mailSearchToolbar: true,
-+        filterMenu: item.filterMenu ? prepareMenu(item.filterMenu, index, side, 'filter') : undefined,
-+        composeMenu: item.composeMenu ? prepareMenu(item.composeMenu, index, side, 'compose') : undefined
++        filterMenu: item.filterMenu ? prepareMenu(item.filterMenu, index, placement, 'filter') : undefined,
++        composeMenu: item.composeMenu ? prepareMenu(item.composeMenu, index, placement, 'compose') : undefined
 +      };
 +    }
      let imageSource, templateSource;
      if (item.icon?.type === 'imageSource') {
        imageSource = Image.resolveAssetSource(item.icon.imageSource);
+@@ -71,16 +95,16 @@ export const prepareHeaderBarButtonItems = (barButtonItems, side) => {
+     if (item.type === 'button') {
+       return {
+         ...processedItem,
+-        buttonId: `${index}-${side}`
++        buttonId: `${index}-${placement}`
+       };
+     }
+     if (item.type === 'menu') {
+       return {
+         ...processedItem,
+-        menu: prepareMenu(item.menu, index, side)
++        menu: prepareMenu(item.menu, index, placement)
+       };
+     }
+     return null;
+-  });
++  }).filter(item => item !== null);
+ };
+ //# sourceMappingURL=prepareHeaderBarButtonItems.js.map
+\ No newline at end of file
+diff --git a/lib/typescript/components/helpers/prepareHeaderBarButtonItems.d.ts b/lib/typescript/components/helpers/prepareHeaderBarButtonItems.d.ts
+index c41ef943e554754f599f2fcd157dd0dc61d78b7e..ed02d44f78ee3f1387ba93bf292be2b99bb0e3b3 100644
+--- a/lib/typescript/components/helpers/prepareHeaderBarButtonItems.d.ts
++++ b/lib/typescript/components/helpers/prepareHeaderBarButtonItems.d.ts
+@@ -1,5 +1,5 @@
+ import { HeaderBarButtonItem } from 'react-native-screens/types';
+-export declare const prepareHeaderBarButtonItems: (barButtonItems: HeaderBarButtonItem[], side: "left" | "right") => (import("react-native-screens/types").HeaderBarButtonItemSpacing | {
++export declare const prepareHeaderBarButtonItems: (barButtonItems: HeaderBarButtonItem[], side: "left" | "right" | "center" | "toolbar") => (import("react-native-screens/types").HeaderBarButtonItemSpacing | {
+     buttonId: string;
+     imageSource: import("react-native").ImageResolvedAssetSource | undefined;
+     templateSource: import("react-native").ImageResolvedAssetSource | undefined;
+@@ -161,5 +161,5 @@ export declare const prepareHeaderBarButtonItems: (barButtonItems: HeaderBarButt
+     identifier?: string | undefined;
+     accessibilityLabel?: string | undefined;
+     accessibilityHint?: string | undefined;
+-} | null)[];
++})[];
+ //# sourceMappingURL=prepareHeaderBarButtonItems.d.ts.map
+\ No newline at end of file
 diff --git a/lib/typescript/fabric/ScreenStackHeaderConfigNativeComponent.d.ts b/lib/typescript/fabric/ScreenStackHeaderConfigNativeComponent.d.ts
 index a51d8648567cff29cd2be0d5262bd15c6fc69c61..8b7439aff4d7e6fe8a72bf0bac93c3c19568b1a6 100644
 --- a/lib/typescript/fabric/ScreenStackHeaderConfigNativeComponent.d.ts
@@ -1423,7 +1562,7 @@ index a51d8648567cff29cd2be0d5262bd15c6fc69c61..8b7439aff4d7e6fe8a72bf0bac93c3c1
      onPressHeaderBarButtonMenuItem?: CT.DirectEventHandler<OnPressHeaderBarButtonMenuItemEvent> | undefined;
      synchronousShadowStateUpdatesEnabled?: CT.WithDefault<boolean, true>;
 diff --git a/lib/typescript/fabric/ScreenStackHeaderSubviewNativeComponent.d.ts b/lib/typescript/fabric/ScreenStackHeaderSubviewNativeComponent.d.ts
-index 1ca926e6753294861f5f79ab6267dc7999f70639..15929959d1e274cc6abd55f2eb8db50ba102169a 100644
+index 1ca926e6753294861f5f79ab6267dc7999f70639..94e676fdb08ff9d1cf81a1cf06a45e931b5461f1 100644
 --- a/lib/typescript/fabric/ScreenStackHeaderSubviewNativeComponent.d.ts
 +++ b/lib/typescript/fabric/ScreenStackHeaderSubviewNativeComponent.d.ts
 @@ -3,6 +3,7 @@ export type HeaderSubviewTypes = 'back' | 'right' | 'left' | 'title' | 'center'
@@ -1576,7 +1715,7 @@ index 10a31341f4eff258a7f8ea6abae3eddf0dd21218..bab5031f5f9b246f15e5396f3f2fee90
   * Custom Screen Transition
   */
 diff --git a/src/components/ScreenStackHeaderConfig.tsx b/src/components/ScreenStackHeaderConfig.tsx
-index c3a88b6f6c8362cf717372a35cdc35a6b397bdd0..9da8553b2c2e81fa13ef4f5b3e805efc0004ef29 100644
+index c3a88b6f6c8362cf717372a35cdc35a6b397bdd0..9e8173da567933fd3f6819fb26bf4a0e87640767 100644
 --- a/src/components/ScreenStackHeaderConfig.tsx
 +++ b/src/components/ScreenStackHeaderConfig.tsx
 @@ -48,7 +48,12 @@ export const ScreenStackHeaderConfig = React.forwardRef<
@@ -1599,11 +1738,11 @@ index c3a88b6f6c8362cf717372a35cdc35a6b397bdd0..9da8553b2c2e81fa13ef4f5b3e805efc
        : undefined;
 +  const preparedHeaderCenterBarButtonItems =
 +    headerCenterBarButtonItems && isHeaderBarButtonsAvailableForCurrentPlatform
-+      ? prepareHeaderBarButtonItems(headerCenterBarButtonItems, 'right')
++      ? prepareHeaderBarButtonItems(headerCenterBarButtonItems, 'center')
 +      : undefined;
 +  const preparedHeaderToolbarItems =
 +    headerToolbarItems && isHeaderBarButtonsAvailableForCurrentPlatform
-+      ? prepareHeaderBarButtonItems(headerToolbarItems, 'right')
++      ? prepareHeaderBarButtonItems(headerToolbarItems, 'toolbar')
 +      : undefined;
    const hasHeaderBarButtonItems =
      isHeaderBarButtonsAvailableForCurrentPlatform &&
@@ -1634,10 +1773,12 @@ index c3a88b6f6c8362cf717372a35cdc35a6b397bdd0..9da8553b2c2e81fa13ef4f5b3e805efc
          );
          if (
            pressedItem &&
-@@ -82,6 +101,31 @@ export const ScreenStackHeaderConfig = React.forwardRef<
+@@ -81,6 +100,32 @@ export const ScreenStackHeaderConfig = React.forwardRef<
+           pressedItem.onPress
          ) {
            pressedItem.onPress();
-         }
++          return;
++        }
 +        for (const item of allItems) {
 +          if (!item || item.type !== 'mailSearchToolbar') {
 +            continue;
@@ -1662,11 +1803,10 @@ index c3a88b6f6c8362cf717372a35cdc35a6b397bdd0..9da8553b2c2e81fa13ef4f5b3e805efc
 +            );
 +            return;
 +          }
-+        }
+         }
        }
      : undefined;
- 
-@@ -111,6 +155,8 @@ export const ScreenStackHeaderConfig = React.forwardRef<
+@@ -111,6 +156,8 @@ export const ScreenStackHeaderConfig = React.forwardRef<
          const allItems = [
            ...(preparedHeaderLeftBarButtonItems ?? []),
            ...(preparedHeaderRightBarButtonItems ?? []),
@@ -1675,7 +1815,7 @@ index c3a88b6f6c8362cf717372a35cdc35a6b397bdd0..9da8553b2c2e81fa13ef4f5b3e805efc
          ];
          for (const item of allItems) {
            if (item && item.type === 'menu' && item.menu) {
-@@ -119,6 +165,17 @@ export const ScreenStackHeaderConfig = React.forwardRef<
+@@ -119,6 +166,17 @@ export const ScreenStackHeaderConfig = React.forwardRef<
                action.onPress();
                return;
              }
@@ -1693,7 +1833,7 @@ index c3a88b6f6c8362cf717372a35cdc35a6b397bdd0..9da8553b2c2e81fa13ef4f5b3e805efc
            }
          }
        }
-@@ -130,6 +187,8 @@ export const ScreenStackHeaderConfig = React.forwardRef<
+@@ -130,6 +188,8 @@ export const ScreenStackHeaderConfig = React.forwardRef<
        userInterfaceStyle={props.experimental_userInterfaceStyle}
        headerLeftBarButtonItems={preparedHeaderLeftBarButtonItems}
        headerRightBarButtonItems={preparedHeaderRightBarButtonItems}
@@ -1703,20 +1843,47 @@ index c3a88b6f6c8362cf717372a35cdc35a6b397bdd0..9da8553b2c2e81fa13ef4f5b3e805efc
        onPressHeaderBarButtonMenuItem={onPressHeaderBarButtonMenuItem}
        ref={ref}
 diff --git a/src/components/helpers/prepareHeaderBarButtonItems.ts b/src/components/helpers/prepareHeaderBarButtonItems.ts
-index be2c24dfee77f5883b5ab1d7473be80933b5dc6f..0b038d2005b2d51bbb2ab1d7dba7eaccda83d42f 100644
+index be2c24dfee77f5883b5ab1d7473be80933b5dc6f..2008a342f13806641909c19a9f4ab6829f239016 100644
 --- a/src/components/helpers/prepareHeaderBarButtonItems.ts
 +++ b/src/components/helpers/prepareHeaderBarButtonItems.ts
-@@ -50,13 +50,43 @@ const prepareMenu = (
+@@ -7,7 +7,7 @@ import {
+ const prepareMenu = (
+   menu: HeaderBarButtonItemWithMenu['menu'],
+   index: number,
+-  side: 'left' | 'right',
++  placement: 'left' | 'right' | 'center' | 'toolbar',
+   path: string = '',
+ ): HeaderBarButtonItemWithMenu['menu'] => {
+   return {
+@@ -34,7 +34,7 @@ const prepareMenu = (
+           xcassetName,
+           imageSource,
+           templateSource,
+-          ...prepareMenu(menuItem, index, side, currentPath),
++          ...prepareMenu(menuItem, index, placement, currentPath),
+         };
+       }
+       return {
+@@ -43,20 +43,53 @@ const prepareMenu = (
+         xcassetName,
+         imageSource,
+         templateSource,
+-        menuId: `${currentPath}-${index}-${side}`,
++        menuId: `${currentPath}-${index}-${placement}`,
+       };
+     }),
+   };
  };
  
  export const prepareHeaderBarButtonItems = (
 -  barButtonItems: HeaderBarButtonItem[],
+-  side: 'left' | 'right',
 +  barButtonItems:
 +    | HeaderBarButtonItem[]
 +    | HeaderBarButtonItem
 +    | null
 +    | undefined,
-   side: 'left' | 'right',
++  placement: 'left' | 'right' | 'center' | 'toolbar',
  ) => {
 -  return barButtonItems?.map((item, index) => {
 +  const items = Array.isArray(barButtonItems)
@@ -1730,6 +1897,9 @@ index be2c24dfee77f5883b5ab1d7473be80933b5dc6f..0b038d2005b2d51bbb2ab1d7dba7eacc
        return item;
      }
 +    if (item.type === 'searchBarPlacement') {
++      if (placement !== 'toolbar') {
++        return null;
++      }
 +      return {
 +        ...item,
 +        searchBarPlacement: true,
@@ -1745,13 +1915,32 @@ index be2c24dfee77f5883b5ab1d7473be80933b5dc6f..0b038d2005b2d51bbb2ab1d7dba7eacc
 +      return {
 +        ...item,
 +        mailSearchToolbar: true,
-+        filterMenu: item.filterMenu ? prepareMenu(item.filterMenu, index, side, 'filter') : undefined,
-+        composeMenu: item.composeMenu ? prepareMenu(item.composeMenu, index, side, 'compose') : undefined,
++        filterMenu: item.filterMenu ? prepareMenu(item.filterMenu, index, placement, 'filter') : undefined,
++        composeMenu: item.composeMenu ? prepareMenu(item.composeMenu, index, placement, 'compose') : undefined,
 +      };
 +    }
      let imageSource, templateSource;
      if (item.icon?.type === 'imageSource') {
        imageSource = Image.resolveAssetSource(item.icon.imageSource);
+@@ -91,15 +124,15 @@ export const prepareHeaderBarButtonItems = (
+     if (item.type === 'button') {
+       return {
+         ...processedItem,
+-        buttonId: `${index}-${side}`,
++        buttonId: `${index}-${placement}`,
+       };
+     }
+     if (item.type === 'menu') {
+       return {
+         ...processedItem,
+-        menu: prepareMenu(item.menu, index, side),
++        menu: prepareMenu(item.menu, index, placement),
+       };
+     }
+     return null;
+-  });
++  }).filter(item => item !== null);
+ };
 diff --git a/src/fabric/ScreenStackHeaderConfigNativeComponent.ts b/src/fabric/ScreenStackHeaderConfigNativeComponent.ts
 index a80d9fef0c0ab5ce8221c5e0c7fae65162bc6164..fc16f51425702a418c09de553a54753331f19d15 100644
 --- a/src/fabric/ScreenStackHeaderConfigNativeComponent.ts
