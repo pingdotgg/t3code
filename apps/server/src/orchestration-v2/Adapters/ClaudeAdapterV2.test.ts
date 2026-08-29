@@ -1700,6 +1700,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const sdkMessages = yield* Queue.unbounded<SDKMessage>();
       const offeredMessages: Array<SDKUserMessage> = [];
       const continuationRequests: Array<ProviderContinuationRequest> = [];
+      const terminalReceipts =
+        yield* Queue.unbounded<Extract<ProviderAdapterV2Event, { type: "turn.terminal" }>>();
+      let openedOptions: ClaudeAgentSdkQueryOptions | undefined;
       const adapter = makeClaudeAdapterV2({
         instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CLAUDE_SETTINGS,
@@ -1715,16 +1718,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         },
         queryRunner: {
           allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
-          open: () =>
-            Effect.succeed({
-              messages: Stream.fromQueue(sdkMessages),
-              offer: (message) =>
-                Effect.sync(() => {
-                  offeredMessages.push(message);
-                }),
-              setModel: () => Effect.void,
-              interrupt: options?.interrupt ?? Effect.void,
-              close: options?.close?.(sdkMessages) ?? Effect.void,
+          open: (input) =>
+            Effect.sync(() => {
+              openedOptions = input.options;
+              return {
+                messages: Stream.fromQueue(sdkMessages),
+                offer: (message) =>
+                  Effect.sync(() => {
+                    offeredMessages.push(message);
+                  }),
+                setModel: () => Effect.void,
+                interrupt: options?.interrupt ?? Effect.void,
+                close: options?.close?.(sdkMessages) ?? Effect.void,
+              };
             }),
           forkSession: () => Effect.die("unused forkSession"),
           assertComplete: Effect.void,
@@ -1745,8 +1751,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const events: Array<ProviderAdapterV2Event> = [];
       yield* runtime.events.pipe(
         Stream.runForEach((event) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             events.push(event);
+            if (event.type === "turn.terminal") {
+              yield* Queue.offer(terminalReceipts, event);
+            }
           }),
         ),
         Effect.forkScoped,
@@ -1768,11 +1777,208 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         offeredMessages,
         continuationRequests,
         events,
+        terminalReceipts,
+        getOpenedOptions: () => openedOptions,
         terminalEvents,
         hasPendingBackgroundWork,
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect("preserves typed Claude plans and todos through generic tool completion", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const assistantTools = (
+          uuid: string,
+          tools: ReadonlyArray<Record<string, unknown>>,
+          parentToolUseId: string | null = null,
+        ) =>
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: `msg_${uuid}`,
+              type: "message",
+              role: "assistant",
+              content: tools.map((tool) => ({ type: "tool_use", ...tool })),
+              stop_reason: "tool_use",
+              stop_sequence: null,
+              usage: {
+                input_tokens: 1,
+                output_tokens: 1,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+              },
+            },
+            parent_tool_use_id: parentToolUseId,
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const toolResults = (uuid: string, toolUseIds: ReadonlyArray<string>) =>
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: toolUseIds.map((toolUseId) => ({
+                type: "tool_result",
+                tool_use_id: toolUseId,
+                content: "ok",
+              })),
+            },
+            parent_tool_use_id: null,
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-plan-lifecycle-1"),
+            text: "Plan the work.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          assistantTools("00000000-0000-4000-8000-000000000501", [
+            {
+              id: "tool-todo-1",
+              name: "TodoWrite",
+              input: { todos: [{ content: "Inspect", status: "in_progress" }] },
+            },
+          ]),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          assistantTools("00000000-0000-4000-8000-000000000501", [
+            {
+              id: "tool-todo-1",
+              name: "TodoWrite",
+              input: { todos: [{ content: "Inspect", status: "in_progress" }] },
+            },
+          ]),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          toolResults("00000000-0000-4000-8000-000000000502", ["tool-todo-1"]),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000503",
+            result: "Todo recorded.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-plan-lifecycle-2"),
+            providerTurnOrdinal: 2,
+            text: "Finish the plan.",
+            attachments: [],
+          }),
+        );
+        const canUseTool = harness.getOpenedOptions()?.canUseTool;
+        assert.isFunction(canUseTool);
+        const planMarkdown = "# Ready to implement\n\n1. Ship it.";
+        yield* Effect.promise(() =>
+          canUseTool!(
+            "ExitPlanMode",
+            { plan: planMarkdown },
+            {
+              signal: new AbortController().signal,
+              toolUseID: "tool-exit-plan-1",
+              requestId: "request-exit-plan-1",
+            },
+          ),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          assistantTools("00000000-0000-4000-8000-000000000504", [
+            {
+              id: "tool-todo-2",
+              name: "TodoWrite",
+              input: { todos: [{ content: "Inspect", status: "completed" }] },
+            },
+            { id: "tool-exit-plan-1", name: "ExitPlanMode", input: { plan: planMarkdown } },
+          ]),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          assistantTools(
+            "00000000-0000-4000-8000-000000000507",
+            [
+              {
+                id: "tool-subagent-todo",
+                name: "TodoWrite",
+                input: { todos: [{ content: "Child-only work", status: "in_progress" }] },
+              },
+            ],
+            "tool-parent-agent",
+          ),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          toolResults("00000000-0000-4000-8000-000000000505", ["tool-todo-2", "tool-exit-plan-1"]),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000506",
+            result: "Plan captured.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+
+        const items = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" ? [[String(event.turnItem.id), event.turnItem]] : [],
+          ),
+        );
+        const plans = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "plan.updated" ? [[String(event.plan.id), event.plan]] : [],
+          ),
+        );
+        const todoItems = [...items.values()].filter((item) => item.type === "todo_list");
+        const proposedItems = [...items.values()].filter((item) => item.type === "proposed_plan");
+        assert.lengthOf(todoItems, 2);
+        assert.lengthOf(proposedItems, 1);
+        assert.equal(
+          proposedItems[0]?.type === "proposed_plan" && proposedItems[0].markdown,
+          planMarkdown,
+        );
+        assert.isTrue(
+          [...items.values()].some(
+            (item) =>
+              item.type === "dynamic_tool" && item.nativeItemRef?.nativeId === "tool-todo-2",
+          ),
+        );
+        assert.isTrue(
+          [...items.values()].some(
+            (item) =>
+              item.type === "dynamic_tool" && item.nativeItemRef?.nativeId === "tool-exit-plan-1",
+          ),
+        );
+        assert.deepEqual(
+          [...plans.values()]
+            .filter((plan) => plan.kind === "todo_list")
+            .map((plan) => plan.status),
+          ["superseded", "completed"],
+        );
+        const proposedPlan = [...plans.values()].find((plan) => plan.kind === "proposed_plan");
+        assert.equal(proposedPlan?.status, "active");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
 
   it.effect("resolves API retries on resumed assistant activity", () =>
     Effect.scoped(
