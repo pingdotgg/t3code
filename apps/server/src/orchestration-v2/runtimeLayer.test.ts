@@ -15,6 +15,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   RunId,
   ThreadId,
@@ -129,7 +130,7 @@ const TestProviderInstanceRegistry = Layer.succeed(ProviderInstanceRegistry, {
 
 const TestLayer = Layer.merge(OrchestrationV2LayerLive, OrchestrationV2EventSinkLayerLive).pipe(
   Layer.provide(mcpSessionRegistryTestLayer),
-  Layer.provide(SqlitePersistenceMemory),
+  Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
   Layer.provide(ServerConfigLayer),
   Layer.provide(ServerSettingsService.layerTest()),
@@ -1376,6 +1377,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
       const eventSink = yield* EventSinkV2;
+      const sql = yield* SqlClient.SqlClient;
       const maintenance = yield* ProjectionMaintenanceV2;
       const threadId = ThreadId.make("runtime-layer-deferred-settle-thread");
 
@@ -1414,6 +1416,34 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       const before = yield* orchestrator.getThreadProjection(threadId);
       const run = before.runs[0];
       assert.isDefined(run);
+      const providerSessionId = ProviderSessionId.make(
+        "runtime-layer-deferred-settle-provider-session",
+      );
+      const providerSessionAttachedAt = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("runtime-layer-deferred-settle-provider-session-attached"),
+            type: "provider-session.attached",
+            threadId,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: providerSessionAttachedAt,
+            payload: {
+              id: providerSessionId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              status: "ready",
+              cwd: "/tmp/runtime-layer-deferred-settle",
+              model: modelSelection.model,
+              capabilities: CodexProviderCapabilitiesV2,
+              createdAt: providerSessionAttachedAt,
+              updatedAt: providerSessionAttachedAt,
+              lastError: null,
+            },
+          },
+        ],
+      });
       yield* orchestrator.dispatch({
         type: "thread.organization.defer",
         commandId: CommandId.make("runtime-layer-deferred-settle-schedule"),
@@ -1462,6 +1492,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(settled.thread.settledOverride, "settled");
       assert.isNull(settled.thread.pinnedAt);
       assert.isNull(settled.thread.deferredOrganization);
+      assert.lengthOf(settled.providerSessions, 0);
       const applyCommand = {
         type: "thread.organization.defer.apply" as const,
         commandId: CommandId.make(`command:system:thread-organization-defer:${threadId}:${run.id}`),
@@ -1469,8 +1500,27 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         runId: run.id,
       };
       const retry = yield* orchestrator.dispatch(applyCommand);
-      assert.equal(retry.sequence, settledSequence);
-      assert.equal(retry.storedEvents[0]?.event.type, "thread.settled");
+      assert.equal(retry.sequence, settledSequence + 1);
+      assert.deepEqual(
+        retry.storedEvents.map((stored) => stored.event.type),
+        ["thread.settled", "provider-session.detached"],
+      );
+      const settleEffects = yield* sql<{ readonly payload_json: string }>`
+        SELECT payload_json
+        FROM orchestration_v2_effect_outbox
+        WHERE command_id = ${applyCommand.commandId}
+        ORDER BY effect_id ASC
+      `;
+      assert.deepEqual(
+        settleEffects.map((effect) => JSON.parse(effect.payload_json)),
+        [
+          {
+            type: "provider-session.detach",
+            providerSessionId,
+            detail: "Thread settled.",
+          },
+        ],
+      );
 
       const rebuilt = yield* maintenance.rebuild;
       assert.isTrue(rebuilt.valid);
@@ -1484,6 +1534,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
       const eventSink = yield* EventSinkV2;
+      const sql = yield* SqlClient.SqlClient;
 
       const createStartingThread = (suffix: string) =>
         Effect.gen(function* () {
@@ -1556,6 +1607,34 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
 
       const archived = yield* createStartingThread("archive");
+      const providerSessionId = ProviderSessionId.make(
+        "runtime-layer-deferred-archive-provider-session",
+      );
+      const providerSessionAttachedAt = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("runtime-layer-deferred-archive-provider-session-attached"),
+            type: "provider-session.attached",
+            threadId: archived.threadId,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: providerSessionAttachedAt,
+            payload: {
+              id: providerSessionId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              status: "ready",
+              cwd: "/tmp/runtime-layer-deferred-archive",
+              model: modelSelection.model,
+              capabilities: CodexProviderCapabilitiesV2,
+              createdAt: providerSessionAttachedAt,
+              updatedAt: providerSessionAttachedAt,
+              lastError: null,
+            },
+          },
+        ],
+      });
       yield* orchestrator.dispatch({
         type: "thread.organization.defer",
         commandId: CommandId.make("runtime-layer-deferred-archive-schedule"),
@@ -1567,6 +1646,28 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       const archivedProjection = yield* orchestrator.getThreadProjection(archived.threadId);
       assert.isNotNull(archivedProjection.thread.archivedAt);
       assert.isNull(archivedProjection.thread.deferredOrganization);
+      assert.lengthOf(archivedProjection.providerSessions, 0);
+      const archiveApplyCommandId = CommandId.make(
+        `command:system:thread-organization-defer:${archived.threadId}:${archived.run.id}`,
+      );
+      const archiveEffects = yield* sql<{ readonly payload_json: string }>`
+        SELECT payload_json
+        FROM orchestration_v2_effect_outbox
+        WHERE command_id = ${archiveApplyCommandId}
+        ORDER BY effect_id ASC
+      `;
+      assert.deepEqual(
+        archiveEffects.map((effect) => JSON.parse(effect.payload_json)),
+        [
+          {
+            type: "provider-session.detach",
+            providerSessionId,
+            detail: "Thread archived.",
+            revokeMcpCredential: true,
+          },
+          { type: "terminal.cleanup" },
+        ],
+      );
 
       const stale = yield* createStartingThread("stale");
       yield* orchestrator.dispatch({

@@ -1436,6 +1436,63 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  const queueProviderSessionDetaches = Effect.fn(
+    "orchestrationV2.dispatch.queueProviderSessionDetaches",
+  )(function* (input: {
+    readonly command: OrchestrationV2Command;
+    readonly threadId: ThreadId;
+    readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+    readonly effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>;
+    readonly projection: OrchestrationV2ThreadProjection;
+    readonly providerSessionIds: ReadonlySet<ProviderSessionId>;
+    readonly occurredAt: DateTime.Utc;
+    readonly detail: string;
+    readonly revokeMcpCredential: boolean;
+  }) {
+    const liveSessions = input.projection.providerSessions.filter(
+      (session) =>
+        input.providerSessionIds.has(session.id) &&
+        session.status !== "stopped" &&
+        session.status !== "error",
+    );
+    yield* Effect.forEach(
+      liveSessions,
+      (session) =>
+        Effect.gen(function* () {
+          yield* emit(
+            input.events,
+            input.command,
+          )({
+            type: "provider-session.detached",
+            threadId: input.threadId,
+            driver: session.driver,
+            providerInstanceId: session.providerInstanceId,
+            occurredAt: input.occurredAt,
+            payload: {
+              providerSessionId: session.id,
+              detachedAt: input.occurredAt,
+              reason: input.detail,
+            },
+          });
+          yield* Ref.update(input.effects, (existing) => [
+            ...existing,
+            {
+              id: `effect:${input.command.commandId}:provider-session.detach:${session.id}`,
+              commandId: input.command.commandId,
+              threadId: input.threadId,
+              request: {
+                type: "provider-session.detach",
+                providerSessionId: session.id,
+                detail: input.detail,
+                ...(input.revokeMcpCredential ? { revokeMcpCredential: true } : {}),
+              },
+            } satisfies PendingOrchestrationEffectV2,
+          ]);
+        }),
+      { concurrency: 1, discard: true },
+    );
+  });
+
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
     command: Extract<
       OrchestrationV2Command,
@@ -1878,7 +1935,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // decided serially against the projection, so a turn start that
     // re-engages the thread cannot race this detach.
     const detachSessionIds = new Set(
-      command.type === "thread.archive" || command.type === "thread.settle"
+      command.type === "thread.archive" ||
+        command.type === "thread.delete" ||
+        command.type === "thread.settle"
         ? projection.providerSessions.map((session) => session.id)
         : command.type === "thread.metadata.update" &&
             command.worktreePath !== undefined &&
@@ -1893,70 +1952,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
     );
     if (detachSessionIds.size > 0) {
-      const liveSessions = projection.providerSessions.filter(
-        (session) =>
-          detachSessionIds.has(session.id) &&
-          session.status !== "stopped" &&
-          session.status !== "error",
-      );
-      yield* Effect.forEach(
-        liveSessions,
-        (session) =>
-          Effect.gen(function* () {
-            yield* emit(
-              events,
-              command,
-            )({
-              type: "provider-session.detached",
-              threadId: command.threadId,
-              driver: session.driver,
-              providerInstanceId: session.providerInstanceId,
-              occurredAt: now,
-              payload: {
-                providerSessionId: session.id,
-                detachedAt: now,
-                reason:
-                  command.type === "thread.archive"
-                    ? "Thread archived."
-                    : command.type === "thread.settle"
-                      ? "Thread settled."
-                      : command.type === "thread.metadata.update"
-                        ? "Workspace changed."
-                        : command.type === "thread.runtime-mode.set"
-                          ? "Runtime mode changed."
-                          : "Provider or model selection changed.",
-              },
-            });
-            const pendingEffect = {
-              id: `effect:${command.commandId}:provider-session.detach:${session.id}`,
-              commandId: command.commandId,
-              threadId: command.threadId,
-              request: {
-                type: "provider-session.detach",
-                providerSessionId: session.id,
-                detail:
-                  command.type === "thread.archive"
-                    ? "Thread archived."
-                    : command.type === "thread.settle"
-                      ? "Thread settled."
-                      : command.type === "thread.metadata.update"
-                        ? "Workspace changed."
-                        : command.type === "thread.runtime-mode.set"
-                          ? "Runtime mode changed."
-                          : "Provider or model selection changed.",
-                // Terminal detaches revoke the thread's MCP credentials; other
-                // detach reasons keep them so a re-attaching provider process
-                // stays authorized.
-                ...(command.type === "thread.archive" ? { revokeMcpCredential: true } : {}),
-              },
-            } satisfies PendingOrchestrationEffectV2;
-            yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
-          }),
-        { concurrency: 1, discard: true },
-      );
+      yield* queueProviderSessionDetaches({
+        command,
+        threadId: command.threadId,
+        events,
+        effects,
+        projection,
+        providerSessionIds: detachSessionIds,
+        occurredAt: now,
+        detail:
+          command.type === "thread.archive"
+            ? "Thread archived."
+            : command.type === "thread.settle"
+              ? "Thread settled."
+              : command.type === "thread.delete"
+                ? "Thread deleted."
+                : command.type === "thread.metadata.update"
+                  ? "Workspace changed."
+                  : command.type === "thread.runtime-mode.set"
+                    ? "Runtime mode changed."
+                    : "Provider or model selection changed.",
+        revokeMcpCredential: command.type === "thread.archive" || command.type === "thread.delete",
+      });
     }
 
-    if (command.type === "thread.archive") {
+    if (command.type === "thread.archive" || command.type === "thread.delete") {
       yield* Ref.update(effects, (existing) => [
         ...existing,
         {
@@ -1981,6 +2001,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       >,
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
     ) {
       const projection = yield* projectionStore.getThreadProjection(command.threadId).pipe(
         Effect.mapError(
@@ -2110,6 +2131,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
           },
         });
+        yield* queueProviderSessionDetaches({
+          command,
+          threadId: command.threadId,
+          events,
+          effects,
+          projection,
+          providerSessionIds: new Set(projection.providerSessions.map((session) => session.id)),
+          occurredAt: now,
+          detail: "Thread settled.",
+          revokeMcpCredential: false,
+        });
         return;
       }
       yield* emit(
@@ -2128,6 +2160,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           updatedAt: now,
         },
       });
+      yield* disposeAllDelegatedCompletionCohorts({
+        command,
+        events,
+        projection,
+        now,
+        cancelQueuedDelivery: false,
+      });
+      yield* queueProviderSessionDetaches({
+        command,
+        threadId: command.threadId,
+        events,
+        effects,
+        projection,
+        providerSessionIds: new Set(projection.providerSessions.map((session) => session.id)),
+        occurredAt: now,
+        detail: "Thread archived.",
+        revokeMcpCredential: true,
+      });
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:terminal.cleanup`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: { type: "terminal.cleanup" },
+        } satisfies PendingOrchestrationEffectV2,
+      ]);
     },
   );
 
@@ -7156,7 +7215,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.organization.defer":
       case "thread.organization.defer.cancel":
       case "thread.organization.defer.apply":
-        yield* dispatchDeferredOrganization(command, events);
+        yield* dispatchDeferredOrganization(command, events, effects);
         break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
