@@ -218,7 +218,7 @@ function ConfigureStep({
       <DialogHeader>
         <DialogTitle>Import from {source.name}</DialogTitle>
         <DialogDescription>
-          Choose which cookies to import and where to put them on {destinationEnvironmentName}.
+          Choose which cookies to import for {destinationEnvironmentName}.
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
@@ -377,10 +377,10 @@ function DoneStep({
         </DialogTitle>
         <DialogDescription>
           {imported > 0
-            ? `Added to ${targetName} on ${destinationEnvironmentName}.${skipped > 0 ? ` ${cookieResultCount(skipped)} skipped.` : ""}`
+            ? `Added to ${targetName} for ${destinationEnvironmentName}.${skipped > 0 ? ` ${cookieResultCount(skipped)} skipped.` : ""}`
             : skipped > 0
-              ? `No cookies were added to ${targetName} on ${destinationEnvironmentName}.`
-              : `There were no cookies to import to ${destinationEnvironmentName}.`}
+              ? `No cookies were added to ${targetName} for ${destinationEnvironmentName}.`
+              : `There were no cookies to import for ${destinationEnvironmentName}.`}
         </DialogDescription>
       </DialogHeader>
       {skippedDomains.length > 0 ? (
