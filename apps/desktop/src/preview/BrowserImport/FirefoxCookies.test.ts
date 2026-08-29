@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Builds a Firefox-shaped
 // `cookies.sqlite` fixture with the same native bindings Firefox itself uses.
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -10,6 +11,18 @@ import * as NodeSqlite from "node:sqlite";
 
 import { readFirefoxCookies } from "./FirefoxCookies.ts";
 import { parseFirefoxProfiles } from "./Sources.ts";
+
+const parsePosixFirefoxProfiles = (ini: string, root = "/home/user/.mozilla/firefox") =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    return parseFirefoxProfiles(ini, path, root);
+  }).pipe(Effect.provide(NodePath.layerPosix));
+
+const parseWindowsFirefoxProfiles = (ini: string, root = "C:\\Users\\user\\Firefox") =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    return parseFirefoxProfiles(ini, path, root);
+  }).pipe(Effect.provide(NodePath.layerWin32));
 
 /** Builds a `cookies.sqlite` with Firefox's real `moz_cookies` shape. */
 const writeFirefoxCookieDatabase = Effect.fnUntraced(function* (
@@ -202,39 +215,114 @@ describe("readFirefoxCookies", () => {
 });
 
 describe("parseFirefoxProfiles", () => {
-  it("reads named profiles and ignores Install sections", () => {
-    // `Install*` sections name a default profile but do not describe one, so
-    // counting them would invent a profile whose directory does not exist.
-    const parsed = parseFirefoxProfiles(
-      [
-        "[Install4F96D1932A9F858E]",
-        "Default=Profiles/abcd1234.default-release",
-        "Locked=1",
-        "",
-        "[Profile0]",
-        "Name=default-release",
-        "IsRelative=1",
-        "Path=Profiles/abcd1234.default-release",
-        "",
-        "[Profile1]",
-        "Name=Work",
-        "IsRelative=0",
-        "Path=/Volumes/External/firefox-work",
-        "",
-        "[General]",
-        "StartWithLastProfile=1",
-      ].join("\n"),
+  it.effect("reads named profiles and ignores Install sections", () =>
+    Effect.gen(function* () {
+      // `Install*` sections name a default profile but do not describe one, so
+      // counting them would invent a profile whose directory does not exist.
+      const parsed = yield* parsePosixFirefoxProfiles(
+        [
+          "[Install4F96D1932A9F858E]",
+          "Default=Profiles/abcd1234.default-release",
+          "Locked=1",
+          "",
+          "[Profile0]",
+          "Name=default-release",
+          "IsRelative=1",
+          "Path=Profiles/abcd1234.default-release",
+          "",
+          "[Profile1]",
+          "Name=Work",
+          "IsRelative=0",
+          "Path=/Volumes/External/firefox-work",
+          "",
+          "[General]",
+          "StartWithLastProfile=1",
+        ].join("\n"),
+      );
+
+      expect(parsed).toEqual([
+        { directory: "Profiles/abcd1234.default-release", name: "default-release" },
+        { directory: "/Volumes/External/firefox-work", name: "Work" },
+      ]);
+    }),
+  );
+
+  it.effect("falls back to the path when a profile has no name", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* parsePosixFirefoxProfiles(["[Profile0]", "Path=Profiles/x.default"].join("\n")),
+      ).toEqual([{ directory: "Profiles/x.default", name: "Profiles/x.default" }]);
+    }),
+  );
+
+  for (const [platform, root] of [
+    ["Linux", "/home/user/.mozilla/firefox"],
+    ["macOS", "/Users/user/Library/Application Support/Firefox"],
+  ] as const) {
+    it.effect(`validates relative and absolute ${platform} profile paths`, () =>
+      Effect.gen(function* () {
+        const parsed = yield* parsePosixFirefoxProfiles(
+          [
+            "[Profile0]",
+            "Name=Relative",
+            "IsRelative=1",
+            "Path=Profiles/relative.default",
+            "[Profile1]",
+            "Name=Custom",
+            "IsRelative=0",
+            "Path=/mnt/custom/firefox-profile",
+            "[Profile2]",
+            "IsRelative=1",
+            "Path=../../escape",
+            "[Profile3]",
+            "IsRelative=1",
+            "Path=/absolute-marked-relative",
+            "[Profile4]",
+            "IsRelative=0",
+            "Path=relative-marked-absolute",
+            "[Profile5]",
+            "IsRelative=1",
+            "Path=Profiles/nul\u0000escape",
+          ].join("\n"),
+          root,
+        );
+
+        expect(parsed).toEqual([
+          { directory: "Profiles/relative.default", name: "Relative" },
+          { directory: "/mnt/custom/firefox-profile", name: "Custom" },
+        ]);
+      }),
     );
+  }
 
-    expect(parsed).toEqual([
-      { directory: "Profiles/abcd1234.default-release", name: "default-release" },
-      { directory: "/Volumes/External/firefox-work", name: "Work" },
-    ]);
-  });
+  it.effect("uses Windows path rules for relative and absolute profiles", () =>
+    Effect.gen(function* () {
+      const parsed = yield* parseWindowsFirefoxProfiles(
+        [
+          "[Profile0]",
+          "Name=Relative",
+          "IsRelative=1",
+          "Path=Profiles\\relative.default",
+          "[Profile1]",
+          "Name=Custom",
+          "IsRelative=0",
+          "Path=D:\\Firefox Profiles\\Work",
+          "[Profile2]",
+          "IsRelative=1",
+          "Path=..\\..\\escape",
+          "[Profile3]",
+          "IsRelative=1",
+          "Path=D:\\absolute-marked-relative",
+          "[Profile4]",
+          "IsRelative=0",
+          "Path=relative-marked-absolute",
+        ].join("\n"),
+      );
 
-  it("falls back to the path when a profile has no name", () => {
-    expect(parseFirefoxProfiles(["[Profile0]", "Path=Profiles/x.default"].join("\n"))).toEqual([
-      { directory: "Profiles/x.default", name: "Profiles/x.default" },
-    ]);
-  });
+      expect(parsed).toEqual([
+        { directory: "Profiles\\relative.default", name: "Relative" },
+        { directory: "D:\\Firefox Profiles\\Work", name: "Custom" },
+      ]);
+    }),
+  );
 });

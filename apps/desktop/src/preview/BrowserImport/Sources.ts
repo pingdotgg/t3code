@@ -206,13 +206,42 @@ export const resolveCookieDatabase = Effect.fnUntraced(function* (
  * a default profile but do not describe one, so only `[ProfileN]` blocks
  * count.
  */
-export function parseFirefoxProfiles(ini: string): ReadonlyArray<BrowserImportSourceProfile> {
+export function parseFirefoxProfiles(
+  ini: string,
+  path: Path.Path,
+  root: string,
+): ReadonlyArray<BrowserImportSourceProfile> {
   const profiles: BrowserImportSourceProfile[] = [];
-  let current: { name?: string; path?: string } | null = null;
+  let current: { name?: string; path?: string; isRelative?: string } | null = null;
 
   const flush = () => {
     if (current?.path) {
-      profiles.push({ directory: current.path, name: current.name?.trim() || current.path });
+      const candidate = current.path;
+      const isRelative = current.isRelative === undefined || current.isRelative === "1";
+      const validIsRelative = current.isRelative === undefined || /^[01]$/.test(current.isRelative);
+      if (!validIsRelative || candidate.includes("\u0000")) {
+        current = null;
+        return;
+      }
+
+      let directory: string | undefined;
+      if (isRelative) {
+        if (!path.isAbsolute(candidate)) {
+          const resolved = path.resolve(root, candidate);
+          const relative = path.relative(root, resolved);
+          const escapesRoot =
+            relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+          if (!escapesRoot) directory = path.normalize(candidate);
+        }
+      } else if (path.isAbsolute(candidate)) {
+        // Firefox supports profiles on arbitrary custom roots when
+        // IsRelative=0. Do not constrain them to the standard Firefox root.
+        directory = path.normalize(candidate);
+      }
+
+      if (directory !== undefined) {
+        profiles.push({ directory, name: current.name?.trim() || directory });
+      }
     }
     current = null;
   };
@@ -231,6 +260,7 @@ export function parseFirefoxProfiles(ini: string): ReadonlyArray<BrowserImportSo
     const value = line.slice(separator + 1).trim();
     if (key === "name") current.name = value;
     if (key === "path") current.path = value;
+    if (key === "isrelative") current.isRelative = value;
   }
   flush();
   return profiles;
@@ -354,7 +384,7 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
 
   if (definition.engine === "firefox") {
     const declared = yield* fileSystem.readFileString(context.path.join(root, "profiles.ini")).pipe(
-      Effect.map(parseFirefoxProfiles),
+      Effect.map((ini) => parseFirefoxProfiles(ini, context.path, root)),
       Effect.orElseSucceed(() => [] as ReadonlyArray<BrowserImportSourceProfile>),
     );
     if (declared.length > 0) return declared;
