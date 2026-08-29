@@ -135,7 +135,7 @@ export function useThreadComposerState() {
       ? (feedbackSubmissionsByThreadKey[selectedThreadKey] ?? [])
       : [];
     return buildThreadFeed(selectedThreadVisibleTurnItems, {
-      localMessages: submissions.flatMap((submission) =>
+      anchoredMessages: submissions.flatMap((submission) =>
         submission.status === "interrupted"
           ? []
           : [codexFeedbackMessage(submission), codexFeedbackMessage(submission, "assistant")],
