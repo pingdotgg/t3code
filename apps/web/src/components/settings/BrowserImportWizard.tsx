@@ -83,9 +83,8 @@ export function BrowserImportWizard({
   const [target, setTarget] = useState<string>(
     canCreateProfile ? NEW_TARGET_VALUE : (targetProfiles[0]?.id ?? NEW_TARGET_VALUE),
   );
-  // Stable across retries so a Full Disk Access round-trip (added on the Safari
-  // branch) or a keychain re-approval lands in one profile, not a new one each
-  // time.
+  // Stable across retries so a keychain re-approval lands in one profile, not
+  // a new one each time.
   const newProfileId = useRef(`profile-${randomUUID()}`);
 
   const runImport = () => {
@@ -198,9 +197,6 @@ type ConfigureStepProps = {
   readonly onImport: () => void;
 };
 
-// TEMP: an in-dialog layout switcher for comparing directions live — the ui.sh
-// picker can't load under the app's CSP. Collapse to the chosen variant and
-// delete this switcher before merge.
 function ConfigureStep({
   source,
   targetProfiles,
@@ -263,26 +259,13 @@ function ConfigureStep({
           </section>
         </div>
       </DialogPanel>
-      <ConfigureFooter onCancel={onCancel} onImport={onImport} />
+      <DialogFooter>
+        <Button variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button onClick={onImport}>Import</Button>
+      </DialogFooter>
     </>
-  );
-}
-
-/** Shared footer so the step keeps one set of actions. */
-function ConfigureFooter({
-  onCancel,
-  onImport,
-}: {
-  readonly onCancel: () => void;
-  readonly onImport: () => void;
-}) {
-  return (
-    <DialogFooter>
-      <Button variant="outline" onClick={onCancel}>
-        Cancel
-      </Button>
-      <Button onClick={onImport}>Import</Button>
-    </DialogFooter>
   );
 }
 
