@@ -64,6 +64,7 @@ import {
   makeClaudeAdapterV2,
   makeClaudeAgentSdkProtocolLogger,
   makeClaudeQueryOptions,
+  permissionResultFromDecision,
   type ClaudeAgentSdkQueryOptions,
   type ClaudeAgentSdkQueryOpenInput,
 } from "./ClaudeAdapterV2.ts";
@@ -663,6 +664,52 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       hasExtraArgs: true,
     });
     assert.notInclude(JSON.stringify(loggedClaudeQueryOptions(options)), "secret launch prompt");
+  });
+});
+
+describe("ClaudeAdapterV2 session permissions", () => {
+  it("forces suggested permission updates to session scope", () => {
+    const result = permissionResultFromDecision({
+      toolName: "Bash",
+      decision: "acceptForSession",
+      toolInput: { command: "git status" },
+      toolUseID: "tool-1",
+      suggestions: [
+        {
+          type: "addRules",
+          rules: [{ toolName: "Bash", ruleContent: "git status" }],
+          behavior: "allow",
+          destination: "localSettings",
+        },
+      ],
+    });
+
+    assert.deepEqual(result.updatedPermissions, [
+      {
+        type: "addRules",
+        rules: [{ toolName: "Bash", ruleContent: "git status" }],
+        behavior: "allow",
+        destination: "session",
+      },
+    ]);
+  });
+
+  it("adds a whole-tool session rule when Claude offers no suggestion", () => {
+    const result = permissionResultFromDecision({
+      toolName: "mcp__t3__custom_tool",
+      decision: "acceptForSession",
+      toolInput: {},
+      toolUseID: "tool-2",
+    });
+
+    assert.deepEqual(result.updatedPermissions, [
+      {
+        type: "addRules",
+        rules: [{ toolName: "mcp__t3__custom_tool" }],
+        behavior: "allow",
+        destination: "session",
+      },
+    ]);
   });
 });
 
