@@ -114,6 +114,8 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       // than replacing them.
       expect(toolNames).toContain("preview_status");
       expect(toolNames).toContain("delegate_task");
+      expect(toolNames).toContain("t3_thread_transfers");
+      expect(toolNames).toContain("t3_thread_fork");
 
       // The handoff tool mutates thread state, reaches the network (origin
       // fetch), and runs project setup scripts, so its MCP hints must not
@@ -125,6 +127,11 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const status = tools.find((tool) => tool.name === "t3_worktree_status");
       expect(status?.annotations?.readOnlyHint).toBe(true);
       expect(status?.annotations?.destructiveHint).toBe(false);
+      const transfers = tools.find((tool) => tool.name === "t3_thread_transfers");
+      expect(transfers?.annotations?.readOnlyHint).toBe(true);
+      expect(transfers?.annotations?.destructiveHint).toBe(false);
+      const fork = tools.find((tool) => tool.name === "t3_thread_fork");
+      expect(fork?.annotations?.destructiveHint).toBe(true);
 
       // MCP requires every tool input schema to be a top-level object schema.
       // A non-object schema (e.g. the anyOf produced by an empty

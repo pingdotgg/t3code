@@ -1,4 +1,8 @@
 import {
+  ConversationForkInput,
+  ConversationForkResult,
+  ConversationTransferListInput,
+  ConversationTransferListResult,
   OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpCreatedThread,
   OrchestratorMcpCreateThreadsInput,
@@ -30,9 +34,14 @@ import {
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { ConversationTransferMcpService } from "../../ConversationTransferMcpService.ts";
 import { OrchestratorMcpService } from "../../OrchestratorMcpService.ts";
 
 const dependencies = [McpInvocationContext.McpInvocationContext, OrchestratorMcpService];
+const transferDependencies = [
+  McpInvocationContext.McpInvocationContext,
+  ConversationTransferMcpService,
+];
 
 export const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
@@ -229,6 +238,32 @@ export const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   .annotate(Tool.Title, "Interrupt a T3 thread")
   .annotate(Tool.Destructive, true);
 
+export const ThreadTransfersTool = Tool.make("t3_thread_transfers", {
+  description:
+    "List up to 100 durable context transfers recorded on a T3 thread in the calling project, newest first. Omit threadId for this thread. Filter by transfer type to inspect fork, provider handoff, merge-back, or delegated-task provenance and resolution status.",
+  parameters: ConversationTransferListInput,
+  success: ConversationTransferListResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: transferDependencies,
+})
+  .annotate(Tool.Title, "List thread context transfers")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+export const ThreadForkTool = Tool.make("t3_thread_fork", {
+  description:
+    "Create a durable T3 conversation fork in the calling project from an explicit completed run, checkpoint, or latest stable run. Omit sourceThreadId for this thread. The new thread inherits the source configuration within the caller's permission ceiling. Native provider fork eligibility is reported now; native-fork or portable-context resolution happens truthfully on the first target turn. Reuse the required clientRequestId for retries.",
+  parameters: ConversationForkInput,
+  success: ConversationForkResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: transferDependencies,
+})
+  .annotate(Tool.Title, "Fork a T3 conversation")
+  .annotate(Tool.Destructive, true);
+
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
@@ -245,4 +280,6 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadSendTool,
   ThreadWaitTool,
   ThreadInterruptTool,
+  ThreadTransfersTool,
+  ThreadForkTool,
 );

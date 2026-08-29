@@ -1,7 +1,13 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Tool } from "effect/unstable/ai";
 
-import { CreateThreadsTool, DelegateTaskTool, ScheduleTaskTool } from "./tools.ts";
+import {
+  CreateThreadsTool,
+  DelegateTaskTool,
+  ScheduleTaskTool,
+  ThreadForkTool,
+  ThreadTransfersTool,
+} from "./tools.ts";
 
 describe("orchestrator MCP tool guidance", () => {
   it("directs subagent requests to delegation instead of ordinary threads", () => {
@@ -54,5 +60,29 @@ describe("orchestrator MCP tool guidance", () => {
     assert.isAtLeast(schema.properties?.schedule?.anyOf?.length ?? 0, 2);
     assert.include(ScheduleTaskTool.description ?? "", "STRUCTURED OBJECT");
     assert.include(ScheduleTaskTool.description ?? "", "nextRunAt");
+  });
+
+  it("publishes discoverable root-object schemas for conversation transfers", () => {
+    const forkSchema = Tool.getJsonSchema(ThreadForkTool) as {
+      readonly type?: unknown;
+      readonly properties?: Readonly<Record<string, unknown>>;
+      readonly required?: ReadonlyArray<string>;
+    };
+    const transfersSchema = Tool.getJsonSchema(ThreadTransfersTool) as {
+      readonly type?: unknown;
+      readonly properties?: Readonly<Record<string, unknown>>;
+    };
+
+    assert.equal(forkSchema.type, "object");
+    assert.hasAllKeys(forkSchema.properties ?? {}, [
+      "sourceThreadId",
+      "sourcePoint",
+      "title",
+      "clientRequestId",
+    ]);
+    assert.include(forkSchema.required ?? [], "sourcePoint");
+    assert.include(forkSchema.required ?? [], "clientRequestId");
+    assert.equal(transfersSchema.type, "object");
+    assert.hasAllKeys(transfersSchema.properties ?? {}, ["threadId", "type", "limit"]);
   });
 });

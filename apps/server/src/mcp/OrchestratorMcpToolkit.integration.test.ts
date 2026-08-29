@@ -2,6 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
+  ConversationForkResult,
+  ConversationTransferListResult,
   EnvironmentId,
   IsoDateTime,
   MessageId,
@@ -36,6 +38,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -49,6 +52,10 @@ import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexA
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import { OrchestratorV2, type OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
 import { layer as threadManagementServiceLayer } from "../orchestration-v2/ThreadManagementService.ts";
+import {
+  layer as threadForkServiceLayer,
+  ThreadForkServiceV2,
+} from "../orchestration-v2/ThreadForkService.ts";
 import {
   type ProviderAdapterV2Event,
   ProviderAdapterProtocolError,
@@ -90,6 +97,10 @@ const queuedFollowupPrompt = "Complete the queued follow-up and return the final
 const queuedFollowupResult = "Queued delegated follow-up completed.";
 
 const decodeCreateThreadsResult = Schema.decodeUnknownEffect(OrchestratorMcpCreateThreadsResult);
+const decodeConversationForkResult = Schema.decodeUnknownEffect(ConversationForkResult);
+const decodeConversationTransferListResult = Schema.decodeUnknownEffect(
+  ConversationTransferListResult,
+);
 const decodeCreatedThread = Schema.decodeUnknownEffect(OrchestratorMcpCreatedThread);
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
 const decodeTaskCancelResult = Schema.decodeUnknownEffect(OrchestratorMcpTaskCancelResult);
@@ -515,6 +526,23 @@ describe("orchestrator MCP toolkit", () => {
               Ref.update(continuationOffers, (existing) => [...existing, request]),
             take: Effect.never,
           });
+          const forkPlanEntered = yield* Deferred.make<void>();
+          const releaseForkPlan = yield* Deferred.make<void>();
+          const gatedThreadForkServiceLayer = Layer.effect(
+            ThreadForkServiceV2,
+            Effect.gen(function* () {
+              const service = yield* ThreadForkServiceV2;
+              return ThreadForkServiceV2.of({
+                plan: (input) =>
+                  input.title === "Race-gated fork"
+                    ? Deferred.succeed(forkPlanEntered, undefined).pipe(
+                        Effect.andThen(Deferred.await(releaseForkPlan)),
+                        Effect.andThen(service.plan(input)),
+                      )
+                    : service.plan(input),
+              });
+            }),
+          ).pipe(Layer.provide(threadForkServiceLayer));
           // Offers land after the finalize projection writes, so poll briefly
           // instead of asserting counts immediately.
           const waitForContinuationOffers = (count: number) =>
@@ -551,6 +579,7 @@ describe("orchestrator MCP toolkit", () => {
               },
             },
             registryLayer,
+            { threadForkServiceLayer: gatedThreadForkServiceLayer },
           ).pipe(Layer.provide(continuationProbeLayer));
           const orchestrationLayer = Layer.merge(
             orchestratorLayer,
@@ -1817,17 +1846,255 @@ describe("orchestrator MCP toolkit", () => {
               `Claude completed: ${createdThreadPrompt}`,
             );
 
-            const forkedThreadId = ThreadId.make("thread:mcp-orchestrator-inherited-read");
+            const collisionCreate = yield* decodeCreateThreadsResult(
+              (yield* invoke("create_threads", {
+                clientRequestId: "fork",
+                threads: [{ title: "Create namespace collision sentinel" }],
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            const collisionFork = yield* decodeConversationForkResult(
+              (yield* invoke("t3_thread_fork", {
+                sourceThreadId: promptedThread.threadId,
+                sourcePoint: { type: "latest_stable" },
+                clientRequestId: "0",
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(collisionCreate.threads[0]?.threadId).not.toBe(collisionFork.targetThreadId);
+            expect(
+              (yield* orchestrator.getThreadProjection(collisionCreate.threads[0]!.threadId)).thread
+                .title,
+            ).toBe("Create namespace collision sentinel");
+            expect(
+              (yield* orchestrator.getThreadProjection(collisionFork.targetThreadId)).thread
+                .lineage,
+            ).toMatchObject({
+              parentThreadId: promptedThread.threadId,
+              relationshipToParent: "fork",
+            });
+
+            const occupiedForkTargetId = ThreadId.make(
+              "thread:mcp:mcp-provider-session-parent:conversation-fork:target:occupied-target",
+            );
             yield* orchestrator.dispatch({
-              type: "thread.fork",
+              type: "thread.create",
               createdBy: "user",
               creationSource: "web",
-              commandId: CommandId.make("command:mcp-orchestrator-inherited-read"),
+              commandId: CommandId.make("command:mcp-fork:occupied-target-create"),
+              threadId: occupiedForkTargetId,
+              projectId,
+              title: "Existing target must survive",
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            const occupiedForkCall = yield* invoke("t3_thread_fork", {
               sourceThreadId: promptedThread.threadId,
-              targetThreadId: forkedThreadId,
+              sourcePoint: { type: "latest_stable" },
+              clientRequestId: "occupied-target",
+            });
+            expect(occupiedForkCall.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "orchestration_error",
+            });
+            const occupiedForkTarget =
+              yield* orchestrator.getThreadProjection(occupiedForkTargetId);
+            expect(occupiedForkTarget.thread.title).toBe("Existing target must survive");
+            expect(occupiedForkTarget.contextTransfers).toEqual([]);
+
+            const deletedOccupiedForkTargetId = ThreadId.make(
+              "thread:mcp:mcp-provider-session-parent:conversation-fork:target:deleted-occupied-target",
+            );
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-fork:deleted-occupied-target-create"),
+              threadId: deletedOccupiedForkTargetId,
+              projectId,
+              title: "Deleted target must stay deleted",
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.delete",
+              commandId: CommandId.make("command:mcp-fork:deleted-occupied-target-delete"),
+              threadId: deletedOccupiedForkTargetId,
+            });
+            const deletedOccupiedForkCall = yield* invoke("t3_thread_fork", {
+              sourceThreadId: promptedThread.threadId,
+              sourcePoint: { type: "latest_stable" },
+              clientRequestId: "deleted-occupied-target",
+            });
+            expect(deletedOccupiedForkCall.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "orchestration_error",
+            });
+            const deletedOccupiedForkTarget = yield* orchestrator.getThreadProjection(
+              deletedOccupiedForkTargetId,
+            );
+            expect(deletedOccupiedForkTarget.thread.title).toBe("Deleted target must stay deleted");
+            expect(deletedOccupiedForkTarget.thread.deletedAt).not.toBeNull();
+            expect(deletedOccupiedForkTarget.contextTransfers).toEqual([]);
+
+            const racingForkFiber = yield* Effect.forkChild(
+              invoke("t3_thread_fork", {
+                sourceThreadId: promptedThread.threadId,
+                sourcePoint: { type: "latest_stable" },
+                title: "Race-gated fork",
+                clientRequestId: "orchestrator-race-gated-fork",
+              }),
+            );
+            yield* Deferred.await(forkPlanEntered);
+            const sourceWriterStarted = yield* Deferred.make<void>();
+            const callerWriterStarted = yield* Deferred.make<void>();
+            const sourceWriterFiber = yield* Effect.forkChild(
+              Deferred.succeed(sourceWriterStarted, undefined).pipe(
+                Effect.andThen(
+                  orchestrator.dispatch({
+                    type: "thread.runtime-mode.set",
+                    commandId: CommandId.make("command:mcp-fork:race-source-runtime"),
+                    threadId: promptedThread.threadId,
+                    runtimeMode: "approval-required",
+                  }),
+                ),
+              ),
+            );
+            const callerWriterFiber = yield* Effect.forkChild(
+              Deferred.succeed(callerWriterStarted, undefined).pipe(
+                Effect.andThen(
+                  orchestrator.dispatch({
+                    type: "thread.interaction-mode.set",
+                    commandId: CommandId.make("command:mcp-fork:race-caller-interaction"),
+                    threadId: parentThreadId,
+                    interactionMode: "plan",
+                  }),
+                ),
+              ),
+            );
+            yield* Deferred.await(sourceWriterStarted);
+            yield* Deferred.await(callerWriterStarted);
+            yield* Effect.yieldNow;
+            yield* Deferred.succeed(releaseForkPlan, undefined);
+            const racingForkCall = yield* Fiber.join(racingForkFiber);
+            const sourceWriter = yield* Fiber.join(sourceWriterFiber);
+            const callerWriter = yield* Fiber.join(callerWriterFiber);
+            const racingFork = yield* decodeConversationForkResult(
+              racingForkCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(racingFork.receipt.sequence).toBeLessThan(sourceWriter.sequence);
+            expect(racingFork.receipt.sequence).toBeLessThan(callerWriter.sequence);
+            expect(
+              (yield* orchestrator.getThreadProjection(racingFork.targetThreadId)).thread,
+            ).toMatchObject({ runtimeMode: "full-access", interactionMode: "default" });
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-fork:race-restore-source-runtime"),
+              threadId: promptedThread.threadId,
+              runtimeMode: "full-access",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-fork:race-restore-caller-interaction"),
+              threadId: parentThreadId,
+              interactionMode: "default",
+            });
+
+            const deniedFork = yield* orchestrator
+              .dispatch({
+                type: "thread.fork",
+                createdBy: "agent",
+                creationSource: "mcp",
+                commandId: CommandId.make("command:mcp-fork:denied-policy-ceiling"),
+                sourceThreadId: promptedThread.threadId,
+                targetThreadId: ThreadId.make("thread:mcp-fork:denied-policy-ceiling"),
+                sourcePoint: { type: "latest_stable" },
+                policyCeiling: {
+                  callerThreadId: parentThreadId,
+                  runtimeMode: "approval-required",
+                  interactionMode: "plan",
+                },
+              })
+              .pipe(Effect.flip);
+            expect(deniedFork._tag).toBe("OrchestratorDispatchError");
+
+            const forkCall = yield* invoke("t3_thread_fork", {
+              sourceThreadId: promptedThread.threadId,
               sourcePoint: { type: "latest_stable" },
               title: "Inherited read thread",
+              clientRequestId: "orchestrator-inherited-read",
             });
+            expect(forkCall.isError).toBe(false);
+            const forked = yield* decodeConversationForkResult(forkCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            const forkedThreadId = forked.targetThreadId;
+            expect(forked).toMatchObject({
+              sourceThreadId: promptedThread.threadId,
+              scope: "conversation_through_source_point",
+              requestedSourcePoint: { type: "latest_stable" },
+              transfer: { type: "fork", status: "pending" },
+              providerSupport: { resolutionTiming: "first_target_turn" },
+              receipt: { commandType: "thread.fork" },
+            });
+            expect(forked.canonicalSourcePoint.runId).toBeDefined();
+            const forkCheckpointId = forked.canonicalSourcePoint.checkpointId;
+            if (forkCheckpointId === undefined) {
+              return yield* Effect.die(new Error("Stable fork source checkpoint missing."));
+            }
+            const checkpointForkCall = yield* invoke("t3_thread_fork", {
+              sourceThreadId: promptedThread.threadId,
+              sourcePoint: { type: "checkpoint", checkpointId: forkCheckpointId },
+              clientRequestId: "orchestrator-checkpoint-fork",
+            });
+            const checkpointFork = yield* decodeConversationForkResult(
+              checkpointForkCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(checkpointFork.canonicalSourcePoint.runId).toBe(
+              forked.canonicalSourcePoint.runId,
+            );
+
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-fork:lower-caller-runtime"),
+              threadId: parentThreadId,
+              runtimeMode: "approval-required",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-fork:lower-caller-interaction"),
+              threadId: parentThreadId,
+              interactionMode: "plan",
+            });
+
+            const repeatedForkCall = yield* invoke("t3_thread_fork", {
+              sourceThreadId: promptedThread.threadId,
+              sourcePoint: { type: "latest_stable" },
+              title: "Inherited read thread",
+              clientRequestId: "orchestrator-inherited-read",
+            });
+            const repeatedFork = yield* decodeConversationForkResult(
+              repeatedForkCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(repeatedFork.targetThreadId).toBe(forkedThreadId);
+            expect(repeatedFork.receipt).toEqual(forked.receipt);
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-fork:restore-caller-runtime"),
+              threadId: parentThreadId,
+              runtimeMode: "full-access",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-fork:restore-caller-interaction"),
+              threadId: parentThreadId,
+              interactionMode: "default",
+            });
+
             const forkedProjection = yield* orchestrator.getThreadProjection(forkedThreadId);
             expect(forkedProjection.messages).toEqual([]);
             expect(
@@ -1850,6 +2117,21 @@ describe("orchestrator MCP toolkit", () => {
               sourceThreadId: promptedThread.threadId,
               createdBy: "agent",
               creationSource: "mcp",
+            });
+
+            const transfersCall = yield* invoke("t3_thread_transfers", {
+              threadId: forkedThreadId,
+              type: "fork",
+              limit: 1,
+            });
+            const transfers = yield* decodeConversationTransferListResult(
+              transfersCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(transfers).toMatchObject({
+              threadId: forkedThreadId,
+              scope: "current_project",
+              hasMore: false,
+              transfers: [{ id: forked.transfer.id, type: "fork", status: "pending" }],
             });
 
             const ordinaryLoopPrompt = "Run an ordinary thread loop iteration.";

@@ -312,6 +312,24 @@ Without `runId`, it selects the newest interruptible run. A terminal run is
 returned unchanged, and a thread with no active provider turn returns
 `no_active_run`.
 
+### Conversation forks and transfer discovery
+
+`t3_thread_fork` dispatches the existing `thread.fork` command through
+`ThreadManagementService`, including its project admission and deleted-source
+checks. The request names a stable source point and supplies an idempotency key;
+the target thread ID and command ID are stable for that key. The response is
+derived from the committed `thread.created` and `context-transfer.created`
+events rather than an optional final projection read.
+
+Fork creation records lineage and a pending context transfer. Native eligibility
+is reported from the source provider session and strong provider refs, but
+resolution remains deferred to the first target turn. The existing provider
+turn planner then chooses native fork or checks portable-context capabilities.
+
+`t3_thread_transfers` exposes a bounded, newest-first view of one current-project
+thread's durable context-transfer records. It is the read path for fork
+provenance and later resolution or consumption.
+
 ## Delegated Task Lifecycle
 
 The MCP server is a command ingress into V2. It does not call provider adapters

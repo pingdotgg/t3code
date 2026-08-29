@@ -2,6 +2,7 @@ import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 
 import { McpInvocationContext } from "../../McpInvocationContext.ts";
+import { ConversationTransferMcpService } from "../../ConversationTransferMcpService.ts";
 import { OrchestratorMcpService } from "../../OrchestratorMcpService.ts";
 
 const handlers = {
@@ -108,6 +109,18 @@ const handlers = {
       const scope = yield* McpInvocationContext;
       const service = yield* OrchestratorMcpService;
       return yield* service.interruptThread(scope, input);
+    }),
+  t3_thread_transfers: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext;
+      const service = yield* ConversationTransferMcpService;
+      return yield* service.list(scope, input);
+    }),
+  t3_thread_fork: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext;
+      const service = yield* ConversationTransferMcpService;
+      return yield* service.fork(scope, input);
     }),
 } satisfies Parameters<typeof OrchestratorToolkit.toLayer>[0];
 

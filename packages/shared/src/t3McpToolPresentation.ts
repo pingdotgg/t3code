@@ -48,6 +48,8 @@ const T3_MCP_TOOLS: Record<
   t3_thread_start: { displayName: "Start a T3 thread", summaryAction: "thread-create" },
   t3_thread_list: { displayName: "List T3 threads", summaryAction: "thread-list" },
   t3_thread_read: { displayName: "Read a T3 thread", summaryAction: "thread-read" },
+  t3_thread_transfers: { displayName: "List T3 thread context transfers" },
+  t3_thread_fork: { displayName: "Fork a T3 conversation" },
   t3_thread_send: { displayName: "Send to a T3 thread", summaryAction: "thread-send" },
   t3_thread_wait: { displayName: "Wait for a T3 thread", summaryAction: "thread-wait" },
   t3_thread_interrupt: { displayName: "Interrupt a T3 thread", summaryAction: "thread-interrupt" },

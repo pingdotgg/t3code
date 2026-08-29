@@ -53,7 +53,10 @@ import {
 } from "../RuntimePolicy.ts";
 import { layer as turnItemPositionStoreLayer } from "../TurnItemPositionStore.ts";
 import { layer as runtimeRequestServiceLayer } from "../RuntimeRequestService.ts";
-import { layer as threadForkServiceLayer } from "../ThreadForkService.ts";
+import {
+  layer as defaultThreadForkServiceLayer,
+  ThreadForkServiceV2,
+} from "../ThreadForkService.ts";
 import {
   runOrchestratorV2Scenario,
   type OrchestratorV2ScenarioStepError,
@@ -180,6 +183,7 @@ export function runOrchestratorV2ProviderReplayScenario<
     >;
     readonly enableLegacyTokenStreaming?: boolean;
     readonly runEffectWorker?: boolean;
+    readonly threadForkServiceLayer?: Layer.Layer<ThreadForkServiceV2>;
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
@@ -220,6 +224,7 @@ export function makeOrchestratorV2ProviderReplayLayer<
     readonly enableLegacyTokenStreaming?: boolean;
     readonly runEffectWorker?: boolean;
     readonly replayGate?: ProviderReplayGate;
+    readonly threadForkServiceLayer?: Layer.Layer<ThreadForkServiceV2>;
   } = {},
 ): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
   const registryLayer = harness.makeProviderAdapterRegistryLayer(
@@ -239,6 +244,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     >;
     readonly enableLegacyTokenStreaming?: boolean;
     readonly runEffectWorker?: boolean;
+    readonly threadForkServiceLayer?: Layer.Layer<ThreadForkServiceV2>;
   } = {},
 ): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
   const serverConfigLayer = Layer.effect(
@@ -392,7 +398,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         providerSessionManagerProvided,
         providerSwitchServiceProvided,
         runExecutionServiceProvided,
-        threadForkServiceLayer,
+        options.threadForkServiceLayer ?? defaultThreadForkServiceLayer,
       ),
     ),
   );

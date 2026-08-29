@@ -2283,6 +2283,14 @@ export const OrchestrationV2Command = Schema.Union([
     targetThreadId: ThreadId,
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
     title: Schema.optional(TrimmedNonEmptyString),
+    /** Optional caller ceiling enforced with the current source and caller projections. */
+    policyCeiling: Schema.optional(
+      Schema.Struct({
+        callerThreadId: ThreadId,
+        runtimeMode: RuntimeMode,
+        interactionMode: ProviderInteractionMode,
+      }),
+    ),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
