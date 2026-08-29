@@ -97,6 +97,46 @@ describe("environment themes", () => {
     expect(definitions.map((definition) => definition.id)).toEqual(["nightfall"]);
   });
 
+  it("drops published palettes with no usable colors", () => {
+    const theme = { id: "invalid", name: "Invalid", appearance: "dark" } as const;
+    const definitions = publishedThemeDefinitions([
+      { ...theme, colors: { canvas: "not-a-color" } },
+      { ...theme, id: "unknown-roles", colors: { futureRole: "#ffffff" } },
+      {
+        ...theme,
+        id: "ignored-variant",
+        colors: { canvas: "not-a-color" },
+        variants: { dark: { canvas: "#112233" } },
+      },
+    ]);
+
+    expect(definitions).toEqual([]);
+  });
+
+  it("keeps seeds, partial palettes, and usable alternate appearances", () => {
+    const theme = { name: "Shared", appearance: "dark" } as const;
+    const definitions = publishedThemeDefinitions([
+      NIGHTFALL_THEME,
+      {
+        ...theme,
+        id: "partial",
+        colors: { canvas: "not-a-color", text: "#ffffff", futureRole: "#ffffff" },
+      },
+      {
+        ...theme,
+        id: "light-variant",
+        colors: { canvas: "not-a-color" },
+        variants: { light: { canvas: "#eff1f5" } },
+      },
+    ]);
+
+    expect(definitions.map((definition) => definition.id)).toEqual([
+      "nightfall",
+      "partial",
+      "light-variant",
+    ]);
+  });
+
   // A machine may publish roles a newer client added; an older one has to
   // ignore them rather than render a broken palette.
   it("ignores published roles this build does not render", () => {

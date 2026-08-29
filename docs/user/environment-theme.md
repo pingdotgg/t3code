@@ -85,6 +85,8 @@ out keep their generated value. A role this version of T3 Code does not know is 
 than rejected, so publishing a role added by a newer release is safe. An `id` inside the file is
 ignored — the filename decides.
 
+A theme with no usable colors is not listed on that client.
+
 Write each file atomically — write a temporary file beside it and rename — so T3 Code never reads
 a half-written theme. An unreadable or invalid file is simply not published; the machine's other
 themes are unaffected.

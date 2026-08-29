@@ -72,7 +72,7 @@ export function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefini
 }
 
 /**
- * The published set as library entries. Reserved ids are dropped here rather
+ * Published palettes this client can render. Reserved ids are dropped here rather
  * than rendered: a published `t3-iris.json` would show this palette on its
  * card while "Use" resolved the built-in, and a published `dark.json` would
  * capture everyone whose stored preference is the stock `"dark"`.
@@ -80,7 +80,17 @@ export function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefini
 export function publishedThemeDefinitions(
   themes: ReadonlyArray<EnvironmentTheme>,
 ): ReadonlyArray<ThemeDefinition> {
-  return themes.filter((theme) => !isReservedThemeId(theme.id)).map(environmentThemeDefinition);
+  return themes
+    .filter((theme) => {
+      if (isReservedThemeId(theme.id)) return false;
+      if (theme.canvas !== undefined && theme.accent !== undefined) return true;
+      const otherAppearance = theme.appearance === "dark" ? "light" : "dark";
+      return [theme.colors, theme.variants?.[otherAppearance]].some(
+        (colors) =>
+          colors !== undefined && Object.keys(lenientThemeColorOverrides(colors)).length > 0,
+      );
+    })
+    .map(environmentThemeDefinition);
 }
 
 /** The published themes as library entries; empty while none are published. */
