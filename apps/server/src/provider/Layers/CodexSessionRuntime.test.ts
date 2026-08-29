@@ -775,7 +775,7 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
-  it.effect("falls back to thread/start when resume fails recoverably", () =>
+  it.effect("requests metadata-only resume before falling back to thread/start", () =>
     Effect.gen(function* () {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
       const started = makeThreadOpenResponse("fresh-thread");
@@ -812,6 +812,15 @@ describe("openCodexThread", () => {
         calls.map((call) => call.method),
         ["thread/resume", "thread/start"],
       );
+      NodeAssert.deepStrictEqual(calls[0]?.payload, {
+        threadId: "stale-thread",
+        excludeTurns: true,
+        cwd: "/tmp/project",
+        model: "gpt-5.3-codex",
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        sandbox: "danger-full-access",
+      });
     }),
   );
 

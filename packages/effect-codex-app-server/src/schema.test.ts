@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import * as CodexSchema from "./schema.ts";
 
 const isGetAccountResponse = Schema.is(CodexSchema.V2GetAccountResponse);
+const encodeThreadResumeParams = Schema.encodeUnknownSync(CodexSchema.V2ThreadResumeParams);
 
 it("accepts Codex 0.150 multi-agent values", () => {
   const schemas = [
@@ -95,4 +96,16 @@ it("accepts Codex 0.150 account plan values", () => {
 
     assert.equal(isGetAccountResponse(accountResponse), true);
   }
+});
+
+it("encodes metadata-only thread resume requests", () => {
+  const encoded = encodeThreadResumeParams({
+    threadId: "thread-1",
+    excludeTurns: true,
+  });
+
+  assert.deepEqual(encoded, {
+    threadId: "thread-1",
+    excludeTurns: true,
+  });
 });
