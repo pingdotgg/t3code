@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { clearBrowserProfileData } from "./IntegrationsSettings";
+import { browserProfileRemovalAvailable, clearBrowserProfileData } from "./IntegrationsSettings";
 
 const environmentId = "environment-a" as EnvironmentId;
 const secondEnvironmentId = "environment-b" as EnvironmentId;
@@ -61,5 +61,14 @@ describe("clearBrowserProfileData", () => {
     await expect(clearBrowserProfileData(null, [environmentId], "profile-a")).rejects.toThrow();
     expect(bridge.clearCookies).not.toHaveBeenCalled();
     expect(bridge.clearCache).not.toHaveBeenCalled();
+  });
+});
+
+describe("browserProfileRemovalAvailable", () => {
+  it("requires a ready non-empty catalog and desktop bridge", () => {
+    expect(browserProfileRemovalAvailable(true, true, 1)).toBe(true);
+    expect(browserProfileRemovalAvailable(true, true, 0)).toBe(false);
+    expect(browserProfileRemovalAvailable(true, false, 1)).toBe(false);
+    expect(browserProfileRemovalAvailable(false, true, 1)).toBe(false);
   });
 });
