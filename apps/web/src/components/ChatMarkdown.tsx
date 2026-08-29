@@ -878,6 +878,7 @@ function MarkdownCodeBlock({
       ) : null}
       {showDiagram ? (
         <MermaidDiagram
+          key={code}
           code={code}
           language={language}
           theme={theme}

@@ -2,10 +2,15 @@ import { LRUCache } from "./lruCache";
 
 type MermaidTheme = "light" | "dark";
 
+interface CachedMermaidSvg {
+  svg: string;
+  rootId: string;
+}
+
 const MAX_MERMAID_CACHE_ENTRIES = 200;
 const MAX_MERMAID_CACHE_MEMORY_BYTES = 20 * 1024 * 1024;
 
-const mermaidSvgCache = new LRUCache<string>(
+const mermaidSvgCache = new LRUCache<CachedMermaidSvg>(
   MAX_MERMAID_CACHE_ENTRIES,
   MAX_MERMAID_CACHE_MEMORY_BYTES,
 );
@@ -16,6 +21,15 @@ let renderCount = 0;
 
 function mermaidCacheKey(source: string, theme: MermaidTheme): string {
   return `${theme}:${source}`;
+}
+
+function nextMermaidId(): string {
+  renderCount += 1;
+  return `t3m_${renderCount}_`;
+}
+
+function cloneMermaidSvg(entry: CachedMermaidSvg): string {
+  return entry.svg.replaceAll(entry.rootId, nextMermaidId());
 }
 
 function loadMermaid(): Promise<typeof import("mermaid")> {
@@ -31,12 +45,13 @@ function mermaidApi(mod: typeof import("mermaid")) {
 }
 
 export function getCachedMermaidSvg(source: string, theme: MermaidTheme): string | null {
-  return mermaidSvgCache.get(mermaidCacheKey(source, theme));
+  const cached = mermaidSvgCache.get(mermaidCacheKey(source, theme));
+  return cached === null ? null : cloneMermaidSvg(cached);
 }
 
 export async function renderMermaidSvg(source: string, theme: MermaidTheme): Promise<string> {
-  const cached = getCachedMermaidSvg(source, theme);
-  if (cached !== null) return cached;
+  const cached = mermaidSvgCache.get(mermaidCacheKey(source, theme));
+  if (cached !== null) return cloneMermaidSvg(cached);
 
   const mermaid = mermaidApi(await loadMermaid());
   if (initializedTheme !== theme) {
@@ -61,9 +76,9 @@ export async function renderMermaidSvg(source: string, theme: MermaidTheme): Pro
     initializedTheme = theme;
   }
 
-  renderCount += 1;
-  const { svg } = await mermaid.render(`t3mermaid${renderCount}`, source);
-  mermaidSvgCache.set(mermaidCacheKey(source, theme), svg, svg.length * 2);
+  const rootId = nextMermaidId();
+  const { svg } = await mermaid.render(rootId, source);
+  mermaidSvgCache.set(mermaidCacheKey(source, theme), { svg, rootId }, svg.length * 2);
   return svg;
 }
 

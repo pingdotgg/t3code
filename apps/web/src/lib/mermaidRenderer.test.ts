@@ -23,13 +23,15 @@ describe("renderMermaidSvg", () => {
   });
 
   it("initializes once per theme and returns the rendered svg", async () => {
-    mermaid.render.mockResolvedValue({ svg: "<svg>ok</svg>" });
+    mermaid.render.mockImplementation(async (id: string) => ({
+      svg: `<svg id="${id}">ok</svg>`,
+    }));
 
     await expect(renderMermaidSvg("flowchart TD\n  A --> B", "dark")).resolves.toBe(
-      "<svg>ok</svg>",
+      '<svg id="t3m_1_">ok</svg>',
     );
     await expect(renderMermaidSvg("flowchart TD\n  A --> C", "dark")).resolves.toBe(
-      "<svg>ok</svg>",
+      '<svg id="t3m_2_">ok</svg>',
     );
 
     expect(mermaid.initialize).toHaveBeenCalledTimes(1);
@@ -45,7 +47,9 @@ describe("renderMermaidSvg", () => {
   });
 
   it("reinitializes when the theme changes", async () => {
-    mermaid.render.mockResolvedValue({ svg: "<svg>ok</svg>" });
+    mermaid.render.mockImplementation(async (id: string) => ({
+      svg: `<svg id="${id}">ok</svg>`,
+    }));
 
     await renderMermaidSvg("flowchart TD\n  A --> B", "dark");
     await renderMermaidSvg("flowchart TD\n  A --> B", "light");
@@ -64,15 +68,19 @@ describe("renderMermaidSvg", () => {
   });
 
   it("returns a cached svg without rendering again", async () => {
-    mermaid.render.mockResolvedValue({ svg: "<svg>ok</svg>" });
+    mermaid.render.mockImplementation(async (id: string) => ({
+      svg: `<svg id="${id}"><use href="#${id}-marker"/></svg>`,
+    }));
 
-    await renderMermaidSvg("flowchart TD\n  A --> B", "dark");
+    const first = await renderMermaidSvg("flowchart TD\n  A --> B", "dark");
     mermaid.render.mockClear();
 
-    await expect(renderMermaidSvg("flowchart TD\n  A --> B", "dark")).resolves.toBe(
-      "<svg>ok</svg>",
-    );
-    expect(getCachedMermaidSvg("flowchart TD\n  A --> B", "dark")).toBe("<svg>ok</svg>");
+    const second = await renderMermaidSvg("flowchart TD\n  A --> B", "dark");
+    const fromCache = getCachedMermaidSvg("flowchart TD\n  A --> B", "dark");
+
+    expect(first).toBe('<svg id="t3m_1_"><use href="#t3m_1_-marker"/></svg>');
+    expect(second).toBe('<svg id="t3m_2_"><use href="#t3m_2_-marker"/></svg>');
+    expect(fromCache).toBe('<svg id="t3m_3_"><use href="#t3m_3_-marker"/></svg>');
     expect(mermaid.render).not.toHaveBeenCalled();
   });
 });

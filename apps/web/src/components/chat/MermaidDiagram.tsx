@@ -33,7 +33,6 @@ export function MermaidDiagram({
     }
 
     let cancelled = false;
-    setSvg(null);
     setError(null);
 
     void renderMermaidSvg(code, theme).then(
