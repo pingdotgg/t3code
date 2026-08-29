@@ -398,18 +398,26 @@ export const make = Effect.gen(function* () {
         return indexedResult;
       }
 
-      const entryByPath = new Map(indexedResult.entries.map((entry) => [entry.path, entry]));
-      for (const entry of dotEntries) {
-        entryByPath.set(entry.path, entry);
+      const indexedPaths = new Set(indexedResult.entries.map((entry) => entry.path));
+      const supplementalEntries = dotEntries
+        .filter((entry) => !indexedPaths.has(entry.path))
+        .toSorted((left, right) => left.path.localeCompare(right.path));
+      if (supplementalEntries.length === 0) {
+        return indexedResult;
       }
-      const sortedEntries = [...entryByPath.values()].toSorted((left, right) =>
-        left.path.localeCompare(right.path),
+
+      const remainingCapacity = Math.max(
+        0,
+        NON_GIT_DOT_ENTRY_SCAN_MAX_ENTRIES - indexedResult.entries.length,
       );
-      const entries = sortedEntries.slice(0, NON_GIT_DOT_ENTRY_SCAN_MAX_ENTRIES);
+      const acceptedSupplementalEntries = supplementalEntries.slice(0, remainingCapacity);
+      const entries = [...indexedResult.entries, ...acceptedSupplementalEntries].toSorted(
+        (left, right) => left.path.localeCompare(right.path),
+      );
 
       return {
         entries,
-        truncated: entries.length < sortedEntries.length,
+        truncated: acceptedSupplementalEntries.length < supplementalEntries.length,
       };
     },
   );
