@@ -124,6 +124,17 @@ describe("cookieScope", () => {
   it("matches the scheme to the secure flag", () => {
     expect(cookieScope("example.test", "/", false).url).toBe("http://example.test/");
   });
+
+  it("brackets bare IPv6 hosts without duplicating existing brackets", () => {
+    expect(cookieScope("::1", "/", false)).toEqual({
+      url: "http://[::1]/",
+      domain: undefined,
+    });
+    expect(cookieScope("[::1]", "/app", true)).toEqual({
+      url: "https://[::1]/app",
+      domain: undefined,
+    });
+  });
 });
 
 describe("readChromiumCookieDatabase", () => {

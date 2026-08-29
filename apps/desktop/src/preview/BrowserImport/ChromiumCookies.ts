@@ -213,8 +213,10 @@ export const cookieScope = (
 ): { readonly url: string; readonly domain: string | undefined } => {
   const isDomainCookie = hostKey.startsWith(".");
   const host = isDomainCookie ? hostKey.slice(1) : hostKey;
+  const urlAuthority =
+    host.includes(":") && !(host.startsWith("[") && host.endsWith("]")) ? `[${host}]` : host;
   return {
-    url: `${secure ? "https" : "http"}://${host}${path}`,
+    url: `${secure ? "https" : "http"}://${urlAuthority}${path}`,
     ...(isDomainCookie ? { domain: hostKey } : { domain: undefined }),
   };
 };
