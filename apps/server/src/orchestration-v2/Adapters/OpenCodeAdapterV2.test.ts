@@ -1,32 +1,93 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
   NodeId,
+  OpenCodeSettings,
+  ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  RunAttemptId,
+  RunId,
+  MessageId,
   ThreadId,
   type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
+import type { OpenCodeRuntimeShape } from "../../provider/opencodeRuntime.ts";
+import type { ServerConfig } from "../../config.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
 
 import {
+  advanceOpenCodePromptAdmission,
+  cancelOpenCodePromptAdmission,
   openCodeBoundaryAfterProviderTurn,
   openCodeChildPermissionRules,
   openCodePermissionRules,
   openCodePermissionRequestKind,
   openCodeToolProjectionKind,
   makeOpenCodeProtocolLogger,
+  makeOpenCodeAdapterV2,
   OPENCODE_PROVIDER,
   OpenCodeProviderCapabilitiesV2,
+  reconcileOpenCodePromptAdmissionStatus,
 } from "./OpenCodeAdapterV2.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const OPEN_CODE_TEST_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
+  serverUrl: "http://test.invalid",
+});
+
+function promiseGate<A>() {
+  let resolve!: (value: A) => void;
+  const promise = new Promise<A>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function asyncEventStream() {
+  const values: Array<{ value: unknown; handled: ReturnType<typeof promiseGate<void>> }> = [];
+  const waiters: Array<(value: IteratorResult<unknown>) => void> = [];
+  let previousHandled: ReturnType<typeof promiseGate<void>> | undefined;
+  return {
+    close() {
+      for (const waiter of waiters.splice(0)) waiter({ done: true, value: undefined });
+    },
+    push(value: unknown) {
+      const handled = promiseGate<void>();
+      const waiter = waiters.shift();
+      if (waiter) {
+        previousHandled = handled;
+        waiter({ done: false, value });
+      } else values.push({ value, handled });
+      return handled.promise;
+    },
+    stream: {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () => {
+            previousHandled?.resolve();
+            const entry = values.shift();
+            if (entry !== undefined) {
+              previousHandled = entry.handled;
+              return Promise.resolve({ done: false as const, value: entry.value });
+            }
+            return new Promise<IteratorResult<unknown>>((resolve) => waiters.push(resolve));
+          },
+        };
+      },
+    },
+  };
+}
 
 function runtimePolicy(
   runtimeMode: ProviderAdapterV2RuntimePolicy["runtimeMode"],
@@ -67,6 +128,323 @@ function providerTurn(input: {
 }
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect("keeps a newly admitted prompt alive across stale idle and delayed busy evidence", () =>
+    Effect.gen(function* () {
+      const idAllocator = yield* IdAllocatorV2;
+      const nativeEvents = asyncEventStream();
+      const prompt = promiseGate<void>();
+      const promptStarted = promiseGate<void>();
+      const steerPrompt = promiseGate<void>();
+      const steerPromptStarted = promiseGate<void>();
+      const statusCalled = promiseGate<void>();
+      const abortCalled = promiseGate<void>();
+      let status: "idle" | "busy" = "busy";
+      let promptCalls = 0;
+      const client = {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({
+            data: { id: "native-opencode-race", time: { created: 1, updated: 1 } },
+          }),
+          promptAsync: async () => {
+            promptCalls += 1;
+            if (promptCalls === 1) {
+              promptStarted.resolve();
+              await prompt.promise;
+            } else {
+              steerPromptStarted.resolve();
+              await steerPrompt.promise;
+            }
+            return { data: true };
+          },
+          status: async () => ({
+            data: (() => {
+              statusCalled.resolve();
+              return { "native-opencode-race": { type: status } };
+            })(),
+          }),
+          messages: async () => ({ data: [] }),
+          abort: async () => {
+            abortCalled.resolve();
+            return { data: true };
+          },
+        },
+        mcp: { add: async () => ({ data: true }) },
+      };
+      const adapter = makeOpenCodeAdapterV2({
+        instanceId: ProviderInstanceId.make("opencode-test"),
+        settings: OPEN_CODE_TEST_SETTINGS,
+        environment: {},
+        runtime: {
+          connectToOpenCodeServer: () =>
+            Effect.succeed({ url: "http://test.invalid", external: true }),
+          createOpenCodeSdkClient: () => client,
+        } as unknown as OpenCodeRuntimeShape,
+        idAllocator,
+        serverConfig: {
+          cwd: "/workspace",
+          attachmentsDir: "/tmp/attachments",
+        } as ServerConfig["Service"],
+      });
+      const threadId = ThreadId.make("thread-opencode-admission-race");
+      const providerSessionId = ProviderSessionId.make("session-opencode-admission-race");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("opencode-test"),
+        model: "anthropic/claude-sonnet",
+        options: [],
+      };
+      const policy = runtimePolicy("full-access", { cwd: "/workspace" });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const now = yield* DateTime.now;
+      const attemptId = RunAttemptId.make("attempt-opencode-admission-race");
+      const runId = RunId.make("run-opencode-admission-race");
+      const start = yield* runtime
+        .startTurn({
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("project-opencode-admission-race"),
+            title: "race",
+            providerInstanceId: modelSelection.instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdBy: "user",
+            creationSource: "web",
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId,
+          rootNodeId: NodeId.make("node-opencode-admission-race"),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-opencode-admission-race"),
+            text: "hello",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy: policy,
+        })
+        .pipe(Effect.forkScoped);
+
+      yield* Effect.promise(() => promptStarted.promise);
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: "native-opencode-race", status: { type: "idle" } },
+        }),
+      );
+      prompt.resolve();
+      yield* Fiber.join(start);
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: "native-opencode-race", status: { type: "busy" } },
+        }),
+      );
+      status = "busy";
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: "native-opencode-race",
+            info: {
+              id: "user-message",
+              sessionID: "native-opencode-race",
+              role: "user",
+              time: { created: DateTime.toEpochMillis(now) },
+            },
+          },
+        }),
+      );
+
+      yield* Effect.promise(() => statusCalled.promise);
+
+      const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
+      assert.equal(snapshot.providerTurns.at(-1)?.status, "running");
+      const activeTurn = snapshot.providerTurns.at(-1)!;
+      const steer = yield* runtime
+        .steerTurn({
+          threadId,
+          runId,
+          providerThread,
+          providerTurnId: activeTurn.id,
+          message: {
+            messageId: MessageId.make("message-opencode-steer-race"),
+            text: "follow up",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => steerPromptStarted.promise);
+      const interrupt = yield* runtime
+        .interruptTurn({ providerThread, providerTurnId: activeTurn.id })
+        .pipe(Effect.forkScoped);
+      steerPrompt.resolve();
+      yield* Fiber.join(steer);
+      yield* Effect.promise(() => abortCalled.promise);
+      yield* Fiber.join(interrupt);
+      const promptWhileStopping = yield* Effect.exit(
+        runtime.steerTurn({
+          threadId,
+          runId,
+          providerThread,
+          providerTurnId: activeTurn.id,
+          message: {
+            messageId: MessageId.make("message-opencode-after-stop"),
+            text: "must not pass the pending stop",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        }),
+      );
+      assert.isTrue(Exit.isFailure(promptWhileStopping));
+      assert.equal(promptCalls, 2);
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: "native-opencode-race", status: { type: "idle" } },
+        }),
+      );
+      const interrupted = yield* runtime.readThreadSnapshot({ providerThread });
+      assert.equal(interrupted.providerTurns.at(-1)?.status, "interrupted");
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
+  it("holds stale idle through prompt admission until the new user message is observed", () => {
+    const admission = {
+      admissionPending: true,
+      admissionAccepted: false,
+      admissionMessageObserved: false,
+      idleDuringAdmission: false,
+    };
+
+    assert.equal(advanceOpenCodePromptAdmission(admission, "idle"), "hold");
+    assert.equal(advanceOpenCodePromptAdmission(admission, "accepted"), "hold");
+    assert.isTrue(admission.admissionPending);
+    assert.equal(advanceOpenCodePromptAdmission(admission, "user-message"), "reconcile-idle");
+    assert.isTrue(admission.admissionPending);
+  });
+
+  it("releases admission only after prompt acceptance and new-turn evidence", () => {
+    const admission = {
+      admissionPending: true,
+      admissionAccepted: false,
+      admissionMessageObserved: false,
+      idleDuringAdmission: false,
+    };
+
+    assert.equal(advanceOpenCodePromptAdmission(admission, "busy"), "hold");
+    assert.equal(advanceOpenCodePromptAdmission(admission, "accepted"), "release");
+    assert.isFalse(admission.admissionPending);
+  });
+
+  it("invalidates pending admission before aborting a turn", () => {
+    const admission = {
+      admissionGeneration: 4,
+      admissionPending: true,
+      admissionAccepted: false,
+      admissionMessageObserved: false,
+      idleDuringAdmission: false,
+    };
+
+    cancelOpenCodePromptAdmission(admission, 5);
+
+    assert.equal(admission.admissionGeneration, 5);
+    assert.isFalse(admission.admissionPending);
+    assert.equal(advanceOpenCodePromptAdmission(admission, "accepted"), "release");
+  });
+
+  it.effect("reconciles current idle and busy status replies after prompt admission", () =>
+    Effect.gen(function* () {
+      for (const expected of ["idle", "busy"] as const) {
+        const admission = { admissionGeneration: 4, admissionPending: true };
+        const status = yield* Deferred.make<"idle" | "busy" | "unknown">();
+        const fiber = yield* reconcileOpenCodePromptAdmissionStatus(
+          admission,
+          4,
+          Deferred.await(status),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+
+        yield* Deferred.succeed(status, expected);
+
+        assert.equal(yield* Fiber.join(fiber), expected);
+        assert.isFalse(admission.admissionPending);
+      }
+    }),
+  );
+
+  it.effect("ignores a delayed status reply after steering starts a newer admission", () =>
+    Effect.gen(function* () {
+      const admission = { admissionGeneration: 4, admissionPending: true };
+      const status = yield* Deferred.make<"idle" | "busy" | "unknown">();
+      const fiber = yield* reconcileOpenCodePromptAdmissionStatus(
+        admission,
+        4,
+        Deferred.await(status),
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+
+      admission.admissionGeneration = 5;
+      admission.admissionPending = true;
+      yield* Deferred.succeed(status, "idle");
+
+      assert.equal(yield* Fiber.join(fiber), "stale");
+      assert.equal(admission.admissionGeneration, 5);
+      assert.isTrue(admission.admissionPending);
+    }),
+  );
+
+  it.effect("does not revive admission when abort wins a pending status lookup", () =>
+    Effect.gen(function* () {
+      const admission = { admissionGeneration: 4, admissionPending: true };
+      const status = yield* Deferred.make<"idle" | "busy" | "unknown">();
+      const fiber = yield* reconcileOpenCodePromptAdmissionStatus(
+        admission,
+        4,
+        Deferred.await(status),
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+
+      cancelOpenCodePromptAdmission(admission, 5);
+      yield* Deferred.succeed(status, "idle");
+
+      assert.equal(yield* Fiber.join(fiber), "stale");
+      assert.isFalse(admission.admissionPending);
+    }),
+  );
+
   it.effect("logs bounded structural protocol diagnostics without native payload values", () =>
     Effect.gen(function* () {
       const idAllocator = yield* IdAllocatorV2;
