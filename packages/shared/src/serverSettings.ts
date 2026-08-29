@@ -132,8 +132,14 @@ export function applyServerSettingsPatch(
     providerHealthRefreshInterval,
     backgroundActivityProfile,
     backgroundActivity,
-    ...patchForMerge
+    copilotKit,
+    ...patchForMergeBase
   } = patch;
+  const { openRouterApiKey: _openRouterApiKey, ...copilotKitForMerge } = copilotKit ?? {};
+  const patchForMerge = {
+    ...patchForMergeBase,
+    ...(copilotKit === undefined ? {} : { copilotKit: copilotKitForMerge }),
+  };
   const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
   const backgroundActivityPatch =
     backgroundActivityProfile !== undefined

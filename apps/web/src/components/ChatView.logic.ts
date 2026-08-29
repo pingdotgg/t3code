@@ -32,6 +32,14 @@ export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function canOpenCopilotReview(input: {
+  isGitRepo: boolean;
+  hasProject: boolean;
+  hasWorkspaceRoot: boolean;
+}): boolean {
+  return input.isGitRepo && input.hasProject && input.hasWorkspaceRoot;
+}
+
 export function shouldDockDraftHeroForSubmission(input: {
   isDraftHeroState: boolean;
   activeThreadKey: string | null;

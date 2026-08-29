@@ -5,6 +5,7 @@ export type SettingsPath =
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
+  | "/settings/copilotkit"
   | "/settings/integrations"
   | "/settings/source-control"
   | "/settings/connections"
@@ -29,6 +30,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
+  "/settings/copilotkit": "CopilotKit",
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
@@ -207,6 +209,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "providers",
     title: "Providers",
     to: "/settings/providers",
+  },
+  {
+    id: "copilotkit-openrouter-api-key",
+    title: "OpenRouter API key",
+    to: "/settings/copilotkit",
+    targetId: "copilotkit-review",
+  },
+  {
+    id: "copilotkit-review-model",
+    title: "Review model",
+    to: "/settings/copilotkit",
+    targetId: "copilotkit-review",
   },
   {
     id: "agent-browser-access",

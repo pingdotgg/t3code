@@ -1,22 +1,13 @@
 import {
-  CopilotChat,
-  CopilotKit,
+  UseAgentUpdate,
+  useAgent,
   useAgentContext,
-  useComponent,
-  useConfigureSuggestions,
+  useCopilotKit,
   useFrontendTool,
-  useHumanInTheLoop,
-} from "@copilotkit/react-core/v2";
-import "@copilotkit/react-core/v2/styles.css";
-import {
-  type EnvironmentId,
-  type ModelSelection,
-  type ProviderInteractionMode,
-  type RuntimeMode,
-  type ThreadId,
-} from "@t3tools/contracts";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import * as Cause from "effect/Cause";
+  useRenderToolCall,
+} from "@copilotkit/react-core/v2/headless";
+import { CopilotKitContext, CopilotKitCoreReact } from "@copilotkit/react-core/v2/context";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import {
   AlertTriangleIcon,
@@ -24,65 +15,90 @@ import {
   CircleDotIcon,
   FileCode2Icon,
   GitBranchIcon,
-  LoaderCircleIcon,
-  PlayIcon,
+  RefreshCwIcon,
+  SearchCodeIcon,
   ShieldCheckIcon,
-  XCircleIcon,
+  SparklesIcon,
 } from "lucide-react";
-import { useCallback, useMemo, useRef } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
 import { newMessageId } from "~/lib/utils";
 import { reviewEnvironment } from "~/state/review";
 import { usePreparedConnection } from "~/state/session";
-import { threadEnvironment } from "~/state/threads";
-import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
-import { toastManager } from "../ui/toast";
+import { ScrollArea } from "../ui/scroll-area";
 import {
-  buildApprovedFixPrompt,
   buildReviewDiffContext,
-  reviewApprovalSignature,
+  reviewSubmissionProblem,
   safeWorkspaceRelativePath,
+  selectCompleteReviewDiffSources,
+  type ReviewDiffContext,
   type ReviewFinding,
+  type ReviewProgressItem,
+  type ReviewSubmission,
+  type ReviewVerdict,
 } from "./copilotReview.logic";
 
 const REVIEW_AGENT_ID = "review";
+const REVIEW_AGENT_UPDATES = [
+  UseAgentUpdate.OnMessagesChanged,
+  UseAgentUpdate.OnRunStatusChanged,
+] as const;
 
 const severitySchema = z.enum(["critical", "high", "medium", "low"]);
 const findingSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().min(1).max(120),
   severity: severitySchema,
-  title: z.string().min(1),
-  file: z.string().min(1),
+  title: z.string().min(1).max(160),
+  file: z.string().min(1).max(500),
   line: z.number().int().positive().optional(),
-  explanation: z.string().min(1),
-  suggestedFix: z.string().min(1),
+  explanation: z.string().min(1).max(1_200),
+  suggestedFix: z.string().min(1).max(1_200),
 });
-const reviewDashboardSchema = z.object({
+const reviewProgressSchema = z.object({
+  stage: z.enum(["mapping", "correctness", "security", "performance", "finalizing"]),
+  title: z.string().min(1).max(120),
+  detail: z.string().min(1).max(320),
+  files: z.array(z.string().min(1).max(500)).max(12).default([]),
+});
+const reviewSubmissionSchema = z.object({
   verdict: z.enum(["ready", "needs-work", "blocked"]),
-  summary: z.string().min(1),
+  summary: z.string().min(1).max(500),
   changedFiles: z.number().int().nonnegative(),
   additions: z.number().int().nonnegative(),
   deletions: z.number().int().nonnegative(),
-  checks: z.array(
+  findings: z.array(findingSchema).max(50),
+});
+const reviewInspectionResultSchema = z.object({
+  summary: z.object({
+    changedFiles: z.number().int().nonnegative(),
+    additions: z.number().int().nonnegative(),
+    deletions: z.number().int().nonnegative(),
+    sourceCount: z.number().int().nonnegative(),
+    truncated: z.boolean(),
+  }),
+  files: z.array(
     z.object({
-      label: z.string().min(1),
-      status: z.enum(["pass", "warn", "fail"]),
-      detail: z.string().min(1),
+      path: z.string(),
+      additions: z.number().int().nonnegative(),
+      deletions: z.number().int().nonnegative(),
     }),
   ),
-  findings: z.array(findingSchema),
 });
-const approvalSchema = z.object({
-  findings: z.array(findingSchema).min(1),
-  verification: z.array(z.string().min(1)).default([]),
+const reviewProgressResultSchema = z.object({
+  recorded: z.literal(true),
+  progress: reviewProgressSchema,
+});
+const reviewSubmissionResultSchema = z.object({
+  accepted: z.literal(true),
+  findings: z.number().int().nonnegative(),
 });
 
-type ReviewDashboardProps = z.infer<typeof reviewDashboardSchema>;
+type ReviewPhase = "connecting" | "inspecting" | "reviewing" | "complete" | "error";
+type ReviewInspection = Pick<ReviewDiffContext, "summary" | "files">;
 
 export interface CopilotReviewAgentProps {
   readonly environmentId: EnvironmentId;
@@ -91,37 +107,29 @@ export interface CopilotReviewAgentProps {
   readonly projectName: string;
   readonly cwd: string;
   readonly branch: string | null;
-  readonly modelSelection: ModelSelection;
-  readonly runtimeMode: RuntimeMode;
-  readonly interactionMode: ProviderInteractionMode;
-  readonly isWorking: boolean;
+  readonly reviewRequestId: number;
   readonly onOpenFile: (relativePath: string) => void;
 }
 
-function failureMessage(result: {
-  readonly _tag: "Failure";
-  readonly cause: Cause.Cause<unknown>;
-}): string {
-  const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : "The request failed.";
-}
-
-function parseJson(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
+function readableReviewError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/openrouter|api[ -]?key|unauthorized|401/i.test(message)) {
+    return "The review model is not configured. Add an OpenRouter API key in Settings → CopilotKit and try again.";
   }
+  if (/fetch|network|connect|socket/i.test(message)) {
+    return "T3 Code could not reach the review runtime. Check the server connection and try again.";
+  }
+  return message.trim() || "The review stopped before it produced a result.";
 }
 
-function verdictPresentation(verdict: ReviewDashboardProps["verdict"]) {
+function verdictPresentation(verdict: ReviewVerdict) {
   switch (verdict) {
     case "ready":
       return { label: "Ready", variant: "success" as const, icon: CheckCircle2Icon };
     case "blocked":
-      return { label: "Blocked", variant: "error" as const, icon: XCircleIcon };
+      return { label: "Blocked", variant: "error" as const, icon: AlertTriangleIcon };
     case "needs-work":
-      return { label: "Needs work", variant: "warning" as const, icon: AlertTriangleIcon };
+      return { label: "Needs work", variant: "warning" as const, icon: CircleDotIcon };
   }
 }
 
@@ -137,519 +145,833 @@ function severityVariant(severity: ReviewFinding["severity"]) {
   }
 }
 
-function ReviewDashboard({
-  verdict,
-  summary,
-  changedFiles,
-  additions,
-  deletions,
-  checks,
-  findings,
-  onOpenFile,
-}: ReviewDashboardProps & { readonly onOpenFile: (relativePath: string) => void }) {
-  const presentation = verdictPresentation(verdict);
-  const VerdictIcon = presentation.icon;
+function HeadlessCopilotProvider({
+  children,
+  runtimeUrl,
+  headers,
+  onError,
+}: {
+  readonly children: ReactNode;
+  readonly runtimeUrl: string;
+  readonly headers: Record<string, string>;
+  readonly onError: (error: Error) => void;
+}) {
+  const coreRef = useRef<CopilotKitCoreReact | null>(null);
+  const onErrorRef = useRef(onError);
+  if (coreRef.current === null) {
+    coreRef.current = new CopilotKitCoreReact({
+      runtimeUrl,
+      headers,
+      credentials: "include",
+      deferInitialConnection: true,
+    });
+    coreRef.current.setDefaultThrottleMs(75);
+  }
+  const copilotkit = coreRef.current;
+  const [executingToolCallIds, setExecutingToolCallIds] = useState(() => new Set<string>());
 
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  useEffect(() => {
+    const subscription = copilotkit.subscribe({
+      onError: ({ error }) => onErrorRef.current(error),
+    });
+    return () => subscription.unsubscribe();
+  }, [copilotkit]);
+
+  useEffect(() => {
+    const subscription = copilotkit.subscribe({
+      onToolExecutionStart: ({ toolCallId }) => {
+        setExecutingToolCallIds((current) => new Set(current).add(toolCallId));
+      },
+      onToolExecutionEnd: ({ toolCallId }) => {
+        setExecutingToolCallIds((current) => {
+          if (!current.has(toolCallId)) return current;
+          const next = new Set(current);
+          next.delete(toolCallId);
+          return next;
+        });
+      },
+    });
+    return () => subscription.unsubscribe();
+  }, [copilotkit]);
+
+  useEffect(() => {
+    copilotkit.setRuntimeUrl(runtimeUrl);
+    copilotkit.setHeaders(headers);
+    copilotkit.setCredentials("include");
+    copilotkit.connect();
+  }, [copilotkit, headers, runtimeUrl]);
+
+  const contextValue = useMemo(
+    () => ({ copilotkit, executingToolCallIds }),
+    [copilotkit, executingToolCallIds],
+  );
+
+  return <CopilotKitContext.Provider value={contextValue}>{children}</CopilotKitContext.Provider>;
+}
+
+function ReviewStatus({ phase }: { readonly phase: ReviewPhase }) {
+  if (phase === "complete") {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-success-foreground">
+        <CheckCircle2Icon className="size-3.5" />
+        Review complete
+      </span>
+    );
+  }
+  if (phase === "error") {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-destructive-foreground">
+        <AlertTriangleIcon className="size-3.5" />
+        Review stopped
+      </span>
+    );
+  }
+  const label =
+    phase === "connecting"
+      ? "Connecting"
+      : phase === "inspecting"
+        ? "Reading the diff"
+        : "Reviewing changes";
   return (
-    <Card className="my-3 overflow-hidden rounded-xl border-border/80 bg-card/80">
-      <CardHeader className="gap-3 border-b border-border/70 p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              Branch review
-            </p>
-            <CardTitle className="text-base leading-5">{summary}</CardTitle>
+    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <CircleDotIcon className="size-3.5 text-primary" />
+      {label}
+    </span>
+  );
+}
+
+function parseToolResult(result: string | undefined): unknown {
+  if (result === undefined) return null;
+  try {
+    return JSON.parse(result);
+  } catch {
+    return null;
+  }
+}
+
+function ReviewToolStep({
+  active,
+  detail,
+  tool,
+  title,
+}: {
+  readonly active: boolean;
+  readonly detail: string;
+  readonly tool: string;
+  readonly title: string;
+}) {
+  return (
+    <section className="border-b border-border/70 px-3 py-3" data-copilotkit-genui={tool}>
+      <div className="flex items-start gap-2.5">
+        <div className="pt-0.5">
+          {active ? (
+            <SearchCodeIcon className="size-3.5 text-primary" />
+          ) : (
+            <CheckCircle2Icon className="size-3.5 text-muted-foreground" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-medium">{title}</p>
+            <Badge size="sm" variant="outline">
+              {tool}
+            </Badge>
           </div>
-          <Badge variant={presentation.variant}>
+          <p className="mt-1 text-xs leading-4 text-muted-foreground">{detail}</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ReviewProgress({
+  active,
+  item,
+  onOpenFile,
+}: {
+  readonly active: boolean;
+  readonly item: ReviewProgressItem;
+  readonly onOpenFile: (relativePath: string) => void;
+}) {
+  const files = item.files.flatMap((file) => {
+    const path = safeWorkspaceRelativePath(file);
+    return path === null ? [] : [path];
+  });
+  return (
+    <section
+      className="border-b border-border/70 px-3 py-3"
+      data-copilotkit-genui="report_review_progress"
+    >
+      <div className="flex items-start gap-2.5">
+        <div className="pt-0.5">
+          {active ? (
+            <SearchCodeIcon className="size-3.5 text-primary" />
+          ) : (
+            <CheckCircle2Icon className="size-3.5 text-muted-foreground" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-medium">{item.title}</p>
+            <Badge size="sm" variant="outline">
+              {item.stage}
+            </Badge>
+          </div>
+          <p className="mt-1 text-xs leading-4 text-muted-foreground">{item.detail}</p>
+          {files.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {files.map((file) => (
+                <Button
+                  className="max-w-full justify-start px-1.5 font-mono text-[10px]"
+                  key={file}
+                  onClick={() => onOpenFile(file)}
+                  size="micro"
+                  variant="ghost"
+                >
+                  <FileCode2Icon />
+                  <span className="truncate">{file}</span>
+                </Button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ReviewFiles({
+  inspection,
+  onOpenFile,
+}: {
+  readonly inspection: ReviewInspection;
+  readonly onOpenFile: (relativePath: string) => void;
+}) {
+  const visibleFiles = inspection.files.slice(0, 16);
+  return (
+    <section className="border-b border-border/70 px-3 py-3" data-copilotkit-genui="inspect_branch">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <CheckCircle2Icon className="size-3.5 shrink-0 text-muted-foreground" />
+          <p className="truncate text-xs font-medium">Branch mapped</p>
+        </div>
+        <Badge className="shrink-0" size="sm" variant="outline">
+          inspect_branch
+        </Badge>
+      </div>
+      <p className="mb-2 text-[11px] text-muted-foreground">
+        {inspection.summary.changedFiles} files, +{inspection.summary.additions} -
+        {inspection.summary.deletions}
+      </p>
+      <div className="space-y-0.5">
+        {visibleFiles.map((file) => (
+          <button
+            className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs hover:bg-muted/60"
+            key={file.path}
+            onClick={() => onOpenFile(file.path)}
+            type="button"
+          >
+            <FileCode2Icon className="size-3.5 shrink-0 text-muted-foreground" />
+            <code className="min-w-0 flex-1 truncate">{file.path}</code>
+            <span className="shrink-0 text-[10px] text-muted-foreground">
+              +{file.additions} -{file.deletions}
+            </span>
+          </button>
+        ))}
+      </div>
+      {inspection.files.length > visibleFiles.length ? (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          {inspection.files.length - visibleFiles.length} more files are included in the review.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function ReviewResult({
+  result,
+  onOpenFile,
+}: {
+  readonly result: ReviewSubmission;
+  readonly onOpenFile: (relativePath: string) => void;
+}) {
+  const presentation = verdictPresentation(result.verdict);
+  const VerdictIcon = presentation.icon;
+  return (
+    <section data-copilotkit-genui="submit_review">
+      <div className="border-b border-border/70 px-3 py-3">
+        <div className="mb-2 flex items-center gap-2">
+          <SparklesIcon className="size-3.5 text-primary" />
+          <p className="text-xs font-medium">Generated review</p>
+          <Badge size="sm" variant="outline">
+            submit_review
+          </Badge>
+        </div>
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-sm font-medium leading-5">{result.summary}</p>
+          <Badge className="shrink-0" size="sm" variant={presentation.variant}>
             <VerdictIcon />
             {presentation.label}
           </Badge>
         </div>
-        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-          <span>{changedFiles} files</span>
-          <span className="text-success-foreground">+{additions}</span>
-          <span className="text-destructive-foreground">-{deletions}</span>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4 p-4">
-        {checks.length > 0 ? (
-          <div className="grid gap-2 sm:grid-cols-2">
-            {checks.map((check) => (
-              <div
-                className="rounded-lg border border-border/70 bg-muted/30 p-2.5"
-                key={check.label}
-              >
-                <div className="flex items-center gap-2 text-xs font-medium">
-                  {check.status === "pass" ? (
-                    <CheckCircle2Icon className="size-3.5 text-success-foreground" />
-                  ) : check.status === "fail" ? (
-                    <XCircleIcon className="size-3.5 text-destructive-foreground" />
-                  ) : (
-                    <CircleDotIcon className="size-3.5 text-warning-foreground" />
-                  )}
-                  {check.label}
-                </div>
-                <p className="mt-1 text-xs leading-4 text-muted-foreground">{check.detail}</p>
-              </div>
-            ))}
-          </div>
-        ) : null}
-
-        {findings.length === 0 ? (
-          <div className="flex items-center gap-2 rounded-lg bg-success/8 p-3 text-sm text-success-foreground">
-            <ShieldCheckIcon className="size-4" />
-            No actionable issue found in the supplied diff.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {findings.map((finding) => {
-              const path = safeWorkspaceRelativePath(finding.file);
-              return (
-                <div className="rounded-lg border border-border/70 p-3" key={finding.id}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge size="sm" variant={severityVariant(finding.severity)}>
-                          {finding.severity}
-                        </Badge>
-                        <span className="text-sm font-medium">{finding.title}</span>
-                      </div>
-                      <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                        {finding.explanation}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between gap-2">
-                    <code className="min-w-0 truncate text-[11px] text-muted-foreground">
-                      {finding.file}
-                      {finding.line ? `:${finding.line}` : ""}
-                    </code>
-                    <Button
-                      disabled={path === null}
-                      onClick={() => path && onOpenFile(path)}
-                      size="micro"
-                      variant="outline"
-                    >
-                      <FileCode2Icon />
-                      Open
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function ToolProgressCard({
-  icon: Icon,
-  title,
-  detail,
-  active,
-}: {
-  readonly icon: typeof GitBranchIcon;
-  readonly title: string;
-  readonly detail: string;
-  readonly active: boolean;
-}) {
-  return (
-    <div className="my-2 flex items-center gap-3 rounded-lg border border-border/70 bg-muted/30 p-3">
-      {active ? (
-        <LoaderCircleIcon className="size-4 animate-spin text-primary" />
-      ) : (
-        <Icon className="size-4 text-primary" />
-      )}
-      <div className="min-w-0">
-        <p className="text-sm font-medium">{title}</p>
-        <p className="truncate text-xs text-muted-foreground">{detail}</p>
+        <p className="mt-2 text-xs text-muted-foreground">
+          {result.changedFiles} files, +{result.additions} -{result.deletions}
+        </p>
       </div>
-    </div>
+
+      {result.findings.length === 0 ? (
+        <div className="flex items-start gap-2.5 px-3 py-4 text-sm text-success-foreground">
+          <ShieldCheckIcon className="mt-0.5 size-4 shrink-0" />
+          <p>No actionable problems found in the current diff.</p>
+        </div>
+      ) : (
+        <div>
+          {result.findings.map((finding) => {
+            const path = safeWorkspaceRelativePath(finding.file);
+            return (
+              <article
+                className="border-b border-border/70 px-3 py-3 last:border-b-0"
+                key={finding.id}
+              >
+                <div className="flex items-start gap-2">
+                  <Badge
+                    className="mt-0.5 shrink-0"
+                    size="sm"
+                    variant={severityVariant(finding.severity)}
+                  >
+                    {finding.severity}
+                  </Badge>
+                  <p className="text-sm font-medium leading-5">{finding.title}</p>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                  {finding.explanation}
+                </p>
+                <div className="mt-2 rounded-md bg-muted/40 px-2.5 py-2">
+                  <p className="text-[11px] font-medium text-muted-foreground">Suggested fix</p>
+                  <p className="mt-1 text-xs leading-4">{finding.suggestedFix}</p>
+                </div>
+                <Button
+                  className="mt-2 max-w-full justify-start px-1.5 font-mono text-[11px]"
+                  disabled={path === null}
+                  onClick={() => path && onOpenFile(path)}
+                  size="micro"
+                  variant="ghost"
+                >
+                  <FileCode2Icon />
+                  <span className="truncate">
+                    {finding.file}
+                    {finding.line ? `:${finding.line}` : ""}
+                  </span>
+                </Button>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
-function ReviewToolHost(props: CopilotReviewAgentProps) {
+function ReviewPane(
+  props: CopilotReviewAgentProps & {
+    readonly runtimeError: Error | null;
+    readonly clearRuntimeError: () => void;
+    readonly getRuntimeError: () => Error | null;
+  },
+) {
+  const { clearRuntimeError, getRuntimeError } = props;
   const runDiffPreview = useAtomQueryRunner(reviewEnvironment.diffPreview, {
     reportFailure: false,
   });
-  const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
-  const approvedSignatures = useRef(new Set<string>());
-  const openFile = useCallback(
-    (relativePath: string) => {
-      props.onOpenFile(relativePath);
-    },
-    [props.onOpenFile],
-  );
+  const localAgentId = useMemo(() => `t3-review:${props.threadId}`, [props.threadId]);
+  const reviewThreadId = useMemo(() => `review:${props.threadId}`, [props.threadId]);
+  const { agent, isReady } = useAgent({
+    agentId: localAgentId,
+    runtimeAgentId: REVIEW_AGENT_ID,
+    threadId: reviewThreadId,
+    updates: [...REVIEW_AGENT_UPDATES],
+    throttleMs: 75,
+  });
+  const { copilotkit } = useCopilotKit();
+  const renderToolCall = useRenderToolCall();
+  const [phase, setPhase] = useState<ReviewPhase>("connecting");
+  const [runError, setRunError] = useState<string | null>(null);
+  const [scopeNotice, setScopeNotice] = useState<string | null>(null);
+  const diffContextRef = useRef<ReviewDiffContext | null>(null);
+  const readDiffChunkIndicesRef = useRef(new Set<number>());
+  const resultSubmittedRef = useRef(false);
+  const automaticRunKeyRef = useRef<string | null>(null);
+  const runInFlightRef = useRef(false);
+
   const agentContext = useMemo(
     () => ({
       project: props.projectName,
       thread: props.threadTitle,
       branch: props.branch,
-      codingAgentBusy: props.isWorking,
     }),
-    [props.branch, props.isWorking, props.projectName, props.threadTitle],
+    [props.branch, props.projectName, props.threadTitle],
   );
-
   useAgentContext({
-    description:
-      "The active T3 Code workspace and thread. Use tools to inspect code; do not guess.",
+    description: "The active T3 Code project and branch. Inspect the diff before reviewing it.",
     value: agentContext,
-  });
-
-  useConfigureSuggestions({
-    suggestions: [
-      {
-        title: "Review this branch",
-        message: "Review the current branch and show me the review dashboard.",
-      },
-      {
-        title: "Find risky changes",
-        message: "Inspect this branch and focus the review on correctness and security risks.",
-      },
-    ],
-    available: "before-first-message",
-    consumerAgentId: REVIEW_AGENT_ID,
   });
 
   useFrontendTool(
     {
       name: "inspect_branch",
-      agentId: REVIEW_AGENT_ID,
+      agentId: localAgentId,
       description:
-        "Read the real current branch and working-tree diff from T3 Code. Call this before reviewing or re-reviewing.",
+        "Load the real current branch and working-tree diff from T3 Code. T3 Code invokes this before the review model starts.",
       parameters: z.object({
-        reason: z.string().describe("Why the branch needs inspection"),
+        reason: z.string().min(1).max(240).describe("Why the branch is being inspected"),
       }),
       handler: async () => {
-        const result = await runDiffPreview({
+        setPhase("inspecting");
+        const response = await runDiffPreview({
           environmentId: props.environmentId,
           input: { cwd: props.cwd },
         });
-        if (result._tag === "Failure") throw new Error(failureMessage(result));
-        return buildReviewDiffContext(result.value.sources);
-      },
-      render: ({ status, result }) => {
-        if (status !== "complete") {
-          return (
-            <ToolProgressCard
-              active
-              detail="Reading the branch range and working tree"
-              icon={GitBranchIcon}
-              title="Inspecting the current diff"
-            />
+        if (response._tag === "Failure") throw new Error("T3 Code could not read the branch diff.");
+        const selection = selectCompleteReviewDiffSources(response.value.sources);
+        const context = buildReviewDiffContext(selection.sources);
+        if (context.summary.truncated) {
+          throw new Error(
+            "T3 Code could not load the complete diff. The review was stopped instead of reviewing partial changes.",
           );
         }
-        const parsed = z
-          .object({
-            summary: z.object({
-              changedFiles: z.number(),
-              additions: z.number(),
-              deletions: z.number(),
-              truncated: z.boolean(),
-            }),
-          })
-          .safeParse(parseJson(result));
-        const summary = parsed.success ? parsed.data.summary : null;
+        diffContextRef.current = context;
+        readDiffChunkIndicesRef.current = new Set<number>();
+        setScopeNotice(
+          selection.workingTreeFallback
+            ? "The branch range is too large to load, so this run covers the complete working-tree changes."
+            : null,
+        );
+        setPhase("reviewing");
+        return {
+          summary: context.summary,
+          files: context.files,
+          scope: selection.workingTreeFallback ? "working-tree" : "branch-and-working-tree",
+          chunks: context.chunks.map(({ diff: _diff, ...chunk }) => chunk),
+        };
+      },
+      render: ({ result, status }) => {
+        if (status === "complete") {
+          const inspection = reviewInspectionResultSchema.safeParse(parseToolResult(result));
+          if (inspection.success) {
+            return <ReviewFiles inspection={inspection.data} onOpenFile={props.onOpenFile} />;
+          }
+        }
         return (
-          <ToolProgressCard
-            active={false}
+          <ReviewToolStep
+            active={status !== "complete"}
             detail={
-              summary
-                ? `${summary.changedFiles} files, +${summary.additions} -${summary.deletions}${summary.truncated ? ", context clipped" : ""}`
-                : "Diff loaded"
+              status === "complete"
+                ? "The changed-file manifest is ready."
+                : "Loading the branch range and working-tree changes."
             }
-            icon={GitBranchIcon}
-            title="Current diff loaded"
+            title={status === "complete" ? "Branch mapped" : "Mapping the branch"}
+            tool="inspect_branch"
           />
         );
       },
     },
-    [props.cwd, props.environmentId, runDiffPreview],
-  );
-
-  useComponent(
-    {
-      name: "present_review_dashboard",
-      agentId: REVIEW_AGENT_ID,
-      description:
-        "Render the branch review as an interactive dashboard after inspect_branch returns. Do not invent CI results.",
-      parameters: reviewDashboardSchema,
-      render: (dashboardProps) => {
-        const parsed = reviewDashboardSchema.safeParse(dashboardProps);
-        return parsed.success ? (
-          <ReviewDashboard {...parsed.data} onOpenFile={openFile} />
-        ) : (
-          <ToolProgressCard
-            active
-            detail="Building the findings and checks"
-            icon={GitBranchIcon}
-            title="Preparing the review dashboard"
-          />
-        );
-      },
-    },
-    [openFile],
+    [localAgentId, props.cwd, props.environmentId, props.onOpenFile, runDiffPreview],
   );
 
   useFrontendTool(
     {
-      name: "open_file",
-      agentId: REVIEW_AGENT_ID,
-      description: "Open a repository-relative file in T3 Code's real file viewer.",
+      name: "read_review_chunk",
+      agentId: localAgentId,
+      description:
+        "Read one complete chunk from the inspected diff. Read every chunk exactly once, in index order, before submitting the review.",
       parameters: z.object({
-        path: z.string().describe("Repository-relative file path from the inspected diff"),
+        index: z.number().int().positive().describe("The 1-based chunk index from inspect_branch"),
       }),
-      handler: async ({ path }) => {
-        const safePath = safeWorkspaceRelativePath(path);
-        if (safePath === null)
-          throw new Error("Only safe repository-relative paths can be opened.");
-        openFile(safePath);
-        return { opened: true, path: safePath };
+      handler: async ({ index }) => {
+        const context = diffContextRef.current;
+        if (context === null) throw new Error("Inspect the branch before reading its diff.");
+        const chunk = context.chunks[index - 1];
+        if (chunk === undefined || chunk.index !== index) {
+          throw new Error(`Review diff chunk ${index} does not exist.`);
+        }
+
+        readDiffChunkIndicesRef.current.add(index);
+        setPhase("reviewing");
+        return {
+          ...chunk,
+          totalChunks: context.chunks.length,
+          remainingChunks: context.chunks
+            .filter((candidate) => !readDiffChunkIndicesRef.current.has(candidate.index))
+            .map((candidate) => candidate.index),
+        };
       },
-      render: ({ status, args }) => (
-        <ToolProgressCard
-          active={status !== "complete"}
-          detail={args.path ?? "Resolving path"}
-          icon={FileCode2Icon}
-          title={status === "complete" ? "Opened in T3 Code" : "Opening file"}
-        />
-      ),
+      render: ({ args, status }) => {
+        const index = typeof args.index === "number" ? args.index : null;
+        return (
+          <ReviewToolStep
+            active={status !== "complete"}
+            detail={
+              index === null
+                ? "Preparing the next complete diff chunk."
+                : status === "complete"
+                  ? `Diff chunk ${index} is now part of the review context.`
+                  : `Reading diff chunk ${index}.`
+            }
+            title={status === "complete" ? "Diff chunk read" : "Reading code changes"}
+            tool="read_review_chunk"
+          />
+        );
+      },
     },
-    [openFile],
+    [localAgentId],
   );
 
-  useHumanInTheLoop(
+  useFrontendTool(
     {
-      name: "approve_fixes",
-      agentId: REVIEW_AGENT_ID,
+      name: "report_review_progress",
+      agentId: localAgentId,
       description:
-        "Ask the user to approve the exact review findings before any coding work begins.",
-      parameters: approvalSchema,
-      render: ({ status, args, result, respond }) => {
-        const findings = args.findings ?? [];
-        const verification = args.verification ?? [];
-        const signature = reviewApprovalSignature(findings, verification);
-        const completedResult =
+        "Update T3 Code's native review activity UI before starting a meaningful review pass.",
+      parameters: reviewProgressSchema,
+      handler: async (next) => {
+        const inspectedPaths = new Set(
+          diffContextRef.current?.files.map((file) => file.path) ?? [],
+        );
+        const files = next.files.flatMap((file) => {
+          const path = safeWorkspaceRelativePath(file);
+          return path !== null && inspectedPaths.has(path) ? [path] : [];
+        });
+        setPhase("reviewing");
+        return { recorded: true, progress: { ...next, files } };
+      },
+      render: ({ args, result, status }) => {
+        const completedProgress =
           status === "complete"
-            ? z
-                .object({ approved: z.boolean(), count: z.number().optional() })
-                .safeParse(parseJson(result))
+            ? reviewProgressResultSchema.safeParse(parseToolResult(result))
             : null;
-
-        if (completedResult?.success) {
+        const streamedProgress = reviewProgressSchema.safeParse(args);
+        const item = completedProgress?.success
+          ? completedProgress.data.progress
+          : streamedProgress.success
+            ? streamedProgress.data
+            : null;
+        if (item === null) {
           return (
-            <ToolProgressCard
-              active={false}
-              detail={
-                completedResult.data.approved
-                  ? `${completedResult.data.count ?? findings.length} findings approved`
-                  : "No code changes were started"
-              }
-              icon={completedResult.data.approved ? ShieldCheckIcon : XCircleIcon}
-              title={completedResult.data.approved ? "Fixes approved" : "Fixes declined"}
+            <ReviewToolStep
+              active={status !== "complete"}
+              detail="The agent is preparing its next review pass."
+              title="Review pass"
+              tool="report_review_progress"
             />
           );
         }
-
         return (
-          <Card className="my-3 mb-36 rounded-xl border-primary/30 bg-primary/4 md:mb-3">
-            <CardHeader className="p-4 pb-2">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <ShieldCheckIcon className="size-4 text-primary" />
-                Apply {findings.length} review {findings.length === 1 ? "fix" : "fixes"}?
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 p-4 pt-2">
-              <div className="space-y-1.5">
-                {findings.map((finding) => (
-                  <div className="flex items-start gap-2 text-xs" key={finding.id}>
-                    <Badge size="sm" variant={severityVariant(finding.severity)}>
-                      {finding.severity}
-                    </Badge>
-                    <span className="leading-4">{finding.title}</span>
-                  </div>
-                ))}
-              </div>
-              <p className="text-xs leading-4 text-muted-foreground">
-                Approval sends these exact findings to the coding agent in this T3 thread. You can
-                still review every edit before committing.
-              </p>
-              {verification.length > 0 ? (
-                <div className="rounded-lg border border-border/70 bg-muted/30 p-2.5">
-                  <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    Verification
-                  </p>
-                  {verification.map((command) => (
-                    <code className="block break-all text-[11px]" key={command}>
-                      {command}
-                    </code>
-                  ))}
-                </div>
-              ) : null}
-              <div className="flex gap-2">
+          <ReviewProgress
+            active={status !== "complete"}
+            item={item}
+            onOpenFile={props.onOpenFile}
+          />
+        );
+      },
+    },
+    [localAgentId, props.onOpenFile],
+  );
+
+  useFrontendTool(
+    {
+      name: "submit_review",
+      agentId: localAgentId,
+      description:
+        "Finish the review and send the validated findings to T3 Code's native review pane. Call exactly once.",
+      parameters: reviewSubmissionSchema,
+      handler: async (submission) => {
+        const context = diffContextRef.current;
+        if (context === null) throw new Error("Inspect the branch before submitting a review.");
+        const missingChunks = context.chunks.filter(
+          (chunk) => !readDiffChunkIndicesRef.current.has(chunk.index),
+        );
+        if (missingChunks.length > 0) {
+          throw new Error(
+            `Read every diff chunk before submitting. Missing: ${missingChunks.map((chunk) => chunk.index).join(", ")}.`,
+          );
+        }
+        const problem = reviewSubmissionProblem(context, submission);
+        if (problem !== null) throw new Error(problem);
+        const normalizedSubmission: ReviewSubmission = {
+          ...submission,
+          findings: submission.findings.map((finding) => ({
+            ...finding,
+            file: safeWorkspaceRelativePath(finding.file)!,
+          })),
+        };
+        resultSubmittedRef.current = true;
+        setPhase("complete");
+        return { accepted: true, findings: normalizedSubmission.findings.length };
+      },
+      render: ({ args, result, status }) => {
+        const accepted =
+          status === "complete"
+            ? reviewSubmissionResultSchema.safeParse(parseToolResult(result))
+            : null;
+        const submission = reviewSubmissionSchema.safeParse(args);
+        if (accepted?.success && submission.success) {
+          return <ReviewResult onOpenFile={props.onOpenFile} result={submission.data} />;
+        }
+        return (
+          <ReviewToolStep
+            active={status !== "complete"}
+            detail={
+              status === "complete"
+                ? "The final review response could not be rendered."
+                : "Validating findings and preparing the review result."
+            }
+            title={status === "complete" ? "Review response received" : "Finalizing review"}
+            tool="submit_review"
+          />
+        );
+      },
+    },
+    [localAgentId, props.onOpenFile],
+  );
+
+  const runReview = useCallback(async () => {
+    if (!isReady) {
+      clearRuntimeError();
+      setPhase("connecting");
+      copilotkit.connect();
+      return;
+    }
+    if (agent.isRunning || runInFlightRef.current) return;
+
+    runInFlightRef.current = true;
+    clearRuntimeError();
+    diffContextRef.current = null;
+    readDiffChunkIndicesRef.current = new Set<number>();
+    resultSubmittedRef.current = false;
+    setRunError(null);
+    setScopeNotice(null);
+    setPhase("inspecting");
+    agent.setMessages([]);
+    agent.addMessage({
+      id: newMessageId(),
+      role: "user",
+      content:
+        "Review the current branch now. T3 Code will attach the diff manifest next. Read every listed chunk, report progress while you work, then submit the final review to the pane.",
+    });
+
+    try {
+      const inspectionResult = await copilotkit.runTool({
+        name: "inspect_branch",
+        agentId: localAgentId,
+        parameters: { reason: "Start the requested branch review" },
+        followUp: false,
+      });
+      if (inspectionResult.error) throw new Error(inspectionResult.error);
+      await copilotkit.runAgent({ agent });
+      if (getRuntimeError() !== null) {
+        setPhase("error");
+        return;
+      }
+      if (!resultSubmittedRef.current) {
+        setRunError("The review stopped before it submitted findings.");
+        setPhase("error");
+      }
+    } catch (error) {
+      setRunError(readableReviewError(getRuntimeError() ?? error));
+      setPhase("error");
+    } finally {
+      runInFlightRef.current = false;
+    }
+  }, [agent, clearRuntimeError, copilotkit, getRuntimeError, isReady, localAgentId]);
+
+  useEffect(() => {
+    const automaticRunKey = `${props.threadId}:${props.cwd}:${props.branch ?? "detached"}:${props.reviewRequestId}`;
+    if (!isReady || agent.isRunning || automaticRunKeyRef.current === automaticRunKey) return;
+    automaticRunKeyRef.current = automaticRunKey;
+    void runReview();
+  }, [
+    agent.isRunning,
+    isReady,
+    props.branch,
+    props.cwd,
+    props.reviewRequestId,
+    props.threadId,
+    runReview,
+  ]);
+
+  const toolMessagesByCallId = new Map(
+    agent.messages
+      .filter((message) => message.role === "tool")
+      .map((message) => [message.toolCallId, message] as const),
+  );
+  const reviewToolCalls = agent.messages.flatMap((message) =>
+    message.role === "assistant" ? (message.toolCalls ?? []) : [],
+  );
+  const visibleError = props.runtimeError ? readableReviewError(props.runtimeError) : runError;
+  const visiblePhase: ReviewPhase = visibleError === null ? phase : "error";
+  const reviewBusy =
+    agent.isRunning ||
+    visiblePhase === "connecting" ||
+    visiblePhase === "inspecting" ||
+    visiblePhase === "reviewing";
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      <header className="flex items-start justify-between gap-3 border-b border-border/70 px-3 py-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <GitBranchIcon className="size-4 shrink-0 text-muted-foreground" />
+            <p className="truncate text-sm font-medium">Branch review</p>
+          </div>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {props.branch ?? "Detached HEAD"}
+          </p>
+        </div>
+        <Button
+          aria-label="Review the latest diff"
+          className="shrink-0"
+          disabled={reviewBusy}
+          onClick={() => void runReview()}
+          size={visiblePhase === "complete" ? "sm" : "micro"}
+          title={visiblePhase === "complete" ? undefined : "Review again"}
+          variant="outline"
+        >
+          <RefreshCwIcon />
+          {visiblePhase === "complete" ? "Redo review" : null}
+        </Button>
+      </header>
+
+      <ScrollArea className="min-h-0 flex-1">
+        <div aria-live="polite" className="border-b border-border/70 px-3 py-2.5">
+          <ReviewStatus phase={visiblePhase} />
+          {scopeNotice ? (
+            <p className="mt-1.5 text-[11px] leading-4 text-muted-foreground">{scopeNotice}</p>
+          ) : null}
+        </div>
+
+        <section className="border-b border-border/70 bg-muted/20 px-3 py-3">
+          <div className="flex items-center gap-2">
+            <SparklesIcon className="size-3.5 text-primary" />
+            <p className="text-xs font-medium">CopilotKit GenUI</p>
+            <Badge size="sm" variant="info">
+              Live tool UI
+            </Badge>
+          </div>
+          <p className="mt-1.5 text-[11px] leading-4 text-muted-foreground">
+            CopilotKit turns the review agent&apos;s tool calls into the interactive cards below.
+          </p>
+        </section>
+
+        {visibleError ? (
+          <section className="border-b border-border/70 px-3 py-4">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-destructive-foreground" />
+              <div>
+                <p className="text-sm font-medium">Review could not finish</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{visibleError}</p>
                 <Button
-                  disabled={status !== "executing" || !respond || findings.length === 0}
-                  onClick={() => {
-                    if (!respond) return;
-                    approvedSignatures.current.add(signature);
-                    void respond({ approved: true, count: findings.length });
-                  }}
-                  size="sm"
-                >
-                  <PlayIcon />
-                  Approve fixes
-                </Button>
-                <Button
-                  disabled={status !== "executing" || !respond}
-                  onClick={() => {
-                    if (!respond) return;
-                    approvedSignatures.current.delete(signature);
-                    void respond({ approved: false });
-                  }}
+                  className="mt-3"
+                  onClick={() => void runReview()}
                   size="sm"
                   variant="outline"
                 >
-                  Not now
+                  <RefreshCwIcon />
+                  Try again
                 </Button>
               </div>
-            </CardContent>
-          </Card>
-        );
-      },
-    },
-    [],
+            </div>
+          </section>
+        ) : null}
+
+        <div aria-label="CopilotKit generated review UI">
+          {reviewToolCalls.map((toolCall) => {
+            const toolMessage = toolMessagesByCallId.get(toolCall.id);
+            return (
+              <div key={toolCall.id}>
+                {renderToolCall(
+                  toolMessage === undefined ? { toolCall } : { toolCall, toolMessage },
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </ScrollArea>
+    </div>
   );
+}
 
-  useFrontendTool(
-    {
-      name: "apply_review_fixes",
-      agentId: REVIEW_AGENT_ID,
-      description:
-        "Start the normal T3 Code coding agent with findings that the user just approved. Never call before approve_fixes succeeds.",
-      parameters: approvalSchema,
-      handler: async ({ findings, verification }) => {
-        const signature = reviewApprovalSignature(findings, verification);
-        if (!approvedSignatures.current.delete(signature)) {
-          throw new Error("These exact findings have not been approved by the user.");
-        }
-        if (props.isWorking) {
-          approvedSignatures.current.add(signature);
-          return {
-            started: false,
-            detail: "The T3 coding agent is already working. Wait for the current turn to finish.",
-          };
-        }
-
-        const startResult = await startThreadTurn({
-          environmentId: props.environmentId,
-          input: {
-            threadId: props.threadId,
-            message: {
-              messageId: newMessageId(),
-              role: "user",
-              text: buildApprovedFixPrompt(findings, verification),
-              attachments: [],
-            },
-            modelSelection: props.modelSelection,
-            titleSeed: props.threadTitle || "Copilot review fixes",
-            runtimeMode: props.runtimeMode,
-            interactionMode: props.interactionMode,
-            createdAt: new Date().toISOString(),
-          },
-        });
-        if (startResult._tag === "Failure") {
-          approvedSignatures.current.add(signature);
-          throw new Error(failureMessage(startResult));
-        }
-
-        toastManager.add({
-          type: "success",
-          title: "Approved fixes sent to T3 Code",
-          description: `${findings.length} ${findings.length === 1 ? "finding" : "findings"} handed to the coding agent.`,
-        });
-        return {
-          started: true,
-          count: findings.length,
-          detail: "The coding agent is now implementing the approved fixes in this thread.",
-        };
-      },
-      render: ({ status, result }) => {
-        const parsed =
-          status === "complete"
-            ? z
-                .object({ started: z.boolean(), count: z.number().optional(), detail: z.string() })
-                .safeParse(parseJson(result))
-            : null;
-        return (
-          <ToolProgressCard
-            active={status !== "complete"}
-            detail={parsed?.success ? parsed.data.detail : "Preparing the approved handoff"}
-            icon={PlayIcon}
-            title={
-              parsed?.success && !parsed.data.started
-                ? "Coding agent is busy"
-                : status === "complete"
-                  ? "T3 Code is implementing the fixes"
-                  : "Starting the coding agent"
-            }
-          />
-        );
-      },
-    },
-    [
-      props.environmentId,
-      props.interactionMode,
-      props.isWorking,
-      props.modelSelection,
-      props.runtimeMode,
-      props.threadId,
-      props.threadTitle,
-      startThreadTurn,
-    ],
-  );
-
+function ReviewUnavailable({ title, detail }: { readonly title: string; readonly detail: string }) {
   return (
-    <CopilotChat
-      agentId={REVIEW_AGENT_ID}
-      className="min-h-0 bg-background"
-      labels={{
-        chatInputPlaceholder: "Review this branch or ask about a finding…",
-        welcomeMessageText:
-          "I can inspect the current diff, render a review, open files, and hand approved fixes to T3 Code.",
-      }}
-      threadId={`review:${props.threadId}`}
-    />
+    <div className="flex h-full items-start gap-2.5 bg-background px-3 py-4">
+      <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-warning-foreground" />
+      <div>
+        <p className="text-sm font-medium">{title}</p>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">{detail}</p>
+      </div>
+    </div>
   );
 }
 
 export default function CopilotReviewAgent(props: CopilotReviewAgentProps) {
   const preparedConnection = usePreparedConnection(props.environmentId);
+  const [runtimeError, setRuntimeError] = useState<Error | null>(null);
+  const runtimeErrorRef = useRef<Error | null>(null);
   const runtimeConfig = useMemo(() => {
     if (Option.isNone(preparedConnection)) return null;
     const prepared = preparedConnection.value;
-    if (prepared.httpAuthorization?._tag === "Dpop") return null;
+    if (prepared.httpAuthorization?._tag === "Dpop") return "dpop" as const;
     return {
       runtimeUrl: new URL("/api/copilotkit", prepared.httpBaseUrl).toString(),
       headers:
         prepared.httpAuthorization?._tag === "Bearer"
           ? { authorization: `Bearer ${prepared.httpAuthorization.token}` }
-          : null,
+          : {},
     };
   }, [preparedConnection]);
+  const clearRuntimeError = useCallback(() => {
+    runtimeErrorRef.current = null;
+    setRuntimeError(null);
+  }, []);
+  const getRuntimeError = useCallback(() => runtimeErrorRef.current, []);
+  const handleRuntimeError = useCallback((error: Error) => {
+    runtimeErrorRef.current = error;
+    setRuntimeError(error);
+  }, []);
 
-  if (runtimeConfig === null) return null;
+  if (runtimeConfig === null) {
+    return (
+      <ReviewUnavailable
+        detail="The review will start when T3 Code reconnects to this environment."
+        title="Connecting to the environment"
+      />
+    );
+  }
+  if (runtimeConfig === "dpop") {
+    return (
+      <ReviewUnavailable
+        detail="The CopilotKit runtime does not support managed relay authentication yet. Use a local or bearer-authenticated environment."
+        title="Review is unavailable for this connection"
+      />
+    );
+  }
 
   return (
-    <CopilotKit
-      credentials="include"
-      defaultThrottleMs={75}
-      {...(runtimeConfig.headers ? { headers: runtimeConfig.headers } : {})}
+    <HeadlessCopilotProvider
+      headers={runtimeConfig.headers}
+      key={runtimeConfig.runtimeUrl}
+      onError={handleRuntimeError}
       runtimeUrl={runtimeConfig.runtimeUrl}
-      showDevConsole={false}
     >
-      <ReviewToolHost {...props} />
-    </CopilotKit>
+      <ReviewPane
+        {...props}
+        clearRuntimeError={clearRuntimeError}
+        getRuntimeError={getRuntimeError}
+        runtimeError={runtimeError}
+      />
+    </HeadlessCopilotProvider>
   );
 }

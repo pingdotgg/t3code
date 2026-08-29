@@ -248,6 +248,37 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings CopilotKit review", () => {
+  it("defaults legacy settings to a supported review model without a saved key", () => {
+    expect(decodeServerSettings({}).copilotKit).toEqual({
+      openRouterApiKeyConfigured: false,
+      reviewModel: "openai/gpt-5-mini",
+    });
+  });
+
+  it("accepts a saved key update and one of the selectable models", () => {
+    expect(
+      decodeServerSettingsPatch({
+        copilotKit: {
+          openRouterApiKey: "  sk-or-test  ",
+          reviewModel: "anthropic/claude-sonnet-4.6",
+        },
+      }).copilotKit,
+    ).toEqual({
+      openRouterApiKey: "sk-or-test",
+      reviewModel: "anthropic/claude-sonnet-4.6",
+    });
+  });
+
+  it("rejects review model slugs that are not offered by settings", () => {
+    expect(() =>
+      decodeServerSettingsPatch({
+        copilotKit: { reviewModel: "type-a-model-yourself" },
+      }),
+    ).toThrow();
+  });
+});
+
 describe("ServerSettings.sourceControlWritingStyle", () => {
   it("defaults all style settings for legacy configs", () => {
     const settings = decodeServerSettings({});

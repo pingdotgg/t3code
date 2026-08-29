@@ -597,6 +597,25 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+export const COPILOTKIT_REVIEW_MODEL_IDS = [
+  "openai/gpt-5-mini",
+  "anthropic/claude-sonnet-4.6",
+  "google/gemini-3-flash-preview",
+] as const;
+export const CopilotKitReviewModel = Schema.Literals(COPILOTKIT_REVIEW_MODEL_IDS);
+export type CopilotKitReviewModel = typeof CopilotKitReviewModel.Type;
+export const DEFAULT_COPILOTKIT_REVIEW_MODEL: CopilotKitReviewModel = "openai/gpt-5-mini";
+
+export const CopilotKitSettings = Schema.Struct({
+  openRouterApiKeyConfigured: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  reviewModel: CopilotKitReviewModel.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_COPILOTKIT_REVIEW_MODEL)),
+  ),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type CopilotKitSettings = typeof CopilotKitSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   // Legacy token-by-token assistant output. Deliberately a fresh key (was
   // `enableAssistantStreaming`): decoding drops the old key, so everyone,
@@ -682,6 +701,7 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  copilotKit: CopilotKitSettings,
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
@@ -839,6 +859,13 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
+  copilotKit: Schema.optionalKey(
+    Schema.Struct({
+      /** Written to the server secret store and omitted from persisted settings and responses. */
+      openRouterApiKey: Schema.optionalKey(TrimmedString),
+      reviewModel: Schema.optionalKey(CopilotKitReviewModel),
+    }),
+  ),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({

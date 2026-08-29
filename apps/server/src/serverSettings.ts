@@ -11,6 +11,7 @@
  * @module ServerSettings
  */
 import {
+  type CopilotKitReviewModel,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -60,6 +61,12 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+export const COPILOTKIT_OPENROUTER_API_KEY_SECRET = "copilotkit-openrouter-api-key";
+
+export interface CopilotKitReviewRuntimeSettings {
+  readonly openRouterApiKey: string;
+  readonly reviewModel: CopilotKitReviewModel;
+}
 
 /**
  * Fold the legacy in-config `enabled` flag into the envelope-level
@@ -362,6 +369,40 @@ const make = Effect.gen(function* () {
 
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey);
 
+  const readCopilotKitOpenRouterApiKey = secretStore.get(COPILOTKIT_OPENROUTER_API_KEY_SECRET).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ServerSettingsError({
+          settingsPath,
+          operation: "read-secret",
+          environmentVariable: "OPENROUTER_API_KEY",
+          cause,
+        }),
+    ),
+  );
+
+  const resolveCopilotKitOpenRouterApiKey = readCopilotKitOpenRouterApiKey.pipe(
+    Effect.map((secret) =>
+      Option.match(secret, {
+        onNone: () => globalThis.process.env.OPENROUTER_API_KEY?.trim() ?? "",
+        onSome: (value) => textDecoder.decode(value),
+      }),
+    ),
+  );
+
+  const materializeCopilotKitApiKeyStatus = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    resolveCopilotKitOpenRouterApiKey.pipe(
+      Effect.map((openRouterApiKey) => ({
+        ...settings,
+        copilotKit: {
+          ...settings.copilotKit,
+          openRouterApiKeyConfigured: openRouterApiKey.length > 0,
+        },
+      })),
+    );
+
   const materializeProviderEnvironmentSecrets = (
     settings: ServerSettings,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
@@ -407,12 +448,17 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const materializeServerSecrets = (settings: ServerSettings) =>
+    materializeProviderEnvironmentSecrets(settings).pipe(
+      Effect.flatMap(materializeCopilotKitApiKeyStatus),
+    );
+
   const materializeChanges = (changes: Stream.Stream<ServerSettings>) =>
     changes.pipe(
       Stream.mapEffect((settings) =>
-        materializeProviderEnvironmentSecrets(settings).pipe(
+        materializeServerSecrets(settings).pipe(
           Effect.catch((error: ServerSettingsError) =>
-            Effect.logWarning("failed to materialize provider environment secrets", {
+            Effect.logWarning("failed to materialize server settings secrets", {
               operation: error.operation,
               providerInstanceId: error.providerInstanceId,
               environmentVariable: error.environmentVariable,
@@ -423,6 +469,33 @@ const make = Effect.gen(function* () {
       ),
       Stream.map(resolveTextGenerationProvider),
     );
+
+  const persistCopilotKitOpenRouterApiKey = (
+    patch: ServerSettingsPatch,
+  ): Effect.Effect<void, ServerSettingsError> => {
+    const openRouterApiKey = patch.copilotKit?.openRouterApiKey;
+    if (openRouterApiKey === undefined) return Effect.void;
+
+    const operation = openRouterApiKey.length > 0 ? "write-secret" : "remove-secret";
+    const persistence =
+      openRouterApiKey.length > 0
+        ? secretStore.set(
+            COPILOTKIT_OPENROUTER_API_KEY_SECRET,
+            textEncoder.encode(openRouterApiKey),
+          )
+        : secretStore.remove(COPILOTKIT_OPENROUTER_API_KEY_SECRET);
+    return persistence.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerSettingsError({
+            settingsPath,
+            operation,
+            environmentVariable: "OPENROUTER_API_KEY",
+            cause,
+          }),
+      ),
+    );
+  };
 
   const persistProviderEnvironmentSecrets = (
     current: ServerSettings,
@@ -621,13 +694,14 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
-      Effect.flatMap(materializeProviderEnvironmentSecrets),
+      Effect.flatMap(materializeServerSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
+          yield* persistCopilotKitOpenRouterApiKey(patch);
           const nextPersisted = yield* persistProviderEnvironmentSecrets(
             current,
             applyServerSettingsPatch(current, patch),
@@ -636,7 +710,7 @@ const make = Effect.gen(function* () {
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
+          const materialized = yield* materializeServerSecrets(next);
           return resolveTextGenerationProvider(materialized);
         }),
       ),
@@ -652,3 +726,33 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ServerSettingsService, make);
+
+export const getCopilotKitReviewRuntimeSettings: Effect.Effect<
+  CopilotKitReviewRuntimeSettings,
+  ServerSettingsError,
+  ServerSettingsService | ServerSecretStore.ServerSecretStore | ServerConfig.ServerConfig
+> = Effect.gen(function* () {
+  const serverSettings = yield* ServerSettingsService;
+  const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const { settingsPath } = yield* ServerConfig.ServerConfig;
+  const settings = yield* serverSettings.getSettings;
+  const secret = yield* secretStore.get(COPILOTKIT_OPENROUTER_API_KEY_SECRET).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ServerSettingsError({
+          settingsPath,
+          operation: "read-secret",
+          environmentVariable: "OPENROUTER_API_KEY",
+          cause,
+        }),
+    ),
+  );
+
+  return {
+    openRouterApiKey: Option.match(secret, {
+      onNone: () => globalThis.process.env.OPENROUTER_API_KEY?.trim() ?? "",
+      onSome: (value) => textDecoder.decode(value),
+    }),
+    reviewModel: settings.copilotKit.reviewModel,
+  };
+});

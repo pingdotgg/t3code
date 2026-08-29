@@ -319,6 +319,7 @@ import {
   buildLocalDraftThread,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  canOpenCopilotReview,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -1446,6 +1447,7 @@ function ChatViewContent(props: ChatViewProps) {
     useState<Record<string, number>>({});
   const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
+  const [copilotReviewRequestId, setCopilotReviewRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
@@ -2792,8 +2794,11 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
-  const copilotReviewAvailable =
-    isServerThread && isGitRepo && activeProject !== null && activeWorkspaceRoot !== undefined;
+  const copilotReviewAvailable = canOpenCopilotReview({
+    isGitRepo,
+    hasProject: activeProject !== null,
+    hasWorkspaceRoot: activeWorkspaceRoot !== undefined,
+  });
   const showComposerContextStrip = shouldShowComposerContextStrip({
     hasActiveProject: activeProject !== null,
     isGitRepo,
@@ -3406,6 +3411,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadRef]);
   const addCopilotReviewSurface = useCallback(() => {
     if (!activeThreadRef || !copilotReviewAvailable) return;
+    setCopilotReviewRequestId((requestId) => requestId + 1);
     useRightPanelStore.getState().open(activeThreadRef, "copilot-review");
   }, [activeThreadRef, copilotReviewAvailable]);
   const openFileSurface = useCallback(
@@ -6585,12 +6591,9 @@ function ChatViewContent(props: ChatViewProps) {
           branch={activeThreadBranch}
           cwd={activeWorkspaceRoot}
           environmentId={activeThread.environmentId}
-          interactionMode={interactionMode}
-          isWorking={isWorking}
-          modelSelection={activeThread.modelSelection}
           onOpenFile={openFileSurface}
           projectName={activeProject.title}
-          runtimeMode={runtimeMode}
+          reviewRequestId={copilotReviewRequestId}
           threadId={activeThread.id}
           threadTitle={activeThread.title}
         />

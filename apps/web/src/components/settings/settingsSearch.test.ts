@@ -90,4 +90,15 @@ describe("searchSettings", () => {
       targetId: "appearance",
     });
   });
+
+  it("routes CopilotKit credentials and model selection to their own settings page", () => {
+    expect(searchSettings("OpenRouter API key")[0]).toMatchObject({
+      id: "copilotkit-openrouter-api-key",
+      to: "/settings/copilotkit",
+    });
+    expect(searchSettings("Review model")[0]).toMatchObject({
+      id: "copilotkit-review-model",
+      to: "/settings/copilotkit",
+    });
+  });
 });

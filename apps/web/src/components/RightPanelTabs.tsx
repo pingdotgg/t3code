@@ -333,7 +333,7 @@ function RightPanelEmptyState(props: {
     },
     {
       label: "CopilotKit Review",
-      description: "Review this branch with generative UI.",
+      description: "Start a review of the current branch.",
       icon: CopilotKitIcon,
       shortcut: "C",
       available: props.copilotReviewAvailable,

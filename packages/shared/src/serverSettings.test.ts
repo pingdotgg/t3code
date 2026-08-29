@@ -63,6 +63,18 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("applies the CopilotKit model without copying the transient API key into settings", () => {
+    const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      copilotKit: {
+        openRouterApiKey: "sk-or-secret",
+        reviewModel: "google/gemini-3-flash-preview",
+      },
+    });
+
+    expect(next.copilotKit.reviewModel).toBe("google/gemini-3-flash-preview");
+    expect(next.copilotKit).not.toHaveProperty("openRouterApiKey");
+  });
+
   it("replaces text generation selection when provider/model are provided", () => {
     const current = {
       ...DEFAULT_SERVER_SETTINGS,

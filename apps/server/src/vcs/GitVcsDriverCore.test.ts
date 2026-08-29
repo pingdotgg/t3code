@@ -831,6 +831,27 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("returns a complete review preview for diffs larger than the old pane limit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const lastLine = "export const finalReviewLine = true;";
+        const largeContents = `${Array.from(
+          { length: 7_000 },
+          (_, index) => `export const reviewLine${index} = ${index};`,
+        ).join("\n")}\n${lastLine}\n`;
+        assert.isAbove(largeContents.length, 120_000);
+        yield* writeTextFile(cwd, "README.md", largeContents);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        const workingTree = preview.sources.find((source) => source.kind === "working-tree");
+
+        assert.strictEqual(workingTree?.truncated, false);
+        assert.include(workingTree?.diff ?? "", lastLine);
+      }),
+    );
+
     it.effect("loads full file contents for working-tree diff expansion", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
