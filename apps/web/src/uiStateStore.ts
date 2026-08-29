@@ -20,6 +20,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
+  threadOrder?: string[];
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -35,6 +36,7 @@ export interface UiProjectState {
 }
 
 export interface UiThreadState {
+  threadOrder: string[];
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
@@ -48,6 +50,7 @@ export interface UiState extends UiProjectState, UiThreadState, UiEndpointState 
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  threadOrder: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -125,6 +128,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    threadOrder: sanitizeStringArray(parsed.threadOrder),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -203,6 +207,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        threadOrder: state.threadOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
@@ -337,6 +342,39 @@ export function setProjectExpanded(
   };
 }
 
+export function reorderThreads(
+  state: UiState,
+  currentThreadOrder: readonly string[],
+  draggedThreadId: string,
+  targetThreadId: string,
+): UiState {
+  const draggedIndex = currentThreadOrder.indexOf(draggedThreadId);
+  const targetIndex = currentThreadOrder.indexOf(targetThreadId);
+  if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) {
+    return state;
+  }
+
+  const reorderedVisibleThreads = [...currentThreadOrder];
+  const [dragged] = reorderedVisibleThreads.splice(draggedIndex, 1);
+  reorderedVisibleThreads.splice(targetIndex, 0, dragged!);
+
+  // A project filter and lifecycle sections can hide unpinned threads. Keep
+  // those ids in their saved slots while replacing only the visible active
+  // ids, then append visible threads that do not have a persisted slot yet.
+  const visibleThreadIds = new Set(currentThreadOrder);
+  let nextVisibleIndex = 0;
+  const threadOrder = state.threadOrder.map((threadId) => {
+    if (!visibleThreadIds.has(threadId)) return threadId;
+    return reorderedVisibleThreads[nextVisibleIndex++]!;
+  });
+  threadOrder.push(...reorderedVisibleThreads.slice(nextVisibleIndex));
+
+  return {
+    ...state,
+    threadOrder,
+  };
+}
+
 export function reorderProjects(
   state: UiState,
   currentProjectOrder: readonly string[],
@@ -387,6 +425,11 @@ interface UiStateStore extends UiState {
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
+  reorderThreads: (
+    currentThreadOrder: readonly string[],
+    draggedThreadId: string,
+    targetThreadId: string,
+  ) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
@@ -406,6 +449,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
+  reorderThreads: (currentThreadOrder, draggedThreadId, targetThreadId) =>
+    set((state) => reorderThreads(state, currentThreadOrder, draggedThreadId, targetThreadId)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
