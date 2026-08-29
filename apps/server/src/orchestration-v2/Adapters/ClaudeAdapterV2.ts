@@ -1851,6 +1851,21 @@ function toSessionPermissionUpdates(
   ];
 }
 
+export const awaitClaudeApprovalDecision = Effect.fn("awaitClaudeApprovalDecision")(function* (
+  decision: Deferred.Deferred<ProviderApprovalDecision>,
+  signal: AbortSignal,
+) {
+  const cancellation = Effect.callback<ProviderApprovalDecision>((resume) => {
+    const abort = () => resume(Effect.succeed("cancel"));
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) {
+      abort();
+    }
+    return Effect.sync(() => signal.removeEventListener("abort", abort));
+  });
+  return yield* Effect.raceFirst(Deferred.await(decision), cancellation);
+});
+
 /**
  * First user-facing error from a non-success result. "[ede_diagnostic] ..."
  * entries are CLI-internal telemetry (the CLI hides them from its own UI too),
@@ -2200,7 +2215,6 @@ export function makeClaudeAdapterV2(
         );
         const requestedContinuations = yield* Ref.make(new Set<string>());
         const runtimeContext = yield* Effect.context<never>();
-        const runFork = Effect.runForkWith(runtimeContext);
         const runPromise = Effect.runPromiseWith(runtimeContext);
 
         const emitProviderEvent = (event: ProviderAdapterV2Event) =>
@@ -4270,11 +4284,10 @@ export function makeClaudeAdapterV2(
             { concurrency: 1 },
           );
 
-          const abort = () => {
-            runFork(Deferred.succeed(decision, "cancel"));
-          };
-          callbackOptions.signal.addEventListener("abort", abort, { once: true });
-          const resolvedDecision = yield* Deferred.await(decision).pipe(
+          const resolvedDecision = yield* awaitClaudeApprovalDecision(
+            decision,
+            callbackOptions.signal,
+          ).pipe(
             Effect.ensuring(
               Ref.update(pendingRuntimeRequests, (current) => {
                 const updated = new Map(current);
@@ -4283,7 +4296,6 @@ export function makeClaudeAdapterV2(
               }),
             ),
           );
-          callbackOptions.signal.removeEventListener("abort", abort);
 
           return permissionResultFromDecision({
             toolName,
