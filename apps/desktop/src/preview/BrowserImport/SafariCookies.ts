@@ -32,7 +32,7 @@ const APPLE_EPOCH_OFFSET_SECONDS = 978_307_200;
 /** `u32 0x00000100`, `u32le cookieCount`, then one `u32le` offset per cookie. */
 const COOKIE_PAGE_HEADER_SIZE = 12;
 /** Through the `f64 creation` field; string bytes follow. */
-const COOKIE_RECORD_HEADER_SIZE = 48;
+const COOKIE_RECORD_HEADER_SIZE = 56;
 
 const FLAG_SECURE = 0x1;
 const FLAG_HTTP_ONLY = 0x4;
@@ -125,7 +125,9 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
       // Offsets are relative to the record; one pointing outside it would
       // otherwise read a neighbouring cookie's bytes as this one's value.
       if (
-        [urlOffset, nameOffset, pathOffset, valueOffset].some((offset) => offset >= cookie.length)
+        [urlOffset, nameOffset, pathOffset, valueOffset].some(
+          (offset) => offset < COOKIE_RECORD_HEADER_SIZE || offset >= cookie.length,
+        )
       ) {
         throw new SafariCookieReadError({ reason: "readFailed" });
       }

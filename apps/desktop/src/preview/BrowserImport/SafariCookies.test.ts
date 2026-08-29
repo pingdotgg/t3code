@@ -191,6 +191,38 @@ describe("parseBinaryCookies", () => {
     expect(() => parseBinaryCookies(corrupt)).toThrow(SafariCookieReadError);
   });
 
+  it("rejects records truncated inside the 56-byte header", () => {
+    const valid = encodeBinaryCookies([
+      { domain: "a.test", name: "n", path: "/", value: "v", expiry: 1_000, flags: 0 },
+    ]);
+    const pageStart = 8 + 4;
+    const recordStart = pageStart + valid.readUInt32LE(pageStart + 8);
+
+    for (let size = 48; size < 56; size += 1) {
+      const corrupt = Buffer.from(valid);
+      corrupt.writeUInt32LE(size, recordStart);
+      expect(() => parseBinaryCookies(corrupt), `record size ${size}`).toThrow(
+        SafariCookieReadError,
+      );
+    }
+  });
+
+  it("rejects string offsets that point into the record header", () => {
+    const valid = encodeBinaryCookies([
+      { domain: "a.test", name: "n", path: "/", value: "v", expiry: 1_000, flags: 0 },
+    ]);
+    const pageStart = 8 + 4;
+    const recordStart = pageStart + valid.readUInt32LE(pageStart + 8);
+
+    for (const offsetField of [16, 20, 24, 28]) {
+      const corrupt = Buffer.from(valid);
+      corrupt.writeUInt32LE(55, recordStart + offsetField);
+      expect(() => parseBinaryCookies(corrupt), `offset field ${offsetField}`).toThrow(
+        SafariCookieReadError,
+      );
+    }
+  });
+
   it("rejects a file that is not binarycookies", () => {
     expect(() => parseBinaryCookies(Buffer.from("not a cookie jar"))).toThrow(
       SafariCookieReadError,
