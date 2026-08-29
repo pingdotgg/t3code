@@ -66,9 +66,11 @@ typography do not leak into the banner. Timestamps and attachment status inherit
 text size. Arrow keys select an entry, Enter restores it, and Escape closes the drawer.
 
 `ComposerActivityStatus` represents either a working turn or thread synchronization.
-Loading and syncing take precedence over the timer until the thread is current.
-The same status occupies the standalone row, task summary, or expanded task header;
-cached tasks remain accessible while syncing. There is no separate sync banner.
+Loading and syncing take precedence over the timer and task UI until the thread is current.
+`ChatComposer` hides task inputs during synchronization, including the summary, progress,
+and expanded list. Its existing drawer reset closes the list when those inputs disappear.
+The sync status uses the standalone activity row. Its icon spins unless reduced motion is
+enabled. There is no separate sync banner.
 
 The composer overlay is measured as a whole. Tabs no longer need absolute offsets
 or a separate mutation observer to reserve space. The running timer updates its

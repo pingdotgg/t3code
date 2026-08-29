@@ -32,10 +32,10 @@ its progress. Click the banner to expand or collapse the task list. The summary 
 while the agent works. Without tasks, the banner shows only the timer. The timer disappears when
 the turn finishes.
 
-While messages load or sync, that status temporarily replaces the timer. You can still
-expand any tasks already loaded. Once syncing finishes, the timer reflects the turn's
-original start time. Long task lists scroll beneath their header, with a fade at each
-edge that has more content.
+While messages load or sync, that status temporarily replaces the timer and tasks.
+Task details and progress stay hidden until the thread is live again. Once syncing
+finishes, current tasks return and the timer reflects the turn's original start time.
+Long task lists scroll beneath their header, with a fade at each edge that has more content.
 
 Notices stack above the activity row. Dismissing a notice keeps the timer and task progress visible.
 You can dismiss a failed server update and retry later in **Settings → Connections**.

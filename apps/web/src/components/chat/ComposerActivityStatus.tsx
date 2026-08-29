@@ -11,7 +11,7 @@ export function ComposerActivityIcon({ status }: { readonly status: ComposerActi
   if (status.kind !== "sync") return null;
   return (
     <ComposerBanner.Icon>
-      <LoaderCircleIcon />
+      <LoaderCircleIcon className="motion-safe:animate-spin" />
     </ComposerBanner.Icon>
   );
 }
