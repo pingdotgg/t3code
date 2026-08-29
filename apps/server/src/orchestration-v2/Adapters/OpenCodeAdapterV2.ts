@@ -40,6 +40,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -236,7 +237,59 @@ interface ActiveOpenCodeTurn {
   interrupted: boolean;
   finalized: boolean;
   planId: PlanId | null;
+  admissionGeneration: number;
+  admissionPending: boolean;
+  admissionAccepted: boolean;
+  admissionMessageObserved: boolean;
+  idleDuringAdmission: boolean;
+  admissionSettled: Deferred.Deferred<void>;
 }
+
+type OpenCodeAdmissionSignal = "accepted" | "busy" | "idle" | "user-message";
+type OpenCodeAdmissionAction = "hold" | "reconcile-idle" | "release";
+
+export function advanceOpenCodePromptAdmission(
+  admission: Pick<
+    ActiveOpenCodeTurn,
+    "admissionAccepted" | "admissionMessageObserved" | "admissionPending" | "idleDuringAdmission"
+  >,
+  signal: OpenCodeAdmissionSignal,
+): OpenCodeAdmissionAction {
+  if (!admission.admissionPending) return "release";
+  if (signal === "idle") {
+    admission.idleDuringAdmission = true;
+    return "hold";
+  }
+  if (signal === "accepted") admission.admissionAccepted = true;
+  if (signal === "busy" || signal === "user-message") admission.admissionMessageObserved = true;
+  if (!admission.admissionAccepted || !admission.admissionMessageObserved) return "hold";
+  if (admission.idleDuringAdmission) return "reconcile-idle";
+  admission.admissionPending = false;
+  return "release";
+}
+
+export function cancelOpenCodePromptAdmission(
+  admission: Pick<ActiveOpenCodeTurn, "admissionGeneration" | "admissionPending">,
+  nextGeneration: number,
+): void {
+  admission.admissionGeneration = nextGeneration;
+  admission.admissionPending = false;
+}
+
+export const reconcileOpenCodePromptAdmissionStatus = Effect.fn(
+  "reconcileOpenCodePromptAdmissionStatus",
+)(function* (
+  admission: Pick<ActiveOpenCodeTurn, "admissionGeneration" | "admissionPending">,
+  generation: number,
+  readStatus: Effect.Effect<"busy" | "idle" | "unknown">,
+) {
+  const status = yield* readStatus;
+  if (admission.admissionGeneration !== generation || !admission.admissionPending) {
+    return "stale" as const;
+  }
+  admission.admissionPending = false;
+  return status;
+});
 
 interface OpenCodeSubagentContext {
   readonly nativeItemId: string;
@@ -264,6 +317,7 @@ interface OpenCodeThreadState {
   readonly userMessageIds: Array<string>;
   parentSubagent: OpenCodeSubagentContext | null;
   nextChildTurnOrdinal: number;
+  nextAdmissionGeneration: number;
 }
 
 interface PendingOpenCodeRequest {
@@ -1194,6 +1248,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               userMessageIds: [],
               parentSubagent: context,
               nextChildTurnOrdinal: 1,
+              nextAdmissionGeneration: 1,
             });
             yield* emitProviderEvent({
               type: "app_thread.created",
@@ -1927,6 +1982,35 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           );
         });
 
+        const reconcilePromptAdmission = Effect.fnUntraced(function* (
+          state: OpenCodeThreadState,
+          turn: ActiveOpenCodeTurn,
+        ) {
+          const generation = turn.admissionGeneration;
+          const status = yield* reconcileOpenCodePromptAdmissionStatus(
+            turn,
+            generation,
+            sdkCall("session.status", { sessionID: state.nativeSessionId, generation }, () =>
+              client.session.status(),
+            ).pipe(
+              Effect.match({
+                onFailure: () => "unknown" as const,
+                onSuccess: (response) => {
+                  const statuses = unwrapData("session.status", response);
+                  const sessionStatus = statuses[state.nativeSessionId];
+                  return sessionStatus === undefined || sessionStatus.type === "idle"
+                    ? ("idle" as const)
+                    : ("busy" as const);
+                },
+              }),
+            ),
+          );
+          if (state.activeTurn !== turn || status === "stale") return;
+          if (status === "idle") {
+            yield* finalizeTurn(state, turn, turn.interrupted ? "interrupted" : "completed");
+          }
+        });
+
         const createChildTurn = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
           message: Extract<OpenCodeMessage, { role: "user" }>,
@@ -1975,6 +2059,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             interrupted: false,
             finalized: false,
             planId: null,
+            admissionGeneration: 0,
+            admissionPending: false,
+            admissionAccepted: true,
+            admissionMessageObserved: true,
+            idleDuringAdmission: false,
+            admissionSettled: Deferred.makeUnsafe<void>(),
           };
           state.activeTurn = turn;
           state.providerTurns.set(String(providerTurnId), providerTurn);
@@ -2083,6 +2173,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           if (turn !== null && turn.nativeUserMessageId === null) {
             turn.nativeUserMessageId = message.id;
             yield* emitProviderTurn(state, turn, "running", null);
+          }
+          if (turn !== null && turn.admissionPending) {
+            if (advanceOpenCodePromptAdmission(turn, "user-message") === "reconcile-idle") {
+              yield* reconcilePromptAdmission(state, turn);
+            }
           }
         });
 
@@ -2233,10 +2328,20 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               const state = threads.get(event.properties.sessionID);
               if (state === undefined) return;
               if (event.properties.status.type === "busy") {
+                if (state.activeTurn?.admissionPending) {
+                  const turn = state.activeTurn;
+                  if (advanceOpenCodePromptAdmission(turn, "busy") === "reconcile-idle") {
+                    yield* reconcilePromptAdmission(state, turn);
+                  }
+                }
                 yield* updateProviderThread(state, { status: "active" });
                 return;
               }
               if (event.properties.status.type === "idle" && state.activeTurn !== null) {
+                if (state.activeTurn.admissionPending) {
+                  advanceOpenCodePromptAdmission(state.activeTurn, "idle");
+                  return;
+                }
                 yield* finalizeTurn(
                   state,
                   state.activeTurn,
@@ -2248,6 +2353,10 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             case "session.idle": {
               const state = threads.get(event.properties.sessionID);
               if (state?.activeTurn !== null && state?.activeTurn !== undefined) {
+                if (state.activeTurn.admissionPending) {
+                  advanceOpenCodePromptAdmission(state.activeTurn, "idle");
+                  return;
+                }
                 yield* finalizeTurn(
                   state,
                   state.activeTurn,
@@ -2381,6 +2490,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             userMessageIds: [],
             parentSubagent: subagentsByChildSessionId.get(nativeSession.id) ?? null,
             nextChildTurnOrdinal: 1,
+            nextAdmissionGeneration: 1,
           };
           threads.set(nativeSession.id, state);
           return state;
@@ -2597,6 +2707,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 interrupted: false,
                 finalized: false,
                 planId: null,
+                admissionGeneration: state.nextAdmissionGeneration++,
+                admissionPending: true,
+                admissionAccepted: false,
+                admissionMessageObserved: false,
+                idleDuringAdmission: false,
+                admissionSettled: Deferred.makeUnsafe<void>(),
               };
               state.appThread = turnInput.appThread;
               state.activeTurn = turn;
@@ -2644,7 +2760,16 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                     failure: makeProviderFailure({ cause, class: "provider_error" }),
                   }),
                 ),
+                Effect.ensuring(
+                  Deferred.succeed(turn.admissionSettled, undefined).pipe(Effect.ignore),
+                ),
               );
+              if (state.activeTurn === turn && !turn.finalized) {
+                const admissionAction = advanceOpenCodePromptAdmission(turn, "accepted");
+                if (admissionAction === "reconcile-idle") {
+                  yield* reconcilePromptAdmission(state, turn);
+                }
+              }
             }).pipe(
               Effect.mapError(
                 (cause) =>
@@ -2663,9 +2788,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               const state = threads.get(sessionId);
               const turn = state?.activeTurn;
               if (
+                state === undefined ||
                 turn === undefined ||
                 turn === null ||
-                turn.providerTurnId !== steerInput.providerTurnId
+                turn.providerTurnId !== steerInput.providerTurnId ||
+                turn.interrupted
               ) {
                 return yield* protocolError(
                   `OpenCode turn ${steerInput.providerTurnId} is not active`,
@@ -2697,6 +2824,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 ...(text.length === 0 ? [] : [{ type: "text" as const, text }]),
                 ...files,
               ];
+              turn.admissionGeneration = state.nextAdmissionGeneration++;
+              turn.admissionPending = true;
+              turn.admissionAccepted = false;
+              turn.admissionMessageObserved = false;
+              turn.idleDuringAdmission = false;
+              turn.admissionSettled = Deferred.makeUnsafe<void>();
               yield* sdkCall(
                 "session.promptAsync",
                 { sessionID: sessionId, model: parsedModel, parts },
@@ -2706,7 +2839,17 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                     model: parsedModel,
                     parts,
                   }),
+              ).pipe(
+                Effect.ensuring(
+                  Deferred.succeed(turn.admissionSettled, undefined).pipe(Effect.ignore),
+                ),
               );
+              if (state.activeTurn === turn && !turn.finalized) {
+                const admissionAction = advanceOpenCodePromptAdmission(turn, "accepted");
+                if (admissionAction === "reconcile-idle") {
+                  yield* reconcilePromptAdmission(state, turn);
+                }
+              }
             }).pipe(
               Effect.mapError(
                 (cause) =>
@@ -2733,9 +2876,18 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 );
               }
               turn.interrupted = true;
+              const admissionWasPending = turn.admissionPending;
+              cancelOpenCodePromptAdmission(turn, state!.nextAdmissionGeneration++);
+              if (admissionWasPending) {
+                // OpenCode's v2 prompt call does not expose an AbortSignal. Wait
+                // for admission to settle before aborting so a prompt cannot be
+                // accepted after the stop already reached an idle session.
+                yield* Deferred.await(turn.admissionSettled).pipe(Effect.timeout("10 seconds"));
+              }
               yield* sdkCall("session.abort", { sessionID: sessionId }, () =>
                 client.session.abort({ sessionID: sessionId }),
               ).pipe(
+                Effect.timeout("10 seconds"),
                 // The turn can settle while the abort is in flight, and
                 // aborting an already-idle session fails. That stop still
                 // succeeded; only surface failures for a turn that is
