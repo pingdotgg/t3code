@@ -50,7 +50,19 @@ describe("thread workflows", () => {
         },
       ],
       messages: [
-        { id: "message-first", text: "First" },
+        {
+          id: "message-first",
+          text: "First",
+          attachments: [
+            {
+              type: "image",
+              id: "attachment-first",
+              name: "first.png",
+              mimeType: "image/png",
+              sizeBytes: 64,
+            },
+          ],
+        },
         { id: "message-later", text: "Later" },
       ],
       providerTurns: [
@@ -79,6 +91,10 @@ describe("thread workflows", () => {
     expect(state.queuedRuns.map(({ run, text }) => [run.id, text])).toEqual([
       ["first", "First"],
       ["later", "Later"],
+    ]);
+    expect(state.queuedRuns.map(({ attachments }) => attachments.map(({ id }) => id))).toEqual([
+      ["attachment-first"],
+      [],
     ]);
     expect(state.activeRun?.id).toBe("active");
     expect(state.canReorder).toBe(true);

@@ -2200,6 +2200,9 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
     text: Schema.String,
+    // Full replacement list. Absent = leave the message's attachments as-is,
+    // so pre-attachment clients editing text keep the original attachments.
+    attachments: Schema.optional(Schema.Array(ChatAttachment)),
   }),
   Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),
