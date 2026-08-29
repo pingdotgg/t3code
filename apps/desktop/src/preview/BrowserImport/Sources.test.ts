@@ -354,6 +354,54 @@ describe("cookieDatabaseCandidatePaths", () => {
 
 const firefox = BROWSER_IMPORT_SOURCES.find((source) => source.id === "firefox")!;
 
+describe("listSourceProfiles Firefox fallback", () => {
+  const cases = [
+    { platform: "linux" as const, profileDirectory: "linux.default" },
+    { platform: "darwin" as const, profileDirectory: "Profiles/macos.default" },
+    { platform: "win32" as const, profileDirectory: "Profiles/windows.default" },
+  ];
+
+  for (const { platform, profileDirectory } of cases) {
+    it.effect(`scans the ${platform} profile location and excludes stale entries`, () =>
+      run(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: `t3code-firefox-${platform}-`,
+          });
+          const appData = path.join(home, "AppData", "Roaming");
+          const context = yield* sourcePathContext.pipe(
+            Effect.provideService(HostProcessEnvironment, {
+              HOME: home,
+              APPDATA: appData,
+            }),
+            Effect.provideService(HostProcessPlatform, platform),
+          );
+          const root = firefox.userDataDirectory(context)!;
+          const scanRoot = platform === "linux" ? root : path.join(root, "Profiles");
+          yield* fileSystem.makeDirectory(path.join(root, profileDirectory), { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(root, profileDirectory, "cookies.sqlite"),
+            "db",
+          );
+          yield* fileSystem.makeDirectory(path.join(scanRoot, "stale.default"), {
+            recursive: true,
+          });
+          yield* fileSystem.writeFileString(path.join(scanRoot, "stale-file.default"), "not-dir");
+
+          assert.deepEqual(yield* listSourceProfiles(firefox, context), [
+            {
+              directory: profileDirectory,
+              name: path.basename(profileDirectory),
+            },
+          ]);
+        }),
+      ),
+    );
+  }
+});
+
 describe("isSourceRunning for Firefox", () => {
   it.effect("finds the lock inside the profile, not at the root", () =>
     run(
@@ -367,6 +415,7 @@ describe("isSourceRunning for Firefox", () => {
         const root = firefox.userDataDirectory(context)!;
         const profile = `${root}/Profiles/abcd.default-release`;
         yield* fileSystem.makeDirectory(profile, { recursive: true });
+        yield* fileSystem.writeFileString(`${profile}/cookies.sqlite`, "db");
 
         assert.isFalse(yield* isSourceRunning(firefox, context));
 

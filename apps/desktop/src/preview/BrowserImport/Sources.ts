@@ -359,14 +359,23 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
     );
     if (declared.length > 0) return declared;
 
-    // No readable `profiles.ini`, so fall back to scanning the directory the
-    // profiles actually live in.
-    return yield* fileSystem.readDirectory(context.path.join(root, "Profiles")).pipe(
-      Effect.map((entries) =>
-        entries.map((entry) => ({ directory: context.path.join("Profiles", entry), name: entry })),
-      ),
-      Effect.orElseSucceed(() => [] as ReadonlyArray<BrowserImportSourceProfile>),
-    );
+    // Linux keeps profile directories directly under the Firefox root. macOS
+    // and Windows put them in `Profiles/`.
+    const fallbackDirectory =
+      context.platform === "linux" ? root : context.path.join(root, "Profiles");
+    const entries = yield* fileSystem
+      .readDirectory(fallbackDirectory)
+      .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+    const found = yield* Effect.forEach(entries, (entry) => {
+      const directory = context.platform === "linux" ? entry : context.path.join("Profiles", entry);
+      const database = cookieDatabasePath(definition, context, directory);
+      return database === undefined
+        ? Effect.succeed(undefined)
+        : entryExists(database).pipe(
+            Effect.map((exists) => (exists ? { directory, name: entry } : undefined)),
+          );
+    });
+    return found.filter((profile) => profile !== undefined);
   }
 
   const declared = yield* fileSystem.readFileString(context.path.join(root, "Local State")).pipe(
