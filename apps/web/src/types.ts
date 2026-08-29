@@ -1,6 +1,7 @@
 import type {
   ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
+  ChatUnknownAttachment as ContractChatUnknownAttachment,
   MessageId,
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
@@ -55,6 +56,10 @@ export type ChatAttachment = ChatImageAttachment | ChatFileAttachment | ChatUnkn
 // not narrow. Use these guards wherever type-specific fields are read.
 export function isImageAttachment(attachment: ChatAttachment): attachment is ChatImageAttachment {
   return attachment.type === "image";
+}
+
+export function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAttachment {
+  return attachment.type === "file";
 }
 
 export interface ChatMessage {
