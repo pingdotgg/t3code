@@ -288,6 +288,7 @@ export interface ThreadManagementServiceShape {
   readonly listProjectThreads: (input: {
     readonly projectId: ProjectId;
     readonly includeSubagents: boolean;
+    readonly includeArchived?: boolean;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, ThreadManagementError>;
   readonly sendToThread: (
     input: ThreadManagementSendInput,
@@ -463,7 +464,7 @@ const make = Effect.gen(function* () {
           }),
       ),
       Effect.map((snapshot) =>
-        snapshot.threads
+        [...snapshot.threads, ...(input.includeArchived === true ? snapshot.archivedThreads : [])]
           .filter((thread) => thread.projectId === input.projectId)
           .filter(
             (thread) =>

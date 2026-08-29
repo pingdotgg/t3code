@@ -264,9 +264,13 @@ retry the request.
 ### `t3_thread_list`
 
 Lists durable thread shells in the calling thread's project, newest first.
-Callers can filter by title, run status, and whether app-owned sub-agent threads
-are included. Results are bounded and offset-paginated. Deleted threads and
-threads from other projects are never exposed.
+Callers can filter by title, run status, archive state, pin state, explicit
+settlement, snooze state, unread completion, linked pull request, and whether
+app-owned sub-agent threads are included. Results include raw organization
+timestamps, pin order, read state, linked pull request, branch, and workspace
+path. Results are bounded and offset-paginated. The server pages shell
+snapshots, including archived shells when requested, without loading thread
+transcripts. Deleted threads and threads from other projects are never exposed.
 
 ### `t3_thread_read`
 
@@ -282,6 +286,31 @@ provenance. MCP-created threads and user-role messages use `createdBy: "agent"`
 and `creationSource: "mcp"`; provider output uses `creationSource: "provider"`.
 Actor and ingress are separate so agent-authored user-role messages remain
 distinguishable from human-authored messages.
+
+The thread detail includes the same raw organization fields as
+`t3_thread_list`. This lets an agent verify a mutation without inferring sidebar
+state from run status.
+
+### `t3_thread_organize`
+
+Runs the existing V2 organization commands for a thread in the calling
+project. A single operation defaults to the calling thread. A batch accepts up
+to 20 thread and action pairs and returns an applied or failed outcome for each
+pair. Supported actions are pin, unpin, reorder, snooze, unsnooze, settle,
+unsettle, archive, unarchive, mark read, and mark unread.
+
+The V2 decider remains authoritative. Pinning clears snooze and explicit
+settlement, settling clears the pin, and threads with active or blocked work
+cannot settle. A pending approval or user-input request also blocks archive
+through MCP. Every successful outcome returns the resulting durable
+organization state.
+
+### `t3_thread_delete`
+
+Permanently deletes one thread in the calling project and defaults to the
+calling thread when `threadId` is omitted. The tool is separate from
+`t3_thread_organize` so clients can identify and confirm the destructive
+operation.
 
 ### `t3_thread_send`
 

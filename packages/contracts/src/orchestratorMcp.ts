@@ -28,6 +28,7 @@ import {
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
+import { ThreadLinkedPullRequest } from "./orchestration.ts";
 import {
   ProviderOptionDescriptor,
   ProviderOptionSelection,
@@ -293,6 +294,12 @@ export const OrchestratorMcpThreadListInput = Schema.Struct({
   ),
   titleContains: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
   includeSubagents: Schema.optional(Schema.Boolean),
+  archived: Schema.optional(Schema.Boolean),
+  pinned: Schema.optional(Schema.Boolean),
+  settled: Schema.optional(Schema.Boolean),
+  snoozed: Schema.optional(Schema.Boolean),
+  unread: Schema.optional(Schema.Boolean),
+  hasLinkedPullRequest: Schema.optional(Schema.Boolean),
   cursor: Schema.optional(NonNegativeInt),
   limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(100))),
 });
@@ -309,6 +316,19 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   model: Schema.String,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  branch: Schema.NullOr(Schema.String),
+  worktreePath: Schema.NullOr(Schema.String),
+  linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
+  pinnedAt: Schema.NullOr(IsoDateTime),
+  pinOrderKey: Schema.NullOr(Schema.String),
+  settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])),
+  settledAt: Schema.NullOr(IsoDateTime),
+  snoozedUntil: Schema.NullOr(IsoDateTime),
+  snoozedAt: Schema.NullOr(IsoDateTime),
+  archived: Schema.Boolean,
+  archivedAt: Schema.NullOr(IsoDateTime),
+  readState: Schema.Literals(["read", "unread", "unknown"]),
+  lastVisitedAt: Schema.NullOr(IsoDateTime),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
   itemCount: NonNegativeInt,
@@ -357,6 +377,16 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   itemCount: NonNegativeInt,
   pendingRequestCount: NonNegativeInt,
   archived: Schema.Boolean,
+  archivedAt: Schema.NullOr(IsoDateTime),
+  linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
+  pinnedAt: Schema.NullOr(IsoDateTime),
+  pinOrderKey: Schema.NullOr(Schema.String),
+  settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])),
+  settledAt: Schema.NullOr(IsoDateTime),
+  snoozedUntil: Schema.NullOr(IsoDateTime),
+  snoozedAt: Schema.NullOr(IsoDateTime),
+  readState: Schema.Literals(["read", "unread", "unknown"]),
+  lastVisitedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -400,6 +430,97 @@ export const OrchestratorMcpThreadReadResult = Schema.Struct({
   hasMore: Schema.Boolean,
 });
 export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadResult.Type;
+
+export const OrchestratorMcpThreadOrganizeAction = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("pin"), orderKey: Schema.optional(TrimmedNonEmptyString) }),
+  Schema.Struct({ type: Schema.Literal("unpin") }),
+  Schema.Struct({ type: Schema.Literal("reorder"), orderKey: TrimmedNonEmptyString }),
+  Schema.Struct({ type: Schema.Literal("snooze"), until: IsoDateTime }),
+  Schema.Struct({ type: Schema.Literal("unsnooze") }),
+  Schema.Struct({ type: Schema.Literal("settle") }),
+  Schema.Struct({ type: Schema.Literal("unsettle") }),
+  Schema.Struct({ type: Schema.Literal("archive") }),
+  Schema.Struct({ type: Schema.Literal("unarchive") }),
+  Schema.Struct({ type: Schema.Literal("mark_read") }),
+  Schema.Struct({ type: Schema.Literal("mark_unread") }),
+]);
+export type OrchestratorMcpThreadOrganizeAction = typeof OrchestratorMcpThreadOrganizeAction.Type;
+export const OrchestratorMcpThreadOrganizeActionType = Schema.Literals([
+  "pin",
+  "unpin",
+  "reorder",
+  "snooze",
+  "unsnooze",
+  "settle",
+  "unsettle",
+  "archive",
+  "unarchive",
+  "mark_read",
+  "mark_unread",
+]);
+
+export const OrchestratorMcpThreadOrganizeItem = Schema.Struct({
+  threadId: ThreadId,
+  action: OrchestratorMcpThreadOrganizeAction,
+});
+export type OrchestratorMcpThreadOrganizeItem = typeof OrchestratorMcpThreadOrganizeItem.Type;
+
+export const OrchestratorMcpThreadOrganizeInput = Schema.Union([
+  Schema.Struct({
+    threadId: Schema.optional(ThreadId),
+    action: OrchestratorMcpThreadOrganizeAction,
+    clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  }),
+  Schema.Struct({
+    items: Schema.Array(OrchestratorMcpThreadOrganizeItem).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(20),
+    ),
+    clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  }),
+]);
+export type OrchestratorMcpThreadOrganizeInput = typeof OrchestratorMcpThreadOrganizeInput.Type;
+
+export const OrchestratorMcpThreadOrganizationState = Schema.Struct({
+  threadId: ThreadId,
+  pinnedAt: Schema.NullOr(IsoDateTime),
+  pinOrderKey: Schema.NullOr(Schema.String),
+  settledOverride: Schema.NullOr(Schema.Literals(["settled", "active"])),
+  settledAt: Schema.NullOr(IsoDateTime),
+  snoozedUntil: Schema.NullOr(IsoDateTime),
+  snoozedAt: Schema.NullOr(IsoDateTime),
+  archivedAt: Schema.NullOr(IsoDateTime),
+  readState: Schema.Literals(["read", "unread", "unknown"]),
+  lastVisitedAt: Schema.NullOr(IsoDateTime),
+});
+export type OrchestratorMcpThreadOrganizationState =
+  typeof OrchestratorMcpThreadOrganizationState.Type;
+
+export const OrchestratorMcpThreadOrganizeOutcome = Schema.Struct({
+  threadId: ThreadId,
+  action: OrchestratorMcpThreadOrganizeActionType,
+  status: Schema.Literals(["applied", "failed"]),
+  state: Schema.NullOr(OrchestratorMcpThreadOrganizationState),
+  error: Schema.NullOr(Schema.String),
+});
+export type OrchestratorMcpThreadOrganizeOutcome = typeof OrchestratorMcpThreadOrganizeOutcome.Type;
+
+export const OrchestratorMcpThreadOrganizeResult = Schema.Struct({
+  outcomes: Schema.Array(OrchestratorMcpThreadOrganizeOutcome),
+});
+export type OrchestratorMcpThreadOrganizeResult = typeof OrchestratorMcpThreadOrganizeResult.Type;
+
+export const OrchestratorMcpThreadDeleteInput = Schema.Struct({
+  threadId: Schema.optional(ThreadId),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpThreadDeleteInput = typeof OrchestratorMcpThreadDeleteInput.Type;
+
+export const OrchestratorMcpThreadDeleteResult = Schema.Struct({
+  threadId: ThreadId,
+  deleted: Schema.Boolean,
+});
+export type OrchestratorMcpThreadDeleteResult = typeof OrchestratorMcpThreadDeleteResult.Type;
 
 export const OrchestratorMcpThreadSendInput = Schema.Struct({
   threadId: ThreadId,

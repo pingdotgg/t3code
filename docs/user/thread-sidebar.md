@@ -28,6 +28,11 @@ The order syncs across devices.
 
 Pinning does not prevent automatic settlement. Settling a thread removes its pin.
 
+Agents connected through T3 Code can organize threads too. They can pin, snooze,
+settle, archive, or change read state in the current project. T3 Code applies the
+same rules as the sidebar. For example, an agent cannot settle a thread while work
+or a user request is still pending.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list
