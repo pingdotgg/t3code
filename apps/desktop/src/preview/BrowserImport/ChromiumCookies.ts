@@ -94,8 +94,13 @@ const CookieRow = Schema.Struct({
 });
 
 const decodeCookieRows = Schema.decodeUnknownEffect(Schema.Array(CookieRow));
+const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+const SchemaVersion = Schema.Union([
+  NonNegativeInt,
+  Schema.FiniteFromString.pipe(Schema.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
+]);
 const decodeSchemaVersion = Schema.decodeUnknownEffect(
-  Schema.Tuple([Schema.Struct({ value: Schema.Number })]),
+  Schema.Tuple([Schema.Struct({ value: SchemaVersion })]),
 );
 
 /**
