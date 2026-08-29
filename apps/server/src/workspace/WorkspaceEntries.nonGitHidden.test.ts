@@ -1,10 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { FileFinder } from "@ff-labs/fff-node";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -41,6 +43,10 @@ function writeTextFile(cwd: string, relativePath: string, contents = "") {
 }
 
 it.layer(TestLayer, { excludeTestServices: true })("non-Git workspace dot entries", (it) => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   describe("list", () => {
     it.effect("includes unignored dot entries", () =>
       Effect.gen(function* () {
@@ -79,6 +85,40 @@ it.layer(TestLayer, { excludeTestServices: true })("non-Git workspace dot entrie
 
         expect(paths).toContain("visible.txt");
         expect(paths).not.toContain(".secret");
+      }),
+    );
+
+    it.effect("does not let dot entries displace indexed entries at the listing cap", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, ".hidden-a");
+        yield* writeTextFile(cwd, ".hidden-b");
+
+        const indexedEntryCount = 24_999;
+        vi.spyOn(FileFinder.prototype, "mixedSearch").mockReturnValue({
+          ok: true,
+          value: {
+            items: Array.from({ length: indexedEntryCount }, (_, index) => ({
+              type: "file",
+              item: {
+                relativePath: `zz-visible-${String(index).padStart(5, "0")}.txt`,
+              },
+            })),
+            totalMatched: indexedEntryCount,
+          },
+        } as never);
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.list({ cwd });
+        const visibleEntries = result.entries.filter((entry) =>
+          entry.path.startsWith("zz-visible-"),
+        );
+        const hiddenEntries = result.entries.filter((entry) => entry.path.startsWith(".hidden-"));
+
+        expect(visibleEntries).toHaveLength(indexedEntryCount);
+        expect(hiddenEntries).toHaveLength(1);
+        expect(result.entries).toHaveLength(25_000);
+        expect(result.truncated).toBe(true);
       }),
     );
   });
