@@ -90,7 +90,6 @@ export function BrowserImportWizard({
   const runImport = () => {
     const chosen = resolveWizardTarget(target, newProfileId.current, targetProfiles);
     if (chosen === undefined) {
-      setTarget(initialTargetSelection(canCreateProfile, targetProfiles));
       setTargetError("That profile is no longer available. Choose where to import these cookies.");
       setStep({ step: "configure" });
       return;
@@ -227,6 +226,14 @@ function ConfigureStep({
   onCancel,
   onImport,
 }: ConfigureStepProps) {
+  const targetMissing =
+    target.kind === "existing" &&
+    !targetProfiles.some((profile) => profile.id === target.profileId);
+  const targetFeedback =
+    targetError ??
+    (targetMissing
+      ? "That profile is no longer available. Choose where to import these cookies."
+      : undefined);
   return (
     <>
       <DialogHeader>
@@ -279,23 +286,17 @@ function ConfigureStep({
             ))}
           </section>
         </div>
+        {targetFeedback ? (
+          <p role="alert" className="mt-3 text-sm text-destructive">
+            {targetFeedback}
+          </p>
+        ) : null}
       </DialogPanel>
-      {targetError ? (
-        <p role="alert" className="text-sm text-destructive">
-          {targetError}
-        </p>
-      ) : null}
       <DialogFooter>
         <Button variant="outline" onClick={onCancel}>
           Cancel
         </Button>
-        <Button
-          disabled={
-            sourceProfileDirectory === "" ||
-            resolveWizardTarget(target, "pending-new-profile", targetProfiles) === undefined
-          }
-          onClick={onImport}
-        >
+        <Button disabled={sourceProfileDirectory === "" || targetMissing} onClick={onImport}>
           Import
         </Button>
       </DialogFooter>
