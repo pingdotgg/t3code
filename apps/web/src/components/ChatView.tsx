@@ -2883,17 +2883,15 @@ function ChatViewContent(props: ChatViewProps) {
     () =>
       deriveTimelineEntriesFromVisibleTurnItems({
         visibleTurnItems: serverVisibleTurnItems,
-        optimisticMessages: [
-          ...optimisticUserMessages,
-          ...feedbackSubmissions.flatMap((submission) =>
-            submission.status === "interrupted"
-              ? []
-              : [
-                  { ...codexFeedbackMessage(submission), runId: null },
-                  { ...codexFeedbackMessage(submission, "assistant"), runId: null },
-                ],
-          ),
-        ],
+        optimisticMessages: optimisticUserMessages,
+        anchoredMessages: feedbackSubmissions.flatMap((submission) =>
+          submission.status === "interrupted"
+            ? []
+            : [
+                { ...codexFeedbackMessage(submission), runId: null },
+                { ...codexFeedbackMessage(submission, "assistant"), runId: null },
+              ],
+        ),
         attachmentUrlById: timelineAttachmentUrlById,
         ...(serverProjection === null
           ? {}
