@@ -1,4 +1,4 @@
-import { autoAnimate } from "@formkit/auto-animate";
+import { autoAnimate, type AnimationController } from "@formkit/auto-animate";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -2683,6 +2683,31 @@ export default function Sidebar() {
   const threadDndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
+  const activeThreadListAnimationControllerRef = useRef<AnimationController | null>(null);
+  const activeThreadListAnimationFrameRef = useRef<number | null>(null);
+  const pauseActiveThreadListAnimation = useCallback(() => {
+    const frameId = activeThreadListAnimationFrameRef.current;
+    if (frameId !== null) {
+      cancelAnimationFrame(frameId);
+      activeThreadListAnimationFrameRef.current = null;
+    }
+    activeThreadListAnimationControllerRef.current?.disable();
+  }, []);
+  const resumeActiveThreadListAnimationAfterDrop = useCallback(() => {
+    const frameId = activeThreadListAnimationFrameRef.current;
+    if (frameId !== null) cancelAnimationFrame(frameId);
+    activeThreadListAnimationFrameRef.current = requestAnimationFrame(() => {
+      activeThreadListAnimationControllerRef.current?.enable();
+      activeThreadListAnimationFrameRef.current = null;
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      const frameId = activeThreadListAnimationFrameRef.current;
+      if (frameId !== null) cancelAnimationFrame(frameId);
+    },
+    [],
+  );
   const [optimisticPinnedOrder, setOptimisticPinnedOrder] = useState<{
     readonly order: readonly string[];
     /** pinOrderKey per thread as of the drop — the baseline that tells a
@@ -2847,12 +2872,23 @@ export default function Sidebar() {
   );
   const handleActiveThreadDragEnd = useCallback(
     (event: DragEndEvent) => {
-      const activeKey = String(event.active.id);
-      const overKey = event.over === null ? null : String(event.over.id);
-      if (overKey === null || activeKey === overKey) return;
-      reorderThreads(currentActiveThreadOrder, activeThreadOrderAnchorById, activeKey, overKey);
+      try {
+        const activeKey = String(event.active.id);
+        const overKey = event.over === null ? null : String(event.over.id);
+        if (overKey === null || activeKey === overKey) return;
+        reorderThreads(currentActiveThreadOrder, activeThreadOrderAnchorById, activeKey, overKey);
+      } finally {
+        // Keep auto-animate disabled through the committed reorder. dnd-kit
+        // already animates the drag; replaying the move would make it jump.
+        resumeActiveThreadListAnimationAfterDrop();
+      }
     },
-    [activeThreadOrderAnchorById, currentActiveThreadOrder, reorderThreads],
+    [
+      activeThreadOrderAnchorById,
+      currentActiveThreadOrder,
+      reorderThreads,
+      resumeActiveThreadListAnimationAfterDrop,
+    ],
   );
   // One snooze per thread at a time — same double-dispatch guard as settle.
   const snoozingThreadKeysRef = useRef(new Set<string>());
@@ -3469,6 +3505,17 @@ export default function Sidebar() {
     if (!node) return;
     autoAnimate(node, { duration: 150, easing: "ease-out" });
   }, []);
+  const attachActiveThreadListAutoAnimateRef = useCallback((node: HTMLUListElement | null) => {
+    if (node === null) {
+      activeThreadListAnimationControllerRef.current = null;
+      return;
+    }
+    if (activeThreadListAnimationControllerRef.current?.parent === node) return;
+    activeThreadListAnimationControllerRef.current = autoAnimate(node, {
+      duration: 150,
+      easing: "ease-out",
+    });
+  }, []);
 
   // New thread defaults to the project you're in (active thread's project,
   // falling back to the top project) — same resolution the command palette
@@ -3995,6 +4042,8 @@ export default function Sidebar() {
                           sensors={threadDndSensors}
                           collisionDetection={closestCenter}
                           modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+                          onDragStart={pauseActiveThreadListAnimation}
+                          onDragCancel={resumeActiveThreadListAnimationAfterDrop}
                           onDragEnd={handleActiveThreadDragEnd}
                         >
                           <SortableContext
@@ -4002,6 +4051,7 @@ export default function Sidebar() {
                             strategy={verticalListSortingStrategy}
                           >
                             <ul
+                              ref={attachActiveThreadListAutoAnimateRef}
                               role="list"
                               aria-label="Active threads"
                               className="flex flex-col gap-px"
