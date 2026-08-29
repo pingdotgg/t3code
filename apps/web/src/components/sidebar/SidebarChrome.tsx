@@ -51,7 +51,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   return (
     <SidebarHeader
       className={cn(
-        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0",
+        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center overflow-hidden px-3 py-0 md:px-0",
         isElectron && "drag-region",
       )}
     >
@@ -64,17 +64,19 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           backdropVariant && resolveSidebarStageFocusRingOffsetClass(backdropVariant),
         )}
       />
-      <SidebarBrand onBackdrop={backdropVariant !== null} />
-      {pillLabel ? (
-        <Badge
-          className="relative z-10 ml-1 rounded-full px-1.5 text-muted-foreground"
-          data-environment-identification="pill"
-          size="sm"
-          variant="secondary"
-        >
-          {pillLabel}
-        </Badge>
-      ) : null}
+      <div className="relative z-10 flex min-w-0 items-center gap-0.5 md:ml-[var(--workspace-titlebar-content-left)]">
+        <SidebarBrand onBackdrop={backdropVariant !== null} />
+        {pillLabel ? (
+          <Badge
+            className="rounded-full px-1 text-muted-foreground"
+            data-environment-identification="pill"
+            size="sm"
+            variant="secondary"
+          >
+            {pillLabel}
+          </Badge>
+        ) : null}
+      </div>
     </SidebarHeader>
   );
 });
@@ -84,7 +86,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="Go to threads"
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
+        "relative hidden h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
@@ -92,7 +94,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       <T3Wordmark />
       <span
         className={cn(
-          "-translate-y-px truncate text-sm font-medium tracking-tight",
+          "-translate-y-px hidden truncate text-sm font-medium tracking-tight @[15rem]/sidebar-header:inline",
           onBackdrop ? "text-white/70" : "text-muted-foreground",
         )}
       >
