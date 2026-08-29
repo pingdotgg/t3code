@@ -24,6 +24,8 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { it, assert, describe, vi } from "@effect/vitest";
 
+import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -1526,6 +1528,67 @@ routing.layer("ProviderServiceLive routing", (it) => {
           assert.equal(runtimePayload.activeTurnId, `turn-${String(session.threadId)}`);
           assert.equal(runtimePayload.lastError, null);
           assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
+        }
+      }
+    }),
+  );
+
+  it.effect("does not persist running after a concurrent send is interrupted", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const sendStarted = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      routing.codex.sendTurn.mockImplementationOnce(() =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(sendStarted, undefined);
+          yield* Deferred.await(interrupted);
+          return yield* Effect.interrupt;
+        }),
+      );
+      routing.codex.interruptTurn.mockImplementationOnce(() =>
+        Deferred.succeed(interrupted, undefined).pipe(Effect.asVoid),
+      );
+
+      const threadId = asThreadId("thread-interrupted-send-directory");
+      const session = yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const sendExitFiber = yield* provider
+        .sendTurn({
+          threadId: session.threadId,
+          input: "hold this prompt",
+          attachments: [],
+        })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(sendStarted);
+      yield* provider.interruptTurn({ threadId: session.threadId });
+      const sendExit = yield* Fiber.join(sendExitFiber);
+
+      assert.equal(Exit.isFailure(sendExit), true);
+      if (Exit.isFailure(sendExit)) {
+        assert.equal(Cause.hasInterruptsOnly(sendExit.cause), true);
+      }
+      const persisted = yield* runtimeRepository.getByThreadId({
+        threadId: session.threadId,
+      });
+      assert.equal(Option.isSome(persisted), true);
+      if (Option.isSome(persisted)) {
+        // The directory folds both adapter "ready" and "running" into its
+        // runtime "running" state. The payload proves sendTurn did not upsert.
+        assert.equal(persisted.value.status, "running");
+        const payload = persisted.value.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            activeTurnId?: string | null;
+            lastRuntimeEvent?: string | null;
+          };
+          assert.equal(runtimePayload.activeTurnId ?? null, null);
+          assert.notEqual(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
         }
       }
     }),
