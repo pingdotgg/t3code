@@ -7,7 +7,11 @@ import { ActivityIndicator, Animated, Platform, Pressable, View } from "react-na
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
-import { brandTitleOffset, CompactBrandTitle } from "../../components/CompactBrandTitle";
+import {
+  BRAND_HEADER_ITEM_IDENTIFIER,
+  brandTitleOffset,
+  CompactBrandTitle,
+} from "../../components/CompactBrandTitle";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useWorkspaceState } from "../../state/workspace";
 import {
@@ -172,6 +176,7 @@ export function getConnectionAwareBrandHeaderOptions(opts: {
             />
           ),
           hidesSharedBackground: true,
+          identifier: BRAND_HEADER_ITEM_IDENTIFIER,
           type: "custom",
         },
       ],
