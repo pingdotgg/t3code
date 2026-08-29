@@ -26,7 +26,16 @@ vi.mock("../state/session", async (importOriginal) => ({
 vi.mock("../state/entities", () => ({
   useActiveEnvironmentId: () => EnvironmentId.make("env-windows"),
 }));
-vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => vi.fn() }));
+vi.mock("../editorPreferences", () => ({
+  useOpenInPreferredEditor: () => vi.fn(),
+  usePreferredEditor: () => ["vscode", vi.fn()],
+}));
+vi.mock("../remoteOpen", () => ({
+  useRemoteOpenResolution: () => ({
+    isResolved: true,
+    state: { mode: "local-exec", localExecutionUnavailableReason: null },
+  }),
+}));
 vi.mock("~/lib/openPullRequestLink", () => ({ useOpenChangeRequestLink: () => vi.fn() }));
 
 import ChatMarkdown from "./ChatMarkdown";
