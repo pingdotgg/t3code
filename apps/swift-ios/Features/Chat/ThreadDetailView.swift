@@ -1449,17 +1449,18 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                             )
                         }
                         collectionView.layoutIfNeeded()
+                        if shouldFollowBottom {
+                            self.scrollToBottom(
+                                collectionView,
+                                animated: false
+                            )
+                        }
+                        collectionView.layoutIfNeeded()
                         self.timestampReveal.refresh(
                             anchorYsByMessageID: self.visibleTimestampAnchors(
                                 in: collectionView
                             )
                         )
-                        if shouldFollowBottom {
-                            self.scrollToBottom(
-                                collectionView,
-                                animated: !isInitialLoad && lastIDChanged
-                            )
-                        }
                         return
                     }
                     if shouldFollowBottom {
