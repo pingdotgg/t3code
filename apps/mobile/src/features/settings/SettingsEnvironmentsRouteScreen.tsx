@@ -27,6 +27,7 @@ export function SettingsEnvironmentsRouteScreen() {
   const {
     connectedEnvironments,
     onReconnectEnvironment,
+    onRefreshProviders,
     onRemoveEnvironmentPress,
     onUpdateEnvironment,
   } = useRemoteConnections();
@@ -135,6 +136,7 @@ export function SettingsEnvironmentsRouteScreen() {
                   expanded={expandedId === environment.environmentId}
                   onToggle={() => handleToggle(environment.environmentId)}
                   onReconnect={onReconnectEnvironment}
+                  onRefreshProviders={onRefreshProviders}
                   onRemove={onRemoveEnvironmentPress}
                   onUpdate={handleUpdateEnvironment}
                 />
@@ -164,6 +166,7 @@ export function SettingsEnvironmentsRouteScreen() {
         <CloudEnvironmentRows
           connectedCloudEnvironments={connectedCloudEnvironments}
           onReconnectEnvironment={onReconnectEnvironment}
+          onRefreshProviders={onRefreshProviders}
           {...(SHOWCASE_ENABLED
             ? {
                 showcaseAvailableEnvironments: SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,

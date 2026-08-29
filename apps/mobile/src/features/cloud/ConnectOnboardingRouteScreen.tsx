@@ -45,7 +45,8 @@ function ConfiguredConnectOnboardingRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
-  const { connectedEnvironments, onReconnectEnvironment } = useRemoteConnections();
+  const { connectedEnvironments, onReconnectEnvironment, onRefreshProviders } =
+    useRemoteConnections();
   const { refreshRelayEnvironments } = useConnectionController();
   const { connectedCloudEnvironments } = splitEnvironmentSections({
     connectedEnvironments,
@@ -111,6 +112,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
           <CloudEnvironmentRows
             connectedCloudEnvironments={connectedCloudEnvironments}
             onReconnectEnvironment={onReconnectEnvironment}
+            onRefreshProviders={onRefreshProviders}
             showHeader={false}
           />
         ) : (

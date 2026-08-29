@@ -16,6 +16,7 @@ export function ConnectionsRouteScreen() {
   const {
     connectedEnvironments,
     onReconnectEnvironment,
+    onRefreshProviders,
     onRemoveEnvironmentPress,
     onUpdateEnvironment,
   } = useRemoteConnections();
@@ -73,6 +74,7 @@ export function ConnectionsRouteScreen() {
                   expanded={expandedId === environment.environmentId}
                   onToggle={() => handleToggle(environment.environmentId)}
                   onReconnect={onReconnectEnvironment}
+                  onRefreshProviders={onRefreshProviders}
                   onRemove={onRemoveEnvironmentPress}
                   onUpdate={onUpdateEnvironment}
                 />
