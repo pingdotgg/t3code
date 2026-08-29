@@ -380,6 +380,50 @@ describe("V2 session presentation", () => {
     }
   });
 
+  it("keeps failed tool items tool-toned so groups still summarize", () => {
+    const failedCommand = {
+      id: TurnItemId.make("item-failed-command"),
+      threadId: ThreadId.make("thread-1"),
+      runId: RunId.make("run-1"),
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "failed" as const,
+      title: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: DateTime.nowUnsafe(),
+      type: "command_execution" as const,
+      input: "ssh host true",
+      output: "connection refused",
+      exitCode: 255,
+    } satisfies OrchestrationV2TurnItem;
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        {
+          position: 0,
+          visibility: "local" as const,
+          sourceThreadId: ThreadId.make("thread-1"),
+          sourceItemId: failedCommand.id,
+          item: failedCommand,
+        } as never,
+      ],
+      optimisticMessages: [],
+    });
+    const entry = entries[0];
+    expect(entry?.kind).toBe("work");
+    if (entry?.kind === "work") {
+      // An exit-code failure is still an ordinary tool row: the failed
+      // lifecycle status carries the marker, and an "error" tone here would
+      // knock the whole group out of the "Ran N commands" summary.
+      expect(entry.entry.tone).toBe("tool");
+      expect(entry.entry.toolLifecycleStatus).toBe("failed");
+    }
+  });
+
   it("waits for a dispatched turn item before adding queued input to the timeline", () => {
     const projection = makeThreadProjectionFixture();
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");

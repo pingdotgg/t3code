@@ -475,7 +475,6 @@ function projectedWorkEntryStatus(
 
 function projectedWorkEntryTone(item: OrchestrationV2TurnItem): WorkLogEntry["tone"] {
   if (item.type === "error") return "info";
-  if (item.status === "failed") return "error";
   if (item.type === "reasoning") return "thinking";
   switch (item.type) {
     case "command_execution":

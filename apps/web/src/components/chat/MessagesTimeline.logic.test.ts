@@ -1613,6 +1613,53 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.at(-1)).toMatchObject({ kind: "thinking" });
   });
 
+  it("summarizes a settled tool group even when a command in it failed", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "work-entry-ok",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:01Z",
+          entry: {
+            id: "work-ok",
+            createdAt: "2026-01-01T00:00:01Z",
+            label: "Ran command",
+            command: "true",
+            tone: "tool" as const,
+            itemType: "command_execution" as const,
+            toolLifecycleStatus: "completed" as const,
+          },
+        },
+        {
+          id: "work-entry-failed",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:02Z",
+          entry: {
+            id: "work-failed",
+            createdAt: "2026-01-01T00:00:02Z",
+            label: "Ran command",
+            command: "ssh host true",
+            detail: "connection refused",
+            tone: "tool" as const,
+            itemType: "command_execution" as const,
+            toolLifecycleStatus: "failed" as const,
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kind: "work-toggle",
+      summary: "Ran 2 commands",
+      hasFailure: true,
+    });
+  });
+
   it("collapses contiguous settled tool entries behind a summary toggle", () => {
     const timelineEntries = [
       {
