@@ -943,7 +943,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                     <Button
                       size="icon-sm"
                       variant="ghost-muted"
-                      disabled={disabled || !environmentsReady || importInFlight}
+                      disabled={disabled || importInFlight}
                       aria-label={`${profile.name} options`}
                     />
                   }
