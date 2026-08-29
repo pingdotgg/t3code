@@ -4713,6 +4713,7 @@ function ChatViewContent(props: ChatViewProps) {
       return null;
     }
     const working = activeBackgroundLiveness === "working";
+    const goal = activeBackgroundLiveness === "goal";
     const liveCount = agentPanelModel.liveCount;
     return {
       id: `background-liveness:${activeThread.id}`,
@@ -4727,7 +4728,9 @@ function ChatViewContent(props: ChatViewProps) {
         ? liveCount > 0
           ? `${liveCount} ${liveCount === 1 ? "agent" : "agents"} working`
           : "Background work"
-        : "Monitoring",
+        : goal
+          ? "Goal active"
+          : "Monitoring",
       actions: (
         <Button
           size="xs"

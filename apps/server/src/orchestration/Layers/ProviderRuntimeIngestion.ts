@@ -1923,6 +1923,22 @@ const make = Effect.gen(function* () {
         }
       }
 
+      if (event.type === "thread.goal.updated") {
+        threadBackgroundLiveness.recordGoalLiveness({
+          threadId: thread.id,
+          goalId: "provider-goal",
+          status: event.payload.status,
+        });
+      }
+
+      if (event.type === "thread.goal.cleared") {
+        threadBackgroundLiveness.recordGoalLiveness({
+          threadId: thread.id,
+          goalId: "provider-goal",
+          status: "complete",
+        });
+      }
+
       if (event.type === "turn.diff.updated") {
         const turnId = toTurnId(event.turnId);
         const checkpointContext = turnId

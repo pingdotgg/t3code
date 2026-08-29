@@ -1021,6 +1021,42 @@ function mapToRuntimeEvents(
     ];
   }
 
+  if (event.method === "thread/goal/updated") {
+    const payload = readPayload(EffectCodexSchema.V2ThreadGoalUpdatedNotification, event.payload);
+    const goal = payload?.goal;
+    if (!goal || !trimText(goal.objective)) {
+      return [];
+    }
+    return [
+      {
+        type: "thread.goal.updated",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {
+          objective: trimText(goal.objective)!,
+          status: goal.status,
+          ...(goal.tokenBudget !== undefined && goal.tokenBudget !== null
+            ? { tokenBudget: Math.max(0, goal.tokenBudget) }
+            : {}),
+          tokensUsed: Math.max(0, goal.tokensUsed),
+          timeUsedSeconds: Math.max(0, goal.timeUsedSeconds),
+        },
+      },
+    ];
+  }
+
+  if (event.method === "thread/goal/cleared") {
+    if (!readPayload(EffectCodexSchema.V2ThreadGoalClearedNotification, event.payload)) {
+      return [];
+    }
+    return [
+      {
+        type: "thread.goal.cleared",
+        ...runtimeEventBase(event, canonicalThreadId),
+        payload: {},
+      },
+    ];
+  }
+
   if (event.method === "thread/tokenUsage/updated") {
     const payload = readPayload(
       EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification,

@@ -20,11 +20,12 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-export type ThreadBackgroundLiveness = "working" | "monitoring" | null;
+export type ThreadBackgroundLiveness = "working" | "monitoring" | "goal" | null;
 
 interface ThreadLivenessState {
   readonly agents: Set<string>;
   readonly monitors: Set<string>;
+  readonly goals: Set<string>;
 }
 
 // Classification sets are the shared contracts copies (MONITOR_TASK_TYPES:
@@ -64,10 +65,16 @@ export class ThreadBackgroundLivenessService extends Context.Service<
     /** Session death orphans all of a thread's background work. */
     readonly clearThreadLiveness: (threadId: string) => void;
 
-    /**
-     * Two-state vocabulary by design: any live agent work is "working";
-     * "monitoring" only when watch loops are the ONLY live work.
-     */
+    /** Record a durable provider goal. Goals are not watch loops: they have
+     * their own calm sidebar state and never invent a next-run time. */
+    readonly recordGoalLiveness: (input: {
+      readonly threadId: string;
+      readonly goalId: string;
+      readonly status: string;
+    }) => void;
+
+    /** Any live agent work is "working"; monitor tasks outrank durable goals,
+     * and "monitoring" only describes actual watch loops. */
     readonly getThreadBackgroundLiveness: (threadId: string) => ThreadBackgroundLiveness;
   }
 >()("t3/orchestration/ThreadBackgroundLiveness/ThreadBackgroundLivenessService") {}
@@ -80,7 +87,11 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
     if (existing) {
       return existing;
     }
-    const created: ThreadLivenessState = { agents: new Set(), monitors: new Set() };
+    const created: ThreadLivenessState = {
+      agents: new Set(),
+      monitors: new Set(),
+      goals: new Set(),
+    };
     stateByThreadId.set(threadId, created);
     return created;
   };
@@ -96,7 +107,8 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
     }
     state.agents.delete(taskId);
     state.monitors.delete(taskId);
-    if (state.agents.size === 0 && state.monitors.size === 0) {
+    state.goals.delete(taskId);
+    if (state.agents.size === 0 && state.monitors.size === 0 && state.goals.size === 0) {
       stateByThreadId.delete(threadId);
     }
   };
@@ -153,6 +165,14 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
       stateByThreadId.delete(threadId);
     },
 
+    recordGoalLiveness: ({ threadId, goalId, status }) => {
+      drop(threadId, goalId);
+      if (status !== "active") {
+        return;
+      }
+      stateFor(threadId).goals.add(goalId);
+    },
+
     getThreadBackgroundLiveness: (threadId) => {
       const state = stateByThreadId.get(threadId);
       if (!state) {
@@ -163,6 +183,9 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
       }
       if (state.monitors.size > 0) {
         return "monitoring";
+      }
+      if (state.goals.size > 0) {
+        return "goal";
       }
       return null;
     },

@@ -739,6 +739,23 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("working");
   });
 
+  it("reports an active goal after live work, but before ready", () => {
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        session: null,
+        backgroundLiveness: "goal",
+      }),
+    ).toBe("goal");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        session,
+        backgroundLiveness: "goal",
+      }),
+    ).toBe("working");
+  });
+
   it("reports failed only while the session status is error", () => {
     expect(
       resolveSidebarThreadStatus({

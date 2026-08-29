@@ -95,6 +95,50 @@ describe("ThreadBackgroundLiveness", () => {
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
   });
 
+  it("reports an active provider goal only after live agent and monitor work settle", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-goal";
+    liveness.recordGoalLiveness({ threadId, goalId: "codex-goal", status: "active" });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("goal");
+
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "watch",
+      taskType: "monitor",
+      status: "running",
+      kind: "started",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("monitoring");
+
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "worker",
+      taskType: "subagent",
+      status: "running",
+      kind: "started",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "worker",
+      taskType: "subagent",
+      status: "completed",
+      kind: "completed",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "watch",
+      taskType: "monitor",
+      status: "completed",
+      kind: "completed",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("goal");
+
+    liveness.recordGoalLiveness({ threadId, goalId: "codex-goal", status: "complete" });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+  });
+
   it("terminal rows without a taskType still clear monitor entries", () => {
     const liveness = ThreadBackgroundLiveness.make();
     const threadId = "t-live-2";

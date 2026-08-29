@@ -129,6 +129,7 @@ export interface ThreadStatusPill {
   label:
     | "Working"
     | "Monitoring"
+    | "Goal active"
     | "Connecting"
     | "Completed"
     | "Pending Approval"
@@ -149,6 +150,7 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   Connecting: 4,
   "Plan Ready": 3,
   Monitoring: 2,
+  "Goal active": 2,
   Completed: 1,
 };
 
@@ -472,6 +474,7 @@ export type SidebarThreadStatus =
   | "input"
   | "working"
   | "monitoring"
+  | "goal"
   | "failed"
   | "ready";
 
@@ -502,6 +505,9 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   }
   if (thread.backgroundLiveness === "monitoring") {
     return "monitoring";
+  }
+  if (thread.backgroundLiveness === "goal") {
+    return "goal";
   }
   return "ready";
 }
@@ -761,6 +767,15 @@ export function resolveThreadStatusPill(input: {
   if (thread.backgroundLiveness === "monitoring") {
     return {
       label: "Monitoring",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: false,
+    };
+  }
+
+  if (thread.backgroundLiveness === "goal") {
+    return {
+      label: "Goal active",
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: false,

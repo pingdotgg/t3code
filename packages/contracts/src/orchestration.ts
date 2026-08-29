@@ -547,7 +547,9 @@ export const OrchestrationThreadShell = Schema.Struct({
    * subagents/workflows run, "monitoring" when watch loops are the only
    * live work. Optional so old servers/clients interop; absent = none.
    */
-  backgroundLiveness: Schema.optional(Schema.NullOr(Schema.Literals(["working", "monitoring"]))),
+  backgroundLiveness: Schema.optional(
+    Schema.NullOr(Schema.Literals(["working", "monitoring", "goal"])),
+  ),
   /**
    * Current plan step while a turn runs, for the Working indicators
    * (sidebar row, in-chat working line). Cleared when the turn settles —

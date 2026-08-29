@@ -851,7 +851,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // working threads aren't your problem yet) — only the colored status label
   // stands out.
   const isInFlight =
-    status === "working" || status === "monitoring" || status === "approval" || status === "input";
+    status === "working" ||
+    status === "monitoring" ||
+    status === "goal" ||
+    status === "approval" ||
+    status === "input";
   const shouldRecede =
     (status === "ready" || isInFlight) && !isUnread && !isWoke && !props.isActive && !isSelected;
   // Status hues follow the system-wide convention set by sidebar v1 and the
@@ -877,6 +881,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             icon: null,
             className: "text-sky-600 dark:text-sky-400",
           }
+        : status === "goal"
+          ? {
+              label: "Goal active",
+              icon: null,
+              className: "text-sky-600 dark:text-sky-400",
+            }
         : status === "approval"
           ? {
               label: "Approval",

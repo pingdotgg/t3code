@@ -25,6 +25,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -2256,6 +2257,23 @@ export const makeCodexSessionRuntime = (
       } satisfies ProviderSession;
       yield* Ref.set(sessionRef, session);
       yield* emitSessionEvent("session/ready", "Codex App Server session ready.");
+      // Goals are durable Codex thread state, unlike a live turn. Hydrate the
+      // shell after reconnect so a settled thread does not lose its truthful
+      // Goal active indication until the next goal notification arrives.
+      const goalResponse = yield* client
+        .request("thread/goal/get", { threadId: providerThreadId })
+        .pipe(Effect.option);
+      if (Option.isSome(goalResponse) && goalResponse.value.goal) {
+        yield* emitEvent({
+          kind: "notification",
+          threadId: options.threadId,
+          method: "thread/goal/updated",
+          payload: {
+            threadId: providerThreadId,
+            goal: goalResponse.value.goal,
+          },
+        });
+      }
       return session;
     });
 
