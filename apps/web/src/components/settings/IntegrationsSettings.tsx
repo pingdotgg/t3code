@@ -988,6 +988,16 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                       Remove profile and data
                     </MenuItem>
                   )}
+                  {!removalAvailable ? (
+                    <>
+                      <MenuSeparator />
+                      <MenuItem disabled>
+                        {environmentsReady
+                          ? "Connect to an environment to clear profile data"
+                          : "Checking environments…"}
+                      </MenuItem>
+                    </>
+                  ) : null}
                 </MenuPopup>
               </Menu>
             </div>
