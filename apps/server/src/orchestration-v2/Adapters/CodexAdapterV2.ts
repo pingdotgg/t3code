@@ -113,6 +113,21 @@ import {
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
+
+export function codexProviderTurnTokenUsage(
+  tokenUsage: CodexSchema.V2ThreadTokenUsageUpdatedNotification["tokenUsage"],
+  updatedAt: string,
+) {
+  return {
+    usedTokens: Math.max(0, tokenUsage.last.totalTokens),
+    maxTokens: tokenUsage.modelContextWindow ?? null,
+    inputTokens: Math.max(0, tokenUsage.last.inputTokens),
+    cachedInputTokens: Math.max(0, tokenUsage.last.cachedInputTokens),
+    outputTokens: Math.max(0, tokenUsage.last.outputTokens),
+    reasoningOutputTokens: Math.max(0, tokenUsage.last.reasoningOutputTokens),
+    updatedAt,
+  };
+}
 const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
 const CODEX_ASSISTANT_DELTA_FLUSH_INTERVAL_MS = 50;
 const CodexBackgroundTerminalTerminateResponse = Schema.Struct({
@@ -3255,18 +3270,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 status: "running",
                 startedAt: context.startedAt,
                 completedAt: null,
-                tokenUsage: {
-                  usedTokens: Math.max(0, payload.tokenUsage.total.totalTokens),
-                  maxTokens: payload.tokenUsage.modelContextWindow ?? null,
-                  inputTokens: Math.max(0, payload.tokenUsage.total.inputTokens),
-                  cachedInputTokens: Math.max(0, payload.tokenUsage.total.cachedInputTokens),
-                  outputTokens: Math.max(0, payload.tokenUsage.total.outputTokens),
-                  reasoningOutputTokens: Math.max(
-                    0,
-                    payload.tokenUsage.total.reasoningOutputTokens,
-                  ),
-                  updatedAt: DateTime.formatIso(now),
-                },
+                tokenUsage: codexProviderTurnTokenUsage(
+                  payload.tokenUsage,
+                  DateTime.formatIso(now),
+                ),
               },
             });
           }).pipe(Effect.orDie),
