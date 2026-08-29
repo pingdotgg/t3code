@@ -343,8 +343,10 @@ const publishThemeFile = Effect.fn(function* (input: {
 
   const destinationPath = path.join(input.themesDir, `${themeId}.json`);
   // Neither ends in `.json`, so the watcher never mistakes them for themes.
+  // The staging name carries the pid, so concurrent publishers of one id
+  // cannot unlink each other's half-written stage.
   const backupPath = `${destinationPath}.rollback`;
-  const stagingPath = `${destinationPath}.staging`;
+  const stagingPath = `${destinationPath}.staging-${process.pid}`;
   yield* fs
     .makeDirectory(input.themesDir, { recursive: true })
     .pipe(Effect.mapError((cause) => new ThemePublishError({ themesDir: input.themesDir, cause })));
@@ -358,7 +360,7 @@ const publishThemeFile = Effect.fn(function* (input: {
   // predictable name is never followed or written through. Written verbatim:
   // appending so much as a newline could push a file at the size limit past
   // it and have the watcher skip what was just accepted.
-  yield* Effect.try({
+  const stagedIno = yield* Effect.try({
     try: () => {
       try {
         NodeFS.unlinkSync(stagingPath);
@@ -372,6 +374,9 @@ const publishThemeFile = Effect.fn(function* (input: {
       );
       try {
         NodeFS.writeFileSync(fd, raw);
+        // Rename preserves the inode, so this identifies our published file
+        // at the destination for as long as it is actually ours.
+        return NodeFS.fstatSync(fd).ino;
       } finally {
         NodeFS.closeSync(fd);
       }
@@ -406,7 +411,11 @@ const publishThemeFile = Effect.fn(function* (input: {
     }
     try {
       if (hadPrevious) NodeFS.renameSync(backupPath, destinationPath);
-      else NodeFS.unlinkSync(destinationPath);
+      // Removed only while it is still the exact file this process put
+      // there; a concurrent publisher's file is never unlinked.
+      else if (NodeFS.lstatSync(destinationPath).ino === stagedIno) {
+        NodeFS.unlinkSync(destinationPath);
+      }
     } catch {
       // Best effort; the failure that triggered the revert still surfaces.
     }

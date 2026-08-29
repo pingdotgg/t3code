@@ -97,8 +97,10 @@ describe("t3 theme", () => {
       assert.equal(NodeFS.existsSync(published), true);
       assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
       // No rollback or staging residue after a successful set.
-      assert.equal(NodeFS.existsSync(`${published}.rollback`), false);
-      assert.equal(NodeFS.existsSync(`${published}.staging`), false);
+      const residue = NodeFS.readdirSync(NodePath.dirname(published)).filter(
+        (entry) => !entry.endsWith(".json"),
+      );
+      assert.deepEqual(residue, []);
     }),
   );
 
@@ -210,7 +212,7 @@ describe("t3 theme", () => {
       NodeFS.mkdirSync(themesDir, { recursive: true });
       const victim = NodePath.join(baseDir, "victim.txt");
       NodeFS.writeFileSync(victim, "precious");
-      NodeFS.symlinkSync(victim, NodePath.join(themesDir, "nightfall.json.staging"));
+      NodeFS.symlinkSync(victim, NodePath.join(themesDir, `nightfall.json.staging-${process.pid}`));
       const themeFile = NodePath.join(baseDir, "nightfall.json");
       NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
 
