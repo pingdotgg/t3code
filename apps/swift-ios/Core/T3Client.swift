@@ -557,8 +557,13 @@ public actor T3Client {
     }
 
     @discardableResult
-    public func regenerateTitle(threadID: String) async throws -> DispatchResult {
-        try await dispatch(OrchestrationCommands.regenerateTitle(threadID: threadID))
+    public func regenerateTitle(
+        threadID: String,
+        commandID: String = UUID().uuidString
+    ) async throws -> DispatchResult {
+        try await dispatch(
+            OrchestrationCommands.regenerateTitle(threadID: threadID, commandID: commandID)
+        )
     }
 
     @discardableResult

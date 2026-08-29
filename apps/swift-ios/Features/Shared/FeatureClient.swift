@@ -62,7 +62,10 @@ public protocol FeatureClient: AnyObject {
         refresh: Bool
     ) async throws -> [FeatureWorkspaceBranch]
     func renameThread(id: String, title: String) async throws
-    func regenerateThreadTitle(id: String) async throws -> FeatureTitleRegenerationDispatchReceipt
+    /// `requestID` is the command identity of the dispatch; the server echoes
+    /// it on the thread's `titleRegeneration`, letting the caller distinguish
+    /// its own request from another client's.
+    func regenerateThreadTitle(id: String, requestID: String) async throws -> FeatureTitleRegenerationDispatchReceipt
     func setThreadArchived(id: String, archived: Bool) async throws
     func setThreadSettled(id: String, settled: Bool) async throws
     func setThreadSnoozed(id: String, until: Date?) async throws
@@ -204,7 +207,7 @@ public extension FeatureClient {
         try await initialSnapshot()
     }
 
-    func regenerateThreadTitle(id _: String) async throws -> FeatureTitleRegenerationDispatchReceipt {
+    func regenerateThreadTitle(id _: String, requestID _: String) async throws -> FeatureTitleRegenerationDispatchReceipt {
         throw FeatureCapabilityUnavailable("Thread title regeneration")
     }
 

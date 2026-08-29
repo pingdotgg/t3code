@@ -207,10 +207,17 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 let retained = Set(currentIdentifiers)
                 let selectionChanged = previousSelection != selectedThreadID
                     ? Set([previousSelection, selectedThreadID].compactMap { $0 }) : []
+                let regenerationChanged = previousRegeneratingTitleThreadIDs
+                    .symmetricDifference(regeneratingTitleThreadIDs)
                 snapshot.reconfigureItems(newIdentifiers.filter { identifier in
-                    retained.contains(identifier)
-                        && (previousItems[identifier] != itemsByID[identifier]
-                            || identifier.threadID.map(selectionChanged.contains) == true)
+                    Self.needsReconfiguration(
+                        identifier: identifier,
+                        retained: retained,
+                        previousItems: previousItems,
+                        itemsByID: itemsByID,
+                        selectionChanged: selectionChanged,
+                        regenerationChanged: regenerationChanged
+                    )
                 })
                 let shouldAnimate = !resolvedSwipeCompletions.isEmpty
                     && !currentIdentifiers.isEmpty
@@ -233,6 +240,24 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         func invalidateTimer() {
             timer?.invalidate()
             timer = nil
+        }
+
+        /// Rows retained across a membership or order change still need fresh
+        /// content when their own item, selection, or title-regeneration state
+        /// changed in the same update; regeneration state lives outside
+        /// `HomeCollectionItem`, so it is compared separately.
+        nonisolated static func needsReconfiguration(
+            identifier: HomeCollectionItem.ID,
+            retained: Set<HomeCollectionItem.ID>,
+            previousItems: [HomeCollectionItem.ID: HomeCollectionItem],
+            itemsByID: [HomeCollectionItem.ID: HomeCollectionItem],
+            selectionChanged: Set<String>,
+            regenerationChanged: Set<String>
+        ) -> Bool {
+            retained.contains(identifier)
+                && (previousItems[identifier] != itemsByID[identifier]
+                    || identifier.threadID.map(selectionChanged.contains) == true
+                    || identifier.threadID.map(regenerationChanged.contains) == true)
         }
 
         func cancelPendingSwipeActions() {
@@ -1049,7 +1074,7 @@ private final class HomeCollectionCell: UICollectionViewListCell {
     }
 }
 
-private enum HomeShelf: String, Hashable {
+enum HomeShelf: String, Hashable {
     case active
     case snoozed
     case settled
@@ -1060,7 +1085,7 @@ private enum HomeShelf: String, Hashable {
     }
 }
 
-private enum HomeCollectionItem: Equatable {
+enum HomeCollectionItem: Equatable {
     enum ID: Hashable {
         case thread(String)
         case shelfHeader(HomeShelf)

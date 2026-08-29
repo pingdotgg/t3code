@@ -1515,12 +1515,16 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func regenerateThreadTitle(
-        id: String
+        id: String,
+        requestID: String
     ) async throws -> FeatureTitleRegenerationDispatchReceipt {
         let route = try threadRoute(for: id)
         let previousThread = cachedThread(id: route.uiID)
         let previousTitle = previousThread?.title
-        let dispatch = try await route.client.regenerateTitle(threadID: route.wireID)
+        let dispatch = try await route.client.regenerateTitle(
+            threadID: route.wireID,
+            commandID: requestID
+        )
         do {
             try await refresh(
                 client: route.client,
@@ -1528,6 +1532,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             )
             return Self.titleRegenerationDispatchReceipt(
                 previousTitle: previousTitle,
+                dispatchRequestID: requestID,
                 dispatchSequence: dispatch.sequence,
                 refreshedSequence: shellsByEnvironmentID[route.environmentID]?.snapshotSequence,
                 refreshedThread: cachedThread(id: route.uiID)
@@ -1539,6 +1544,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     static func titleRegenerationDispatchReceipt(
         previousTitle: String?,
+        dispatchRequestID: String,
         dispatchSequence: Int,
         refreshedSequence: Int?,
         refreshedThread: FeatureThread?
@@ -1547,7 +1553,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
               let refreshedSequence,
               refreshedSequence >= dispatchSequence,
               let refreshedThread else { return .refreshUnavailable }
-        if refreshedThread.isRegeneratingTitle == true { return .regenerating }
+        if refreshedThread.isRegeneratingTitle == true {
+            // A different request id means another client's regeneration
+            // replaced this dispatch; the server will never apply ours.
+            return refreshedThread.titleRegenerationRequestID == dispatchRequestID
+                ? .regenerating
+                : .failed
+        }
         guard refreshedThread.title == previousTitle else {
             return .completed(title: refreshedThread.title)
         }
@@ -3870,6 +3882,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let backgroundWorkIsActive = backgroundLiveness == .working
         let sessionIsLive = shellThread.session?.status == "starting"
             || shellThread.session?.status == "running"
+        // The shell is the authority for title metadata; the cached detail
+        // keeps whatever the last detail fetch saw. Without this copy every
+        // shell snapshot would republish a stale pre-regeneration title and
+        // revert a freshly regenerated one.
+        detail.thread.title = shellThread.title
+        detail.thread.isRegeneratingTitle = shellThread.titleRegeneration != nil
+        detail.thread.titleRegenerationRequestID = shellThread.titleRegeneration?.requestId
         detail.thread.state = Self.resolveThreadState(
             latestTurn: shellThread.latestTurn,
             session: shellThread.session,
@@ -4296,6 +4315,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
             supportsPullRequestLinking: environment.descriptor?.capabilities.threadPullRequestLinking,
             isRegeneratingTitle: thread.titleRegeneration != nil,
+            titleRegenerationRequestID: thread.titleRegeneration?.requestId,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session
@@ -4378,6 +4398,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
             supportsPullRequestLinking: environment.descriptor?.capabilities.threadPullRequestLinking,
             isRegeneratingTitle: thread.titleRegeneration != nil,
+            titleRegenerationRequestID: thread.titleRegeneration?.requestId,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session

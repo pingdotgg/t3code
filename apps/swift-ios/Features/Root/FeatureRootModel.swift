@@ -34,6 +34,7 @@ private struct FeatureTitleRegenerationTracker {
     private struct Pending {
         let projectID: String
         let environmentID: String?
+        let requestID: String
         let originalTitle: String
         var observedServerRequest = false
     }
@@ -45,13 +46,14 @@ private struct FeatureTitleRegenerationTracker {
         Set(pendingByThreadID.compactMap { $0.value.observedServerRequest ? $0.key : nil })
     }
 
-    mutating func begin(_ thread: FeatureThread) -> Bool {
+    mutating func begin(_ thread: FeatureThread, requestID: String) -> Bool {
         guard pendingByThreadID[thread.id] == nil, thread.isRegeneratingTitle != true else {
             return false
         }
         pendingByThreadID[thread.id] = Pending(
             projectID: thread.projectID,
             environmentID: thread.environmentID,
+            requestID: requestID,
             originalTitle: thread.title
         )
         return true
@@ -99,14 +101,21 @@ private struct FeatureTitleRegenerationTracker {
             pendingByThreadID.removeValue(forKey: thread.id)
             return .cancelled
         }
-        guard thread.title == pending.originalTitle else {
-            pendingByThreadID.removeValue(forKey: thread.id)
-            return .completed(title: thread.title)
-        }
         if thread.isRegeneratingTitle == true {
+            guard thread.titleRegenerationRequestID == pending.requestID else {
+                // Another client's request replaced this dispatch server-side;
+                // ours can no longer produce a title, so stop tracking it
+                // without claiming an outcome.
+                pendingByThreadID.removeValue(forKey: thread.id)
+                return .cancelled
+            }
             pending.observedServerRequest = true
             pendingByThreadID[thread.id] = pending
             return nil
+        }
+        guard thread.title == pending.originalTitle else {
+            pendingByThreadID.removeValue(forKey: thread.id)
+            return .completed(title: thread.title)
         }
         guard pending.observedServerRequest else {
             return nil
@@ -204,6 +213,10 @@ public final class FeatureRootModel {
     private var outboxRetryAttempt = 0
     private var outboxGeneration: UInt64 = 0
     private var titleRegenerationTracker = FeatureTitleRegenerationTracker()
+    /// In-flight regeneration dispatches, so a rename can wait for the server
+    /// to register the request before it sends the title that cancels it.
+    private var titleRegenerationTasks: [String: Task<Void, Never>] = [:]
+    private var titleRegenerationTaskGenerations: [String: UInt64] = [:]
     private var titleRegenerationRecoveryTasks: [String: Task<Void, Never>] = [:]
     private let titleRegenerationRefreshTimeout: Duration
     private let accessibilityAnnouncer: @MainActor (String) -> Void
@@ -538,13 +551,22 @@ public final class FeatureRootModel {
     }
 
     public func renameThread(_ id: String, title: String) async {
-        titleRegenerationTracker.cancel(threadID: id)
-        cancelTitleRegenerationRecovery(threadID: id)
+        // The server cancels a pending regeneration when a rename lands, but
+        // only for requests it has already registered. A rename dispatched
+        // while the regeneration command is still in flight can be processed
+        // first and leave the regeneration pending behind the user's manual
+        // title. Let the dispatch settle so the server-side cancellation
+        // always engages.
+        await titleRegenerationTasks[id]?.value
         let environment = currentEnvironmentIdentity
-        await perform {
+        let renamed = await perform {
             try await client.renameThread(id: id, title: title)
             guard currentEnvironmentIdentity == environment else { return }
             mutateThread(id: id) { $0.title = title }
+        }
+        if renamed {
+            titleRegenerationTracker.cancel(threadID: id)
+            cancelTitleRegenerationRecovery(threadID: id)
         }
     }
 
@@ -557,27 +579,58 @@ public final class FeatureRootModel {
             errorMessage = "Title regeneration is not available for this thread."
             return
         }
-        guard titleRegenerationTracker.begin(thread) else { return }
+        let requestID = UUID().uuidString
+        guard titleRegenerationTracker.begin(thread, requestID: requestID) else { return }
         cancelTitleRegenerationRecovery(threadID: id)
         accessibilityAnnouncer("Regenerating title for \(thread.title).")
 
-        do {
-            let receipt = try await client.regenerateThreadTitle(id: id)
-            if let resolution = titleRegenerationTracker.finishDispatch(
+        let generation = titleRegenerationTaskGenerations[id, default: 0] &+ 1
+        titleRegenerationTaskGenerations[id] = generation
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.dispatchTitleRegeneration(
                 threadID: id,
+                threadTitle: thread.title,
+                requestID: requestID
+            )
+        }
+        titleRegenerationTasks[id] = task
+        await task.value
+        if titleRegenerationTaskGenerations[id] == generation {
+            titleRegenerationTasks[id] = nil
+        }
+    }
+
+    private func dispatchTitleRegeneration(
+        threadID: String,
+        threadTitle: String,
+        requestID: String
+    ) async {
+        do {
+            let receipt = try await client.regenerateThreadTitle(id: threadID, requestID: requestID)
+            if let resolution = titleRegenerationTracker.finishDispatch(
+                threadID: threadID,
                 receipt: receipt
             ) {
-                resolveTitleRegeneration(resolution, threadID: id)
+                resolveTitleRegeneration(resolution, threadID: threadID)
             } else if receipt == .refreshUnavailable,
-                      titleRegenerationTracker.threadIDs.contains(id) {
-                scheduleTitleRegenerationRecovery(threadID: id)
+                      titleRegenerationTracker.threadIDs.contains(threadID) {
+                scheduleTitleRegenerationRecovery(threadID: threadID)
                 synchronizeTitleRegenerationRecoveryTasks()
             }
         } catch {
-            titleRegenerationTracker.cancel(threadID: id)
-            cancelTitleRegenerationRecovery(threadID: id)
-            if !Self.isBenignCancellation(error) {
-                showTitleRegenerationFailure(title: thread.title)
+            if Self.isBenignCancellation(error) {
+                titleRegenerationTracker.cancel(threadID: threadID)
+                cancelTitleRegenerationRecovery(threadID: threadID)
+            } else if Self.mayHaveReachedServer(error) {
+                // The dispatch may have crossed; keep tracking and let shell
+                // observation or the bounded recovery timeout resolve it.
+                scheduleTitleRegenerationRecovery(threadID: threadID)
+                synchronizeTitleRegenerationRecoveryTasks()
+            } else {
+                titleRegenerationTracker.cancel(threadID: threadID)
+                cancelTitleRegenerationRecovery(threadID: threadID)
+                showTitleRegenerationFailure(title: threadTitle)
             }
         }
     }
@@ -1038,6 +1091,25 @@ public final class FeatureRootModel {
         return message == "cancelled" || message == "canceled"
     }
 
+    /// Whether a failed dispatch may still have been processed server-side.
+    /// Timeouts and dropped transports leave the request's fate unknown, so
+    /// pending regeneration state must survive them instead of freeing the
+    /// row for a duplicate request.
+    private static func mayHaveReachedServer(_ error: any Error) -> Bool {
+        if let rpcError = error as? RPCError {
+            switch rpcError {
+            case .responseTimedOut, .disconnected:
+                return true
+            case .connectionUnavailable, .remote, .protocolViolation:
+                return false
+            }
+        }
+        if error is URLError { return true }
+        let message = error.localizedDescription.lowercased()
+        return ["timed out", "timeout", "connection", "network", "socket", "offline"]
+            .contains { message.contains($0) }
+    }
+
     private var currentEnvironmentIdentity: String {
         snapshot.environments
             .sorted { $0.id < $1.id }
@@ -1063,16 +1135,38 @@ public final class FeatureRootModel {
             removeThread(id: id)
             removeDetail(id: id)
         case let .detail(value):
+            let value = deferringToShellMetadata(value)
             pendingThreadsByID.removeValue(forKey: value.thread.id)
             store(value)
             upsert(value.thread, reconcilesTitleRegeneration: false)
         case let .detailDelta(value, delta):
+            let value = deferringToShellMetadata(value)
             pendingThreadsByID.removeValue(forKey: value.thread.id)
             store(value, delta: delta)
             upsert(value.thread, reconcilesTitleRegeneration: false)
         case let .failure(message):
             errorMessage = message
         }
+    }
+
+    /// Detail frames carry thread metadata as of their composition, while the
+    /// shell stream is the authority for it. A frame fetched before a title
+    /// regeneration or rename landed can arrive after the shell already
+    /// published the newer title; applying it wholesale would revert the row.
+    /// Keep the shell's title and regeneration state whenever it is at least
+    /// as recent as the frame's.
+    private func deferringToShellMetadata(_ detail: FeatureThreadDetail) -> FeatureThreadDetail {
+        guard let shell = snapshot.threads.first(where: { $0.id == detail.thread.id }),
+              shell.updatedAt >= detail.thread.updatedAt,
+              shell.title != detail.thread.title
+              || shell.isRegeneratingTitle != detail.thread.isRegeneratingTitle
+              || shell.titleRegenerationRequestID != detail.thread.titleRegenerationRequestID
+        else { return detail }
+        var detail = detail
+        detail.thread.title = shell.title
+        detail.thread.isRegeneratingTitle = shell.isRegeneratingTitle
+        detail.thread.titleRegenerationRequestID = shell.titleRegenerationRequestID
+        return detail
     }
 
     private func upsert(

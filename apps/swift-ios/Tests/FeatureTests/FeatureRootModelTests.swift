@@ -67,6 +67,7 @@ struct FeatureRootModelTests {
         await request.value
         var pending = first
         pending.isRegeneratingTitle = true
+        pending.titleRegenerationRequestID = client.regeneratedTitleRequestIDs[0]
         client.snapshot = FeatureSnapshot(threads: [pending, second])
         await model.reload()
 
@@ -91,6 +92,7 @@ struct FeatureRootModelTests {
         #expect(
             NativeFeatureClient.titleRegenerationDispatchReceipt(
                 previousTitle: unchanged.title,
+                dispatchRequestID: "dispatch-request",
                 dispatchSequence: 12,
                 refreshedSequence: 11,
                 refreshedThread: unchanged
@@ -99,13 +101,30 @@ struct FeatureRootModelTests {
 
         var pending = unchanged
         pending.isRegeneratingTitle = true
+        pending.titleRegenerationRequestID = "dispatch-request"
         #expect(
             NativeFeatureClient.titleRegenerationDispatchReceipt(
                 previousTitle: unchanged.title,
+                dispatchRequestID: "dispatch-request",
                 dispatchSequence: 12,
                 refreshedSequence: 12,
                 refreshedThread: pending
             ) == .regenerating
+        )
+
+        // The server replaced this dispatch with another client's request, so
+        // this one can no longer produce a title.
+        var foreign = unchanged
+        foreign.isRegeneratingTitle = true
+        foreign.titleRegenerationRequestID = "another-client"
+        #expect(
+            NativeFeatureClient.titleRegenerationDispatchReceipt(
+                previousTitle: unchanged.title,
+                dispatchRequestID: "dispatch-request",
+                dispatchSequence: 12,
+                refreshedSequence: 12,
+                refreshedThread: foreign
+            ) == .failed
         )
 
         var completed = unchanged
@@ -113,6 +132,7 @@ struct FeatureRootModelTests {
         #expect(
             NativeFeatureClient.titleRegenerationDispatchReceipt(
                 previousTitle: unchanged.title,
+                dispatchRequestID: "dispatch-request",
                 dispatchSequence: 12,
                 refreshedSequence: 13,
                 refreshedThread: completed
@@ -121,6 +141,7 @@ struct FeatureRootModelTests {
         #expect(
             NativeFeatureClient.titleRegenerationDispatchReceipt(
                 previousTitle: unchanged.title,
+                dispatchRequestID: "dispatch-request",
                 dispatchSequence: 12,
                 refreshedSequence: 13,
                 refreshedThread: unchanged
@@ -129,6 +150,7 @@ struct FeatureRootModelTests {
         #expect(
             NativeFeatureClient.titleRegenerationDispatchReceipt(
                 previousTitle: nil,
+                dispatchRequestID: "dispatch-request",
                 dispatchSequence: 12,
                 refreshedSequence: 13,
                 refreshedThread: nil
@@ -155,6 +177,7 @@ struct FeatureRootModelTests {
 
         var pending = thread
         pending.isRegeneratingTitle = true
+        pending.titleRegenerationRequestID = client.regeneratedTitleRequestIDs[0]
         client.snapshot = FeatureSnapshot(threads: [pending])
         await model.reload()
         client.snapshot = FeatureSnapshot(threads: [thread])
@@ -217,6 +240,7 @@ struct FeatureRootModelTests {
         for await _ in started.stream { break }
         var pending = thread
         pending.isRegeneratingTitle = true
+        pending.titleRegenerationRequestID = client.regeneratedTitleRequestIDs[0]
         client.snapshot = FeatureSnapshot(threads: [pending])
         await model.reload()
         client.resumeTitleRegeneration()
@@ -317,6 +341,7 @@ struct FeatureRootModelTests {
         await model.regenerateThreadTitle(thread.id)
         var pending = thread
         pending.isRegeneratingTitle = true
+        pending.titleRegenerationRequestID = client.regeneratedTitleRequestIDs[0]
         client.snapshot = FeatureSnapshot(threads: [pending])
         await model.reload()
         client.snapshot = FeatureSnapshot(threads: [thread])
@@ -403,6 +428,157 @@ struct FeatureRootModelTests {
             "Regenerating title for Keep this title.",
             "Title regeneration completed for Recovered title.",
         ])
+    }
+
+    @Test
+    func staleDetailEventDoesNotRevertARegeneratedTitle() async {
+        let client = FeatureClientStub()
+        let thread = regeneratableThread(id: "open", title: "Original title")
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.titleRegenerationReceipt = .completed(title: "Regenerated title")
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        await model.regenerateThreadTitle(thread.id)
+        var regenerated = thread
+        regenerated.title = "Regenerated title"
+        regenerated.updatedAt = thread.updatedAt.addingTimeInterval(60)
+        client.snapshot = FeatureSnapshot(threads: [regenerated])
+        await model.reload()
+
+        #expect(model.snapshot.threads.first?.title == "Regenerated title")
+
+        // A detail frame composed before the regeneration landed keeps the
+        // old title on its cached thread and must not republish it over the
+        // shell’s newer one.
+        let run = Task { await model.start() }
+        client.emit(.detail(FeatureThreadDetail(thread: thread)))
+        client.finishEvents()
+        await run.value
+
+        #expect(model.snapshot.threads.first?.title == "Regenerated title")
+        #expect(model.details[thread.id]?.thread.title == "Regenerated title")
+    }
+
+    @Test
+    func foreignTitleRegenerationRequestIsNotTrackedAsOurs() async {
+        let client = FeatureClientStub()
+        let thread = regeneratableThread(id: "shared", title: "Original title")
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.titleRegenerationReceipt = .refreshUnavailable
+        var announcements: [String] = []
+        let model = testRootModel(client: client) { announcements.append($0) }
+        await model.reload()
+
+        await model.regenerateThreadTitle(thread.id)
+
+        // Another client’s regeneration replaced this request server-side.
+        var foreign = thread
+        foreign.isRegeneratingTitle = true
+        foreign.titleRegenerationRequestID = "another-client"
+        client.snapshot = FeatureSnapshot(threads: [foreign])
+        await model.reload()
+
+        // The shell still reports a live regeneration, so the row stays
+        // honest, but this client no longer claims an outcome for it.
+        #expect(model.regeneratingTitleThreadIDs == [thread.id])
+        #expect(announcements == ["Regenerating title for Original title."])
+
+        var completed = thread
+        completed.title = "Foreign regenerated title"
+        client.snapshot = FeatureSnapshot(threads: [completed])
+        await model.reload()
+
+        #expect(model.snapshot.threads.first?.title == "Foreign regenerated title")
+        #expect(model.regeneratingTitleThreadIDs.isEmpty)
+        #expect(announcements == ["Regenerating title for Original title."])
+    }
+
+    @Test
+    func renameWaitsForAnInFlightTitleRegenerationDispatch() async {
+        let client = FeatureClientStub()
+        let thread = regeneratableThread(id: "rename", title: "Original title")
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.titleRegenerationReceipt = .regenerating
+        client.holdTitleRegeneration = true
+        var announcements: [String] = []
+        let model = testRootModel(client: client) { announcements.append($0) }
+        await model.reload()
+
+        let regeneration = Task { await model.regenerateThreadTitle(thread.id) }
+        for _ in 0..<50 {
+            await Task.yield()
+        }
+        let rename = Task { await model.renameThread(thread.id, title: "Manual title") }
+        for _ in 0..<50 {
+            await Task.yield()
+        }
+
+        // The rename must not reach the server before the regeneration
+        // dispatch is acknowledged, or the server would register the
+        // regeneration behind the manual title.
+        #expect(client.renamedThreadTitles.isEmpty)
+
+        client.resumeTitleRegeneration()
+        await regeneration.value
+        await rename.value
+
+        #expect(client.renamedThreadTitles.map(\.title) == ["Manual title"])
+        #expect(model.snapshot.threads.first?.title == "Manual title")
+        #expect(model.regeneratingTitleThreadIDs.isEmpty)
+        #expect(announcements == ["Regenerating title for Original title."])
+    }
+
+    @Test
+    func ambiguousDispatchFailureKeepsRegenerationPending() async {
+        let client = FeatureClientStub()
+        let thread = regeneratableThread(id: "ambiguous", title: "Original title")
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.titleRegenerationError = RPCError.responseTimedOut
+        var announcements: [String] = []
+        let model = testRootModel(client: client) { announcements.append($0) }
+        await model.reload()
+
+        await model.regenerateThreadTitle(thread.id)
+
+        // The dispatch may still have been processed; the row must not free
+        // itself for a duplicate request.
+        #expect(model.regeneratingTitleThreadIDs == [thread.id])
+        #expect(model.errorMessage == nil)
+        await model.regenerateThreadTitle(thread.id)
+        #expect(client.regeneratedTitleThreadIDs == [thread.id])
+
+        // A later authoritative snapshot still resolves the pending work.
+        client.titleRegenerationError = nil
+        var completed = thread
+        completed.title = "Authoritative title"
+        client.snapshot = FeatureSnapshot(threads: [completed])
+        await model.reload()
+
+        #expect(model.snapshot.threads.first?.title == "Authoritative title")
+        #expect(model.regeneratingTitleThreadIDs.isEmpty)
+        #expect(announcements == ["Regenerating title for Original title."])
+    }
+
+    @Test
+    func failedRenameKeepsPendingRegeneration() async {
+        let client = FeatureClientStub()
+        let thread = regeneratableThread(id: "rename-failure", title: "Original title")
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.titleRegenerationReceipt = .regenerating
+        client.renameThreadError = RPCError.remote("rejected")
+        var announcements: [String] = []
+        let model = testRootModel(client: client) { announcements.append($0) }
+        await model.reload()
+
+        await model.regenerateThreadTitle(thread.id)
+        await model.renameThread(thread.id, title: "Manual title")
+
+        // The rename never reached the server, so the regeneration it would
+        // have cancelled must stay tracked.
+        #expect(model.regeneratingTitleThreadIDs == [thread.id])
+        #expect(model.snapshot.threads.first?.title == "Original title")
+        #expect(announcements == ["Regenerating title for Original title."])
     }
 
     @Test
@@ -3035,6 +3211,9 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var resolvedInputAnswers: [String: FeatureInputAnswer]?
     var savedSettings: [FeatureSettings] = []
     var regeneratedTitleThreadIDs: [String] = []
+    var regeneratedTitleRequestIDs: [String] = []
+    var renamedThreadTitles: [(id: String, title: String)] = []
+    var renameThreadError: (any Error)?
     var titleRegenerationReceipt: FeatureTitleRegenerationDispatchReceipt = .completed(title: "Title")
     var titleRegenerationError: (any Error)?
     var holdTitleRegeneration = false
@@ -3155,11 +3334,16 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         return createdThread
     }
 
-    func renameThread(id: String, title: String) async throws {}
+    func renameThread(id: String, title: String) async throws {
+        if let renameThreadError { throw renameThreadError }
+        renamedThreadTitles.append((id, title))
+    }
     func regenerateThreadTitle(
-        id: String
+        id: String,
+        requestID: String
     ) async throws -> FeatureTitleRegenerationDispatchReceipt {
         regeneratedTitleThreadIDs.append(id)
+        regeneratedTitleRequestIDs.append(requestID)
         onTitleRegenerationStarted?()
         onTitleRegenerationStarted = nil
         if let titleRegenerationError { throw titleRegenerationError }
