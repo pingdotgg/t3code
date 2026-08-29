@@ -273,11 +273,6 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
   },
 );
 
-/**
- * What a reader produces: the cookies it could recover, and how many stored
- * rows it could not. The count reaches the user as part of the skipped total
- * rather than disappearing.
- */
 export interface ChromiumCookieSource {
   readonly cookieDatabasePath: string;
   readonly keychainService: string;

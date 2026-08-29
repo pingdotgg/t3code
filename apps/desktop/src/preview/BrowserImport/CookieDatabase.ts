@@ -32,7 +32,11 @@ export interface ImportedCookie {
   readonly sameSite: "no_restriction" | "lax" | "strict";
 }
 
-/** Cookies recovered from one database and rows that could not be decrypted. */
+/**
+ * Cookies recovered from one database and rows that could not be decrypted.
+ * The skipped count reaches the user instead of disappearing from a partial
+ * import result.
+ */
 export interface CookieReadResult {
   readonly cookies: ReadonlyArray<ImportedCookie>;
   readonly undecryptable: number;
