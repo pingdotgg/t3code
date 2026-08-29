@@ -64,11 +64,11 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           backdropVariant && resolveSidebarStageFocusRingOffsetClass(backdropVariant),
         )}
       />
-      <div className="relative z-10 flex min-w-0 flex-1 items-center gap-1 overflow-hidden md:mr-3 md:ml-[var(--workspace-titlebar-content-left)]">
+      <div className="relative z-10 flex min-w-0 flex-1 items-center gap-1 md:mr-3 md:ml-[var(--workspace-titlebar-content-left)]">
         <SidebarBrand onBackdrop={backdropVariant !== null} />
         {pillLabel ? (
           <Badge
-            className="ml-auto shrink-0 rounded-full px-1 text-muted-foreground"
+            className="ml-1 shrink-0 rounded-full px-1 text-muted-foreground md:ml-auto"
             data-environment-identification="pill"
             size="sm"
             variant="secondary"
@@ -86,7 +86,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="Go to threads"
       className={cn(
-        "relative hidden h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
+        "relative hidden h-7 w-fit min-w-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
