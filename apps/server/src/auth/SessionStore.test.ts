@@ -3,9 +3,11 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -13,7 +15,10 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { PersistenceSqlError } from "../persistence/Errors.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import {
+  makeSqlitePersistenceLive,
+  SqlitePersistenceMemory,
+} from "../persistence/Layers/Sqlite.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -54,6 +59,32 @@ const relaySessionInput = {
   client: { label: "Relay desktop", deviceType: "desktop" },
 } as const;
 
+const makeDiskSessionStoreLayer = Effect.fn("makeDiskSessionStoreLayer")(function* (
+  baseDir: string,
+  token?: string,
+) {
+  const devUrl = new URL("http://127.0.0.1:5173");
+  const paths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
+    baseDirIsExplicit: true,
+  });
+  yield* ServerConfig.ensureServerDirectories(paths);
+  const persistence = makeSqlitePersistenceLive(paths.dbPath);
+  return SessionStore.layer.pipe(
+    Layer.provide(persistence),
+    Layer.provide(ServerSecretStore.layer),
+    Layer.provide(makeServerEnvironmentLayer(EnvironmentId.make(baseDir))),
+    Layer.provide(
+      makeServerConfigLayer({
+        ...paths,
+        baseDir,
+        mode: "web",
+        devUrl,
+        ...(token === undefined ? {} : { devAuthToken: Redacted.make(token) }),
+      }),
+    ),
+  );
+});
+
 const repositoryFailure = new PersistenceSqlError({
   operation: "AuthSessionRepository.getById:query",
   detail: "sqlite is unavailable",
@@ -62,6 +93,7 @@ const repositoryFailure = new PersistenceSqlError({
 const failingSessionLookupRepositoryLayer = Layer.succeed(AuthSessions.AuthSessionRepository, {
   create: () => Effect.void,
   createReplacingActive: () => Effect.succeed([]),
+  createIfAbsent: () => Effect.void,
   getById: () => Effect.fail(repositoryFailure),
   listActive: () => Effect.succeed([]),
   revoke: () => Effect.fail(repositoryFailure),
@@ -101,6 +133,116 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect(moved).toBe(original);
       expect(other).not.toBe(original);
     }),
+  );
+
+  it.effect("keeps reusable dev auth local across disk-backed stores and restarts", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const token = "reusable-dev-auth-token-that-is-long-enough";
+      const baseA = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dev-auth-a-" });
+      const baseB = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dev-auth-b-" });
+      const layerA = yield* makeDiskSessionStoreLayer(baseA, token);
+      const fromA = yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const dev = yield* sessions.verify(token);
+        const local = yield* sessions.issue({ subject: "environment-a" });
+        const ticket = yield* sessions.issueWebSocketToken(local.sessionId);
+        yield* sessions.revoke(dev.sessionId);
+        return { dev, local, ticket };
+      }).pipe(Effect.provide(layerA), Effect.scoped);
+
+      const layerB = yield* makeDiskSessionStoreLayer(baseB, token);
+      yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const dev = yield* sessions.verify(token);
+        expect(dev.sessionId).toBe(fromA.dev.sessionId);
+        expect((yield* Effect.flip(sessions.verify(fromA.local.token)))._tag).toBe(
+          "InvalidSessionTokenSignatureError",
+        );
+        expect((yield* Effect.flip(sessions.verifyWebSocketToken(fromA.ticket.token)))._tag).toBe(
+          "InvalidWebSocketTokenSignatureError",
+        );
+      }).pipe(Effect.provide(layerB), Effect.scoped);
+
+      const reopenedA = yield* makeDiskSessionStoreLayer(baseA, token);
+      yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        expect((yield* Effect.flip(sessions.verify(token)))._tag).toBe("SessionTokenRevokedError");
+      }).pipe(Effect.provide(reopenedA), Effect.scoped);
+    }),
+  );
+
+  it.effect("invalidates old dev credentials and tickets after rotation or removal", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dev-auth-rotation-" });
+      const oldToken = "old-reusable-dev-auth-token-that-is-long-enough";
+      const newToken = "new-reusable-dev-auth-token-that-is-long-enough";
+      const initialLayer = yield* makeDiskSessionStoreLayer(baseDir, oldToken);
+      const old = yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const dev = yield* sessions.verify(oldToken);
+        const ticket = yield* sessions.issueWebSocketToken(dev.sessionId);
+        return { dev, ticket };
+      }).pipe(Effect.provide(initialLayer), Effect.scoped);
+
+      const rotatedLayer = yield* makeDiskSessionStoreLayer(baseDir, newToken);
+      const rotated = yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        expect((yield* Effect.flip(sessions.verify(oldToken)))._tag).toBe(
+          "MalformedSessionTokenError",
+        );
+        expect((yield* Effect.flip(sessions.verifyWebSocketToken(old.ticket.token)))._tag).toBe(
+          "UnknownWebSocketSessionError",
+        );
+        expect(
+          (yield* sessions.listActive()).some((row) => row.sessionId === old.dev.sessionId),
+        ).toBe(true);
+        const dev = yield* sessions.verify(newToken);
+        const ticket = yield* sessions.issueWebSocketToken(dev.sessionId);
+        return { dev, ticket };
+      }).pipe(Effect.provide(rotatedLayer), Effect.scoped);
+
+      const removedLayer = yield* makeDiskSessionStoreLayer(baseDir);
+      yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        expect((yield* Effect.flip(sessions.verify(newToken)))._tag).toBe(
+          "MalformedSessionTokenError",
+        );
+        expect((yield* Effect.flip(sessions.verifyWebSocketToken(rotated.ticket.token)))._tag).toBe(
+          "UnknownWebSocketSessionError",
+        );
+        expect(
+          (yield* sessions.listActive()).some((row) => row.sessionId === rotated.dev.sessionId),
+        ).toBe(true);
+      }).pipe(Effect.provide(removedLayer), Effect.scoped);
+    }),
+  );
+
+  it.effect("keeps the reusable token active after normal sessions expire", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const token = "reusable-dev-auth-token-that-is-long-enough";
+      const normal = yield* sessions.issue({ subject: "normal-session" });
+
+      yield* TestClock.adjust(Duration.days(31));
+
+      expect((yield* sessions.verify(token)).subject).toBe("reusable-dev-token");
+      expect((yield* Effect.flip(sessions.verify(normal.token)))._tag).toBe(
+        "SessionTokenExpiredError",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          makeSessionStoreLayer({
+            mode: "web",
+            devUrl: new URL("http://127.0.0.1:5173"),
+            devAuthToken: Redacted.make("reusable-dev-auth-token-that-is-long-enough"),
+          }),
+          TestClock.layer(),
+        ),
+      ),
+    ),
   );
 
   it.effect("issues and verifies signed browser session tokens", () =>
