@@ -204,7 +204,7 @@ export function QueuedRunsControl(props: {
     <section
       aria-label={`${items.length} queued message${items.length === 1 ? "" : "s"}`}
       aria-live="polite"
-      className="chat-composer-queue-strip relative z-0 -mb-4 mx-auto w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] px-2 pt-1.5 pb-5"
+      className="chat-composer-queue-strip relative z-0 -mb-4 mx-auto w-[calc(100%-2.75rem)] max-w-[calc(var(--chat-content-max-width)-2.75rem)] px-2 pt-1.5 pb-5"
     >
       <header className="flex h-6 items-center gap-1.5 px-1.5 text-[11px] font-medium text-muted-foreground">
         <ListOrderedIcon className="size-3.5" />
