@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { mermaidClipboardMarkdown } from "~/lib/mermaidLanguage";
-import { renderMermaidSvg } from "~/lib/mermaidRenderer";
+import { getCachedMermaidSvg, renderMermaidSvg } from "~/lib/mermaidRenderer";
 
 function mermaidErrorMessage(cause: unknown): string {
   if (cause instanceof Error && cause.message.trim().length > 0) {
@@ -20,11 +20,18 @@ export function MermaidDiagram({
   theme: "light" | "dark";
   onError?: (message: string) => void;
 }) {
-  const [svg, setSvg] = useState<string | null>(null);
+  const [svg, setSvg] = useState(() => getCachedMermaidSvg(code, theme));
   const [error, setError] = useState<string | null>(null);
   const clipboardMarkdown = mermaidClipboardMarkdown(code, language);
 
   useEffect(() => {
+    const cachedSvg = getCachedMermaidSvg(code, theme);
+    if (cachedSvg !== null) {
+      setSvg(cachedSvg);
+      setError(null);
+      return;
+    }
+
     let cancelled = false;
     setSvg(null);
     setError(null);

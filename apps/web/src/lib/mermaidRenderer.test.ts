@@ -9,7 +9,11 @@ vi.mock("mermaid", () => ({
   default: mermaid,
 }));
 
-import { renderMermaidSvg, resetMermaidRendererForTests } from "./mermaidRenderer";
+import {
+  getCachedMermaidSvg,
+  renderMermaidSvg,
+  resetMermaidRendererForTests,
+} from "./mermaidRenderer";
 
 describe("renderMermaidSvg", () => {
   beforeEach(() => {
@@ -56,5 +60,19 @@ describe("renderMermaidSvg", () => {
     mermaid.render.mockRejectedValue(new Error("Parse error"));
 
     await expect(renderMermaidSvg("not a diagram", "dark")).rejects.toThrow("Parse error");
+    expect(getCachedMermaidSvg("not a diagram", "dark")).toBeNull();
+  });
+
+  it("returns a cached svg without rendering again", async () => {
+    mermaid.render.mockResolvedValue({ svg: "<svg>ok</svg>" });
+
+    await renderMermaidSvg("flowchart TD\n  A --> B", "dark");
+    mermaid.render.mockClear();
+
+    await expect(renderMermaidSvg("flowchart TD\n  A --> B", "dark")).resolves.toBe(
+      "<svg>ok</svg>",
+    );
+    expect(getCachedMermaidSvg("flowchart TD\n  A --> B", "dark")).toBe("<svg>ok</svg>");
+    expect(mermaid.render).not.toHaveBeenCalled();
   });
 });
