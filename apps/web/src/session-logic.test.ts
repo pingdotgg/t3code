@@ -489,6 +489,109 @@ describe("V2 session presentation", () => {
     }
   });
 
+  it("anchors feedback before later committed turns without reordering canonical history", () => {
+    const threadId = ThreadId.make("thread-feedback-order");
+    const messageItem = (input: {
+      readonly id: string;
+      readonly role: "user" | "assistant";
+      readonly createdAt: string;
+      readonly ordinal: number;
+    }): OrchestrationV2TurnItem => {
+      const timestamp = DateTime.makeUnsafe(input.createdAt);
+      const common = {
+        id: TurnItemId.make(`item-${input.id}`),
+        threadId,
+        runId: RunId.make(`run-${input.ordinal}`),
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: input.ordinal,
+        status: "completed" as const,
+        title: null,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        updatedAt: timestamp,
+        messageId: MessageId.make(input.id),
+        text: input.id,
+      };
+      return input.role === "user"
+        ? {
+            ...common,
+            type: "user_message",
+            inputIntent: "turn_start",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          }
+        : { ...common, type: "assistant_message", streaming: false };
+    };
+    const canonicalItems = [
+      messageItem({ id: "old-user", role: "user", createdAt: "2026-08-29T00:00:01Z", ordinal: 1 }),
+      messageItem({
+        id: "old-assistant",
+        role: "assistant",
+        createdAt: "2026-08-29T00:00:02Z",
+        ordinal: 2,
+      }),
+      messageItem({
+        id: "later-user",
+        role: "user",
+        createdAt: "2026-08-29T00:00:05Z",
+        ordinal: 3,
+      }),
+      messageItem({
+        id: "later-assistant",
+        role: "assistant",
+        createdAt: "2026-08-29T00:00:04Z",
+        ordinal: 4,
+      }),
+    ];
+    const visibleTurnItems = canonicalItems.map((item, position) => ({
+      position,
+      visibility: "local" as const,
+      sourceThreadId: threadId,
+      sourceItemId: item.id,
+      item,
+    }));
+    const feedback = (id: string, role: "user" | "assistant"): ChatMessage => ({
+      id: MessageId.make(id),
+      role,
+      text: id,
+      runId: null,
+      streaming: false,
+      createdAt: "2026-08-29T00:00:03Z",
+      updatedAt: "2026-08-29T00:00:03Z",
+    });
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems,
+      anchoredMessages: [
+        feedback("feedback-user", "user"),
+        feedback("feedback-assistant", "assistant"),
+        feedback("later-user", "user"),
+      ],
+      optimisticMessages: [
+        { ...feedback("optimistic-user", "user"), createdAt: "2026-08-29T00:00:00Z" },
+      ],
+    });
+
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "old-user",
+      "old-assistant",
+      "feedback-user",
+      "feedback-assistant",
+      "later-user",
+      "later-assistant",
+      "optimistic-user",
+    ]);
+    expect(
+      entries
+        .filter((entry) => entry.id.startsWith("feedback-"))
+        .every((entry) => entry.kind === "message" && entry.projectedItem === undefined),
+    ).toBe(true);
+  });
+
   it("uses projected plan status and file contents in timeline entries", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const threadId = ThreadId.make("thread-timeline-artifacts");
