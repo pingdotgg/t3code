@@ -1140,9 +1140,11 @@ const make = Effect.gen(function* () {
       requestedBranch !== undefined &&
       (createBranch || selectedRef?.isRemote === true || targetBefore.refName !== requestedBranch);
     const threadWorkspaces = yield* Effect.forEach(threads, (thread) =>
-      threadWorkspacePath(thread, projectWorktreeRoot).pipe(
-        Effect.map((workspacePath) => [thread, workspacePath] as const),
-      ),
+      threadWorkspacePath(
+        thread,
+        projectWorktreeRoot,
+        inventory.worktrees.map((worktree) => worktree.path),
+      ).pipe(Effect.map((workspacePath) => [thread, workspacePath] as const)),
     );
     const otherBindings = threadWorkspaces
       .filter(
