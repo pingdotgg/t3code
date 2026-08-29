@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import { BrowserImportFailureReason } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import type { Session } from "electron";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -21,7 +22,7 @@ import * as Schema from "effect/Schema";
 import { HostProcessExecutablePath, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as BrowserSession from "../BrowserSession.ts";
-import { readChromiumCookies } from "./ChromiumCookies.ts";
+import { readChromiumCookies, type CookieReadResult } from "./ChromiumCookies.ts";
 import {
   BROWSER_IMPORT_SOURCES,
   cookieDatabasePath,
@@ -46,6 +47,19 @@ export class BrowserImportFailedError extends Schema.TaggedErrorClass<BrowserImp
   // to its message, and the renderer maps that token back to user-facing copy.
   override get message(): string {
     return `Importing cookies from ${this.sourceId} failed: ${this.reason}.`;
+  }
+}
+
+export class BrowserCookieWriteError extends Schema.TaggedErrorClass<BrowserCookieWriteError>()(
+  "BrowserCookieWriteError",
+  {
+    url: Schema.String,
+    name: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not write imported cookie ${this.name} for ${this.url}.`;
   }
 }
 
@@ -81,6 +95,45 @@ const cookieHost = (url: string): string => {
     return url;
   }
 };
+
+export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
+  session: { readonly cookies: Pick<Session["cookies"], "set"> },
+  read: CookieReadResult,
+) {
+  let imported = 0;
+  let skipped = read.undecryptable;
+  const skippedDomains = new Set(read.undecryptableHosts);
+  for (const cookie of read.cookies) {
+    const written = yield* Effect.tryPromise({
+      try: () =>
+        session.cookies.set({
+          url: cookie.url,
+          name: cookie.name,
+          value: cookie.value,
+          // Omitted for host-only cookies: Electron reads any `domain` as a
+          // domain cookie and re-adds the leading dot, widening its scope.
+          ...(cookie.domain === undefined ? {} : { domain: cookie.domain }),
+          path: cookie.path,
+          secure: cookie.secure,
+          httpOnly: cookie.httpOnly,
+          sameSite: cookie.sameSite,
+          ...(cookie.expirationDate === undefined ? {} : { expirationDate: cookie.expirationDate }),
+        }),
+      catch: (cause) => new BrowserCookieWriteError({ url: cookie.url, name: cookie.name, cause }),
+    }).pipe(
+      Effect.as(true),
+      Effect.tapError((error) => Effect.logDebug(error.message, { cause: error.cause })),
+      Effect.catchTag("BrowserCookieWriteError", () => Effect.succeed(false)),
+    );
+    if (written) {
+      imported += 1;
+    } else {
+      skipped += 1;
+      skippedDomains.add(cookieHost(cookie.url));
+    }
+  }
+  return { imported, skipped, skippedDomains: [...skippedDomains].slice(0, 20) };
+});
 
 export const make = Effect.gen(function* BrowserImportMake() {
   const browserSession = yield* BrowserSession.BrowserSession;
@@ -180,46 +233,7 @@ export const make = Effect.gen(function* BrowserImportMake() {
 
     // Written one at a time rather than in parallel: Chromium's cookie store
     // serialises writes anyway, and a rejected cookie should only cost itself.
-    let imported = 0;
-    // Rows the reader could not decrypt are already lost cookies, so they
-    // count as skipped rather than vanishing from the tally.
-    let skipped = read.undecryptable;
-    const skippedDomains = new Set(read.undecryptableHosts);
-    for (const cookie of read.cookies) {
-      const written = yield* Effect.tryPromise({
-        try: () =>
-          session.cookies.set({
-            url: cookie.url,
-            name: cookie.name,
-            value: cookie.value,
-            // Omitted for host-only cookies: Electron reads any `domain` as a
-            // domain cookie and re-adds the leading dot, which would widen the
-            // scope of every host-only cookie the source had.
-            ...(cookie.domain === undefined ? {} : { domain: cookie.domain }),
-            path: cookie.path,
-            secure: cookie.secure,
-            httpOnly: cookie.httpOnly,
-            sameSite: cookie.sameSite,
-            ...(cookie.expirationDate === undefined
-              ? {}
-              : { expirationDate: cookie.expirationDate }),
-          }),
-        catch: () => undefined,
-      }).pipe(
-        Effect.as(true),
-        Effect.catchCause(() => Effect.succeed(false)),
-      );
-      if (written) {
-        imported += 1;
-      } else {
-        skipped += 1;
-        skippedDomains.add(cookieHost(cookie.url));
-      }
-    }
-
-    // Capped: a broken key can skip thousands, and the user only needs a sense
-    // of which sites didn't come over, not an exhaustive list.
-    return { imported, skipped, skippedDomains: [...skippedDomains].slice(0, 20) };
+    return yield* writeCookies(session, read);
   });
 
   return BrowserImport.of({ listSources, importCookies });

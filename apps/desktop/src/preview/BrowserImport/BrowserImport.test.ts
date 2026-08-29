@@ -7,13 +7,27 @@ import {
 } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 
 import * as BrowserSession from "../BrowserSession.ts";
 import * as BrowserImport from "./BrowserImport.ts";
 import { BROWSER_IMPORT_SOURCES, sourcePaths } from "./Sources.ts";
 
 const helium = BROWSER_IMPORT_SOURCES.find((source) => source.id === "helium")!;
+
+const cookie = {
+  url: "https://rejected.example/path",
+  name: "session",
+  value: "value",
+  domain: undefined,
+  path: "/",
+  secure: true,
+  httpOnly: true,
+  expirationDate: undefined,
+  sameSite: "lax" as const,
+};
 
 /**
  * Dies if the import reaches session work: every case here covers a request
@@ -111,5 +125,49 @@ describe("BrowserImport.importCookies", () => {
 
       assert.equal(error.reason, "browserRunning");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+});
+
+describe("BrowserImport.writeCookies", () => {
+  it.effect("counts a rejected cookie and its domain as skipped", () =>
+    Effect.gen(function* () {
+      const result = yield* BrowserImport.writeCookies(
+        {
+          cookies: {
+            set: () => Promise.reject(new Error("fixture rejection")),
+          },
+        },
+        { cookies: [cookie], undecryptable: 0, undecryptableHosts: [] },
+      );
+
+      assert.deepEqual(result, {
+        imported: 0,
+        skipped: 1,
+        skippedDomains: ["rejected.example"],
+      });
+    }),
+  );
+
+  it.effect("propagates interruption while writing a cookie", () =>
+    Effect.gen(function* () {
+      const write = BrowserImport.writeCookies(
+        {
+          cookies: {
+            set: () => new Promise<void>(() => {}),
+          },
+        },
+        { cookies: [cookie], undecryptable: 0, undecryptableHosts: [] },
+      );
+
+      const interrupted = yield* Ref.make(false);
+      const fiber = yield* write.pipe(
+        Effect.onInterrupt(() => Ref.set(interrupted, true)),
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(fiber);
+
+      assert.isTrue(yield* Ref.get(interrupted));
+    }),
   );
 });
