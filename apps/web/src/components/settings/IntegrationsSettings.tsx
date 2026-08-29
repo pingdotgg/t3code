@@ -896,22 +896,27 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                 // Every source is a plain row — running, needs-permission and
                 // ready all look the same here. The wizard picks up whatever
                 // state the source is in and walks the user forward from there.
-                importableSources.map((source) => (
-                  <MenuItem
-                    key={source.id}
-                    disabled={!settingsHydrated || primaryEnvironment == null}
-                    onClick={() => {
-                      if (!settingsHydrated || primaryEnvironment == null) return;
-                      setImportSession({
-                        source,
-                        environmentId: primaryEnvironment.environmentId,
-                        environmentName: primaryEnvironment.label,
-                      });
-                    }}
-                  >
-                    {source.name}
-                  </MenuItem>
-                ))
+                <>
+                  {importableSources.map((source) => (
+                    <MenuItem
+                      key={source.id}
+                      disabled={!settingsHydrated || primaryEnvironment == null}
+                      onClick={() => {
+                        if (!settingsHydrated || primaryEnvironment == null) return;
+                        setImportSession({
+                          source,
+                          environmentId: primaryEnvironment.environmentId,
+                          environmentName: primaryEnvironment.label,
+                        });
+                      }}
+                    >
+                      {source.name}
+                    </MenuItem>
+                  ))}
+                  {primaryEnvironment == null ? (
+                    <MenuItem disabled>Connect to an environment to import cookies</MenuItem>
+                  ) : null}
+                </>
               )}
             </MenuGroup>
           </MenuPopup>
