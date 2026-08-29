@@ -54,18 +54,12 @@ export const resolveHeadlessConnectionHost = (
     return normalizeHost(host);
   }
 
-  const interfaceEntries = Object.values(interfaces).flatMap((entries) => entries ?? []);
-  const externalIpv4 = interfaceEntries.find(
-    (entry) => !entry.internal && isIpv4Family(entry.family),
-  );
-  if (externalIpv4) {
-    return externalIpv4.address;
-  }
-
-  const externalIpv6 = interfaceEntries.find(
-    (entry) => !entry.internal && isIpv6Family(entry.family),
-  );
-  return externalIpv6 ? normalizeHost(externalIpv6.address) : "localhost";
+  // Keep explicit wildcard hosts (0.0.0.0, ::, [::]) as-is instead of resolving
+  // to the container's external IP (e.g. 172.18.0.2 in Docker). The user
+  // explicitly requested to bind on all interfaces; the pairing URL should
+  // reflect that host so the client can reach it via the same interface they
+  // chose. Resolving to a container-internal IP produces an unreachable URL.
+  return normalizeHost(host);
 };
 
 export const resolveHeadlessConnectionString = (
