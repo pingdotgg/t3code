@@ -9,11 +9,16 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import { ProjectService } from "../project/ProjectService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import {
   ContextHandoffServiceV2,
@@ -57,6 +62,9 @@ export const layer: Layer.Layer<
   | EventSinkV2
   | ContextHandoffServiceV2
   | IdAllocatorV2
+  | FileSystem.FileSystem
+  | GitWorkflowService
+  | ProjectService
   | ProjectionStoreV2
   | ProviderSessionManagerV2
   | RunExecutionServiceV2
@@ -67,6 +75,9 @@ export const layer: Layer.Layer<
     const eventSink = yield* EventSinkV2;
     const contextHandoffService = yield* ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocatorV2;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const gitWorkflow = yield* GitWorkflowService;
+    const projects = yield* ProjectService;
     const projectionStore = yield* ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionServiceV2;
@@ -127,6 +138,43 @@ export const layer: Layer.Layer<
           runId,
           cause: `Run ${runId} is missing its execution projection state.`,
         });
+      }
+      const { worktreePath, branch } = projection.thread;
+      if (worktreePath !== null && branch !== null) {
+        const exists = yield* fileSystem
+          .exists(worktreePath)
+          .pipe(Effect.orElseSucceed(() => true));
+        if (!exists) {
+          const project = yield* projects.getById(projection.thread.projectId).pipe(
+            Effect.map(Option.getOrUndefined),
+            Effect.orElseSucceed(() => undefined),
+          );
+          if (project !== undefined) {
+            yield* Effect.logWarning("provider turn start recreating missing worktree", {
+              threadId: projection.thread.id,
+              worktreePath,
+              branch,
+            });
+            yield* gitWorkflow.pruneWorktrees({ cwd: project.workspaceRoot }).pipe(
+              Effect.andThen(
+                gitWorkflow.createWorktree({
+                  cwd: project.workspaceRoot,
+                  refName: branch,
+                  path: worktreePath,
+                }),
+              ),
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                  ? Effect.failCause(cause)
+                  : Effect.logWarning("provider turn start failed to recreate worktree", {
+                      threadId: projection.thread.id,
+                      worktreePath,
+                      cause: Cause.pretty(cause),
+                    }),
+              ),
+            );
+          }
+        }
       }
       const selectInheritedBackgroundItems = (
         current: typeof projection,
