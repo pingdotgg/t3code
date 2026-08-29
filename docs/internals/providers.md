@@ -23,6 +23,14 @@ adapter in a child scope. Adapter implementations live beside them in
 [`ProviderAdapter.ts`][adapter]. Read the driver plus its adapter to see how a specific agent's
 transport, config, and event shapes are mapped.
 
+## Codex app-server framing
+
+The Codex client reads newline-delimited JSON from the app-server process's stdout through
+[`protocol.ts`][codex-protocol]. Messages can span thousands of pipe reads, so the reader scans only
+new chunks and keeps unfinished lines as fragments, joining once per complete line. Repeatedly
+concatenating and splitting the pending line makes large messages quadratic in size. CRLF is
+accepted, and a final line without a newline is processed only when the input stream ends normally.
+
 ## Registry and routing
 
 Two registries separate configuration from live processes:
@@ -161,6 +169,7 @@ when a request opens (approval) or user input is requested, via
 
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
 [codex]: ../../apps/server/src/provider/Drivers/CodexDriver.ts
+[codex-protocol]: ../../packages/effect-codex-app-server/src/protocol.ts
 [claude]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts
 [cursor]: ../../apps/server/src/provider/Drivers/CursorDriver.ts
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
