@@ -5,6 +5,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, it, describe } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -1795,6 +1796,35 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         assert.equal(yield* fileSystem.exists(worktreePath), false);
         assert.notInclude(yield* driver.listLocalBranchNames(cwd), "feature/worktree");
+      }),
+    );
+
+    it.effect("compare-and-deletes a local branch only at the expected commit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createRef({ cwd, refName: "feature/owned", switchRef: false });
+        const commitSha = yield* git(cwd, ["rev-parse", "feature/owned"]);
+
+        const staleDelete = yield* Effect.exit(
+          driver.deleteLocalBranch({
+            cwd,
+            refName: "feature/owned",
+            force: true,
+            expectedCommitSha: "1111111111111111111111111111111111111111",
+          }),
+        );
+        assert.isTrue(Exit.isFailure(staleDelete));
+        assert.include(yield* driver.listLocalBranchNames(cwd), "feature/owned");
+
+        yield* driver.deleteLocalBranch({
+          cwd,
+          refName: "feature/owned",
+          force: true,
+          expectedCommitSha: commitSha,
+        });
+        assert.notInclude(yield* driver.listLocalBranchNames(cwd), "feature/owned");
       }),
     );
 

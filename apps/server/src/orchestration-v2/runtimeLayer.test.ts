@@ -1048,6 +1048,27 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         },
       );
 
+      const workspaceUpdateAfterArchive = yield* orchestrator
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("runtime-layer-lifecycle-workspace-after-archive"),
+          threadId,
+          branch: "feature/should-not-bind",
+          worktreePath: "/tmp/should-not-bind",
+          expectedBranch: "feature/v2",
+          expectedWorktreePath: "/tmp/t3-v2-worktree",
+          expectedArchived: false,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(workspaceUpdateAfterArchive, OrchestratorDispatchError);
+      const projectionAfterArchivedWorkspaceUpdate =
+        yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(projectionAfterArchivedWorkspaceUpdate.thread.branch, "feature/v2");
+      assert.equal(
+        projectionAfterArchivedWorkspaceUpdate.thread.worktreePath,
+        "/tmp/t3-v2-worktree",
+      );
+
       const remove = yield* orchestrator.dispatch({
         type: "thread.delete",
         commandId: CommandId.make("runtime-layer-lifecycle-delete"),

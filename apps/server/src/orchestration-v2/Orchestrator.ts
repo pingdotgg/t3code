@@ -1498,6 +1498,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} branch changed before the metadata update could be applied.`,
       });
     }
+    if (
+      command.type === "thread.metadata.update" &&
+      command.expectedArchived !== undefined &&
+      command.expectedArchived !== (thread.archivedAt !== null)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} archive state changed before the metadata update could be applied.`,
+      });
+    }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
