@@ -35,8 +35,7 @@ import {
   type OrchestrationEngineShape,
 } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
-import { ThreadSettlementReactor } from "../Services/ThreadSettlementReactor.ts";
-import { ThreadSettlementReactorLive } from "./ThreadSettlementReactor.ts";
+import * as ThreadSettlementReactor from "../ThreadSettlementReactor.ts";
 
 const NOW = "2026-08-28T12:00:00.000Z";
 const PROJECT_ID = ProjectId.make("settlement-project");
@@ -266,12 +265,12 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     branchCalls,
     detailCalls,
     updateSettings,
-    layer: ThreadSettlementReactorLive.pipe(Layer.provide(dependencies)),
+    layer: ThreadSettlementReactor.layer.pipe(Layer.provide(dependencies)),
   };
 });
 
 const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
-  reactor: ThreadSettlementReactor["Service"],
+  reactor: ThreadSettlementReactor.ThreadSettlementReactor["Service"],
   activation: Deferred.Deferred<void>,
   snapshotReads: Queue.Queue<number>,
 ) {
@@ -341,7 +340,7 @@ describe("ThreadSettlementReactor", () => {
         });
 
         yield* Effect.gen(function* () {
-          const reactor = yield* ThreadSettlementReactor;
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
           yield* reactor.start();
           assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 0);
 
@@ -396,7 +395,7 @@ describe("ThreadSettlementReactor", () => {
         });
 
         yield* Effect.gen(function* () {
-          const reactor = yield* ThreadSettlementReactor;
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
 
@@ -456,7 +455,7 @@ describe("ThreadSettlementReactor", () => {
         });
 
         yield* Effect.gen(function* () {
-          const reactor = yield* ThreadSettlementReactor;
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
           yield* reactor.start();
           yield* Deferred.succeed(fixture.activation, undefined);
           yield* Queue.take(fixture.snapshotReads);
@@ -516,7 +515,7 @@ describe("ThreadSettlementReactor", () => {
         });
 
         yield* Effect.gen(function* () {
-          const reactor = yield* ThreadSettlementReactor;
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
 
           assert.deepStrictEqual(
@@ -564,7 +563,7 @@ describe("ThreadSettlementReactor", () => {
         });
 
         yield* Effect.gen(function* () {
-          const reactor = yield* ThreadSettlementReactor;
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
 
           assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), [
@@ -609,7 +608,7 @@ describe("ThreadSettlementReactor", () => {
         });
 
         yield* Effect.gen(function* () {
-          const reactor = yield* ThreadSettlementReactor;
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
 
           const firstSweep = yield* Ref.get(fixture.commands);

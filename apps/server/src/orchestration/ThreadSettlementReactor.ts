@@ -1,35 +1,41 @@
 import { CommandId, type GitManagerServiceError } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import { GitManager } from "../../git/GitManager.ts";
-import { PullRequestService, type PullRequestError } from "../../pullRequest/PullRequestService.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
-import { forkParked } from "../../serverActivation.ts";
-import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
-import {
-  ThreadSettlementReactor,
-  type ThreadSettlementReactorShape,
-} from "../Services/ThreadSettlementReactor.ts";
+import * as GitManager from "../git/GitManager.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { forkParked } from "../serverActivation.ts";
+import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
+import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
 import {
   isAutoSettlementCandidate,
   shouldAutoSettleThread,
   type SettlementPullRequest,
-} from "../ThreadSettlementPolicy.ts";
+} from "./ThreadSettlementPolicy.ts";
 
-const make = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngineService;
-  const snapshots = yield* ProjectionSnapshotQuery;
-  const settingsService = yield* ServerSettingsService;
-  const git = yield* GitManager;
-  const pullRequests = yield* PullRequestService;
+export class ThreadSettlementReactor extends Context.Service<
+  ThreadSettlementReactor,
+  {
+    readonly start: () => Effect.Effect<void, never, Scope.Scope>;
+    readonly drain: Effect.Effect<void>;
+  }
+>()("t3/orchestration/ThreadSettlementReactor") {}
+
+export const make = Effect.gen(function* () {
+  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const settingsService = yield* ServerSettings.ServerSettingsService;
+  const git = yield* GitManager.GitManager;
+  const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
 
   const sweep = Effect.fn("ThreadSettlementReactor.sweep")(function* () {
@@ -39,7 +45,10 @@ const make = Effect.gen(function* () {
     const candidates = snapshot.threads.filter((thread) => isAutoSettlementCandidate(thread, now));
     const lookupByKey = new Map<
       string,
-      Effect.Effect<SettlementPullRequest | null, GitManagerServiceError | PullRequestError>
+      Effect.Effect<
+        SettlementPullRequest | null,
+        GitManagerServiceError | PullRequestService.PullRequestError
+      >
     >();
 
     const pullRequestFor = Effect.fn("ThreadSettlementReactor.pullRequestFor")(function* (
@@ -130,35 +139,35 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const start: ThreadSettlementReactorShape["start"] = Effect.fn("ThreadSettlementReactor.start")(
-    function* () {
-      const settingsChanges = yield* settingsService.subscribeChanges;
-      const initialSettings = yield* settingsService.getSettings.pipe(Effect.orDie);
-      let lastAfterDays = initialSettings.sidebarAutoSettleAfterDays;
-      let lastOnMerge = initialSettings.sidebarAutoSettleOnMerge;
-      yield* forkParked(
-        Effect.gen(function* () {
-          yield* worker.enqueue(undefined);
-          yield* worker.drain;
-        }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.asVoid),
-      );
-      yield* forkParked(
-        Stream.runForEach(settingsChanges, (settings) => {
-          if (
-            settings.sidebarAutoSettleAfterDays === lastAfterDays &&
-            settings.sidebarAutoSettleOnMerge === lastOnMerge
-          ) {
-            return Effect.void;
-          }
-          lastAfterDays = settings.sidebarAutoSettleAfterDays;
-          lastOnMerge = settings.sidebarAutoSettleOnMerge;
-          return worker.enqueue(undefined);
-        }),
-      );
-    },
-  );
+  const start: ThreadSettlementReactor["Service"]["start"] = Effect.fn(
+    "ThreadSettlementReactor.start",
+  )(function* () {
+    const settingsChanges = yield* settingsService.subscribeChanges;
+    const initialSettings = yield* settingsService.getSettings.pipe(Effect.orDie);
+    let lastAfterDays = initialSettings.sidebarAutoSettleAfterDays;
+    let lastOnMerge = initialSettings.sidebarAutoSettleOnMerge;
+    yield* forkParked(
+      Effect.gen(function* () {
+        yield* worker.enqueue(undefined);
+        yield* worker.drain;
+      }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.asVoid),
+    );
+    yield* forkParked(
+      Stream.runForEach(settingsChanges, (settings) => {
+        if (
+          settings.sidebarAutoSettleAfterDays === lastAfterDays &&
+          settings.sidebarAutoSettleOnMerge === lastOnMerge
+        ) {
+          return Effect.void;
+        }
+        lastAfterDays = settings.sidebarAutoSettleAfterDays;
+        lastOnMerge = settings.sidebarAutoSettleOnMerge;
+        return worker.enqueue(undefined);
+      }),
+    );
+  });
 
-  return { start, drain: worker.drain } satisfies ThreadSettlementReactorShape;
+  return { start, drain: worker.drain } satisfies ThreadSettlementReactor["Service"];
 });
 
-export const ThreadSettlementReactorLive = Layer.effect(ThreadSettlementReactor, make);
+export const layer = Layer.effect(ThreadSettlementReactor, make);

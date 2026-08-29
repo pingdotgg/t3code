@@ -158,6 +158,6 @@ already dispatch.
 [ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
 [cmd]: ../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
 [checkpoint]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
-[settlement]: ../../apps/server/src/orchestration/Layers/ThreadSettlementReactor.ts
+[settlement]: ../../apps/server/src/orchestration/ThreadSettlementReactor.ts
 [receipts]: ../../apps/server/src/orchestration/Layers/RuntimeReceiptBus.ts
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
