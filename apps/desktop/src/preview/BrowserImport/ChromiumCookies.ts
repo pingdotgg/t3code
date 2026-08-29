@@ -90,6 +90,7 @@ const CookieRow = Schema.Struct({
   is_secure: Schema.Number,
   is_httponly: Schema.Number,
   samesite: Schema.Number,
+  top_frame_site_key: Schema.String,
 });
 
 const decodeCookieRows = Schema.decodeUnknownEffect(Schema.Array(CookieRow));
@@ -267,12 +268,22 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
         Effect.flatMap(decodeSchemaVersion),
         Effect.map(([row]) => row.value),
       );
-      const raw = yield* sql`
-      select host_key, name, value, encrypted_value, path,
-             expires_utc / 1000000 as expires_seconds,
-             is_secure, is_httponly, samesite
-        from cookies
-    `;
+      // CHIPS added top_frame_site_key in schema 15. Keep the old query valid
+      // for earlier databases, which do not have the column at all.
+      const raw =
+        schemaVersion >= 15
+          ? yield* sql`
+              select host_key, name, value, encrypted_value, path,
+                     expires_utc / 1000000 as expires_seconds,
+                     is_secure, is_httponly, samesite, top_frame_site_key
+                from cookies
+            `
+          : yield* sql`
+              select host_key, name, value, encrypted_value, path,
+                     expires_utc / 1000000 as expires_seconds,
+                     is_secure, is_httponly, samesite, '' as top_frame_site_key
+                from cookies
+            `;
       return { rows: yield* decodeCookieRows(raw), schemaVersion };
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })));
 
@@ -280,6 +291,14 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
     let undecryptable = 0;
     const undecryptableHosts = new Set<string>();
     for (const row of rows.rows) {
+      // Electron's cookies.set contract cannot represent a CHIPS partition
+      // key. Importing this row without one would widen it into an ordinary
+      // unpartitioned cookie, so count it as skipped instead.
+      if (row.top_frame_site_key !== "") {
+        undecryptable += 1;
+        undecryptableHosts.add(bareHost(row.host_key));
+        continue;
+      }
       // Chromium stores legacy/plaintext cookies in `value` with an empty
       // encrypted blob. Preserve an actually empty cookie by falling back to
       // `value`, rather than treating every empty blob as the empty string.
