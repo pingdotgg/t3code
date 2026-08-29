@@ -432,7 +432,7 @@ struct FeatureCommandDrawerGestureView: UIViewRepresentable {
             /// ever receiving `.began`.
             func gestureRecognizer(
                 _ gestureRecognizer: UIGestureRecognizer,
-                shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
+                shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
             ) -> Bool {
                 FeatureCommandDrawerGestureView.takesPriority(
                     over: otherGestureRecognizer
