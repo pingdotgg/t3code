@@ -4,13 +4,17 @@ import {
   type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Scheduler from "effect/Scheduler";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
@@ -420,6 +424,28 @@ function awaitConnectionState(
 }
 
 describe("EnvironmentRegistry", () => {
+  it.effect("does not acquire a session after the registry scope has already closed", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TARGET]);
+      const registryScope = yield* Scope.make();
+      const context = yield* Layer.build(harness.layer).pipe(Scope.provide(registryScope));
+      const registry = Context.get(context, EnvironmentRegistry.EnvironmentRegistry);
+      const dispatcher = new Scheduler.MixedScheduler("sync", () => () => {}).makeDispatcher();
+      const scheduler: Scheduler.Scheduler = {
+        executionMode: "sync",
+        shouldYield: () => false,
+        makeDispatcher: () => dispatcher,
+      };
+
+      yield* Scope.close(registryScope, Exit.void);
+      yield* registry.start.pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
+      dispatcher.flush();
+
+      expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
+      expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+    }),
+  );
+
   it.effect("hydrates connection profiles into catalog entries", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([SSH_CONNECTION], [SSH_PROFILE]);

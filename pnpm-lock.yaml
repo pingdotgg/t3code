@@ -88,13 +88,14 @@ patchedDependencies:
   '@ff-labs/fff-node@0.9.4': ab9ff544009e1891cfe3930105862d3699007f38922a79f3c98d90018deca368
   '@legendapp/list@3.3.5': 064530db83875fa671559a81ae42dc159726dc2dd6ec4c982da44ff7c7a74706
   '@pierre/diffs@1.3.0-beta.10': 7ef7cb0cbabb17c15cdb137554068b36f15f6f5265e73fb51452aa3380db91aa
-  '@react-native-menu/menu@2.0.0': c7f66d121c726ade4f5c4e1aed11a691e5711d244c544084e289ac26132a0045
+  '@react-native-menu/menu@2.0.0': f63d256bf6a97a873b5e628eb595bd6ef0075ddd5bdd890fc920f7a6024290dd
   '@react-navigation/native-stack@7.17.6': e667c3cef8c78bb9ff4882ee5bd23a432247b843060a9499eb5f07e9e2295552
   effect@4.0.0-beta.103: af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6
   react-native-gesture-handler@2.32.0: 808eb26f9e57cf4945efd3985af4d9c764da6f91f4c9764433cc868602bbf4d3
   react-native-keyboard-controller@1.21.13: 20be72c84d74253acdcfefbc6defe36dc396944f1a44cab2bdd0e3cd572ae008
   react-native-nitro-modules@0.35.9: 825622aae63a8fb5b904f3c77908a0e216261d727ea171709f2c0b6088422675
   react-native-screens@4.26.2: 149bef30a66351ea9b26b42f87b78c539cb52b880f2387bb323ec80dcac84006
+  uniwind@1.7.0: 161c1fc8213f9692f30351cfd10d77a820c5df61838946c4c15e9795a8a1847f
 
 importers:
 
@@ -239,7 +240,7 @@ importers:
         version: 1.3.0-beta.10(patch_hash=7ef7cb0cbabb17c15cdb137554068b36f15f6f5265e73fb51452aa3380db91aa)(@shikijs/themes@4.2.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@react-native-menu/menu':
         specifier: ^2.0.0
-        version: 2.0.0(patch_hash=c7f66d121c726ade4f5c4e1aed11a691e5711d244c544084e289ac26132a0045)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
+        version: 2.0.0(patch_hash=f63d256bf6a97a873b5e628eb595bd6ef0075ddd5bdd890fc920f7a6024290dd)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       '@react-navigation/elements':
         specifier: 2.9.26
         version: 2.9.26(c10301b6e0c42fc6434d2b643197a81e)
@@ -437,7 +438,7 @@ importers:
         version: 3.6.0
       uniwind:
         specifier: ^1.6.2
-        version: 1.7.0(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(tailwindcss@4.3.0)
+        version: 1.7.0(patch_hash=161c1fc8213f9692f30351cfd10d77a820c5df61838946c4c15e9795a8a1847f)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(tailwindcss@4.3.0)
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.0-beta.103
@@ -13702,7 +13703,7 @@ snapshots:
       react-native: 0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)
     optional: true
 
-  '@react-native-menu/menu@2.0.0(patch_hash=c7f66d121c726ade4f5c4e1aed11a691e5711d244c544084e289ac26132a0045)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)':
+  '@react-native-menu/menu@2.0.0(patch_hash=f63d256bf6a97a873b5e628eb595bd6ef0075ddd5bdd890fc920f7a6024290dd)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)':
     dependencies:
       react: 19.2.3
       react-native: 0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)
@@ -20702,7 +20703,7 @@ snapshots:
 
   universalify@2.0.1: {}
 
-  uniwind@1.7.0(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(tailwindcss@4.3.0):
+  uniwind@1.7.0(patch_hash=161c1fc8213f9692f30351cfd10d77a820c5df61838946c4c15e9795a8a1847f)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(tailwindcss@4.3.0):
     dependencies:
       '@tailwindcss/node': 4.2.1
       '@tailwindcss/oxide': 4.2.1
