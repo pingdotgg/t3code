@@ -16,3 +16,14 @@ export function setMarkdownTaskChecked(
 
   return `${markdown.slice(0, markerOffset + 1)}${checked ? "x" : " "}${markdown.slice(markerOffset + 2)}`;
 }
+
+export function resolveMarkdownTaskPreviewUpdate(input: {
+  readonly markdown: string;
+  readonly markerOffset: number;
+  readonly checked: boolean;
+  readonly truncated: boolean;
+}): string | null {
+  if (input.truncated) return null;
+  const nextMarkdown = setMarkdownTaskChecked(input.markdown, input.markerOffset, input.checked);
+  return nextMarkdown === input.markdown ? null : nextMarkdown;
+}
