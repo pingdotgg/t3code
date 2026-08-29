@@ -195,6 +195,28 @@ const make = Effect.gen(function* () {
       .listProjectThreads({ projectId, includeSubagents: true })
       .pipe(asOperationFailed(`Unable to list threads in project ${projectId}`));
 
+  const readWorkspaceStatus = (workspacePath: string) =>
+    gitWorkflow
+      .invalidateLocalStatus(workspacePath)
+      .pipe(
+        Effect.andThen(gitWorkflow.localStatus({ cwd: workspacePath })),
+        asOperationFailed(`Unable to read git status in '${workspacePath}'`),
+      );
+
+  const loadWorkspaceBindingInventory = Effect.fn(
+    "WorktreeMcpService.loadWorkspaceBindingInventory",
+  )(function* (workspacePath: string) {
+    const inventoryExit = yield* Effect.exit(loadWorktrees(workspacePath));
+    if (Exit.isSuccess(inventoryExit)) {
+      return Option.some(inventoryExit.value);
+    }
+    const statusExit = yield* Effect.exit(readWorkspaceStatus(workspacePath));
+    if (Exit.isSuccess(statusExit) && !statusExit.value.isRepo) {
+      return Option.none();
+    }
+    return yield* Effect.failCause(inventoryExit.cause);
+  });
+
   const loadActiveWorkspaceBindings = Effect.fn("WorktreeMcpService.loadActiveWorkspaceBindings")(
     function* (repositoryCommonDir: string) {
       const snapshot = yield* threadManagement
@@ -219,15 +241,15 @@ const make = Effect.gen(function* () {
                 onNone: () => Effect.succeed([]),
                 onSome: (project) =>
                   Effect.gen(function* () {
-                    const projectInventory = yield* Effect.option(
-                      loadWorktrees(project.workspaceRoot),
+                    const projectInventory = yield* loadWorkspaceBindingInventory(
+                      project.workspaceRoot,
                     );
                     return yield* Effect.forEach(projectThreads, (thread) =>
                       Effect.gen(function* () {
                         const inventory =
                           thread.worktreePath === null
                             ? projectInventory
-                            : yield* Effect.option(loadWorktrees(thread.worktreePath));
+                            : yield* loadWorkspaceBindingInventory(thread.worktreePath);
                         if (
                           Option.isNone(inventory) ||
                           inventory.value.repositoryCommonDir !== repositoryCommonDir ||
@@ -246,14 +268,6 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.map((bindings) => bindings.flat()));
     },
   );
-
-  const readWorkspaceStatus = (workspacePath: string) =>
-    gitWorkflow
-      .invalidateLocalStatus(workspacePath)
-      .pipe(
-        Effect.andThen(gitWorkflow.localStatus({ cwd: workspacePath })),
-        asOperationFailed(`Unable to read git status in '${workspacePath}'`),
-      );
 
   const readWorkspaceBranchOrNull = (workspacePath: string) =>
     readWorkspaceStatus(workspacePath).pipe(
@@ -1285,19 +1299,19 @@ const make = Effect.gen(function* () {
 
           let checkoutAction: WorktreeMcpCheckoutResult["checkoutAction"] =
             targetWorkspacePath === currentWorkspacePath ? "unchanged" : "reused";
-          let createdBranch: string | null = null;
-          let createdBranchCommit: string | null = null;
           let resolvedBranch: string | null = targetBefore.refName;
           const targetBeforeCommit = shouldMutateCheckout
             ? yield* gitWorkflow
                 .resolveCommit({ cwd: targetWorkspacePath, revision: "HEAD" })
                 .pipe(asOperationFailed("Unable to record the checkout's current commit"))
             : null;
-          const requestedRemoteCommit =
-            shouldMutateCheckout && requestedBranch !== undefined && selectedRef?.isRemote === true
-              ? yield* gitWorkflow
-                  .resolveCommit({ cwd: targetWorkspacePath, revision: requestedBranch })
-                  .pipe(asOperationFailed(`Unable to resolve remote ref '${requestedBranch}'`))
+          const requestedTransitionCommit =
+            shouldMutateCheckout && requestedBranch !== undefined
+              ? createBranch
+                ? targetBeforeCommit
+                : yield* gitWorkflow
+                    .resolveCommit({ cwd: targetWorkspacePath, revision: requestedBranch })
+                    .pipe(asOperationFailed(`Unable to resolve ref '${requestedBranch}'`))
               : null;
           let ownedCheckoutState: {
             readonly refName: string | null;
@@ -1364,30 +1378,60 @@ const make = Effect.gen(function* () {
                 return "not_possible" as const;
               }
               const rollbackExit = yield* Effect.exit(
-                (checkoutChanged
+                checkoutChanged
                   ? gitWorkflow.switchRef({
                       cwd: targetWorkspacePath,
                       refName: targetBefore.refName!,
                     })
-                  : Effect.void
-                ).pipe(
-                  Effect.andThen(
-                    createdBranch === null || createdBranchCommit === null
-                      ? Effect.void
-                      : gitWorkflow.deleteLocalBranch({
-                          cwd: targetWorkspacePath,
-                          refName: createdBranch,
-                          force: true,
-                          expectedCommitSha: createdBranchCommit,
-                        }),
-                  ),
-                ),
+                  : Effect.void,
               );
               return Exit.isSuccess(rollbackExit) ? ("rolled_back" as const) : ("failed" as const);
             },
           );
 
           if (shouldMutateCheckout && requestedBranch !== undefined) {
+            const [mutationProjection, mutationBindings, mutationTargetBefore] = yield* Effect.all(
+              [
+                loadThread(scope),
+                loadActiveWorkspaceBindings(inventory.repositoryCommonDir),
+                readWorkspaceStatus(targetWorkspacePath),
+              ],
+              { concurrency: 3 },
+            );
+            if (
+              mutationProjection.thread.branch !== projection.thread.branch ||
+              mutationProjection.thread.worktreePath !== projection.thread.worktreePath ||
+              mutationProjection.thread.archivedAt !== projection.thread.archivedAt ||
+              mutationProjection.thread.deletedAt !== projection.thread.deletedAt ||
+              mutationTargetBefore.refName !== targetBefore.refName ||
+              mutationTargetBefore.hasWorkingTreeChanges !== targetBefore.hasWorkingTreeChanges
+            ) {
+              return yield* failure(
+                "checkout_in_progress",
+                `Thread or checkout state changed immediately before Git mutation. Retry from the current workspace state.`,
+              );
+            }
+            const mutationOtherBindings = mutationBindings
+              .filter(
+                ([thread, workspacePath]) =>
+                  thread.id !== scope.threadId && workspacePath === targetWorkspacePath,
+              )
+              .map(([thread]) => thread);
+            const mutationActiveBinding = mutationOtherBindings.find(
+              (thread) => thread.activeRunId !== null,
+            );
+            if (mutationActiveBinding !== undefined) {
+              return yield* failure(
+                "workspace_in_use",
+                `Checkout '${targetWorkspacePath}' became active for thread '${mutationActiveBinding.id}' (${mutationActiveBinding.title}) before Git mutation.`,
+              );
+            }
+            if (mutationOtherBindings.length > 0) {
+              return yield* failure(
+                "workspace_shared",
+                `Checkout '${targetWorkspacePath}' became bound to thread '${mutationOtherBindings[0]!.id}' before Git mutation.`,
+              );
+            }
             if (createBranch) {
               yield* gitWorkflow
                 .createRef({
@@ -1396,8 +1440,6 @@ const make = Effect.gen(function* () {
                   switchRef: false,
                 })
                 .pipe(asOperationFailed(`Unable to create branch '${requestedBranch}'`));
-              createdBranch = requestedBranch;
-              createdBranchCommit = targetBeforeCommit?.commitSha ?? null;
             }
             const switchExit = yield* Effect.exit(
               gitWorkflow.switchRef({ cwd: targetWorkspacePath, refName: requestedBranch }),
@@ -1405,7 +1447,20 @@ const make = Effect.gen(function* () {
             if (Exit.isFailure(switchExit)) {
               const afterFailedSwitchExit = yield* Effect.exit(captureCheckoutState());
               if (Exit.isSuccess(afterFailedSwitchExit)) {
-                ownedCheckoutState = afterFailedSwitchExit.value;
+                const observed = afterFailedSwitchExit.value;
+                const unchanged =
+                  observed.refName === targetBefore.refName &&
+                  observed.commitSha === targetBeforeCommit?.commitSha;
+                const requestedState =
+                  !observed.hasWorkingTreeChanges &&
+                  requestedTransitionCommit !== null &&
+                  observed.commitSha === requestedTransitionCommit.commitSha &&
+                  (selectedRef?.isRemote === true
+                    ? observed.refName === null
+                    : observed.refName === requestedBranch);
+                if (unchanged || requestedState) {
+                  ownedCheckoutState = observed;
+                }
               }
               const rollback = yield* rollbackOwnedCheckout();
               if (rollback === "not_possible" || rollback === "failed") {
@@ -1499,8 +1554,8 @@ const make = Effect.gen(function* () {
             }
             if (
               resolvedBranch === null &&
-              requestedRemoteCommit !== null &&
-              actualCommitExit.value.commitSha !== requestedRemoteCommit.commitSha
+              requestedTransitionCommit !== null &&
+              actualCommitExit.value.commitSha !== requestedTransitionCommit.commitSha
             ) {
               return yield* failure(
                 "partial_failure",

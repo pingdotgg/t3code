@@ -3239,32 +3239,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const deleteLocalBranch: GitVcsDriver.GitVcsDriver["Service"]["deleteLocalBranch"] = Effect.fn(
     "deleteLocalBranch",
   )(function* (input) {
-    if (input.expectedCommitSha !== undefined) {
-      yield* executeGit(
-        "GitVcsDriver.deleteLocalBranch",
-        input.cwd,
-        ["update-ref", "-d", `refs/heads/${input.refName}`, input.expectedCommitSha],
-        {
-          timeoutMs: 10_000,
-          fallbackErrorDetail: "git branch compare-and-delete failed",
-        },
-      );
-      const stillExists = yield* executeGit(
-        "GitVcsDriver.deleteLocalBranch.verify",
-        input.cwd,
-        ["show-ref", "--verify", "--quiet", `refs/heads/${input.refName}`],
-        { timeoutMs: 5_000, allowNonZeroExit: true },
-      ).pipe(Effect.map((result) => result.exitCode === 0));
-      if (stillExists) {
-        return yield* new GitCommandError({
-          operation: "GitVcsDriver.deleteLocalBranch",
-          command: "git update-ref -d",
-          cwd: input.cwd,
-          detail: `Local branch '${input.refName}' changed before it could be deleted safely.`,
-        });
-      }
-      return;
-    }
     yield* executeGit(
       "GitVcsDriver.deleteLocalBranch",
       input.cwd,
