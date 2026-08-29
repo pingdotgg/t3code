@@ -15,6 +15,15 @@ type Backend = {
 
 type BackendPreparation = { readonly ok: true } | { readonly ok: false; readonly error: unknown };
 
+const MIN_CAPTURE_RMS = 0.0005;
+
+function captureLevel(pcm: Float32Array): number {
+  if (pcm.length === 0) return 0;
+  let sum = 0;
+  for (const sample of pcm) sum += sample * sample;
+  return Math.sqrt(sum / pcm.length);
+}
+
 type ControllerOptions = {
   supported: boolean;
   unsupportedReason?: string;
@@ -120,6 +129,11 @@ export class DesktopSpeechController {
         if (this.cancelRequested) {
           this.setState("ready");
           return { supported: true, state: "ready" };
+        }
+        if (captureLevel(pcm) < MIN_CAPTURE_RMS) {
+          throw new Error(
+            "No audio was detected. Make sure a microphone is selected as your default input device, then try again.",
+          );
         }
         const text = (await backend.transcribe(pcm)).trim();
         if (!this.cancelRequested && text) this.options.emit({ type: "transcript", text });

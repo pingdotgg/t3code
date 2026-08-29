@@ -69,6 +69,25 @@ describe("DesktopSpeechController", () => {
     await controller.cancel();
   });
 
+  it("reports an error when a silent capture produces no audio", async () => {
+    const { controller, capture, backend, events } = makeController();
+    capture.stop.mockResolvedValue(new Float32Array(16000));
+
+    await controller.start();
+    const status = await controller.stop();
+
+    expect(status).toMatchObject({ supported: true, state: "error" });
+    expect(status.supported && status.message).toMatch("No audio was detected");
+    expect(backend.transcribe).not.toHaveBeenCalled();
+    expect(events).toContainEqual(expect.objectContaining({ type: "error" }));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "status",
+        status: expect.objectContaining({ state: "error" }),
+      }),
+    );
+  });
+
   it("automatically stops a recording at the duration limit", async () => {
     const { controller, backend } = makeController(1);
     await controller.start();
