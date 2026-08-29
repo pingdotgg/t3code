@@ -114,6 +114,11 @@ import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSna
 import * as OrchestrationEventStore from "./persistence/Services/OrchestrationEventStore.ts";
 import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
 import {
+  attachmentIsPendingUpload,
+  claimPendingAttachments,
+  releaseClaimedAttachments,
+} from "./orchestration-v2/AttachmentClaims.ts";
+import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
   observeRpcStreamEffect as instrumentRpcStreamEffect,
@@ -1214,29 +1219,52 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
-            startup
-              .enqueueCommand(
-                threadManagement.dispatch(
-                  ThreadManagementService.withCreationProvenance(command, {
-                    createdBy: "user",
-                    creationSource: "creationSource" in command ? command.creationSource : "web",
-                  }),
-                ),
-              )
-              .pipe(
-                Effect.tap(() => recordClientCommandAnalytics(command)),
-                Effect.map((result) => ({ sequence: result.sequence })),
-                Effect.mapError((cause) => {
-                  const detail = userFacingDispatchErrorMessage(cause);
-                  return new OrchestrationV2DispatchCommandError({
-                    commandId: command.commandId,
-                    commandType: command.type,
-                    message: detail ?? "Failed to dispatch orchestration V2 command",
-                    ...(detail === undefined ? {} : { detail }),
-                    cause,
-                  });
-                }),
-              ),
+            Effect.gen(function* () {
+              // Pending uploads are claimed into the thread's attachment store
+              // at intake; a failed dispatch releases the claimed copies while
+              // the pending upload stays behind as the client's retry source.
+              const claimed =
+                command.type === "message.dispatch" &&
+                command.attachments.some(attachmentIsPendingUpload)
+                  ? yield* claimPendingAttachments({
+                      threadId: command.threadId,
+                      attachments: command.attachments,
+                    })
+                  : null;
+              const effectiveCommand =
+                claimed === null || command.type !== "message.dispatch"
+                  ? command
+                  : { ...command, attachments: claimed.attachments };
+              return yield* startup
+                .enqueueCommand(
+                  threadManagement.dispatch(
+                    ThreadManagementService.withCreationProvenance(effectiveCommand, {
+                      createdBy: "user",
+                      creationSource: "creationSource" in command ? command.creationSource : "web",
+                    }),
+                  ),
+                )
+                .pipe(
+                  Effect.tapError(() =>
+                    claimed === null
+                      ? Effect.void
+                      : releaseClaimedAttachments(claimed.claimedPaths),
+                  ),
+                );
+            }).pipe(
+              Effect.tap(() => recordClientCommandAnalytics(command)),
+              Effect.map((result) => ({ sequence: result.sequence })),
+              Effect.mapError((cause) => {
+                const detail = userFacingDispatchErrorMessage(cause);
+                return new OrchestrationV2DispatchCommandError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  message: detail ?? "Failed to dispatch orchestration V2 command",
+                  ...(detail === undefined ? {} : { detail }),
+                  cause,
+                });
+              }),
+            ),
             {
               "rpc.aggregate": "orchestrationV2",
               "orchestration_v2.command_id": command.commandId,
@@ -1332,65 +1360,104 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.launchThread,
-            startup
-              .enqueueCommand(
-                threadLaunch.launch({
+            Effect.gen(function* () {
+              const pendingUploads =
+                input.initialMessage?.attachments.some(attachmentIsPendingUpload) ?? false;
+              if (pendingUploads && input.threadId === undefined) {
+                return yield* new OrchestrationV2ThreadLaunchError({
                   commandId: input.commandId,
-                  ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-                  ...(input.reuseExistingThread === undefined
-                    ? {}
-                    : { reuseExistingThread: input.reuseExistingThread }),
                   projectId: input.projectId,
-                  title: input.title,
-                  ...(input.generateTitle === undefined
-                    ? {}
-                    : { generateTitle: input.generateTitle }),
-                  modelSelection: input.modelSelection,
-                  runtimeMode: input.runtimeMode,
-                  interactionMode: input.interactionMode,
-                  workspaceStrategy: input.workspaceStrategy,
-                  ...(input.initialMessage === undefined
-                    ? {}
-                    : {
-                        initialMessage: {
-                          ...(input.initialMessage.messageId === undefined
-                            ? {}
-                            : { messageId: input.initialMessage.messageId }),
-                          text: input.initialMessage.text,
-                          attachments: input.initialMessage.attachments,
-                        },
-                      }),
-                  createdBy: "user",
-                  creationSource: input.creationSource ?? "web",
-                }),
-              )
-              .pipe(
-                Effect.tap(() =>
-                  analytics
-                    .record("client.thread.started", originProps)
-                    .pipe(
-                      Effect.andThen(
-                        input.initialMessage === undefined
-                          ? Effect.void
-                          : analytics.record("client.turn.requested", originProps),
+                  message: "Uploaded attachments need a thread id at launch.",
+                });
+              }
+              const claimed =
+                pendingUploads && input.threadId !== undefined && input.initialMessage !== undefined
+                  ? yield* claimPendingAttachments({
+                      threadId: input.threadId,
+                      attachments: input.initialMessage.attachments,
+                    }).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new OrchestrationV2ThreadLaunchError({
+                            commandId: input.commandId,
+                            projectId: input.projectId,
+                            message: cause.message,
+                            cause,
+                          }),
                       ),
-                      Effect.ignore,
-                    ),
-                ),
-                Effect.map((result) => ({
-                  ...result,
-                  projection: projectThreadProjectionForWire(result.projection),
-                })),
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationV2ThreadLaunchError({
-                      commandId: input.commandId,
-                      projectId: input.projectId,
-                      message: "Failed to launch thread",
-                      cause,
-                    }),
-                ),
-              ),
+                    )
+                  : null;
+              const initialMessage =
+                input.initialMessage === undefined
+                  ? undefined
+                  : claimed === null
+                    ? input.initialMessage
+                    : { ...input.initialMessage, attachments: claimed.attachments };
+              return yield* startup
+                .enqueueCommand(
+                  threadLaunch.launch({
+                    commandId: input.commandId,
+                    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+                    ...(input.reuseExistingThread === undefined
+                      ? {}
+                      : { reuseExistingThread: input.reuseExistingThread }),
+                    projectId: input.projectId,
+                    title: input.title,
+                    ...(input.generateTitle === undefined
+                      ? {}
+                      : { generateTitle: input.generateTitle }),
+                    modelSelection: input.modelSelection,
+                    runtimeMode: input.runtimeMode,
+                    interactionMode: input.interactionMode,
+                    workspaceStrategy: input.workspaceStrategy,
+                    ...(initialMessage === undefined
+                      ? {}
+                      : {
+                          initialMessage: {
+                            ...(initialMessage.messageId === undefined
+                              ? {}
+                              : { messageId: initialMessage.messageId }),
+                            text: initialMessage.text,
+                            attachments: initialMessage.attachments,
+                          },
+                        }),
+                    createdBy: "user",
+                    creationSource: input.creationSource ?? "web",
+                  }),
+                )
+                .pipe(
+                  Effect.tapError(() =>
+                    claimed === null
+                      ? Effect.void
+                      : releaseClaimedAttachments(claimed.claimedPaths),
+                  ),
+                  Effect.tap(() =>
+                    analytics
+                      .record("client.thread.started", originProps)
+                      .pipe(
+                        Effect.andThen(
+                          input.initialMessage === undefined
+                            ? Effect.void
+                            : analytics.record("client.turn.requested", originProps),
+                        ),
+                        Effect.ignore,
+                      ),
+                  ),
+                  Effect.map((result) => ({
+                    ...result,
+                    projection: projectThreadProjectionForWire(result.projection),
+                  })),
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: "Failed to launch thread",
+                        cause,
+                      }),
+                  ),
+                );
+            }),
             {
               "rpc.aggregate": "orchestration",
               "orchestration_v2.command_id": input.commandId,
