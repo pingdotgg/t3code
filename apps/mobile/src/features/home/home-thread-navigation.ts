@@ -39,6 +39,8 @@ export function useHomeThreadSelection() {
     const clear = () => {
       dismissingRouteKey.current = null;
     };
+    // This listener belongs to Home, so swipe-back is its opening transition.
+    // Thread's closing event is targeted at the outgoing Thread route.
     const removeTransitionStart = navigation.addListener("transitionStart", ({ data }) => {
       const state = navigation.getState();
       const currentRoute = state.routes[state.index];

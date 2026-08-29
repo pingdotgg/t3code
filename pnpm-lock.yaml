@@ -437,7 +437,7 @@ importers:
         specifier: ^3.5.0
         version: 3.6.0
       uniwind:
-        specifier: ^1.6.2
+        specifier: 1.7.0
         version: 1.7.0(patch_hash=161c1fc8213f9692f30351cfd10d77a820c5df61838946c4c15e9795a8a1847f)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(tailwindcss@4.3.0)
     devDependencies:
       '@effect/vitest':
