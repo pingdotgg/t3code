@@ -66,6 +66,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { makeClaudeEnvironment } from "../../provider/Drivers/ClaudeHome.ts";
+import { resolveClaudeContextWindow } from "../../provider/Layers/ClaudeProvider.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
@@ -117,6 +118,39 @@ import {
 
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
+
+function claudeContextWindow(modelSelection: ModelSelection): number | null {
+  if (modelSelection.model === "claude-opus-4-6" || modelSelection.model === "claude-opus-4-7") {
+    return 1_000_000;
+  }
+  return resolveClaudeContextWindow(modelSelection) === "1m" ? 1_000_000 : 200_000;
+}
+
+export function claudeProviderTurnTokenUsage(
+  usage: {
+    readonly input_tokens: number;
+    readonly cache_creation_input_tokens?: number | null;
+    readonly cache_read_input_tokens?: number | null;
+    readonly output_tokens: number;
+  },
+  modelSelection: ModelSelection,
+  updatedAt: string,
+) {
+  const inputTokens =
+    usage.input_tokens +
+    (usage.cache_creation_input_tokens ?? 0) +
+    (usage.cache_read_input_tokens ?? 0);
+  const outputTokens = usage.output_tokens;
+  return {
+    usedTokens: inputTokens + outputTokens,
+    maxTokens: claudeContextWindow(modelSelection),
+    inputTokens,
+    cachedInputTokens: usage.cache_read_input_tokens ?? 0,
+    outputTokens,
+    reasoningOutputTokens: 0,
+    updatedAt,
+  };
+}
 export const CLAUDE_DRIVER_KIND = CLAUDE_PROVIDER;
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_DRIVER_KIND);
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
@@ -3970,7 +4004,35 @@ export function makeClaudeAdapterV2(
           }
 
           if (message.type === "assistant") {
-            yield* completeProviderRetry(context, yield* DateTime.now);
+            const now = yield* DateTime.now;
+            yield* completeProviderRetry(context, now);
+            if (message.parent_tool_use_id === null && message.message.usage !== undefined) {
+              yield* emitProviderEvent({
+                type: "provider_turn.updated",
+                driver: CLAUDE_PROVIDER,
+                threadId: context.input.threadId,
+                providerTurn: {
+                  id: context.providerTurnId,
+                  providerThreadId: context.input.providerThread.id,
+                  nodeId: context.input.rootNodeId,
+                  runAttemptId: context.input.attemptId,
+                  nativeTurnRef: {
+                    driver: CLAUDE_PROVIDER,
+                    nativeId: context.nativeTurnId,
+                    strength: "strong",
+                  },
+                  ordinal: context.providerTurnOrdinal,
+                  status: "running",
+                  startedAt: context.startedAt,
+                  completedAt: null,
+                  tokenUsage: claudeProviderTurnTokenUsage(
+                    message.message.usage,
+                    context.input.modelSelection,
+                    DateTime.formatIso(now),
+                  ),
+                },
+              });
+            }
             const parentToolUseId = message.parent_tool_use_id;
             const snapshotModel =
               typeof message.message.model === "string" ? message.message.model.trim() : "";
