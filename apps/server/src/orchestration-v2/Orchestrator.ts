@@ -1569,6 +1569,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : now,
+            unsettledAt: null,
             pinnedAt: null,
             pinOrderKey: null,
             updatedAt: alreadySettled ? thread.updatedAt : now,
@@ -1580,6 +1581,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             settledOverride: "active",
             settledAt: null,
+            unsettledAt: alreadyPinnedActive ? (thread.unsettledAt ?? null) : now,
             updatedAt: alreadyPinnedActive ? thread.updatedAt : now,
           };
         }
@@ -2860,6 +2862,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...projection.thread,
           settledOverride: null,
           settledAt: null,
+          unsettledAt:
+            projection.thread.settledOverride === "active"
+              ? (projection.thread.unsettledAt ?? null)
+              : now,
           updatedAt: now,
         };
         yield* emit(
