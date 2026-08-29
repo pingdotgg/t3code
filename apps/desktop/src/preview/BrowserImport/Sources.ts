@@ -208,7 +208,12 @@ export const chromiumProcessIsAlive = (
       // Only ESRCH positively proves the process is gone. Permission errors
       // and unknown failures stay conservative so an active browser is never
       // mistaken for a stale lock.
-      return (cause as NodeJS.ErrnoException).code !== "ESRCH";
+      return !(
+        typeof cause === "object" &&
+        cause !== null &&
+        "code" in cause &&
+        cause.code === "ESRCH"
+      );
     }
   });
 

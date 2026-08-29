@@ -122,6 +122,21 @@ describe("chromiumProcessIsAlive", () => {
           throw denied;
         }),
       );
+      assert.isTrue(
+        yield* chromiumProcessIsAlive(4321, () => {
+          throw undefined;
+        }),
+      );
+      assert.isTrue(
+        yield* chromiumProcessIsAlive(4321, () => {
+          throw "unknown failure";
+        }),
+      );
+      assert.isTrue(
+        yield* chromiumProcessIsAlive(4321, () => {
+          throw null;
+        }),
+      );
       assert.isTrue(yield* chromiumProcessIsAlive(4321, () => true));
     }),
   );
