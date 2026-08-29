@@ -284,9 +284,10 @@ function SelectableTile({
   return (
     <button
       type="button"
+      aria-pressed={selected}
       onClick={onSelect}
       className={cn(
-        "flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors",
+        "flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
         selected
           ? "border-primary bg-primary/8"
           : "border-border/60 hover:border-border hover:bg-muted/40",
