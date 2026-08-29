@@ -52,10 +52,12 @@ describe("initialWizardStep", () => {
   });
 
   it("asks for Full Disk Access before choosing an import target", () => {
-    expect(initialWizardStep(source({ unavailable: "needsFullDiskAccess" }))).toEqual({
-      step: "fullDiskAccess",
-      resume: "configure",
-    });
+    expect(initialWizardStep(source({ profiles: [], unavailable: "needsFullDiskAccess" }))).toEqual(
+      {
+        step: "fullDiskAccess",
+        resume: "configure",
+      },
+    );
   });
 
   it("blocks on a reason nothing local can fix", () => {
