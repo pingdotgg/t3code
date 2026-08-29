@@ -15,6 +15,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -84,6 +85,14 @@ interface RestartAdapterState {
 function makeRestartAdapter(
   state: Ref.Ref<RestartAdapterState>,
   sessionCapabilities: OrchestrationV2ProviderCapabilities = pooledCapabilities,
+  observeTurnStart?: (input: {
+    readonly model: string;
+    readonly cwd: string | null;
+  }) => Effect.Effect<void>,
+  interruptGate?: {
+    readonly requested: Queue.Queue<void>;
+    readonly release: Deferred.Deferred<void>;
+  },
 ): ProviderAdapterV2Shape {
   return {
     instanceId: providerInstanceId,
@@ -224,6 +233,12 @@ function makeRestartAdapter(
                   },
                 ],
               }));
+              if (observeTurnStart !== undefined) {
+                yield* observeTurnStart({
+                  model: input.modelSelection.model,
+                  cwd: input.runtimePolicy.cwd,
+                });
+              }
               const active = {
                 input,
                 providerTurnId: ProviderTurnId.make(`provider-turn:${input.attemptId}`),
@@ -259,6 +274,10 @@ function makeRestartAdapter(
             Effect.gen(function* () {
               const active = (yield* Ref.get(state)).activeTurn;
               if (active !== null) {
+                if (interruptGate !== undefined) {
+                  yield* Queue.offer(interruptGate.requested, undefined);
+                  yield* Deferred.await(interruptGate.release);
+                }
                 const updatedAt = yield* DateTime.now;
                 yield* Queue.offer(events, {
                   type: "provider_thread.updated",
@@ -525,6 +544,151 @@ it.live("restarts selection as a new attempt and retries after old-session clean
         projection.providerSessions.find((session) => session.model === replacementSelection.model)
           ?.id,
       );
+    }),
+  ),
+);
+
+it.live("queues a workspace continuation before detaching and starts it in the new cwd", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const initialCwd = yield* checkpointWorkspace("workspace-continuation-initial");
+      const targetCwd = yield* checkpointWorkspace("workspace-continuation-target");
+      const threadId = ThreadId.make("thread:workspace-continuation");
+      const projectId = ProjectId.make("project:workspace-continuation");
+      const state = yield* Ref.make<RestartAdapterState>({
+        activeTurn: null,
+        opened: [],
+        started: [],
+        closedSessionCount: 0,
+        failedReplacementOpen: false,
+      });
+      const initialTurnStarted = yield* Deferred.make<{
+        readonly model: string;
+        readonly cwd: string | null;
+      }>();
+      const continuationTurnStarted = yield* Deferred.make<{
+        readonly model: string;
+        readonly cwd: string | null;
+      }>();
+      const interruptRequested = yield* Queue.unbounded<void>();
+      const interruptRelease = yield* Deferred.make<void>();
+      const registry = makeSingleProviderAdapterRegistryLayer(
+        makeRestartAdapter(
+          state,
+          pooledCapabilities,
+          (started) =>
+            Deferred.succeed(
+              started.cwd === initialCwd ? initialTurnStarted : continuationTurnStarted,
+              started,
+            ).pipe(Effect.asVoid),
+          {
+            requested: interruptRequested,
+            release: interruptRelease,
+          },
+        ),
+      );
+      const orchestratorLayer = makeOrchestratorV2ReplayLayerWithRegistry(
+        { name: "workspace-continuation" },
+        registry,
+      );
+
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* OrchestratorV2;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:workspace-continuation:create"),
+          threadId,
+          projectId,
+          title: "Workspace continuation",
+          modelSelection: initialSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: initialCwd,
+        });
+        const providerTurnProjected = yield* Deferred.make<void>();
+        const afterCreate = yield* orchestrator.getThreadEventSequence(threadId);
+        yield* orchestrator.streamStoredEventsFrom({ threadId, afterSequence: afterCreate }).pipe(
+          Stream.runForEach((stored) =>
+            stored.event.type === "provider-turn.updated" &&
+            stored.event.payload.status === "running"
+              ? Deferred.succeed(providerTurnProjected, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        const initialSendReceipt = yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("command:workspace-continuation:first"),
+          threadId,
+          messageId: MessageId.make("message:workspace-continuation:first"),
+          text: "Start in the original checkout.",
+          attachments: [],
+          modelSelection: initialSelection,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        assert.isTrue(initialSendReceipt.storedEvents.length > 0);
+        assert.deepEqual(yield* Deferred.await(initialTurnStarted), {
+          model: initialSelection.model,
+          cwd: initialCwd,
+        });
+        yield* Deferred.await(providerTurnProjected);
+
+        const bindingReceipt = yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("command:workspace-continuation:binding"),
+          threadId,
+          branch: "feature/workspace-continuation",
+          worktreePath: targetCwd,
+          expectedBranch: "main",
+          expectedWorktreePath: initialCwd,
+        });
+        assert.isTrue(
+          bindingReceipt.storedEvents.some(
+            (stored) => stored.event.type === "provider-session.detached",
+          ),
+        );
+
+        const continuationReceipt = yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("command:workspace-continuation:queued"),
+          threadId,
+          messageId: MessageId.make("message:workspace-continuation:queued"),
+          text: "Continue after the workspace handoff.",
+          attachments: [],
+          modelSelection: initialSelection,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        assert.isTrue(continuationReceipt.storedEvents.length > 0);
+        const queued = yield* orchestrator.getThreadProjection(threadId);
+        const continuationRun = queued.runs.find(
+          (run) => run.userMessageId === MessageId.make("message:workspace-continuation:queued"),
+        );
+        assert.isDefined(continuationRun);
+        assert.equal(continuationRun.status, "queued");
+        yield* Queue.take(interruptRequested);
+        yield* Deferred.succeed(interruptRelease, undefined);
+
+        assert.deepEqual(yield* Deferred.await(continuationTurnStarted), {
+          model: initialSelection.model,
+          cwd: targetCwd,
+        });
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(projection.thread.branch, "feature/workspace-continuation");
+        assert.equal(projection.thread.worktreePath, targetCwd);
+        assert.equal(
+          projection.messages.find(
+            (message) => message.id === MessageId.make("message:workspace-continuation:queued"),
+          )?.text,
+          "Continue after the workspace handoff.",
+        );
+      }).pipe(Effect.provide(orchestratorLayer));
     }),
   ),
 );

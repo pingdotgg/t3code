@@ -1560,6 +1560,33 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(result.branch, current);
       }),
     );
+
+    it.effect(
+      "resolves an explicit remote ref instead of a same-named untracked local branch",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "origin", remote]);
+          yield* git(cwd, ["push", "origin", "HEAD:refs/heads/feature"]);
+          const remoteFeatureCommit = yield* git(cwd, ["rev-parse", "origin/feature"]);
+          yield* git(cwd, ["checkout", "-b", "feature"]);
+          yield* writeTextFile(cwd, "local-only.txt", "local\n");
+          yield* git(cwd, ["add", "local-only.txt"]);
+          yield* git(cwd, ["commit", "-m", "local feature"]);
+          const localFeatureCommit = yield* git(cwd, ["rev-parse", "feature"]);
+          yield* git(cwd, ["checkout", initialBranch]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          const switched = yield* driver.switchRef({ cwd, refName: "origin/feature" });
+
+          assert.equal(switched.refName, null);
+          assert.notEqual(localFeatureCommit, remoteFeatureCommit);
+          assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteFeatureCommit);
+        }),
+    );
   });
 
   describe("worktree operations", () => {

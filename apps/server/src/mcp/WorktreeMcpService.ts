@@ -11,6 +11,7 @@ import {
   type WorktreeMcpContinuationStatus,
   type WorktreeMcpHandoffInput,
   type WorktreeMcpHandoffResult,
+  type WorktreeMcpListInput,
   type WorktreeMcpListResult,
   type WorktreeMcpSetupScriptStatus,
   type WorktreeMcpStatusResult,
@@ -21,6 +22,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -45,6 +47,7 @@ export class WorktreeMcpService extends Context.Service<
     ) => Effect.Effect<WorktreeMcpStatusResult, WorktreeMcpFailure>;
     readonly listWorktrees: (
       scope: McpInvocationScope,
+      input: WorktreeMcpListInput,
     ) => Effect.Effect<WorktreeMcpListResult, WorktreeMcpFailure>;
     readonly checkout: (
       scope: McpInvocationScope,
@@ -76,6 +79,7 @@ const asOperationFailed = (prefix: string) =>
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const threadManagement = yield* ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
@@ -135,10 +139,17 @@ const make = Effect.gen(function* () {
 
   const normalizePath = (value: string) => path.normalize(path.resolve(value));
 
-  const threadWorkspacePath = (
+  const canonicalizePath = (value: string) => {
+    const normalized = normalizePath(value);
+    return fileSystem.realPath(normalized).pipe(Effect.orElseSucceed(() => normalized));
+  };
+
+  const threadWorkspacePath = Effect.fn("WorktreeMcpService.threadWorkspacePath")(function* (
     thread: Pick<OrchestrationV2ThreadShell, "worktreePath">,
     projectWorkspaceRoot: string,
-  ) => normalizePath(thread.worktreePath ?? projectWorkspaceRoot);
+  ) {
+    return yield* canonicalizePath(thread.worktreePath ?? projectWorkspaceRoot);
+  });
 
   const loadRefs = Effect.fn("WorktreeMcpService.loadRefs")(function* (
     projectWorkspaceRoot: string,
@@ -146,14 +157,13 @@ const make = Effect.gen(function* () {
   ) {
     const refs: Array<VcsRef> = [];
     let cursor: number | undefined;
-    let firstPage = true;
     do {
       const page = yield* gitWorkflow
         .listRefs({
           cwd: projectWorkspaceRoot,
           refKind,
           includeMatchingRemoteRefs: refKind === "all",
-          refresh: firstPage,
+          refresh: cursor === undefined,
           limit: 200,
           ...(cursor === undefined ? {} : { cursor }),
         })
@@ -166,9 +176,16 @@ const make = Effect.gen(function* () {
       }
       refs.push(...page.refs);
       cursor = page.nextCursor ?? undefined;
-      firstPage = false;
     } while (cursor !== undefined);
     return refs;
+  });
+
+  const loadWorktrees = Effect.fn("WorktreeMcpService.loadWorktrees")(function* (
+    projectWorkspaceRoot: string,
+  ) {
+    return yield* gitWorkflow
+      .listWorktrees(projectWorkspaceRoot)
+      .pipe(asOperationFailed("Unable to list project worktrees"));
   });
 
   const loadProjectThreads = (
@@ -177,6 +194,61 @@ const make = Effect.gen(function* () {
     threadManagement
       .listProjectThreads({ projectId, includeSubagents: true })
       .pipe(asOperationFailed(`Unable to list threads in project ${projectId}`));
+
+  const loadActiveWorkspaceBindings = Effect.fn("WorktreeMcpService.loadActiveWorkspaceBindings")(
+    function* (repositoryCommonDir: string) {
+      const snapshot = yield* threadManagement
+        .getShellSnapshot({ location: "active" })
+        .pipe(asOperationFailed("Unable to inspect active thread workspace bindings"));
+      const byProject = new Map<ProjectId, Array<OrchestrationV2ThreadShell>>();
+      for (const thread of snapshot.threads) {
+        const projectThreads = byProject.get(thread.projectId) ?? [];
+        projectThreads.push(thread);
+        byProject.set(thread.projectId, projectThreads);
+      }
+
+      return yield* Effect.forEach(
+        [...byProject.entries()],
+        ([projectId, projectThreads]) =>
+          projects.getById(projectId).pipe(
+            asOperationFailed(
+              `Unable to read project ${projectId} while checking workspace owners`,
+            ),
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.succeed([]),
+                onSome: (project) =>
+                  loadWorktrees(project.workspaceRoot).pipe(
+                    Effect.flatMap((projectInventory) => {
+                      if (projectInventory.repositoryCommonDir !== repositoryCommonDir) {
+                        return Effect.succeed([]);
+                      }
+                      return Effect.forEach(projectThreads, (thread) => {
+                        if (thread.worktreePath === null) {
+                          return Effect.succeed(
+                            projectInventory.currentWorktreeRoot === null
+                              ? []
+                              : [[thread, projectInventory.currentWorktreeRoot] as const],
+                          );
+                        }
+                        return loadWorktrees(thread.worktreePath).pipe(
+                          Effect.map((threadInventory) =>
+                            threadInventory.repositoryCommonDir === repositoryCommonDir &&
+                            threadInventory.currentWorktreeRoot !== null
+                              ? [[thread, threadInventory.currentWorktreeRoot] as const]
+                              : [],
+                          ),
+                        );
+                      }).pipe(Effect.map((bindings) => bindings.flat()));
+                    }),
+                  ),
+              }),
+            ),
+          ),
+        { concurrency: 4 },
+      ).pipe(Effect.map((bindings) => bindings.flat()));
+    },
+  );
 
   const readWorkspaceStatus = (workspacePath: string) =>
     gitWorkflow
@@ -265,17 +337,13 @@ const make = Effect.gen(function* () {
     }
 
     const project = yield* loadProject(scope, projection.thread.projectId);
-    const projectCwd = project.workspaceRoot;
-    const sourceCwd = projection.thread.worktreePath ?? projectCwd;
+    const projectCwd = yield* canonicalizePath(project.workspaceRoot);
+    const sourceCwd = yield* canonicalizePath(projection.thread.worktreePath ?? projectCwd);
 
     if (projection.thread.worktreePath !== null) {
-      const projectRefs = yield* loadRefs(projectCwd, "local");
-      const projectWorktreePaths = new Set(
-        projectRefs.flatMap((ref) =>
-          ref.worktreePath === null ? [] : [normalizePath(ref.worktreePath)],
-        ),
-      );
-      if (!projectWorktreePaths.has(normalizePath(projection.thread.worktreePath))) {
+      const inventory = yield* loadWorktrees(projectCwd);
+      const projectWorktreePaths = new Set(inventory.worktrees.map((worktree) => worktree.path));
+      if (!projectWorktreePaths.has(sourceCwd)) {
         return yield* failure(
           "scope_mismatch",
           `Thread worktree '${projection.thread.worktreePath}' is not registered in project '${projection.thread.projectId}'.`,
@@ -631,31 +699,30 @@ const make = Effect.gen(function* () {
       yield* requireCapability(scope);
       const projection = yield* loadThread(scope);
       const project = yield* loadProject(scope, projection.thread.projectId);
-      const projectWorkspaceRoot = normalizePath(project.workspaceRoot);
+      const projectWorkspaceRoot = yield* canonicalizePath(project.workspaceRoot);
       const workspacePath = normalizePath(projection.thread.worktreePath ?? projectWorkspaceRoot);
-      const [defaultStartFromOrigin, actual, refs] = yield* Effect.all(
-        [
-          readDefaultStartFromOrigin,
-          readWorkspaceStatus(workspacePath),
-          loadRefs(projectWorkspaceRoot, "local"),
-        ],
-        { concurrency: 3 },
-      );
-      const knownWorkspacePaths = new Set([
-        projectWorkspaceRoot,
-        ...refs.flatMap((ref) =>
-          ref.isRemote === true || ref.worktreePath === null
-            ? []
-            : [normalizePath(ref.worktreePath)],
-        ),
-      ]);
-      const agreement = !knownWorkspacePaths.has(workspacePath)
-        ? "workspace_missing"
-        : !actual.isRepo
-          ? "not_repository"
-          : actual.refName !== projection.thread.branch
-            ? "branch_mismatch"
-            : "in_sync";
+      const [defaultStartFromOrigin, actual, projectInventory, workspaceInventory] =
+        yield* Effect.all(
+          [
+            readDefaultStartFromOrigin,
+            readWorkspaceStatus(workspacePath),
+            loadWorktrees(projectWorkspaceRoot),
+            loadWorktrees(workspacePath),
+          ],
+          { concurrency: 4 },
+        );
+      const canonicalWorkspacePath = yield* canonicalizePath(workspacePath);
+      const physicalWorkspacePath = workspaceInventory.currentWorktreeRoot;
+      const agreement =
+        workspaceInventory.repositoryCommonDir !== projectInventory.repositoryCommonDir ||
+        physicalWorkspacePath === null ||
+        !projectInventory.worktrees.some((worktree) => worktree.path === physicalWorkspacePath)
+          ? "workspace_missing"
+          : !actual.isRepo
+            ? "not_repository"
+            : actual.refName !== projection.thread.branch
+              ? "branch_mismatch"
+              : "in_sync";
 
       const result: WorktreeMcpStatusResult = {
         attached: projection.thread.worktreePath !== null,
@@ -668,7 +735,7 @@ const make = Effect.gen(function* () {
           worktreePath: projection.thread.worktreePath,
         },
         actualWorkspace: {
-          workspacePath,
+          workspacePath: physicalWorkspacePath ?? canonicalWorkspacePath,
           isRepo: actual.isRepo,
           branch: actual.refName,
           hasWorkingTreeChanges: actual.hasWorkingTreeChanges,
@@ -879,12 +946,12 @@ const make = Effect.gen(function* () {
     }
 
     const project = yield* loadProject(scope, projection.thread.projectId);
-    const projectWorkspaceRoot = normalizePath(project.workspaceRoot);
-    const currentWorkspacePath = normalizePath(
+    const projectWorkspaceRoot = yield* canonicalizePath(project.workspaceRoot);
+    const recordedWorkspacePath = yield* canonicalizePath(
       projection.thread.worktreePath ?? projectWorkspaceRoot,
     );
     if (input.target.type === "new_worktree") {
-      const previousActual = yield* readWorkspaceStatus(currentWorkspacePath);
+      const previousActual = yield* readWorkspaceStatus(recordedWorkspacePath);
       const handoff = yield* performHandoff(
         scope,
         {
@@ -903,10 +970,9 @@ const make = Effect.gen(function* () {
         },
         projection,
       );
-      const actual = yield* readWorkspaceStatus(handoff.worktreePath);
       return {
         previous: {
-          workspacePath: currentWorkspacePath,
+          workspacePath: recordedWorkspacePath,
           recordedBranch: projection.thread.branch,
           recordedWorktreePath: projection.thread.worktreePath,
           actualBranch: previousActual.refName,
@@ -915,16 +981,34 @@ const make = Effect.gen(function* () {
           workspacePath: handoff.worktreePath,
           recordedBranch: handoff.branch,
           recordedWorktreePath: handoff.worktreePath,
-          actualBranch: actual.refName,
+          actualBranch: handoff.branch,
         },
         checkoutAction: "created",
         workspaceChanged: true,
-        branchChanged: previousActual.refName !== actual.refName,
+        branchChanged: previousActual.refName !== handoff.branch,
         continuation: handoff.continuation,
         setupScript: handoff.setupScript,
         callerTurnEnds: true,
         note: handoff.note,
       } satisfies WorktreeMcpCheckoutResult;
+    }
+    const [inventory, currentInventory] = yield* Effect.all(
+      [loadWorktrees(projectWorkspaceRoot), loadWorktrees(recordedWorkspacePath)],
+      { concurrency: 2 },
+    );
+    if (inventory.repositoryCommonDir !== currentInventory.repositoryCommonDir) {
+      return yield* failure(
+        "scope_mismatch",
+        `Thread workspace '${recordedWorkspacePath}' does not belong to the calling thread's project repository.`,
+      );
+    }
+    const projectWorktreeRoot = inventory.currentWorktreeRoot;
+    const currentWorkspacePath = currentInventory.currentWorktreeRoot;
+    if (projectWorktreeRoot === null || currentWorkspacePath === null) {
+      return yield* failure(
+        "invalid_request",
+        "Git could not resolve the physical project or thread checkout.",
+      );
     }
     const [refs, threads, previousActual] = yield* Effect.all(
       [
@@ -936,12 +1020,7 @@ const make = Effect.gen(function* () {
     );
 
     const localRefs = refs.filter((ref) => ref.isRemote !== true);
-    const workspacePaths = new Set([
-      projectWorkspaceRoot,
-      ...localRefs.flatMap((ref) =>
-        ref.worktreePath === null ? [] : [normalizePath(ref.worktreePath)],
-      ),
-    ]);
+    const workspacePaths = new Set(inventory.worktrees.map((worktree) => worktree.path));
     const localRefByName = new Map(localRefs.map((ref) => [ref.name, ref]));
     const remoteRefByName = new Map(
       refs.filter((ref) => ref.isRemote === true).map((ref) => [ref.name, ref]),
@@ -954,14 +1033,17 @@ const make = Effect.gen(function* () {
 
     switch (input.target.type) {
       case "worktree": {
-        targetWorkspacePath = normalizePath(input.target.path);
+        const targetInventory = yield* loadWorktrees(input.target.path);
+        targetWorkspacePath =
+          targetInventory.currentWorktreeRoot ?? (yield* canonicalizePath(input.target.path));
         if (
-          targetWorkspacePath === projectWorkspaceRoot ||
+          targetInventory.repositoryCommonDir !== inventory.repositoryCommonDir ||
+          targetWorkspacePath === projectWorktreeRoot ||
           !workspacePaths.has(targetWorkspacePath)
         ) {
           return yield* failure(
             "scope_mismatch",
-            targetWorkspacePath === projectWorkspaceRoot
+            targetWorkspacePath === projectWorktreeRoot
               ? "Use target.type='project_root' to return to the project's main checkout."
               : `Worktree '${input.target.path}' does not belong to project '${projection.thread.projectId}'. Call t3_worktree_list and choose one of its paths.`,
           );
@@ -969,7 +1051,7 @@ const make = Effect.gen(function* () {
         break;
       }
       case "project_root": {
-        targetWorkspacePath = projectWorkspaceRoot;
+        targetWorkspacePath = projectWorktreeRoot;
         requestedBranch = input.target.branch;
         createBranch = input.target.create ?? false;
         if (createBranch && requestedBranch === undefined) {
@@ -1000,15 +1082,15 @@ const make = Effect.gen(function* () {
         const selectedWorktreePath =
           selectedRef?.isRemote === true || selectedRef?.worktreePath == null
             ? null
-            : normalizePath(selectedRef.worktreePath);
+            : selectedRef.worktreePath;
         targetWorkspacePath =
           workspace === "project_root"
-            ? projectWorkspaceRoot
+            ? projectWorktreeRoot
             : workspace === "current"
               ? currentWorkspacePath
               : (selectedWorktreePath ??
                 (projection.thread.worktreePath !== null && selectedRef?.isDefault === true
-                  ? projectWorkspaceRoot
+                  ? projectWorktreeRoot
                   : currentWorkspacePath));
         break;
       }
@@ -1043,7 +1125,7 @@ const make = Effect.gen(function* () {
     const selectedWorktreePath =
       selectedRef?.isRemote === true || selectedRef?.worktreePath == null
         ? null
-        : normalizePath(selectedRef.worktreePath);
+        : selectedRef.worktreePath;
     if (
       !createBranch &&
       requestedBranch !== undefined &&
@@ -1058,16 +1140,18 @@ const make = Effect.gen(function* () {
 
     const shouldMutateCheckout =
       requestedBranch !== undefined &&
-      (createBranch ||
-        (selectedRef?.isRemote === true
-          ? targetBefore.refName !== requestedBranch &&
-            targetBefore.refName !== requestedBranch.replace(/^[^/]+\//, "")
-          : targetBefore.refName !== requestedBranch));
-    const otherBindings = threads.filter(
-      (thread) =>
-        thread.id !== scope.threadId &&
-        threadWorkspacePath(thread, projectWorkspaceRoot) === targetWorkspacePath,
+      (createBranch || selectedRef?.isRemote === true || targetBefore.refName !== requestedBranch);
+    const threadWorkspaces = yield* Effect.forEach(threads, (thread) =>
+      threadWorkspacePath(thread, projectWorktreeRoot).pipe(
+        Effect.map((workspacePath) => [thread, workspacePath] as const),
+      ),
     );
+    const otherBindings = threadWorkspaces
+      .filter(
+        ([thread, workspacePath]) =>
+          thread.id !== scope.threadId && workspacePath === targetWorkspacePath,
+      )
+      .map(([thread]) => thread);
     const activeBinding = otherBindings.find((thread) => thread.activeRunId !== null);
     if ((targetWorkspacePath !== currentWorkspacePath || shouldMutateCheckout) && activeBinding) {
       return yield* failure(
@@ -1076,7 +1160,7 @@ const make = Effect.gen(function* () {
       );
     }
     if (
-      targetWorkspacePath !== projectWorkspaceRoot &&
+      targetWorkspacePath !== projectWorktreeRoot &&
       (targetWorkspacePath !== currentWorkspacePath || shouldMutateCheckout) &&
       otherBindings.length > 0
     ) {
@@ -1086,7 +1170,7 @@ const make = Effect.gen(function* () {
       );
     }
     if (
-      targetWorkspacePath === projectWorkspaceRoot &&
+      targetWorkspacePath === projectWorktreeRoot &&
       shouldMutateCheckout &&
       otherBindings.length > 0
     ) {
@@ -1103,285 +1187,463 @@ const make = Effect.gen(function* () {
     }
 
     const ids = yield* transitionIds(scope, "checkout");
+    const workspaceGuardKey = `workspace:${inventory.repositoryCommonDir}:${targetWorkspacePath}`;
     return yield* Effect.uninterruptibleMask(() =>
-      Effect.gen(function* () {
-        let checkoutAction: WorktreeMcpCheckoutResult["checkoutAction"] =
-          targetWorkspacePath === currentWorkspacePath ? "unchanged" : "reused";
-        let createdBranch: string | null = null;
-
-        if (shouldMutateCheckout && requestedBranch !== undefined) {
-          if (createBranch) {
-            yield* gitWorkflow
-              .createRef({
-                cwd: targetWorkspacePath,
-                refName: requestedBranch,
-                switchRef: false,
-              })
-              .pipe(asOperationFailed(`Unable to create branch '${requestedBranch}'`));
-            createdBranch = requestedBranch;
-          }
-          const switchExit = yield* Effect.exit(
-            gitWorkflow.switchRef({ cwd: targetWorkspacePath, refName: requestedBranch }),
+      Effect.suspend(() => {
+        if (workspaceTransitionsInFlight.has(workspaceGuardKey)) {
+          return Effect.fail(
+            failure(
+              "checkout_in_progress",
+              `Another workspace transition is already in progress for '${targetWorkspacePath}'.`,
+            ),
           );
-          if (Exit.isFailure(switchExit)) {
-            const afterFailedSwitchExit = yield* Effect.exit(
-              readWorkspaceStatus(targetWorkspacePath),
+        }
+        workspaceTransitionsInFlight.add(workspaceGuardKey);
+        return Effect.gen(function* () {
+          const [latestProjection, latestInventory, latestBindings, latestTargetBefore] =
+            yield* Effect.all(
+              [
+                loadThread(scope),
+                loadWorktrees(projectWorkspaceRoot),
+                loadActiveWorkspaceBindings(inventory.repositoryCommonDir),
+                readWorkspaceStatus(targetWorkspacePath),
+              ],
+              { concurrency: 4 },
             );
-            if (Exit.isFailure(afterFailedSwitchExit)) {
-              return yield* failure(
-                "partial_failure",
-                `Branch checkout failed and the resulting Git state could not be verified: ${errorMessage(Cause.squash(switchExit.cause))}`,
-                {
-                  workspacePath: targetWorkspacePath,
-                  recordedBranch: projection.thread.branch,
-                  actualBranch: null,
-                  rollback: "not_possible",
-                },
-              );
-            }
-            const afterFailedSwitch = afterFailedSwitchExit.value;
-            const checkoutChanged = afterFailedSwitch.refName !== targetBefore.refName;
-            if (checkoutChanged && targetBefore.refName === null) {
-              return yield* failure(
-                "partial_failure",
-                `Branch checkout failed after changing Git state and the previous detached ref cannot be restored automatically: ${errorMessage(Cause.squash(switchExit.cause))}`,
-                {
-                  workspacePath: targetWorkspacePath,
-                  recordedBranch: projection.thread.branch,
-                  actualBranch: afterFailedSwitch.refName,
-                  rollback: "not_possible",
-                },
-              );
-            }
-            const rollback = checkoutChanged
-              ? gitWorkflow.switchRef({
-                  cwd: targetWorkspacePath,
-                  refName: targetBefore.refName!,
-                })
-              : Effect.void;
-            const cleanup = rollback.pipe(
-              Effect.andThen(
-                createdBranch === null
-                  ? Effect.void
-                  : gitWorkflow.deleteLocalBranch({
-                      cwd: targetWorkspacePath,
-                      refName: createdBranch,
-                      force: true,
-                    }),
-              ),
-            );
-            const cleanupExit = yield* Effect.exit(cleanup);
-            if (Exit.isFailure(cleanupExit)) {
-              const actualBranch = yield* readWorkspaceBranchOrNull(targetWorkspacePath);
-              return yield* failure(
-                "partial_failure",
-                `Branch checkout failed and rollback also failed: ${errorMessage(Cause.squash(switchExit.cause))}`,
-                {
-                  workspacePath: targetWorkspacePath,
-                  recordedBranch: projection.thread.branch,
-                  actualBranch,
-                  rollback: "failed",
-                },
-              );
-            }
+          if (
+            latestProjection.thread.branch !== projection.thread.branch ||
+            latestProjection.thread.worktreePath !== projection.thread.worktreePath ||
+            latestProjection.thread.archivedAt !== projection.thread.archivedAt
+          ) {
             return yield* failure(
-              "operation_failed",
-              `Unable to check out '${requestedBranch}': ${errorMessage(Cause.squash(switchExit.cause))}`,
+              "checkout_in_progress",
+              `Thread '${scope.threadId}' changed workspace state while checkout was being prepared. Retry from its current binding.`,
             );
           }
-          checkoutAction = createBranch ? "created" : "switched";
-        }
-
-        const actualExit = yield* Effect.exit(readWorkspaceStatus(targetWorkspacePath));
-        if (Exit.isFailure(actualExit)) {
-          const detail = errorMessage(Cause.squash(actualExit.cause));
-          if (checkoutAction === "switched" || checkoutAction === "created") {
-            if (targetBefore.refName === null) {
-              return yield* failure(
-                "partial_failure",
-                `Git checkout completed but its resulting state could not be verified: ${detail}`,
-                {
-                  workspacePath: targetWorkspacePath,
-                  recordedBranch: projection.thread.branch,
-                  actualBranch: null,
-                  rollback: "not_possible",
-                },
-              );
-            }
-            const rollbackExit = yield* Effect.exit(
-              gitWorkflow
-                .switchRef({ cwd: targetWorkspacePath, refName: targetBefore.refName })
-                .pipe(
-                  Effect.andThen(
-                    createdBranch === null
-                      ? Effect.void
-                      : gitWorkflow.deleteLocalBranch({
-                          cwd: targetWorkspacePath,
-                          refName: createdBranch,
-                          force: true,
-                        }),
-                  ),
-                ),
+          if (
+            latestInventory.repositoryCommonDir !== inventory.repositoryCommonDir ||
+            !latestInventory.worktrees.some((worktree) => worktree.path === targetWorkspacePath)
+          ) {
+            return yield* failure(
+              "scope_mismatch",
+              `Checkout target '${targetWorkspacePath}' is no longer registered in the calling thread's Git repository.`,
             );
-            if (Exit.isFailure(rollbackExit)) {
-              const actualBranch = yield* readWorkspaceBranchOrNull(targetWorkspacePath);
-              return yield* failure(
-                "partial_failure",
-                `Git checkout completed, verification failed, and rollback also failed: ${detail}`,
-                {
-                  workspacePath: targetWorkspacePath,
-                  recordedBranch: projection.thread.branch,
-                  actualBranch,
-                  rollback: "failed",
-                },
-              );
-            }
           }
-          return yield* failure(
-            "operation_failed",
-            `Unable to verify the selected checkout '${targetWorkspacePath}': ${detail}`,
+          if (
+            latestTargetBefore.refName !== targetBefore.refName ||
+            latestTargetBefore.hasWorkingTreeChanges !== targetBefore.hasWorkingTreeChanges
+          ) {
+            return yield* failure(
+              "checkout_in_progress",
+              `Checkout '${targetWorkspacePath}' changed while the transition was being prepared. Retry from its current Git state.`,
+            );
+          }
+          if (shouldMutateCheckout && latestTargetBefore.hasWorkingTreeChanges) {
+            return yield* failure(
+              "dirty_workspace",
+              `Checkout '${targetWorkspacePath}' has uncommitted files. Commit or discard them before switching branches.`,
+            );
+          }
+          const latestOtherBindings = latestBindings
+            .filter(
+              ([thread, workspacePath]) =>
+                thread.id !== scope.threadId && workspacePath === targetWorkspacePath,
+            )
+            .map(([thread]) => thread);
+          const latestActiveBinding = latestOtherBindings.find(
+            (thread) => thread.activeRunId !== null,
           );
-        }
-        const actual = actualExit.value;
-        const nextBranch = actual.refName;
-        const workspaceChanged = targetWorkspacePath !== currentWorkspacePath;
-        const nextWorktreePath = workspaceChanged
-          ? targetWorkspacePath === projectWorkspaceRoot
-            ? null
-            : targetWorkspacePath
-          : projection.thread.worktreePath;
-        const bindingChanged =
-          nextBranch !== projection.thread.branch ||
-          nextWorktreePath !== projection.thread.worktreePath;
+          if (
+            (targetWorkspacePath !== currentWorkspacePath || shouldMutateCheckout) &&
+            latestActiveBinding
+          ) {
+            return yield* failure(
+              "workspace_in_use",
+              `Checkout '${targetWorkspacePath}' is in use by active thread '${latestActiveBinding.id}' (${latestActiveBinding.title}).`,
+            );
+          }
+          if (
+            targetWorkspacePath !== projectWorktreeRoot &&
+            (targetWorkspacePath !== currentWorkspacePath || shouldMutateCheckout) &&
+            latestOtherBindings.length > 0
+          ) {
+            return yield* failure(
+              "workspace_shared",
+              `Worktree '${targetWorkspacePath}' is already bound to thread '${latestOtherBindings[0]!.id}'. Reusing it would make two threads share one mutable checkout.`,
+            );
+          }
+          if (
+            targetWorkspacePath === projectWorktreeRoot &&
+            shouldMutateCheckout &&
+            latestOtherBindings.length > 0
+          ) {
+            return yield* failure(
+              "workspace_shared",
+              `The project root is also bound to thread '${latestOtherBindings[0]!.id}'. Switching its branch would make that thread's recorded branch disagree with Git.`,
+            );
+          }
 
-        if (bindingChanged) {
-          const dispatchExit = yield* Effect.exit(
-            threadManagement.dispatch({
-              type: "thread.metadata.update",
-              commandId: ids.commandId,
-              threadId: scope.threadId,
-              branch: nextBranch,
-              worktreePath: nextWorktreePath,
-              expectedBranch: projection.thread.branch,
-              expectedWorktreePath: projection.thread.worktreePath,
-            }),
-          );
-          if (Exit.isFailure(dispatchExit)) {
-            const dispatchDetail = errorMessage(Cause.squash(dispatchExit.cause));
-            const bindingAfterDispatchExit = yield* Effect.exit(loadThread(scope));
-            if (Exit.isFailure(bindingAfterDispatchExit)) {
-              return yield* failure(
-                "partial_failure",
-                `The durable binding update reported a failure and its outcome could not be verified: ${dispatchDetail}`,
-                {
-                  workspacePath: targetWorkspacePath,
-                  recordedBranch: projection.thread.branch,
-                  actualBranch: actual.refName,
-                  rollback: "not_possible",
-                },
-              );
+          let checkoutAction: WorktreeMcpCheckoutResult["checkoutAction"] =
+            targetWorkspacePath === currentWorkspacePath ? "unchanged" : "reused";
+          let createdBranch: string | null = null;
+          let resolvedBranch: string | null = targetBefore.refName;
+
+          if (shouldMutateCheckout && requestedBranch !== undefined) {
+            if (createBranch) {
+              yield* gitWorkflow
+                .createRef({
+                  cwd: targetWorkspacePath,
+                  refName: requestedBranch,
+                  switchRef: false,
+                })
+                .pipe(asOperationFailed(`Unable to create branch '${requestedBranch}'`));
+              createdBranch = requestedBranch;
             }
-            const bindingAfterDispatch = bindingAfterDispatchExit.value.thread;
-            const bindingCommitted =
-              bindingAfterDispatch.branch === nextBranch &&
-              bindingAfterDispatch.worktreePath === nextWorktreePath;
-            if (bindingCommitted) {
-              yield* Effect.logWarning(
-                "workspace binding dispatch reported failure after the binding committed",
-                {
-                  threadId: scope.threadId,
-                  workspacePath: targetWorkspacePath,
-                  detail: dispatchDetail,
-                },
+            const switchExit = yield* Effect.exit(
+              gitWorkflow.switchRef({ cwd: targetWorkspacePath, refName: requestedBranch }),
+            );
+            if (Exit.isFailure(switchExit)) {
+              const afterFailedSwitchExit = yield* Effect.exit(
+                readWorkspaceStatus(targetWorkspacePath),
               );
-            } else {
-              if (checkoutAction === "switched" || checkoutAction === "created") {
-                if (targetBefore.refName === null) {
-                  return yield* failure(
-                    "partial_failure",
-                    `Git checkout completed but the durable thread binding failed: ${dispatchDetail}`,
-                    {
-                      workspacePath: targetWorkspacePath,
-                      recordedBranch: projection.thread.branch,
-                      actualBranch: actual.refName,
-                      rollback: "not_possible",
-                    },
-                  );
-                }
-                const rollbackExit = yield* Effect.exit(
-                  gitWorkflow
-                    .switchRef({ cwd: targetWorkspacePath, refName: targetBefore.refName })
-                    .pipe(
-                      Effect.andThen(
-                        createdBranch === null
-                          ? Effect.void
-                          : gitWorkflow.deleteLocalBranch({
-                              cwd: targetWorkspacePath,
-                              refName: createdBranch,
-                              force: true,
-                            }),
-                      ),
-                    ),
+              if (Exit.isFailure(afterFailedSwitchExit)) {
+                return yield* failure(
+                  "partial_failure",
+                  `Branch checkout failed and the resulting Git state could not be verified: ${errorMessage(Cause.squash(switchExit.cause))}`,
+                  {
+                    workspacePath: targetWorkspacePath,
+                    recordedBranch: projection.thread.branch,
+                    actualBranch: null,
+                    rollback: "not_possible",
+                  },
                 );
-                if (Exit.isFailure(rollbackExit)) {
-                  const actualBranch = yield* readWorkspaceBranchOrNull(targetWorkspacePath);
-                  return yield* failure(
-                    "partial_failure",
-                    `Git checkout completed, the durable binding failed, and rollback also failed: ${dispatchDetail}`,
-                    {
-                      workspacePath: targetWorkspacePath,
-                      recordedBranch: projection.thread.branch,
-                      actualBranch,
-                      rollback: "failed",
-                    },
-                  );
-                }
+              }
+              const afterFailedSwitch = afterFailedSwitchExit.value;
+              const checkoutChanged = afterFailedSwitch.refName !== targetBefore.refName;
+              if (checkoutChanged && targetBefore.refName === null) {
+                return yield* failure(
+                  "partial_failure",
+                  `Branch checkout failed after changing Git state and the previous detached ref cannot be restored automatically: ${errorMessage(Cause.squash(switchExit.cause))}`,
+                  {
+                    workspacePath: targetWorkspacePath,
+                    recordedBranch: projection.thread.branch,
+                    actualBranch: afterFailedSwitch.refName,
+                    rollback: "not_possible",
+                  },
+                );
+              }
+              const rollback = checkoutChanged
+                ? gitWorkflow.switchRef({
+                    cwd: targetWorkspacePath,
+                    refName: targetBefore.refName!,
+                  })
+                : Effect.void;
+              const cleanup = rollback.pipe(
+                Effect.andThen(
+                  createdBranch === null
+                    ? Effect.void
+                    : gitWorkflow.deleteLocalBranch({
+                        cwd: targetWorkspacePath,
+                        refName: createdBranch,
+                        force: true,
+                      }),
+                ),
+              );
+              const cleanupExit = yield* Effect.exit(cleanup);
+              if (Exit.isFailure(cleanupExit)) {
+                const actualBranch = yield* readWorkspaceBranchOrNull(targetWorkspacePath);
+                return yield* failure(
+                  "partial_failure",
+                  `Branch checkout failed and rollback also failed: ${errorMessage(Cause.squash(switchExit.cause))}`,
+                  {
+                    workspacePath: targetWorkspacePath,
+                    recordedBranch: projection.thread.branch,
+                    actualBranch,
+                    rollback: "failed",
+                  },
+                );
               }
               return yield* failure(
                 "operation_failed",
-                `Unable to update the durable thread workspace: ${dispatchDetail}`,
+                `Unable to check out '${requestedBranch}': ${errorMessage(Cause.squash(switchExit.cause))}`,
               );
             }
+            resolvedBranch = switchExit.value.refName;
+            if (resolvedBranch === null) {
+              return yield* failure(
+                "partial_failure",
+                `Git reported a detached checkout after selecting '${requestedBranch}'. The durable thread binding was not changed.`,
+                {
+                  workspacePath: targetWorkspacePath,
+                  recordedBranch: projection.thread.branch,
+                  actualBranch: null,
+                  rollback: "not_possible",
+                },
+              );
+            }
+            checkoutAction = createBranch ? "created" : "switched";
           }
-        }
 
-        const continuation = workspaceChanged
-          ? yield* queueContinuation({
-              scope,
-              projection,
-              prompt: input.continuationPrompt,
-              commandId: ids.continuationCommandId,
-              messageId: ids.continuationMessageId,
-              workspacePath: targetWorkspacePath,
-            })
-          : ({ status: "skipped" } as const);
-        const previous = {
-          workspacePath: currentWorkspacePath,
-          recordedBranch: projection.thread.branch,
-          recordedWorktreePath: projection.thread.worktreePath,
-          actualBranch: previousActual.refName,
-        };
-        const current = {
-          workspacePath: targetWorkspacePath,
-          recordedBranch: nextBranch,
-          recordedWorktreePath: nextWorktreePath,
-          actualBranch: actual.refName,
-        };
-        return {
-          previous,
-          current,
-          checkoutAction,
-          workspaceChanged,
-          branchChanged: previousActual.refName !== actual.refName,
-          continuation,
-          setupScript: { status: "skipped" },
-          callerTurnEnds: workspaceChanged,
-          note: workspaceChanged
-            ? continuation.status === "scheduled"
-              ? "Checkout and durable thread binding completed. The workspace change detaches this provider session; the queued continuation starts the next turn in the selected checkout."
-              : "Checkout and durable thread binding completed. The workspace change detaches this provider session, so this turn ends after the call. Send another message to continue in the selected checkout."
-            : "Checkout and durable thread binding completed without changing the provider session workspace.",
-        } satisfies WorktreeMcpCheckoutResult;
+          const actualExit = yield* Effect.exit(readWorkspaceStatus(targetWorkspacePath));
+          if (Exit.isFailure(actualExit)) {
+            const detail = errorMessage(Cause.squash(actualExit.cause));
+            if (checkoutAction === "switched" || checkoutAction === "created") {
+              if (targetBefore.refName === null) {
+                return yield* failure(
+                  "partial_failure",
+                  `Git checkout completed but its resulting state could not be verified: ${detail}`,
+                  {
+                    workspacePath: targetWorkspacePath,
+                    recordedBranch: projection.thread.branch,
+                    actualBranch: null,
+                    rollback: "not_possible",
+                  },
+                );
+              }
+              const rollbackExit = yield* Effect.exit(
+                gitWorkflow
+                  .switchRef({ cwd: targetWorkspacePath, refName: targetBefore.refName })
+                  .pipe(
+                    Effect.andThen(
+                      createdBranch === null
+                        ? Effect.void
+                        : gitWorkflow.deleteLocalBranch({
+                            cwd: targetWorkspacePath,
+                            refName: createdBranch,
+                            force: true,
+                          }),
+                    ),
+                  ),
+              );
+              if (Exit.isFailure(rollbackExit)) {
+                const actualBranch = yield* readWorkspaceBranchOrNull(targetWorkspacePath);
+                return yield* failure(
+                  "partial_failure",
+                  `Git checkout completed, verification failed, and rollback also failed: ${detail}`,
+                  {
+                    workspacePath: targetWorkspacePath,
+                    recordedBranch: projection.thread.branch,
+                    actualBranch,
+                    rollback: "failed",
+                  },
+                );
+              }
+            }
+            return yield* failure(
+              "operation_failed",
+              `Unable to verify the selected checkout '${targetWorkspacePath}': ${detail}`,
+            );
+          }
+          const actual = actualExit.value;
+          if (
+            (checkoutAction === "switched" || checkoutAction === "created") &&
+            actual.refName !== resolvedBranch
+          ) {
+            return yield* failure(
+              "partial_failure",
+              `Git resolved '${requestedBranch}' to '${resolvedBranch}' but the checkout now reports '${actual.refName ?? "detached HEAD"}'. The durable thread binding was not changed.`,
+              {
+                workspacePath: targetWorkspacePath,
+                recordedBranch: projection.thread.branch,
+                actualBranch: actual.refName,
+                rollback: "not_possible",
+              },
+            );
+          }
+          const nextBranch = actual.refName;
+          const workspaceChanged = targetWorkspacePath !== currentWorkspacePath;
+          const nextWorktreePath = workspaceChanged
+            ? targetWorkspacePath === projectWorktreeRoot
+              ? null
+              : targetWorkspacePath
+            : projection.thread.worktreePath;
+          const bindingChanged =
+            nextBranch !== projection.thread.branch ||
+            nextWorktreePath !== projection.thread.worktreePath;
+
+          const rollbackOwnedCheckout = Effect.fn("WorktreeMcpService.rollbackOwnedCheckout")(
+            function* () {
+              if (checkoutAction !== "switched" && checkoutAction !== "created") {
+                return "not_needed" as const;
+              }
+              if (targetBefore.refName === null) {
+                return "not_possible" as const;
+              }
+              const [latestStatus, latestBindings, callerProjectionExit] = yield* Effect.all(
+                [
+                  readWorkspaceStatus(targetWorkspacePath),
+                  loadActiveWorkspaceBindings(inventory.repositoryCommonDir),
+                  Effect.exit(threadManagement.getThreadProjection(scope.threadId)),
+                ],
+                { concurrency: 3 },
+              );
+              const anotherOwner = latestBindings.some(
+                ([thread, workspacePath]) =>
+                  thread.id !== scope.threadId && workspacePath === targetWorkspacePath,
+              );
+              const callerStillInitial =
+                Exit.isSuccess(callerProjectionExit) &&
+                callerProjectionExit.value.thread.branch === projection.thread.branch &&
+                callerProjectionExit.value.thread.worktreePath === projection.thread.worktreePath;
+              if (latestStatus.refName !== actual.refName || anotherOwner || !callerStillInitial) {
+                return "not_possible" as const;
+              }
+              const rollbackExit = yield* Effect.exit(
+                gitWorkflow
+                  .switchRef({ cwd: targetWorkspacePath, refName: targetBefore.refName })
+                  .pipe(
+                    Effect.andThen(
+                      createdBranch === null
+                        ? Effect.void
+                        : gitWorkflow.deleteLocalBranch({
+                            cwd: targetWorkspacePath,
+                            refName: createdBranch,
+                            force: true,
+                          }),
+                    ),
+                  ),
+              );
+              return Exit.isSuccess(rollbackExit) ? ("rolled_back" as const) : ("failed" as const);
+            },
+          );
+
+          if (bindingChanged) {
+            const preCommitProjectionExit = yield* Effect.exit(loadThread(scope));
+            const preCommitProjection = Exit.isSuccess(preCommitProjectionExit)
+              ? preCommitProjectionExit.value
+              : null;
+            const metadataChanged =
+              preCommitProjection === null ||
+              preCommitProjection.thread.branch !== projection.thread.branch ||
+              preCommitProjection.thread.worktreePath !== projection.thread.worktreePath ||
+              preCommitProjection.thread.archivedAt !== projection.thread.archivedAt;
+            if (metadataChanged) {
+              const rollback = yield* rollbackOwnedCheckout();
+              if (rollback === "failed" || rollback === "not_possible") {
+                return yield* failure(
+                  "partial_failure",
+                  `The thread changed or disappeared after Git checkout, so its durable binding was not updated and Git rollback was ${rollback === "failed" ? "unsuccessful" : "unsafe"}.`,
+                  {
+                    workspacePath: targetWorkspacePath,
+                    recordedBranch: projection.thread.branch,
+                    actualBranch: yield* readWorkspaceBranchOrNull(targetWorkspacePath),
+                    rollback: rollback === "failed" ? "failed" : "not_possible",
+                  },
+                );
+              }
+              return yield* failure(
+                "checkout_in_progress",
+                `Thread '${scope.threadId}' changed or disappeared before the workspace binding committed. Git state was left unchanged.`,
+              );
+            }
+            const dispatchExit = yield* Effect.exit(
+              threadManagement.dispatch({
+                type: "thread.metadata.update",
+                commandId: ids.commandId,
+                threadId: scope.threadId,
+                branch: nextBranch,
+                worktreePath: nextWorktreePath,
+                expectedBranch: projection.thread.branch,
+                expectedWorktreePath: projection.thread.worktreePath,
+              }),
+            );
+            if (Exit.isFailure(dispatchExit)) {
+              const dispatchDetail = errorMessage(Cause.squash(dispatchExit.cause));
+              const bindingAfterDispatchExit = yield* Effect.exit(loadThread(scope));
+              if (Exit.isFailure(bindingAfterDispatchExit)) {
+                return yield* failure(
+                  "partial_failure",
+                  `The durable binding update reported a failure and its outcome could not be verified: ${dispatchDetail}`,
+                  {
+                    workspacePath: targetWorkspacePath,
+                    recordedBranch: projection.thread.branch,
+                    actualBranch: actual.refName,
+                    rollback: "not_possible",
+                  },
+                );
+              }
+              const bindingAfterDispatch = bindingAfterDispatchExit.value.thread;
+              const bindingCommitted =
+                bindingAfterDispatch.branch === nextBranch &&
+                bindingAfterDispatch.worktreePath === nextWorktreePath;
+              if (bindingCommitted) {
+                yield* Effect.logWarning(
+                  "workspace binding dispatch reported failure after the binding committed",
+                  {
+                    threadId: scope.threadId,
+                    workspacePath: targetWorkspacePath,
+                    detail: dispatchDetail,
+                  },
+                );
+              } else {
+                const bindingStillInitial =
+                  bindingAfterDispatch.branch === projection.thread.branch &&
+                  bindingAfterDispatch.worktreePath === projection.thread.worktreePath;
+                const rollback = bindingStillInitial
+                  ? yield* rollbackOwnedCheckout()
+                  : ("not_possible" as const);
+                if (rollback === "failed" || rollback === "not_possible") {
+                  return yield* failure(
+                    "partial_failure",
+                    `Git checkout completed but the durable binding failed, and rollback was ${rollback === "failed" ? "unsuccessful" : "unsafe"}: ${dispatchDetail}`,
+                    {
+                      workspacePath: targetWorkspacePath,
+                      recordedBranch: bindingAfterDispatch.branch,
+                      actualBranch: yield* readWorkspaceBranchOrNull(targetWorkspacePath),
+                      rollback: rollback === "failed" ? "failed" : "not_possible",
+                    },
+                  );
+                }
+                return yield* failure(
+                  "operation_failed",
+                  `Unable to update the durable thread workspace: ${dispatchDetail}`,
+                );
+              }
+            }
+          }
+
+          const continuation = workspaceChanged
+            ? yield* queueContinuation({
+                scope,
+                projection,
+                prompt: input.continuationPrompt,
+                commandId: ids.continuationCommandId,
+                messageId: ids.continuationMessageId,
+                workspacePath: targetWorkspacePath,
+              })
+            : ({ status: "skipped" } as const);
+          const previous = {
+            workspacePath: currentWorkspacePath,
+            recordedBranch: projection.thread.branch,
+            recordedWorktreePath: projection.thread.worktreePath,
+            actualBranch: previousActual.refName,
+          };
+          const current = {
+            workspacePath: targetWorkspacePath,
+            recordedBranch: nextBranch,
+            recordedWorktreePath: nextWorktreePath,
+            actualBranch: actual.refName,
+          };
+          return {
+            previous,
+            current,
+            checkoutAction,
+            workspaceChanged,
+            branchChanged: previousActual.refName !== actual.refName,
+            continuation,
+            setupScript: { status: "skipped" },
+            callerTurnEnds: workspaceChanged,
+            note: workspaceChanged
+              ? continuation.status === "scheduled"
+                ? "Checkout and durable thread binding completed. The workspace change detaches this provider session; the queued continuation starts the next turn in the selected checkout."
+                : "Checkout and durable thread binding completed. The workspace change detaches this provider session, so this turn ends after the call. Send another message to continue in the selected checkout."
+              : "Checkout and durable thread binding completed without changing the provider session workspace.",
+          } satisfies WorktreeMcpCheckoutResult;
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => workspaceTransitionsInFlight.delete(workspaceGuardKey)),
+          ),
+        );
       }),
     );
   });
@@ -1415,6 +1677,7 @@ export const layer: Layer.Layer<
   WorktreeMcpService,
   never,
   | Crypto.Crypto
+  | FileSystem.FileSystem
   | Path.Path
   | ThreadManagementService
   | ProjectService.ProjectService

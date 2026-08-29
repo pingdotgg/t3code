@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   GitManagerError,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   type Project,
   ProjectId,
   ProviderInstanceId,
@@ -104,7 +105,10 @@ interface HarnessOptions {
   readonly dispatchGate?: Effect.Effect<void>;
   readonly threadAttachedOnRecheck?: boolean;
   readonly threadArchivedOnRecheck?: boolean;
+  readonly threadArchivedOnCall?: number;
+  readonly threadDeletedOnCall?: number;
   readonly threadReadFailsOnRecheck?: boolean;
+  readonly threadReadFailsAfterDispatch?: boolean;
   readonly threadReadFailsOnCall?: number;
   readonly continuation?: "queued" | "fails" | "dies";
   readonly projectMissing?: boolean;
@@ -124,6 +128,12 @@ interface HarnessOptions {
     readonly isRemote?: boolean;
     readonly worktreePath: string | null;
   }>;
+  readonly worktrees?: ReadonlyArray<{
+    readonly path: string;
+    readonly refName: string | null;
+  }>;
+  readonly projectWorktreeRoot?: string;
+  readonly workspaceAliases?: Readonly<Record<string, string>>;
   readonly workspaceStatuses?: Readonly<Record<string, { branch: string | null; dirty?: boolean }>>;
   readonly localStatusFailsOnCall?: number;
   readonly localStatusFailure?: "typed" | "defect" | "interrupt";
@@ -135,9 +145,21 @@ interface HarnessOptions {
     readonly status?: "idle" | "running";
     readonly active?: boolean;
   }>;
+  readonly otherProjectThread?: {
+    readonly projectId: ProjectId;
+    readonly workspaceRoot: string;
+    readonly id: ThreadId;
+    readonly title: string;
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
+    readonly active?: boolean;
+  };
   readonly switchRefFails?: boolean;
   readonly switchRefFailsAfterMutation?: boolean;
   readonly switchRefRollbackFails?: boolean;
+  readonly switchRefGate?: Effect.Effect<void>;
+  readonly switchRefResultBranch?: string | null;
+  readonly refChangeAfterSwitch?: string | null;
   readonly createRefFails?: boolean;
 }
 
@@ -189,6 +211,28 @@ const makeHarness = (options: HarnessOptions = {}) => {
         }),
       ) as never;
     }
+    if (options.threadReadFailsAfterDispatch === true && dispatch.mock.calls.length > 0) {
+      return Effect.fail(
+        new OrchestratorDispatchError({
+          commandId: CommandId.make("command:test:post-dispatch-read"),
+          commandType: "thread.metadata.update",
+        }),
+      ) as never;
+    }
+    if (
+      options.threadArchivedOnCall !== undefined &&
+      getThreadProjection.mock.calls.length >= options.threadArchivedOnCall &&
+      thread !== null
+    ) {
+      return Effect.succeed(makeProjection({ ...thread, archivedAt: "2026-01-02T00:00:00.000Z" }));
+    }
+    if (
+      options.threadDeletedOnCall !== undefined &&
+      getThreadProjection.mock.calls.length >= options.threadDeletedOnCall &&
+      thread !== null
+    ) {
+      return Effect.succeed(makeProjection({ ...thread, deletedAt: "2026-01-02T00:00:00.000Z" }));
+    }
     if (
       options.threadAttachedOnRecheck === true &&
       getThreadProjection.mock.calls.length > 1 &&
@@ -212,9 +256,26 @@ const makeHarness = (options: HarnessOptions = {}) => {
     ) {
       return Effect.succeed(makeProjection({ ...thread, ...options.threadAfterFailedDispatch }));
     }
-    return id === threadId && thread !== null
-      ? Effect.succeed(makeProjection(thread))
-      : Effect.fail(new OrchestratorProjectionError({ threadId: id }));
+    if (id === threadId && thread !== null) {
+      return Effect.succeed(makeProjection(thread));
+    }
+    const projectThread = options.projectThreads?.find((item) => item.id === id);
+    if (projectThread !== undefined) {
+      const projection = makeProjection({
+        branch: projectThread.branch,
+        worktreePath: projectThread.worktreePath,
+      });
+      return Effect.succeed({
+        ...projection,
+        thread: {
+          ...projection.thread,
+          id: projectThread.id,
+          title: projectThread.title,
+          activeRunId: projectThread.active === true ? "run-active" : null,
+        },
+      });
+    }
+    return Effect.fail(new OrchestratorProjectionError({ threadId: id }));
   });
   const sendToThread = vi.fn((_: unknown) => {
     switch (options.continuation ?? "queued") {
@@ -236,34 +297,59 @@ const makeHarness = (options: HarnessOptions = {}) => {
       : Effect.succeed(
           id === projectId && options.projectMissing !== true
             ? Option.some(project)
-            : Option.none(),
+            : id === options.otherProjectThread?.projectId
+              ? Option.some({
+                  ...project,
+                  id,
+                  workspaceRoot: options.otherProjectThread.workspaceRoot,
+                })
+              : Option.none(),
         ),
   );
-  const listProjectThreads = vi.fn(() =>
-    Effect.succeed(
-      (
-        options.projectThreads ?? [
-          {
-            id: threadId,
-            title: "Worktree test thread",
-            branch: thread?.branch ?? null,
-            worktreePath: thread?.worktreePath ?? null,
-          },
-        ]
-      ).map(
-        (item) =>
-          ({
-            id: item.id,
-            projectId,
-            title: item.title,
-            branch: item.branch,
-            worktreePath: item.worktreePath,
-            status: item.status ?? "idle",
-            activeRunId: item.active === true ? "run-active" : null,
-            lineage: { relationshipToParent: "none" },
-          }) as never,
-      ),
-    ),
+  const projectThreadShells: Array<OrchestrationV2ThreadShell> = (
+    options.projectThreads ?? [
+      {
+        id: threadId,
+        title: "Worktree test thread",
+        branch: thread?.branch ?? null,
+        worktreePath: thread?.worktreePath ?? null,
+      },
+    ]
+  ).map(
+    (item) =>
+      ({
+        id: item.id,
+        projectId,
+        title: item.title,
+        branch: item.branch,
+        worktreePath: item.worktreePath,
+        status: item.status ?? "idle",
+        activeRunId: item.active === true ? "run-active" : null,
+        lineage: { relationshipToParent: "none" },
+      }) as unknown as OrchestrationV2ThreadShell,
+  );
+  if (options.otherProjectThread !== undefined) {
+    projectThreadShells.push({
+      ...(projectThreadShells[0] ?? makeProjection({}).thread),
+      id: options.otherProjectThread.id,
+      projectId: options.otherProjectThread.projectId,
+      title: options.otherProjectThread.title,
+      branch: options.otherProjectThread.branch,
+      worktreePath: options.otherProjectThread.worktreePath,
+      activeRunId: options.otherProjectThread.active === true ? "run-active" : null,
+      lineage: { relationshipToParent: "none" },
+    } as unknown as OrchestrationV2ThreadShell);
+  }
+  const listProjectThreads = vi.fn((input: { readonly projectId: ProjectId }) =>
+    Effect.succeed(projectThreadShells.filter((item) => item.projectId === input.projectId)),
+  );
+  const getShellSnapshot = vi.fn(() =>
+    Effect.succeed({
+      schemaVersion: 1,
+      snapshotSequence: 1,
+      threads: projectThreadShells,
+      archivedThreads: [],
+    } as never),
   );
   const removeWorktree = vi.fn((_: unknown) =>
     options.removeWorktreeFails
@@ -312,28 +398,56 @@ const makeHarness = (options: HarnessOptions = {}) => {
             ),
           ),
   );
-  const listRefs = vi.fn((input: { readonly query?: string | undefined }) =>
-    Effect.succeed({
-      refs:
-        options.refs !== undefined
-          ? options.refs.filter(
-              (ref) => input.query === undefined || ref.name.includes(input.query),
-            )
-          : options.existingBranchWorktreePath === undefined
-            ? []
-            : [
-                {
-                  name: input.query ?? "",
-                  current: false,
-                  isDefault: false,
-                  worktreePath: options.existingBranchWorktreePath,
-                },
-              ],
+  const listRefs = vi.fn((input: { readonly query?: string | undefined }) => {
+    const refs =
+      options.refs !== undefined
+        ? options.refs.filter((ref) =>
+            input.query === undefined ? true : ref.name.includes(input.query),
+          )
+        : options.existingBranchWorktreePath === undefined
+          ? []
+          : [
+              {
+                name: input.query ?? "",
+                current: false,
+                isDefault: false,
+                worktreePath: options.existingBranchWorktreePath,
+              },
+            ];
+    return Effect.succeed({
+      refs,
       isRepo: true,
       hasPrimaryRemote: true,
       nextCursor: null,
       totalCount:
         options.refs?.length ?? (options.existingBranchWorktreePath === undefined ? 0 : 1),
+    });
+  });
+  const configuredWorktrees =
+    options.worktrees ??
+    (options.refs ?? []).flatMap((ref) =>
+      ref.worktreePath === null ? [] : [{ path: ref.worktreePath, refName: ref.name }],
+    );
+  const projectWorktreeRoot = options.projectWorktreeRoot ?? workspaceRoot;
+  const listedWorktrees = configuredWorktrees.some(
+    (worktree) => worktree.path === projectWorktreeRoot,
+  )
+    ? configuredWorktrees
+    : [
+        {
+          path: projectWorktreeRoot,
+          refName: options.currentBranch === undefined ? "dev" : options.currentBranch,
+        },
+        ...configuredWorktrees,
+      ];
+  const listWorktrees = vi.fn((cwd: string) =>
+    Effect.succeed({
+      repositoryCommonDir: "/repo/.git",
+      currentWorktreeRoot:
+        options.workspaceAliases?.[cwd] ??
+        listedWorktrees.find((worktree) => worktree.path === cwd)?.path ??
+        (cwd === workspaceRoot ? projectWorktreeRoot : cwd),
+      worktrees: listedWorktrees,
     }),
   );
   let localStatusCallCount = 0;
@@ -363,27 +477,47 @@ const makeHarness = (options: HarnessOptions = {}) => {
       hasPrimaryRemote: true,
       isDefaultRef: false,
       refName:
-        current?.branch ?? (options.currentBranch === undefined ? "dev" : options.currentBranch),
+        current === undefined
+          ? options.currentBranch === undefined
+            ? "dev"
+            : options.currentBranch
+          : current.branch,
       hasWorkingTreeChanges: current?.dirty ?? false,
       workingTree: { files: [], insertions: 0, deletions: 0 },
     });
   });
   let switchCallCount = 0;
-  const switchRef = vi.fn((input: { readonly cwd: string; readonly refName: string }) => {
-    switchCallCount += 1;
-    if (options.switchRefFailsAfterMutation === true && switchCallCount === 1) {
-      workspaceStatuses.set(input.cwd, { branch: input.refName, dirty: false });
-      return Effect.fail("simulated switch failure after mutation") as never;
-    }
-    if (
-      options.switchRefFails === true ||
-      (options.switchRefRollbackFails === true && switchCallCount > 1)
-    ) {
-      return Effect.fail("simulated switch failure") as never;
-    }
-    workspaceStatuses.set(input.cwd, { branch: input.refName, dirty: false });
-    return Effect.succeed({ refName: input.refName });
-  });
+  const switchRef = vi.fn((input: { readonly cwd: string; readonly refName: string }) =>
+    (options.switchRefGate ?? Effect.void).pipe(
+      Effect.andThen(
+        Effect.suspend(() => {
+          switchCallCount += 1;
+          if (options.switchRefFailsAfterMutation === true && switchCallCount === 1) {
+            workspaceStatuses.set(input.cwd, { branch: input.refName, dirty: false });
+            return Effect.fail("simulated switch failure after mutation") as never;
+          }
+          if (
+            options.switchRefFails === true ||
+            (options.switchRefRollbackFails === true && switchCallCount > 1)
+          ) {
+            return Effect.fail("simulated switch failure") as never;
+          }
+          const resolvedBranch =
+            options.switchRefResultBranch === undefined
+              ? input.refName
+              : options.switchRefResultBranch;
+          workspaceStatuses.set(input.cwd, {
+            branch:
+              options.refChangeAfterSwitch === undefined
+                ? resolvedBranch
+                : options.refChangeAfterSwitch,
+            dirty: false,
+          });
+          return Effect.succeed({ refName: resolvedBranch });
+        }),
+      ),
+    ),
+  );
   const createRef = vi.fn((_: unknown) =>
     options.createRefFails === true
       ? (Effect.fail("simulated create ref failure") as never)
@@ -418,8 +552,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
   // Optional deterministic Path semantics: providing this BEFORE the general
   // mocks means the service resolves Path here rather than from NodeServices,
   // so absolute-path validation is testable independently of the host OS. The
-  // service only calls isAbsolute; the minimal per-platform semantics are
-  // inlined so the test does not depend on the host's path module.
+  // The minimal per-platform semantics are inlined so the test does not
+  // depend on the host's path module.
   const win32IsAbsolute = (value: string) => /^(?:[a-zA-Z]:[\\/]|[\\/])/.test(value);
   const posixIsAbsolute = (value: string) => value.startsWith("/");
   const serviceLayer =
@@ -429,6 +563,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
           Layer.provide(
             Layer.succeed(Path.Path, {
               isAbsolute: options.pathSemantics === "win32" ? win32IsAbsolute : posixIsAbsolute,
+              normalize: (value: string) => value,
+              resolve: (value: string) => value,
             } as unknown as Path.Path),
           ),
         );
@@ -437,6 +573,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       Layer.mergeAll(
         Layer.mock(ThreadManagementService)({
           dispatch,
+          getShellSnapshot,
           getThreadProjection,
           listProjectThreads,
           sendToThread,
@@ -449,6 +586,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
         }),
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           listRefs,
+          listWorktrees,
           listLocalBranchNames,
           localStatus,
           fetchRemote,
@@ -483,6 +621,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     deleteLocalBranch,
     localStatus,
     listRefs,
+    listWorktrees,
     listProjectThreads,
     switchRef,
     createRef,
@@ -525,10 +664,13 @@ const runStatus = (harness: ReturnType<typeof makeHarness>) =>
     return yield* service.status(harness.scope);
   }).pipe(Effect.provide(harness.layer));
 
-const runList = (harness: ReturnType<typeof makeHarness>) =>
+const runList = (
+  harness: ReturnType<typeof makeHarness>,
+  input: Parameters<WorktreeMcpService["Service"]["listWorktrees"]>[1] = {},
+) =>
   Effect.gen(function* () {
     const service = yield* WorktreeMcpService;
-    return yield* service.listWorktrees(harness.scope);
+    return yield* service.listWorktrees(harness.scope, input);
   }).pipe(Effect.provide(harness.layer));
 
 const runCheckout = (
@@ -987,7 +1129,12 @@ describe("t3_worktree_handoff", () => {
   it.effect("queues the continuation even when interrupted during the binding dispatch", () =>
     Effect.gen(function* () {
       const gate = yield* Deferred.make<void>();
-      const harness = makeHarness({ dispatchGate: Deferred.await(gate) });
+      const dispatchStarted = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        dispatchGate: Deferred.succeed(dispatchStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(gate)),
+        ),
+      });
 
       // Interrupt arrives while the metadata dispatch is in flight; the
       // binding-plus-continuation section must run to completion anyway so the
@@ -998,7 +1145,7 @@ describe("t3_worktree_handoff", () => {
           continuationPrompt: "Keep going in the worktree.",
         }),
       );
-      yield* Effect.yieldNow;
+      yield* Deferred.await(dispatchStarted);
       const interruption = yield* Effect.forkChild(Fiber.interrupt(fiber));
       yield* Effect.yieldNow;
       yield* Deferred.succeed(gate, undefined);
@@ -1335,6 +1482,10 @@ describe("t3_worktree_list", () => {
     return Effect.gen(function* () {
       const result = yield* runList(harness);
       expect(result.projectWorkspaceRoot).toBe(workspaceRoot);
+      expect(result.repositoryCommonDir).toBe("/repo/.git");
+      expect(result.projectWorktreeRoot).toBe(workspaceRoot);
+      expect(result.nextCursor).toBeNull();
+      expect(result.total).toBe(2);
       expect(result.worktrees).toEqual([
         {
           path: workspaceRoot,
@@ -1343,6 +1494,8 @@ describe("t3_worktree_list", () => {
           isRepo: true,
           isProjectRoot: true,
           hasWorkingTreeChanges: false,
+          availability: "available",
+          statusError: null,
           bindings: [
             {
               threadId,
@@ -1354,6 +1507,7 @@ describe("t3_worktree_list", () => {
               callingThread: true,
             },
           ],
+          bindingCount: 1,
         },
         {
           path: worktreePath,
@@ -1362,6 +1516,8 @@ describe("t3_worktree_list", () => {
           isRepo: true,
           isProjectRoot: false,
           hasWorkingTreeChanges: true,
+          availability: "available",
+          statusError: null,
           bindings: [
             {
               threadId: otherThreadId,
@@ -1373,8 +1529,82 @@ describe("t3_worktree_list", () => {
               callingThread: false,
             },
           ],
+          bindingCount: 1,
         },
       ]);
+    });
+  });
+
+  it.effect("includes detached worktrees without inventing a branch label", () => {
+    const detachedPath = "/worktrees/project/detached";
+    const harness = makeHarness({
+      worktrees: [
+        { path: workspaceRoot, refName: "dev" },
+        { path: detachedPath, refName: null },
+      ],
+      workspaceStatuses: {
+        [workspaceRoot]: { branch: "dev" },
+        [detachedPath]: { branch: null },
+      },
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness);
+      expect(result.worktrees).toContainEqual({
+        path: detachedPath,
+        branch: null,
+        actualBranch: null,
+        isRepo: true,
+        isProjectRoot: false,
+        hasWorkingTreeChanges: false,
+        availability: "available",
+        statusError: null,
+        bindings: [],
+        bindingCount: 0,
+      });
+    });
+  });
+
+  it.effect("pages before status reads and keeps a missing checkout discoverable", () => {
+    const firstPath = "/worktrees/project/a-missing";
+    const secondPath = "/worktrees/project/b";
+    const harness = makeHarness({
+      worktrees: [
+        { path: workspaceRoot, refName: "dev" },
+        { path: firstPath, refName: "feature/a" },
+        { path: secondPath, refName: "feature/b" },
+      ],
+      localStatusFailsOnCall: 1,
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness, { cursor: 1, limit: 1 });
+      expect(result).toMatchObject({ total: 3, nextCursor: 2 });
+      expect(result.worktrees).toEqual([
+        expect.objectContaining({
+          path: firstPath,
+          availability: "missing",
+          actualBranch: null,
+          isRepo: false,
+        }),
+      ]);
+      expect(harness.localStatus).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it.effect("bounds returned bindings while reporting the total", () => {
+    const otherOne = ThreadId.make("thread-binding-one");
+    const otherTwo = ThreadId.make("thread-binding-two");
+    const harness = makeHarness({
+      worktrees: [{ path: workspaceRoot, refName: "dev" }],
+      projectThreads: [
+        { id: threadId, title: "Caller", branch: "dev", worktreePath: null },
+        { id: otherOne, title: "Other one", branch: "dev", worktreePath: null },
+        { id: otherTwo, title: "Other two", branch: "dev", worktreePath: null },
+      ],
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness, { bindingLimit: 1 });
+      expect(result.worktrees[0]?.bindingCount).toBe(3);
+      expect(result.worktrees[0]?.bindings).toHaveLength(1);
     });
   });
 });
@@ -1429,6 +1659,101 @@ describe("t3_thread_checkout", () => {
       );
     });
   });
+
+  it.effect(
+    "asks Git to resolve a remote ref even when a same-named local branch is current",
+    () => {
+      const harness = makeHarness({
+        thread: { branch: "feature", worktreePath: null },
+        refs: [
+          {
+            name: "feature",
+            current: true,
+            isDefault: false,
+            worktreePath: workspaceRoot,
+          },
+          {
+            name: "origin/feature",
+            current: false,
+            isDefault: false,
+            isRemote: true,
+            worktreePath: null,
+          },
+        ],
+        workspaceStatuses: { [workspaceRoot]: { branch: "feature" } },
+        switchRefResultBranch: "feature",
+      });
+      return Effect.gen(function* () {
+        const result = yield* runCheckout(harness, {
+          target: { type: "branch", branch: "origin/feature" },
+        });
+        expect(result.checkoutAction).toBe("switched");
+        expect(result.current.actualBranch).toBe("feature");
+        expect(harness.switchRef).toHaveBeenCalledWith({
+          cwd: workspaceRoot,
+          refName: "origin/feature",
+        });
+      });
+    },
+  );
+
+  it.effect("refuses to bind when Git changes again after resolving the requested ref", () => {
+    const harness = makeHarness({
+      thread: { branch: "dev", worktreePath: null },
+      refs: rootRefs,
+      workspaceStatuses: { [workspaceRoot]: { branch: "dev" } },
+      switchRefResultBranch: "feature/checkout",
+      refChangeAfterSwitch: "feature/intervening",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        runCheckout(harness, {
+          target: { type: "branch", branch: "feature/checkout" },
+        }),
+      );
+      expectTypedFailure(exit, {
+        _tag: "WorktreeMcpFailure",
+        code: "partial_failure",
+        partial: {
+          actualBranch: "feature/intervening",
+          rollback: "not_possible",
+        },
+      });
+      expect(harness.dispatch).not.toHaveBeenCalled();
+      expect(harness.switchRef).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  for (const [state, option] of [
+    ["archived", { threadArchivedOnCall: 3 }],
+    ["deleted", { threadDeletedOnCall: 3 }],
+  ] as const) {
+    it.effect(`rolls Git back when the thread is ${state} before binding`, () => {
+      const harness = makeHarness({
+        thread: { branch: "dev", worktreePath: null },
+        refs: rootRefs,
+        workspaceStatuses: { [workspaceRoot]: { branch: "dev" } },
+        ...option,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          runCheckout(harness, {
+            target: { type: "branch", branch: "feature/checkout" },
+          }),
+        );
+        expectTypedFailure(exit, {
+          _tag: "WorktreeMcpFailure",
+          code: "checkout_in_progress",
+        });
+        expect(harness.switchRef).toHaveBeenNthCalledWith(2, {
+          cwd: workspaceRoot,
+          refName: "dev",
+        });
+        expect(harness.dispatch).not.toHaveBeenCalled();
+        expect(harness.sendToThread).not.toHaveBeenCalled();
+      });
+    });
+  }
 
   it.effect("creates and checks out a new branch in the current workspace", () => {
     const harness = makeHarness({
@@ -1562,6 +1887,51 @@ describe("t3_thread_checkout", () => {
           expectedBranch: "feature/source",
           expectedWorktreePath: sourcePath,
         }),
+      );
+    });
+  });
+
+  it.effect("does not turn a completed new-worktree handoff into a status-read failure", () => {
+    const harness = makeHarness({
+      thread: { branch: "dev", worktreePath: null },
+      workspaceStatuses: { [workspaceRoot]: { branch: "dev" } },
+      localStatusFailsOnCall: 3,
+    });
+    return Effect.gen(function* () {
+      const result = yield* runCheckout(harness, {
+        target: { type: "new_worktree", branch: "feature/completed-handoff" },
+      });
+      expect(result.current.actualBranch).toBe("feature/completed-handoff");
+      expect(harness.localStatus).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it.effect("reuses a detached worktree without inventing a branch", () => {
+    const detachedPath = "/worktrees/project/detached";
+    const harness = makeHarness({
+      thread: { branch: "dev", worktreePath: null },
+      refs: [rootRefs[0]],
+      worktrees: [
+        { path: workspaceRoot, refName: "dev" },
+        { path: detachedPath, refName: null },
+      ],
+      workspaceStatuses: {
+        [workspaceRoot]: { branch: "dev" },
+        [detachedPath]: { branch: null },
+      },
+    });
+    return Effect.gen(function* () {
+      const result = yield* runCheckout(harness, {
+        target: { type: "worktree", path: detachedPath },
+      });
+      expect(result.current).toMatchObject({
+        workspacePath: detachedPath,
+        recordedBranch: null,
+        recordedWorktreePath: detachedPath,
+        actualBranch: null,
+      });
+      expect(harness.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ branch: null, worktreePath: detachedPath }),
       );
     });
   });
@@ -1844,6 +2214,44 @@ describe("t3_thread_checkout", () => {
     });
   });
 
+  it.effect("rejects a physical worktree bound through another project alias", () => {
+    const targetPath = "/worktrees/project/cross-project";
+    const otherProjectRoot = "/aliases/other-project";
+    const otherProjectId = ProjectId.make("project-other");
+    const harness = makeHarness({
+      thread: { branch: "dev", worktreePath: null },
+      refs: [
+        rootRefs[0],
+        {
+          name: "feature/cross-project",
+          current: false,
+          isDefault: false,
+          worktreePath: targetPath,
+        },
+      ],
+      workspaceStatuses: {
+        [workspaceRoot]: { branch: "dev" },
+        [targetPath]: { branch: "feature/cross-project" },
+      },
+      workspaceAliases: { [otherProjectRoot]: targetPath },
+      otherProjectThread: {
+        projectId: otherProjectId,
+        workspaceRoot: otherProjectRoot,
+        id: ThreadId.make("thread-other-project-owner"),
+        title: "Other project owner",
+        branch: "feature/cross-project",
+        worktreePath: null,
+      },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        runCheckout(harness, { target: { type: "worktree", path: targetPath } }),
+      );
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "workspace_shared" });
+      expect(harness.dispatch).not.toHaveBeenCalled();
+    });
+  });
+
   it.effect("rejects switching the shared project root while another thread is active", () => {
     const harness = makeHarness({
       thread: { branch: "dev", worktreePath: null },
@@ -1912,6 +2320,25 @@ describe("t3_thread_checkout", () => {
     });
   });
 
+  it.effect("rechecks the durable binding before changing Git", () => {
+    const harness = makeHarness({
+      thread: { branch: "dev", worktreePath: null },
+      refs: rootRefs,
+      workspaceStatuses: { [workspaceRoot]: { branch: "dev" } },
+      threadAttachedOnRecheck: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        runCheckout(harness, {
+          target: { type: "branch", branch: "feature/checkout" },
+        }),
+      );
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "checkout_in_progress" });
+      expect(harness.switchRef).not.toHaveBeenCalled();
+      expect(harness.dispatch).not.toHaveBeenCalled();
+    });
+  });
+
   it.effect("rolls the git branch back when the durable binding fails", () => {
     const harness = makeHarness({
       thread: { branch: "dev", worktreePath: null },
@@ -1960,7 +2387,7 @@ describe("t3_thread_checkout", () => {
       refs: rootRefs,
       workspaceStatuses: { [workspaceRoot]: { branch: "dev" } },
       dispatchFails: true,
-      threadReadFailsOnRecheck: true,
+      threadReadFailsAfterDispatch: true,
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -1975,6 +2402,32 @@ describe("t3_thread_checkout", () => {
           workspacePath: workspaceRoot,
           recordedBranch: "dev",
           actualBranch: "feature/checkout",
+          rollback: "not_possible",
+        },
+      });
+      expect(harness.switchRef).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it.effect("does not roll Git back over another actor's durable binding", () => {
+    const harness = makeHarness({
+      thread: { branch: "dev", worktreePath: null },
+      refs: rootRefs,
+      workspaceStatuses: { [workspaceRoot]: { branch: "dev" } },
+      dispatchFails: true,
+      threadAfterFailedDispatch: { branch: "feature/other-actor", worktreePath: null },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        runCheckout(harness, {
+          target: { type: "branch", branch: "feature/checkout" },
+        }),
+      );
+      expectTypedFailure(exit, {
+        _tag: "WorktreeMcpFailure",
+        code: "partial_failure",
+        partial: {
+          recordedBranch: "feature/other-actor",
           rollback: "not_possible",
         },
       });
@@ -2009,7 +2462,7 @@ describe("t3_thread_checkout", () => {
       thread: { branch: "dev", worktreePath: null },
       refs: rootRefs,
       workspaceStatuses: { [workspaceRoot]: { branch: "dev" } },
-      localStatusFailsOnCall: 2,
+      localStatusFailsOnCall: 3,
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -2088,6 +2541,59 @@ describe("t3_thread_checkout", () => {
         code: "handoff_in_progress",
       });
       yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(first);
+    }),
+  );
+
+  it.effect("serializes two threads targeting alias paths for the same physical worktree", () =>
+    Effect.gen(function* () {
+      const targetPath = "/worktrees/project/shared-target";
+      const aliasPath = "/aliases/shared-target";
+      const otherThreadId = ThreadId.make("thread-worktree-concurrent");
+      const dispatchGate = yield* Deferred.make<void>();
+      const dispatchStarted = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        thread: { branch: "dev", worktreePath: null },
+        refs: [
+          rootRefs[0],
+          {
+            name: "feature/shared-target",
+            current: false,
+            isDefault: false,
+            worktreePath: targetPath,
+          },
+        ],
+        workspaceStatuses: {
+          [workspaceRoot]: { branch: "dev" },
+          [targetPath]: { branch: "feature/shared-target" },
+        },
+        workspaceAliases: { [aliasPath]: targetPath },
+        projectThreads: [
+          { id: threadId, title: "Caller", branch: "dev", worktreePath: null },
+          { id: otherThreadId, title: "Other", branch: "dev", worktreePath: null },
+        ],
+        dispatchGate: Deferred.succeed(dispatchStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(dispatchGate)),
+        ),
+      });
+      const service = yield* resolveService(harness);
+      const first = yield* Effect.forkChild(
+        service.checkout(harness.scope, {
+          target: { type: "worktree", path: aliasPath },
+        }),
+      );
+      yield* Deferred.await(dispatchStarted);
+      const second = yield* Effect.exit(
+        service.checkout(
+          { ...harness.scope, threadId: otherThreadId },
+          { target: { type: "worktree", path: targetPath } },
+        ),
+      );
+      expectTypedFailure(second, {
+        _tag: "WorktreeMcpFailure",
+        code: "checkout_in_progress",
+      });
+      yield* Deferred.succeed(dispatchGate, undefined);
       yield* Fiber.join(first);
     }),
   );
