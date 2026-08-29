@@ -17,6 +17,8 @@ export interface ComposerTaskStep {
   readonly status: "pending" | "inProgress" | "completed";
 }
 
+const MAX_TASK_SEGMENTS = 10;
+
 function keyedTaskSteps(steps: readonly ComposerTaskStep[]) {
   const occurrences = new Map<string, number>();
   return steps.map((step) => {
@@ -33,7 +35,7 @@ function TaskSegments({
   readonly className?: string;
   readonly steps: readonly ComposerTaskStep[];
 }) {
-  if (steps.length <= 1) return null;
+  if (steps.length <= 1 || steps.length > MAX_TASK_SEGMENTS) return null;
 
   return (
     <span aria-hidden className={cn("flex w-10 shrink-0 items-center gap-0.5", className)}>
@@ -116,8 +118,8 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
   return (
     <div
       className={cn(
-        "chat-composer-shoulder-tab chat-composer-tasks-tab absolute -top-7 left-4 z-0 flex h-8 items-center gap-1 rounded-t-xl border border-b-0 px-2 pb-1 text-xs leading-none text-muted-foreground",
-        hasTrailingShoulder ? "right-28" : "right-4",
+        "chat-composer-shoulder-tab chat-composer-tasks-tab absolute -top-7 left-5.5 z-0 flex h-8 items-center gap-1 rounded-t-xl border border-b-0 px-2 pb-1 text-xs leading-none text-muted-foreground",
+        hasTrailingShoulder ? "right-30" : "right-5.5",
         allDone && "text-foreground",
       )}
       data-composer-tasks-badge="true"
