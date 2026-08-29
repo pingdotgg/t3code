@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeProcess from "node:process";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,7 +13,10 @@ import { ChromiumKeyError, readLinuxSecret, resolveChromiumKeys } from "./Chromi
 type CapturedCommand = {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
-  readonly options: { readonly stdin?: string };
+  readonly options: {
+    readonly stdin?: string;
+    readonly env?: Readonly<Record<string, string | undefined>>;
+  };
 };
 
 const secretToolLayer = (input: {
@@ -104,13 +108,24 @@ describe("Linux Chromium secrets", () => {
     }),
   );
 
-  it.effect("reports a denied unlock prompt as approval needed", () =>
-    Effect.gen(function* () {
+  it.effect("uses a stable locale and reports a denied unlock prompt as approval needed", () => {
+    let captured: CapturedCommand | undefined;
+    return Effect.gen(function* () {
       const error = yield* readLinuxSecret("brave").pipe(Effect.flip);
       expect(error).toBeInstanceOf(ChromiumKeyError);
       expect(error.reason).toBe("needsKeychainApproval");
-    }).pipe(Effect.provide(secretToolLayer({ stderr: "Permission denied", exitCode: 1 }))),
-  );
+      expect(captured?.options.env?.LC_ALL).toBe("C");
+      expect(captured?.options.env?.PATH).toBe(NodeProcess.env.PATH);
+    }).pipe(
+      Effect.provide(
+        secretToolLayer({
+          stderr: "Permission denied",
+          exitCode: 1,
+          capture: (value) => (captured = value),
+        }),
+      ),
+    );
+  });
 
   it.effect("does not discard a denied unlock prompt while resolving keys", () =>
     Effect.gen(function* () {

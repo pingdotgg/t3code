@@ -19,6 +19,7 @@
  */
 import * as Keyring from "@napi-rs/keyring";
 import * as NodeCrypto from "node:crypto";
+import * as NodeProcess from "node:process";
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -133,6 +134,7 @@ export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(functio
         .spawn(
           ChildProcess.make("secret-tool", ["lookup", "application", application], {
             stdin: "ignore",
+            env: { ...NodeProcess.env, LC_ALL: "C" },
           }),
         )
         .pipe(Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })));
