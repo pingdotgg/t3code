@@ -6,6 +6,7 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 
 import type { DesktopThreadDeepLinkPayload } from "@t3tools/contracts";
+import { HostProcessArguments } from "@t3tools/shared/hostProcess";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -273,10 +274,11 @@ export const make = Effect.gen(function* () {
       // Cold starts: URLs stashed by the early capture before this service
       // existed (macOS; latest wins) and the primary instance's own command
       // line (Windows/Linux).
+      const processArguments = yield* HostProcessArguments;
       const earlyUrls = [...drainEarlyOpenUrls()].reverse();
       const initial =
         findThreadDeepLinkInArgv(earlyUrls, scheme) ??
-        findThreadDeepLinkInArgv(process.argv, scheme);
+        findThreadDeepLinkInArgv(processArguments, scheme);
       if (initial !== null) {
         yield* open(initial);
       }

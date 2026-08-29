@@ -9,6 +9,7 @@ import {
   DEEP_LINK_SUBSCRIBE_CHANNEL,
   DEEP_LINK_UNSUBSCRIBE_CHANNEL,
 } from "../ipc/channels.ts";
+import { HostProcessArguments } from "@t3tools/shared/hostProcess";
 import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -215,8 +216,11 @@ const makeServices = (harness: TestHarness) => {
   };
 };
 
-const configureWith = (services: ReturnType<typeof makeServices>) =>
-  Effect.gen(function* () {
+const configureWith = (
+  services: ReturnType<typeof makeServices>,
+  overrides?: { readonly processArguments?: ReadonlyArray<string> },
+) => {
+  const program = Effect.gen(function* () {
     const deepLink = yield* DesktopDeepLink.DesktopDeepLink;
     yield* Effect.scoped(deepLink.configure);
   }).pipe(
@@ -225,6 +229,11 @@ const configureWith = (services: ReturnType<typeof makeServices>) =>
     Effect.provideService(ElectronWindow.ElectronWindow, services.electronWindow),
     Effect.provideService(DesktopIpc.DesktopIpc, services.desktopIpc),
   );
+  const processArguments = overrides?.processArguments;
+  return processArguments === undefined
+    ? program
+    : program.pipe(Effect.provideService(HostProcessArguments, processArguments));
+};
 
 const subscribeAs = (harness: TestHarness, fake: FakeSender) =>
   Effect.gen(function* () {
@@ -443,6 +452,25 @@ describe("DesktopDeepLink", () => {
 
       assert.equal(dying.send.mock.calls.length, 0);
       assert.deepEqual(yield* subscribeAs(harness, next), PAYLOAD);
+    });
+  });
+
+  it.effect("delivers a cold-start link from injected process arguments", () => {
+    const harness = makeHarness();
+    const renderer = makeSender(7);
+
+    return Effect.gen(function* () {
+      // Windows/Linux cold start: the primary instance's own argv carries the
+      // protocol URL. Injected here rather than read from the ambient argv.
+      yield* configureWith(makeServices(harness), {
+        processArguments: [
+          "/usr/bin/t3code",
+          "--allow-file-access-from-files",
+          `t3code://app/${ENVIRONMENT_ID}/${THREAD_ID}`,
+        ],
+      });
+
+      assert.deepEqual(yield* subscribeAs(harness, renderer), PAYLOAD);
     });
   });
 
