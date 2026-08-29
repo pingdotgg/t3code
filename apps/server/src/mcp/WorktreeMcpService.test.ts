@@ -269,7 +269,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
         status: item.active === true ? "running" : "idle",
         activeRunId: item.active === true ? "run-active" : null,
         lineage: { relationshipToParent: "none" },
-      }) as OrchestrationV2ThreadShell,
+      }) as unknown as OrchestrationV2ThreadShell,
   );
   const archivedThreadShells =
     options.archivedProjectThread === undefined
@@ -286,7 +286,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
             archivedAt: "2026-01-02T00:00:00.000Z",
             lineage: { relationshipToParent: "none" },
           },
-        ] as ReadonlyArray<OrchestrationV2ThreadShell>);
+        ] as unknown as ReadonlyArray<OrchestrationV2ThreadShell>);
   const listProjectThreads = vi.fn(() => Effect.succeed(projectThreadShells));
   const getShellSnapshot = vi.fn(() =>
     Effect.succeed({
