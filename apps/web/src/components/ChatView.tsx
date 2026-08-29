@@ -1400,6 +1400,18 @@ function ChatViewContent(props: ChatViewProps) {
     () => deriveCommittedServerUserMessageIds(serverVisibleTurnItems),
     [serverVisibleTurnItems],
   );
+  // Queued messages have no turn item until their run starts, so the
+  // turn-item-derived set alone can never retire their optimistic rows —
+  // cancelling such a run would leave a phantom "pending" queue row behind.
+  // Union in the projection's user messages: once the server holds the
+  // message, the optimistic copy is redundant everywhere it could render.
+  const serverAcknowledgedUserMessageIds = useMemo(() => {
+    const ids = new Set(committedServerMessageIds);
+    for (const message of serverProjection?.messages ?? []) {
+      if (message.role === "user") ids.add(message.id);
+    }
+    return ids;
+  }, [committedServerMessageIds, serverProjection]);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLocalLastVisitedAt = useUiStateStore(
     (store) => store.threadLastVisitedAtById[routeThreadKey],
@@ -4520,14 +4532,14 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     const removedMessages = optimisticUserMessages.filter((message) =>
-      committedServerMessageIds.has(message.id),
+      serverAcknowledgedUserMessageIds.has(message.id),
     );
     if (removedMessages.length === 0) {
       return;
     }
     const timer = window.setTimeout(() => {
       setOptimisticUserMessages((existing) =>
-        existing.filter((message) => !committedServerMessageIds.has(message.id)),
+        existing.filter((message) => !serverAcknowledgedUserMessageIds.has(message.id)),
       );
     }, 0);
     for (const removedMessage of removedMessages) {
@@ -4544,7 +4556,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeMessageCount,
     activeThread?.id,
-    committedServerMessageIds,
+    serverAcknowledgedUserMessageIds,
     handoffAttachmentPreviews,
     optimisticUserMessages,
   ]);

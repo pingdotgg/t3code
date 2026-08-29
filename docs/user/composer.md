@@ -70,7 +70,8 @@ and use **Attach again** or remove the missing file before sending.
 ## Queued messages
 
 Messages sent while the agent is working queue above the composer. Rows show a thumbnail of any
-attached image alongside the text, and each row can be reordered, promoted to a steer, or removed.
+attached image alongside the text, and each row can be dragged by its handle to reorder (the
+handle also responds to the arrow keys), promoted to a steer, or removed.
 
 The pencil on a queued row opens that message in the composer for editing. The message's
 attachments appear above the text with a remove control, and new images can be added the usual way.
