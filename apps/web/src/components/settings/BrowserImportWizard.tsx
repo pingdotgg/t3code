@@ -407,7 +407,7 @@ function DoneStep({
           {imported > 0
             ? `Added to ${targetName} for ${destinationEnvironmentName}.${skipped > 0 ? ` ${cookieResultCount(skipped)} skipped.` : ""}`
             : skipped > 0
-              ? `No cookies were added to ${targetName} for ${destinationEnvironmentName}.`
+              ? `No cookies were imported for ${destinationEnvironmentName}.`
               : `There were no cookies to import for ${destinationEnvironmentName}.`}
         </DialogDescription>
       </DialogHeader>
