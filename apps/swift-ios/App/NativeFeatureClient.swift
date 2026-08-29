@@ -3046,7 +3046,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 let hasActiveWork = loads.contains { load in
                     load.shell.map(Self.shellNeedsFrequentAggregateRefresh) == true
                 }
-                let hadFailure = loads.contains { $0.shell == nil }
                 for load in loads {
                     if load.shell == nil {
                         failureBackoffs[load.environment.id] = failureInterval
@@ -3070,8 +3069,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 self.publish(snapshot)
                 if shellsChanged || hasActiveWork {
                     nextInterval = fastInterval
-                } else if hadFailure {
-                    nextInterval = failureInterval
                 } else {
                     nextInterval = idleInterval
                 }
