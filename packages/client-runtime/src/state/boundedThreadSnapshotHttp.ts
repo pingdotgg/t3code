@@ -9,7 +9,11 @@ import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiClient } from "../rpc/http.ts";
-import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
+import {
+  buildEnvironmentAuthHeaders,
+  withEnvironmentCredentials,
+  withOrchestrationProtocolHeader,
+} from "./environmentHttpAuth.ts";
 import {
   fetchEnvironmentThreadSnapshot,
   ThreadSnapshotLoader,
@@ -46,7 +50,7 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
       input.prepared.httpAuthorization,
       client.orchestration.threadBoundedSnapshot({
         params: { threadId: input.threadId },
-        headers,
+        headers: withOrchestrationProtocolHeader(headers),
       }),
     ),
   );

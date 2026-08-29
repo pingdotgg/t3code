@@ -10,7 +10,12 @@ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
+import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiClient } from "../rpc/http.ts";
+import {
+  buildEnvironmentAuthHeaders,
+  withEnvironmentCredentials,
+  withOrchestrationProtocolHeader,
+} from "./environmentHttpAuth.ts";
 
 // Bounded so a pathologically slow endpoint cannot block the (cheaper) socket
 // fallback for long. The cached shell renders while this runs.
@@ -30,14 +35,22 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
   readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly timeoutMs?: number;
 }) {
-  return yield* executeAuthenticatedEnvironmentHttpRequest({
-    ...input,
-    group: "orchestration",
-    method: "GET",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/orchestration/shell"),
-    timeoutMs: input.timeoutMs ?? DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS,
-    request: ({ client, headers }) => client.shellSnapshot({ headers }),
-  });
+  const requestUrl = environmentEndpointUrl(input.prepared.httpBaseUrl, "/api/orchestration/shell");
+  const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
+  const headers = yield* buildEnvironmentAuthHeaders(
+    input.prepared.httpAuthorization,
+    "GET",
+    requestUrl,
+    input.signer,
+  );
+  return yield* executeEnvironmentHttpRequest(
+    requestUrl,
+    input.timeoutMs ?? DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS,
+    withEnvironmentCredentials(
+      input.prepared.httpAuthorization,
+      client.orchestration.shellSnapshot({ headers: withOrchestrationProtocolHeader(headers) }),
+    ),
+  );
 });
 
 /**
