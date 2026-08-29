@@ -650,9 +650,13 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const updateSettings = useUpdatePrimarySettings();
   const { environments, isReady: environmentsReady } = useEnvironments();
-  const environmentId = usePrimaryEnvironment()?.environmentId;
+  const primaryEnvironment = usePrimaryEnvironment();
   const [sources, setSources] = useState<ReadonlyArray<BrowserImportSource> | null>(null);
-  const [importSource, setImportSource] = useState<BrowserImportSource | null>(null);
+  const [importSession, setImportSession] = useState<{
+    readonly source: BrowserImportSource;
+    readonly environmentId: EnvironmentId;
+    readonly environmentName: string;
+  } | null>(null);
   const [profilePendingRemoval, setProfilePendingRemoval] = useState<BrowserProfile | null>(null);
   const [profileRemovalError, setProfileRemovalError] = useState<string | null>(null);
   const [profileRemovalInFlight, setProfileRemovalInFlight] = useState(false);
@@ -783,9 +787,10 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   // attempt never leaves an empty profile behind.
   const runWizardImport = async (
     source: BrowserImportSource,
+    environmentId: EnvironmentId,
     input: { readonly sourceProfileDirectory: string; readonly target: WizardTarget },
   ): Promise<ImportOutcome> => {
-    if (!environmentId || !previewBridge) return { kind: "blocked", reason: "sessionUnavailable" };
+    if (!previewBridge) return { kind: "blocked", reason: "sessionUnavailable" };
     if (importInFlightRef.current) return { kind: "blocked", reason: "readFailed" };
     importInFlightRef.current = true;
     setImportInFlight(true);
@@ -879,7 +884,18 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                 // ready all look the same here. The wizard picks up whatever
                 // state the source is in and walks the user forward from there.
                 importableSources.map((source) => (
-                  <MenuItem key={source.id} onClick={() => setImportSource(source)}>
+                  <MenuItem
+                    key={source.id}
+                    disabled={primaryEnvironment == null}
+                    onClick={() => {
+                      if (primaryEnvironment == null) return;
+                      setImportSession({
+                        source,
+                        environmentId: primaryEnvironment.environmentId,
+                        environmentName: primaryEnvironment.label,
+                      });
+                    }}
+                  >
                     {source.name}
                   </MenuItem>
                 ))
@@ -1026,14 +1042,17 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>
-      {importSource ? (
+      {importSession ? (
         <BrowserImportWizard
-          source={importSource}
+          source={importSession.source}
+          destinationEnvironmentName={importSession.environmentName}
           targetProfiles={listedProfiles.map((profile) => ({ id: profile.id, name: profile.name }))}
           canCreateProfile={!atProfileLimit}
-          onImport={(input) => runWizardImport(importSource, input)}
-          onRefreshSource={() => refreshImportSource(importSource.id)}
-          onClose={() => setImportSource(null)}
+          onImport={(input) =>
+            runWizardImport(importSession.source, importSession.environmentId, input)
+          }
+          onRefreshSource={() => refreshImportSource(importSession.source.id)}
+          onClose={() => setImportSession(null)}
         />
       ) : null}
     </SettingsRow>

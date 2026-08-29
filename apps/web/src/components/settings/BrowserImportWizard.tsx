@@ -38,6 +38,8 @@ export type { WizardTarget } from "./browserImportWizard.logic";
 
 interface BrowserImportWizardProps {
   readonly source: BrowserImportSource;
+  /** Captured when the wizard opens so destination copy and writes stay stable. */
+  readonly destinationEnvironmentName: string;
   /** Existing profiles the import can go into. Incognito is excluded upstream. */
   readonly targetProfiles: ReadonlyArray<WizardTargetProfile>;
   /** Whether a new profile can still be created (profile cap). */
@@ -65,6 +67,7 @@ interface BrowserImportWizardProps {
  */
 export function BrowserImportWizard({
   source: initialSource,
+  destinationEnvironmentName,
   targetProfiles,
   canCreateProfile,
   onImport,
@@ -116,7 +119,11 @@ export function BrowserImportWizard({
         ) : step.step === "checking" ? (
           <CheckingStep sourceName={source.name} />
         ) : step.step === "done" ? (
-          <DoneStep {...step} onClose={onClose} />
+          <DoneStep
+            {...step}
+            destinationEnvironmentName={destinationEnvironmentName}
+            onClose={onClose}
+          />
         ) : step.step === "blocked" ? (
           <BlockedStep
             source={source}
@@ -127,6 +134,7 @@ export function BrowserImportWizard({
         ) : (
           <ConfigureStep
             source={source}
+            destinationEnvironmentName={destinationEnvironmentName}
             targetProfiles={targetProfiles}
             canCreateProfile={canCreateProfile}
             sourceProfileDirectory={sourceProfileDirectory}
@@ -182,6 +190,7 @@ function cookieResultCount(count: number): string {
 
 type ConfigureStepProps = {
   readonly source: BrowserImportSource;
+  readonly destinationEnvironmentName: string;
   readonly targetProfiles: ReadonlyArray<WizardTargetProfile>;
   readonly canCreateProfile: boolean;
   readonly sourceProfileDirectory: string;
@@ -194,6 +203,7 @@ type ConfigureStepProps = {
 
 function ConfigureStep({
   source,
+  destinationEnvironmentName,
   targetProfiles,
   canCreateProfile,
   sourceProfileDirectory,
@@ -207,7 +217,9 @@ function ConfigureStep({
     <>
       <DialogHeader>
         <DialogTitle>Import from {source.name}</DialogTitle>
-        <DialogDescription>Choose which cookies to import and where to put them.</DialogDescription>
+        <DialogDescription>
+          Choose which cookies to import and where to put them on {destinationEnvironmentName}.
+        </DialogDescription>
       </DialogHeader>
       <DialogPanel>
         {/* Side by side when the dialog has room, stacked when it doesn't. */}
@@ -343,12 +355,14 @@ function DoneStep({
   skipped,
   skippedDomains,
   targetName,
+  destinationEnvironmentName,
   onClose,
 }: {
   readonly imported: number;
   readonly skipped: number;
   readonly skippedDomains: ReadonlyArray<string>;
   readonly targetName: string;
+  readonly destinationEnvironmentName: string;
   readonly onClose: () => void;
 }) {
   return (
@@ -363,10 +377,10 @@ function DoneStep({
         </DialogTitle>
         <DialogDescription>
           {imported > 0
-            ? `Added to ${targetName}.${skipped > 0 ? ` ${cookieResultCount(skipped)} skipped.` : ""}`
+            ? `Added to ${targetName} on ${destinationEnvironmentName}.${skipped > 0 ? ` ${cookieResultCount(skipped)} skipped.` : ""}`
             : skipped > 0
-              ? `No cookies were added to ${targetName}.`
-              : "There were no cookies to import."}
+              ? `No cookies were added to ${targetName} on ${destinationEnvironmentName}.`
+              : `There were no cookies to import to ${destinationEnvironmentName}.`}
         </DialogDescription>
       </DialogHeader>
       {skippedDomains.length > 0 ? (
