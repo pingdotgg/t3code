@@ -1,5 +1,5 @@
 diff --git a/dist/metro/transformer.cjs b/dist/metro/transformer.cjs
-index 71e5e76f478bf20035d231bb7090946dae9703a5..0ae74e878bedc27b8e5aee9b151a1aa8ae8cd9b4 100644
+index d57ca81..fd8693c 100644
 --- a/dist/metro/transformer.cjs
 +++ b/dist/metro/transformer.cjs
 @@ -7,6 +7,7 @@ const culori = require('culori');
@@ -10,7 +10,7 @@ index 71e5e76f478bf20035d231bb7090946dae9703a5..0ae74e878bedc27b8e5aee9b151a1aa8
  
  function _interopDefaultCompat (e) { return e && typeof e === 'object' && 'default' in e ? e.default : e; }
  
-@@ -1720,10 +1721,11 @@ const transform = async (config$1, projectRoot, filePath, data, options) => {
+@@ -1753,10 +1754,11 @@ const transform = async (config$1, projectRoot, filePath, data, options) => {
    await bundlerConfig.generateArtifacts(cssArtifactPath);
    const virtualCode = await compileCSS(bundlerConfig);
    const isWeb = bundlerConfig.platform === config.Platform.Web;
@@ -24,7 +24,7 @@ index 71e5e76f478bf20035d231bb7090946dae9703a5..0ae74e878bedc27b8e5aee9b151a1aa8
      "utf-8"
    );
 diff --git a/dist/metro/transformer.mjs b/dist/metro/transformer.mjs
-index 6fb28df0aa9add2bd4f508500dfe0926c4b19187..5c67c09f1ac3c407e8d16d5ca92cca3f9e604d0b 100644
+index d3e7475..bf63587 100644
 --- a/dist/metro/transformer.mjs
 +++ b/dist/metro/transformer.mjs
 @@ -5,6 +5,7 @@ import { converter, parse, formatHex, formatHex8 } from 'culori';
@@ -35,7 +35,7 @@ index 6fb28df0aa9add2bd4f508500dfe0926c4b19187..5c67c09f1ac3c407e8d16d5ca92cca3f
  
  const toCamelCase = (str) => str.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
  const pipe = (data) => ((...fns) => fns.reduce((acc, fn) => fn(acc), data));
-@@ -1713,10 +1714,11 @@ const transform = async (config, projectRoot, filePath, data, options) => {
+@@ -1746,10 +1747,11 @@ const transform = async (config, projectRoot, filePath, data, options) => {
    await bundlerConfig.generateArtifacts(cssArtifactPath);
    const virtualCode = await compileCSS(bundlerConfig);
    const isWeb = bundlerConfig.platform === Platform.Web;
@@ -49,7 +49,7 @@ index 6fb28df0aa9add2bd4f508500dfe0926c4b19187..5c67c09f1ac3c407e8d16d5ca92cca3f
      "utf-8"
    );
 diff --git a/src/bundler/adapters/metro/transformer.ts b/src/bundler/adapters/metro/transformer.ts
-index 1addaf5ad10d476862af0035aeb276fce57f6dc3..1589d06a740ad644135148de56ad47b31eb92bd0 100644
+index 08059b0..05c0515 100644
 --- a/src/bundler/adapters/metro/transformer.ts
 +++ b/src/bundler/adapters/metro/transformer.ts
 @@ -5,6 +5,7 @@ import { Platform } from '@/common/consts'
@@ -60,7 +60,7 @@ index 1addaf5ad10d476862af0035aeb276fce57f6dc3..1589d06a740ad644135148de56ad47b3
  import path from 'path'
  
  const cssArtifactPath = path.resolve(__dirname, '../../uniwind.css')
-@@ -54,13 +55,20 @@ export const transform = async (
+@@ -69,13 +70,20 @@ export const transform = async (
      await bundlerConfig.generateArtifacts(cssArtifactPath)
      const virtualCode = await compileCSS(bundlerConfig)
      const isWeb = bundlerConfig.platform === Platform.Web
@@ -83,7 +83,7 @@ index 1addaf5ad10d476862af0035aeb276fce57f6dc3..1589d06a740ad644135148de56ad47b3
          'utf-8',
      )
 diff --git a/src/core/config/config.native.ts b/src/core/config/config.native.ts
-index fb54a3ccf34869463a80e417da67e0ca804ffe82..8eff7d70f4b34a9e0b7b424d0bb5dc049b330a65 100644
+index 5e0832b..01aed1b 100644
 --- a/src/core/config/config.native.ts
 +++ b/src/core/config/config.native.ts
 @@ -8,6 +8,8 @@ import type { CSSVariables, GenerateStyleSheetsCallback, ThemeName } from '../ty
@@ -95,7 +95,7 @@ index fb54a3ccf34869463a80e417da67e0ca804ffe82..8eff7d70f4b34a9e0b7b424d0bb5dc04
      constructor() {
          super()
      }
-@@ -55,7 +57,16 @@ class UniwindConfigBuilder extends UniwindConfigBuilderBase {
+@@ -35,9 +37,18 @@ class UniwindConfigBuilder extends UniwindConfigBuilderBase {
          UniwindListener.notify([StyleDependency.Insets])
      }
  
@@ -113,3 +113,5 @@ index fb54a3ccf34869463a80e417da67e0ca804ffe82..8eff7d70f4b34a9e0b7b424d0bb5dc04
          UniwindStore.reinit(generateStyleSheetCallback, themes)
 +        this.stylesFingerprint = stylesFingerprint
      }
+ 
+     protected onThemeChange() {
