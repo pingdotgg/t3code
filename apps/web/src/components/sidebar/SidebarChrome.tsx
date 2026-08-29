@@ -64,7 +64,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           backdropVariant && resolveSidebarStageFocusRingOffsetClass(backdropVariant),
         )}
       />
-      <div className="relative z-10 flex min-w-0 items-center gap-0.5 md:ml-[var(--workspace-titlebar-content-left)]">
+      <div className="relative z-10 flex min-w-0 items-center gap-1 md:ml-[var(--workspace-titlebar-content-left)]">
         <SidebarBrand onBackdrop={backdropVariant !== null} />
         {pillLabel ? (
           <Badge
