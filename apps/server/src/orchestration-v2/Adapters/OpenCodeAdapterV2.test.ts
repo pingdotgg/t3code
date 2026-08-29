@@ -137,9 +137,12 @@ describe("OpenCodeAdapterV2", () => {
       const steerPrompt = promiseGate<void>();
       const steerPromptStarted = promiseGate<void>();
       const statusCalled = promiseGate<void>();
+      const steerStatusCalled = promiseGate<void>();
       const abortCalled = promiseGate<void>();
       let status: "idle" | "busy" = "busy";
       let promptCalls = 0;
+      let statusCalls = 0;
+      const promptInputs: Array<{ readonly messageID?: string }> = [];
       const client = {
         event: {
           subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
@@ -151,7 +154,8 @@ describe("OpenCodeAdapterV2", () => {
           create: async () => ({
             data: { id: "native-opencode-race", time: { created: 1, updated: 1 } },
           }),
-          promptAsync: async () => {
+          promptAsync: async (input: { readonly messageID?: string }) => {
+            promptInputs.push(input);
             promptCalls += 1;
             if (promptCalls === 1) {
               promptStarted.resolve();
@@ -164,7 +168,9 @@ describe("OpenCodeAdapterV2", () => {
           },
           status: async () => ({
             data: (() => {
-              statusCalled.resolve();
+              statusCalls += 1;
+              if (statusCalls === 1) statusCalled.resolve();
+              else steerStatusCalled.resolve();
               return { "native-opencode-race": { type: status } };
             })(),
           }),
@@ -266,6 +272,7 @@ describe("OpenCodeAdapterV2", () => {
       );
       prompt.resolve();
       yield* Fiber.join(start);
+      assert.match(promptInputs[0]?.messageID ?? "", /^msg_[0-9a-f]{12}[0-9A-Za-z]{28}$/);
       yield* Effect.promise(() =>
         nativeEvents.push({
           type: "session.status",
@@ -279,7 +286,27 @@ describe("OpenCodeAdapterV2", () => {
           properties: {
             sessionID: "native-opencode-race",
             info: {
-              id: "user-message",
+              id: "stale-user-message",
+              sessionID: "native-opencode-race",
+              role: "user",
+              time: { created: DateTime.toEpochMillis(now) },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: "native-opencode-race", status: { type: "idle" } },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: "native-opencode-race",
+            info: {
+              id: promptInputs[0]!.messageID!,
               sessionID: "native-opencode-race",
               role: "user",
               time: { created: DateTime.toEpochMillis(now) },
@@ -309,11 +336,53 @@ describe("OpenCodeAdapterV2", () => {
         })
         .pipe(Effect.forkScoped);
       yield* Effect.promise(() => steerPromptStarted.promise);
+      assert.notEqual(promptInputs[1]?.messageID, promptInputs[0]?.messageID);
+      steerPrompt.resolve();
+      yield* Fiber.join(steer);
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: "native-opencode-race", status: { type: "busy" } },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: "native-opencode-race",
+            info: {
+              id: promptInputs[0]!.messageID!,
+              sessionID: "native-opencode-race",
+              role: "user",
+              time: { created: DateTime.toEpochMillis(now) },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: "native-opencode-race", status: { type: "idle" } },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: "native-opencode-race",
+            info: {
+              id: promptInputs[1]!.messageID!,
+              sessionID: "native-opencode-race",
+              role: "user",
+              time: { created: DateTime.toEpochMillis(now) },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() => steerStatusCalled.promise);
       const interrupt = yield* runtime
         .interruptTurn({ providerThread, providerTurnId: activeTurn.id })
         .pipe(Effect.forkScoped);
-      steerPrompt.resolve();
-      yield* Fiber.join(steer);
       yield* Effect.promise(() => abortCalled.promise);
       yield* Fiber.join(interrupt);
       const promptWhileStopping = yield* Effect.exit(
