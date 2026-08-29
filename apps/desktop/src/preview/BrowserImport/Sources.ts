@@ -1,5 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off - Hostname and signal 0 are the
-// platform boundary for interpreting Chromium's host-PID lock target.
+// @effect-diagnostics nodeBuiltinImport:off - Signal 0 is the platform probe
+// for whether Chromium's lock-owning PID is still alive.
 /**
  * Importable browser sources.
  *
@@ -12,13 +12,12 @@
  */
 import type { BrowserImportSourceId, BrowserImportSourceProfile } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessHostname } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as NodeOS from "node:os";
 
 /**
  * Where a source's files live, resolved once per call rather than read from
@@ -244,6 +243,7 @@ export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")
   paths: SourcePaths,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
+  const currentHost = yield* HostProcessHostname;
   const lock = paths.path.join(definition.userDataDirectory(paths), "SingletonLock");
   // Chromium writes a `SingletonLock` symlink for as long as an instance holds
   // the profile. Its presence is a far cheaper and more targeted signal than
@@ -256,9 +256,7 @@ export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")
   // can leave this link behind after a crash, so a positively dead local PID
   // is stale. Every ambiguous target or liveness result stays conservative.
   return yield* fileSystem.readLink(lock).pipe(
-    Effect.flatMap((target) =>
-      chromiumSingletonLockIsHeld(target, NodeOS.hostname(), processIsAlive),
-    ),
+    Effect.flatMap((target) => chromiumSingletonLockIsHeld(target, currentHost, processIsAlive)),
     Effect.catch((error) => Effect.succeed(error.reason._tag !== "NotFound")),
   );
 });

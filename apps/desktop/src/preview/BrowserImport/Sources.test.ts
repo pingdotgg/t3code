@@ -2,7 +2,7 @@
 // table with the same native bindings the source reads.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessHostname } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -63,6 +63,30 @@ describe("isSourceRunning", () => {
         );
 
         assert.isTrue(yield* isSourceRunning(helium, paths));
+      }),
+    ),
+  );
+
+  it.effect("uses the provided hostname to classify Chromium locks", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const paths = yield* withSourceHome();
+        yield* fileSystem.symlink(
+          "lock-owner-99999999",
+          `${helium.userDataDirectory(paths)}/SingletonLock`,
+        );
+
+        assert.isTrue(
+          yield* isSourceRunning(helium, paths).pipe(
+            Effect.provideService(HostProcessHostname, "another-host"),
+          ),
+        );
+        assert.isFalse(
+          yield* isSourceRunning(helium, paths).pipe(
+            Effect.provideService(HostProcessHostname, "lock-owner"),
+          ),
+        );
       }),
     ),
   );
