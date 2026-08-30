@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { Project, ProjectScript } from "./project.ts";
+import { Project, ProjectFaviconPath, ProjectScript } from "./project.ts";
 import { SourceControlCloneProtocol, SourceControlProviderKind } from "./sourceControl.ts";
 
 const ProjectMcpClientRequestId = TrimmedNonEmptyString.check(Schema.isMaxLength(256)).annotate({
@@ -91,7 +91,7 @@ export const ProjectMcpCreateInput = Schema.Struct({
   source: ProjectMcpCreateSource,
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
-  faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   clientRequestId: Schema.optional(ProjectMcpClientRequestId),
 });
@@ -103,7 +103,7 @@ export const ProjectMcpUpdateInput = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
-  faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   clientRequestId: Schema.optional(ProjectMcpClientRequestId),
 });

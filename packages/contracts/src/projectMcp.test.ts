@@ -1,10 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
-import { ProjectMcpCreateInput, ProjectMcpFailure, ProjectMcpListInput } from "./projectMcp.ts";
+import {
+  ProjectMcpCreateInput,
+  ProjectMcpFailure,
+  ProjectMcpListInput,
+  ProjectMcpUpdateInput,
+} from "./projectMcp.ts";
 
 const decodeCreateInput = Schema.decodeUnknownSync(ProjectMcpCreateInput);
 const decodeListInput = Schema.decodeUnknownSync(ProjectMcpListInput);
+const decodeUpdateInput = Schema.decodeUnknownSync(ProjectMcpUpdateInput);
 const decodeFailure = Schema.decodeUnknownSync(ProjectMcpFailure);
 
 describe("project MCP contracts", () => {
@@ -70,5 +76,26 @@ describe("project MCP contracts", () => {
         message: "Use a new clientRequestId.",
       }),
     ).toMatchObject({ code: "project_deleted" });
+  });
+
+  it("accepts only favicon paths served by the project asset route", () => {
+    expect(
+      decodeCreateInput({
+        title: "Icon project",
+        source: { type: "existing_directory", workspaceRoot: "/work/icon" },
+        faviconPath: "/work/icon/favicon.svg",
+      }).faviconPath,
+    ).toBe("/work/icon/favicon.svg");
+    expect(() =>
+      decodeCreateInput({
+        title: "Secret project",
+        source: { type: "existing_directory", workspaceRoot: "/work/secret" },
+        faviconPath: "/work/secret/.env",
+      }),
+    ).toThrow();
+    expect(decodeUpdateInput({ projectId: "project-1", faviconPath: null }).faviconPath).toBeNull();
+    expect(() =>
+      decodeUpdateInput({ projectId: "project-1", faviconPath: "/work/secret/.env" }),
+    ).toThrow();
   });
 });

@@ -16,6 +16,12 @@ const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
 
+export const ProjectFaviconPath = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(1024),
+  Schema.isPattern(/\.(?:avif|gif|ico|jpe?g|png|svg|webp)$/i),
+);
+export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
+
 export const ProjectScriptIcon = Schema.Literals([
   "play",
   "test",
@@ -84,7 +90,7 @@ export const Project = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
-  faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
@@ -123,7 +129,7 @@ export const ProjectMutation = Schema.Union([
     createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
     defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
     defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
-    faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
     scripts: Schema.optional(Schema.Array(ProjectScript)),
   }),
   Schema.Struct({
@@ -135,7 +141,7 @@ export const ProjectMutation = Schema.Union([
     defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
     autoPull: Schema.optional(Schema.Boolean),
     projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
-    faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
     defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
     scripts: Schema.optional(Schema.Array(ProjectScript)),
   }),

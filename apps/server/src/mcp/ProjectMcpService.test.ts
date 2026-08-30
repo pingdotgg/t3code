@@ -11,6 +11,7 @@ import {
   ProviderInstanceId,
   type ServerSettings,
   ServerSettingsError,
+  SourceControlRepositoryError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -222,8 +223,65 @@ it.effect("loads response settings before committing project mutations", () =>
         })
         .pipe(Effect.flip);
       expect(error.code).toBe("operation_failed");
+      expect(error.message).toBe("Unable to read project defaults.");
+      expect(error.message).not.toMatch(/settings unavailable|settings\.json/);
       expect(yield* Ref.get(createCalls)).toBe(0);
     }).pipe(Effect.provide(testLayer));
+  }),
+);
+
+it.effect("redacts repository failures from public project MCP results", () =>
+  Effect.gen(function* () {
+    const secretRemote = "https://oauth-token@example.com/private/repo.git";
+    const testLayer = ProjectMcp.layer.pipe(
+      Layer.provide(
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () => Effect.succeed(Option.none()),
+        }),
+      ),
+      Layer.provide(Layer.mock(T3ProjectFileLoader.T3ProjectFileLoader)({})),
+      Layer.provide(
+        Layer.mock(ServerSettingsService.ServerSettingsService)({
+          getSettings: Effect.succeed({ defaultThreadEnvMode: "local" } as ServerSettings),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
+          cloneRepository: () =>
+            Effect.fail(
+              new SourceControlRepositoryError({
+                provider: "unknown",
+                operation: "cloneRepository",
+                detail: `fatal: authentication failed for ${secretRemote}`,
+              }),
+            ),
+        }),
+      ),
+      Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+      Layer.provide(NodeServices.layer),
+    );
+
+    const error = yield* Effect.gen(function* () {
+      const service = yield* ProjectMcp.ProjectMcpService;
+      return yield* service
+        .create(scope, {
+          title: "Private clone",
+          source: {
+            type: "clone",
+            destinationPath: "/work/private-clone",
+            remoteUrl: secretRemote,
+          },
+          clientRequestId: "private-clone",
+        })
+        .pipe(Effect.flip);
+    }).pipe(Effect.provide(testLayer));
+
+    expect(error).toMatchObject({
+      code: "operation_failed",
+      message: "Unable to clone the requested repository.",
+    });
+    expect(error.message).not.toMatch(/oauth-token|example\.com|fatal|authentication/i);
+    expect(error).not.toHaveProperty("cause");
   }),
 );
 

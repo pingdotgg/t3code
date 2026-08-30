@@ -209,7 +209,7 @@ it.effect("clones a looked-up repository into the requested destination", () =>
       assert.deepStrictEqual(cloneCalls, [
         {
           cwd: `${parent}/missing/nested`,
-          args: ["clone", CLONE_URLS.url, "t3code"],
+          args: ["clone", "--origin", "origin", CLONE_URLS.url, "t3code"],
         },
       ]);
     }).pipe(

@@ -58,8 +58,14 @@ function failure(code: ProjectMcpFailure["code"], message: string): ProjectMcpFa
   return new ProjectMcpFailure({ code, message });
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function redactOperationFailure(operation: string, publicMessage: string) {
+  return <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, ProjectMcpFailure, R> =>
+    effect.pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("Project MCP operation failed.", { operation, error }),
+      ),
+      Effect.mapError(() => failure("operation_failed", publicMessage)),
+    );
 }
 
 function stablePart(value: string): string {
@@ -113,9 +119,7 @@ const make = Effect.gen(function* () {
           );
 
   const loadSettings = serverSettings.getSettings.pipe(
-    Effect.mapError((error) =>
-      failure("operation_failed", `Unable to read server settings: ${errorMessage(error)}`),
-    ),
+    redactOperationFailure("read-server-settings", "Unable to read project defaults."),
   );
 
   const projectWorkspaceDefaults = Effect.fn("ProjectMcpService.projectWorkspaceDefaults")(
@@ -171,14 +175,7 @@ const make = Effect.gen(function* () {
   const loadProject = Effect.fn("ProjectMcpService.loadProject")(function* (projectId: ProjectId) {
     const project = yield* projects
       .getById(projectId)
-      .pipe(
-        Effect.mapError((error) =>
-          failure(
-            "operation_failed",
-            `Unable to read project ${projectId}: ${errorMessage(error)}`,
-          ),
-        ),
-      );
+      .pipe(redactOperationFailure("read-project", "Unable to read the requested project."));
     if (Option.isNone(project)) {
       return yield* failure("project_not_found", `Project '${projectId}' was not found.`);
     }
@@ -189,9 +186,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* requireCapability(scope);
       const snapshot = yield* projects.snapshot.pipe(
-        Effect.mapError((error) =>
-          failure("operation_failed", `Unable to list projects: ${errorMessage(error)}`),
-        ),
+        redactOperationFailure("list-projects", "Unable to list projects."),
       );
       const settings = yield* loadSettings;
       const cursor = input.cursor ?? 0;
@@ -230,11 +225,9 @@ const make = Effect.gen(function* () {
           const existing = yield* projects
             .getById(projectId, { includeDeleted: true })
             .pipe(
-              Effect.mapError((error) =>
-                failure(
-                  "operation_failed",
-                  `Unable to retry project creation: ${errorMessage(error)}`,
-                ),
+              redactOperationFailure(
+                "read-project-create-receipt",
+                "Unable to check the project creation result.",
               ),
             );
           if (Option.isSome(existing)) {
@@ -276,8 +269,9 @@ const make = Effect.gen(function* () {
                 ...(input.source.protocol === undefined ? {} : { protocol: input.source.protocol }),
               })
               .pipe(
-                Effect.mapError((error) =>
-                  failure("operation_failed", `Unable to clone project: ${errorMessage(error)}`),
+                redactOperationFailure(
+                  "clone-project-repository",
+                  "Unable to clone the requested repository.",
                 ),
               );
             workspaceRoot = cloned.cwd;
@@ -300,9 +294,7 @@ const make = Effect.gen(function* () {
               ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
             })
             .pipe(
-              Effect.mapError((error) =>
-                failure("operation_failed", `Unable to create project: ${errorMessage(error)}`),
-              ),
+              redactOperationFailure("create-project", "Unable to create the requested project."),
             );
           return yield* projectView(project, settings);
         }),
@@ -345,10 +337,16 @@ const make = Effect.gen(function* () {
           ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
         })
         .pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("Project MCP operation failed.", {
+              operation: "update-project",
+              error,
+            }),
+          ),
           Effect.mapError((error) =>
             error._tag === "ProjectNotFoundError"
-              ? failure("project_not_found", error.message)
-              : failure("operation_failed", `Unable to update project: ${errorMessage(error)}`),
+              ? failure("project_not_found", `Project '${input.projectId}' was not found.`)
+              : failure("operation_failed", "Unable to update the requested project."),
           ),
         );
       return yield* projectView(project, settings);
@@ -359,14 +357,7 @@ const make = Effect.gen(function* () {
       yield* requireCapability(scope);
       const projectOption = yield* projects
         .getById(input.projectId, { includeDeleted: true })
-        .pipe(
-          Effect.mapError((error) =>
-            failure(
-              "operation_failed",
-              `Unable to read project ${input.projectId}: ${errorMessage(error)}`,
-            ),
-          ),
-        );
+        .pipe(redactOperationFailure("read-project-for-delete", "Unable to read the project."));
       if (Option.isNone(projectOption)) {
         return yield* failure("project_not_found", `Project '${input.projectId}' was not found.`);
       }
@@ -385,8 +376,9 @@ const make = Effect.gen(function* () {
         threads.getShellSnapshot({ location: "active" }),
         threads.getShellSnapshot({ location: "archive" }),
       ]).pipe(
-        Effect.mapError((error) =>
-          failure("operation_failed", `Unable to inspect project threads: ${errorMessage(error)}`),
+        redactOperationFailure(
+          "inspect-project-threads",
+          "Unable to inspect the project's threads.",
         ),
       );
       const projectThreads = [
@@ -423,8 +415,9 @@ const make = Effect.gen(function* () {
           }),
         { concurrency: 1, discard: true },
       ).pipe(
-        Effect.mapError((error) =>
-          failure("operation_failed", `Unable to delete project threads: ${errorMessage(error)}`),
+        redactOperationFailure(
+          "delete-project-threads",
+          "Unable to delete the project's thread records.",
         ),
       );
       yield* projects
@@ -437,11 +430,7 @@ const make = Effect.gen(function* () {
           }),
           projectId: input.projectId,
         })
-        .pipe(
-          Effect.mapError((error) =>
-            failure("operation_failed", `Unable to delete project: ${errorMessage(error)}`),
-          ),
-        );
+        .pipe(redactOperationFailure("delete-project", "Unable to delete the requested project."));
       return {
         projectId: input.projectId,
         deleted: true,

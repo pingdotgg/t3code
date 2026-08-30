@@ -118,6 +118,12 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       expect(toolNames).toContain("delegate_task");
       expect(toolNames).toContain("t3_project_list");
       expect(toolNames).toContain("t3_project_delete");
+      const projectCreate = tools.find((tool) => tool.name === "t3_project_create");
+      expect(
+        projectCreate?.annotations && "idempotentHint" in projectCreate.annotations
+          ? projectCreate.annotations.idempotentHint
+          : undefined,
+      ).not.toBe(true);
 
       // The handoff tool mutates thread state, reaches the network (origin
       // fetch), and runs project setup scripts, so its MCP hints must not

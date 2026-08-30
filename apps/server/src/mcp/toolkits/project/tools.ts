@@ -58,7 +58,7 @@ export const ProjectCreateTool = Tool.make("t3_project_create", {
   .annotate(Tool.Title, "Create a T3 project")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true);
 
 export const ProjectUpdateTool = Tool.make("t3_project_update", {
