@@ -23,7 +23,6 @@ import * as Ref from "effect/Ref";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
-import { makeKeyedSerialExecutor } from "../orchestration-v2/KeyedSerialExecutor.ts";
 import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -463,43 +462,68 @@ it.effect("clones before registration and requires explicit cascading for nonemp
   }),
 );
 
-it.effect("serializes project deletion against new thread claims", () =>
+it.effect("serializes receipt-aware thread creation with project deletion", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:mcp:delete-launch-race");
+    const threadId = ThreadId.make("thread:mcp:delete-launch-race");
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.1-codex",
+    } as const;
     const project = makeProject({
       id: projectId,
       title: "Delete race",
       workspaceRoot: "/work/delete-race",
     });
-    const state = yield* Ref.make<Project | null>(project);
-    const snapshotEntered = yield* Deferred.make<void>();
-    const allowSnapshot = yield* Deferred.make<void>();
-    const competingClaim = yield* Deferred.make<void>();
-    const projectMutations = yield* makeKeyedSerialExecutor<ProjectId>();
-    const blockedThreadManagementLayer = Layer.mock(ThreadManagement.ThreadManagementService)({
-      withProjectMutationLock: projectMutations.withLock,
-      getShellSnapshot: () =>
-        Deferred.succeed(snapshotEntered, undefined).pipe(
-          Effect.andThen(Deferred.await(allowSnapshot)),
-          Effect.as({
-            schemaVersion: 1,
-            snapshotSequence: 1,
-            threads: [],
-            archivedThreads: [],
-          }),
+    const projectState = yield* Ref.make<Project>(project);
+    const creationEntered = yield* Deferred.make<void>();
+    const allowCreation = yield* Deferred.make<void>();
+    const deleteLockAttempted = yield* Deferred.make<void>();
+    const deleteLockAcquired = yield* Deferred.make<void>();
+    const adapter = {
+      instanceId: modelSelection.instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+      planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+      openSession: () => Effect.die("provider execution is disabled in project deletion tests"),
+    } as ProviderAdapterV2Shape;
+    const registry = ProviderAdapterRegistry.makeLayer([adapter]);
+    const orchestrator = makeOrchestratorV2ReplayLayerWithRegistry(
+      { name: "project-delete-create-race" },
+      registry,
+      { databaseLayer: SqlitePersistenceMemory, runEffectWorker: false },
+    );
+    const actualThreads = ThreadManagement.layer.pipe(Layer.provide(orchestrator));
+    const gatedThreads = Layer.effect(
+      ThreadManagement.ThreadManagementService,
+      Effect.gen(function* () {
+        const actual = yield* ThreadManagement.ThreadManagementService;
+        return ThreadManagement.ThreadManagementService.of({
+          ...actual,
+          withProjectMutationLock: (lockedProjectId, effect) =>
+            Deferred.succeed(deleteLockAttempted, undefined).pipe(
+              Effect.andThen(
+                actual.withProjectMutationLock(
+                  lockedProjectId,
+                  Deferred.succeed(deleteLockAcquired, undefined).pipe(Effect.andThen(effect)),
+                ),
+              ),
+            ),
+        });
+      }),
+    ).pipe(Layer.provide(actualThreads));
+    const projectServiceLayer = Layer.mock(ProjectService.ProjectService)({
+      getById: () =>
+        Ref.get(projectState).pipe(
+          Effect.map((current) =>
+            current.deletedAt === null ? Option.some(current) : Option.none(),
+          ),
         ),
-      dispatch: () => Effect.die("unexpected command"),
+      delete: () => Ref.updateAndGet(projectState, (current) => ({ ...current, deletedAt: now })),
     });
     const testLayer = ProjectMcp.layer.pipe(
-      Layer.provide(
-        Layer.mock(ProjectService.ProjectService)({
-          getById: () => Ref.get(state).pipe(Effect.map(Option.fromNullishOr)),
-          delete: () =>
-            Ref.updateAndGet(state, (current) =>
-              current === null ? null : { ...current, deletedAt: now },
-            ).pipe(Effect.map((deleted) => deleted!)),
-        }),
-      ),
+      Layer.provideMerge(gatedThreads),
+      Layer.provide(projectServiceLayer),
       Layer.provide(Layer.mock(T3ProjectFileLoader.T3ProjectFileLoader)({})),
       Layer.provide(
         Layer.mock(ServerSettingsService.ServerSettingsService)({
@@ -507,28 +531,88 @@ it.effect("serializes project deletion against new thread claims", () =>
         }),
       ),
       Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
-      Layer.provide(blockedThreadManagementLayer),
       Layer.provide(NodeServices.layer),
     );
 
     yield* Effect.gen(function* () {
-      const service = yield* ProjectMcp.ProjectMcpService;
-      const deletion = yield* Effect.forkChild(
-        service.delete(scope, { projectId, clientRequestId: "delete-launch-race" }),
-        { startImmediately: true },
-      );
-      yield* Deferred.await(snapshotEntered);
-      const claim = yield* Effect.forkChild(
-        projectMutations.withLock(projectId, Deferred.succeed(competingClaim, undefined)),
-        { startImmediately: true },
-      );
-      expect(yield* Deferred.isDone(competingClaim)).toBe(false);
+      const projects = yield* ProjectMcp.ProjectMcpService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const createCommand = {
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("command:mcp:delete-launch-race:create"),
+        threadId,
+        projectId,
+        title: "Racing thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      } as const;
+      const admitCreate = (command: typeof createCommand) =>
+        threads.withProjectCreationAdmission(
+          { projectId, commandId: command.commandId },
+          (receipt) =>
+            Effect.gen(function* () {
+              if (Option.isNone(receipt)) {
+                if (command.commandId === createCommand.commandId) {
+                  yield* Deferred.succeed(creationEntered, undefined);
+                  yield* Deferred.await(allowCreation);
+                }
+                const current = yield* Ref.get(projectState);
+                if (current.deletedAt !== null) {
+                  return yield* new ProjectMcpFailure({
+                    code: "project_deleted",
+                    message: "Project was deleted before thread creation was admitted.",
+                  });
+                }
+              }
+              return yield* threads.dispatch(command);
+            }),
+        );
 
-      yield* Deferred.succeed(allowSnapshot, undefined);
+      const creation = yield* Effect.forkChild(admitCreate(createCommand), {
+        startImmediately: true,
+      });
+      yield* Deferred.await(creationEntered);
+      const deletion = yield* Effect.forkChild(
+        projects.delete(scope, {
+          projectId,
+          cascadeThreads: true,
+          clientRequestId: "delete-launch-race",
+        }),
+        { startImmediately: true },
+      );
+      yield* Deferred.await(deleteLockAttempted);
+      expect(yield* Deferred.isDone(deleteLockAcquired)).toBe(false);
+
+      yield* Deferred.succeed(allowCreation, undefined);
+      yield* Fiber.join(creation);
+      yield* Deferred.await(deleteLockAcquired);
       const deleted = yield* Fiber.join(deletion);
-      yield* Fiber.join(claim);
-      expect(deleted.deleted).toBe(true);
-      expect(yield* Deferred.isDone(competingClaim)).toBe(true);
+      expect(deleted).toMatchObject({ deleted: true, deletedThreadCount: 1 });
+
+      const sequenceBeforeReplay = yield* threads.getThreadEventSequence(threadId);
+      const replayed = yield* admitCreate(createCommand);
+      const sequenceAfterReplay = yield* threads.getThreadEventSequence(threadId);
+      expect(replayed.storedEvents.some((stored) => stored.event.type === "thread.created")).toBe(
+        true,
+      );
+      expect(sequenceAfterReplay).toBe(sequenceBeforeReplay);
+
+      const freshCommand = {
+        ...createCommand,
+        commandId: CommandId.make("command:mcp:delete-launch-race:fresh-after-delete"),
+        threadId: ThreadId.make("thread:mcp:delete-launch-race:fresh-after-delete"),
+      };
+      const rejected = yield* admitCreate(freshCommand).pipe(Effect.flip);
+      expect(rejected).toMatchObject({ code: "project_deleted" });
+      expect(
+        Option.isNone(yield* Effect.option(threads.getThreadProjection(freshCommand.threadId))),
+      ).toBe(true);
+      expect((yield* Ref.get(projectState)).deletedAt).toBe(now);
     }).pipe(Effect.provide(testLayer));
   }),
 );

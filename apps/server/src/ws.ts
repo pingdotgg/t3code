@@ -90,6 +90,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
+import { dispatchClientCommand } from "./orchestration-v2/ClientCommandDispatch.ts";
 import { ProviderSessionManagerV2 } from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
@@ -1333,15 +1334,20 @@ const makeWsRpcLayer = (
                 claimed === null || command.type !== "message.dispatch"
                   ? command
                   : { ...command, attachments: claimed.attachments };
+              const provenanceCommand = ThreadManagementService.withCreationProvenance(
+                effectiveCommand,
+                {
+                  createdBy: "user",
+                  creationSource: "creationSource" in command ? command.creationSource : "web",
+                },
+              );
+              const dispatchCommand = dispatchClientCommand({
+                command: provenanceCommand,
+                projects: projectService,
+                threads: threadManagement,
+              });
               return yield* startup
-                .enqueueCommand(
-                  threadManagement.dispatch(
-                    ThreadManagementService.withCreationProvenance(effectiveCommand, {
-                      createdBy: "user",
-                      creationSource: "creationSource" in command ? command.creationSource : "web",
-                    }),
-                  ),
-                )
+                .enqueueCommand(dispatchCommand)
                 .pipe(
                   Effect.tapError(() =>
                     claimed === null

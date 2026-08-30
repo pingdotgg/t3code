@@ -436,84 +436,91 @@ export const make = Effect.gen(function* () {
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
     function* (input) {
-      const { project, launchReceipt, candidateThreadId, claimed } =
-        yield* threads.withProjectMutationLock(
-          input.projectId,
-          Effect.gen(function* () {
-            const project = yield* projects.getById(input.projectId).pipe(
-              Effect.mapError(mapError(input, "resolve-project")),
-              Effect.flatMap(
-                Option.match({
-                  onNone: () =>
-                    Effect.fail(mapError(input, "resolve-project")("Project not found.")),
-                  onSome: Effect.succeed,
-                }),
-              ),
-            );
-            if (input.reuseExistingThread === true && input.threadId === undefined) {
-              return yield* mapError(
-                input,
-                "update-thread",
-              )("Reusing an existing thread requires a thread id.");
-            }
-
-            const launchReceipt = yield* readReceipt(input, input.commandId);
-            const candidateThreadId =
-              input.threadId ??
-              (yield* ids.allocate
-                .thread({ projectId: input.projectId })
-                .pipe(Effect.mapError(mapError(input, "create-thread"))));
-
-            if (input.reuseExistingThread === true && Option.isNone(launchReceipt)) {
-              yield* validateReusableThread(input, candidateThreadId);
-            }
-
-            const initialBranch = input.workspaceStrategy.branch ?? null;
-            const initialWorktreePath =
-              input.workspaceStrategy.type === "existing_worktree"
-                ? input.workspaceStrategy.worktreePath
-                : null;
-            const claimDispatch =
-              input.reuseExistingThread === true
-                ? threads.dispatch({
-                    type: "thread.metadata.update",
-                    commandId: input.commandId,
-                    threadId: candidateThreadId,
-                  })
-                : threads.dispatch({
-                    type: "thread.create",
-                    commandId: input.commandId,
-                    threadId: candidateThreadId,
-                    projectId: input.projectId,
-                    title: input.title,
-                    modelSelection: input.modelSelection,
-                    runtimeMode: input.runtimeMode,
-                    interactionMode: input.interactionMode,
-                    branch: initialBranch,
-                    worktreePath: initialWorktreePath,
-                    createdBy: input.createdBy,
-                    creationSource: input.creationSource,
-                  });
-            const claimed = yield* claimDispatch.pipe(
-              Effect.mapError(
-                mapError(
+      const { launchReceipt, candidateThreadId, claimed } = yield* threads
+        .withProjectCreationAdmission(
+          { projectId: input.projectId, commandId: input.commandId },
+          (launchReceipt) =>
+            Effect.gen(function* () {
+              if (input.reuseExistingThread === true && input.threadId === undefined) {
+                return yield* mapError(
                   input,
-                  input.reuseExistingThread === true ? "update-thread" : "create-thread",
-                  candidateThreadId,
+                  "update-thread",
+                )("Reusing an existing thread requires a thread id.");
+              }
+
+              const candidateThreadId =
+                input.threadId ??
+                (Option.isSome(launchReceipt)
+                  ? launchReceipt.value.threadId
+                  : yield* ids.allocate
+                      .thread({ projectId: input.projectId })
+                      .pipe(Effect.mapError(mapError(input, "create-thread"))));
+
+              if (Option.isNone(launchReceipt)) {
+                yield* projects.getById(input.projectId).pipe(
+                  Effect.mapError(mapError(input, "resolve-project")),
+                  Effect.flatMap(
+                    Option.match({
+                      onNone: () =>
+                        Effect.fail(mapError(input, "resolve-project")("Project not found.")),
+                      onSome: () => Effect.void,
+                    }),
+                  ),
+                );
+              }
+
+              if (input.reuseExistingThread === true && Option.isNone(launchReceipt)) {
+                yield* validateReusableThread(input, candidateThreadId);
+              }
+
+              const initialBranch = input.workspaceStrategy.branch ?? null;
+              const initialWorktreePath =
+                input.workspaceStrategy.type === "existing_worktree"
+                  ? input.workspaceStrategy.worktreePath
+                  : null;
+              const claimDispatch =
+                input.reuseExistingThread === true
+                  ? threads.dispatch({
+                      type: "thread.metadata.update",
+                      commandId: input.commandId,
+                      threadId: candidateThreadId,
+                    })
+                  : threads.dispatch({
+                      type: "thread.create",
+                      commandId: input.commandId,
+                      threadId: candidateThreadId,
+                      projectId: input.projectId,
+                      title: input.title,
+                      modelSelection: input.modelSelection,
+                      runtimeMode: input.runtimeMode,
+                      interactionMode: input.interactionMode,
+                      branch: initialBranch,
+                      worktreePath: initialWorktreePath,
+                      createdBy: input.createdBy,
+                      creationSource: input.creationSource,
+                    });
+              const claimed = yield* claimDispatch.pipe(
+                Effect.mapError(
+                  mapError(
+                    input,
+                    input.reuseExistingThread === true ? "update-thread" : "create-thread",
+                    candidateThreadId,
+                  ),
                 ),
-              ),
-            );
-            return { project, launchReceipt, candidateThreadId, claimed };
-          }),
+              );
+              return { launchReceipt, candidateThreadId, claimed };
+            }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            isThreadLaunchError(cause) ? cause : mapError(input, "read-receipt")(cause),
+          ),
         );
 
       return yield* Effect.gen(function* () {
         const threadId =
           claimed.storedEvents.find((stored) => stored.event.type.startsWith("thread."))?.event
             .threadId ?? candidateThreadId;
-        if (project.id !== input.projectId) {
-          return yield* mapError(input, "resolve-project", threadId)("Project identity changed.");
-        }
 
         let runId: RunId | null = null;
         let messageWasAlreadyAccepted = false;

@@ -35,6 +35,7 @@ import {
   LegacyV1ThreadImporter,
   type LegacyV1ThreadImportError,
 } from "./LegacyV1ThreadImporter.ts";
+import type { CommandReceiptStoreV2Error, CommandReceiptV2 } from "./CommandReceiptStore.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
@@ -266,6 +267,10 @@ export type ThreadManagementError = typeof ThreadManagementError.Type;
 type ThreadManagementFailure = ThreadManagementError | OrchestratorV2Error;
 
 export interface ThreadManagementServiceShape {
+  readonly withProjectCreationAdmission: <A, E, R>(
+    input: { readonly projectId: ProjectId; readonly commandId: CommandId },
+    effect: (receipt: Option.Option<CommandReceiptV2>) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | CommandReceiptStoreV2Error, R>;
   readonly withProjectMutationLock: <A, E, R>(
     projectId: ProjectId,
     effect: Effect.Effect<A, E, R>,
@@ -368,6 +373,13 @@ const make = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;
   const legacyImporter = yield* LegacyV1ThreadImporter;
   const projectMutations = yield* makeKeyedSerialExecutor<ProjectId>();
+
+  const withProjectCreationAdmission: ThreadManagementServiceShape["withProjectCreationAdmission"] =
+    (input, effect) =>
+      projectMutations.withLock(
+        input.projectId,
+        orchestrator.getCommandReceipt(input.commandId).pipe(Effect.flatMap(effect)),
+      );
 
   const ensureLegacyTranscript = Effect.fn(
     "orchestrationV2.threadManagement.ensureLegacyTranscript",
@@ -679,6 +691,7 @@ const make = Effect.gen(function* () {
     });
 
   return ThreadManagementService.of({
+    withProjectCreationAdmission,
     withProjectMutationLock: projectMutations.withLock,
     ensureLegacyTranscript,
     dispatch,

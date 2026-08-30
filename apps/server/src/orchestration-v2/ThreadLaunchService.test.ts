@@ -268,6 +268,53 @@ it.effect("claims a thread under the shared project mutation lock", () =>
   }),
 );
 
+it.effect("replays an accepted launch after project deletion without new preparation", () =>
+  Effect.gen(function* () {
+    const projectState = yield* Ref.make<typeof project | null>(project);
+    const setupEntered = yield* Deferred.make<void>();
+    const allowSetup = yield* Deferred.make<void>();
+    const setupFinished = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      getProjectById: (id) =>
+        Ref.get(projectState).pipe(
+          Effect.map((current) =>
+            id === projectId && current !== null ? Option.some(current) : Option.none(),
+          ),
+        ),
+      runSetup: () =>
+        Deferred.succeed(setupEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(allowSetup)),
+          Effect.tap(() => Deferred.succeed(setupFinished, undefined)),
+          Effect.as({ status: "no-script" as const }),
+        ),
+    });
+
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+        command: "command:launch:replay-after-project-delete",
+        thread: "thread:launch:replay-after-project-delete",
+      });
+
+      const first = yield* launches.launch(input);
+      yield* Deferred.await(setupEntered);
+      yield* Deferred.succeed(allowSetup, undefined);
+      yield* Deferred.await(setupFinished);
+      const sequenceBeforeReplay = yield* threads.getThreadEventSequence(first.threadId);
+      yield* Ref.set(projectState, null);
+
+      const replay = yield* launches.launch(input);
+      const sequenceAfterReplay = yield* threads.getThreadEventSequence(first.threadId);
+      assert.isFalse(first.resumed);
+      assert.isTrue(replay.resumed);
+      assert.equal(replay.threadId, first.threadId);
+      assert.equal(sequenceAfterReplay, sequenceBeforeReplay);
+      assert.equal(harness.runSetup.mock.calls.length, 1);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("returns a visible preparing message while provisioning is still blocked", () =>
   Effect.gen(function* () {
     const worktreeEntered = yield* Deferred.make<void>();

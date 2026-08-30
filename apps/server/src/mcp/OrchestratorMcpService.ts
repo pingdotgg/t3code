@@ -1423,26 +1423,51 @@ const make = Effect.gen(function* () {
                 title: request.title,
                 index,
               });
+              const createCommandId = stableCommandId({
+                scope,
+                requestKey: key,
+                operation: "create-thread",
+                index,
+              });
+              const createCommand = {
+                type: "thread.create",
+                createdBy: "agent",
+                creationSource: "mcp",
+                commandId: createCommandId,
+                threadId,
+                projectId: parent.thread.projectId,
+                title,
+                modelSelection: target.modelSelection,
+                runtimeMode,
+                interactionMode,
+                branch: parent.thread.branch,
+                worktreePath: parent.thread.worktreePath,
+              } as const;
               yield* threadManagement
-                .dispatch({
-                  type: "thread.create",
-                  createdBy: "agent",
-                  creationSource: "mcp",
-                  commandId: stableCommandId({
-                    scope,
-                    requestKey: key,
-                    operation: "create-thread",
-                    index,
-                  }),
-                  threadId,
-                  projectId: parent.thread.projectId,
-                  title,
-                  modelSelection: target.modelSelection,
-                  runtimeMode,
-                  interactionMode,
-                  branch: parent.thread.branch,
-                  worktreePath: parent.thread.worktreePath,
-                })
+                .withProjectCreationAdmission(
+                  { projectId: parent.thread.projectId, commandId: createCommandId },
+                  (receipt) =>
+                    Effect.gen(function* () {
+                      if (Option.isNone(receipt)) {
+                        const freshParent = yield* loadProjection(scope.threadId);
+                        const freshParentRun = latestActiveRun(freshParent);
+                        if (
+                          freshParent.thread.projectId !== parent.thread.projectId ||
+                          freshParent.thread.deletedAt !== null ||
+                          freshParent.thread.archivedAt !== null ||
+                          freshParentRun === undefined ||
+                          freshParentRun.rootNodeId === null ||
+                          freshParentRun.providerInstanceId !== scope.providerInstanceId
+                        ) {
+                          return yield* failure(
+                            "parent_not_active",
+                            "Thread creation requires an active parent in the target project.",
+                          );
+                        }
+                      }
+                      return yield* threadManagement.dispatch(createCommand);
+                    }),
+                )
                 .pipe(
                   Effect.mapError((error) =>
                     failure(
