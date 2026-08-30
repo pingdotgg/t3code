@@ -14,12 +14,15 @@ export type DiffRenderMode = "stacked" | "split";
 
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 const DEFAULT_WORKING_TREE_SELECTION: DiffPanelSelection = { kind: "unstaged" };
+export const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
 interface DiffPanelStoreState {
   byThreadKey: Record<string, DiffPanelSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
   diffRenderMode: DiffRenderMode;
+  collapsedFileKeysByScopeKey: Record<string, ReadonlySet<string>>;
   setDiffRenderMode: (mode: DiffRenderMode) => void;
+  setCollapsedFileKeys: (scopeKey: string, fileKeys: ReadonlySet<string>) => void;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: TurnId, filePath?: string) => void;
@@ -38,7 +41,15 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
       diffRenderMode: "stacked",
+      collapsedFileKeysByScopeKey: {},
       setDiffRenderMode: (diffRenderMode) => set({ diffRenderMode }),
+      setCollapsedFileKeys: (scopeKey, fileKeys) =>
+        set((state) => ({
+          collapsedFileKeysByScopeKey: {
+            ...state.collapsedFileKeysByScopeKey,
+            [scopeKey]: fileKeys,
+          },
+        })),
       selectGitScope: (ref, scope) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -148,4 +159,12 @@ export function selectThreadDiffPanelSelection(
     byThreadKey[scopedThreadKey(ref)] ??
     (hasWorkingTreeChanges ? DEFAULT_WORKING_TREE_SELECTION : DEFAULT_SELECTION)
   );
+}
+
+export function selectCollapsedDiffFileKeys(
+  collapsedFileKeysByScopeKey: Record<string, ReadonlySet<string>>,
+  scopeKey: string | null,
+): ReadonlySet<string> {
+  if (!scopeKey) return EMPTY_COLLAPSED_DIFF_FILE_KEYS;
+  return collapsedFileKeysByScopeKey[scopeKey] ?? EMPTY_COLLAPSED_DIFF_FILE_KEYS;
 }

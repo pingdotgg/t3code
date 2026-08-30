@@ -2,7 +2,12 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId, TurnId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { selectThreadDiffPanelSelection, useDiffPanelStore } from "./diffPanelStore";
+import {
+  EMPTY_COLLAPSED_DIFF_FILE_KEYS,
+  selectCollapsedDiffFileKeys,
+  selectThreadDiffPanelSelection,
+  useDiffPanelStore,
+} from "./diffPanelStore";
 
 const THREAD_REF = scopeThreadRef(EnvironmentId.make("environment-1"), ThreadId.make("thread-1"));
 
@@ -12,6 +17,7 @@ describe("diffPanelStore", () => {
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
       diffRenderMode: "stacked",
+      collapsedFileKeysByScopeKey: {},
     }),
   );
 
@@ -88,6 +94,28 @@ describe("diffPanelStore", () => {
     expect(
       selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
     ).toEqual({ kind: "branch", baseRef: "origin/main" });
+  });
+
+  it("keeps collapsed file keys after the panel unmounts", () => {
+    const scopeKey = "environment-1:thread-1:turn:turn-1";
+    const fileKeys = new Set(["src/components/game-stats.tsx"]);
+    useDiffPanelStore.getState().setCollapsedFileKeys(scopeKey, fileKeys);
+
+    expect(
+      selectCollapsedDiffFileKeys(
+        useDiffPanelStore.getState().collapsedFileKeysByScopeKey,
+        scopeKey,
+      ),
+    ).toEqual(fileKeys);
+    expect(
+      selectCollapsedDiffFileKeys(
+        useDiffPanelStore.getState().collapsedFileKeysByScopeKey,
+        "environment-1:thread-1:unstaged",
+      ),
+    ).toBe(EMPTY_COLLAPSED_DIFF_FILE_KEYS);
+    expect(
+      useDiffPanelStore.persist.getOptions().partialize?.(useDiffPanelStore.getState()),
+    ).not.toHaveProperty("collapsedFileKeysByScopeKey");
   });
 
   it("reconciles a missing turn selection to the latest available turn", () => {
