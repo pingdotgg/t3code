@@ -27,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import { queuedRunsInDeliveryOrder } from "../orchestration-v2/QueuedRunOrder.ts";
 import {
   ThreadManagementService,
@@ -84,14 +85,17 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function dispatchFailure(error: unknown): QueueMcpFailure {
-  const tag =
-    typeof error === "object" && error !== null && "_tag" in error
-      ? String((error as { readonly _tag: unknown })._tag)
-      : "";
-  return tag === "OrchestratorDispatchError" || tag === "OrchestratorCommandPreviouslyRejectedError"
-    ? failure("operation_rejected", errorMessage(error))
-    : failure("orchestration_error", errorMessage(error));
+function dispatchFailure(error: OrchestratorV2Error): QueueMcpFailure {
+  switch (error._tag) {
+    case "OrchestratorDispatchError":
+    case "OrchestratorCommandPreviouslyRejectedError":
+      return failure("operation_rejected", errorMessage(error));
+    case "OrchestratorProjectionError":
+    case "OrchestratorDomainEventStreamError":
+    case "OrchestratorProviderAdapterError":
+    case "OrchestratorCommandIdConflictError":
+      return failure("orchestration_error", errorMessage(error));
+  }
 }
 
 const isThreadManagementThreadNotFound = Schema.is(ThreadManagementThreadNotFoundError);
