@@ -127,6 +127,19 @@ describe("downloadHandoffFile", () => {
     expect(handoffFiles()[0]).toContain("other.glb");
   });
 
+  it("serializes concurrent downloads and keeps only the newest handoff file", async () => {
+    const signal = new AbortController().signal;
+    const [first, second] = await Promise.all([
+      downloadHandoffFile("https://server/a", "scene.glb", signal),
+      downloadHandoffFile("https://server/b", "other.glb", signal),
+    ]);
+
+    expect(first.contentUri).toContain("scene.glb");
+    expect(second.contentUri).toContain("other.glb");
+    expect(handoffFiles()).toHaveLength(1);
+    expect(handoffFiles()[0]).toContain("other.glb");
+  });
+
   it("deletes the partial file and maps the failure to product copy", async () => {
     fake.state.nextDownload = () => Promise.reject(new Error("response has status: 404"));
 

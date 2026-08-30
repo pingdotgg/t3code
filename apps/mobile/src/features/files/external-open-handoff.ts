@@ -34,6 +34,18 @@ async function deleteHandoffRoot(): Promise<void> {
 }
 
 let stalePrune: Promise<void> | null = null;
+let handoffDownloadTail: Promise<void> = Promise.resolve();
+
+function enqueueHandoffDownload<T>(operation: () => Promise<T>): Promise<T> {
+  const result = handoffDownloadTail.then(operation);
+  // Keep the queue usable after a failed or aborted handoff while returning
+  // the original result to that operation's caller.
+  handoffDownloadTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
 
 /** Clears handoff files left behind by a previous app session. Runs once per
     JS runtime; `downloadHandoffFile` awaits it so a deferred prune can never
@@ -56,51 +68,56 @@ export async function downloadHandoffFile(
     }
   };
   throwIfAborted();
-  stalePrune ??= Promise.resolve();
-  await stalePrune;
-  await deleteHandoffRoot();
-  // An abort while awaiting the prune must not start the download.
-  throwIfAborted();
-  const { Directory, File } = await import("expo-file-system");
-  const { uuidv4 } = await import("../../lib/uuid");
-  // A unique subdirectory per handoff keeps the original basename (which the
-  // receiving app displays) collision-safe even when a prune fails.
-  const directory = new Directory(await handoffRoot(), uuidv4());
-  directory.create({ intermediates: true, idempotent: true });
-  const destination = new File(directory, sanitizeHandoffFileName(fileName));
-  // The mint-time cap re-checked here so a file that grew after signing (or a
-  // response that ignores it) cannot fill the device cache.
-  const capAbort = new AbortController();
-  const onCallerAbort = () => capAbort.abort();
-  signal.addEventListener("abort", onCallerAbort, { once: true });
-  let tooLarge = false;
-  try {
-    const downloaded = await File.downloadFileAsync(url, destination, {
-      signal: capAbort.signal,
-      onProgress: ({ bytesWritten }) => {
-        if (bytesWritten > WORKSPACE_EXTERNAL_OPEN_MAX_BYTES && !tooLarge) {
-          tooLarge = true;
-          capAbort.abort();
-        }
-      },
-    });
-    return { contentUri: downloaded.contentUri };
-  } catch (error) {
+  return enqueueHandoffDownload(async () => {
+    // A request may abort while waiting behind the previous handoff. Reject it
+    // before it can prune the completed file that remains valid for that call.
+    throwIfAborted();
+    stalePrune ??= Promise.resolve();
+    await stalePrune;
+    await deleteHandoffRoot();
+    // An abort while awaiting the prune must not start the download.
+    throwIfAborted();
+    const { Directory, File } = await import("expo-file-system");
+    const { uuidv4 } = await import("../../lib/uuid");
+    // A unique subdirectory per handoff keeps the original basename (which the
+    // receiving app displays) collision-safe even when a prune fails.
+    const directory = new Directory(await handoffRoot(), uuidv4());
+    directory.create({ intermediates: true, idempotent: true });
+    const destination = new File(directory, sanitizeHandoffFileName(fileName));
+    // The mint-time cap re-checked here so a file that grew after signing (or a
+    // response that ignores it) cannot fill the device cache.
+    const capAbort = new AbortController();
+    const onCallerAbort = () => capAbort.abort();
+    signal.addEventListener("abort", onCallerAbort, { once: true });
+    let tooLarge = false;
     try {
-      directory.delete();
-    } catch {
-      // The partial file goes with the next prune instead.
+      const downloaded = await File.downloadFileAsync(url, destination, {
+        signal: capAbort.signal,
+        onProgress: ({ bytesWritten }) => {
+          if (bytesWritten > WORKSPACE_EXTERNAL_OPEN_MAX_BYTES && !tooLarge) {
+            tooLarge = true;
+            capAbort.abort();
+          }
+        },
+      });
+      return { contentUri: downloaded.contentUri };
+    } catch (error) {
+      try {
+        directory.delete();
+      } catch {
+        // The partial file goes with the next prune instead.
+      }
+      if (tooLarge) {
+        throw new Error("The file is too large to open in another app.", { cause: error });
+      }
+      if (signal.aborted) {
+        throw error;
+      }
+      throw new Error("The file could not be downloaded.", { cause: error });
+    } finally {
+      signal.removeEventListener("abort", onCallerAbort);
     }
-    if (tooLarge) {
-      throw new Error("The file is too large to open in another app.", { cause: error });
-    }
-    if (signal.aborted) {
-      throw error;
-    }
-    throw new Error("The file could not be downloaded.", { cause: error });
-  } finally {
-    signal.removeEventListener("abort", onCallerAbort);
-  }
+  });
 }
 
 /** Hands the local content URI to whichever installed Android app handles the
