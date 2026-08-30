@@ -2,24 +2,22 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
   useEffect,
-  useMemo,
   useState,
   useSyncExternalStore,
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { isElectron } from "../env";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { cn, isMacPlatform } from "../lib/utils";
-import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
-import { useComposerDraftStore } from "../composerDraftStore";
-import { mergeProjectScriptKeybindings } from "../lib/projectScriptKeybindings";
-import { hasChatSidebarShortcutClaim } from "../sidebarShortcutBus";
-import { resolveThreadRouteTarget } from "../threadRoutes";
+import { primaryServerKeybindingsAtom } from "../state/server";
+import {
+  readChatSidebarShortcutKeybindings,
+  subscribeChatSidebarShortcut,
+} from "../sidebarShortcutBus";
 import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
 import LegacyThreadSidebar from "./LegacySidebar";
 import ThreadSidebar from "./Sidebar";
@@ -72,21 +70,12 @@ function readInitialThreadSidebarWidth(): number {
 
 function SidebarControl() {
   const primaryKeybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const routeTarget = useParams({ strict: false, select: resolveThreadRouteTarget });
-  const routeEnvironmentId = useComposerDraftStore((store) =>
-    routeTarget?.kind === "server"
-      ? routeTarget.threadRef.environmentId
-      : routeTarget?.kind === "draft"
-        ? (store.getDraftSession(routeTarget.draftId)?.environmentId ?? null)
-        : null,
+  const chatKeybindings = useSyncExternalStore(
+    subscribeChatSidebarShortcut,
+    readChatSidebarShortcutKeybindings,
+    () => null,
   );
-  const environmentKeybindings =
-    useAtomValue(serverEnvironment.configValueAtom(routeEnvironmentId))?.keybindings ??
-    DEFAULT_RESOLVED_KEYBINDINGS;
-  const keybindings = useMemo(
-    () => mergeProjectScriptKeybindings(primaryKeybindings, environmentKeybindings),
-    [environmentKeybindings, primaryKeybindings],
-  );
+  const keybindings = chatKeybindings ?? primaryKeybindings;
   const { toggleSidebar } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
@@ -97,7 +86,7 @@ function SidebarControl() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (hasChatSidebarShortcutClaim() || event.defaultPrevented) return;
+      if (readChatSidebarShortcutKeybindings() !== null || event.defaultPrevented) return;
       if (
         event.target instanceof HTMLElement &&
         event.target.closest("[data-keybinding-capture]")

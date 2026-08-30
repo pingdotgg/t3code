@@ -1,8 +1,23 @@
-let chatSidebarShortcutClaims = 0;
+import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 
-export function claimChatSidebarShortcut(): () => void {
-  chatSidebarShortcutClaims += 1;
-  return () => void (chatSidebarShortcutClaims -= 1);
+let chatSidebarShortcutKeybindings: ResolvedKeybindingsConfig | null = null;
+const listeners = new Set<() => void>();
+const notifyListeners = () => listeners.forEach((listener) => listener());
+
+export function claimChatSidebarShortcut(keybindings: ResolvedKeybindingsConfig): () => void {
+  chatSidebarShortcutKeybindings = keybindings;
+  notifyListeners();
+
+  return () => {
+    if (chatSidebarShortcutKeybindings !== keybindings) return;
+    chatSidebarShortcutKeybindings = null;
+    notifyListeners();
+  };
 }
 
-export const hasChatSidebarShortcutClaim = () => chatSidebarShortcutClaims > 0;
+export const readChatSidebarShortcutKeybindings = () => chatSidebarShortcutKeybindings;
+
+export function subscribeChatSidebarShortcut(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => void listeners.delete(listener);
+}

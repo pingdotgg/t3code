@@ -5379,7 +5379,7 @@ function ChatViewContent(props: ChatViewProps) {
       event.stopPropagation();
       void runProjectScript(script);
     };
-    const releaseSidebarShortcut = activeThreadId ? claimChatSidebarShortcut() : null;
+    const releaseSidebarShortcut = activeThreadId ? claimChatSidebarShortcut(keybindings) : null;
     window.addEventListener("keydown", handler, true);
     return () => {
       releaseSidebarShortcut?.();
