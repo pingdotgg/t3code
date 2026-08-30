@@ -210,7 +210,7 @@ import {
   ChevronDownIcon,
   GitBranchIcon,
   PencilIcon,
-  TriangleAlertIcon,
+  InfoIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
@@ -286,6 +286,7 @@ import {
   useProject,
   useProjects,
   useThreadProjection,
+  useThreadStatus,
   useThreadHistory,
   useThreadShell,
   useThreadRefs,
@@ -330,8 +331,10 @@ import {
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
 import { resolveThreadPr } from "./ThreadStatusIndicators";
-import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { QueuedRunsControl, type EditQueuedRunRequest } from "./chat/QueuedRunsControl";
+import { ComposerSurface } from "./chat/ComposerSurface";
+import { resolveThreadSyncPhase } from "../threadSync";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_DURATION_MS,
@@ -404,10 +407,13 @@ import {
   AlertDialogTitle,
 } from "./ui/alert-dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { ServerUpdateAction, ServerUpdateProgress } from "./ServerUpdateAction";
+import { ServerUpdateAction } from "./ServerUpdateAction";
+import { ComposerServerUpdateStatus } from "./chat/ComposerServerUpdateStatus";
 import {
   buildVersionMismatchDismissalKey,
+  dismissServerUpdateFailure,
   dismissVersionMismatch,
+  isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
@@ -1387,6 +1393,12 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
+  const threadStatus = useThreadStatus(routeThreadDetailRef);
+  const threadSyncPhase = resolveThreadSyncPhase({
+    detailExists: serverProjection !== null,
+    shellExists: serverThread !== null,
+    status: threadStatus,
+  });
   // Latest provider-reported context usage (#8144): the newest turn that has
   // a report wins; stale turns keep the meter alive between turns.
   const activeThreadLiveTokenUsage = useMemo(() => {
@@ -1989,13 +2001,17 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadKey, existingOpenTerminalThreadKeys, terminalUiState.terminalOpen]);
   const latestRunSettled = isLatestRunSettled(activeLatestRun, activeRuntime);
   const activePlan = useMemo(
-    () => deriveActivePlanState(serverProjection, activeLatestRun?.runId),
-    [activeLatestRun?.runId, serverProjection],
+    () => deriveActivePlanState(serverProjection, activeActivityRun?.runId),
+    [activeActivityRun?.runId, serverProjection],
   );
   // Tasks progress for the running turn's own plan only — deriveActivePlanState
   // falls back to older runs' plans, which must not label fresh work.
   const activeComposerTasksProgress = useMemo(() => {
-    if (latestRunSettled || !activePlan || activePlan.runId !== (activeLatestRun?.runId ?? null)) {
+    if (
+      isLatestRunSettled(activeActivityRun, activeRuntime) ||
+      !activePlan ||
+      activePlan.runId !== (activeActivityRun?.runId ?? null)
+    ) {
       return null;
     }
     const totalSteps = activePlan.steps.length;
@@ -2006,10 +2022,9 @@ function ChatViewContent(props: ChatViewProps) {
       activePlan.steps.find((candidate) => candidate.status === "pending")?.step ??
       activePlan.steps.at(-1)!.step;
     return { step, completedSteps, totalSteps };
-  }, [activeLatestRun?.runId, activePlan, latestRunSettled]);
+  }, [activeActivityRun, activePlan, activeRuntime]);
   const activeComposerTaskSteps =
     activeComposerTasksProgress && activePlan ? activePlan.steps : null;
-  const workingStepLabel = activeComposerTasksProgress?.step ?? null;
   const activeProjectRef = useMemo(
     () =>
       activeThread ? scopeProjectRef(activeThread.environmentId, activeThread.projectId) : null,
@@ -2379,6 +2394,12 @@ function ChatViewContent(props: ChatViewProps) {
   const serverUpdateState = useAtomValue(
     serverEnvironment.updateStateAtom(serverUpdateEnvironmentId),
   );
+  const [dismissedServerUpdateState, setDismissedServerUpdateState] = useState<
+    typeof serverUpdateState | null
+  >(null);
+  const serverUpdateFailureDismissed =
+    serverUpdateState === dismissedServerUpdateState ||
+    isServerUpdateFailureDismissed(serverUpdateState);
   const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
     const updateRunning = serverUpdateState.status === "running";
@@ -2404,6 +2425,8 @@ function ChatViewContent(props: ChatViewProps) {
         items.push({
           id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
           variant: "default",
+          // Prioritize live connection progress among the notices.
+          priority: "urgent",
           icon: (
             <span
               className="size-1.5 animate-status-pulse rounded-full bg-foreground"
@@ -2450,36 +2473,45 @@ function ChatViewContent(props: ChatViewProps) {
     if (
       serverUpdateEnvironmentId &&
       !reconnectingThroughVersionSkew &&
-      (serverUpdateState.status !== "idle" ||
-        (showVersionMismatchBanner && versionMismatch && versionMismatchDismissKey))
+      (serverUpdateState.status === "idle"
+        ? showVersionMismatchBanner
+        : !serverUpdateFailureDismissed)
     ) {
       const updateInProgress = serverUpdateState.status === "running";
       const updateFailed = serverUpdateState.status === "failed";
       items.push({
         id: `server-version:${serverUpdateEnvironmentId}`,
-        variant: updateFailed ? "error" : updateInProgress ? "default" : "warning",
-        icon: updateInProgress ? (
-          <span
-            className="size-1.5 animate-status-pulse rounded-full bg-foreground"
-            aria-hidden="true"
-          />
-        ) : (
-          <TriangleAlertIcon />
-        ),
+        variant: updateFailed ? "error" : "default",
+        // Prioritize update progress over passive notices, but keep activity attached.
+        priority: updateInProgress ? "urgent" : "notice",
+        icon: <InfoIcon aria-hidden />,
         title:
-          updateInProgress || updateFailed
-            ? `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`
-            : "Client and server versions differ",
-        description:
           updateInProgress || updateFailed ? (
-            <ServerUpdateProgress state={serverUpdateState} />
+            <ComposerServerUpdateStatus
+              state={serverUpdateState}
+              serverLabel={versionMismatchServerLabel}
+            />
           ) : versionMismatch ? (
-            <>
-              Client {versionMismatch.clientVersion} is connected to {versionMismatchServerLabel}{" "}
-              {versionMismatch.serverVersion}.{" "}
-              {serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)}
-            </>
-          ) : null,
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button type="button" className="cursor-help rounded-sm text-left">
+                    Server update available
+                  </button>
+                }
+              />
+              <TooltipPopup side="top">
+                {versionMismatchServerLabel} {versionMismatch.serverVersion}{" "}
+                <span aria-hidden="true">→</span> {versionMismatch.clientVersion}
+              </TooltipPopup>
+            </Tooltip>
+          ) : (
+            "Server update available"
+          ),
+        description:
+          !updateInProgress && !updateFailed && versionMismatchSelfUpdate === "desktop-managed"
+            ? serverUpdateGuidance(versionMismatchSelfUpdate, versionMismatchServerLabel)
+            : undefined,
         // The desktop-managed guidance is already the description; the action
         // slot would only repeat it.
         actions:
@@ -2491,14 +2523,18 @@ function ChatViewContent(props: ChatViewProps) {
               serverLabel={versionMismatchServerLabel}
               selfUpdate={versionMismatchSelfUpdate}
               targetVersion={versionMismatch.clientVersion}
-              {...(updateFailed ? { label: "Retry update" } : {})}
+              label={updateFailed ? "Retry" : "Update"}
             />
           ),
-        ...(updateInProgress || updateFailed || !versionMismatchDismissKey
+        ...(updateInProgress || (!updateFailed && !versionMismatchDismissKey)
           ? {}
           : {
-              dismissLabel: "Dismiss version mismatch warning",
+              dismissLabel: "Dismiss update notice",
               onDismiss: () => {
+                if (updateFailed) {
+                  dismissServerUpdateFailure(serverUpdateState);
+                  setDismissedServerUpdateState(serverUpdateState);
+                }
                 dismissVersionMismatch(versionMismatchDismissKey);
                 setDismissedVersionMismatchKey(versionMismatchDismissKey);
               },
@@ -2512,6 +2548,7 @@ function ChatViewContent(props: ChatViewProps) {
     navigate,
     setDismissedVersionMismatchKey,
     showVersionMismatchBanner,
+    serverUpdateFailureDismissed,
     serverUpdateState,
     versionMismatch,
     versionMismatchDismissKey,
@@ -2582,11 +2619,13 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return findLatestProposedPlan(serverProjection, activeLatestRun?.runId ?? null);
   }, [activeLatestRun?.runId, latestRunSettled, serverProjection]);
-  const showPlanFollowUpPrompt =
-    pendingUserInputs.length === 0 &&
-    interactionMode === "plan" &&
-    latestRunSettled &&
-    hasActionableProposedPlan(activeProposedPlan);
+  const showPlanFollowUpPrompt = shouldShowPlanFollowUpPrompt({
+    pendingUserInputCount: pendingUserInputs.length,
+    interactionMode,
+    latestTurnSettled: latestRunSettled,
+    hasActionableProposedPlan: hasActionableProposedPlan(activeProposedPlan),
+    hasComposerAttachments: composerHasAttachments,
+  });
   const activePendingApproval = pendingApprovals[0] ?? null;
   const {
     beginLocalDispatch,
@@ -5099,7 +5138,7 @@ function ChatViewContent(props: ChatViewProps) {
             {
               id: `queued-edit:${editingQueuedRun.runId}`,
               variant: "info",
-              urgent: true,
+              priority: "urgent",
               icon: <PencilIcon />,
               title: "Editing queued message",
               actions: (
@@ -7339,9 +7378,6 @@ function ChatViewContent(props: ChatViewProps) {
                 key={activeThread.id}
                 isWorking={isWorking}
                 activeTurnInProgress={isWorking || !latestRunSettled}
-                activeTurnStartedAt={activeWorkStartedAt}
-                workingStepLabel={workingStepLabel}
-                pendingBackgroundTasks={pendingBackgroundTasks}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
                 latestRun={activeActivityRun}
@@ -7414,13 +7450,13 @@ function ChatViewContent(props: ChatViewProps) {
             >
               <div
                 ref={draftHeroTransition.transitionGroupRef}
-                className="chat-composer-horizontal-inset w-full"
+                className="w-full ps-[calc(env(safe-area-inset-left)+0.75rem)] pe-[calc(env(safe-area-inset-right)+0.75rem+var(--thread-details-panel-inset))] sm:ps-[calc(env(safe-area-inset-left)+1.25rem)] sm:pe-[calc(env(safe-area-inset-right)+1.25rem+var(--thread-details-panel-inset))]"
               >
                 <div className="pointer-events-auto relative z-10">
                   {isDraftHeroState ? (
                     <div className="absolute inset-x-0 bottom-full">
                       <div
-                        className="pb-8"
+                        className="pb-8 group-has-data-[composer-shoulder-tab]/composer-stack:pb-4"
                         style={
                           forceExpandedMobileComposer
                             ? { viewTransitionName: MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME }
@@ -7432,11 +7468,8 @@ function ChatViewContent(props: ChatViewProps) {
                           activeProjectTitle={activeProject?.title ?? null}
                         />
                       </div>
-                      <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                     </div>
-                  ) : (
-                    <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
-                  )}
+                  ) : null}
                   {isServerThread && activeThread ? (
                     <QueuedRunsControl
                       environmentId={activeThread.environmentId}
@@ -7455,14 +7488,8 @@ function ChatViewContent(props: ChatViewProps) {
                         : undefined
                     }
                   >
-                    <div
-                      className={cn(
-                        "chat-composer-glass-shell chat-content-lane relative",
-                        composerBannerItems.length > 0 && "chat-composer-glass-shell-attached",
-                        showComposerContextStrip && "chat-composer-glass-shell-with-context",
-                      )}
-                    >
-                      <div className="chat-composer-glass-host relative z-10 w-full rounded-[22px]">
+                    <ComposerSurface.Shell contextStrip={showComposerContextStrip}>
+                      <ComposerSurface.Host>
                         <div className="relative z-10">
                           <ChatComposer
                             composerRef={composerRef}
@@ -7485,6 +7512,7 @@ function ChatViewContent(props: ChatViewProps) {
                             isConnecting={isConnecting}
                             isSendBusy={isSendBusy}
                             isPreparingWorktree={isPreparingWorktree}
+                            bannerItems={composerBannerItems}
                             environmentUnavailable={activeEnvironmentUnavailableState}
                             activePendingApproval={activePendingApproval}
                             pendingApprovals={pendingApprovals}
@@ -7497,6 +7525,10 @@ function ChatViewContent(props: ChatViewProps) {
                             respondingRequestIds={respondingRequestIds}
                             showPlanFollowUpPrompt={showPlanFollowUpPrompt}
                             activeProposedPlan={activeProposedPlan}
+                            isWorking={isWorking}
+                            activeWorkStartedAt={activeWorkStartedAt}
+                            pendingBackgroundTasks={pendingBackgroundTasks}
+                            threadSyncPhase={activeEnvironmentUnavailable ? null : threadSyncPhase}
                             runtimeMode={runtimeMode}
                             interactionMode={interactionMode}
                             lockedProvider={modelPickerLockedProvider}
@@ -7511,7 +7543,6 @@ function ChatViewContent(props: ChatViewProps) {
                             compactDisabled={composerCompactDisabled}
                             compactDisabledReason={null}
                             sendDisabledReason={feedbackUploading ? "Sending feedback" : null}
-                            externalDrawerAttached={composerBannerItems.length > 0}
                             resolvedTheme={resolvedTheme}
                             settings={settings}
                             keybindings={keybindings}
@@ -7551,7 +7582,7 @@ function ChatViewContent(props: ChatViewProps) {
                             onRemoveEditingQueuedAttachment={removeEditingQueuedAttachment}
                           />
                         </div>
-                      </div>
+                      </ComposerSurface.Host>
                       <div
                         aria-hidden={!showComposerContextStrip}
                         className={cn(
@@ -7607,7 +7638,7 @@ function ChatViewContent(props: ChatViewProps) {
                           </div>
                         </div>
                       </div>
-                    </div>
+                    </ComposerSurface.Shell>
                     <div
                       aria-hidden
                       className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
