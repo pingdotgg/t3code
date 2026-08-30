@@ -190,7 +190,7 @@ import {
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { deriveProjectScriptKeybindingMutation } from "~/lib/projectScriptKeybindings";
+import { deriveProjectScriptKeybindingMutations } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   buildProjectScript,
@@ -3356,31 +3356,28 @@ function ChatViewContent(props: ChatViewProps) {
         return updateResult;
       }
 
-      const keybindingMutation = deriveProjectScriptKeybindingMutation({
+      const keybindingMutations = deriveProjectScriptKeybindingMutations({
         keybindings: environmentKeybindings,
         keybinding: input.keybinding,
         command: input.keybindingCommand,
       });
 
-      if (!isElectron || !keybindingMutation) {
+      if (!isElectron) {
         return updateResult;
       }
-      if (keybindingMutation.type === "upsert") {
-        return mapAtomCommandResult(
-          await upsertKeybinding({
+      for (const mutation of keybindingMutations) {
+        const result = mapAtomCommandResult(
+          await (mutation.type === "upsert" ? upsertKeybinding : removeKeybinding)({
             environmentId,
-            input: keybindingMutation.input,
+            input: mutation.input,
           }),
           () => undefined,
         );
+        if (result._tag === "Failure") {
+          return result;
+        }
       }
-      return mapAtomCommandResult(
-        await removeKeybinding({
-          environmentId,
-          input: keybindingMutation.input,
-        }),
-        () => undefined,
-      );
+      return updateResult;
     },
     [environmentId, environmentKeybindings, removeKeybinding, updateProject, upsertKeybinding],
   );
@@ -7082,7 +7079,7 @@ function ChatViewContent(props: ChatViewProps) {
             preferredScriptId={
               activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
             }
-            keybindings={keybindings}
+            keybindings={environmentKeybindings}
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}

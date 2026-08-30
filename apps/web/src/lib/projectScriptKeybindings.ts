@@ -2,11 +2,17 @@ import {
   KeybindingRule as KeybindingRuleSchema,
   type KeybindingCommand,
   type KeybindingRule,
+  type ResolvedKeybindingRule,
   type ResolvedKeybindingsConfig,
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+
+import {
+  shortcutToKeybindingInput,
+  whenAstToExpression,
+} from "../components/settings/KeybindingsSettings.logic";
 
 export const PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE = "Invalid keybinding.";
 
@@ -43,52 +49,66 @@ export function keybindingValueForCommand(
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding || binding.command !== command) continue;
-
-    const parts: string[] = [];
-    if (binding.shortcut.modKey) parts.push("mod");
-    if (binding.shortcut.ctrlKey) parts.push("ctrl");
-    if (binding.shortcut.metaKey) parts.push("meta");
-    if (binding.shortcut.altKey) parts.push("alt");
-    if (binding.shortcut.shiftKey) parts.push("shift");
-    const keyToken =
-      binding.shortcut.key === " "
-        ? "space"
-        : binding.shortcut.key === "escape"
-          ? "esc"
-          : binding.shortcut.key;
-    parts.push(keyToken);
-    return parts.join("+");
+    return shortcutToKeybindingInput(binding.shortcut);
   }
   return null;
 }
 
 type ProjectScriptKeybindingMutation =
   | { type: "upsert"; input: ServerUpsertKeybindingInput }
-  | { type: "remove"; input: ServerRemoveKeybindingInput }
-  | null;
+  | { type: "remove"; input: ServerRemoveKeybindingInput };
 
-export function deriveProjectScriptKeybindingMutation(input: {
+function keybindingTargetForResolvedRule(
+  rule: ResolvedKeybindingRule,
+): ServerRemoveKeybindingInput {
+  const when = whenAstToExpression(rule.whenAst);
+  return {
+    key: shortcutToKeybindingInput(rule.shortcut),
+    command: rule.command,
+    ...(when.length > 0 ? { when } : {}),
+  };
+}
+
+function isSameKeybindingTarget(
+  left: ServerRemoveKeybindingInput,
+  right: ServerRemoveKeybindingInput,
+): boolean {
+  return (
+    left.key === right.key &&
+    left.command === right.command &&
+    (left.when ?? undefined) === (right.when ?? undefined)
+  );
+}
+
+export function deriveProjectScriptKeybindingMutations(input: {
   keybindings: ResolvedKeybindingsConfig;
   keybinding: string | null | undefined;
   command: KeybindingCommand;
-}): ProjectScriptKeybindingMutation {
+}): ReadonlyArray<ProjectScriptKeybindingMutation> {
   const nextRule = decodeProjectScriptKeybindingRule(input);
-  const previousKeybinding = keybindingValueForCommand(input.keybindings, input.command);
-  const previousRule = previousKeybinding
-    ? decodeProjectScriptKeybindingRule({
-        keybinding: previousKeybinding,
-        command: input.command,
-      })
-    : null;
+  const previousTargets: ServerRemoveKeybindingInput[] = [];
+  for (const binding of input.keybindings) {
+    if (binding.command !== input.command) continue;
+    const target = keybindingTargetForResolvedRule(binding);
+    if (!previousTargets.some((candidate) => isSameKeybindingTarget(candidate, target))) {
+      previousTargets.push(target);
+    }
+  }
 
   if (nextRule) {
-    return {
-      type: "upsert",
-      input:
-        previousRule && previousRule.key !== nextRule.key
-          ? { ...nextRule, replace: previousRule }
-          : nextRule,
-    };
+    const replace = previousTargets.at(-1);
+    return [
+      ...previousTargets.slice(0, -1).map(
+        (target): ProjectScriptKeybindingMutation => ({
+          type: "remove",
+          input: target,
+        }),
+      ),
+      {
+        type: "upsert",
+        input: replace ? { ...nextRule, replace } : nextRule,
+      },
+    ];
   }
-  return previousRule ? { type: "remove", input: previousRule } : null;
+  return previousTargets.map((target) => ({ type: "remove", input: target }));
 }
