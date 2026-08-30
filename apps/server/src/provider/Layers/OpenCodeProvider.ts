@@ -31,6 +31,7 @@ const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
   showInteractionModeToggle: false,
 } as const;
+const OPENCODE_VERSION_PROBE_TIMEOUT = "4 seconds";
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
   readonly cause: unknown;
@@ -399,6 +400,16 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           Effect.mapError(
             (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
           ),
+          Effect.timeoutOrElse({
+            duration: OPENCODE_VERSION_PROBE_TIMEOUT,
+            orElse: () =>
+              Effect.fail(
+                new OpenCodeProbeError({
+                  cause: new Error("OpenCode CLI version probe timed out."),
+                  detail: "OpenCode CLI version probe timed out after 4 seconds.",
+                }),
+              ),
+          }),
         ),
     );
     if (versionExit._tag === "Failure") {
