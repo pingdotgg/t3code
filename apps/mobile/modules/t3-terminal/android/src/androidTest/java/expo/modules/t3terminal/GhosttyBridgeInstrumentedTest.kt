@@ -45,12 +45,13 @@ class GhosttyBridgeInstrumentedTest {
           .count { it.startsWith("T3-SCROLLBACK-") }
       Log.i("T3GhosttyScrollbackTest", "retainedMarkers=$retainedMarkers")
 
-      // The upstream standard page holds 215 rows. This bound proves that the
-      // line limit is active and that the 10,000-byte library default was
-      // replaced, while allowing only one page of pruning approximation.
+      // The upstream standard page adjusts to 316 physical rows at 80 columns
+      // in this revision. This bound proves that the line limit is active and
+      // that the 10,000-byte library default was replaced, while allowing only
+      // one page of pruning approximation.
       assertTrue(
         "expected approximately 10,000 retained markers, found $retainedMarkers",
-        abs(retainedMarkers - 10_000) <= 215
+        abs(retainedMarkers - 10_000) <= 316
       )
     } finally {
       GhosttyBridge.nativeDestroy(terminal)

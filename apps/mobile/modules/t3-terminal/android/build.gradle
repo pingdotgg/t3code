@@ -12,6 +12,7 @@ android {
   defaultConfig {
     minSdkVersion rootProject.ext.minSdkVersion
     targetSdkVersion rootProject.ext.targetSdkVersion
+    testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
 
     externalNativeBuild {
       cmake {
