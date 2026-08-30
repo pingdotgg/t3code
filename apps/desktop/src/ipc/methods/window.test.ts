@@ -11,6 +11,7 @@ import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import {
   getLocalEnvironmentBootstraps,
   getWindowBackdropState,
@@ -167,6 +168,9 @@ describe("getWindowBackdropState", () => {
           Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
             platform: "darwin",
           } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          Layer.mock(DesktopWindow.DesktopWindow)({
+            isBackdropEnabled: () => false,
+          }),
           Layer.mock(ElectronWindow.ElectronWindow)({
             currentMainOrFirst: Effect.succeed(Option.some(window)),
           }),

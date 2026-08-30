@@ -93,9 +93,10 @@ export const getWindowBackdropState = DesktopIpc.makeSyncIpcMethod({
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     if (environment.platform !== "win32") return false;
 
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const window = yield* electronWindow.currentMainOrFirst;
-    return Option.isSome(window) && DesktopWindow.isWindowBackdropEnabled(window.value);
+    return Option.isSome(window) && desktopWindow.isBackdropEnabled(window.value);
   }),
 });
 

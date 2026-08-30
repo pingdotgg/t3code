@@ -109,6 +109,7 @@ export class DesktopWindow extends Context.Service<
     // guest page instead of the app UI. The menu routes here to always target
     // the main window.
     readonly zoomMain: (direction: MainWindowZoomDirection) => Effect.Effect<void>;
+    readonly isBackdropEnabled: (window: Electron.BrowserWindow) => boolean;
     readonly syncAppearance: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
@@ -132,37 +133,46 @@ function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
   return shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
 }
 
-const windowsWithAcrylicBackdrop = new WeakSet<Electron.BrowserWindow>();
-const windowsWithoutAcrylicBackdrop = new WeakSet<Electron.BrowserWindow>();
-const windowsManagedForBackdrop = new WeakSet<Electron.BrowserWindow>();
-const windowsWithBackdropStateListener = new WeakSet<Electron.BrowserWindow>();
+type WindowBackdropState = {
+  readonly windowsWithAcrylicBackdrop: WeakSet<Electron.BrowserWindow>;
+  readonly windowsWithoutAcrylicBackdrop: WeakSet<Electron.BrowserWindow>;
+  readonly windowsManagedForBackdrop: WeakSet<Electron.BrowserWindow>;
+  readonly windowsWithBackdropStateListener: WeakSet<Electron.BrowserWindow>;
+};
 
-export function isWindowBackdropEnabled(window: Electron.BrowserWindow): boolean {
-  return windowsWithAcrylicBackdrop.has(window);
-}
-
-function sendWindowBackdropState(window: Electron.BrowserWindow): void {
+function sendWindowBackdropState(
+  window: Electron.BrowserWindow,
+  backdropState: WindowBackdropState,
+): void {
   if (window.isDestroyed()) return;
 
   try {
-    window.webContents.send(WINDOW_BACKDROP_STATE_CHANNEL, isWindowBackdropEnabled(window));
+    window.webContents.send(
+      WINDOW_BACKDROP_STATE_CHANNEL,
+      backdropState.windowsWithAcrylicBackdrop.has(window),
+    );
   } catch {
     // The renderer may not be ready yet. The did-finish-load listener retries it.
   }
 }
 
-function registerWindowBackdropStateSync(window: Electron.BrowserWindow): void {
-  if (!windowsWithBackdropStateListener.has(window)) {
+function registerWindowBackdropStateSync(
+  window: Electron.BrowserWindow,
+  backdropState: WindowBackdropState,
+): void {
+  if (!backdropState.windowsWithBackdropStateListener.has(window)) {
     try {
-      window.webContents.on("did-finish-load", () => sendWindowBackdropState(window));
-      windowsWithBackdropStateListener.add(window);
+      window.webContents.on("did-finish-load", () =>
+        sendWindowBackdropState(window, backdropState),
+      );
+      backdropState.windowsWithBackdropStateListener.add(window);
     } catch {
       // Native appearance must remain best effort if a test double or old shell
       // does not expose the renderer event surface.
     }
   }
 
-  sendWindowBackdropState(window);
+  sendWindowBackdropState(window, backdropState);
 }
 
 export function getWindowBackdropOptions(
@@ -199,39 +209,39 @@ function applyWindowsBackdrop(
   platform: NodeJS.Platform,
   shouldUseDarkColors: boolean,
   desktopBackdropEnabled: boolean,
+  backdropState: WindowBackdropState,
 ): Effect.Effect<void> {
   if (platform !== "win32") {
     return Effect.void;
   }
 
-  windowsManagedForBackdrop.add(window);
-
   return Effect.try({
     try: () => {
+      backdropState.windowsManagedForBackdrop.add(window);
       window.setBackgroundMaterial(desktopBackdropEnabled ? WINDOWS_ACRYLIC_MATERIAL : "none");
       if (desktopBackdropEnabled) {
-        windowsWithAcrylicBackdrop.add(window);
-        windowsWithoutAcrylicBackdrop.delete(window);
+        backdropState.windowsWithAcrylicBackdrop.add(window);
+        backdropState.windowsWithoutAcrylicBackdrop.delete(window);
         window.setBackgroundColor(WINDOWS_TRANSPARENT_BACKGROUND_COLOR);
       } else {
-        windowsWithAcrylicBackdrop.delete(window);
-        windowsWithoutAcrylicBackdrop.add(window);
+        backdropState.windowsWithAcrylicBackdrop.delete(window);
+        backdropState.windowsWithoutAcrylicBackdrop.add(window);
         window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
       }
     },
     catch: (cause) => cause,
   }).pipe(
-    Effect.andThen(Effect.sync(() => registerWindowBackdropStateSync(window))),
+    Effect.andThen(Effect.sync(() => registerWindowBackdropStateSync(window, backdropState))),
     Effect.catchCause((cause) =>
       Effect.gen(function* () {
-        windowsWithAcrylicBackdrop.delete(window);
-        windowsWithoutAcrylicBackdrop.add(window);
+        backdropState.windowsWithAcrylicBackdrop.delete(window);
+        backdropState.windowsWithoutAcrylicBackdrop.add(window);
         try {
           window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
         } catch {
           // Preserve the original backdrop failure; window creation must stay best effort.
         }
-        registerWindowBackdropStateSync(window);
+        registerWindowBackdropStateSync(window, backdropState);
         yield* logWindowWarning("Windows backdrop material unavailable; using solid background", {
           cause,
         });
@@ -348,6 +358,7 @@ function syncWindowAppearance(
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
   desktopBackdropEnabled: boolean,
+  backdropState: WindowBackdropState,
 ): Effect.Effect<void> {
   return Effect.gen(function* () {
     if (window.isDestroyed()) {
@@ -355,10 +366,13 @@ function syncWindowAppearance(
     }
 
     if (platform === "win32") {
-      if (windowsManagedForBackdrop.has(window)) {
-        if (desktopBackdropEnabled && windowsWithAcrylicBackdrop.has(window)) {
+      if (backdropState.windowsManagedForBackdrop.has(window)) {
+        if (desktopBackdropEnabled && backdropState.windowsWithAcrylicBackdrop.has(window)) {
           window.setBackgroundColor(WINDOWS_TRANSPARENT_BACKGROUND_COLOR);
-        } else if (!desktopBackdropEnabled && windowsWithoutAcrylicBackdrop.has(window)) {
+        } else if (
+          !desktopBackdropEnabled &&
+          backdropState.windowsWithoutAcrylicBackdrop.has(window)
+        ) {
           window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
         } else {
           yield* applyWindowsBackdrop(
@@ -366,6 +380,7 @@ function syncWindowAppearance(
             platform,
             shouldUseDarkColors,
             desktopBackdropEnabled,
+            backdropState,
           );
         }
       }
@@ -417,6 +432,14 @@ export const make = Effect.gen(function* () {
   // The transient "Connecting to WSL" splash window, tracked separately so it
   // is never mistaken for the real main window.
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+  const backdropState: WindowBackdropState = {
+    windowsWithAcrylicBackdrop: new WeakSet(),
+    windowsWithoutAcrylicBackdrop: new WeakSet(),
+    windowsManagedForBackdrop: new WeakSet(),
+    windowsWithBackdropStateListener: new WeakSet(),
+  };
+  const isBackdropEnabled = (window: Electron.BrowserWindow): boolean =>
+    backdropState.windowsWithAcrylicBackdrop.has(window);
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
@@ -523,6 +546,7 @@ export const make = Effect.gen(function* () {
       environment.platform,
       shouldUseDarkColors,
       desktopBackdropEnabled,
+      backdropState,
     );
 
     if (environment.platform === "darwin") {
@@ -986,6 +1010,7 @@ export const make = Effect.gen(function* () {
       environment.platform,
       shouldUseDarkColors,
       desktopBackdropEnabled,
+      backdropState,
     );
     void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors, environment.platform));
     yield* logWindowInfo("connecting splash shown");
@@ -1072,6 +1097,7 @@ export const make = Effect.gen(function* () {
       // own zoom, so put each guest back where the preview left it.
       yield* previewManager.reapplyZoom();
     }),
+    isBackdropEnabled,
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
       const desktopBackdropEnabled = yield* getDesktopBackdropEnabled;
@@ -1081,6 +1107,7 @@ export const make = Effect.gen(function* () {
           shouldUseDarkColors,
           environment.platform,
           desktopBackdropEnabled,
+          backdropState,
         ),
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
