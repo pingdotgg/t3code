@@ -113,12 +113,14 @@ describe("projectScriptKeybindings", () => {
     expect(derive(null)).toEqual(targets.map((input) => ({ type: "remove", input })));
   });
 
-  it("lets routed script bindings override primary commands", () => {
+  it("preserves primary precedence and lets routed scripts override it", () => {
     const command = commandForProjectScript("test");
-    const keybindings = mergeProjectScriptKeybindings(
-      [resolvedBinding("sidebar.toggle", "mod+b"), resolvedBinding(command, "mod+r")],
-      [resolvedBinding(command, "mod+b", "terminalFocus")],
-    );
+    const action = resolvedBinding(command, "mod+b");
+    const primary = [action, resolvedBinding("sidebar.toggle", "mod+b")];
+    expect(mergeProjectScriptKeybindings(primary, primary)).toEqual(primary);
+    const keybindings = mergeProjectScriptKeybindings(primary, [
+      resolvedBinding(command, "mod+b", "terminalFocus"),
+    ]);
 
     expect(
       resolveShortcutCommand(

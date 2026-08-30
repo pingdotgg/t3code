@@ -81,6 +81,7 @@ export function mergeProjectScriptKeybindings(
   primary: ResolvedKeybindingsConfig,
   environment: ResolvedKeybindingsConfig,
 ): ResolvedKeybindingsConfig {
+  if (primary === environment) return primary;
   return [
     ...primary.filter((binding) => projectScriptIdFromCommand(binding.command) === null),
     ...environment.filter((binding) => projectScriptIdFromCommand(binding.command) !== null),
