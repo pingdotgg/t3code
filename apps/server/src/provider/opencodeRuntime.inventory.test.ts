@@ -3,10 +3,15 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   HostProcessEnvironment,
   HostProcessExecutablePath,
@@ -16,6 +21,72 @@ import {
 import { OpenCodeRuntime, OpenCodeRuntimeLive } from "./opencodeRuntime.ts";
 
 const testLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
+
+it.effect("OpenCodeRuntime inventory runs CLI commands sequentially", () =>
+  Effect.gen(function* () {
+    const firstStarted = yield* Deferred.make<void>();
+    const releaseFirst = yield* Deferred.make<void>();
+    const spawnedArgs: Array<ReadonlyArray<string>> = [];
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        const args = command._tag === "StandardCommand" ? command.args : [];
+        spawnedArgs.push(args);
+        const isFirst = spawnedArgs.length === 1;
+        if (isFirst) {
+          yield* Deferred.succeed(firstStarted, undefined);
+        }
+        const stdout =
+          args[0] === "models"
+            ? Stream.encodeText(
+                Stream.make(
+                  'openai/gpt-test\n{"id":"gpt-test","providerID":"openai","name":"GPT Test"}\n',
+                ),
+              )
+            : Stream.empty;
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(spawnedArgs.length),
+          exitCode: isFirst
+            ? Deferred.await(releaseFirst).pipe(Effect.as(ChildProcessSpawner.ExitCode(0)))
+            : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(isFirst),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout,
+          stderr: Stream.empty,
+          all: stdout,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    );
+    const runtimeLayer = OpenCodeRuntimeLive.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+    );
+    const runtime = yield* OpenCodeRuntime.pipe(Effect.provide(runtimeLayer));
+    const inventory = yield* runtime
+      .loadInventoryFromCli({ binaryPath: "opencode", cwd: "/workspace" })
+      .pipe(Effect.forkChild);
+
+    yield* Deferred.await(firstStarted);
+    yield* Effect.yieldNow;
+    NodeAssert.deepEqual(spawnedArgs, [["models", "--verbose"]]);
+
+    yield* Deferred.succeed(releaseFirst, undefined);
+    yield* Fiber.join(inventory);
+
+    NodeAssert.deepEqual(spawnedArgs, [
+      ["models", "--verbose"],
+      ["agent", "list"],
+      ["debug", "skill"],
+    ]);
+  }),
+);
 
 it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
   it.effect("keeps provider inventory when agent discovery fails", () =>
