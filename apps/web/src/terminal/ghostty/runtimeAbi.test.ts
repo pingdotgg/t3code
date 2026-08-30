@@ -204,6 +204,51 @@ describe("vendored libghostty-vt WebAssembly", () => {
     call("ghostty_wasm_free_u8_array", options, 8);
   });
 
+  it("retains substantial history without collapsing to Ghostty's minimum allocation", async () => {
+    const result = await WebAssembly.instantiate(
+      decodeWasmDataUrl(wasmDataUrl).buffer as ArrayBuffer,
+      { env: { log: () => {} } },
+    );
+    const instance = result instanceof WebAssembly.Instance ? result : result.instance;
+    const memory = instance.exports.memory as WebAssembly.Memory;
+    const call = (name: string, ...args: number[]) =>
+      (instance.exports[name] as WasmFunction)(...args);
+    const alloc = (size: number) => call("ghostty_wasm_alloc_u8_array", size);
+
+    const options = alloc(8);
+    const optionsView = new DataView(memory.buffer, options, 8);
+    optionsView.setUint16(0, 80, true);
+    optionsView.setUint16(2, 10, true);
+    // This is the value currently passed to the pinned ABI as max_scrollback.
+    optionsView.setUint32(4, 10_000, true);
+
+    const terminalSlot = call("ghostty_wasm_alloc_opaque");
+    expect(call("ghostty_terminal_new", 0, terminalSlot, options)).toBe(0);
+    const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
+    const input = new TextEncoder().encode(
+      Array.from({ length: 12_000 }, (_, index) => `${index + 1}\r\n`).join(""),
+    );
+    const inputPointer = alloc(input.length);
+    new Uint8Array(memory.buffer, inputPointer, input.length).set(input);
+    call("ghostty_terminal_vt_write", terminal, inputPointer, input.length);
+
+    const scrollbar = alloc(24);
+    expect(call("ghostty_terminal_get", terminal, 9, scrollbar)).toBe(0);
+    const retainedRows =
+      Number(new DataView(memory.buffer, scrollbar, 24).getBigUint64(0, true)) - 10;
+
+    call("ghostty_wasm_free_u8_array", scrollbar, 24);
+    call("ghostty_wasm_free_u8_array", inputPointer, input.length);
+    call("ghostty_terminal_free", terminal);
+    call("ghostty_wasm_free_opaque", terminalSlot);
+    call("ghostty_wasm_free_u8_array", options, 8);
+
+    // This representative width previously retained only 800 rows. The byte
+    // budget is not a promise of an exact row count, but it must avoid that
+    // minimum allocation and preserve substantially more useful history.
+    expect(retainedRows).toBeGreaterThan(8_000);
+  });
+
   it("routes terminal-generated replies through the shared callback table", async () => {
     const mainResult = await WebAssembly.instantiate(
       decodeWasmDataUrl(wasmDataUrl).buffer as ArrayBuffer,
