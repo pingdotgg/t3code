@@ -29,8 +29,8 @@ extern "C" {
  * The key design principle of this API is that it only needs read/write
  * access to the terminal instance during the update call. This allows
  * the render state to minimally impact terminal IO performance and also
- * allows the renderer to be safely multi-threaded (as long as a lock is 
- * held during the update call to ensure exclusive access to the terminal 
+ * allows the renderer to be safely multi-threaded (as long as a lock is
+ * held during the update call to ensure exclusive access to the terminal
  * instance).
  *
  * The basic usage of this API is:
@@ -54,13 +54,13 @@ extern "C" {
  * ## Dirty Tracking
  *
  * Dirty tracking is a key feature of the render state that allows renderers
- * to efficiently determine what parts of the screen have changed and only 
+ * to efficiently determine what parts of the screen have changed and only
  * redraw changed regions.
  *
  * The render state API keeps track of dirty state at two independent layers:
- * a global dirty state that indicates whether the entire frame is clean, 
- * partially dirty, or fully dirty, and a per-row dirty state that allows 
- * tracking which rows in a partially dirty frame have changed. 
+ * a global dirty state that indicates whether the entire frame is clean,
+ * partially dirty, or fully dirty, and a per-row dirty state that allows
+ * tracking which rows in a partially dirty frame have changed.
  *
  * The user of the render state API is expected to unset both of these.
  * The `update` call does not unset dirty state, it only updates it.
@@ -68,7 +68,7 @@ extern "C" {
  * An extremely important detail: setting one dirty state doesn't unset
  * the other. For example, setting the global dirty state to false does not
  * reset the row-level dirty flags. So, the caller of the render state API must
- * be careful to manage both layers of dirty state correctly. 
+ * be careful to manage both layers of dirty state correctly.
  *
  * ## Examples
  *
@@ -229,8 +229,8 @@ typedef enum GHOSTTY_ENUM_TYPED {
   GHOSTTY_RENDER_STATE_ROW_DATA_RAW = 2,
 
   /** Populate a pre-allocated GhosttyRenderStateRowCells with cell data for
-   *  the current row (GhosttyRenderStateRowCells). Cell data is only 
-   *  valid as long as the underlying render state is not updated. 
+   *  the current row (GhosttyRenderStateRowCells). Cell data is only
+   *  valid as long as the underlying render state is not updated.
    *  It is unsafe to use cell data after updating the render state. */
   GHOSTTY_RENDER_STATE_ROW_DATA_CELLS = 3,
 
@@ -301,9 +301,9 @@ typedef struct {
   /** The cursor color when explicitly set by terminal state. */
   GhosttyColorRgb cursor;
 
-  /** 
-   * True when cursor contains a valid explicit cursor color value. 
-   * If this is false, the cursor color should be ignored; it will 
+  /**
+   * True when cursor contains a valid explicit cursor color value.
+   * If this is false, the cursor color should be ignored; it will
    * contain undefined data.
    * */
   bool cursor_has_value;
@@ -610,7 +610,7 @@ GHOSTTY_API GhosttyResult ghostty_render_state_row_set(
  * via ghostty_render_state_row_get() with
  * GHOSTTY_RENDER_STATE_ROW_DATA_CELLS.
  *
- * You can reuse this value repeatedly with ghostty_render_state_row_get() to 
+ * You can reuse this value repeatedly with ghostty_render_state_row_get() to
  * avoid allocating a new cells container for every row.
  *
  * @param allocator Pointer to allocator, or NULL to use the default allocator

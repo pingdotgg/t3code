@@ -53,8 +53,8 @@ extern "C" {
  *
  * ## Effects
  *
- * By default, the terminal sequence processing with ghostty_terminal_vt_write() 
- * only process sequences that directly affect terminal state and 
+ * By default, the terminal sequence processing with ghostty_terminal_vt_write()
+ * only process sequences that directly affect terminal state and
  * ignores sequences that have side effect behavior or require responses.
  * These sequences include things like bell characters, title changes, device
  * attributes queries, and more. To handle these sequences, the embedder
@@ -77,7 +77,7 @@ extern "C" {
  * All callbacks are invoked synchronously during
  * ghostty_terminal_vt_write(). Callbacks **must not** call
  * ghostty_terminal_vt_write() on the same terminal (no reentrancy).
- * And callbacks must be very careful to not block for too long or perform 
+ * And callbacks must be very careful to not block for too long or perform
  * expensive operations, since they are blocking further IO processing.
  *
  * The available effects are:
@@ -1375,7 +1375,7 @@ GHOSTTY_API GhosttyResult ghostty_terminal_set(GhosttyTerminal terminal,
  * This never fails. Any erroneous input or errors in processing the
  * input are logged internally but do not cause this function to fail
  * because this input is assumed to be untrusted and from an external
- * source; so the primary goal is to keep the terminal state consistent and 
+ * source; so the primary goal is to keep the terminal state consistent and
  * not allow malformed input to corrupt or crash.
  *
  * @param terminal The terminal handle

@@ -1,7 +1,7 @@
 /**
  * @file kitty_graphics.h
  *
- * Kitty graphics protocol 
+ * Kitty graphics protocol
  *
  * See @ref kitty_graphics for a full usage guide.
  */
