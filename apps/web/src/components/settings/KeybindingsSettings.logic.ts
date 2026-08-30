@@ -60,27 +60,17 @@ export function whenAstToExpression(node: KeybindingWhenNode | undefined): strin
     case "identifier":
       return node.name;
     case "not":
-      return `!${wrapWhenExpression(node.node, "not")}`;
+      return `!${wrapWhenExpression(node.node)}`;
     case "and":
-      return `${wrapWhenExpression(node.left, "and")} && ${wrapWhenExpression(node.right, "and", true)}`;
+      return `${wrapWhenExpression(node.left)} && ${wrapWhenExpression(node.right)}`;
     case "or":
-      return `${wrapWhenExpression(node.left, "or")} || ${wrapWhenExpression(node.right, "or", true)}`;
+      return `${wrapWhenExpression(node.left)} || ${wrapWhenExpression(node.right)}`;
   }
 }
 
-function wrapWhenExpression(
-  node: KeybindingWhenNode,
-  parent: "not" | "and" | "or",
-  right = false,
-): string {
-  const expression = whenAstToExpression(node);
-  const needsParentheses =
-    parent === "not"
-      ? node.type === "and" || node.type === "or"
-      : parent === "and"
-        ? node.type === "or" || (right && node.type === "and")
-        : right && node.type === "or";
-  return needsParentheses ? `(${expression})` : expression;
+function wrapWhenExpression(node: KeybindingWhenNode): string {
+  if (node.type === "identifier" || node.type === "not") return whenAstToExpression(node);
+  return `(${whenAstToExpression(node)})`;
 }
 
 export function parseWhenExpressionDraft(

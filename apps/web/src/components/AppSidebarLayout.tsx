@@ -18,6 +18,7 @@ import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { mergeProjectScriptKeybindings } from "../lib/projectScriptKeybindings";
+import { hasChatSidebarShortcutClaim } from "../sidebarShortcutBus";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
 import LegacyThreadSidebar from "./LegacySidebar";
@@ -86,7 +87,6 @@ function SidebarControl() {
     () => mergeProjectScriptKeybindings(primaryKeybindings, environmentKeybindings),
     [environmentKeybindings, primaryKeybindings],
   );
-  const chatHandlesSidebarShortcut = routeTarget !== null;
   const { toggleSidebar } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
@@ -97,14 +97,14 @@ function SidebarControl() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (chatHandlesSidebarShortcut || event.defaultPrevented) return;
+      if (hasChatSidebarShortcutClaim() || event.defaultPrevented) return;
       if (
         event.target instanceof HTMLElement &&
         event.target.closest("[data-keybinding-capture]")
       ) {
         return;
       }
-      if (resolveShortcutCommand(event, keybindings) !== "sidebar.toggle") return;
+      if (resolveShortcutCommand(event, primaryKeybindings) !== "sidebar.toggle") return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -114,7 +114,7 @@ function SidebarControl() {
     // Capture before focused editors consume commands such as Mod+B for rich-text formatting.
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [chatHandlesSidebarShortcut, keybindings, toggleSidebar]);
+  }, [primaryKeybindings, toggleSidebar]);
 
   return (
     // The right-side layout controls carry mr-px (border compensation inside

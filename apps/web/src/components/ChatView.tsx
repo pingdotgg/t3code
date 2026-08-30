@@ -195,6 +195,7 @@ import {
   deriveProjectScriptKeybindingMutations,
   mergeProjectScriptKeybindings,
 } from "~/lib/projectScriptKeybindings";
+import { claimChatSidebarShortcut } from "~/sidebarShortcutBus";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   buildProjectScript,
@@ -5199,7 +5200,7 @@ function ChatViewContent(props: ChatViewProps) {
         event.stopPropagation();
         return;
       }
-      if (!activeThreadId || isCommandPaletteOpen()) {
+      if (!activeThreadId) {
         return;
       }
       const terminalFocusOwner = getTerminalFocusOwner();
@@ -5235,6 +5236,7 @@ function ChatViewContent(props: ChatViewProps) {
         toggleSidebar();
         return;
       }
+      if (isCommandPaletteOpen()) return;
 
       if (command === "thread.settle") {
         event.preventDefault();
@@ -5377,8 +5379,12 @@ function ChatViewContent(props: ChatViewProps) {
       event.stopPropagation();
       void runProjectScript(script);
     };
+    const releaseSidebarShortcut = activeThreadId ? claimChatSidebarShortcut() : null;
     window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+    return () => {
+      releaseSidebarShortcut?.();
+      window.removeEventListener("keydown", handler, true);
+    };
   }, [
     activeProject,
     activeRightPanelSurface,

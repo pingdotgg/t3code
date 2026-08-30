@@ -93,14 +93,14 @@ describe("projectScriptKeybindings", () => {
 
   it("removes every stale binding when changing or clearing a shortcut", () => {
     const command = commandForProjectScript("test");
-    const compactWhen = Array.from({ length: 38 }, (_, index) => `v${index}`).join("&&");
+    const when = Array.from({ length: 38 }, (_, index) => `v${index}`).join("&&");
     const keybindings = [
       resolvedBinding(command, "mod+r"),
-      resolvedBinding(command, "mod+alt+r", compactWhen),
+      resolvedBinding(command, "mod+alt+r", when),
     ];
     const targets = [
       { key: "mod+r", command },
-      { key: "mod+alt+r", command, when: compactWhen },
+      { key: "mod+alt+r", command, when },
     ];
     const derive = (keybinding: string | null) =>
       deriveProjectScriptKeybindingMutations({ keybindings, keybinding, command });
