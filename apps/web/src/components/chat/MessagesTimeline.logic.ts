@@ -31,13 +31,10 @@ import {
   type RunId,
 } from "@t3tools/contracts";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
-import { formatPendingBackgroundWorkLabel } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   resolveT3McpToolPresentation,
   type T3McpToolPresentation,
 } from "@t3tools/shared/t3McpToolPresentation";
-
-export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 
 export function workEntryIsVisibleInGroup(
   entry: WorkLogEntry,
@@ -227,9 +224,8 @@ export type MessagesTimelineRow =
       groupId: string;
       hiddenCount: number;
       expanded: boolean;
-      onlyToolEntries: boolean;
-      summary: string | null;
-      summaryKind: ToolGroupSummaryKind | null;
+      summary: string;
+      summaryKind: ToolGroupSummaryKind;
       hasFailure: boolean;
     }
   | {
@@ -279,15 +275,6 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       turnPlan: TurnPlanEntry;
-    }
-  | { kind: "working"; id: string; createdAt: string | null }
-  | {
-      kind: "waiting-background";
-      id: string;
-      createdAt: string | null;
-      description: string | null;
-      taskCount: number;
-      label: string;
     };
 
 export interface StableMessagesTimelineRowsState {
@@ -318,7 +305,7 @@ export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
 
-type ToolGroupAction = "read" | "edit" | "command" | "code-search" | "search" | "other";
+type ToolGroupAction = "read" | "edit" | "command" | "code-search" | "search" | "other" | "update";
 export type ToolGroupSummaryKind =
   | ToolGroupAction
   | "dynamic-tool"
@@ -349,7 +336,7 @@ export function toolGroupAction(entry: WorkLogEntry): ToolGroupAction {
   }
   if (workLogEntryIsLocalCodeSearch(entry)) return "code-search";
   if (entry.itemType === "web_search") return "search";
-  return "other";
+  return workLogEntryIsToolLike(entry) ? "other" : "update";
 }
 
 function toolGroupActionCount(
@@ -384,6 +371,8 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
       return `Searched code ${count} ${count === 1 ? "time" : "times"}`;
     case "other":
       return `Used ${count} ${count === 1 ? "tool" : "tools"}`;
+    case "update":
+      return `Received ${count} ${count === 1 ? "update" : "updates"}`;
   }
 }
 
@@ -711,11 +700,6 @@ export function deriveMessagesTimelineRows(input: {
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
-  activeTurnStartedAt: string | null;
-  pendingBackgroundTasks?: ReadonlyArray<{
-    readonly taskId: string;
-    readonly description?: string | undefined;
-  }> | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
@@ -803,6 +787,17 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "work") {
+      if (timelineEntry.entry.tone === "error") {
+        nextRows.push({
+          kind: "work",
+          id: timelineEntry.id,
+          createdAt: timelineEntry.createdAt,
+          groupedEntries: [timelineEntry.entry],
+          isExpandedToolGroupEntry: false,
+          isLastExpandedToolGroupEntry: false,
+        });
+        continue;
+      }
       const groupedEntries = [timelineEntry.entry];
       let cursor = index + 1;
       while (cursor < input.timelineEntries.length) {
@@ -810,10 +805,12 @@ export function deriveMessagesTimelineRows(input: {
         if (
           !nextEntry ||
           nextEntry.kind !== "work" ||
+          nextEntry.entry.tone === "error" ||
           collapsedEntryIds.has(nextEntry.id) ||
           collapsedSupersededEntryIds.has(nextEntry.id) ||
           foldsByAnchorEntryId.has(nextEntry.id) ||
           supersededFoldsByAnchorEntryId.has(nextEntry.id) ||
+          (nextEntry.entry.runId ?? null) !== (timelineEntry.entry.runId ?? null) ||
           nextEntry.attempt?.id !== timelineEntry.attempt?.id
         ) {
           break;
@@ -821,44 +818,48 @@ export function deriveMessagesTimelineRows(input: {
         groupedEntries.push(nextEntry.entry);
         cursor += 1;
       }
+      const isActiveTail =
+        input.isWorking &&
+        unsettledRunId !== null &&
+        timelineEntry.entry.runId === unsettledRunId &&
+        cursor === input.timelineEntries.length;
       const visibleGroupedEntries = groupedEntries.filter((entry) =>
-        workEntryIsVisibleInGroup(entry, workEntryIsInActiveRun(entry)),
+        workEntryIsVisibleInGroup(entry, isActiveTail || workEntryIsInActiveRun(entry)),
       );
       if (visibleGroupedEntries.length > 0) {
-        const onlyToolEntries = visibleGroupedEntries.every(
-          (entry) => workLogEntryIsToolLike(entry) && entry.tone !== "error",
-        );
         const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
-        const groupId = workGroupId(timelineEntry.id);
-        const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
-        const pushExpandedGroupEntries = () => {
-          for (const [entryIndex, workEntry] of visibleGroupedEntries.entries()) {
-            nextRows.push({
-              kind: "work",
-              id: workEntry.id,
-              createdAt: workEntry.createdAt,
-              groupedEntries: [workEntry],
-              isExpandedToolGroupEntry: true,
-              isLastExpandedToolGroupEntry: entryIndex === visibleGroupedEntries.length - 1,
-            });
-          }
-        };
-        if (onlyToolEntries && activeInProgressToolEntries.length > 0) {
-          // The active turn's contiguous tool run renders as one live pill
-          // showing the latest in-flight tool; expanding reveals the entries.
+        if (isActiveTail || activeInProgressToolEntries.length > 0) {
+          const groupId = workGroupId(timelineEntry.id);
+          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const latestActiveToolEntry = (
+            isActiveTail ? visibleGroupedEntries : activeInProgressToolEntries
+          ).at(-1)!;
           nextRows.push({
             kind: "work-live",
             id: `work-live:${timelineEntry.id}`,
             createdAt: timelineEntry.createdAt,
-            entry: activeInProgressToolEntries.at(-1)!,
+            entry: latestActiveToolEntry,
             groupedEntries: visibleGroupedEntries,
             groupId,
             expanded,
           });
-          if (expanded) pushExpandedGroupEntries();
-        } else if (onlyToolEntries) {
-          // Settled tool-only groups collapse behind a generated summary
-          // ("Ran 3 commands and changed 1 file").
+          if (expanded) {
+            for (const [entryIndex, workEntry] of visibleGroupedEntries.entries()) {
+              nextRows.push({
+                kind: "work",
+                id: workEntry.id,
+                createdAt: workEntry.createdAt,
+                groupedEntries: [workEntry],
+                isExpandedToolGroupEntry: true,
+                isLastExpandedToolGroupEntry: entryIndex === visibleGroupedEntries.length - 1,
+              });
+            }
+          }
+        } else {
+          const groupId = workGroupId(timelineEntry.id);
+          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const summaryKind = toolGroupSummaryKind(visibleGroupedEntries);
+          const latestToolEntry = visibleGroupedEntries.findLast(workLogEntryIsToolLike);
           nextRows.push({
             kind: "work-toggle",
             id: `work-toggle:${timelineEntry.id}`,
@@ -866,54 +867,28 @@ export function deriveMessagesTimelineRows(input: {
             groupId,
             hiddenCount: visibleGroupedEntries.length,
             expanded,
-            onlyToolEntries: true,
-            summary: summarizeToolGroup(visibleGroupedEntries),
-            summaryKind: toolGroupSummaryKind(visibleGroupedEntries),
-            hasFailure: workEntryDisplayIndicatesToolFailure(visibleGroupedEntries.at(-1)!),
-          });
-          if (expanded) pushExpandedGroupEntries();
-        } else if (visibleGroupedEntries.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
-          nextRows.push({
-            kind: "work",
-            id: timelineEntry.id,
-            createdAt: timelineEntry.createdAt,
-            groupedEntries: visibleGroupedEntries,
-            isExpandedToolGroupEntry: false,
-            isLastExpandedToolGroupEntry: false,
-          });
-        } else {
-          // Mixed groups (errors, info rows) keep the recent tail visible and
-          // clamp the rest behind a "+N previous log entries" toggle.
-          const hiddenEntries = visibleGroupedEntries.slice(0, -MAX_VISIBLE_WORK_LOG_ENTRIES);
-          const renderedEntries = expanded
-            ? visibleGroupedEntries
-            : visibleGroupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
-          for (const workEntry of renderedEntries) {
-            nextRows.push({
-              kind: "work",
-              id: workEntry.id,
-              createdAt: workEntry.createdAt,
-              groupedEntries: [workEntry],
-              isExpandedToolGroupEntry: false,
-              isLastExpandedToolGroupEntry: false,
-            });
-          }
-          const latestToolEntry = visibleGroupedEntries.findLast(workLogEntryIsToolLike);
-          nextRows.push({
-            kind: "work-toggle",
-            id: `work-toggle:${timelineEntry.id}`,
-            createdAt: timelineEntry.createdAt,
-            groupId,
-            hiddenCount: hiddenEntries.length,
-            expanded,
-            onlyToolEntries: hiddenEntries.every(workLogEntryIsToolLike),
-            summary: null,
-            summaryKind: null,
+            summary:
+              visibleGroupedEntries.length === 1 &&
+              !workLogEntryIsToolLike(visibleGroupedEntries[0]!)
+                ? visibleGroupedEntries[0]!.label
+                : summarizeToolGroup(visibleGroupedEntries),
+            summaryKind,
             hasFailure:
               latestToolEntry !== undefined &&
-              workEntryDisplayIndicatesToolFailure(latestToolEntry) &&
-              hiddenEntries.some(workEntryDisplayIndicatesToolFailure),
+              workEntryDisplayIndicatesToolFailure(latestToolEntry),
           });
+          if (expanded) {
+            for (const [entryIndex, workEntry] of visibleGroupedEntries.entries()) {
+              nextRows.push({
+                kind: "work",
+                id: workEntry.id,
+                createdAt: workEntry.createdAt,
+                groupedEntries: [workEntry],
+                isExpandedToolGroupEntry: true,
+                isLastExpandedToolGroupEntry: entryIndex === visibleGroupedEntries.length - 1,
+              });
+            }
+          }
         }
       }
       index = cursor - 1;
@@ -986,28 +961,6 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.message.role === "user"
           ? input.revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
-    });
-  }
-
-  if (input.isWorking) {
-    nextRows.push({
-      kind: "working",
-      id: "working-indicator-row",
-      createdAt: input.activeTurnStartedAt,
-    });
-  } else if (input.pendingBackgroundTasks && input.pendingBackgroundTasks.length > 0) {
-    // Root run settled but finite provider background work remains. Show Waiting
-    // instead of looking fully idle until the roster drains.
-    const firstTask = input.pendingBackgroundTasks[0];
-    nextRows.push({
-      kind: "waiting-background",
-      id: "waiting-background-row",
-      createdAt: input.activeTurnStartedAt,
-      description: firstTask?.description ?? null,
-      taskCount: input.pendingBackgroundTasks.length,
-      label:
-        formatPendingBackgroundWorkLabel(input.pendingBackgroundTasks) ??
-        "Waiting on a background task",
     });
   }
 
@@ -1092,19 +1045,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.kind !== b.kind || a.id !== b.id) return false;
 
   switch (a.kind) {
-    case "working":
-      return a.createdAt === (b as typeof a).createdAt;
-
-    case "waiting-background": {
-      const bw = b as typeof a;
-      return (
-        a.createdAt === bw.createdAt &&
-        a.description === bw.description &&
-        a.taskCount === bw.taskCount &&
-        a.label === bw.label
-      );
-    }
-
     case "turn-fold": {
       const bf = b as typeof a;
       return a.createdAt === bf.createdAt && a.label === bf.label && a.expanded === bf.expanded;
@@ -1164,7 +1104,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.groupId === bw.groupId &&
         a.hiddenCount === bw.hiddenCount &&
         a.expanded === bw.expanded &&
-        a.onlyToolEntries === bw.onlyToolEntries &&
         a.summary === bw.summary &&
         a.summaryKind === bw.summaryKind &&
         a.hasFailure === bw.hasFailure
