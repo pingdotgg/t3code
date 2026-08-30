@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { commandForProjectScript } from "../projectScripts";
 import {
   decodeProjectScriptKeybindingRule,
+  deriveProjectScriptKeybindingMutation,
   keybindingValueForCommand,
   PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE,
 } from "./projectScriptKeybindings";
@@ -79,5 +80,63 @@ describe("projectScriptKeybindings", () => {
     );
 
     expect(value).toBe("mod+shift+k");
+  });
+
+  it("replaces the previous keybinding when a script keybinding changes", () => {
+    const command = commandForProjectScript("test");
+
+    expect(
+      deriveProjectScriptKeybindingMutation({
+        keybindings: [
+          {
+            command,
+            shortcut: {
+              key: "r",
+              metaKey: false,
+              ctrlKey: false,
+              shiftKey: false,
+              altKey: false,
+              modKey: true,
+            },
+          },
+        ],
+        keybinding: "mod+shift+r",
+        command,
+      }),
+    ).toEqual({
+      type: "upsert",
+      input: {
+        key: "mod+shift+r",
+        command,
+        replace: { key: "mod+r", command },
+      },
+    });
+  });
+
+  it("removes the previous keybinding when a script keybinding is cleared", () => {
+    const command = commandForProjectScript("test");
+
+    expect(
+      deriveProjectScriptKeybindingMutation({
+        keybindings: [
+          {
+            command,
+            shortcut: {
+              key: "r",
+              metaKey: false,
+              ctrlKey: false,
+              shiftKey: false,
+              altKey: false,
+              modKey: true,
+            },
+          },
+        ],
+        keybinding: null,
+        command,
+      }),
+    ).toEqual({
+      type: "remove",
+      input: { key: "mod+r", command },
+    });
   });
 });

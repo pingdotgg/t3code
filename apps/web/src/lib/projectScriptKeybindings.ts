@@ -3,6 +3,8 @@ import {
   type KeybindingCommand,
   type KeybindingRule,
   type ResolvedKeybindingsConfig,
+  type ServerRemoveKeybindingInput,
+  type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -58,4 +60,35 @@ export function keybindingValueForCommand(
     return parts.join("+");
   }
   return null;
+}
+
+type ProjectScriptKeybindingMutation =
+  | { type: "upsert"; input: ServerUpsertKeybindingInput }
+  | { type: "remove"; input: ServerRemoveKeybindingInput }
+  | null;
+
+export function deriveProjectScriptKeybindingMutation(input: {
+  keybindings: ResolvedKeybindingsConfig;
+  keybinding: string | null | undefined;
+  command: KeybindingCommand;
+}): ProjectScriptKeybindingMutation {
+  const nextRule = decodeProjectScriptKeybindingRule(input);
+  const previousKeybinding = keybindingValueForCommand(input.keybindings, input.command);
+  const previousRule = previousKeybinding
+    ? decodeProjectScriptKeybindingRule({
+        keybinding: previousKeybinding,
+        command: input.command,
+      })
+    : null;
+
+  if (nextRule) {
+    return {
+      type: "upsert",
+      input:
+        previousRule && previousRule.key !== nextRule.key
+          ? { ...nextRule, replace: previousRule }
+          : nextRule,
+    };
+  }
+  return previousRule ? { type: "remove", input: previousRule } : null;
 }

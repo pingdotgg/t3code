@@ -189,7 +189,7 @@ import {
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
+import { deriveProjectScriptKeybindingMutation } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   buildProjectScript,
@@ -1293,6 +1293,9 @@ function ChatViewContent(props: ChatViewProps) {
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
+    reportFailure: false,
+  });
+  const removeKeybinding = useAtomCommand(serverEnvironment.removeKeybinding, {
     reportFailure: false,
   });
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
@@ -3349,23 +3352,33 @@ function ChatViewContent(props: ChatViewProps) {
         return updateResult;
       }
 
-      const keybindingRule = decodeProjectScriptKeybindingRule({
+      const keybindingMutation = deriveProjectScriptKeybindingMutation({
+        keybindings,
         keybinding: input.keybinding,
         command: input.keybindingCommand,
       });
 
-      if (isElectron && keybindingRule) {
+      if (!isElectron || !keybindingMutation) {
+        return updateResult;
+      }
+      if (keybindingMutation.type === "upsert") {
         return mapAtomCommandResult(
           await upsertKeybinding({
             environmentId,
-            input: keybindingRule,
+            input: keybindingMutation.input,
           }),
           () => undefined,
         );
       }
-      return updateResult;
+      return mapAtomCommandResult(
+        await removeKeybinding({
+          environmentId,
+          input: keybindingMutation.input,
+        }),
+        () => undefined,
+      );
     },
-    [environmentId, updateProject, upsertKeybinding],
+    [environmentId, keybindings, removeKeybinding, updateProject, upsertKeybinding],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput): Promise<AtomCommandResult<void, unknown>> => {
