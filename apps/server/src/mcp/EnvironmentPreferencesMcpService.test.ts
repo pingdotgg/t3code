@@ -8,9 +8,12 @@ import {
   EnvironmentMcpPreferencesUpdateInput,
   ProjectId,
   ProviderInstanceId,
+  ServerSettings,
   ThreadId,
-  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -51,6 +54,7 @@ import {
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 const decodePreferencesUpdate = Schema.decodeUnknownEffect(EnvironmentMcpPreferencesUpdateInput);
+const decodePersistedSettings = Schema.decodeUnknownEffect(fromLenientJson(ServerSettings));
 const environmentId = EnvironmentId.make("environment-preferences-test");
 const threadId = ThreadId.make("thread:environment-preferences-test");
 const projectId = ProjectId.make("project:environment-preferences-test");
@@ -71,18 +75,48 @@ const environmentLayer = Layer.succeed(
   }),
 );
 
-const fullAccessProjection = {
-  thread: {
-    id: threadId,
-    projectId,
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    deletedAt: null,
+const now = DateTime.makeUnsafe("2026-08-29T00:00:00.000Z");
+const fullAccessShell = {
+  createdBy: "user",
+  creationSource: "web",
+  id: threadId,
+  projectId,
+  title: "Environment preference caller",
+  providerInstanceId: ProviderInstanceId.make("codex"),
+  modelSelection: {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-5.6",
   },
-} as OrchestrationV2ThreadProjection;
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  branch: null,
+  worktreePath: null,
+  lineage: {
+    parentThreadId: null,
+    relationshipToParent: null,
+    rootThreadId: threadId,
+  },
+  forkedFrom: null,
+  activeProviderThreadId: null,
+  latestRunId: null,
+  activeRunId: null,
+  status: "idle",
+  pendingRuntimeRequest: null,
+  latestVisibleMessage: null,
+  latestUserMessageAt: null,
+  hasActionableProposedPlan: false,
+  itemCount: 0,
+  visibleItemCount: 0,
+  createdAt: now,
+  updatedAt: now,
+  archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
+  deletedAt: null,
+} satisfies OrchestrationV2ThreadShell;
 
 const threadLayer = Layer.mock(ThreadManagementService)({
-  getThreadProjection: () => Effect.succeed(fullAccessProjection),
+  getThreadShell: () => Effect.succeed(fullAccessShell),
 });
 
 const makeServerSettingsLayer = () =>
@@ -105,12 +139,19 @@ it.effect("persists only allowlisted preferences and publishes the normalized se
       const settingsService = yield* ServerSettingsModule.ServerSettingsService;
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
+      yield* settingsService.updateSettings({
+        enableProviderUpdateChecks: false,
+        sourceControlWritingStyle: {
+          mode: "custom",
+          customInstructions: "Keep this seeded instruction unless it is explicitly cleared.",
+          followChangeRequestTemplates: true,
+        },
+      });
       const changes = yield* settingsService.subscribeChanges;
 
       const result = yield* service.updatePreferences(scope, {
         defaultThreadEnvMode: "worktree",
         newWorktreesStartFromOrigin: false,
-        enableProviderUpdateChecks: false,
         backgroundActivity: { profile: "performance" },
         sourceControlWritingStyle: {
           mode: "custom",
@@ -121,8 +162,7 @@ it.effect("persists only allowlisted preferences and publishes the normalized se
       const published = Option.getOrThrow(yield* Stream.runHead(changes));
       const readBack = yield* settingsService.getSettings;
       const persistedRaw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
-      const persisted = JSON.parse(persistedRaw) as Record<string, unknown>;
+      const persisted = yield* decodePersistedSettings(persistedRaw);
 
       expect(result.preferences).toMatchObject({
         defaultThreadEnvMode: "worktree",
@@ -141,6 +181,7 @@ it.effect("persists only allowlisted preferences and publishes the normalized se
         },
       });
       expect(readBack.defaultThreadEnvMode).toBe("worktree");
+      expect(readBack.enableProviderUpdateChecks).toBe(false);
       expect(readBack.enableAgentBrowserAccess).toBe(true);
       expect(readBack.backgroundActivity).toEqual({
         schemaVersion: 1,
@@ -149,6 +190,8 @@ it.effect("persists only allowlisted preferences and publishes the normalized se
       });
       expect(published.sourceControlWritingStyle.customInstructions).toBe("");
       expect(persisted.defaultThreadEnvMode).toBe("worktree");
+      expect(persisted.enableProviderUpdateChecks).toBe(false);
+      expect(persisted.sourceControlWritingStyle.customInstructions).toBe("");
     }),
   ).pipe(
     Effect.provide(

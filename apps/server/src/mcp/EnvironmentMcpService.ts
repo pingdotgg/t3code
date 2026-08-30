@@ -16,12 +16,9 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { ThreadCommandExecutor } from "../orchestration-v2/ThreadCommandExecutor.ts";
-import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
-import { ProjectionStoreThreadNotFoundError } from "../orchestration-v2/ProjectionStore.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
@@ -40,9 +37,6 @@ export class EnvironmentMcpService extends Context.Service<
     ) => Effect.Effect<EnvironmentMcpPreferencesUpdateResult, EnvironmentMcpFailure>;
   }
 >()("t3/mcp/EnvironmentMcpService") {}
-
-const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
-const isProjectionStoreThreadNotFoundError = Schema.is(ProjectionStoreThreadNotFoundError);
 
 const unavailable = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -145,15 +139,12 @@ export const make = Effect.gen(function* () {
     );
 
   const loadCurrentCaller = (scope: McpInvocationScope) =>
-    threads.getThreadProjection(scope.threadId).pipe(
-      Effect.mapError((error) =>
-        isOrchestratorProjectionError(error) && isProjectionStoreThreadNotFoundError(error.cause)
-          ? new EnvironmentMcpFailure({ code: "thread_not_found" })
-          : new EnvironmentMcpFailure({ code: "operation_failed" }),
-      ),
-      Effect.filterOrFail(
-        (projection) => projection.thread.deletedAt === null,
-        () => new EnvironmentMcpFailure({ code: "thread_not_found" }),
+    threads.getThreadShell(scope.threadId).pipe(
+      Effect.mapError(() => new EnvironmentMcpFailure({ code: "operation_failed" })),
+      Effect.flatMap((shell) =>
+        shell === null || shell.deletedAt !== null
+          ? Effect.fail(new EnvironmentMcpFailure({ code: "thread_not_found" }))
+          : Effect.succeed(shell),
       ),
     );
 
@@ -271,10 +262,7 @@ export const make = Effect.gen(function* () {
             scope.threadId,
             Effect.gen(function* () {
               const caller = yield* loadCurrentCaller(scope);
-              if (
-                caller.thread.runtimeMode !== "full-access" ||
-                caller.thread.interactionMode !== "default"
-              ) {
+              if (caller.runtimeMode !== "full-access" || caller.interactionMode !== "default") {
                 return yield* new EnvironmentMcpFailure({ code: "permission_denied" });
               }
               const settings = yield* unavailable(
