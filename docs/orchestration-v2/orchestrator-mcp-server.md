@@ -356,7 +356,11 @@ servers as absent: `expectedIdle` is enforced inside the thread's serialized
 decision. The worker acquires that same per-thread admission boundary, re-reads
 idle, archive, provider, checkpoint, and provider-history target state, then
 compares the workspace-and-index fingerprint inside the existing per-workspace
-checkpoint lock. New same-thread commands wait until guarded restore
+checkpoint lock. The thread-state comparison starts from this worker re-read,
+not from command acceptance. A run that starts and finishes before the worker
+acquires the boundary does not automatically reject the restore; the worker
+uses the current provider history when it validates and applies the requested
+rollback target. New same-thread commands wait until guarded restore
 finalization releases the admission boundary. An unrelated external process
 can still write while Git is executing; T3 does not claim an OS-wide lock.
 

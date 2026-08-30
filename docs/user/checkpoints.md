@@ -30,11 +30,15 @@ The thread must be idle with no queued work, and the provider must support
 rolling its conversation back to the same point.
 
 Before the locked restore begins, T3 verifies that the covered workspace files
-and thread state still match the accepted request. If either changed while the
-request was waiting, the restore fails and preserves the newer state. As with
-other filesystem commands, an unrelated process can still write while Git is
-executing. The result distinguishes a request that is still running, a fully
-applied restore, a failure, and a partial result where files were restored but
-the provider conversation or durable finalization could not be completed.
+still match the accepted request. The worker then re-reads the thread under the
+same-thread admission boundary and rejects active or queued work and invalid
+rollback targets. Thread state must remain unchanged from that worker re-read
+through filesystem restoration. A run that starts and finishes before the
+worker acquires the boundary may be part of the provider history that the
+requested rollback removes; it is not an acceptance-time thread-state compare.
+As with other filesystem commands, an unrelated process can still write while
+Git is executing. The result distinguishes a request that is still running, a
+fully applied restore, a failure, and a partial result where files were restored
+but the provider conversation or durable finalization could not be completed.
 Retrying with the same idempotency key reads the original result instead of
 starting another restore.
