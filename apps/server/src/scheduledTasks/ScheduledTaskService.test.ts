@@ -312,7 +312,7 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
             commandId: firstInput.commandId,
           }),
         );
-        expect(conflict).toBeInstanceOf(ScheduledTasks.ScheduledTaskManualRunConflictError);
+        expect(conflict).toBeInstanceOf(ScheduledTasks.ScheduledTaskManualRunMessageConflictError);
         expect((yield* threads.getThreadProjection(boundThreadId)).messages).toHaveLength(1);
       }),
     );
@@ -415,7 +415,7 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
 
         yield* Fiber.join(first);
         const conflict = yield* Fiber.join(second).pipe(Effect.flip);
-        expect(conflict).toBeInstanceOf(ScheduledTasks.ScheduledTaskManualRunConflictError);
+        expect(conflict).toBeInstanceOf(ScheduledTasks.ScheduledTaskManualRunMessageConflictError);
         expect((yield* threads.getThreadProjection(boundThreadId)).messages).toHaveLength(1);
         const tasks = (yield* scheduler.list()).tasks;
         expect(tasks.find((task) => task.id === firstTaskId)?.runCount).toBe(1);
@@ -553,7 +553,7 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
         const overlap = yield* Effect.flip(
           scheduler.runNowIdempotent(manualRunInput({ taskId, key: "admission-race-overlap" })),
         );
-        expect(overlap).toBeInstanceOf(ScheduledTasks.ScheduledTaskManualRunConflictError);
+        expect(overlap).toBeInstanceOf(ScheduledTasks.ScheduledTaskManualRunAlreadyRunningError);
 
         yield* orchestrator.dispatch({
           type: "thread.runtime-mode.set",
@@ -609,7 +609,7 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
         const overlap = yield* Effect.flip(
           scheduler.runNowIdempotent(manualRunInput({ taskId, key: "recurring-overlap-manual" })),
         );
-        expect(overlap).toBeInstanceOf(ScheduledTasks.ScheduledTaskManualRunConflictError);
+        expect(overlap).toBeInstanceOf(ScheduledTasks.ScheduledTaskManualRunAlreadyRunningError);
         yield* Deferred.succeed(allowLookup, undefined);
         const snapshot = yield* Fiber.join(completed);
         expect(Option.getOrThrow(snapshot)?.tasks.find((task) => task.id === taskId)).toMatchObject(
@@ -706,7 +706,7 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
         const scopeFailure = yield* Effect.flip(
           scheduler.runNowIdempotent(manualRunInput({ taskId: otherTaskId, key: "other-project" })),
         );
-        assert.equal(scopeFailure._tag, "ScheduledTaskManualRunScopeError");
+        assert.equal(scopeFailure._tag, "ScheduledTaskManualRunTaskScopeError");
       }),
     );
   });

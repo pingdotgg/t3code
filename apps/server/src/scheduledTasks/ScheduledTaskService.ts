@@ -95,35 +95,62 @@ export interface ScheduledTaskManualRunResult {
   readonly receipt: CommandReceiptV2;
 }
 
-export class ScheduledTaskManualRunScopeError extends Schema.TaggedErrorClass<ScheduledTaskManualRunScopeError>()(
-  "ScheduledTaskManualRunScopeError",
+export class ScheduledTaskManualRunCallerScopeError extends Schema.TaggedErrorClass<ScheduledTaskManualRunCallerScopeError>()(
+  "ScheduledTaskManualRunCallerScopeError",
+  { taskId: ScheduledTaskId, callerThreadId: ThreadId, projectId: ProjectId },
+) {
+  override get message(): string {
+    return "The scheduled task run caller is not active in the calling project.";
+  }
+}
+
+export class ScheduledTaskManualRunTargetScopeError extends Schema.TaggedErrorClass<ScheduledTaskManualRunTargetScopeError>()(
+  "ScheduledTaskManualRunTargetScopeError",
+  { taskId: ScheduledTaskId, targetThreadId: ThreadId, projectId: ProjectId },
+) {
+  override get message(): string {
+    return "The scheduled task target is not active in the calling project.";
+  }
+}
+
+export class ScheduledTaskManualRunCallerArchivedError extends Schema.TaggedErrorClass<ScheduledTaskManualRunCallerArchivedError>()(
+  "ScheduledTaskManualRunCallerArchivedError",
+  { taskId: ScheduledTaskId, callerThreadId: ThreadId },
+) {
+  override get message(): string {
+    return "The scheduled task run caller is archived.";
+  }
+}
+
+export class ScheduledTaskManualRunTargetArchivedError extends Schema.TaggedErrorClass<ScheduledTaskManualRunTargetArchivedError>()(
+  "ScheduledTaskManualRunTargetArchivedError",
+  { taskId: ScheduledTaskId, targetThreadId: ThreadId },
+) {
+  override get message(): string {
+    return "The scheduled task target is archived.";
+  }
+}
+
+export class ScheduledTaskManualRunTaskScopeError extends Schema.TaggedErrorClass<ScheduledTaskManualRunTaskScopeError>()(
+  "ScheduledTaskManualRunTaskScopeError",
+  { taskId: ScheduledTaskId, projectId: ProjectId },
+) {
+  override get message(): string {
+    return "The scheduled task does not belong to the calling project.";
+  }
+}
+
+export class ScheduledTaskManualRunAcceptedRunScopeError extends Schema.TaggedErrorClass<ScheduledTaskManualRunAcceptedRunScopeError>()(
+  "ScheduledTaskManualRunAcceptedRunScopeError",
   {
     taskId: ScheduledTaskId,
-    reason: Schema.Literals([
-      "caller-not-in-project",
-      "target-not-in-project",
-      "caller-archived",
-      "target-archived",
-      "task-not-in-project",
-      "accepted-run-unauthorized",
-    ]),
+    callerThreadId: ThreadId,
+    targetThreadId: ThreadId,
+    projectId: ProjectId,
   },
 ) {
   override get message(): string {
-    switch (this.reason) {
-      case "caller-not-in-project":
-        return "The scheduled task run caller is not active in the calling project.";
-      case "target-not-in-project":
-        return "The scheduled task target is not active in the calling project.";
-      case "caller-archived":
-        return "The scheduled task run caller is archived.";
-      case "target-archived":
-        return "The scheduled task target is archived.";
-      case "task-not-in-project":
-        return "The scheduled task does not belong to the calling project.";
-      case "accepted-run-unauthorized":
-        return "The accepted run is no longer authorized in the calling project.";
-    }
+    return "The accepted run is no longer authorized in the calling project.";
   }
 }
 
@@ -149,30 +176,39 @@ export class ScheduledTaskManualRunInteractionCeilingError extends Schema.Tagged
   }
 }
 
-export class ScheduledTaskManualRunConflictError extends Schema.TaggedErrorClass<ScheduledTaskManualRunConflictError>()(
-  "ScheduledTaskManualRunConflictError",
-  {
-    taskId: ScheduledTaskId,
-    commandId: CommandId,
-    reason: Schema.Literals([
-      "different-scheduled-run",
-      "different-command",
-      "different-scheduled-task-run",
-      "task-already-running",
-    ]),
-  },
+export class ScheduledTaskManualRunReceiptThreadConflictError extends Schema.TaggedErrorClass<ScheduledTaskManualRunReceiptThreadConflictError>()(
+  "ScheduledTaskManualRunReceiptThreadConflictError",
+  { taskId: ScheduledTaskId, commandId: CommandId, receiptThreadId: ThreadId },
 ) {
   override get message(): string {
-    switch (this.reason) {
-      case "different-scheduled-run":
-        return "The idempotency key belongs to a different scheduled task run.";
-      case "different-command":
-        return "The idempotency key belongs to a different command.";
-      case "different-scheduled-task-run":
-        return "The idempotency key was already accepted for a different scheduled task run.";
-      case "task-already-running":
-        return "Schedule task is already running.";
-    }
+    return "The idempotency key belongs to a different scheduled task run.";
+  }
+}
+
+export class ScheduledTaskManualRunCommandConflictError extends Schema.TaggedErrorClass<ScheduledTaskManualRunCommandConflictError>()(
+  "ScheduledTaskManualRunCommandConflictError",
+  { taskId: ScheduledTaskId, commandId: CommandId },
+) {
+  override get message(): string {
+    return "The idempotency key belongs to a different command.";
+  }
+}
+
+export class ScheduledTaskManualRunMessageConflictError extends Schema.TaggedErrorClass<ScheduledTaskManualRunMessageConflictError>()(
+  "ScheduledTaskManualRunMessageConflictError",
+  { taskId: ScheduledTaskId, commandId: CommandId, messageId: MessageId },
+) {
+  override get message(): string {
+    return "The idempotency key was already accepted for a different scheduled task run.";
+  }
+}
+
+export class ScheduledTaskManualRunAlreadyRunningError extends Schema.TaggedErrorClass<ScheduledTaskManualRunAlreadyRunningError>()(
+  "ScheduledTaskManualRunAlreadyRunningError",
+  { taskId: ScheduledTaskId, commandId: CommandId },
+) {
+  override get message(): string {
+    return "Schedule task is already running.";
   }
 }
 
@@ -187,10 +223,18 @@ export class ScheduledTaskManualRunNotFoundError extends Schema.TaggedErrorClass
 
 export type ScheduledTaskManualRunError =
   | ScheduledTaskError
-  | ScheduledTaskManualRunScopeError
+  | ScheduledTaskManualRunCallerScopeError
+  | ScheduledTaskManualRunTargetScopeError
+  | ScheduledTaskManualRunCallerArchivedError
+  | ScheduledTaskManualRunTargetArchivedError
+  | ScheduledTaskManualRunTaskScopeError
+  | ScheduledTaskManualRunAcceptedRunScopeError
   | ScheduledTaskManualRunRuntimeCeilingError
   | ScheduledTaskManualRunInteractionCeilingError
-  | ScheduledTaskManualRunConflictError
+  | ScheduledTaskManualRunReceiptThreadConflictError
+  | ScheduledTaskManualRunCommandConflictError
+  | ScheduledTaskManualRunMessageConflictError
+  | ScheduledTaskManualRunAlreadyRunningError
   | ScheduledTaskManualRunNotFoundError;
 
 export class ScheduledTaskService extends Context.Service<
@@ -433,10 +477,17 @@ export const layer = Layer.effect(
           threadManagement.getProjectThread({ projectId: input.projectId, threadId }).pipe(
             Effect.mapError((cause) =>
               cause._tag === "ThreadManagementThreadNotFoundError"
-                ? new ScheduledTaskManualRunScopeError({
-                    taskId: input.id,
-                    reason: role === "caller" ? "caller-not-in-project" : "target-not-in-project",
-                  })
+                ? role === "caller"
+                  ? new ScheduledTaskManualRunCallerScopeError({
+                      taskId: input.id,
+                      callerThreadId: threadId,
+                      projectId: input.projectId,
+                    })
+                  : new ScheduledTaskManualRunTargetScopeError({
+                      taskId: input.id,
+                      targetThreadId: threadId,
+                      projectId: input.projectId,
+                    })
                 : taskError(`Could not authorize the scheduled task run ${role}.`, {
                     taskId: input.id,
                     cause,
@@ -445,9 +496,9 @@ export const layer = Layer.effect(
           );
         const caller = yield* loadScopedThread(input.policyCeiling.callerThreadId, "caller");
         if (caller.thread.archivedAt !== null) {
-          return yield* new ScheduledTaskManualRunScopeError({
+          return yield* new ScheduledTaskManualRunCallerArchivedError({
             taskId: input.id,
-            reason: "caller-archived",
+            callerThreadId: input.policyCeiling.callerThreadId,
           });
         }
         const target =
@@ -455,9 +506,9 @@ export const layer = Layer.effect(
             ? null
             : yield* loadScopedThread(ThreadId.make(task.threadId), "target");
         if (target !== null && target.thread.archivedAt !== null) {
-          return yield* new ScheduledTaskManualRunScopeError({
+          return yield* new ScheduledTaskManualRunTargetArchivedError({
             taskId: input.id,
-            reason: "target-archived",
+            targetThreadId: target.thread.id,
           });
         }
         const runtimeMode = target?.thread.runtimeMode ?? task.runtimeMode;
@@ -506,10 +557,10 @@ export const layer = Layer.effect(
           }
           if (primaryReceipt.value.commandType === "thread.create") {
             if (primaryReceipt.value.threadId !== input.unboundThreadId) {
-              return yield* new ScheduledTaskManualRunConflictError({
+              return yield* new ScheduledTaskManualRunReceiptThreadConflictError({
                 taskId: input.id,
                 commandId: input.commandId,
-                reason: "different-scheduled-run",
+                receiptThreadId: primaryReceipt.value.threadId,
               });
             }
             // Thread creation committed, but the scheduled prompt did not. Let
@@ -525,10 +576,9 @@ export const layer = Layer.effect(
           });
         }
         if (receipt.commandType !== "message.dispatch") {
-          return yield* new ScheduledTaskManualRunConflictError({
+          return yield* new ScheduledTaskManualRunCommandConflictError({
             taskId: input.id,
             commandId: input.commandId,
-            reason: "different-command",
           });
         }
 
@@ -557,9 +607,11 @@ export const layer = Layer.effect(
           target.thread.deletedAt !== null ||
           target.thread.projectId !== input.projectId
         ) {
-          return yield* new ScheduledTaskManualRunScopeError({
+          return yield* new ScheduledTaskManualRunAcceptedRunScopeError({
             taskId: input.id,
-            reason: "accepted-run-unauthorized",
+            callerThreadId: input.policyCeiling.callerThreadId,
+            targetThreadId: receipt.threadId,
+            projectId: input.projectId,
           });
         }
 
@@ -569,10 +621,10 @@ export const layer = Layer.effect(
             ? undefined
             : target.runs.find((candidate) => candidate.id === message.runId);
         if (message === undefined || run === undefined) {
-          return yield* new ScheduledTaskManualRunConflictError({
+          return yield* new ScheduledTaskManualRunMessageConflictError({
             taskId: input.id,
             commandId: input.commandId,
-            reason: "different-scheduled-task-run",
+            messageId: input.messageId,
           });
         }
         return Option.some({
@@ -787,10 +839,9 @@ export const layer = Layer.effect(
       if (!reserved) {
         if (trigger === "manual") {
           if (manualRun !== undefined) {
-            return yield* new ScheduledTaskManualRunConflictError({
+            return yield* new ScheduledTaskManualRunAlreadyRunningError({
               taskId: task.id,
               commandId: manualRun.commandId,
-              reason: "task-already-running",
             });
           }
           return yield* taskError("Schedule task is already running.", { taskId: task.id });
@@ -820,9 +871,9 @@ export const layer = Layer.effect(
               return { task, manualRun: null, dispatchError: null };
             }
             if (manualRun !== undefined && active.projectId !== manualRun.projectId) {
-              return yield* new ScheduledTaskManualRunScopeError({
+              return yield* new ScheduledTaskManualRunTaskScopeError({
                 taskId: active.id,
-                reason: "task-not-in-project",
+                projectId: manualRun.projectId,
               });
             }
             if (manualRun !== undefined) {

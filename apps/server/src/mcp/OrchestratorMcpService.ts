@@ -193,13 +193,21 @@ function errorMessage(error: unknown): string {
 function scheduledTaskManualRunFailure(error: ScheduledTaskManualRunError): OrchestratorMcpFailure {
   switch (error._tag) {
     case "ScheduledTaskManualRunNotFoundError":
-    case "ScheduledTaskManualRunScopeError":
+    case "ScheduledTaskManualRunCallerScopeError":
+    case "ScheduledTaskManualRunTargetScopeError":
+    case "ScheduledTaskManualRunCallerArchivedError":
+    case "ScheduledTaskManualRunTargetArchivedError":
+    case "ScheduledTaskManualRunTaskScopeError":
+    case "ScheduledTaskManualRunAcceptedRunScopeError":
       return failure("task_not_found", error.message);
     case "ScheduledTaskManualRunRuntimeCeilingError":
       return failure("runtime_mode_escalation_denied", error.message);
     case "ScheduledTaskManualRunInteractionCeilingError":
       return failure("interaction_mode_escalation_denied", error.message);
-    case "ScheduledTaskManualRunConflictError":
+    case "ScheduledTaskManualRunReceiptThreadConflictError":
+    case "ScheduledTaskManualRunCommandConflictError":
+    case "ScheduledTaskManualRunMessageConflictError":
+    case "ScheduledTaskManualRunAlreadyRunningError":
       return failure("invalid_request", error.message);
     case "ScheduledTaskError":
       return failure("orchestration_error", error.message);
