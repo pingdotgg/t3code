@@ -224,6 +224,26 @@ describe("GitHubAvatarResolver", () => {
     );
   });
 
+  it.effect("retries transient avatar-CDN responses without a negative marker", () => {
+    const count = { value: 0 };
+    return Effect.gen(function* () {
+      const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
+
+      expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
+      expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
+      expect(count.value).toBe(4);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          identity,
+          count,
+          repository: () => jsonResponse({ owner: { avatar_url: AVATAR_URL } }),
+          avatar: () => new Response(null, { status: 503 }),
+        }),
+      ),
+    );
+  });
+
   it.effect("remembers oversized avatars as negative", () => {
     const count = { value: 0 };
     return Effect.gen(function* () {

@@ -118,8 +118,11 @@ export const make = Effect.gen(function* () {
     }
 
     const avatarResponse = yield* httpClient.execute(HttpClientRequest.get(avatarUrl));
-    if (avatarResponse.status < 200 || avatarResponse.status >= 300) {
+    if (avatarResponse.status === 404) {
       return { _tag: "negative" } as const;
+    }
+    if (avatarResponse.status < 200 || avatarResponse.status >= 300) {
+      return { _tag: "retry" } as const;
     }
     const declaredBytes = Number(avatarResponse.headers["content-length"] ?? Number.NaN);
     if (Number.isFinite(declaredBytes) && declaredBytes > MAX_AVATAR_BYTES) {
