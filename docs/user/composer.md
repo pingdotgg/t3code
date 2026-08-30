@@ -13,6 +13,9 @@ On web and desktop, attachments upload as soon as you add them. The send button 
 after every upload finishes. Failed uploads can be retried or removed. On mobile, attachments are
 currently limited to images.
 
+Select a video attachment before or after sending to play it with the browser's built-in controls.
+Playback depends on the video formats and codecs that the browser supports.
+
 If you reload before a file finishes uploading, the draft keeps the file's name and shows **Attach
 again** next to it. Attach the file again or remove it, then send.
 

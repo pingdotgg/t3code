@@ -48,6 +48,7 @@ const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const PROJECT_FAVICON_VERSION_PREFIX = "v";
+const INLINE_VIDEO_MIME_TYPE_PATTERN = /^video\/[\w!#$&^.+-]+$/i;
 const PREVIEW_ASSET_EXTENSIONS = new Set([
   ...WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   ...WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
@@ -300,16 +301,20 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         });
       }
       // Generic files carry their extension inside the attachment id (that
-      // shape resolves the on-disk path); images do not. Only generic files
-      // download, images render inline in chat.
+      // shape resolves the on-disk path); images do not. Videos and images
+      // render inline; other generic files download.
       const isGenericFile = parseAttachmentFileExtension(input.resource.attachmentId) !== null;
+      const videoMimeType = input.resource.mimeType?.split(";", 1)[0]?.trim() ?? "";
+      const isVideo = INLINE_VIDEO_MIME_TYPE_PATTERN.test(videoMimeType);
       claims = {
         version: 1,
         kind: "attachment",
         attachmentId: input.resource.attachmentId,
-        ...(isGenericFile ? { download: true } : {}),
+        ...(isGenericFile && !isVideo ? { download: true } : {}),
         ...(input.resource.fileName !== undefined ? { fileName: input.resource.fileName } : {}),
-        ...(input.resource.mimeType !== undefined ? { mimeType: input.resource.mimeType } : {}),
+        ...(input.resource.mimeType !== undefined
+          ? { mimeType: isVideo ? videoMimeType : input.resource.mimeType }
+          : {}),
         expiresAt,
       };
       fileName = input.resource.fileName ?? path.basename(attachmentPath);

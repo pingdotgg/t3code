@@ -50,6 +50,17 @@ describe("assetResponseHeaders", () => {
     });
   });
 
+  it("serves inline videos with their declared mime type", () => {
+    expect(
+      assetResponseHeaders("/attachments/demo.bin", {
+        mimeType: 'video/mp4; codecs="avc1.42E01E"',
+      }),
+    ).toEqual({
+      "Cache-Control": "private, max-age=3600",
+      "Content-Type": "video/mp4",
+      "X-Content-Type-Options": "nosniff",
+    });
+  });
   it("declares utf-8 for HTML assets so non-ASCII content renders correctly", () => {
     expect(assetResponseHeaders("/workspace/page.html")).toHaveProperty(
       "Content-Type",
