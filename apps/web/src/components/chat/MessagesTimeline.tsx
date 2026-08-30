@@ -1,4 +1,5 @@
 import {
+  type ChatFileAttachment,
   type EnvironmentId,
   type MessageId,
   type ScopedThreadRef,
@@ -14,6 +15,7 @@ import {
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
+const NOOP_DOWNLOAD_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
@@ -35,9 +37,15 @@ import { FileDiff } from "@pierre/diffs/react";
 import {
   deriveTimelineEntries,
   workEntryDisplayIndicatesToolFailure,
+  workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,
 } from "../../session-logic";
-import { type TurnDiffSummary } from "../../types";
+import {
+  type ChatImageAttachment,
+  isFileAttachment,
+  isImageAttachment,
+  type TurnDiffSummary,
+} from "../../types";
 import {
   getRenderablePatch,
   resolveDiffThemeName,
@@ -50,7 +58,9 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   CircleAlertIcon,
+  DownloadIcon,
   EyeIcon,
+  FileIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
@@ -142,6 +152,7 @@ interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
+  onFileDownload: (attachment: ChatFileAttachment) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
@@ -220,6 +231,7 @@ interface MessagesTimelineProps {
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
+  onFileDownload?: (attachment: ChatFileAttachment) => void;
   activeThreadEnvironmentId: EnvironmentId;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
@@ -265,6 +277,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onRevertUserMessage,
   isRevertingCheckpoint,
   onImageExpand,
+  onFileDownload = NOOP_DOWNLOAD_ATTACHMENT,
   activeThreadEnvironmentId,
   markdownCwd,
   resolvedTheme,
@@ -523,6 +536,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
+      onFileDownload,
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
@@ -539,6 +553,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
+      onFileDownload,
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
@@ -924,8 +939,6 @@ function TimelineMinimap({
 // TimelineRowContent — the actual row component
 // ---------------------------------------------------------------------------
 
-type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
-type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
 
@@ -987,7 +1000,13 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const userImages = row.message.attachments ?? [];
+  // The attachment union has an open member, so guards (not literal type
+  // comparisons) split it. Unknown types render as inert rows below the files.
+  const userImages = (row.message.attachments ?? []).filter(isImageAttachment);
+  const userFiles = (row.message.attachments ?? []).filter(isFileAttachment);
+  const unknownAttachments = (row.message.attachments ?? []).filter(
+    (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
+  );
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
   const previewAnnotations: ParsedPreviewAnnotation[] = [];
@@ -1012,7 +1031,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
         {regularImages.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-            {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+            {regularImages.map((image) => (
               <div
                 key={image.id}
                 className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
@@ -1050,6 +1069,51 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             image={previewImages[index] ?? null}
           />
         ))}
+        {userFiles.length > 0 || unknownAttachments.length > 0 ? (
+          <div className="mb-2 flex flex-col gap-1">
+            {userFiles.map((file) => {
+              const content = (
+                <>
+                  <FileIcon className="size-4 shrink-0 text-secondary-label" />
+                  <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                  {file.downloadable === false ? null : (
+                    <DownloadIcon className="size-4 shrink-0" />
+                  )}
+                </>
+              );
+              return file.previewUrl ? (
+                <a
+                  key={file.id}
+                  href={file.previewUrl}
+                  download={file.name}
+                  className="flex min-w-0 items-center gap-2 rounded-md py-1 text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+                >
+                  {content}
+                </a>
+              ) : file.downloadable === false ? (
+                <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+                  {content}
+                </div>
+              ) : (
+                <button
+                  key={file.id}
+                  type="button"
+                  aria-label={`Download ${file.name}`}
+                  onClick={() => ctx.onFileDownload(file)}
+                  className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+                >
+                  {content}
+                </button>
+              );
+            })}
+            {unknownAttachments.map((attachment) => (
+              <div key={attachment.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+                <FileIcon className="size-4 shrink-0 text-secondary-label" />
+                <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {elementContexts.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {elementContexts.map((context) => (
@@ -1479,7 +1543,7 @@ function LiveActivityContent({
         <span
           className={cn(
             "flex size-6 shrink-0 items-center justify-center",
-            failed ? "text-destructive" : highlighted ? "text-foreground" : "text-icon-muted",
+            highlighted ? "text-foreground" : "text-icon-muted",
           )}
           role={announceFailure ? "img" : undefined}
           aria-label={announceFailure ? "Tool call failed" : undefined}
@@ -1556,16 +1620,9 @@ function WorkGroupToggleTimelineRow({
         aria-expanded={row.expanded}
         onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
       >
-        <span
-          className={cn(
-            "flex size-6 shrink-0 items-center justify-center",
-            row.hasFailure ? "text-destructive" : "text-icon-muted",
-          )}
-          role={row.hasFailure ? "img" : undefined}
-          aria-label={row.hasFailure ? "Tool call failed" : undefined}
-        >
+        <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
           <WorkEntryIconSvg
-            name={row.hasFailure ? "x" : toolGroupSummaryIconName(row.summaryKind)}
+            name={toolGroupSummaryIconName(row.summaryKind)}
             className="size-4 shrink-0 stroke-[1.8] opacity-70"
           />
         </span>
@@ -1580,33 +1637,25 @@ function WorkGroupToggleTimelineRow({
     : row.hiddenCount === 1
       ? "log entry"
       : "log entries";
-  const showHiddenFailure = row.hasFailure && !row.expanded;
-
   return (
     <button
       type="button"
       className="flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      aria-label={
+        row.hasFailure && !row.expanded
+          ? `+${row.hiddenCount} previous ${labelNoun}, includes a failure`
+          : undefined
+      }
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     >
-      <span
-        className={cn(
-          "flex size-6 shrink-0 items-center justify-center",
-          showHiddenFailure ? "text-destructive" : "text-icon-muted",
-        )}
-        role={showHiddenFailure ? "img" : undefined}
-        aria-label={showHiddenFailure ? "Hidden work includes a failure" : undefined}
-      >
-        {showHiddenFailure ? (
-          <WorkEntryIconSvg name="x" className="size-4 shrink-0 stroke-[1.8] opacity-70" />
-        ) : (
-          <ChevronDownIcon
-            className={cn(
-              "size-4 shrink-0 opacity-70 transition-transform duration-200",
-              row.expanded && "rotate-180",
-            )}
-          />
-        )}
+      <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
+        <ChevronDownIcon
+          className={cn(
+            "size-4 shrink-0 opacity-70 transition-transform duration-200",
+            row.expanded && "rotate-180",
+          )}
+        />
       </span>
       {row.expanded ? (
         <span className="font-medium text-foreground">
@@ -1733,7 +1782,7 @@ const UserMessageElementContextChip = memo(function UserMessageElementContextChi
 
 function UserMessagePreviewAnnotationCard(props: {
   annotation: ParsedPreviewAnnotation;
-  image: NonNullable<TimelineMessage["attachments"]>[number] | null;
+  image: ChatImageAttachment | null;
 }) {
   const ctx = use(TimelineRowCtx);
   return (
@@ -2631,11 +2680,13 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   const canExpand = expandedBody !== null;
   const showDestructiveRowStyle =
     showFailedIndicator &&
-    (workEntry.sourceActivityKind === "runtime.error" || !workLogEntryIsToolLike(workEntry));
+    (workEntrySignalsSevereFailure(workEntry) || !workLogEntryIsToolLike(workEntry));
+  // Ordinary tool failures stay muted; only runtime errors and warnings get
+  // color. The red treatment is reserved for severe failures.
   const iconWrapperClass = cn(
     "flex size-6 shrink-0 items-center justify-center",
-    showWarningIndicator || showFailedIndicator
-      ? "text-destructive"
+    showWarningIndicator
+      ? "text-warning"
       : showDestructiveRowStyle
         ? "text-destructive"
         : workEntry.tone === "tool" || showFailedIndicator

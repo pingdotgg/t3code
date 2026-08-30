@@ -1,0 +1,117 @@
+diff --git a/dist/metro/transformer.cjs b/dist/metro/transformer.cjs
+index d57ca81..fd8693c 100644
+--- a/dist/metro/transformer.cjs
++++ b/dist/metro/transformer.cjs
+@@ -7,6 +7,7 @@ const culori = require('culori');
+ const node = require('@tailwindcss/node');
+ const oxide = require('@tailwindcss/oxide');
+ const fs = require('fs');
++const node_crypto = require('node:crypto');
+ 
+ function _interopDefaultCompat (e) { return e && typeof e === 'object' && 'default' in e ? e.default : e; }
+ 
+@@ -1753,10 +1754,11 @@ const transform = async (config$1, projectRoot, filePath, data, options) => {
+   await bundlerConfig.generateArtifacts(cssArtifactPath);
+   const virtualCode = await compileCSS(bundlerConfig);
+   const isWeb = bundlerConfig.platform === config.Platform.Web;
++  const nativeStylesFingerprint = isWeb ? void 0 : node_crypto.createHash("sha256").update(virtualCode).update("\0").update(bundlerConfig.stringifiedThemes).digest("hex");
+   data = Buffer.from(
+     isWeb ? virtualCode : [
+       `const { Uniwind } = require('uniwind');`,
+-      `Uniwind.__reinit(rt => ${virtualCode}, ${bundlerConfig.stringifiedThemes});`
++      `Uniwind.__reinit(rt => ${virtualCode}, ${bundlerConfig.stringifiedThemes}, '${nativeStylesFingerprint}');`
+     ].join(""),
+     "utf-8"
+   );
+diff --git a/dist/metro/transformer.mjs b/dist/metro/transformer.mjs
+index d3e7475..bf63587 100644
+--- a/dist/metro/transformer.mjs
++++ b/dist/metro/transformer.mjs
+@@ -5,6 +5,7 @@ import { converter, parse, formatHex, formatHex8 } from 'culori';
+ import { compile } from '@tailwindcss/node';
+ import { Scanner } from '@tailwindcss/oxide';
+ import fs from 'fs';
++import { createHash } from 'node:crypto';
+ 
+ const toCamelCase = (str) => str.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+ const pipe = (data) => ((...fns) => fns.reduce((acc, fn) => fn(acc), data));
+@@ -1746,10 +1747,11 @@ const transform = async (config, projectRoot, filePath, data, options) => {
+   await bundlerConfig.generateArtifacts(cssArtifactPath);
+   const virtualCode = await compileCSS(bundlerConfig);
+   const isWeb = bundlerConfig.platform === Platform.Web;
++  const nativeStylesFingerprint = isWeb ? void 0 : createHash("sha256").update(virtualCode).update("\0").update(bundlerConfig.stringifiedThemes).digest("hex");
+   data = Buffer.from(
+     isWeb ? virtualCode : [
+       `const { Uniwind } = require('uniwind');`,
+-      `Uniwind.__reinit(rt => ${virtualCode}, ${bundlerConfig.stringifiedThemes});`
++      `Uniwind.__reinit(rt => ${virtualCode}, ${bundlerConfig.stringifiedThemes}, '${nativeStylesFingerprint}');`
+     ].join(""),
+     "utf-8"
+   );
+diff --git a/src/bundler/adapters/metro/transformer.ts b/src/bundler/adapters/metro/transformer.ts
+index 08059b0..05c0515 100644
+--- a/src/bundler/adapters/metro/transformer.ts
++++ b/src/bundler/adapters/metro/transformer.ts
+@@ -5,6 +5,7 @@ import { Platform } from '@/common/consts'
+ import type * as ExpoMetroConfig from '@expo/metro-config'
+ import type * as MetroTransformWorker from 'metro-transform-worker'
+ import type { JsTransformerConfig, JsTransformOptions } from 'metro-transform-worker'
++import { createHash } from 'node:crypto'
+ import path from 'path'
+ 
+ const cssArtifactPath = path.resolve(__dirname, '../../uniwind.css')
+@@ -69,13 +70,20 @@ export const transform = async (
+     await bundlerConfig.generateArtifacts(cssArtifactPath)
+     const virtualCode = await compileCSS(bundlerConfig)
+     const isWeb = bundlerConfig.platform === Platform.Web
++    const nativeStylesFingerprint = isWeb
++        ? undefined
++        : createHash('sha256')
++                .update(virtualCode)
++                .update('\0')
++                .update(bundlerConfig.stringifiedThemes)
++                .digest('hex')
+ 
+     data = Buffer.from(
+         isWeb
+             ? virtualCode
+             : [
+                 `const { Uniwind } = require('uniwind');`,
+-                `Uniwind.__reinit(rt => ${virtualCode}, ${bundlerConfig.stringifiedThemes});`,
++                `Uniwind.__reinit(rt => ${virtualCode}, ${bundlerConfig.stringifiedThemes}, '${nativeStylesFingerprint}');`,
+             ].join(''),
+         'utf-8',
+     )
+diff --git a/src/core/config/config.native.ts b/src/core/config/config.native.ts
+index 5e0832b..01aed1b 100644
+--- a/src/core/config/config.native.ts
++++ b/src/core/config/config.native.ts
+@@ -8,6 +8,8 @@ import type { CSSVariables, GenerateStyleSheetsCallback, ThemeName } from '../ty
+ import { UniwindConfigBuilder as UniwindConfigBuilderBase } from './config.common'
+ 
+ class UniwindConfigBuilder extends UniwindConfigBuilderBase {
++    private stylesFingerprint: string | undefined
++
+     constructor() {
+         super()
+     }
+@@ -35,9 +37,18 @@ class UniwindConfigBuilder extends UniwindConfigBuilderBase {
+         UniwindListener.notify([StyleDependency.Insets])
+     }
+ 
+-    protected __reinit(generateStyleSheetCallback: GenerateStyleSheetsCallback, themes: Array<string>) {
++    protected __reinit(
++        generateStyleSheetCallback: GenerateStyleSheetsCallback,
++        themes: Array<string>,
++        stylesFingerprint?: string,
++    ) {
++        if (__DEV__ && stylesFingerprint !== undefined && stylesFingerprint === this.stylesFingerprint) {
++            return
++        }
++
+         super.__reinit(generateStyleSheetCallback, themes)
+         UniwindStore.reinit(generateStyleSheetCallback, themes)
++        this.stylesFingerprint = stylesFingerprint
+     }
+ 
+     protected onThemeChange() {

@@ -8,7 +8,12 @@ export function authClientMetadata(appVersion?: string): AuthClientPresentationM
 
   return {
     label: "T3 Code Mobile",
-    deviceType: "mobile",
+    deviceType:
+      Device.deviceType === Device.DeviceType.TABLET
+        ? "tablet"
+        : Device.deviceType === Device.DeviceType.PHONE
+          ? "mobile"
+          : "unknown",
     ...(Platform.OS === "ios" ? { os: "iOS" } : Platform.OS === "android" ? { os: "Android" } : {}),
     ...(Number.isFinite(osMajorVersion) && osMajorVersion > 0 ? { osMajorVersion } : {}),
     ...(deviceModel ? { deviceModel } : {}),

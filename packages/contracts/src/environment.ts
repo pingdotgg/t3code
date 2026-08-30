@@ -50,6 +50,12 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   connectionProbe: Schema.optionalKey(Schema.Boolean),
   /** Missing on older servers, which still accept inline image attachments. */
   attachmentUploads: Schema.optionalKey(Schema.Boolean),
+  /** Missing on servers that only accept image attachments. */
+  fileAttachments: Schema.optionalKey(
+    Schema.Struct({
+      maxUploadBytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+    }),
+  ),
   /** Server exposes the pull-request list, detail, activity, diff, and mutation APIs. Absent on
       servers from before the pull-request workspace shipped, so clients must not probe them. */
   pullRequests: Schema.optionalKey(Schema.Boolean),
@@ -60,6 +66,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands thread.snooze / thread.unsnooze commands. Same
       version-skew contract as threadSettlement. */
   threadSnooze: Schema.optionalKey(Schema.Boolean),
+  /** Server streams themes an environment publishes. Absent on servers from
+      before environment themes shipped, which never emit the events -- so a
+      client reconnecting to one must drop published themes rather than keep
+      showing a set nothing will ever update. */
+  environmentThemes: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.pin / thread.unpin commands. Same
       version-skew contract as threadSettlement. */
   threadPinning: Schema.optionalKey(Schema.Boolean),

@@ -84,6 +84,10 @@ function safeDecode(value: string): string {
   }
 }
 
+export function isWindowsDrivePathHref(href: string): boolean {
+  return WINDOWS_DRIVE_PATH_PATTERN.test(safeDecode(href));
+}
+
 function unwrapMarkdownLinkDestination(value: string): string {
   return value.startsWith("<") && value.endsWith(">") ? value.slice(1, -1) : value;
 }

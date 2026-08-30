@@ -159,17 +159,3 @@ export function dismissVersionMismatch(dismissalKey: string | null | undefined):
     keys: [...document.keys, dismissalKey],
   });
 }
-
-export function appendVersionMismatchHint(
-  message: string | null | undefined,
-  mismatch: VersionMismatch | null | undefined,
-): string | null {
-  const normalizedMessage = normalizeVersion(message);
-  if (!normalizedMessage) {
-    return mismatch?.hint ?? null;
-  }
-  if (!mismatch) {
-    return normalizedMessage;
-  }
-  return `${normalizedMessage} Hint: ${mismatch.hint}`;
-}

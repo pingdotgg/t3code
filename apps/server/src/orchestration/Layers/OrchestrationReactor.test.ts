@@ -61,7 +61,7 @@ describe("OrchestrationReactor", () => {
               started.push("thread-deletion-reactor");
               return Effect.void;
             },
-            drain: Effect.void,
+            drainThrough: () => Effect.void,
           }),
         ),
         Layer.provideMerge(
