@@ -2144,10 +2144,8 @@ function OpenCommandPaletteDialog(props: {
       return undefined;
     }
 
-    // The `project.openFolder` hotkey opens the picker before a browse view
-    // exists, so there is no query to derive a directory from. Start at the
-    // environment's configured add-project directory instead; the desktop
-    // expands a leading `~` against the target's home, including over WSL.
+    // The desktop expands the leading `~` against the target's home, including
+    // over WSL.
     if (!isBrowsing) {
       return getAddProjectInitialQueryForEnvironment(browseEnvironmentId);
     }
@@ -2358,11 +2356,8 @@ function OpenCommandPaletteDialog(props: {
     primaryEnvironmentId,
   ]);
 
-  // `project.openFolder` routes here: jump straight to the native folder
-  // picker against the environment browsing would target, opening the
-  // add-project browse view behind it so cancelling lands somewhere useful.
-  // Falls back to the regular add-project flow when the picker can't run (web
-  // client, WSL instance not yet resolved) or environment selection is needed.
+  // The native picker needs the desktop bridge and one unambiguous
+  // environment; without both, `project.openFolder` can only open the flow.
   useLayoutEffect(() => {
     if (openIntent?.kind !== "open-folder") {
       return;
