@@ -403,6 +403,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   );
   const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
   const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
+  const openFolderPicker = useCallback(() => dispatch({ _tag: "OpenFolderPicker" }), []);
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme } = useTheme();
@@ -458,6 +459,12 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         });
         return;
       }
+      if (command === "project.openFolder") {
+        event.preventDefault();
+        event.stopPropagation();
+        openFolderPicker();
+        return;
+      }
       const mode = overlayModeForCommand(command);
       if (mode === null) {
         return;
@@ -468,7 +475,16 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, previewOpen, resolvedTheme, terminalOpen, theme, themeHalves, toggleMode]);
+  }, [
+    keybindings,
+    openFolderPicker,
+    previewOpen,
+    resolvedTheme,
+    terminalOpen,
+    theme,
+    themeHalves,
+    toggleMode,
+  ]);
 
   useEffect(
     () =>
@@ -2111,8 +2127,7 @@ function OpenCommandPaletteDialog(props: {
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase) &&
     !isRemoteProjectPending;
   const fileManagerName = getLocalFileManagerName(navigator.platform);
-  const canOpenProjectFromFileManager =
-    isBrowsing &&
+  const canPickProjectFolder =
     browseEnvironmentId !== null &&
     // For a desktop-local (WSL) env, only offer the picker once we have resolved
     // its desktop pool instance id. Without it pickFolder can't be routed to the
@@ -2123,6 +2138,7 @@ function OpenCommandPaletteDialog(props: {
       (browseEnvironmentIsDesktopLocal && browseDesktopInstanceId !== null)) &&
     typeof window !== "undefined" &&
     window.desktopBridge !== undefined;
+  const canOpenProjectFromFileManager = isBrowsing && canPickProjectFolder;
   const fileManagerInitialPath = useMemo(() => {
     if (!canOpenProjectFromFileManager) {
       return undefined;
@@ -2221,7 +2237,7 @@ function OpenCommandPaletteDialog(props: {
   }
 
   const handleOpenProjectFromFileManager = useCallback(async () => {
-    if (!canOpenProjectFromFileManager || isPickingProjectFolder) {
+    if (!canPickProjectFolder || isPickingProjectFolder) {
       return;
     }
     const api = readLocalApi();
@@ -2321,7 +2337,7 @@ function OpenCommandPaletteDialog(props: {
     browseDesktopInstanceId,
     browseEnvironmentId,
     browseEnvironmentPlatform,
-    canOpenProjectFromFileManager,
+    canPickProjectFolder,
     desktopLocalBootstraps,
     environments,
     fileManagerInitialPath,
@@ -2329,6 +2345,39 @@ function OpenCommandPaletteDialog(props: {
     handleAddProjectForEnvironment,
     isPickingProjectFolder,
     primaryEnvironmentId,
+  ]);
+
+  // `project.openFolder` routes here: jump straight to the native folder
+  // picker against the environment browsing would target, falling back to the
+  // regular add-project flow when the picker can't run (web client, WSL
+  // instance not yet resolved) or environment selection is needed first.
+  useLayoutEffect(() => {
+    if (openIntent?.kind !== "open-folder") {
+      return;
+    }
+    clearOpenIntent();
+    if (
+      browseEnvironmentId !== null &&
+      canPickProjectFolder &&
+      addProjectEnvironmentOptions.length <= 1
+    ) {
+      if (!isBrowsing) {
+        void startAddProjectBrowse(browseEnvironmentId);
+      }
+      void handleOpenProjectFromFileManager();
+      return;
+    }
+    openAddProjectFlow();
+  }, [
+    addProjectEnvironmentOptions.length,
+    browseEnvironmentId,
+    canPickProjectFolder,
+    clearOpenIntent,
+    handleOpenProjectFromFileManager,
+    isBrowsing,
+    openAddProjectFlow,
+    openIntent,
+    startAddProjectBrowse,
   ]);
 
   const inputAccessory =
