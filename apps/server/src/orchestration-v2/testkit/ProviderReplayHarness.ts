@@ -415,16 +415,14 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     orchestratorProvided,
     effectWorkerProvided,
     providerRuntimeRecoveryProvided,
-  ).pipe(
-    Layer.provide(worktreeRepairDependenciesTestLayer),
-    Layer.provide(NodeServices.layer),
-  );
+  ).pipe(Layer.provide(worktreeRepairDependenciesTestLayer), Layer.provide(NodeServices.layer));
 
   // Build the daemon from the exact worker instance exposed alongside the
   // orchestrator. Keeping this acquisition in the replay layer makes the
   // outbox lifecycle explicit and prevents test-only command-side draining.
   if (options.runEffectWorker === false) {
     return Layer.merge(orchestratorProvided, providerRuntimeRecoveryProvided).pipe(
+    Layer.provide(worktreeRepairDependenciesTestLayer),
       Layer.provide(NodeServices.layer),
     );
   }
@@ -436,5 +434,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       return orchestrator;
     }),
   ).pipe(Layer.provide(replayRuntime));
-  return Layer.merge(orchestratorWithWorker, providerRuntimeRecoveryProvided);
+  return Layer.merge(orchestratorWithWorker, providerRuntimeRecoveryProvided).pipe(
+    Layer.provide(worktreeRepairDependenciesTestLayer),
+    Layer.provide(NodeServices.layer),
+  );
 }
