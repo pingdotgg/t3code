@@ -1,12 +1,13 @@
 import { SymbolView } from "../components/AppSymbol";
 import { Image, Pressable, ScrollView, View } from "react-native";
 
-import type { DraftComposerImageAttachment } from "../lib/composerImages";
+import { AppText as Text } from "./AppText";
+import type { DraftComposerAttachment } from "../lib/composerImages";
 
 export interface ComposerAttachmentStripProps {
-  /** Attachment images to display. */
-  readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
-  /** Called when the user taps the remove button on an image. */
+  /** Attachments to display. */
+  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
+  /** Called when the user removes an attachment. */
   readonly onRemove: (imageId: string) => void;
   /** Called when the user taps on an image thumbnail to preview it. */
   readonly onPressImage?: (previewUri: string) => void;
@@ -19,8 +20,7 @@ export interface ComposerAttachmentStripProps {
 }
 
 /**
- * A horizontally-scrollable strip of image attachment thumbnails with remove
- * buttons.  Used by both the thread composer and the new-task draft screen.
+ * Attachment thumbnails used by the thread composer and the new-task draft screen.
  */
 export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
   const size = props.imageSize ?? 72;
@@ -40,29 +40,47 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
       className="grow-0"
     >
       <View className="flex-row gap-2.5">
-        {props.attachments.map((image) => (
+        {props.attachments.map((attachment) => (
           <View
-            key={image.id}
+            key={attachment.id}
             className="relative"
             style={{
               paddingTop: removeButtonGutter,
               paddingRight: removeButtonGutter,
             }}
           >
-            <Pressable
-              onPress={props.onPressImage ? () => props.onPressImage!(image.previewUri) : undefined}
-            >
-              <Image
-                source={{ uri: image.previewUri }}
-                className="bg-subtle"
+            {attachment.type === "image" ? (
+              <Pressable
+                onPress={
+                  props.onPressImage ? () => props.onPressImage!(attachment.previewUri) : undefined
+                }
+              >
+                <Image
+                  source={{ uri: attachment.previewUri }}
+                  style={{
+                    width: size,
+                    height: size,
+                    borderRadius: radius,
+                  }}
+                  className="bg-subtle"
+                  resizeMode="cover"
+                />
+              </Pressable>
+            ) : (
+              <View
+                className="items-center justify-center gap-1 bg-subtle px-2"
                 style={{
                   width: size,
                   height: size,
                   borderRadius: radius,
                 }}
-                resizeMode="cover"
-              />
-            </Pressable>
+              >
+                <SymbolView name="doc.text" size={22} tintColor="#a3a3a3" type="monochrome" />
+                <Text className="w-full text-center text-2xs text-foreground" numberOfLines={1}>
+                  {attachment.name}
+                </Text>
+              </View>
+            )}
             <Pressable
               className="absolute h-[22px] w-[22px] items-center justify-center rounded-[11px] bg-black/55"
               style={{
@@ -70,7 +88,7 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
                 right: removeButtonPlacement === "gutter" ? 0 : 4,
               }}
               hitSlop={6}
-              onPress={() => props.onRemove(image.id)}
+              onPress={() => props.onRemove(attachment.id)}
             >
               <SymbolView
                 name="xmark"

@@ -19,7 +19,15 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { ActivityIndicator, Image, Platform, Pressable, View, type ViewStyle } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Platform,
+  Pressable,
+  View,
+  type ViewStyle,
+} from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import Animated, {
   FadeIn,
@@ -36,6 +44,7 @@ import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/re
 import { scopedThreadKey } from "../../lib/scopedEntities";
 
 import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/AppSymbol";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { GlassSurface } from "../../components/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
@@ -46,7 +55,7 @@ import {
 } from "../../components/ComposerToolbar";
 import { ControlPill } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
-import type { DraftComposerImageAttachment } from "../../lib/composerImages";
+import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
@@ -76,7 +85,7 @@ export const COMPOSER_EXPANDED_CHROME = 156;
 
 export interface ThreadComposerProps {
   readonly draftMessage: string;
-  readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
+  readonly draftAttachments: ReadonlyArray<DraftComposerAttachment>;
   readonly placeholder: string;
   readonly contentMaxWidth?: number;
   readonly bottomInset?: number;
@@ -97,6 +106,7 @@ export interface ThreadComposerProps {
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftImages: () => Promise<void>;
+  readonly onPickDraftFiles: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
@@ -597,15 +607,27 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             </View>
             {!isExpanded && props.draftAttachments.length > 0 ? (
               <View className="flex-row gap-1 pl-1">
-                {props.draftAttachments.slice(0, 3).map((image) => (
-                  <Pressable key={image.id} onPress={() => onPressImage(image.previewUri)}>
-                    <Image
-                      source={{ uri: image.previewUri }}
-                      className="size-[30px] rounded-lg bg-subtle"
-                      resizeMode="cover"
-                    />
-                  </Pressable>
-                ))}
+                {props.draftAttachments.slice(0, 3).map((attachment) =>
+                  attachment.type === "image" ? (
+                    <Pressable
+                      key={attachment.id}
+                      onPress={() => onPressImage(attachment.previewUri)}
+                    >
+                      <Image
+                        source={{ uri: attachment.previewUri }}
+                        className="size-[30px] rounded-lg bg-subtle"
+                        resizeMode="cover"
+                      />
+                    </Pressable>
+                  ) : (
+                    <View
+                      key={attachment.id}
+                      className="size-[30px] items-center justify-center rounded-lg bg-subtle"
+                    >
+                      <SymbolView name="doc.text" size={15} tintColor="#a3a3a3" type="monochrome" />
+                    </View>
+                  ),
+                )}
                 {props.draftAttachments.length > 3 ? (
                   <View className="size-[30px] items-center justify-center rounded-lg bg-subtle-strong">
                     <Text className="text-foreground-muted text-2xs font-t3-bold">
@@ -650,7 +672,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 <ComposerToolbarButton
                   accessibilityLabel="Add attachment"
                   icon="plus"
-                  onPress={() => void props.onPickDraftImages()}
+                  onPress={() => {
+                    if (props.serverConfig?.environment.capabilities.fileAttachments) {
+                      Alert.alert("Add attachment", undefined, [
+                        { text: "Photos", onPress: () => void props.onPickDraftImages() },
+                        { text: "Files", onPress: () => void props.onPickDraftFiles() },
+                        { text: "Cancel", style: "cancel" },
+                      ]);
+                      return;
+                    }
+                    void props.onPickDraftImages();
+                  }}
                   showChevron={false}
                 />
                 <View className="min-w-0 flex-1" style={{ maxWidth: 152 }}>

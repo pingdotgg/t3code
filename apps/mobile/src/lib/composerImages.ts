@@ -1,10 +1,21 @@
 import {
+  clampFileAttachmentUploadBytes,
+  fileAttachmentTooLargeMessage,
+} from "@t3tools/client-runtime/state/attachments";
+import {
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  type EnvironmentId,
   type UploadChatImageAttachment,
 } from "@t3tools/contracts";
+import type { PickMultipleFilesResult } from "expo-file-system";
 import { estimateBase64ByteSize } from "./base64";
+import {
+  COMPOSER_ATTACHMENT_DIRECTORY,
+  resolveOwnedComposerAttachmentFileUri,
+} from "./composerAttachmentFiles";
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
 
@@ -12,6 +23,19 @@ export interface DraftComposerImageAttachment extends UploadChatImageAttachment 
   readonly id: string;
   readonly previewUri: string;
 }
+
+export interface DraftComposerFileAttachment {
+  readonly id: string;
+  readonly type: "file";
+  readonly name: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+  readonly fileUri: string;
+  readonly uploadedAttachmentId?: string;
+  readonly uploadEnvironmentId?: EnvironmentId;
+}
+
+export type DraftComposerAttachment = DraftComposerImageAttachment | DraftComposerFileAttachment;
 
 /** Wire shape for startTurn: pure uploads without client draft id / previewUri. */
 export function toUploadChatImageAttachments(
@@ -27,6 +51,189 @@ export function toUploadChatImageAttachments(
 }
 
 const OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste";
+const ATTACHMENT_COPY_CHUNK_BYTES = 64 * 1024;
+
+export async function persistComposerAttachmentFile(
+  uri: string,
+  name: string,
+  maxBytes?: number,
+): Promise<string> {
+  const { Directory, File, FileMode, Paths } = await import("expo-file-system");
+  const directory = new Directory(Paths.document, COMPOSER_ATTACHMENT_DIRECTORY);
+  directory.create({ idempotent: true, intermediates: true });
+  const safeName =
+    Array.from(name, (character) =>
+      character === "/" || character === "\\" || character.charCodeAt(0) < 32 ? "-" : character,
+    ).join("") || "file";
+  const destination = new File(directory, `${uuidv4()}-${safeName}`);
+  const source = new File(uri);
+  const sourceSize = source.size;
+  if (
+    maxBytes !== undefined &&
+    (sourceSize === null || (sourceSize === 0 && uri.startsWith("content:")))
+  ) {
+    destination.create();
+    try {
+      const reader = source.open(FileMode.ReadOnly);
+      try {
+        const writer = destination.open(FileMode.WriteOnly);
+        try {
+          let copiedBytes = 0;
+          while (true) {
+            const chunk = reader.readBytes(
+              Math.min(ATTACHMENT_COPY_CHUNK_BYTES, maxBytes - copiedBytes + 1),
+            );
+            if (chunk.byteLength === 0) {
+              break;
+            }
+            copiedBytes += chunk.byteLength;
+            if (copiedBytes > maxBytes) {
+              throw new Error(fileAttachmentTooLargeMessage(name, maxBytes));
+            }
+            writer.writeBytes(chunk);
+          }
+        } finally {
+          writer.close();
+        }
+      } finally {
+        reader.close();
+      }
+    } catch (error) {
+      if (destination.exists) {
+        destination.delete();
+      }
+      throw error;
+    }
+    return destination.uri;
+  }
+
+  if (maxBytes !== undefined && sourceSize !== null && sourceSize > maxBytes) {
+    throw new Error(fileAttachmentTooLargeMessage(name, maxBytes));
+  }
+  try {
+    await source.copy(destination);
+  } catch (error) {
+    // A failed copy can leave a partial destination file behind with no URI
+    // returned to release it later; delete it before surfacing the failure.
+    try {
+      if (destination.exists) {
+        destination.delete();
+      }
+    } catch (cleanupError) {
+      console.warn("[composer-attachments] could not remove a partial copy", cleanupError);
+    }
+    throw error;
+  }
+  // An Android content: stream can deliver more bytes than the size it
+  // reported before the copy. Validate the persisted copy so an oversized
+  // file is never retained under a stale recorded size.
+  const copiedSize = destination.size;
+  if (maxBytes !== undefined && copiedSize !== null && copiedSize > maxBytes) {
+    try {
+      if (destination.exists) {
+        destination.delete();
+      }
+    } catch (cleanupError) {
+      console.warn("[composer-attachments] could not remove an oversized copy", cleanupError);
+    }
+    throw new Error(fileAttachmentTooLargeMessage(name, maxBytes));
+  }
+  return destination.uri;
+}
+
+export async function removePersistedComposerAttachmentFile(uri: string): Promise<void> {
+  try {
+    const { File, Paths } = await import("expo-file-system");
+    const ownedUri = resolveOwnedComposerAttachmentFileUri(uri, Paths.document.uri);
+    if (ownedUri === null) {
+      return;
+    }
+    const file = new File(ownedUri);
+    if (file.exists) {
+      file.delete();
+    }
+  } catch (error) {
+    console.warn("[composer-attachments] could not remove local file", error);
+  }
+}
+
+export async function pickComposerFiles(input: {
+  readonly existingCount: number;
+  readonly maxBytes?: number;
+}): Promise<{
+  readonly files: ReadonlyArray<DraftComposerFileAttachment>;
+  readonly error: string | null;
+}> {
+  const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
+  if (remainingSlots <= 0) {
+    return {
+      files: [],
+      error: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+    };
+  }
+
+  const { File } = await import("expo-file-system");
+  const endHandoff = beginForegroundHandoff();
+  let result: PickMultipleFilesResult;
+  try {
+    result = await File.pickFileAsync({ multipleFiles: true });
+  } finally {
+    endHandoff();
+  }
+  if (result.canceled) {
+    return { files: [], error: null };
+  }
+
+  const maxBytes = clampFileAttachmentUploadBytes(
+    input.maxBytes ?? PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+  );
+  const attachments: DraftComposerFileAttachment[] = [];
+  let error: string | null = null;
+  let exceededAttachmentLimit = false;
+  for (const file of result.result) {
+    if (attachments.length >= remainingSlots) {
+      exceededAttachmentLimit = true;
+      break;
+    }
+    // A SAF/document picker can hand back a blank display name; the wire
+    // contract rejects empty names at send time, so fall back before the name
+    // reaches storage, errors, or the attachment itself.
+    const name = file.name.trim().length > 0 ? file.name : "file";
+    const sizeBytes = file.size ?? null;
+    if (sizeBytes !== null && sizeBytes > maxBytes) {
+      error = fileAttachmentTooLargeMessage(name, maxBytes);
+      continue;
+    }
+    try {
+      const fileUri = await persistComposerAttachmentFile(file.uri, name, maxBytes);
+      const storedSizeBytes = new File(fileUri).size ?? sizeBytes ?? 0;
+      if (storedSizeBytes <= 0) {
+        await removePersistedComposerAttachmentFile(fileUri);
+        error = `'${name}' is empty or could not be read.`;
+        continue;
+      }
+      if (storedSizeBytes > maxBytes) {
+        await removePersistedComposerAttachmentFile(fileUri);
+        error = fileAttachmentTooLargeMessage(name, maxBytes);
+        continue;
+      }
+      attachments.push({
+        id: uuidv4(),
+        type: "file",
+        name,
+        mimeType: file.type || "application/octet-stream",
+        sizeBytes: storedSizeBytes,
+        fileUri,
+      });
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : `Could not read '${name}'.`;
+    }
+  }
+  if (exceededAttachmentLimit) {
+    error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`;
+  }
+  return { files: attachments, error };
+}
 
 async function loadImagePicker() {
   try {
