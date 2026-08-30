@@ -156,7 +156,9 @@ describe("ConversationTransferMcpService", () => {
             parent,
             source,
             dispatch: () =>
-              Ref.update(dispatched, (count) => count + 1).pipe(Effect.as({} as never)),
+              Ref.update(dispatched, (count) => count + 1).pipe(
+                Effect.andThen(Effect.die("merge-back dispatch should not run")),
+              ),
           }),
         ),
       );
