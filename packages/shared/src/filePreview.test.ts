@@ -38,21 +38,25 @@ describe("workspace file previews", () => {
 });
 
 describe("workspace external-open files", () => {
-  it.each(["scene.glb", "models/robot.GLB", "assets/model.glb?download=1"])(
-    "maps %s to the GLB handoff MIME type",
-    (path) => {
-      expect(isWorkspaceExternalOpenPath(path)).toBe(true);
-      expect(workspaceExternalOpenMimeType(path)).toBe("model/gltf-binary");
-      // External-open files never join the inline preview surfaces.
-      expect(isWorkspacePreviewEntryPath(path)).toBe(false);
-    },
-  );
+  it.each(["scene.glb", "models/robot.GLB"])("maps %s to the GLB handoff MIME type", (path) => {
+    expect(isWorkspaceExternalOpenPath(path)).toBe(true);
+    expect(workspaceExternalOpenMimeType(path)).toBe("model/gltf-binary");
+    // External-open files never join the inline preview surfaces.
+    expect(isWorkspacePreviewEntryPath(path)).toBe(false);
+  });
 
-  it.each(["scene.gltf", "scene.glb.ts", "glb", ".glb", "models/.glb", "scene.glb.bak"])(
-    "rejects non-external-open path %s",
-    (path) => {
-      expect(isWorkspaceExternalOpenPath(path)).toBe(false);
-      expect(workspaceExternalOpenMimeType(path)).toBeNull();
-    },
-  );
+  it.each([
+    "scene.gltf",
+    "scene.glb.ts",
+    "glb",
+    ".glb",
+    "models/.glb",
+    "scene.glb.bak",
+    // Literal filenames keep their query-looking suffixes; not GLB files.
+    "model.glb?download=1",
+    "secrets.glb?x",
+  ])("rejects non-external-open path %s", (path) => {
+    expect(isWorkspaceExternalOpenPath(path)).toBe(false);
+    expect(workspaceExternalOpenMimeType(path)).toBeNull();
+  });
 });

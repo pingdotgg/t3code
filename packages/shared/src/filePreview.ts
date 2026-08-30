@@ -42,11 +42,11 @@ export function isWorkspacePreviewEntryPath(path: string): boolean {
 }
 
 /** The handoff MIME type for a path an external app can open, or null when the
-    path is not an external-open file. Hidden files whose whole name is an
-    extension (such as ".glb") stay excluded. */
+    path is not an external-open file. Matches the full workspace filename —
+    no query stripping, so a literal "model.glb?x" is not a GLB — and hidden
+    files whose whole name is an extension (such as ".glb") stay excluded. */
 export function workspaceExternalOpenMimeType(path: string): string | null {
-  const pathWithoutQuery = path.split(/[?#]/, 1)[0]?.toLowerCase() ?? "";
-  const baseName = pathWithoutQuery.split(/[\\/]/).at(-1) ?? "";
+  const baseName = path.toLowerCase().split(/[\\/]/).at(-1) ?? "";
   return (
     WORKSPACE_EXTERNAL_OPEN_FILE_TYPES.find(
       ({ extension }) => baseName.length > extension.length && baseName.endsWith(extension),

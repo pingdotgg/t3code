@@ -74,6 +74,7 @@ export function WorkspaceFileExternalOpen(props: {
         throw (error as { _tag?: string })._tag === "AssetPreviewTypeValidationError"
           ? new Error(
               "This environment's server doesn't support opening files in another app yet. Update its T3 server and retry.",
+              { cause: error },
             )
           : error;
       }

@@ -168,25 +168,40 @@ describe("createExternalOpenController", () => {
     expect(downloadHandoffFile).toHaveBeenCalledTimes(2);
   });
 
-  it("aborts the download and never launches after dispose", async () => {
-    let seenSignal: AbortSignal | null = null;
-    const { controller, launchViewer, open, statuses } = createHarness({
-      downloadHandoffFile: (_url, _fileName, signal) =>
-        new Promise((_, reject) => {
-          seenSignal = signal;
-          if (signal.aborted) {
-            reject(new Error("Aborted"));
-            return;
-          }
-          signal.addEventListener("abort", () => reject(new Error("Aborted")));
-        }),
+  it("never starts the download when disposed while the mint is pending", async () => {
+    let resolveUrl: (url: string) => void = () => {};
+    const { controller, downloadHandoffFile, launchViewer, open, statuses } = createHarness({
+      requestAssetUrl: () => new Promise((resolve) => (resolveUrl = resolve)),
     });
 
     const opening = open();
     controller.dispose();
+    resolveUrl("https://server/api/assets/tok/scene.glb");
     await opening;
 
-    expect(seenSignal).not.toBeNull();
+    expect(downloadHandoffFile).not.toHaveBeenCalled();
+    expect(launchViewer).not.toHaveBeenCalled();
+    expect(statuses).toEqual([{ _tag: "preparing" }]);
+  });
+
+  it("aborts an in-flight download and never launches after dispose", async () => {
+    let seenSignal: AbortSignal | null = null;
+    let started: () => void = () => {};
+    const downloadStarted = new Promise<void>((resolve) => (started = resolve));
+    const { controller, launchViewer, open, statuses } = createHarness({
+      downloadHandoffFile: (_url, _fileName, signal) =>
+        new Promise((_, reject) => {
+          seenSignal = signal;
+          signal.addEventListener("abort", () => reject(new Error("Aborted")));
+          started();
+        }),
+    });
+
+    const opening = open();
+    await downloadStarted;
+    controller.dispose();
+    await opening;
+
     expect(seenSignal!.aborted).toBe(true);
     expect(launchViewer).not.toHaveBeenCalled();
     // The screen is gone; the abort surfaces no error state.

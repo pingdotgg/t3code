@@ -149,6 +149,17 @@ describe("downloadHandoffFile", () => {
     expect(handoffFiles()).toHaveLength(0);
   });
 
+  it("refuses to start when the signal is already aborted", async () => {
+    const abort = new AbortController();
+    abort.abort();
+
+    await expect(
+      downloadHandoffFile("https://server/a", "scene.glb", abort.signal),
+    ).rejects.toThrow("The download was cancelled.");
+    expect(handoffFiles()).toHaveLength(0);
+    expect(fake.state.directories.size).toBe(0);
+  });
+
   it("propagates a caller abort unchanged so a disposed screen stays silent", async () => {
     const abort = new AbortController();
     fake.state.nextDownload = ({ signal }) =>

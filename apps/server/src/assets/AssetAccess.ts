@@ -118,6 +118,10 @@ const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 export type ResolvedAsset = {
   readonly kind: "file";
   readonly path: string;
+  /** Present on size-capped grants: the cap-checked size the route must bound
+      the stream to, so a file growing after this check cannot serve extra
+      bytes. */
+  readonly sizeBytes?: number;
   readonly download?: boolean;
   readonly fileName?: string;
   readonly mimeType?: string;
@@ -574,9 +578,14 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
         ),
         Effect.orElseSucceed(() => Option.none()),
       );
-      if (Option.isNone(info) || Number(info.value.size) > claims.maxSizeBytes) return null;
+      if (Option.isNone(info)) return null;
+      const sizeBytes = Number(info.value.size);
+      if (sizeBytes > claims.maxSizeBytes) return null;
+      const capped: ResolvedAsset = { kind: "file", path: exactWorkspaceFile, sizeBytes };
+      return capped;
     }
-    return { kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset;
+    const exact: ResolvedAsset = { kind: "file", path: exactWorkspaceFile };
+    return exact;
   }
   const segments = decodedPath.split(/[\\/]/);
   if (

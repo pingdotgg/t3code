@@ -104,11 +104,12 @@ export function createExternalOpenController(deps: {
 
       let handoff: { readonly contentUri: string };
       try {
-        handoff = await deps.downloadHandoffFile(
-          await requestAssetUrl(),
-          deps.fileName,
-          abort.signal,
-        );
+        const url = await requestAssetUrl();
+        // dispose() may have aborted while the mint was pending.
+        if (abort.signal.aborted) {
+          return;
+        }
+        handoff = await deps.downloadHandoffFile(url, deps.fileName, abort.signal);
       } catch (error) {
         if (!abort.signal.aborted) {
           setStatus({ _tag: "error", detail: errorDetail(error) });

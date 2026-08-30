@@ -64,7 +64,9 @@ export async function requestWorkspaceFileAssetUrl(input: {
   );
   if (result._tag !== "Success") {
     const error = squashAtomCommandFailure(result);
-    throw error instanceof Error ? error : new Error("The file could not be authorized.");
+    throw error instanceof Error
+      ? error
+      : new Error("The file could not be authorized.", { cause: error });
   }
   const url = resolveAssetUrl(input.httpBaseUrl, result.value.relativeUrl);
   if (url === null) {

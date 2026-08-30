@@ -214,9 +214,11 @@ describe("AssetAccess", () => {
       const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
       const token = suffix.slice(0, suffix.indexOf("/"));
 
+      // The cap-checked size rides along so the route bounds the stream to it.
       expect(yield* resolveAsset(token, "Robot.GLB")).toEqual({
         kind: "file",
         path: canonicalModelPath,
+        sizeBytes: 4,
       });
       // The token is an exact-file capability: siblings and traversal miss.
       expect(yield* resolveAsset(token, "other.glb")).toBeNull();

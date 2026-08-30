@@ -50,9 +50,17 @@ export async function downloadHandoffFile(
   fileName: string,
   signal: AbortSignal,
 ): Promise<{ contentUri: string }> {
+  const throwIfAborted = () => {
+    if (signal.aborted) {
+      throw new Error("The download was cancelled.");
+    }
+  };
+  throwIfAborted();
   stalePrune ??= Promise.resolve();
   await stalePrune;
   await deleteHandoffRoot();
+  // An abort while awaiting the prune must not start the download.
+  throwIfAborted();
   const { Directory, File } = await import("expo-file-system");
   const { uuidv4 } = await import("../../lib/uuid");
   // A unique subdirectory per handoff keeps the original basename (which the
