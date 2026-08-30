@@ -11,6 +11,7 @@ import {
   type ProjectReadFileResult,
   ThreadId,
 } from "@t3tools/contracts";
+import { workspaceExternalOpenMimeType } from "@t3tools/shared/filePreview";
 
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { SymbolView } from "../../components/AppSymbol";
@@ -46,9 +47,11 @@ import { SourceFileSurface } from "./SourceFileSurface";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
 import { WorkspaceFileImagePreview } from "./WorkspaceFileImagePreview";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
+import { WorkspaceFileExternalOpen } from "./WorkspaceFileExternalOpen";
 import {
   basename,
   isBrowserPreviewFile,
+  isExternalOpenFile,
   isImagePreviewFile,
   isMarkdownPreviewFile,
   isSvgImagePreviewFile,
@@ -489,6 +492,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const [previewRevision, setPreviewRevision] = useState(0);
   const isBrowserFile = relativePath !== null && isBrowserPreviewFile(relativePath);
   const isImageFile = relativePath !== null && isImagePreviewFile(relativePath);
+  // Android delegates these files to an installed viewer app; iOS keeps the
+  // existing source view until it gets its own share-sheet handoff.
+  const externalOpenMimeType =
+    relativePath !== null && isExternalOpenFile(relativePath, Platform.OS)
+      ? workspaceExternalOpenMimeType(relativePath)
+      : null;
+  const isExternalOpenOnlyFile = externalOpenMimeType !== null;
   const canPreview =
     relativePath !== null && (isMarkdownPreviewFile(relativePath) || isBrowserFile || isImageFile);
   const activeMode =
@@ -509,6 +519,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       : `${assetPreviewUri}${assetPreviewUri.includes("?") ? "&" : "?"}revision=${previewRevision}`;
   const needsFileContents =
     relativePath !== null &&
+    !isExternalOpenOnlyFile &&
     (resolvedActiveMode === "source" || isMarkdownPreviewFile(relativePath));
   const fileQuery = useEnvironmentQuery(
     environmentId !== null && cwd !== null && relativePath !== null && needsFileContents
@@ -756,16 +767,27 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
               ))}
           </NativeHeaderToolbar.Menu>
         </NativeHeaderToolbar>
-        <FileContent
-          activeMode={resolvedActiveMode}
-          previewUri={previewUri}
-          fileContents={fileData?.contents ?? null}
-          fileError={fileQuery.error}
-          initialLine={targetLine}
-          relativePath={relativePath}
-          truncated={fileData?.truncated ?? false}
-          onRefresh={() => fileQuery.refresh()}
-        />
+        {externalOpenMimeType !== null ? (
+          <WorkspaceFileExternalOpen
+            key={relativePath}
+            cwd={cwd}
+            environmentId={environmentId}
+            mimeType={externalOpenMimeType}
+            relativePath={relativePath}
+            threadId={threadId}
+          />
+        ) : (
+          <FileContent
+            activeMode={resolvedActiveMode}
+            previewUri={previewUri}
+            fileContents={fileData?.contents ?? null}
+            fileError={fileQuery.error}
+            initialLine={targetLine}
+            relativePath={relativePath}
+            truncated={fileData?.truncated ?? false}
+            onRefresh={() => fileQuery.refresh()}
+          />
+        )}
       </View>
     </ReviewHighlighterProvider>
   );

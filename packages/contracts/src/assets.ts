@@ -156,6 +156,19 @@ export class AssetPreviewTypeValidationError extends Schema.TaggedErrorClass<Ass
   }
 }
 
+export class AssetExternalOpenFileTooLargeError extends Schema.TaggedErrorClass<AssetExternalOpenFileTooLargeError>()(
+  "AssetExternalOpenFileTooLargeError",
+  {
+    resource: AssetResource,
+    sizeBytes: Schema.Number,
+    maxSizeBytes: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `The file is too large to open in another app (limit ${Math.floor(this.maxSizeBytes / (1024 * 1024))} MB).`;
+  }
+}
+
 export class AssetWorkspaceAssetInspectionError extends Schema.TaggedErrorClass<AssetWorkspaceAssetInspectionError>()(
   "AssetWorkspaceAssetInspectionError",
   {
@@ -255,6 +268,7 @@ export const AssetAccessError = Schema.Union([
   AssetWorkspaceRootNormalizationError,
   AssetWorkspacePathValidationError,
   AssetPreviewTypeValidationError,
+  AssetExternalOpenFileTooLargeError,
   AssetWorkspaceAssetInspectionError,
   AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceResolutionError,

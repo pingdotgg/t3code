@@ -1,5 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AssetPreviewTypeValidationError, ThreadId } from "@t3tools/contracts";
+import {
+  AssetExternalOpenFileTooLargeError,
+  AssetPreviewTypeValidationError,
+  ThreadId,
+} from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
@@ -181,6 +185,167 @@ describe("AssetAccess", () => {
       });
       expect(yield* resolveAsset(token, "other.png")).toBeNull();
       expect(yield* resolveAsset(token, "../icon.png")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("issues exact workspace URLs for external-open GLB files", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-glb-workspace-",
+      });
+      const modelsDirectory = path.join(root, "models");
+      const modelPath = path.join(modelsDirectory, "Robot.GLB");
+      const siblingPath = path.join(modelsDirectory, "other.glb");
+      yield* fileSystem.makeDirectory(modelsDirectory, { recursive: true });
+      yield* fileSystem.writeFile(modelPath, new Uint8Array([103, 108, 84, 70]));
+      yield* fileSystem.writeFile(siblingPath, new Uint8Array([103, 108, 84, 70]));
+      const canonicalModelPath = yield* fileSystem.realPath(modelPath);
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: modelPath,
+        },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+
+      expect(yield* resolveAsset(token, "Robot.GLB")).toEqual({
+        kind: "file",
+        path: canonicalModelPath,
+      });
+      // The token is an exact-file capability: siblings and traversal miss.
+      expect(yield* resolveAsset(token, "other.glb")).toBeNull();
+      expect(yield* resolveAsset(token, "../Robot.GLB")).toBeNull();
+      expect(yield* resolveAsset(token, "..%2FRobot.GLB")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects unsupported extensions and symlink escapes for external-open files", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-glb-reject-",
+      });
+      const outside = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-glb-outside-",
+      });
+      const gltfPath = path.join(root, "scene.gltf");
+      yield* fileSystem.writeFileString(gltfPath, "{}");
+      const outsideModelPath = path.join(outside, "secret.glb");
+      yield* fileSystem.writeFile(outsideModelPath, new Uint8Array([1]));
+      const linkPath = path.join(root, "link.glb");
+      yield* fileSystem.symlink(outsideModelPath, linkPath);
+
+      const gltfError = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: gltfPath,
+        },
+        workspaceRoot: root,
+      }).pipe(Effect.flip);
+      expect(gltfError).toBeInstanceOf(AssetPreviewTypeValidationError);
+
+      const symlinkError = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: linkPath,
+        },
+        workspaceRoot: root,
+      }).pipe(Effect.flip);
+      expect(symlinkError).toMatchObject({ _tag: "AssetWorkspaceAssetNotFoundError" });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects oversized external-open files at mint time", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-glb-size-",
+      });
+      const modelPath = path.join(root, "large.glb");
+      yield* fileSystem.writeFile(modelPath, new Uint8Array([1, 2, 3]));
+      const statedFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        stat: (statPath) =>
+          fileSystem
+            .stat(statPath)
+            .pipe(
+              Effect.map((info) =>
+                statPath.endsWith("large.glb")
+                  ? { ...info, size: FileSystem.Size(101 * 1024 * 1024) }
+                  : info,
+              ),
+            ),
+      });
+
+      const error = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: modelPath,
+        },
+        workspaceRoot: root,
+      }).pipe(Effect.provideService(FileSystem.FileSystem, statedFileSystem), Effect.flip);
+
+      expect(error).toBeInstanceOf(AssetExternalOpenFileTooLargeError);
+      expect(error).toMatchObject({
+        _tag: "AssetExternalOpenFileTooLargeError",
+        sizeBytes: 101 * 1024 * 1024,
+        maxSizeBytes: 100 * 1024 * 1024,
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("refuses an external-open token whose file grew past the cap after minting", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-glb-grow-",
+      });
+      const modelPath = path.join(root, "scene.glb");
+      yield* fileSystem.writeFile(modelPath, new Uint8Array([1, 2, 3]));
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: modelPath,
+        },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+
+      expect(yield* resolveAsset(token, "scene.glb")).not.toBeNull();
+
+      const grownFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        stat: (statPath) =>
+          fileSystem
+            .stat(statPath)
+            .pipe(
+              Effect.map((info) =>
+                statPath.endsWith("scene.glb")
+                  ? { ...info, size: FileSystem.Size(101 * 1024 * 1024) }
+                  : info,
+              ),
+            ),
+      });
+      expect(
+        yield* resolveAsset(token, "scene.glb").pipe(
+          Effect.provideService(FileSystem.FileSystem, grownFileSystem),
+        ),
+      ).toBeNull();
     }).pipe(Effect.provide(testLayer)),
   );
 

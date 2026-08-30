@@ -1,6 +1,7 @@
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
+  AssetExternalOpenFileTooLargeError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
@@ -14,9 +15,11 @@ import {
   AssetWorkspaceRootNormalizationError,
 } from "@t3tools/contracts";
 import {
+  isWorkspaceExternalOpenPath,
   isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
   WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
+  WORKSPACE_EXTERNAL_OPEN_MAX_BYTES,
   WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
 } from "@t3tools/shared/filePreview";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
@@ -74,6 +77,9 @@ const AssetClaimsSchema = Schema.Union([
     kind: Schema.Literal("workspace-file-exact"),
     workspaceRoot: Schema.String,
     relativePath: Schema.String,
+    /** Present on external-open grants: the mint-time size cap re-checked at
+        serve time so a file that grew past it is refused. */
+    maxSizeBytes: Schema.optionalKey(Schema.Number),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -240,7 +246,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
               }),
           ),
         );
-      if (!isWorkspacePreviewEntryPath(resolved.relativePath)) {
+      const isExternalOpenFile = isWorkspaceExternalOpenPath(resolved.relativePath);
+      if (!isWorkspacePreviewEntryPath(resolved.relativePath) && !isExternalOpenFile) {
         return yield* new AssetPreviewTypeValidationError({
           resource: input.resource,
         });
@@ -262,6 +269,27 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           resource: input.resource,
         });
       }
+      if (isExternalOpenFile) {
+        // The whole file is downloaded to the device before an external app
+        // gets it, so refuse oversized files at mint time.
+        const info = yield* fileSystem.stat(canonicalFile).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AssetWorkspaceAssetInspectionError({
+                resource: input.resource,
+                cause,
+              }),
+          ),
+        );
+        const sizeBytes = Number(info.size);
+        if (sizeBytes > WORKSPACE_EXTERNAL_OPEN_MAX_BYTES) {
+          return yield* new AssetExternalOpenFileTooLargeError({
+            resource: input.resource,
+            sizeBytes,
+            maxSizeBytes: WORKSPACE_EXTERNAL_OPEN_MAX_BYTES,
+          });
+        }
+      }
       const canonicalWorkspaceRoot = yield* fileSystem.realPath(workspaceRoot).pipe(
         Effect.mapError(
           (cause) =>
@@ -271,21 +299,23 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
-      claims = isWorkspaceImagePreviewPath(resolved.relativePath)
-        ? {
-            version: 1,
-            kind: "workspace-file-exact",
-            workspaceRoot: canonicalWorkspaceRoot,
-            relativePath: resolved.relativePath,
-            expiresAt,
-          }
-        : {
-            version: 1,
-            kind: "workspace-file",
-            workspaceRoot: canonicalWorkspaceRoot,
-            baseRelativePath: path.dirname(resolved.relativePath),
-            expiresAt,
-          };
+      claims =
+        isWorkspaceImagePreviewPath(resolved.relativePath) || isExternalOpenFile
+          ? {
+              version: 1,
+              kind: "workspace-file-exact",
+              workspaceRoot: canonicalWorkspaceRoot,
+              relativePath: resolved.relativePath,
+              ...(isExternalOpenFile ? { maxSizeBytes: WORKSPACE_EXTERNAL_OPEN_MAX_BYTES } : {}),
+              expiresAt,
+            }
+          : {
+              version: 1,
+              kind: "workspace-file",
+              workspaceRoot: canonicalWorkspaceRoot,
+              baseRelativePath: path.dirname(resolved.relativePath),
+              expiresAt,
+            };
       fileName = path.basename(resolved.relativePath);
       break;
     }
@@ -532,9 +562,21 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       workspaceRoot: claims.workspaceRoot,
       relativePath: claims.relativePath,
     });
-    return exactWorkspaceFile
-      ? ({ kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset)
-      : null;
+    if (!exactWorkspaceFile) return null;
+    if (claims.maxSizeBytes !== undefined) {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const info = yield* optionOnNotFound(fileSystem.stat(exactWorkspaceFile)).pipe(
+        Effect.tapError((cause) =>
+          Effect.logError("Failed to size-check an external-open asset.", {
+            path: exactWorkspaceFile,
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none()),
+      );
+      if (Option.isNone(info) || Number(info.value.size) > claims.maxSizeBytes) return null;
+    }
+    return { kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset;
   }
   const segments = decodedPath.split(/[\\/]/);
   if (

@@ -29,6 +29,10 @@ The root filesystem path for a project. In [the orchestration model][1], it is t
 
 A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Git operations live behind the VCS driver contract in `apps/server/src/vcs/VcsDriver.ts`, implemented by [GitVcsDriverCore.ts][3].
 
+#### External-open file
+
+A workspace file T3 never renders itself and instead hands to an installed app on the user's device — today only `.glb` on Android, via `ACTION_VIEW` on a `content://` URI. The extension→MIME registry lives in `packages/shared/src/filePreview.ts`; the server mints a size-capped exact-file asset token for these, and the mobile client downloads the file into an ephemeral cache handoff area (at most one at a time) before launching the viewer. Opening this way requires a native module (`expo-intent-launcher`), so it ships with dev-client/store builds, not over-the-air updates.
+
 ### Thread timeline
 
 #### Thread

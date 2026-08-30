@@ -11,6 +11,19 @@ export const WORKSPACE_IMAGE_PREVIEW_EXTENSIONS = [
   ".webp",
 ] as const;
 
+/** Files T3 cannot render itself but can download and hand to an external
+    viewer app. Keyed by extension; the value is the MIME type sent with the
+    handoff intent. Extend deliberately: every entry becomes downloadable
+    through an exact-file asset token. */
+export const WORKSPACE_EXTERNAL_OPEN_FILE_TYPES = [
+  { extension: ".glb", mimeType: "model/gltf-binary" },
+] as const;
+
+/** External-open files download whole to the device. The server refuses to
+    mint or serve past this cap and the client aborts a download that crosses
+    it, so a lying Content-Length cannot fill the device cache. */
+export const WORKSPACE_EXTERNAL_OPEN_MAX_BYTES = 100 * 1024 * 1024;
+
 function hasPreviewExtension(path: string, extensions: ReadonlyArray<string>): boolean {
   const pathWithoutQuery = path.split(/[?#]/, 1)[0]?.toLowerCase() ?? "";
   return extensions.some((extension) => pathWithoutQuery.endsWith(extension));
@@ -26,4 +39,21 @@ export function isWorkspaceImagePreviewPath(path: string): boolean {
 
 export function isWorkspacePreviewEntryPath(path: string): boolean {
   return isWorkspaceBrowserPreviewPath(path) || isWorkspaceImagePreviewPath(path);
+}
+
+/** The handoff MIME type for a path an external app can open, or null when the
+    path is not an external-open file. Hidden files whose whole name is an
+    extension (such as ".glb") stay excluded. */
+export function workspaceExternalOpenMimeType(path: string): string | null {
+  const pathWithoutQuery = path.split(/[?#]/, 1)[0]?.toLowerCase() ?? "";
+  const baseName = pathWithoutQuery.split(/[\\/]/).at(-1) ?? "";
+  return (
+    WORKSPACE_EXTERNAL_OPEN_FILE_TYPES.find(
+      ({ extension }) => baseName.length > extension.length && baseName.endsWith(extension),
+    )?.mimeType ?? null
+  );
+}
+
+export function isWorkspaceExternalOpenPath(path: string): boolean {
+  return workspaceExternalOpenMimeType(path) !== null;
 }
