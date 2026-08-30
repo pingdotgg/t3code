@@ -105,6 +105,7 @@ interface GitActionsControlProps {
 }
 
 interface PendingDefaultBranchAction {
+  open: boolean;
   action: DefaultBranchConfirmableAction;
   branchName: string;
   includesCommit: boolean;
@@ -538,11 +539,8 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const handleOpenChange = useCallback(
     (open: boolean) => {
       props.onOpenChange(open);
-      if (!open) {
-        resetState();
-      }
     },
-    [props, resetState],
+    [props.onOpenChange],
   );
 
   const openSourceControlSettings = useCallback(() => {
@@ -551,7 +549,13 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   }, [handleOpenChange, navigate]);
 
   return (
-    <Dialog open={props.open} onOpenChange={handleOpenChange}>
+    <Dialog
+      open={props.open}
+      onOpenChange={handleOpenChange}
+      onOpenChangeComplete={(open) => {
+        if (!open) resetState();
+      }}
+    >
       <DialogPopup className="max-w-xl overflow-hidden">
         <div className="flex min-h-0 flex-col overflow-hidden border-foreground/10 bg-transparent">
           <DialogHeader className="border-b border-border/70 bg-foreground/[0.025] dark:border-transparent dark:bg-transparent">
@@ -1293,6 +1297,7 @@ export default function GitActionsControl({
           return;
         }
         setPendingDefaultBranchAction({
+          open: true,
           action,
           branchName: actionBranch,
           includesCommit,
@@ -1496,9 +1501,9 @@ export default function GitActionsControl({
   );
 
   const continuePendingDefaultBranchAction = () => {
-    if (!pendingDefaultBranchAction) return;
+    if (!pendingDefaultBranchAction?.open) return;
     const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
-    setPendingDefaultBranchAction(null);
+    setPendingDefaultBranchAction({ ...pendingDefaultBranchAction, open: false });
     void runGitActionWithToast({
       action,
       ...(commitMessage ? { commitMessage } : {}),
@@ -1509,9 +1514,9 @@ export default function GitActionsControl({
   };
 
   const checkoutFeatureBranchAndContinuePendingAction = () => {
-    if (!pendingDefaultBranchAction) return;
+    if (!pendingDefaultBranchAction?.open) return;
     const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
-    setPendingDefaultBranchAction(null);
+    setPendingDefaultBranchAction({ ...pendingDefaultBranchAction, open: false });
     void runGitActionWithToast({
       action,
       ...(commitMessage ? { commitMessage } : {}),
@@ -1527,9 +1532,6 @@ export default function GitActionsControl({
     const commitMessage = dialogCommitMessage.trim();
 
     setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
 
     void runGitActionWithToast({
       action: "commit",
@@ -1626,9 +1628,6 @@ export default function GitActionsControl({
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
     setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
     void runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
@@ -1835,13 +1834,12 @@ export default function GitActionsControl({
 
       <Dialog
         open={isCommitDialogOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            setIsCommitDialogOpen(false);
-            setDialogCommitMessage("");
-            setExcludedFiles(new Set());
-            setIsEditingFiles(false);
-          }
+        onOpenChange={setIsCommitDialogOpen}
+        onOpenChangeComplete={(open) => {
+          if (open) return;
+          setDialogCommitMessage("");
+          setExcludedFiles(new Set());
+          setIsEditingFiles(false);
         }}
       >
         <DialogPopup>
@@ -1972,16 +1970,7 @@ export default function GitActionsControl({
             </div>
           </DialogPanel>
           <DialogFooter variant="bare">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setIsCommitDialogOpen(false);
-                setDialogCommitMessage("");
-                setExcludedFiles(new Set());
-                setIsEditingFiles(false);
-              }}
-            >
+            <Button variant="outline" size="sm" onClick={() => setIsCommitDialogOpen(false)}>
               Cancel
             </Button>
             <Button
@@ -2007,11 +1996,14 @@ export default function GitActionsControl({
       />
 
       <Dialog
-        open={pendingDefaultBranchAction !== null}
+        open={pendingDefaultBranchAction?.open ?? false}
         onOpenChange={(open) => {
-          if (!open) {
-            setPendingDefaultBranchAction(null);
+          if (!open && pendingDefaultBranchAction) {
+            setPendingDefaultBranchAction({ ...pendingDefaultBranchAction, open: false });
           }
+        }}
+        onOpenChangeComplete={(open) => {
+          if (!open) setPendingDefaultBranchAction(null);
         }}
       >
         <DialogPopup className="max-w-xl">
@@ -2026,7 +2018,11 @@ export default function GitActionsControl({
               className="w-full sm:mr-auto sm:w-auto"
               variant="outline"
               size="sm"
-              onClick={() => setPendingDefaultBranchAction(null)}
+              onClick={() => {
+                if (pendingDefaultBranchAction) {
+                  setPendingDefaultBranchAction({ ...pendingDefaultBranchAction, open: false });
+                }
+              }}
             >
               Abort
             </Button>

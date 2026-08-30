@@ -229,7 +229,20 @@ export function AddProviderInstanceDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      onOpenChangeComplete={(nextOpen) => {
+        if (nextOpen) return;
+        setWizardStep(0);
+        setDriver(DEFAULT_DRIVER_KIND);
+        setLabel("");
+        setAccentColor("");
+        setInstanceIdOverride(null);
+        setConfigByDriver({});
+        setHasAttemptedSubmit(false);
+      }}
+    >
       <DialogPopup className="max-w-xl overflow-hidden">
         <div className="flex min-h-0 flex-col overflow-hidden">
           <DialogHeader>

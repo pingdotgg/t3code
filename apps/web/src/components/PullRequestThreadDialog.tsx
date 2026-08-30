@@ -33,6 +33,7 @@ interface PullRequestThreadDialogProps {
   cwd: string | null;
   initialReference: string | null;
   onOpenChange: (open: boolean) => void;
+  onOpenChangeComplete: (open: boolean) => void;
   onPrepared: (input: { branch: string; worktreePath: string | null }) => Promise<void> | void;
 }
 
@@ -43,6 +44,7 @@ export function PullRequestThreadDialog({
   cwd,
   initialReference,
   onOpenChange,
+  onOpenChangeComplete,
   onPrepared,
 }: PullRequestThreadDialogProps) {
   const referenceInputRef = useRef<HTMLInputElement>(null);
@@ -193,6 +195,7 @@ export function PullRequestThreadDialog({
           onOpenChange(nextOpen);
         }
       }}
+      onOpenChangeComplete={onOpenChangeComplete}
     >
       <DialogPopup className="max-w-xl">
         <DialogHeader>

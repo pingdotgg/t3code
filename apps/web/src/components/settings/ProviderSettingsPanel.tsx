@@ -981,14 +981,12 @@ export function EnvironmentProviderSettings({
         </div>
       </SettingsSection>
 
-      {isAddInstanceDialogOpen ? (
-        <AddProviderInstanceDialog
-          open
-          environmentId={environmentId}
-          environmentLabel={environmentLabel}
-          onOpenChange={setIsAddInstanceDialogOpen}
-        />
-      ) : null}
+      <AddProviderInstanceDialog
+        open={isAddInstanceDialogOpen}
+        environmentId={environmentId}
+        environmentLabel={environmentLabel}
+        onOpenChange={setIsAddInstanceDialogOpen}
+      />
     </>
   );
 }
