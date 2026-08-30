@@ -63,6 +63,7 @@ import {
   OrchestrationV2EventSinkLayerLive,
   OrchestrationV2LayerLive,
 } from "../orchestration-v2/runtimeLayer.ts";
+import { worktreeRepairDependenciesTestLayer } from "../orchestration-v2/ProviderTurnStartService.testkit.ts";
 import { checkpointWorkspace } from "../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
 import * as CheckpointMcp from "./CheckpointMcpService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
@@ -205,6 +206,7 @@ function makeIntegrationLayer(input: {
     Layer.provide(ServerConfigLayer),
     Layer.provide(ServerSettingsService.layerTest()),
     Layer.provide(providerRegistry),
+    Layer.provide(worktreeRepairDependenciesTestLayer),
     Layer.provide(NodeServices.layer),
   );
   const runtimeWithDispatchLock = Layer.merge(runtime, threadDispatchLockLayer);
