@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const AbsolutePath = TrimmedNonEmptyString.check(
   // Absolute POSIX (/...), Windows drive (C:\\ or C:/), or UNC (\\\\host).

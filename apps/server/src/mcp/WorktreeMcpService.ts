@@ -191,9 +191,14 @@ const make = Effect.gen(function* () {
   const loadProjectThreads = (
     projectId: ProjectId,
   ): Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, WorktreeMcpFailure> =>
-    threadManagement
-      .listProjectThreads({ projectId, includeSubagents: true })
-      .pipe(asOperationFailed(`Unable to list threads in project ${projectId}`));
+    threadManagement.getShellSnapshot().pipe(
+      Effect.map((snapshot) =>
+        [...snapshot.threads, ...snapshot.archivedThreads].filter(
+          (thread) => thread.projectId === projectId,
+        ),
+      ),
+      asOperationFailed(`Unable to list threads in project ${projectId}`),
+    );
 
   const readWorkspaceStatus = (workspacePath: string) =>
     gitWorkflow
@@ -220,10 +225,10 @@ const make = Effect.gen(function* () {
   const loadActiveWorkspaceBindings = Effect.fn("WorktreeMcpService.loadActiveWorkspaceBindings")(
     function* (repositoryCommonDir: string) {
       const snapshot = yield* threadManagement
-        .getShellSnapshot({ location: "active" })
-        .pipe(asOperationFailed("Unable to inspect active thread workspace bindings"));
+        .getShellSnapshot()
+        .pipe(asOperationFailed("Unable to inspect thread workspace bindings"));
       const byProject = new Map<ProjectId, Array<OrchestrationV2ThreadShell>>();
-      for (const thread of snapshot.threads) {
+      for (const thread of [...snapshot.threads, ...snapshot.archivedThreads]) {
         const projectThreads = byProject.get(thread.projectId) ?? [];
         projectThreads.push(thread);
         byProject.set(thread.projectId, projectThreads);
@@ -736,28 +741,43 @@ const make = Effect.gen(function* () {
       const project = yield* loadProject(scope, projection.thread.projectId);
       const projectWorkspaceRoot = yield* canonicalizePath(project.workspaceRoot);
       const workspacePath = normalizePath(projection.thread.worktreePath ?? projectWorkspaceRoot);
-      const [defaultStartFromOrigin, actual, projectInventory, workspaceInventory] =
-        yield* Effect.all(
-          [
-            readDefaultStartFromOrigin,
-            readWorkspaceStatus(workspacePath),
-            loadWorktrees(projectWorkspaceRoot),
-            loadWorktrees(workspacePath),
-          ],
-          { concurrency: 4 },
-        );
+      const [
+        defaultStartFromOrigin,
+        actual,
+        projectInventory,
+        workspaceInventory,
+        workspaceExists,
+      ] = yield* Effect.all(
+        [
+          readDefaultStartFromOrigin,
+          readWorkspaceStatus(workspacePath),
+          Effect.option(loadWorktrees(projectWorkspaceRoot)),
+          Effect.option(loadWorktrees(workspacePath)),
+          fileSystem.exists(workspacePath).pipe(Effect.orElseSucceed(() => false)),
+        ],
+        { concurrency: 5 },
+      );
       const canonicalWorkspacePath = yield* canonicalizePath(workspacePath);
-      const physicalWorkspacePath = workspaceInventory.currentWorktreeRoot;
+      const physicalWorkspacePath = Option.isSome(workspaceInventory)
+        ? workspaceInventory.value.currentWorktreeRoot
+        : null;
       const agreement =
-        workspaceInventory.repositoryCommonDir !== projectInventory.repositoryCommonDir ||
-        physicalWorkspacePath === null ||
-        !projectInventory.worktrees.some((worktree) => worktree.path === physicalWorkspacePath)
+        !actual.isRepo && !workspaceExists && Option.isNone(workspaceInventory)
           ? "workspace_missing"
           : !actual.isRepo
             ? "not_repository"
-            : actual.refName !== projection.thread.branch
-              ? "branch_mismatch"
-              : "in_sync";
+            : Option.isNone(projectInventory) || Option.isNone(workspaceInventory)
+              ? "workspace_missing"
+              : workspaceInventory.value.repositoryCommonDir !==
+                    projectInventory.value.repositoryCommonDir ||
+                  physicalWorkspacePath === null ||
+                  !projectInventory.value.worktrees.some(
+                    (worktree) => worktree.path === physicalWorkspacePath,
+                  )
+                ? "workspace_missing"
+                : actual.refName !== projection.thread.branch
+                  ? "branch_mismatch"
+                  : "in_sync";
 
       const result: WorktreeMcpStatusResult = {
         attached: projection.thread.worktreePath !== null,
@@ -1210,11 +1230,19 @@ const make = Effect.gen(function* () {
       requestedBranch !== undefined &&
       (createBranch || selectedRef?.isRemote === true || targetBefore.refName !== requestedBranch);
     const threadWorkspaces = yield* Effect.forEach(threads, (thread) =>
-      threadWorkspacePath(
-        thread,
-        projectWorktreeRoot,
-        inventory.worktrees.map((worktree) => worktree.path),
-      ).pipe(Effect.map((workspacePath) => [thread, workspacePath] as const)),
+      Effect.gen(function* () {
+        const recordedPath = yield* threadWorkspacePath(thread, projectWorktreeRoot);
+        const recordedInventory = yield* loadWorkspaceBindingInventory(recordedPath);
+        const workspacePath = Option.match(recordedInventory, {
+          onNone: () => recordedPath,
+          onSome: (candidateInventory) =>
+            candidateInventory.repositoryCommonDir === inventory.repositoryCommonDir &&
+            candidateInventory.currentWorktreeRoot !== null
+              ? candidateInventory.currentWorktreeRoot
+              : recordedPath,
+        });
+        return [thread, workspacePath] as const;
+      }),
     );
     const otherBindings = threadWorkspaces
       .filter(

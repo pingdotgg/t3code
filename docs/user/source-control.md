@@ -73,8 +73,12 @@ uses the project's instructions and recent commit subjects.
 ### Let an agent change its checkout
 
 Agents running through T3 Code can inspect the checkout recorded on their thread and compare it
-with Git's actual branch. They can also list the project root and existing worktrees, including
-dirty state and other threads using each checkout.
+with Git's actual branch. They can also list the project root and Git-registered worktrees,
+including detached checkouts, dirty state, and the durable branch and worktree path recorded for
+other threads using each checkout. Git resolves symlinked checkout paths through the repository's
+real common-directory and physical-worktree identity, including when a project opens in a nested
+folder. Worktree results are paginated, and missing or unreadable checkouts are reported without
+hiding the rest.
 
 An agent can move its current thread to an existing branch, return to the project root, reuse an
 unclaimed worktree, or create a new worktree. T3 Code performs the Git operation before it updates

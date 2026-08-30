@@ -9,11 +9,13 @@ import {
   type Project,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   WorktreeMcpHandoffInput,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -80,6 +82,51 @@ const makeProjection = (overrides: ThreadFixture = {}): OrchestrationV2ThreadPro
     },
   }) as OrchestrationV2ThreadProjection;
 
+const shellFixture = (
+  overrides: Partial<OrchestrationV2ThreadShell>,
+): OrchestrationV2ThreadShell => {
+  const timestamp = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+  return {
+    createdBy: "user",
+    creationSource: "web",
+    id: threadId,
+    projectId,
+    title: "Worktree test thread",
+    providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "test-model",
+    },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    lineage: {
+      parentThreadId: null,
+      relationshipToParent: null,
+      rootThreadId: threadId,
+    },
+    forkedFrom: null,
+    activeProviderThreadId: null,
+    latestRunId: null,
+    activeRunId: null,
+    status: "idle",
+    pendingRuntimeRequest: null,
+    latestVisibleMessage: null,
+    latestUserMessageAt: null,
+    hasActionableProposedPlan: false,
+    itemCount: 0,
+    visibleItemCount: 0,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    deletedAt: null,
+    ...overrides,
+  };
+};
+
 const project: Project = {
   id: projectId,
   title: "Worktree test project",
@@ -137,6 +184,19 @@ interface HarnessOptions {
     readonly path: string;
     readonly refName: string | null;
   }>;
+  readonly worktreeInventories?: Readonly<
+    Record<
+      string,
+      {
+        readonly repositoryCommonDir: string;
+        readonly currentWorktreeRoot: string | null;
+        readonly worktrees: ReadonlyArray<{
+          readonly path: string;
+          readonly refName: string | null;
+        }>;
+      }
+    >
+  >;
   readonly projectWorktreeRoot?: string;
   readonly workspaceAliases?: Readonly<Record<string, string>>;
   readonly projectWorkspaceRoot?: string;
@@ -346,46 +406,58 @@ const makeHarness = (options: HarnessOptions = {}) => {
         worktreePath: thread?.worktreePath ?? null,
       },
     ]
-  ).map(
-    (item) =>
-      ({
-        id: item.id,
-        projectId,
-        title: item.title,
-        branch: item.branch,
-        worktreePath: item.worktreePath,
-        status: item.status ?? "idle",
-        activeRunId: item.active === true ? "run-active" : null,
-        lineage: { relationshipToParent: "none" },
-      }) as unknown as OrchestrationV2ThreadShell,
+  ).map((item) =>
+    shellFixture({
+      id: item.id,
+      projectId,
+      title: item.title,
+      branch: item.branch,
+      worktreePath: item.worktreePath,
+      status: item.status ?? (item.active === true ? "running" : "idle"),
+      activeRunId: item.active === true ? RunId.make("run-active") : null,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: item.id,
+      },
+    }),
   );
   if (options.otherProjectThread !== undefined) {
-    projectThreadShells.push({
-      ...(projectThreadShells[0] ?? makeProjection({}).thread),
-      id: options.otherProjectThread.id,
-      projectId: options.otherProjectThread.projectId,
-      title: options.otherProjectThread.title,
-      branch: options.otherProjectThread.branch,
-      worktreePath: options.otherProjectThread.worktreePath,
-      activeRunId: options.otherProjectThread.active === true ? "run-active" : null,
-      lineage: { relationshipToParent: "none" },
-    } as unknown as OrchestrationV2ThreadShell);
+    projectThreadShells.push(
+      shellFixture({
+        id: options.otherProjectThread.id,
+        projectId: options.otherProjectThread.projectId,
+        title: options.otherProjectThread.title,
+        branch: options.otherProjectThread.branch,
+        worktreePath: options.otherProjectThread.worktreePath,
+        activeRunId: options.otherProjectThread.active === true ? RunId.make("run-active") : null,
+        status: options.otherProjectThread.active === true ? "running" : "idle",
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: options.otherProjectThread.id,
+        },
+      }),
+    );
   }
   const archivedThreadShells =
     options.archivedProjectThread === undefined
       ? []
       : [
-          {
-            ...(projectThreadShells[0] ?? makeProjection({}).thread),
+          shellFixture({
             id: options.archivedProjectThread.id,
             projectId,
             title: options.archivedProjectThread.title,
             branch: options.archivedProjectThread.branch,
             worktreePath: options.archivedProjectThread.worktreePath,
             activeRunId: null,
-            archivedAt: "2026-01-02T00:00:00.000Z",
-            lineage: { relationshipToParent: "none" },
-          } as unknown as OrchestrationV2ThreadShell,
+            archivedAt: DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: options.archivedProjectThread.id,
+            },
+          }),
         ];
   const listProjectThreads = vi.fn((input: { readonly projectId: ProjectId }) =>
     Effect.succeed(projectThreadShells.filter((item) => item.projectId === input.projectId)),
@@ -495,14 +567,16 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const listWorktrees = vi.fn((cwd: string) =>
     options.worktreeInventoryFailsFor?.has(cwd) === true
       ? (Effect.fail("simulated worktree inventory failure") as never)
-      : Effect.succeed({
-          repositoryCommonDir: "/repo/.git",
-          currentWorktreeRoot:
-            options.workspaceAliases?.[cwd] ??
-            listedWorktrees.find((worktree) => worktree.path === cwd)?.path ??
-            (cwd === workspaceRoot ? projectWorktreeRoot : cwd),
-          worktrees: listedWorktrees,
-        }),
+      : Effect.succeed(
+          options.worktreeInventories?.[cwd] ?? {
+            repositoryCommonDir: "/repo/.git",
+            currentWorktreeRoot:
+              options.workspaceAliases?.[cwd] ??
+              listedWorktrees.find((worktree) => worktree.path === cwd)?.path ??
+              (cwd.startsWith(`${projectWorktreeRoot}/`) ? projectWorktreeRoot : cwd),
+            worktrees: listedWorktrees,
+          },
+        ),
   );
   let localStatusCallCount = 0;
   const localStatus = vi.fn((input: { readonly cwd: string }) => {
@@ -1757,6 +1831,99 @@ describe("t3_worktree_list", () => {
       const result = yield* runList(harness, { bindingLimit: 1 });
       expect(result.worktrees[0]?.bindingCount).toBe(3);
       expect(result.worktrees[0]?.bindings).toHaveLength(1);
+    });
+  });
+
+  it.effect("includes archived thread bindings retained on a physical checkout", () => {
+    const archivedThreadId = ThreadId.make("thread-archived-list-owner");
+    const harness = makeHarness({
+      worktrees: [{ path: workspaceRoot, refName: "dev" }],
+      archivedProjectThread: {
+        id: archivedThreadId,
+        title: "Archived checkout owner",
+        branch: "dev",
+        worktreePath: workspaceRoot,
+      },
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness, { limit: 1 });
+
+      expect(result.worktrees[0]).toMatchObject({
+        path: workspaceRoot,
+        bindingCount: 2,
+        bindings: expect.arrayContaining([
+          expect.objectContaining({
+            threadId: archivedThreadId,
+            recordedWorktreePath: workspaceRoot,
+            active: false,
+          }),
+        ]),
+      });
+    });
+  });
+
+  it.effect("attributes a nested recorded cwd to its physical worktree root", () => {
+    const nestedPath = `${workspaceRoot}/packages/app`;
+    const harness = makeHarness({
+      worktrees: [{ path: workspaceRoot, refName: "dev" }],
+      projectThreads: [
+        {
+          id: threadId,
+          title: "Nested caller",
+          branch: "dev",
+          worktreePath: nestedPath,
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness, { limit: 1 });
+
+      expect(result.worktrees[0]).toMatchObject({
+        path: workspaceRoot,
+        bindingCount: 1,
+        bindings: [
+          {
+            threadId,
+            recordedWorktreePath: nestedPath,
+            callingThread: true,
+          },
+        ],
+      });
+      expect(harness.localStatus).toHaveBeenCalledTimes(1);
+      expect(harness.listWorktrees).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it.effect("does not attribute a nested independent repository to the project worktree", () => {
+    const nestedPath = `${workspaceRoot}/vendor/independent`;
+    const harness = makeHarness({
+      worktrees: [{ path: workspaceRoot, refName: "dev" }],
+      projectThreads: [
+        {
+          id: threadId,
+          title: "Nested independent repository",
+          branch: "main",
+          worktreePath: nestedPath,
+        },
+      ],
+      worktreeInventories: {
+        [nestedPath]: {
+          repositoryCommonDir: `${nestedPath}/.git`,
+          currentWorktreeRoot: nestedPath,
+          worktrees: [{ path: nestedPath, refName: "main" }],
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness, { limit: 1 });
+
+      expect(result.worktrees[0]).toMatchObject({
+        path: workspaceRoot,
+        bindingCount: 0,
+        bindings: [],
+      });
+      expect(harness.localStatus).toHaveBeenCalledTimes(1);
+      expect(harness.listWorktrees).toHaveBeenCalledTimes(2);
     });
   });
 });
