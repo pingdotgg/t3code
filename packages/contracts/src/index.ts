@@ -3,6 +3,7 @@ export * from "./assistantCitations.ts";
 export * from "./background.ts";
 export * from "./auth.ts";
 export * from "./environment.ts";
+export * from "./environmentMcp.ts";
 export * from "./environmentHttp.ts";
 export * from "./relayClient.ts";
 export * from "./desktopBootstrap.ts";
