@@ -28,7 +28,7 @@ import {
   ThreadManagementService,
 } from "../orchestration-v2/ThreadManagementService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
-import { layer, PendingRequestMcpService } from "./PendingRequestMcpService.ts";
+import * as PendingRequestMcpService from "./PendingRequestMcpService.ts";
 
 const parentThreadId = ThreadId.make("thread:pending-request-parent");
 const childThreadId = ThreadId.make("thread:pending-request-child");
@@ -225,7 +225,7 @@ function serviceLayer(input: {
   readonly getReceipt?: ThreadManagementService["Service"]["getCommandReceipt"];
   readonly dispatch?: ThreadManagementService["Service"]["dispatch"];
 }) {
-  return layer.pipe(
+  return PendingRequestMcpService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         NodeServices.layer,
@@ -254,7 +254,7 @@ describe("PendingRequestMcpService", () => {
     "lists and reads only structured user-input questions on direct app-owned children",
     () =>
       Effect.gen(function* () {
-        const service = yield* PendingRequestMcpService;
+        const service = yield* PendingRequestMcpService.PendingRequestMcpService;
         const listed = yield* service.list(scope, {});
         assert.equal(listed.requests.length, 1);
         assert.equal(listed.requests[0]?.taskId, taskId);
@@ -296,7 +296,7 @@ describe("PendingRequestMcpService", () => {
       });
 
       yield* Effect.gen(function* () {
-        const service = yield* PendingRequestMcpService;
+        const service = yield* PendingRequestMcpService.PendingRequestMcpService;
         const first = yield* service.list(scope, { limit: 1 });
         assert.deepEqual(
           first.requests.map((request) => request.requestId),
@@ -356,7 +356,7 @@ describe("PendingRequestMcpService", () => {
       );
 
       yield* Effect.gen(function* () {
-        const service = yield* PendingRequestMcpService;
+        const service = yield* PendingRequestMcpService.PendingRequestMcpService;
         const first = yield* service.list(scope, { limit: 50 });
         assert.deepEqual(first.requests, []);
         assert.isNotNull(first.nextCursor);
@@ -407,7 +407,7 @@ describe("PendingRequestMcpService", () => {
       });
 
       yield* Effect.gen(function* () {
-        const service = yield* PendingRequestMcpService;
+        const service = yield* PendingRequestMcpService.PendingRequestMcpService;
         const listed = yield* service.list(scope, {});
         assert.deepEqual(
           listed.requests.map((request) => request.requestId),
@@ -432,7 +432,7 @@ describe("PendingRequestMcpService", () => {
       );
 
       yield* Effect.gen(function* () {
-        const service = yield* PendingRequestMcpService;
+        const service = yield* PendingRequestMcpService.PendingRequestMcpService;
         const failed = yield* service.list(scope, {}).pipe(Effect.flip);
         assert.equal(failed.code, "orchestration_error");
         assert.notInclude(failed.message, "sqlite credentials leaked");
@@ -466,7 +466,7 @@ describe("PendingRequestMcpService", () => {
     });
 
     return Effect.gen(function* () {
-      const service = yield* PendingRequestMcpService;
+      const service = yield* PendingRequestMcpService.PendingRequestMcpService;
       const read = yield* service.read(scope, { childThreadId, requestId });
       assert.equal(read.questionPayloadStatus, "complete");
       assert.isTrue(read.answerable);
@@ -488,7 +488,7 @@ describe("PendingRequestMcpService", () => {
     });
 
     return Effect.gen(function* () {
-      const service = yield* PendingRequestMcpService;
+      const service = yield* PendingRequestMcpService.PendingRequestMcpService;
       const read = yield* service.read(scope, { childThreadId, requestId });
       assert.equal(read.questionPayloadStatus, "too_large");
       assert.equal(read.questionCount, 1);
@@ -524,7 +524,7 @@ describe("PendingRequestMcpService", () => {
     });
 
     return Effect.gen(function* () {
-      const service = yield* PendingRequestMcpService;
+      const service = yield* PendingRequestMcpService.PendingRequestMcpService;
       const read = yield* service.read(scope, { childThreadId, requestId });
       assert.equal(read.questionPayloadStatus, "invalid");
       assert.equal(read.questionCount, 2);
@@ -547,7 +547,7 @@ describe("PendingRequestMcpService", () => {
 
   it.effect("keeps projection defects out of MCP failure messages", () =>
     Effect.gen(function* () {
-      const service = yield* PendingRequestMcpService;
+      const service = yield* PendingRequestMcpService.PendingRequestMcpService;
       const failure = yield* service.list(scope, {}).pipe(Effect.flip);
       assert.equal(failure.code, "orchestration_error");
       assert.equal(
@@ -573,7 +573,7 @@ describe("PendingRequestMcpService", () => {
 
   it.effect("rejects provider-native children and non-user-input request kinds", () =>
     Effect.gen(function* () {
-      const providerOwnedService = yield* PendingRequestMcpService;
+      const providerOwnedService = yield* PendingRequestMcpService.PendingRequestMcpService;
       const wrongChild = yield* providerOwnedService
         .read(scope, { childThreadId, requestId })
         .pipe(Effect.flip);
@@ -587,7 +587,7 @@ describe("PendingRequestMcpService", () => {
       ),
       Effect.andThen(
         Effect.gen(function* () {
-          const service = yield* PendingRequestMcpService;
+          const service = yield* PendingRequestMcpService.PendingRequestMcpService;
           const wrongKind = yield* service
             .read(scope, { childThreadId, requestId })
             .pipe(Effect.flip);
@@ -634,7 +634,7 @@ describe("PendingRequestMcpService", () => {
       });
 
       yield* Effect.gen(function* () {
-        const service = yield* PendingRequestMcpService;
+        const service = yield* PendingRequestMcpService.PendingRequestMcpService;
         const input = {
           childThreadId,
           requestId,
@@ -673,7 +673,7 @@ describe("PendingRequestMcpService", () => {
       };
 
       yield* Effect.gen(function* () {
-        const service = yield* PendingRequestMcpService;
+        const service = yield* PendingRequestMcpService.PendingRequestMcpService;
         const replay = yield* service.respond(scope, {
           childThreadId,
           requestId,
@@ -699,7 +699,7 @@ describe("PendingRequestMcpService", () => {
 
   it.effect("rejects incomplete answers, stale requests, and ended provider sessions", () =>
     Effect.gen(function* () {
-      const service = yield* PendingRequestMcpService;
+      const service = yield* PendingRequestMcpService.PendingRequestMcpService;
       const invalid = yield* service
         .respond(scope, {
           childThreadId,
@@ -713,7 +713,7 @@ describe("PendingRequestMcpService", () => {
       Effect.provide(serviceLayer({ getChild: () => childProjection() })),
       Effect.andThen(
         Effect.gen(function* () {
-          const service = yield* PendingRequestMcpService;
+          const service = yield* PendingRequestMcpService.PendingRequestMcpService;
           const stale = yield* service
             .respond(scope, {
               childThreadId,
@@ -729,7 +729,7 @@ describe("PendingRequestMcpService", () => {
       ),
       Effect.andThen(
         Effect.gen(function* () {
-          const service = yield* PendingRequestMcpService;
+          const service = yield* PendingRequestMcpService.PendingRequestMcpService;
           const unavailable = yield* service
             .respond(scope, {
               childThreadId,
@@ -759,7 +759,7 @@ describe("PendingRequestMcpService", () => {
     });
 
     return Effect.gen(function* () {
-      const service = yield* PendingRequestMcpService;
+      const service = yield* PendingRequestMcpService.PendingRequestMcpService;
       const rejected = yield* service
         .respond(scope, {
           childThreadId,
@@ -783,7 +783,7 @@ describe("PendingRequestMcpService", () => {
 
   it.effect("keeps delegated answers within the caller's runtime and interaction ceilings", () =>
     Effect.gen(function* () {
-      const service = yield* PendingRequestMcpService;
+      const service = yield* PendingRequestMcpService.PendingRequestMcpService;
       const runtimeError = yield* service
         .respond(scope, {
           childThreadId,
@@ -802,7 +802,7 @@ describe("PendingRequestMcpService", () => {
       ),
       Effect.andThen(
         Effect.gen(function* () {
-          const service = yield* PendingRequestMcpService;
+          const service = yield* PendingRequestMcpService.PendingRequestMcpService;
           const interactionError = yield* service
             .respond(scope, {
               childThreadId,
@@ -826,7 +826,7 @@ describe("PendingRequestMcpService", () => {
 
   it.effect("never treats an unrelated thread id as an authorized child", () =>
     Effect.gen(function* () {
-      const service = yield* PendingRequestMcpService;
+      const service = yield* PendingRequestMcpService.PendingRequestMcpService;
       const error = yield* service
         .read(scope, { childThreadId: unrelatedThreadId, requestId })
         .pipe(Effect.flip);
