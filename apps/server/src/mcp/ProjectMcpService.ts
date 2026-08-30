@@ -16,6 +16,7 @@ import {
 import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -193,7 +194,9 @@ const make = Effect.gen(function* () {
       const limit = input.limit ?? 25;
       const sorted = snapshot.projects.toSorted(
         (left, right) =>
-          right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id),
+          DateTime.toEpochMillis(DateTime.makeUnsafe(right.updatedAt)) -
+            DateTime.toEpochMillis(DateTime.makeUnsafe(left.updatedAt)) ||
+          left.id.localeCompare(right.id),
       );
       const page = sorted.slice(cursor, cursor + limit);
       const nextCursor = cursor + page.length < sorted.length ? cursor + page.length : null;

@@ -49,6 +49,7 @@ const makeProject = (input: {
   readonly id: ProjectId;
   readonly title: string;
   readonly workspaceRoot: string;
+  readonly updatedAt?: Project["updatedAt"];
 }): Project => ({
   id: input.id,
   title: input.title,
@@ -59,7 +60,7 @@ const makeProject = (input: {
   defaultThreadEnvMode: null,
   scripts: [],
   createdAt: now,
-  updatedAt: now,
+  updatedAt: input.updatedAt ?? now,
   deletedAt: null,
 });
 
@@ -706,6 +707,74 @@ it.effect("paginates summaries before loading project files and reads settings o
         projects.slice(10, 15).map((project) => project.workspaceRoot),
       );
       expect(yield* Ref.get(settingsLoads)).toBe(1);
+    }).pipe(Effect.provide(testLayer));
+  }),
+);
+
+it.effect("orders mixed-offset project timestamps chronologically across pages", () =>
+  Effect.gen(function* () {
+    const projects = [
+      makeProject({
+        id: ProjectId.make("project:mixed:oldest"),
+        title: "Oldest",
+        workspaceRoot: "/work/mixed-oldest",
+        updatedAt: "2026-08-29T09:00:00-04:00",
+      }),
+      makeProject({
+        id: ProjectId.make("project:mixed:tie-b"),
+        title: "Tie B",
+        workspaceRoot: "/work/mixed-tie-b",
+        updatedAt: "2026-08-29T16:00:00+02:00",
+      }),
+      makeProject({
+        id: ProjectId.make("project:mixed:newest"),
+        title: "Newest",
+        workspaceRoot: "/work/mixed-newest",
+        updatedAt: "2026-08-29T10:00:00-05:00",
+      }),
+      makeProject({
+        id: ProjectId.make("project:mixed:tie-a"),
+        title: "Tie A",
+        workspaceRoot: "/work/mixed-tie-a",
+        updatedAt: "2026-08-29T14:00:00Z",
+      }),
+    ];
+    const testLayer = ProjectMcp.layer.pipe(
+      Layer.provide(
+        Layer.mock(ProjectService.ProjectService)({
+          snapshot: Effect.succeed({ projects, updatedAt: now }),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(T3ProjectFileLoader.T3ProjectFileLoader)({
+          load: () => Effect.succeed(Option.none()),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ServerSettingsService.ServerSettingsService)({
+          getSettings: Effect.succeed({ defaultThreadEnvMode: "local" } as ServerSettings),
+        }),
+      ),
+      Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
+      Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+      Layer.provide(NodeServices.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectMcp.ProjectMcpService;
+      const firstPage = yield* service.list(scope, { cursor: 0, limit: 2 });
+      const secondPage = yield* service.list(scope, { cursor: 2, limit: 2 });
+
+      expect(firstPage).toMatchObject({ nextCursor: 2, totalCount: 4 });
+      expect(firstPage.projects.map((project) => project.id)).toEqual([
+        ProjectId.make("project:mixed:newest"),
+        ProjectId.make("project:mixed:tie-a"),
+      ]);
+      expect(secondPage).toMatchObject({ nextCursor: null, totalCount: 4 });
+      expect(secondPage.projects.map((project) => project.id)).toEqual([
+        ProjectId.make("project:mixed:tie-b"),
+        ProjectId.make("project:mixed:oldest"),
+      ]);
     }).pipe(Effect.provide(testLayer));
   }),
 );
