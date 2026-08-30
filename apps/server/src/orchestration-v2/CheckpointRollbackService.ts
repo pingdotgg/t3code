@@ -12,7 +12,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { CheckpointRestoreError, CheckpointServiceV2 } from "./CheckpointService.ts";
+import {
+  CheckpointRestoreOutcomeUnknownError,
+  CheckpointRestorePreflightError,
+  CheckpointRestorePreconditionError,
+  CheckpointServiceV2,
+} from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { ThreadDispatchLockV2 } from "./KeyedSerialExecutor.ts";
@@ -66,7 +71,9 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedErrorClass<Ch
 }
 
 const isCheckpointRollbackExecutionError = Schema.is(CheckpointRollbackExecutionError);
-const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
+const isCheckpointRestoreOutcomeUnknownError = Schema.is(CheckpointRestoreOutcomeUnknownError);
+const isCheckpointRestorePreflightError = Schema.is(CheckpointRestorePreflightError);
+const isCheckpointRestorePreconditionError = Schema.is(CheckpointRestorePreconditionError);
 
 export interface CheckpointRollbackServiceV2Shape {
   readonly execute: (input: {
@@ -319,7 +326,7 @@ export const layer: Layer.Layer<
                   latestCheckpoint.status === "ready"
                   ? Effect.void
                   : Effect.fail(
-                      new CheckpointRestoreError({
+                      new CheckpointRestorePreconditionError({
                         scopeId: input.scopeId,
                         checkpointId: input.checkpointId,
                         reason: "precondition-changed",
@@ -329,9 +336,10 @@ export const layer: Layer.Layer<
                     );
               }),
               Effect.mapError((cause) =>
-                isCheckpointRestoreError(cause)
+                isCheckpointRestorePreconditionError(cause) ||
+                isCheckpointRestorePreflightError(cause)
                   ? cause
-                  : new CheckpointRestoreError({
+                  : new CheckpointRestorePreflightError({
                       scopeId: input.scopeId,
                       checkpointId: input.checkpointId,
                       cause,
@@ -352,10 +360,11 @@ export const layer: Layer.Layer<
           Effect.mapError(
             (cause) =>
               new CheckpointRollbackExecutionError({
-                reason:
-                  !isCheckpointRestoreError(cause) || cause.reason === "restore-outcome-unknown"
-                    ? "post-restore-finalization-failed"
-                    : "restore-precondition-changed",
+                reason: isCheckpointRestoreOutcomeUnknownError(cause)
+                  ? "post-restore-finalization-failed"
+                  : isCheckpointRestorePreconditionError(cause)
+                    ? "restore-precondition-changed"
+                    : "unexpected-failure",
                 threadId: input.threadId,
                 providerThreadId: input.providerThreadId,
                 checkpointId: input.checkpointId,

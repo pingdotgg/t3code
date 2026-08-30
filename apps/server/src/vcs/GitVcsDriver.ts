@@ -761,6 +761,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           cwd,
           args: ["ls-files", "--stage", "-z", "--", "."],
         });
+        if (index.stdoutTruncated) {
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git ls-files --stage",
+            cwd,
+            exitCode: index.exitCode,
+            detail: "git ls-files returned incomplete staged-state output.",
+          });
+        }
         return NodeCrypto.createHash("sha256")
           .update("worktree\0")
           .update(treeOid)

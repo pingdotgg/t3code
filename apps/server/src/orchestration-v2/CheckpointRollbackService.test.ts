@@ -17,7 +17,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { CheckpointRestoreError, CheckpointServiceV2 } from "./CheckpointService.ts";
+import {
+  CheckpointRestoreOutcomeUnknownError,
+  CheckpointRestorePreflightError,
+  CheckpointServiceV2,
+} from "./CheckpointService.ts";
 import {
   CheckpointRollbackServiceV2,
   layer as checkpointRollbackServiceLayer,
@@ -495,10 +499,9 @@ it.effect("reports an uncertain filesystem restore as partial before provider ro
     providerInstanceId,
   });
   const rollbackThread = vi.fn(() => Effect.void);
-  const restoreError = new CheckpointRestoreError({
+  const restoreError = new CheckpointRestoreOutcomeUnknownError({
     scopeId,
     checkpointId,
-    reason: "restore-outcome-unknown",
     cause: "Git restore failed after its first mutating command",
   });
   const testLayer = checkpointRollbackServiceTestLayer.pipe(
@@ -533,6 +536,64 @@ it.effect("reports an uncertain filesystem restore as partial before provider ro
       .pipe(Effect.flip);
 
     assert.equal(error.reason, "post-restore-finalization-failed");
+    assert.strictEqual(error.cause, restoreError);
+    assert.equal(rollbackThread.mock.calls.length, 0);
+  }).pipe(Effect.provide(testLayer));
+});
+
+it.effect("keeps a proven pre-restore failure retryable", () => {
+  const threadId = ThreadId.make("thread:rollback-restore-preflight");
+  const providerThreadId = ProviderThreadId.make("provider-thread:rollback-restore-preflight");
+  const providerSessionId = ProviderSessionId.make("provider-session:rollback-restore-preflight");
+  const checkpointId = CheckpointId.make("checkpoint:rollback-restore-preflight");
+  const scopeId = CheckpointScopeId.make("scope:rollback-restore-preflight");
+  const providerInstanceId = ProviderInstanceId.make("provider_rollback_restore_preflight");
+  const projection = makeReadyRollbackProjection({
+    threadId,
+    providerThreadId,
+    providerSessionId,
+    checkpointId,
+    scopeId,
+    providerInstanceId,
+  });
+  const rollbackThread = vi.fn(() => Effect.void);
+  const restoreError = new CheckpointRestorePreflightError({
+    scopeId,
+    checkpointId,
+    cause: "Unable to read the workspace fingerprint before restoring files",
+  });
+  const testLayer = checkpointRollbackServiceTestLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(CheckpointServiceV2)({ restore: () => Effect.fail(restoreError) }),
+        Layer.mock(EventSinkV2)({}),
+        idAllocatorLayer,
+        Layer.mock(ProjectionStoreV2)({
+          getThreadSnapshot: () =>
+            Effect.succeed({ schemaVersion: 1, snapshotSequence: 1, projection }),
+        }),
+        Layer.mock(ProviderSessionManagerV2)({
+          open: () => Effect.succeed({ rollbackThread } as never),
+        }),
+        Layer.mock(RuntimePolicyV2)({ resolve: () => Effect.succeed({} as never) }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const service = yield* CheckpointRollbackServiceV2;
+    const error = yield* service
+      .execute({
+        threadId,
+        providerThreadId,
+        checkpointId,
+        scopeId,
+        expectedIdle: true,
+        expectedWorkspaceFingerprint: "workspace-before",
+      })
+      .pipe(Effect.flip);
+
+    assert.equal(error.reason, "unexpected-failure");
     assert.strictEqual(error.cause, restoreError);
     assert.equal(rollbackThread.mock.calls.length, 0);
   }).pipe(Effect.provide(testLayer));

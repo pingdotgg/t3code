@@ -112,3 +112,40 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
     ),
   );
 });
+
+it.effect("GitVcsDriver rejects a fingerprint built from truncated staged-state output", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const checkpoints = driver.checkpoints;
+    assert.ok(checkpoints);
+
+    const error = yield* checkpoints.readWorkspaceFingerprint("/repo").pipe(Effect.flip);
+
+    assert.equal(error._tag, "VcsProcessExitError");
+    if (error._tag === "VcsProcessExitError") {
+      assert.match(error.detail, /incomplete staged-state output/);
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: (input) => {
+            const args = input.args.join(" ");
+            return Effect.succeed({
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout: args.includes("--git-common-dir")
+                ? ".git\n"
+                : args.includes("write-tree")
+                  ? "tree-oid\n"
+                  : "",
+              stderr: "",
+              stdoutTruncated: args.includes("ls-files --stage"),
+              stderrTruncated: false,
+            });
+          },
+        }),
+      ),
+    ),
+  ),
+);
