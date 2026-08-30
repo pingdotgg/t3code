@@ -18,11 +18,13 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  QUEUED_TURN_START_GRACE_MS,
   canSettle,
   canSnooze,
   changeRequestAutoSettles,
   effectiveSettled,
   effectiveSnoozed,
+  hasQueuedTurnStart,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -1091,7 +1093,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // While the snooze popover is open the pointer leaves the row, which
   // would fade the hover actions out from under the open menu; pin them.
   const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);
+  const [, refreshActionAvailability] = useState(0);
   const actionNow = new Date().toISOString();
+  const queuedTurnStartExpiresAt =
+    thread.latestUserMessageAt != null && hasQueuedTurnStart(thread, { now: actionNow })
+      ? Date.parse(thread.latestUserMessageAt) + QUEUED_TURN_START_GRACE_MS
+      : null;
+  useEffect(() => {
+    if (queuedTurnStartExpiresAt === null) return;
+    const timeoutId = window.setTimeout(
+      () => refreshActionAvailability((tick) => tick + 1),
+      Math.max(0, queuedTurnStartExpiresAt - Date.now()) + 1,
+    );
+    return () => window.clearTimeout(timeoutId);
+  }, [queuedTurnStartExpiresAt]);
   // The server rejects settling active work. Hide the affordance in the same
   // states so a Working label never turns into an action that cannot succeed.
   const showSettleButton = props.settlementSupported && canSettle(thread, { now: actionNow });
@@ -1469,7 +1484,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             "group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-hover/sidebar-row:absolute group-hover/sidebar-row:right-0 group-hover/sidebar-row:opacity-0",
                         ),
                     "flex items-center self-center justify-self-end tabular-nums text-secondary-label transition-opacity",
-                    snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
+                    showSettleButton &&
+                      snoozeMenuOpen &&
+                      "pointer-events-none absolute right-0 opacity-0",
                   )}
                 >
                   {topStatus ? (
