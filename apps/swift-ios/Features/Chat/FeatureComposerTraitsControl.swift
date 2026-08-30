@@ -193,13 +193,15 @@ struct FeatureComposerTraitsControl: Equatable {
         var labels: [String] = []
 
         for descriptor in descriptors {
-            guard let section = sections.first(where: { $0.id == descriptor.id }),
-                  let current = section.choices.first(where: {
-                      $0.id == section.currentChoiceID
-                  }) else { continue }
+            guard let section = sections.first(where: { $0.id == descriptor.id }) else {
+                continue
+            }
+            let current = section.choices.first(where: {
+                $0.id == section.currentChoiceID
+            })
 
             if descriptor.id == "fastMode", descriptor.kind == .boolean {
-                fastModeEnabled = current.value == .boolean(true)
+                fastModeEnabled = current?.value == .boolean(true)
                 fastModeFallbackLabel = fastModeEnabled ? "Fast" : "Normal"
                 continue
             }
@@ -208,16 +210,23 @@ struct FeatureComposerTraitsControl: Equatable {
                descriptor.id == "serviceTier",
                descriptor.kind == .select,
                let fastChoice = section.choices.first(where: { $0.label == "Fast" }),
-               current.id == "default" || current.id == fastChoice.id {
-                fastModeEnabled = current.id == fastChoice.id
-                fastModeFallbackLabel = current.label
+               section.currentChoiceID == "default"
+                   || section.currentChoiceID == fastChoice.id {
+                fastModeEnabled = section.currentChoiceID == fastChoice.id
+                fastModeFallbackLabel = current?.label
                 continue
             }
 
-            switch current.value {
-            case .string:
-                labels.append(current.label)
-            case .boolean(let value):
+            switch descriptor.kind {
+            case .select:
+                let label = current?.label ?? descriptor.choices.first(where: {
+                    $0.id == section.currentChoiceID
+                })?.label
+                if let label {
+                    labels.append(label)
+                }
+            case .boolean:
+                guard case .boolean(let value)? = current?.value else { continue }
                 labels.append("\(descriptor.label) \(value ? "On" : "Off")")
             }
         }
