@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
 import { cn } from "../lib/cn";
+import { MobileNavigationHistoryButtons } from "../features/navigation/MobileNavigationHistoryButtons";
 
 export interface AndroidHeaderAction {
   readonly accessibilityLabel: string;
@@ -49,6 +50,7 @@ export function AndroidScreenHeader(props: {
   readonly onBack?: () => void;
   readonly backDisabled?: boolean;
   readonly embedded?: boolean;
+  readonly showNavigationHistory?: boolean;
 }) {
   const insets = useSafeAreaInsets();
 
@@ -104,6 +106,9 @@ export function AndroidScreenHeader(props: {
             onPress={action.onPress}
           />
         ))}
+        {!props.embedded && props.showNavigationHistory !== false ? (
+          <MobileNavigationHistoryButtons grouped />
+        ) : null}
         {props.trailing}
       </View>
     </View>

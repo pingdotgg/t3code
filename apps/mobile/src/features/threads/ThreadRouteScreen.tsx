@@ -696,12 +696,6 @@ function ThreadRouteContent(
     if (Platform.OS !== "android") return [];
 
     const actions: AndroidHeaderAction[] = [];
-    actions.push({
-      accessibilityLabel: "Forward",
-      disabled: !navigationHistory.canGoForward,
-      icon: "chevron.right",
-      onPress: navigationHistory.forward,
-    });
     if (!navigationHistory.canGoBack) {
       actions.push({
         accessibilityLabel: "Go to threads list",
@@ -887,11 +881,10 @@ function ThreadRouteContent(
 
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
-          backDisabled={!navigationHistory.canGoBack}
           title={selectedThread.title}
           subtitle={headerSubtitle}
-          onBack={layout.usesSplitView ? undefined : navigationHistory.back}
           actions={androidHeaderActions}
+          showNavigationHistory={!layout.usesSplitView}
         />
       ) : null}
 

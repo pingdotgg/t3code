@@ -61,7 +61,7 @@ function useMobileNavigationHistoryCoordinator(
       if (target.direction === "back" && targetRouteExists && targetRootKey !== currentRootKey) {
         navigation.dispatch({
           ...StackActions.popTo(action.payload.name, action.payload.params),
-          source: targetRootKey,
+          source: currentRootKey,
           target: state.key,
         });
       } else if (target.direction === "forward" && !targetRouteExists) {

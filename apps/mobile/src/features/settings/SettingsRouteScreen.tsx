@@ -32,7 +32,6 @@ import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
-import { MobileNavigationHistoryButtons } from "../navigation/MobileNavigationHistoryButtons";
 import { runtime } from "../../lib/runtime";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
@@ -74,11 +73,7 @@ export function SettingsRouteScreen() {
         <>
           {/* Android renders its own in-screen header instead of the native bar. */}
           <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader
-            title="Settings"
-            trailing={<MobileNavigationHistoryButtons grouped />}
-            onBack={() => navigation.goBack()}
-          />
+          <AndroidScreenHeader title="Settings" onBack={() => navigation.goBack()} />
         </>
       ) : (
         <NativeStackScreenOptions
