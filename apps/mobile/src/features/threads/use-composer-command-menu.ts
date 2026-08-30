@@ -10,10 +10,6 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  resolveProviderSkillsForCwd,
-  resolveProviderSlashCommandsForCwd,
-} from "@t3tools/client-runtime/providerSkills";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
@@ -70,12 +66,6 @@ export function useComposerCommandMenu({
     cwd: trigger?.kind === "path" ? projectCwd : null,
     query: trigger?.kind === "path" ? trigger.query : null,
   });
-  const selectedProviderSkills = selectedProviderStatus
-    ? resolveProviderSkillsForCwd(selectedProviderStatus, projectCwd)
-    : [];
-  const selectedProviderSlashCommands = selectedProviderStatus
-    ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, projectCwd)
-    : [];
 
   const items = useMemo<ComposerCommandItem[]>(() => {
     if (!trigger) return [];
@@ -112,7 +102,7 @@ export function useComposerCommandMenu({
       );
 
       const providerCommands: ComposerCommandItem[] = [];
-      for (const command of selectedProviderSlashCommands) {
+      for (const command of selectedProviderStatus?.slashCommands ?? []) {
         if (!command.name.toLowerCase().includes(q)) continue;
         // Codex feedback uploads an existing thread's session and logs.
         if (
@@ -131,7 +121,7 @@ export function useComposerCommandMenu({
         });
       }
 
-      const skillItems = selectedProviderSkills
+      const skillItems = (selectedProviderStatus?.skills ?? [])
         .filter((skill) => matchesSlashSkillQuery(skill, q))
         .map((skill) => ({
           id: `skill:${skill.name}`,
@@ -145,7 +135,7 @@ export function useComposerCommandMenu({
     }
 
     if (trigger.kind === "skill") {
-      const enabledSkills = selectedProviderSkills.filter((skill) => skill.enabled);
+      const enabledSkills = (selectedProviderStatus?.skills ?? []).filter((skill) => skill.enabled);
       const normalizedQuery = normalizeSearchQuery(trigger.query, {
         trimLeadingPattern: /^\$+/,
       });
@@ -242,16 +232,7 @@ export function useComposerCommandMenu({
     }
 
     return [];
-  }, [
-    hasThread,
-    onUpdateInteractionMode,
-    pathSearch.entries,
-    projectCwd,
-    selectedProviderSkills,
-    selectedProviderSlashCommands,
-    selectedProviderStatus,
-    trigger,
-  ]);
+  }, [hasThread, onUpdateInteractionMode, pathSearch.entries, selectedProviderStatus, trigger]);
 
   const onSelect = useCallback(
     (item: ComposerCommandItem) => {

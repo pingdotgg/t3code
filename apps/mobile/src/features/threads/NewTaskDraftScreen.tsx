@@ -20,8 +20,6 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useAtomCommand } from "../../state/use-atom-command";
-import { serverEnvironment } from "../../state/server";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
@@ -195,9 +193,6 @@ export function NewTaskDraftScreen(props: {
   const [isReturningToProjectPicker, setIsReturningToProjectPicker] = useState(false);
   const [shareImportAttempt, setShareImportAttempt] = useState(0);
   const startedShareImportKeyRef = useRef<string | null>(null);
-  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
-    reportFailure: false,
-  });
   const cancellingShareImportKeyRef = useRef<string | null>(null);
   const shareImportDraftBackupRef = useRef(new Map<string, ComposerDraft>());
   const activeShareImportTokenRef = useRef<symbol | null>(null);
@@ -223,31 +218,13 @@ export function NewTaskDraftScreen(props: {
   const isIncomingShareTransferPending = Boolean(
     incomingShare && cancelledIncomingShareId !== props.incomingShareId,
   );
-  const workspaceCwd =
-    (flow.workspaceMode === "worktree"
-      ? selectedProject?.workspaceRoot
-      : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null;
-  const workspaceRefreshKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    const environmentId = selectedProject?.environmentId;
-    const instanceId = flow.selectedProviderStatus?.instanceId;
-    if (!environmentId || !instanceId || !workspaceCwd) return;
-    const key = `${environmentId}:${instanceId}:${workspaceCwd}`;
-    if (workspaceRefreshKeyRef.current === key) return;
-    void refreshProviders({
-      environmentId,
-      input: { instanceId, cwd: workspaceCwd },
-    }).then(
-      (result) => {
-        if (result._tag === "Success") workspaceRefreshKeyRef.current = key;
-      },
-      () => undefined,
-    );
-  }, [refreshProviders, selectedProject?.environmentId, flow.selectedProviderStatus, workspaceCwd]);
   const composerMenu = useComposerCommandMenu({
     draftMessage: flow.prompt,
     environmentId: selectedProject?.environmentId ?? null,
-    projectCwd: workspaceCwd,
+    projectCwd:
+      (flow.workspaceMode === "worktree"
+        ? selectedProject?.workspaceRoot
+        : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null,
     selectedProviderStatus: flow.selectedProviderStatus,
     hasThread: false,
     enabled: isComposerFocused && !isIncomingShareTransferPending,

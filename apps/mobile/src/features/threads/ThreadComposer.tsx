@@ -42,9 +42,6 @@ import type { RemoteClientConnectionState } from "../../lib/connection";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
-import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
-import { useAtomCommand } from "../../state/use-atom-command";
-import { serverEnvironment } from "../../state/server";
 import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
@@ -311,36 +308,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ) ?? null
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
-  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
-    reportFailure: false,
-  });
-  const workspaceRefreshKeyRef = useRef<string | null>(null);
-  const workspaceCwd = props.selectedThread.worktreePath ?? props.projectCwd;
-  useEffect(() => {
-    if (!workspaceCwd || !selectedProviderStatus) return;
-    const key = `${props.environmentId}:${selectedProviderStatus.instanceId}:${workspaceCwd}`;
-    if (workspaceRefreshKeyRef.current === key) return;
-    void refreshProviders({
-      environmentId: props.environmentId,
-      input: { instanceId: selectedProviderStatus.instanceId, cwd: workspaceCwd },
-    }).then(
-      (result) => {
-        if (result._tag === "Success") {
-          workspaceRefreshKeyRef.current = key;
-        } else if (workspaceRefreshKeyRef.current === key) {
-          workspaceRefreshKeyRef.current = null;
-        }
-      },
-      () => {
-        if (workspaceRefreshKeyRef.current === key) workspaceRefreshKeyRef.current = null;
-      },
-    );
-  }, [props.environmentId, refreshProviders, selectedProviderStatus, workspaceCwd]);
 
   const composerMenu = useComposerCommandMenu({
     draftMessage: props.draftMessage,
     environmentId: props.environmentId,
-    projectCwd: props.selectedThread.worktreePath ?? props.projectCwd,
+    projectCwd: props.projectCwd,
     selectedProviderStatus,
     hasThread: true,
     onChangeDraftMessage: props.onChangeDraftMessage,
@@ -551,11 +523,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               ref={inputRef}
               multiline
               value={props.draftMessage}
-              skills={
-                selectedProviderStatus
-                  ? resolveProviderSkillsForCwd(selectedProviderStatus, workspaceCwd)
-                  : []
-              }
+              skills={selectedProviderStatus?.skills ?? []}
               selection={composerMenu.selection}
               onChangeText={props.onChangeDraftMessage}
               onSelectionChange={composerMenu.onSelectionChange}
