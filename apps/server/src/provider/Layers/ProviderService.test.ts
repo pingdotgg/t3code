@@ -531,6 +531,84 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("ProviderServiceLive reads persisted bindings only for live sessions", () =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter();
+    const registry = makeAdapterRegistryMock({
+      [ProviderDriverKind.make("codex")]: codex.adapter,
+    });
+    const providerAdapterLayer = Layer.succeed(
+      ProviderAdapterRegistry.ProviderAdapterRegistry,
+      registry,
+    );
+    // Records every per-thread runtime read so the test can assert that listing
+    // sessions does not query threads without a live session.
+    const readThreadIds: Array<ThreadId> = [];
+    const runtimeRepositoryLayer = Layer.effect(
+      ProviderSessionRuntime.ProviderSessionRuntimeRepository,
+      Effect.gen(function* () {
+        const inner = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        return {
+          ...inner,
+          getByThreadId: (input: { readonly threadId: ThreadId }) => {
+            readThreadIds.push(input.threadId);
+            return inner.getByThreadId(input);
+          },
+        };
+      }),
+    ).pipe(
+      Layer.provide(ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+    );
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+    const providerLayer = makeProviderServiceLive().pipe(
+      Layer.provide(providerAdapterLayer),
+      Layer.provide(directoryLayer),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(serverConfigTestLayer),
+      Layer.provide(AnalyticsService.layerTest),
+      Layer.provide(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const activeThreadId = asThreadId("thread-live-binding");
+
+      // Threads that ran an agent in the past keep their runtime binding.
+      for (let index = 0; index < 25; index += 1) {
+        yield* directory.upsert({
+          threadId: asThreadId(`thread-stopped-binding-${index}`),
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          status: "stopped",
+        });
+      }
+
+      yield* provider.startSession(activeThreadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: activeThreadId,
+        cwd: "/tmp/project-live-binding",
+        runtimeMode: "full-access",
+      });
+
+      readThreadIds.length = 0;
+      const sessions = yield* provider.listSessions();
+
+      assert.deepEqual(
+        sessions.map((session) => session.threadId),
+        [activeThreadId],
+      );
+      assert.deepEqual(readThreadIds, [activeThreadId]);
+    }).pipe(Effect.provide(Layer.mergeAll(providerLayer, directoryLayer)));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("ProviderServiceLive rejects new sessions for disabled custom instances", () =>
   Effect.gen(function* () {
     const instanceId = ProviderInstanceId.make("codex_personal");

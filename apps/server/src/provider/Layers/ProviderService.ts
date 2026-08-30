@@ -996,24 +996,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ),
       );
       const activeSessions = sessionsByProvider.flatMap((sessions) => sessions);
-      const persistedBindings = yield* directory.listThreadIds().pipe(
-        Effect.flatMap((threadIds) =>
-          Effect.forEach(
-            threadIds,
-            (threadId) =>
-              directory
-                .getBinding(threadId)
-                .pipe(
-                  Effect.orElseSucceed(() =>
-                    Option.none<ProviderSessionDirectory.ProviderRuntimeBinding>(),
-                  ),
-                ),
-            { concurrency: "unbounded" },
-          ),
-        ),
-        Effect.orElseSucceed(
-          () => [] as Array<Option.Option<ProviderSessionDirectory.ProviderRuntimeBinding>>,
-        ),
+      // Only threads with a live adapter session can be decorated below. The
+      // runtime table keeps one row per thread that has ever run an agent, so
+      // reading every binding here costs one query per historical thread on
+      // each call, and listSessions runs several times per turn start.
+      const activeThreadIds = [...new Set(activeSessions.map((session) => session.threadId))];
+      const persistedBindings = yield* Effect.forEach(
+        activeThreadIds,
+        (threadId) =>
+          directory
+            .getBinding(threadId)
+            .pipe(
+              Effect.orElseSucceed(() =>
+                Option.none<ProviderSessionDirectory.ProviderRuntimeBinding>(),
+              ),
+            ),
+        { concurrency: "unbounded" },
       );
       const bindingsByThreadId = new Map<
         ThreadId,
