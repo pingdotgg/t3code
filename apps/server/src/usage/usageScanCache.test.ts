@@ -88,7 +88,7 @@ describe("scan cache round trip", () => {
 
   it("rejects the whole cache when an intern table holds a non-string", () => {
     // models: [1] would pass the undefined guard, put a number in a record's
-    // model, and crash normalizeModelName at aggregate time.
+    // model, and crash lookupRate at aggregate time.
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
     const poisoned = { ...encoded, models: [1] };
 
