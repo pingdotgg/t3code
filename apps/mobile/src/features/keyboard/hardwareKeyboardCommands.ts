@@ -66,7 +66,8 @@ export function parseActiveThreadPath(pathname: string): {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 } | null {
-  const match = /^\/threads\/([^/]+)\/([^/]+)(?:\/|$)/.exec(pathname);
+  const pathOnly = pathname.replace(/[?#].*$/, "");
+  const match = /^\/threads\/([^/]+)\/([^/]+)(?:\/|$)/.exec(pathOnly);
   if (!match?.[1] || !match[2]) return null;
   try {
     return {
@@ -79,5 +80,20 @@ export function parseActiveThreadPath(pathname: string): {
 }
 
 export function hasHardwareBackTarget(pathname: string, canGoBack: boolean): boolean {
-  return canGoBack || parseActiveThreadPath(pathname) !== null;
+  return canGoBack || getHardwareBackFallback(pathname) !== null;
+}
+
+export function getHardwareBackFallback(pathname: string):
+  | { readonly route: "Home" }
+  | {
+      readonly route: "Thread";
+      readonly params: NonNullable<ReturnType<typeof parseActiveThreadPath>>;
+    }
+  | null {
+  const thread = parseActiveThreadPath(pathname);
+  if (!thread) return null;
+  const pathOnly = pathname.replace(/[?#].*$/, "");
+  return /^\/threads\/[^/]+\/[^/]+\/?$/.test(pathOnly)
+    ? { route: "Home" }
+    : { route: "Thread", params: thread };
 }

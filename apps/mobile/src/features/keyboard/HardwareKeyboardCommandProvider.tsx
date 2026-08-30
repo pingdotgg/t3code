@@ -4,6 +4,7 @@ import { useCallback, useMemo, useSyncExternalStore, type PropsWithChildren } fr
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import {
   dispatchHardwareKeyboardCommand,
+  getHardwareBackFallback,
   getHardwareKeyboardCommandRegistrationVersion,
   getRegisteredHardwareKeyboardCommands,
   hasHardwareBackTarget,
@@ -48,8 +49,13 @@ export function HardwareKeyboardCommandProvider({
       if (command === "back") {
         if (navigationHistory.canGoBack) {
           navigationHistory.back();
-        } else if (parseActiveThreadPath(pathname)) {
-          navigation.dispatch(StackActions.replace("Home"));
+        } else {
+          const fallback = getHardwareBackFallback(pathname);
+          if (fallback?.route === "Thread") {
+            navigation.dispatch(StackActions.replace("Thread", fallback.params));
+          } else if (fallback?.route === "Home") {
+            navigation.dispatch(StackActions.replace("Home"));
+          }
         }
         return;
       }
