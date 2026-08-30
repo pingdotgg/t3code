@@ -5,6 +5,7 @@ import {
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
+  OrchestratorMcpProviderCapability,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadListInput,
   OrchestratorMcpThreadReadInput,
@@ -16,6 +17,7 @@ import {
 const decodeCreateThreadsInput = Schema.decodeUnknownSync(OrchestratorMcpCreateThreadsInput);
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
+const decodeProviderCapability = Schema.decodeUnknownSync(OrchestratorMcpProviderCapability);
 const decodeThreadInterruptInput = Schema.decodeUnknownSync(OrchestratorMcpThreadInterruptInput);
 const decodeThreadListInput = Schema.decodeUnknownSync(OrchestratorMcpThreadListInput);
 const decodeThreadReadInput = Schema.decodeUnknownSync(OrchestratorMcpThreadReadInput);
@@ -125,6 +127,43 @@ describe("orchestrator MCP contracts", () => {
     expect(request.threads).toHaveLength(2);
     expect(request.threads[0]?.prompt).toBeUndefined();
     expect(request.threads[1]?.target?.driverKind).toBe("claudeAgent");
+  });
+
+  it("accepts attachment-only thread messages and rejects empty messages", () => {
+    const attachment = {
+      type: "image",
+      id: "pending-00000000-0000-4000-8000-000000000001",
+      name: "screen.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+    } as const;
+
+    expect(
+      decodeThreadStartInput({ attachments: [attachment], clientRequestId: "attachment-start" }),
+    ).toMatchObject({ attachments: [attachment] });
+    expect(
+      decodeThreadSendInput({ threadId: "thread-loop-1", attachments: [attachment] }),
+    ).toMatchObject({ attachments: [attachment] });
+    expect(
+      decodeCreateThreadsInput({ threads: [{ attachments: [attachment] }] }).threads[0],
+    ).toMatchObject({ attachments: [attachment] });
+
+    expect(() => decodeThreadStartInput({ prompt: "" })).toThrow();
+    expect(() => decodeThreadSendInput({ threadId: "thread-loop-1", message: "  " })).toThrow();
+  });
+
+  it("defaults attachment kinds for older capability responses", () => {
+    expect(
+      decodeProviderCapability({
+        providerInstanceId: "codex",
+        driverKind: "codex",
+        displayName: "Codex",
+        models: [],
+        canRunChildTask: true,
+        canRunCrossProviderChildTask: true,
+        constraints: [],
+      }).attachmentKinds,
+    ).toEqual([]);
   });
 
   it("decodes project-scoped thread orchestration requests", () => {

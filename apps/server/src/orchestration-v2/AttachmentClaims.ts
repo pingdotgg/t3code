@@ -1,6 +1,7 @@
 import * as FileSystem from "effect/FileSystem";
 import { ChatAttachmentId, type ChatAttachment } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import {
@@ -120,7 +121,11 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
           return normalized;
         }),
       { concurrency: 1 },
-    ).pipe(Effect.tapError(() => releaseClaimedAttachments(claimedPaths)));
+    ).pipe(
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit) ? releaseClaimedAttachments(claimedPaths) : Effect.void,
+      ),
+    );
     return { attachments, claimedPaths } satisfies ClaimedAttachments;
   },
 );

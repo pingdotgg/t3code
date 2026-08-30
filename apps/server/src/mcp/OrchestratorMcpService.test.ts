@@ -15,6 +15,7 @@ import * as Ref from "effect/Ref";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerConfig from "../config.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 
@@ -51,6 +52,9 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3-mcp-orchestrator-service-",
+        }).pipe(Layer.provide(NodeServices.layer)),
         Layer.mock(ThreadManagementService)({
           getThreadProjection: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
@@ -124,6 +128,9 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3-mcp-orchestrator-service-",
+        }).pipe(Layer.provide(NodeServices.layer)),
         Layer.mock(ThreadManagementService)({
           getThreadProjection: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
@@ -186,6 +193,9 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3-mcp-orchestrator-service-",
+        }).pipe(Layer.provide(NodeServices.layer)),
         Layer.mock(ThreadManagementService)({
           getThreadProjection: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
@@ -251,6 +261,9 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3-mcp-orchestrator-service-",
+        }).pipe(Layer.provide(NodeServices.layer)),
         Layer.mock(ThreadManagementService)({
           getThreadProjection: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),

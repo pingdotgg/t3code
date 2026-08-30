@@ -1,7 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
+  ChatAttachmentId,
   EnvironmentId,
   IsoDateTime,
   MessageId,
@@ -71,6 +76,11 @@ import {
 } from "../orchestration-v2/testkit/ReplayTranscriptNdjson.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerConfig from "../config.ts";
+import {
+  createPendingAttachmentId,
+  parseThreadSegmentFromAttachmentId,
+} from "../attachmentStore.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
@@ -131,6 +141,7 @@ interface CapturedTurn {
   readonly instanceId: ProviderInstanceId;
   readonly threadId: ThreadId;
   readonly text: string;
+  readonly attachments: ProviderAdapterV2TurnInput["message"]["attachments"];
 }
 
 function unsupported(driver: ProviderDriverKind, detail: string) {
@@ -247,6 +258,7 @@ function makeDeterministicAdapter(input: {
                   instanceId: input.instanceId,
                   threadId: turnInput.threadId,
                   text: turnInput.message.text,
+                  attachments: turnInput.message.attachments,
                 },
               ]);
               const eventTime = yield* DateTime.now;
@@ -611,11 +623,15 @@ describe("orchestrator MCP toolkit", () => {
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
             }),
           );
+          const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-mcp-orchestrator-toolkit-",
+          }).pipe(Layer.provide(NodeServices.layer));
           const testLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
             Layer.provideMerge(McpServer.McpServer.layer),
             Layer.provideMerge(orchestrationLayer),
             Layer.provide(providerRegistryLayer),
             Layer.provide(scheduledTaskStubLayer),
+            Layer.provideMerge(serverConfigLayer),
             Layer.provide(NodeServices.layer),
           );
 
@@ -1211,10 +1227,12 @@ describe("orchestrator MCP toolkit", () => {
                 expect.objectContaining({
                   providerInstanceId: claudeInstanceId,
                   canRunCrossProviderChildTask: true,
+                  attachmentKinds: ["image"],
                 }),
                 expect.objectContaining({
                   providerInstanceId: "opencode",
                   canRunChildTask: true,
+                  attachmentKinds: ["image", "file"],
                 }),
                 // Models advertise their option descriptors so agents can
                 // discover valid target.options ids and values.
@@ -1382,6 +1400,7 @@ describe("orchestrator MCP toolkit", () => {
                 instanceId: claudeInstanceId,
                 threadId: delegated.childThreadId,
                 text: delegatedPrompt,
+                attachments: [],
               },
             ]);
             expect(
@@ -1785,6 +1804,159 @@ describe("orchestrator MCP toolkit", () => {
                 },
               ),
             ).toHaveLength(2);
+
+            const serverConfig = yield* ServerConfig.ServerConfig;
+            const unsupportedPendingId = createPendingAttachmentId();
+            if (unsupportedPendingId === null) {
+              return yield* Effect.die("Expected a pending attachment id.");
+            }
+            const unsupportedFile = {
+              type: "file",
+              id: ChatAttachmentId.make(unsupportedPendingId),
+              name: "notes.txt",
+              mimeType: "text/plain",
+              sizeBytes: 4,
+            } as const;
+            NodeFS.writeFileSync(
+              NodePath.join(serverConfig.attachmentsDir, `${unsupportedPendingId}.txt`),
+              Buffer.from("test"),
+            );
+            const claimedBeforeUnsupported = NodeFS.readdirSync(serverConfig.attachmentsDir).filter(
+              (entry) => !entry.startsWith("pending-"),
+            );
+            const unsupportedSend = yield* invoke("t3_thread_send", {
+              threadId: emptyThread.threadId,
+              attachments: [unsupportedFile],
+              clientRequestId: "attachment-unsupported-provider-1",
+            });
+            expect(unsupportedSend.structuredContent).toMatchObject({ code: "invalid_request" });
+            expect(
+              NodeFS.existsSync(
+                NodePath.join(serverConfig.attachmentsDir, `${unsupportedPendingId}.txt`),
+              ),
+            ).toBe(true);
+            expect(
+              NodeFS.readdirSync(serverConfig.attachmentsDir).filter(
+                (entry) => !entry.startsWith("pending-"),
+              ),
+            ).toEqual(claimedBeforeUnsupported);
+
+            const pendingId = createPendingAttachmentId();
+            if (pendingId === null) return yield* Effect.die("Expected a pending attachment id.");
+            const pendingAttachment = {
+              type: "image",
+              id: ChatAttachmentId.make(pendingId),
+              name: "mcp-screen.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            } as const;
+            NodeFS.writeFileSync(
+              NodePath.join(serverConfig.attachmentsDir, `${pendingId}.png`),
+              Buffer.from([1, 2, 3, 4]),
+            );
+            const attachmentStartInput = {
+              title: "Attachment-only thread",
+              attachments: [pendingAttachment],
+              clientRequestId: "attachment-only-start-1",
+            } as const;
+            const attachmentStartCall = yield* invoke("t3_thread_start", attachmentStartInput);
+            expect(attachmentStartCall.isError).toBe(false);
+            const attachmentThread = yield* decodeCreatedThread(
+              attachmentStartCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(attachmentThread.attachments).toHaveLength(1);
+            expect(attachmentThread.attachments[0]?.id).not.toBe(pendingId);
+            const claimedAttachment = attachmentThread.attachments[0]!;
+            const attachmentProjection = yield* waitForProjection(
+              orchestrator,
+              attachmentThread.threadId,
+              (projection) => projection.runs.some((run) => run.status === "completed"),
+            );
+            expect(
+              attachmentProjection.messages.find((message) => message.role === "user"),
+            ).toEqual(expect.objectContaining({ text: "", attachments: [claimedAttachment] }));
+            expect(
+              NodeFS.existsSync(NodePath.join(serverConfig.attachmentsDir, `${pendingId}.png`)),
+            ).toBe(true);
+            const claimedPrefix = `${parseThreadSegmentFromAttachmentId(claimedAttachment.id)}-`;
+            expect(
+              NodeFS.readdirSync(serverConfig.attachmentsDir).filter((entry) =>
+                entry.startsWith(claimedPrefix),
+              ),
+            ).toHaveLength(1);
+            expect(
+              (yield* Ref.get(capturedTurns)).find(
+                (turn) => turn.threadId === attachmentThread.threadId,
+              )?.attachments,
+            ).toEqual([claimedAttachment]);
+
+            const repeatedAttachmentStart = yield* decodeCreatedThread(
+              (yield* invoke("t3_thread_start", attachmentStartInput)).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(repeatedAttachmentStart.threadId).toBe(attachmentThread.threadId);
+            expect(repeatedAttachmentStart.attachments).toEqual([claimedAttachment]);
+            // A retry reclaims the pending source with a new id before the
+            // command receipt is replayed; that unused copy is removed.
+            expect(
+              NodeFS.readdirSync(serverConfig.attachmentsDir).filter((entry) =>
+                entry.startsWith(claimedPrefix),
+              ),
+            ).toHaveLength(1);
+
+            const attachmentRead = yield* decodeThreadReadResult(
+              (yield* invoke("t3_thread_read", {
+                threadId: attachmentThread.threadId,
+                limit: 1,
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(attachmentRead.items[0]?.attachments).toEqual([claimedAttachment]);
+
+            const ownedAttachmentSend = yield* decodeThreadSendResult(
+              (yield* invoke("t3_thread_send", {
+                threadId: attachmentThread.threadId,
+                attachments: [claimedAttachment],
+                clientRequestId: "attachment-owned-send-1",
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(ownedAttachmentSend.attachments).toEqual([claimedAttachment]);
+            const crossThreadAttachment = yield* invoke("t3_thread_send", {
+              threadId: emptyThread.threadId,
+              message: "Do not accept another thread's attachment.",
+              attachments: [claimedAttachment],
+              clientRequestId: "attachment-cross-thread-reject-1",
+            });
+            expect(crossThreadAttachment.structuredContent).toMatchObject({
+              code: "invalid_request",
+            });
+
+            const rejectedPendingId = createPendingAttachmentId();
+            if (rejectedPendingId === null) {
+              return yield* Effect.die("Expected a pending attachment id.");
+            }
+            const rejectedPending = {
+              ...pendingAttachment,
+              id: ChatAttachmentId.make(rejectedPendingId),
+              name: "rejected.png",
+            };
+            NodeFS.writeFileSync(
+              NodePath.join(serverConfig.attachmentsDir, `${rejectedPendingId}.png`),
+              Buffer.from([1, 2, 3, 4]),
+            );
+            const claimedFilesBeforeRejectedSteer = NodeFS.readdirSync(
+              serverConfig.attachmentsDir,
+            ).filter((entry) => !entry.startsWith("pending-"));
+            const rejectedSteer = yield* invoke("t3_thread_send", {
+              threadId: emptyThread.threadId,
+              attachments: [rejectedPending],
+              mode: "steer",
+              clientRequestId: "attachment-rejected-steer-1",
+            });
+            expect(rejectedSteer.structuredContent).toMatchObject({ code: "thread_not_sendable" });
+            expect(
+              NodeFS.readdirSync(serverConfig.attachmentsDir).filter(
+                (entry) => !entry.startsWith("pending-"),
+              ),
+            ).toEqual(claimedFilesBeforeRejectedSteer);
 
             const promptedReadCall = yield* invoke("t3_thread_read", {
               threadId: promptedThread.threadId,

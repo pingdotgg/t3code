@@ -10,6 +10,7 @@ import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
+import * as AttachmentMcpService from "./AttachmentMcpService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -28,6 +29,8 @@ import {
 import { WorktreeToolkitHandlersLive } from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
+import { AttachmentToolkitHandlersLive } from "./toolkits/attachment/handlers.ts";
+import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -231,6 +234,11 @@ export const WorktreeToolkitRegistrationLive = McpServer.toolkit(WorktreeToolkit
   Layer.provide(WorktreeMcpService.layer),
 );
 
+export const AttachmentToolkitRegistrationLive = McpServer.toolkit(AttachmentToolkit).pipe(
+  Layer.provide(AttachmentToolkitHandlersLive),
+  Layer.provide(AttachmentMcpService.layer),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -242,4 +250,5 @@ export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   OrchestratorToolkitRegistrationLive,
   WorktreeToolkitRegistrationLive,
+  AttachmentToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

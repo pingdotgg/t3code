@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 
 import { LegacyV1ThreadImporter, LegacyV1ThreadImportError } from "./LegacyV1ThreadImporter.ts";
 import { OrchestratorProjectionError, OrchestratorV2 } from "./Orchestrator.ts";
@@ -21,6 +22,7 @@ import {
   layerWithLegacyImporter,
   ThreadManagementDurableRunProjectionError,
   ThreadManagementProjectThreadsListError,
+  ThreadManagementPostDispatchProjectionError,
   ThreadManagementProjectionLoadError,
   ThreadManagementRunNotFoundError,
   ThreadManagementService,
@@ -60,6 +62,66 @@ it("stamps authoritative provenance on commands that create threads or messages"
     creationSource: "web",
   });
 });
+
+it.effect("marks projection failures that occur after an accepted message dispatch", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:post-dispatch");
+    const threadId = ThreadId.make("thread:thread-management:post-dispatch");
+    const messageId = MessageId.make("message:thread-management:post-dispatch");
+    const projection = {
+      thread: {
+        id: threadId,
+        projectId,
+        deletedAt: null,
+        archivedAt: null,
+      },
+      runs: [],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const reads = yield* Ref.make(0);
+    const projectionError = new OrchestratorProjectionError({
+      threadId,
+      cause: new Error("projection unavailable after commit"),
+    });
+    const testLayer = layer.pipe(
+      Layer.provide(
+        Layer.mock(OrchestratorV2)({
+          getThreadProjection: () =>
+            Ref.updateAndGet(reads, (count) => count + 1).pipe(
+              Effect.flatMap((count) =>
+                count === 1 ? Effect.succeed(projection) : Effect.fail(projectionError),
+              ),
+            ),
+          dispatch: () => Effect.succeed({ sequence: 1, storedEvents: [], replayed: false }),
+        }),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ThreadManagementService;
+      const error = yield* service
+        .sendToThread({
+          projectId,
+          commandId: CommandId.make("command:thread-management:post-dispatch"),
+          threadId,
+          messageId,
+          text: "hello",
+          attachments: [],
+          mode: "auto",
+          createdBy: "agent",
+          creationSource: "mcp",
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(ThreadManagementPostDispatchProjectionError);
+      expect(error).toMatchObject({
+        projectId,
+        threadId,
+        messageId,
+        dispatchReplayed: false,
+      });
+    }).pipe(Effect.provide(testLayer));
+  }),
+);
 
 it("leaves commands that do not create durable authored content unchanged", () => {
   const command: OrchestrationV2Command = {
@@ -255,6 +317,7 @@ it("derives thread management messages from structural error attributes", () => 
   const durableProjectionFailure = new ThreadManagementDurableRunProjectionError({
     threadId,
     messageId,
+    dispatchReplayed: false,
   });
   expect(durableProjectionFailure).toMatchObject({ threadId, messageId });
   expect(durableProjectionFailure.message).toBe(

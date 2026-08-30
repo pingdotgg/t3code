@@ -34,10 +34,28 @@ import {
   ProviderOptionSelectionValue,
 } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ChatAttachment, PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "./chatAttachment.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
   description: "Complete task or message text for the target agent.",
 });
+const OrchestratorMcpMessageText = Schema.String.check(Schema.isMaxLength(120_000)).annotate({
+  description: "Message text. It may be empty only when at least one attachment is supplied.",
+});
+const OrchestratorMcpAttachments = Schema.Array(ChatAttachment)
+  .check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS))
+  .annotate({
+    description:
+      "Attachment references prepared by t3_attachment_prepare_upload or already owned by the target thread.",
+  });
+
+const hasMessageContent = (input: {
+  readonly text: string | undefined;
+  readonly attachments: ReadonlyArray<unknown> | undefined;
+}) =>
+  input.text?.trim().length || (input.attachments?.length ?? 0) > 0
+    ? true
+    : "A message requires non-empty text or at least one attachment.";
 const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512)).annotate({
   description: "Optional concise display title.",
 });
@@ -228,12 +246,19 @@ export const OrchestratorMcpTaskCancelResult = Schema.Struct({
 export type OrchestratorMcpTaskCancelResult = typeof OrchestratorMcpTaskCancelResult.Type;
 
 export const OrchestratorMcpCreateThreadRequest = Schema.Struct({
-  prompt: Schema.optional(OrchestratorMcpPrompt),
+  prompt: Schema.optional(OrchestratorMcpMessageText),
+  attachments: Schema.optional(OrchestratorMcpAttachments),
   title: Schema.optional(OrchestratorMcpTitle),
   target: Schema.optional(OrchestratorMcpTarget),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
-});
+}).check(
+  Schema.makeFilter((input) =>
+    input.prompt === undefined && (input.attachments?.length ?? 0) === 0
+      ? true
+      : hasMessageContent({ text: input.prompt, attachments: input.attachments }),
+  ),
+);
 export type OrchestratorMcpCreateThreadRequest = typeof OrchestratorMcpCreateThreadRequest.Type;
 
 export const OrchestratorMcpCreateThreadsInput = Schema.Struct({
@@ -263,6 +288,7 @@ export const OrchestratorMcpCreatedThread = Schema.Struct({
   creationSource: OrchestrationV2CreationSource,
   providerInstanceId: ProviderInstanceId,
   model: Schema.String,
+  attachments: Schema.Array(ChatAttachment).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type OrchestratorMcpCreatedThread = typeof OrchestratorMcpCreatedThread.Type;
 
@@ -272,13 +298,18 @@ export const OrchestratorMcpCreateThreadsResult = Schema.Struct({
 export type OrchestratorMcpCreateThreadsResult = typeof OrchestratorMcpCreateThreadsResult.Type;
 
 export const OrchestratorMcpThreadStartInput = Schema.Struct({
-  prompt: OrchestratorMcpPrompt,
+  prompt: Schema.optional(OrchestratorMcpMessageText),
+  attachments: Schema.optional(OrchestratorMcpAttachments),
   title: Schema.optional(OrchestratorMcpTitle),
   target: Schema.optional(OrchestratorMcpTarget),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
-});
+}).check(
+  Schema.makeFilter((input) =>
+    hasMessageContent({ text: input.prompt, attachments: input.attachments }),
+  ),
+);
 export type OrchestratorMcpThreadStartInput = typeof OrchestratorMcpThreadStartInput.Type;
 
 export const OrchestratorMcpThreadStatus = Schema.Union([
@@ -388,6 +419,7 @@ export const OrchestratorMcpThreadTimelineItem = Schema.Struct({
   title: Schema.NullOr(Schema.String),
   text: Schema.NullOr(Schema.String),
   textTruncated: Schema.Boolean,
+  attachments: Schema.Array(ChatAttachment).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   updatedAt: IsoDateTime,
 });
 export type OrchestratorMcpThreadTimelineItem = typeof OrchestratorMcpThreadTimelineItem.Type;
@@ -403,10 +435,15 @@ export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadRe
 
 export const OrchestratorMcpThreadSendInput = Schema.Struct({
   threadId: ThreadId,
-  message: OrchestratorMcpPrompt,
+  message: Schema.optional(OrchestratorMcpMessageText),
+  attachments: Schema.optional(OrchestratorMcpAttachments),
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
-});
+}).check(
+  Schema.makeFilter((input) =>
+    hasMessageContent({ text: input.message, attachments: input.attachments }),
+  ),
+);
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
 
 export const OrchestratorMcpThreadSendResult = Schema.Struct({
@@ -415,6 +452,7 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   runId: RunId,
   status: OrchestrationV2RunStatus,
   delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
+  attachments: Schema.Array(ChatAttachment).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
 
@@ -466,6 +504,9 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   ),
   canRunChildTask: Schema.Boolean,
   canRunCrossProviderChildTask: Schema.Boolean,
+  attachmentKinds: Schema.Array(Schema.Literals(["image", "file"])).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   constraints: Schema.Array(Schema.String),
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
@@ -485,6 +526,10 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
     threadManagement: Schema.Boolean,
     incrementalThreadRead: Schema.Boolean,
     scheduledTasks: Schema.Boolean,
+    attachmentReferences: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+    attachmentUploadPreparation: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+    ),
     maxBatchThreads: Schema.Number,
   }),
 });
