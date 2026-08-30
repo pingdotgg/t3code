@@ -12,6 +12,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as GitHubAvatarResolver from "../project/GitHubAvatarResolver.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -20,15 +21,28 @@ import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.t
 const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-asset-access-test-",
 });
-const testLayer = Layer.mergeAll(
-  configLayer,
-  WorkspacePaths.layer,
-  ProjectFaviconResolver.layer.pipe(
-    Layer.provide(WorkspacePaths.layer),
-    Layer.provide(T3ProjectFileLoader.layer),
-  ),
-  ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
-).pipe(Layer.provideMerge(NodeServices.layer));
+const disabledGitHubAvatars = Layer.succeed(
+  GitHubAvatarResolver.GitHubAvatarResolver,
+  GitHubAvatarResolver.GitHubAvatarResolver.of({
+    resolvePath: () => Effect.succeed(null),
+    isManagedPath: () => false,
+  }),
+);
+const testLayerWithGitHubAvatars = (
+  githubAvatars: Layer.Layer<GitHubAvatarResolver.GitHubAvatarResolver>,
+) =>
+  Layer.mergeAll(
+    configLayer,
+    WorkspacePaths.layer,
+    githubAvatars,
+    ProjectFaviconResolver.layer.pipe(
+      Layer.provide(WorkspacePaths.layer),
+      Layer.provide(T3ProjectFileLoader.layer),
+      Layer.provide(githubAvatars),
+    ),
+    ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
+  ).pipe(Layer.provideMerge(NodeServices.layer));
+const testLayer = testLayerWithGitHubAvatars(disabledGitHubAvatars);
 
 describe("AssetAccess", () => {
   it.effect("issues workspace URLs that resolve the entry file and sibling assets", () =>
@@ -354,6 +368,42 @@ describe("AssetAccess", () => {
       expect(tamperedSuffixResult).toEqual({ kind: "file", path: canonicalPath });
       expect(tamperedSuffixResult).not.toEqual({ kind: "file", path: canonicalSiblingPath });
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("serves a managed GitHub avatar through external claims", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-favicon-github-",
+      });
+      const managed = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-github-avatars-",
+      });
+      const avatarPath = path.join(managed, "avatar.png");
+      const avatarBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+      yield* fileSystem.writeFile(avatarPath, avatarBytes);
+      const canonicalAvatarPath = yield* fileSystem.realPath(avatarPath);
+      const githubAvatars = Layer.succeed(
+        GitHubAvatarResolver.GitHubAvatarResolver,
+        GitHubAvatarResolver.GitHubAvatarResolver.of({
+          resolvePath: () => Effect.succeed(avatarPath),
+          isManagedPath: (filePath) => filePath === avatarPath,
+        }),
+      );
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "project-favicon", cwd: root },
+      }).pipe(Effect.provide(testLayerWithGitHubAvatars(githubAvatars)));
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+
+      expect(result.sourcePath).toBe(avatarPath);
+      expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-avatar\.png$/);
+      expect(
+        yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
+      ).toEqual({ kind: "file", path: canonicalAvatarPath });
+    }),
   );
 
   it.effect("ignores a client favicon path hint", () =>

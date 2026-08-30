@@ -16,6 +16,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as GitHubAvatarResolver from "./GitHubAvatarResolver.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
 // Well-known favicon paths checked in order.
@@ -128,6 +129,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
+  const githubAvatarResolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
 
   const resolveIconHref = (href: string): ReadonlyArray<string> => {
     const clean = href.replace(/^\//, "");
@@ -262,6 +264,12 @@ export const make = Effect.gen(function* () {
       if (existing) {
         return existing;
       }
+    }
+
+    // The GitHub owner avatar fills only the gap where nothing local resolves.
+    const githubAvatar = yield* githubAvatarResolver.resolvePath(projectCwd);
+    if (githubAvatar !== null) {
+      return githubAvatar;
     }
 
     return null;

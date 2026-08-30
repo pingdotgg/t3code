@@ -66,6 +66,7 @@ import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as GitHubAvatarResolver from "./project/GitHubAvatarResolver.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
@@ -351,9 +352,16 @@ const WorkspaceLayerLive = Layer.mergeAll(
   WorkspaceFileSystemLayerLive,
 );
 
-const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
-  Layer.provide(WorkspacePaths.layer),
-  Layer.provide(T3ProjectFileLoader.layer),
+const GitHubAvatarResolverLayerLive = GitHubAvatarResolver.layer.pipe(
+  Layer.provide(RepositoryIdentityResolver.layer),
+);
+const ProjectFaviconResolverLayerLive = Layer.mergeAll(
+  ProjectFaviconResolver.layer.pipe(
+    Layer.provide(WorkspacePaths.layer),
+    Layer.provide(T3ProjectFileLoader.layer),
+    Layer.provide(GitHubAvatarResolverLayerLive),
+  ),
+  GitHubAvatarResolverLayerLive,
 );
 
 const AuthLayerLive = EnvironmentAuth.layer.pipe(

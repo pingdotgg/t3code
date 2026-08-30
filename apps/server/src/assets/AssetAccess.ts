@@ -39,6 +39,7 @@ import {
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as GitHubAvatarResolver from "../project/GitHubAvatarResolver.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
@@ -331,6 +332,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         ),
       );
       const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+      const githubAvatarResolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
       const faviconPath = yield* faviconResolver
         .resolvePath(workspaceRoot, input.projectFaviconPath ?? undefined)
         .pipe(
@@ -344,9 +346,10 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         );
       const isExternalOverride =
         faviconPath !== null &&
-        input.projectFaviconPath !== undefined &&
-        path.isAbsolute(input.projectFaviconPath) &&
-        path.normalize(faviconPath) === path.normalize(input.projectFaviconPath);
+        (githubAvatarResolver.isManagedPath(faviconPath) ||
+          (input.projectFaviconPath !== undefined &&
+            path.isAbsolute(input.projectFaviconPath) &&
+            path.normalize(faviconPath) === path.normalize(input.projectFaviconPath)));
       const relativePath =
         faviconPath && !isExternalOverride ? path.relative(workspaceRoot, faviconPath) : null;
       const sourceFaviconPath = isExternalOverride ? faviconPath : relativePath;

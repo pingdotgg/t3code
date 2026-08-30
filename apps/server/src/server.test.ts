@@ -133,6 +133,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
+import * as GitHubAvatarResolver from "./project/GitHubAvatarResolver.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
@@ -578,9 +579,17 @@ const buildAppUnderTest = (options?: {
       Layer.provide(WorkspacePaths.layer),
       Layer.provideMerge(vcsDriverRegistryLayer),
     );
+    const disabledGitHubAvatars = Layer.succeed(
+      GitHubAvatarResolver.GitHubAvatarResolver,
+      GitHubAvatarResolver.GitHubAvatarResolver.of({
+        resolvePath: () => Effect.succeed(null),
+        isManagedPath: () => false,
+      }),
+    );
     const workspaceAndProjectServicesLayer = Layer.mergeAll(
       WorkspacePaths.layer,
       workspaceEntriesLayer,
+      disabledGitHubAvatars,
       WorkspaceFileSystem.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(workspaceEntriesLayer),
@@ -588,6 +597,7 @@ const buildAppUnderTest = (options?: {
       ProjectFaviconResolver.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(T3ProjectFileLoader.layer),
+        Layer.provide(disabledGitHubAvatars),
       ),
     );
     const gitWorkflowLayer = GitWorkflowService.layer.pipe(

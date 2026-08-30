@@ -1,7 +1,8 @@
 # Customize a project icon
 
 T3 Code selects a project icon automatically. It checks `t3.json`, common favicon and app icon
-paths, and icon links in project HTML files.
+paths, and icon links in project HTML files. If a project has no local icon and its repository is
+hosted on GitHub, T3 Code shows the repository owner's avatar instead.
 
 To choose a different icon:
 

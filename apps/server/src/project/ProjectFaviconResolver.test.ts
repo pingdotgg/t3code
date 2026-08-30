@@ -7,14 +7,24 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as GitHubAvatarResolver from "./GitHubAvatarResolver.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
+
+const disabledGitHubAvatars = Layer.succeed(
+  GitHubAvatarResolver.GitHubAvatarResolver,
+  GitHubAvatarResolver.GitHubAvatarResolver.of({
+    resolvePath: () => Effect.succeed(null),
+    isManagedPath: () => false,
+  }),
+);
 
 const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(
     ProjectFaviconResolver.layer.pipe(
       Layer.provide(WorkspacePaths.layer),
       Layer.provide(T3ProjectFileLoader.layer),
+      Layer.provide(disabledGitHubAvatars),
     ),
   ),
   Layer.provideMerge(NodeServices.layer),
@@ -41,9 +51,12 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
   yield* fileSystem.writeFileString(absolutePath, contents).pipe(Effect.orDie);
 });
 
-const makeResolverWithFileSystem = (fileSystem: FileSystem.FileSystem) =>
+const makeResolverWithFileSystem = (
+  fileSystem: FileSystem.FileSystem,
+  githubAvatars: Layer.Layer<GitHubAvatarResolver.GitHubAvatarResolver> = disabledGitHubAvatars,
+) =>
   ProjectFaviconResolver.make.pipe(
-    Effect.provide([WorkspacePaths.layer, T3ProjectFileLoader.layer]),
+    Effect.provide([WorkspacePaths.layer, T3ProjectFileLoader.layer, githubAvatars]),
     Effect.provideService(FileSystem.FileSystem, fileSystem),
   );
 
@@ -286,6 +299,51 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
         const resolved = yield* resolver.resolvePath(cwd);
 
         expect(resolved).toBeNull();
+      }),
+    );
+
+    it.effect("falls back to the GitHub avatar when no local icon resolves", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempDir;
+        const managed = yield* makeTempDir;
+        const avatarPath = path.join(managed, "avatar.png");
+        const githubAvatars = Layer.succeed(
+          GitHubAvatarResolver.GitHubAvatarResolver,
+          GitHubAvatarResolver.GitHubAvatarResolver.of({
+            resolvePath: () => Effect.succeed(avatarPath),
+            isManagedPath: () => true,
+          }),
+        );
+        const resolver = yield* makeResolverWithFileSystem(fileSystem, githubAvatars);
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).toBe(avatarPath);
+      }),
+    );
+
+    it.effect("prefers a local favicon over the GitHub avatar", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "favicon.svg", "<svg>favicon</svg>");
+        const managed = yield* makeTempDir;
+        const avatarPath = path.join(managed, "avatar.png");
+        const githubAvatars = Layer.succeed(
+          GitHubAvatarResolver.GitHubAvatarResolver,
+          GitHubAvatarResolver.GitHubAvatarResolver.of({
+            resolvePath: () => Effect.succeed(avatarPath),
+            isManagedPath: () => true,
+          }),
+        );
+        const resolver = yield* makeResolverWithFileSystem(fileSystem, githubAvatars);
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).toContain("favicon.svg");
       }),
     );
 
