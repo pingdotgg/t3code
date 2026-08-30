@@ -224,6 +224,134 @@ it.effect("blocks a closed in-flight tab without discarding another selected tab
   ),
 );
 
+it.effect("commits a response tab before delivery so a following close cannot be undone", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const closingTabId = PreviewTabId.make("tab-response-before-close");
+      const connected = yield* Deferred.make<void>();
+      const responseDelivered = yield* Deferred.make<void>();
+      const routedRequests: RoutedRequest[] = [];
+      const events = yield* broker.connect(makeHost());
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        const request = { ...event.request, connectionId: event.connectionId };
+        routedRequests.push(request);
+        return Effect.gen(function* () {
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result:
+              request.operation === "status"
+                ? { available: true, tabId: closingTabId }
+                : { url: "http://localhost:3200" },
+          });
+          if (request.operation === "status") {
+            yield* Deferred.succeed(responseDelivered, undefined);
+          }
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+
+      const response = yield* broker
+        .invoke({ scope, operation: "status", input: {}, tabId: closingTabId })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(responseDelivered);
+      yield* broker.forgetClosedTab(scope, closingTabId);
+      yield* Fiber.join(response);
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+
+      expect(routedRequests.at(-1)?.tabId).toBeUndefined();
+    }),
+  ),
+);
+
+it.effect("retires close barriers after failed and interrupted invocations", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const closingTabId = PreviewTabId.make("tab-finalized-barrier");
+      const connected = yield* Deferred.make<void>();
+      const failedRequestRouted = yield* Deferred.make<void>();
+      const interruptedRequestRouted = yield* Deferred.make<void>();
+      const releaseFailure = yield* Deferred.make<void>();
+      const routedRequests: RoutedRequest[] = [];
+      const events = yield* broker.connect(makeHost());
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        const request = { ...event.request, connectionId: event.connectionId };
+        routedRequests.push(request);
+        const marker =
+          typeof request.input === "object" && request.input !== null && "marker" in request.input
+            ? request.input.marker
+            : undefined;
+        return Effect.gen(function* () {
+          if (marker === "fail") {
+            yield* Deferred.succeed(failedRequestRouted, undefined);
+            yield* Deferred.await(releaseFailure);
+            yield* broker.respond({
+              clientId: "client-1",
+              connectionId: request.connectionId,
+              requestId: request.requestId,
+              ok: false,
+              error: {
+                _tag: "PreviewAutomationUnavailableError",
+                message: "host failed",
+              },
+            });
+            return;
+          }
+          if (marker === "interrupt") {
+            yield* Deferred.succeed(interruptedRequestRouted, undefined);
+            return yield* Effect.never;
+          }
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result:
+              marker === "fresh"
+                ? { available: true, tabId: closingTabId }
+                : { url: "http://localhost:3200" },
+          });
+        }).pipe(Effect.forkScoped, Effect.asVoid);
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+
+      const failed = yield* broker
+        .invoke({ scope, operation: "status", input: { marker: "fail" }, tabId: closingTabId })
+        .pipe(Effect.flip, Effect.forkScoped);
+      const interrupted = yield* broker
+        .invoke({
+          scope,
+          operation: "status",
+          input: { marker: "interrupt" },
+          tabId: closingTabId,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(failedRequestRouted);
+      yield* Deferred.await(interruptedRequestRouted);
+      yield* broker.forgetClosedTab(scope, closingTabId);
+      yield* Deferred.succeed(releaseFailure, undefined);
+      yield* Fiber.await(failed);
+      yield* Fiber.interrupt(interrupted);
+
+      yield* broker.invoke({
+        scope,
+        operation: "status",
+        input: { marker: "fresh" },
+        tabId: closingTabId,
+      });
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+
+      expect(routedRequests.at(-1)?.tabId).toBe(closingTabId);
+    }),
+  ),
+);
+
 it.effect("tracks the tab returned by a targeted recording stop", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -252,9 +252,9 @@ it.effect("finishes broker cleanup when close is interrupted after manager remov
       yield* Deferred.await(cleanupEntered);
       expect((yield* manager.list({ threadId })).sessions).toHaveLength(0);
 
-      const interruption = yield* Fiber.interrupt(closeFiber).pipe(Effect.forkScoped);
+      closeFiber.interruptUnsafe();
       yield* Deferred.succeed(releaseCleanup, undefined);
-      yield* Fiber.join(interruption);
+      yield* Fiber.await(closeFiber);
       expect(yield* Ref.get(cleanupCompleted)).toBe(true);
       const repeated = yield* service.close(scope, { tabId: opened.tabId }).pipe(Effect.flip);
       expect(repeated._tag).toBe("PreviewSessionLookupError");
