@@ -73,6 +73,12 @@ function guardedCheckpointRestoreFailureCode(
     case "restore-precondition-changed":
       return "checkpoint_restore_rejected";
   }
+
+  return assertUnhandledCheckpointRollbackReason(reason);
+}
+
+function assertUnhandledCheckpointRollbackReason(reason: never): never {
+  throw new Error(`Unhandled checkpoint rollback failure reason: ${String(reason)}`);
 }
 
 /**
