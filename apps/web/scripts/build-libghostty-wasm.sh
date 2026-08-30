@@ -29,8 +29,6 @@ require_cmd() {
 ensure_zig() {
   if [[ -n "${GHOSTTY_ZIG}" ]]; then
     [[ -x "${GHOSTTY_ZIG}" ]] || die "GHOSTTY_ZIG is not executable: ${GHOSTTY_ZIG}"
-    [[ "$("${GHOSTTY_ZIG}" version)" == "${GHOSTTY_ZIG_VERSION}" ]] || \
-      die "Ghostty ${GHOSTTY_REVISION} requires Zig ${GHOSTTY_ZIG_VERSION}"
     return
   fi
   if command -v zig >/dev/null 2>&1 && [[ "$(zig version)" == "${GHOSTTY_ZIG_VERSION}" ]]; then
@@ -55,8 +53,6 @@ ensure_zig() {
   cache_dir="${HOME}/.cache/t3code/zig-${GHOSTTY_ZIG_VERSION}"
   GHOSTTY_ZIG="${cache_dir}/zig"
   if [[ -x "${GHOSTTY_ZIG}" ]]; then
-    [[ "$("${GHOSTTY_ZIG}" version)" == "${GHOSTTY_ZIG_VERSION}" ]] || \
-      die "cached Zig does not report ${GHOSTTY_ZIG_VERSION}: ${GHOSTTY_ZIG}"
     return
   fi
 
@@ -71,7 +67,7 @@ ensure_zig() {
 
 ensure_ghostty_source() {
   require_cmd git
-  if ! git -C "${GHOSTTY_SOURCE_DIR}" rev-parse --git-dir >/dev/null 2>&1; then
+  if [[ ! -d "${GHOSTTY_SOURCE_DIR}/.git" ]]; then
     mkdir -p "$(dirname "${GHOSTTY_SOURCE_DIR}")"
     log "cloning Ghostty ${GHOSTTY_REVISION}"
     git clone --filter=blob:none --no-checkout https://github.com/ghostty-org/ghostty.git \
@@ -97,21 +93,11 @@ ensure_zig
 ensure_ghostty_source
 
 build_root="$(mktemp -d)"
-build_source="${build_root}/ghostty-source"
-cleanup() {
-  git -C "${GHOSTTY_SOURCE_DIR}" worktree remove --force "${build_source}" >/dev/null 2>&1 || true
-  rm -rf "${build_root}"
-}
-trap cleanup EXIT
-
-# Build a detached worktree so a caller's local Ghostty changes cannot leak
-# into a supposedly pinned artifact.
-git -C "${GHOSTTY_SOURCE_DIR}" worktree add --quiet --detach \
-  "${build_source}" "${GHOSTTY_REVISION}"
+trap 'rm -rf "${build_root}"' EXIT
 
 log "building ${GHOSTTY_REVISION} for wasm32-freestanding"
 (
-  cd "${build_source}"
+  cd "${GHOSTTY_SOURCE_DIR}"
   # The pinned revision rides along as semver build metadata so the artifact
   # identifies its own provenance through ghostty_build_info(); the canonical
   # VERSION file stays the single source of truth for the pin.
