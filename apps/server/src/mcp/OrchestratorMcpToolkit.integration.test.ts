@@ -100,6 +100,7 @@ const projectId = ProjectId.make("project:mcp-orchestrator");
 const deletionRaceProjectId = ProjectId.make("project:mcp-orchestrator-delete-race");
 const deletionRaceParentThreadId = ThreadId.make("thread:mcp-orchestrator-delete-race-parent");
 const ownershipRaceParentThreadId = ThreadId.make("thread:mcp-orchestrator-ownership-race-parent");
+const lifecycleRaceParentThreadId = ThreadId.make("thread:mcp-orchestrator-lifecycle-race-parent");
 const targetProjectId = ProjectId.make("project:mcp-orchestrator-target");
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
@@ -523,6 +524,7 @@ describe("orchestrator MCP toolkit", () => {
           const allowDeletion = yield* Deferred.make<void>();
           const deletionRaceProviderStarted = yield* Deferred.make<ProviderAdapterV2TurnInput>();
           const ownershipRaceProviderStarted = yield* Deferred.make<ProviderAdapterV2TurnInput>();
+          const lifecycleRaceProviderStarted = yield* Deferred.make<ProviderAdapterV2TurnInput>();
           const deletionRaceCommandId = CommandId.make(
             "command:mcp:mcp-provider-session-delete-race:create-thread:delete-create-race:0",
           );
@@ -545,13 +547,16 @@ describe("orchestrator MCP toolkit", () => {
                 turn.threadId !== parentThreadId &&
                 turn.threadId !== deletionRaceParentThreadId &&
                 turn.threadId !== ownershipRaceParentThreadId &&
+                turn.threadId !== lifecycleRaceParentThreadId &&
                 turn.message.text !== cancellationPrompt,
               startedSignal: (turn) =>
                 turn.threadId === deletionRaceParentThreadId
                   ? deletionRaceProviderStarted
                   : turn.threadId === ownershipRaceParentThreadId
                     ? ownershipRaceProviderStarted
-                    : undefined,
+                    : turn.threadId === lifecycleRaceParentThreadId
+                      ? lifecycleRaceProviderStarted
+                      : undefined,
               terminalGate: (turn) =>
                 turn.message.text.startsWith("Delegated task") ||
                 turn.message.text.startsWith("Delegated tasks")
@@ -3591,6 +3596,90 @@ describe("orchestrator MCP toolkit", () => {
                 ),
               ).toBe(true);
             }).pipe(Effect.ensuring(Deferred.succeed(inactiveParentGate.release, undefined)));
+
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-lifecycle-race-parent:create"),
+              threadId: lifecycleRaceParentThreadId,
+              projectId,
+              title: "MCP lifecycle race parent",
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-lifecycle-race-parent:start"),
+              threadId: lifecycleRaceParentThreadId,
+              messageId: MessageId.make("message:mcp-lifecycle-race-parent:start"),
+              text: "Stay active until the caller lifecycle is rechecked.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            const startedLifecycleRaceTurn = yield* Deferred.await(lifecycleRaceProviderStarted);
+            expect(startedLifecycleRaceTurn.threadId).toBe(lifecycleRaceParentThreadId);
+            const lifecycleRaceInvocation: McpInvocationContext.McpInvocationScope = {
+              ...invocation,
+              threadId: lifecycleRaceParentThreadId,
+              providerSessionId: "mcp-provider-session-lifecycle-race",
+            };
+            const invokeLifecycleRace = (name: string, args: Record<string, unknown>) =>
+              server
+                .callTool({ name, arguments: args })
+                .pipe(
+                  Effect.provideService(
+                    McpInvocationContext.McpInvocationContext,
+                    lifecycleRaceInvocation,
+                  ),
+                  Effect.provideService(McpSchema.McpServerClient, client),
+                );
+            const archivedParentKey = "create-after-parent-archived";
+            const archivedParentGate = yield* gateLaunchReceipt(
+              launchCommandId(archivedParentKey, lifecycleRaceInvocation.providerSessionId),
+            );
+            yield* Effect.gen(function* () {
+              const creation = yield* Effect.forkChild(
+                invokeLifecycleRace("create_threads", {
+                  clientRequestId: archivedParentKey,
+                  threads: [
+                    {
+                      projectId: targetProjectId,
+                      title: "Must not outlive its archived caller",
+                      prompt: "Do not launch after the caller is archived.",
+                    },
+                  ],
+                }),
+                { startImmediately: true },
+              );
+              yield* Deferred.await(archivedParentGate.entered);
+              yield* orchestrator.dispatch({
+                type: "thread.archive",
+                commandId: CommandId.make("command:mcp-lifecycle-race-parent:archive"),
+                threadId: lifecycleRaceParentThreadId,
+              });
+              yield* Deferred.succeed(archivedParentGate.release, undefined);
+              const creationCall = yield* Fiber.join(creation);
+              expect(creationCall.structuredContent).toMatchObject({
+                code: "parent_not_active",
+                message:
+                  "Thread creation requires an active run owned by this MCP provider session.",
+              });
+              const childThreadId = ThreadId.make(
+                `thread:mcp:${lifecycleRaceInvocation.providerSessionId}:${archivedParentKey}:0`,
+              );
+              expect(
+                Option.isNone(
+                  yield* Effect.option(orchestrator.getThreadProjection(childThreadId)),
+                ),
+              ).toBe(true);
+            }).pipe(Effect.ensuring(Deferred.succeed(archivedParentGate.release, undefined)));
 
             yield* orchestrator.dispatch({
               type: "thread.create",

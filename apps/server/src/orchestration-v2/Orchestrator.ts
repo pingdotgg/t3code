@@ -738,10 +738,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
     if (caller.thread.deletedAt !== null || caller.thread.archivedAt !== null) {
+      const cause =
+        ceiling.callerRunId !== undefined && ceiling.callerProviderInstanceId !== undefined
+          ? new OrchestratorCallerRunCeilingError({
+              callerThreadId: ceiling.callerThreadId,
+              callerRunId: ceiling.callerRunId,
+              callerProviderInstanceId: ceiling.callerProviderInstanceId,
+            })
+          : `Caller thread ${ceiling.callerThreadId} is not active.`;
       return yield* new OrchestratorDispatchError({
         commandId: input.command.commandId,
         commandType: input.command.type,
-        cause: `Caller thread ${ceiling.callerThreadId} is not active.`,
+        cause,
       });
     }
     if (ceiling.callerRunId !== undefined && ceiling.callerProviderInstanceId !== undefined) {
