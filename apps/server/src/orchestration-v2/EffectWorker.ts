@@ -584,9 +584,15 @@ export const layerWithOptions = (
           const executionError = Cause.findErrorOption(exit.cause).pipe(
             Option.filter(isOrchestrationEffectExecutionError),
           );
-          const failureCode = Option.isSome(executionError)
-            ? executionError.value.failureCode
-            : undefined;
+          const uncertainGuardedFailure =
+            isGuardedCheckpointRestore(effect) &&
+            (Cause.hasDies(exit.cause) ||
+              (!Cause.hasInterruptsOnly(exit.cause) && Option.isNone(executionError)));
+          const failureCode = uncertainGuardedFailure
+            ? "checkpoint_restore_partial"
+            : Option.isSome(executionError)
+              ? executionError.value.failureCode
+              : undefined;
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
           const terminalRollbackFailure =
             effect.request.type === "provider-thread.rollback" && failureCode !== undefined;
@@ -607,7 +613,7 @@ export const layerWithOptions = (
                   error,
                   ...(failureCode === undefined ? {} : { failureCode }),
                 })
-                .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
+                .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause, failureCode)))
             : nonRetryable
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })

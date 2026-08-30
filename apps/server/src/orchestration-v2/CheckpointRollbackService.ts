@@ -181,31 +181,103 @@ export const layer: Layer.Layer<
       const existingSession = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
+      const session = yield* sessions.open({
+        threadId: input.threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy: resolvedRuntimePolicy,
+        ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
+      });
 
-      const runsToRollback = projection.runs.filter(
+      const admittedSnapshot = yield* projections.getThreadSnapshot(input.threadId);
+      const admittedProjection = admittedSnapshot.projection;
+      const admittedProviderThread = admittedProjection.providerThreads.find(
+        (candidate) => candidate.id === input.providerThreadId,
+      );
+      const admittedCheckpoint = admittedProjection.checkpoints.find(
+        (candidate) => candidate.id === input.checkpointId,
+      );
+      const admittedScope = admittedProjection.checkpointScopes.find(
+        (candidate) => candidate.id === input.scopeId,
+      );
+      if (
+        admittedProviderThread === undefined ||
+        admittedProviderThread.providerSessionId !== providerSessionId ||
+        admittedCheckpoint === undefined ||
+        admittedScope === undefined ||
+        admittedCheckpoint.scopeId !== admittedScope.id ||
+        admittedCheckpoint.status !== "ready"
+      ) {
+        return yield* new CheckpointRollbackExecutionError({
+          reason: "rollback-target-invalid",
+          threadId: input.threadId,
+          providerThreadId: input.providerThreadId,
+          checkpointId: input.checkpointId,
+        });
+      }
+      if (
+        admittedProviderThread.id !== admittedProjection.thread.activeProviderThreadId ||
+        admittedProviderThread.providerInstanceId !==
+          admittedProjection.thread.modelSelection.instanceId
+      ) {
+        return yield* new CheckpointRollbackExecutionError({
+          reason: "active-provider-changed",
+          threadId: input.threadId,
+          providerThreadId: input.providerThreadId,
+          checkpointId: input.checkpointId,
+        });
+      }
+      if (
+        input.expectedIdle === true &&
+        admittedProjection.runs.some((run) =>
+          ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+        )
+      ) {
+        return yield* new CheckpointRollbackExecutionError({
+          reason: "thread-not-idle",
+          threadId: input.threadId,
+          providerThreadId: input.providerThreadId,
+          checkpointId: input.checkpointId,
+        });
+      }
+      if (checkpointRollbackAppRunOrdinal(admittedCheckpoint, admittedScope) !== targetOrdinal) {
+        return yield* new CheckpointRollbackExecutionError({
+          reason: "rollback-target-invalid",
+          threadId: input.threadId,
+          providerThreadId: input.providerThreadId,
+          checkpointId: input.checkpointId,
+        });
+      }
+
+      const runsToRollback = admittedProjection.runs.filter(
         (run) => run.ordinal > targetOrdinal && run.status === "completed",
       );
-      const providerThreadTurns = projection.providerTurns.filter(
-        (turn) => turn.providerThreadId === providerThread.id,
+      const providerThreadTurns = admittedProjection.providerTurns.filter(
+        (turn) => turn.providerThreadId === admittedProviderThread.id,
       );
       const rollbackTarget: ProviderAdapterV2RollbackTarget =
         targetOrdinal === 0
           ? {
               type: "thread_start",
-              checkpointId: checkpoint.id,
+              checkpointId: admittedCheckpoint.id,
               appRunOrdinal: 0,
             }
           : yield* Effect.gen(function* () {
-              const targetRun = projection.runs.find((run) => run.ordinal === targetOrdinal);
-              const targetAttempt = projection.attempts.find(
+              const targetRun = admittedProjection.runs.find(
+                (run) => run.ordinal === targetOrdinal,
+              );
+              const targetAttempt = admittedProjection.attempts.find(
                 (attempt) => attempt.id === targetRun?.activeAttemptId,
               );
-              const targetTurn = projection.providerTurns.find(
+              const targetTurn = admittedProjection.providerTurns.find(
                 (turn) =>
                   turn.id === targetAttempt?.providerTurnId ||
                   turn.runAttemptId === targetAttempt?.id,
               );
-              if (targetTurn === undefined || targetTurn.providerThreadId !== providerThread.id) {
+              if (
+                targetTurn === undefined ||
+                targetTurn.providerThreadId !== admittedProviderThread.id
+              ) {
                 return yield* new CheckpointRollbackExecutionError({
                   reason: "provider-turn-unavailable",
                   threadId: input.threadId,
@@ -215,7 +287,7 @@ export const layer: Layer.Layer<
               }
               return {
                 type: "provider_turn" as const,
-                checkpointId: checkpoint.id,
+                checkpointId: admittedCheckpoint.id,
                 appRunOrdinal: targetOrdinal,
                 providerTurn: targetTurn,
               };
@@ -229,14 +301,20 @@ export const layer: Layer.Layer<
                 const latestCheckpoint = latest.checkpoints.find(
                   (candidate) => candidate.id === input.checkpointId,
                 );
+                const latestProviderThread = latest.providerThreads.find(
+                  (candidate) => candidate.id === input.providerThreadId,
+                );
                 const remainsIdle = !latest.runs.some((run) =>
                   ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
                 );
                 return remainsIdle &&
-                  latestSnapshot.snapshotSequence === initialSnapshot.snapshotSequence &&
+                  latestSnapshot.snapshotSequence === admittedSnapshot.snapshotSequence &&
                   latest.thread.archivedAt === null &&
                   latest.thread.deletedAt === null &&
                   latest.thread.activeProviderThreadId === input.providerThreadId &&
+                  latest.thread.modelSelection.instanceId ===
+                    admittedProviderThread.providerInstanceId &&
+                  latestProviderThread?.providerSessionId === providerSessionId &&
                   latestCheckpoint?.scopeId === input.scopeId &&
                   latestCheckpoint.status === "ready"
                   ? Effect.void
@@ -263,8 +341,8 @@ export const layer: Layer.Layer<
           : undefined;
       yield* checkpoints
         .restore({
-          scope,
-          checkpoint,
+          scope: admittedScope,
+          checkpoint: admittedCheckpoint,
           ...(input.expectedWorkspaceFingerprint === undefined
             ? {}
             : { expectedWorkspaceFingerprint: input.expectedWorkspaceFingerprint }),
@@ -286,19 +364,12 @@ export const layer: Layer.Layer<
           ),
         );
       yield* Effect.gen(function* () {
-        const session = yield* sessions.open({
-          threadId: input.threadId,
-          providerSessionId,
-          modelSelection,
-          runtimePolicy: resolvedRuntimePolicy,
-          ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
-        });
         const snapshot =
           runsToRollback.length === 0
-            ? { providerThread }
+            ? { providerThread: admittedProviderThread }
             : yield* session
                 .rollbackThread({
-                  providerThread,
+                  providerThread: admittedProviderThread,
                   target: rollbackTarget,
                   providerThreadTurns,
                 })
@@ -314,15 +385,18 @@ export const layer: Layer.Layer<
                       }),
                   ),
                 );
-        const staleCheckpoints = projection.checkpoints.filter(
+        const staleCheckpoints = admittedProjection.checkpoints.filter(
           (candidate) =>
-            candidate.scopeId === scope.id &&
+            candidate.scopeId === admittedScope.id &&
             candidate.appRunOrdinal !== null &&
             candidate.appRunOrdinal > targetOrdinal &&
             candidate.status === "ready",
         );
         if (staleCheckpoints.length > 0) {
-          yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
+          yield* checkpoints.deleteStaleRefs({
+            scope: admittedScope,
+            checkpoints: staleCheckpoints,
+          });
         }
 
         const now = yield* DateTime.now;
@@ -340,8 +414,8 @@ export const layer: Layer.Layer<
           yield* makeEvent({
             type: "provider-thread.updated",
             threadId: input.threadId,
-            driver: providerThread.driver,
-            providerInstanceId: providerThread.providerInstanceId,
+            driver: admittedProviderThread.driver,
+            providerInstanceId: admittedProviderThread.providerInstanceId,
             occurredAt: now,
             payload: {
               ...snapshot.providerThread,
@@ -357,14 +431,16 @@ export const layer: Layer.Layer<
               threadId: input.threadId,
               ...(staleCheckpoint.runId === null ? {} : { runId: staleCheckpoint.runId }),
               nodeId: staleCheckpoint.nodeId,
-              providerInstanceId: providerThread.providerInstanceId,
+              providerInstanceId: admittedProviderThread.providerInstanceId,
               occurredAt: now,
               payload: { ...staleCheckpoint, status: "stale" },
             }),
           );
         }
         for (const run of runsToRollback) {
-          const rootNode = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
+          const rootNode = admittedProjection.nodes.find(
+            (candidate) => candidate.id === run.rootNodeId,
+          );
           events.push(
             yield* makeEvent({
               type: "run.updated",

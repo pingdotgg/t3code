@@ -47,6 +47,10 @@ import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexA
 import { OrchestrationEffectWorkerV2 } from "../orchestration-v2/EffectWorker.ts";
 import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import {
+  ThreadDispatchLockV2,
+  threadDispatchLockLayer,
+} from "../orchestration-v2/KeyedSerialExecutor.ts";
+import {
   OrchestratorCheckpointRollbackTargetUnsupportedError,
   OrchestratorV2,
 } from "../orchestration-v2/Orchestrator.ts";
@@ -203,8 +207,9 @@ function makeIntegrationLayer(input: {
     Layer.provide(providerRegistry),
     Layer.provide(NodeServices.layer),
   );
+  const runtimeWithDispatchLock = Layer.merge(runtime, threadDispatchLockLayer);
   return CheckpointMcp.layer.pipe(
-    Layer.provideMerge(runtime),
+    Layer.provideMerge(runtimeWithDispatchLock),
     Layer.provideMerge(NodeServices.layer),
   );
 }
@@ -371,6 +376,7 @@ function restoreScenario(
       const checkpointStore = yield* CheckpointStore.CheckpointStore;
       const orchestrator = yield* OrchestratorV2;
       const eventSink = yield* EventSinkV2;
+      const threadDispatch = yield* ThreadDispatchLockV2;
       const worker = yield* OrchestrationEffectWorkerV2;
       const service = yield* CheckpointMcp.CheckpointMcpService;
       const threadId = ThreadId.make(
@@ -483,30 +489,46 @@ function restoreScenario(
         if (input.fingerprintGate === undefined) {
           return yield* Effect.die("fingerprint gate is required for the admission race");
         }
-        const workerFiber = yield* worker.runOnce.pipe(Effect.forkChild);
+        const completionOrder = yield* Ref.make<ReadonlyArray<"restore" | "message">>([]);
+        const workerFiber = yield* worker.runOnce.pipe(
+          Effect.tap(() => Ref.update(completionOrder, (order) => [...order, "restore" as const])),
+          Effect.forkChild,
+        );
         yield* Deferred.await(input.fingerprintGate.entered);
-        const messageFiber = yield* orchestrator
-          .dispatch({
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "mcp",
-            commandId: CommandId.make(`command:message-during-restore:${threadId}`),
-            threadId,
-            messageId: MessageId.make(`message:during-restore:${threadId}`),
-            text: "Run after checkpoint restoration.",
-            attachments: [],
-            modelSelection,
-            dispatchMode: { type: "start_immediately" },
-          })
+        const lockProbe = yield* threadDispatch
+          .withLock(threadId, Effect.void)
           .pipe(Effect.forkChild);
         yield* Effect.yieldNow;
         assert.isTrue(
-          messageFiber.pollUnsafe() === undefined,
-          "same-thread message admission must wait for the guarded restore",
+          lockProbe.pollUnsafe() === undefined,
+          "the guarded restore worker must hold the shared thread admission lock",
         );
+        const dispatchEntered = yield* Deferred.make<void>();
+        const messageFiber = yield* Deferred.succeed(dispatchEntered, undefined).pipe(
+          Effect.andThen(
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "mcp",
+              commandId: CommandId.make(`command:message-during-restore:${threadId}`),
+              threadId,
+              messageId: MessageId.make(`message:during-restore:${threadId}`),
+              text: "Run after checkpoint restoration.",
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
+            }),
+          ),
+          Effect.tap(() => Ref.update(completionOrder, (order) => [...order, "message" as const])),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(dispatchEntered);
+        yield* Effect.yieldNow;
         yield* Deferred.succeed(input.fingerprintGate.release, undefined);
         assert.isTrue(yield* Fiber.join(workerFiber));
+        yield* Fiber.join(lockProbe);
         yield* Fiber.join(messageFiber);
+        assert.deepEqual(yield* Ref.get(completionOrder), ["restore", "message"]);
       } else {
         assert.isTrue(yield* worker.runOnce);
       }
