@@ -11,6 +11,7 @@ import { layer as projectSetupScriptRunnerLayer } from "../project/ProjectSetupS
 import { layer as checkpointCaptureServiceLayer } from "./CheckpointCaptureService.ts";
 import { layer as checkpointServiceLayer } from "./CheckpointService.ts";
 import { layer as checkpointRollbackServiceLayer } from "./CheckpointRollbackService.ts";
+import * as ClientCommandDispatch from "./ClientCommandDispatch.ts";
 import { layer as commandPolicyLayer } from "./CommandPolicy.ts";
 import { layerFromApplicationReceipts as commandReceiptStoreLayer } from "./CommandReceiptStore.ts";
 import { layer as contextHandoffServiceLayer } from "./ContextHandoffService.ts";
@@ -201,6 +202,9 @@ const orchestratorProvided = orchestratorLayer.pipe(
 const threadManagementProvided = threadManagementServiceLayer.pipe(
   Layer.provide(Layer.merge(orchestratorProvided, legacyV1ThreadImporterProvided)),
 );
+const clientCommandDispatchProvided = ClientCommandDispatch.layer.pipe(
+  Layer.provide(Layer.merge(ProjectServiceLayerLive, threadManagementProvided)),
+);
 export const ProjectSetupScriptRunnerLayerLive = projectSetupScriptRunnerLayer.pipe(
   Layer.provide(ProjectServiceLayerLive),
 );
@@ -275,6 +279,7 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   OrchestrationLayerLive,
   OrchestrationV2LayerLive.pipe(Layer.provide(ProjectServiceLayerLive)),
   ProjectServiceLayerLive,
+  clientCommandDispatchProvided,
   threadLaunchProvided,
   threadLifecycleProvided,
   scheduledTaskProvided,

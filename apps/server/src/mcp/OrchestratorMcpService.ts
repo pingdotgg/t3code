@@ -154,6 +154,7 @@ export class OrchestratorMcpService extends Context.Service<
 >()("t3/mcp/OrchestratorMcpService") {}
 
 const isThreadManagementError = Schema.is(ThreadManagementError);
+const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
 
 function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {
   return new OrchestratorMcpFailure({ code, message });
@@ -1470,10 +1471,12 @@ const make = Effect.gen(function* () {
                 )
                 .pipe(
                   Effect.mapError((error) =>
-                    failure(
-                      "orchestration_error",
-                      `Unable to create thread ${index + 1}: ${errorMessage(error)}`,
-                    ),
+                    isOrchestratorMcpFailure(error)
+                      ? error
+                      : failure(
+                          "orchestration_error",
+                          `Unable to create thread ${index + 1}: ${errorMessage(error)}`,
+                        ),
                   ),
                 );
               if (request.prompt !== undefined) {

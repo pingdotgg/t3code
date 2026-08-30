@@ -59,7 +59,7 @@ it.effect("routes WebSocket thread creation through receipt-aware project admiss
 
     yield* Effect.gen(function* () {
       const threads = yield* ThreadManagement.ThreadManagementService;
-      const dispatchClientCommand = yield* ClientCommandDispatch.make;
+      const dispatchClientCommand = (yield* ClientCommandDispatch.make).dispatch;
       const command = {
         type: "thread.create",
         createdBy: "user",

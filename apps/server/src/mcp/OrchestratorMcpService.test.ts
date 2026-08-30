@@ -2,14 +2,20 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  MessageId,
   NodeId,
+  ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  type ServerProvider,
   ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
@@ -19,6 +25,137 @@ import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 
 describe("OrchestratorMcpService", () => {
+  it.effect("preserves a structured parent admission failure", () =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread:mcp-create-admission-parent");
+      const parentRunId = RunId.make("run:mcp-create-admission-parent");
+      const parentNodeId = NodeId.make("node:mcp-create-admission-parent");
+      const projectId = ProjectId.make("project:mcp-create-admission");
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const now = DateTime.makeUnsafe("2026-08-30T12:00:00.000Z");
+      const activeParent: OrchestrationV2ThreadProjection = {
+        thread: {
+          createdBy: "agent",
+          creationSource: "mcp",
+          id: parentThreadId,
+          projectId,
+          title: "Admission parent",
+          providerInstanceId,
+          modelSelection: { instanceId: providerInstanceId, model: "gpt-test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: parentThreadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        runs: [
+          {
+            id: parentRunId,
+            threadId: parentThreadId,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection: { instanceId: providerInstanceId, model: "gpt-test" },
+            providerThreadId: null,
+            userMessageId: MessageId.make("message:mcp-create-admission-parent"),
+            rootNodeId: parentNodeId,
+            activeAttemptId: null,
+            status: "running",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        ],
+        attempts: [],
+        nodes: [],
+        subagents: [],
+        providerSessions: [],
+        providerThreads: [],
+        providerTurns: [],
+        runtimeRequests: [],
+        messages: [],
+        plans: [],
+        turnItems: [],
+        checkpointScopes: [],
+        checkpoints: [],
+        contextHandoffs: [],
+        contextTransfers: [],
+        visibleTurnItems: [],
+        updatedAt: now,
+      };
+      const archivedParent = {
+        ...activeParent,
+        thread: { ...activeParent.thread, archivedAt: now },
+      } as OrchestrationV2ThreadProjection;
+      const provider = {
+        instanceId: providerInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        enabled: true,
+        installed: true,
+        version: "test",
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-08-30T12:00:00.000Z",
+        models: [{ slug: "gpt-test", name: "GPT Test", isCustom: false, capabilities: null }],
+        slashCommands: [],
+        skills: [],
+      } satisfies ServerProvider;
+      const projectionReads = yield* Ref.make(0);
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService)({
+          getThreadProjection: () =>
+            Ref.updateAndGet(projectionReads, (count) => count + 1).pipe(
+              Effect.map((count) => (count === 1 ? activeParent : archivedParent)),
+            ),
+          withProjectCreationAdmission: (_input, effect) => effect(Option.none()),
+          dispatch: () => Effect.die("dispatch must not run after parent admission fails"),
+        }),
+        Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([provider]) }),
+        Layer.mock(ScheduledTaskService)({}),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-create-admission"),
+        threadId: parentThreadId,
+        providerSessionId: "provider-session:mcp-create-admission",
+        providerInstanceId,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      const error = yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service
+          .createThreads(scope, {
+            clientRequestId: "parent-admission-failure",
+            threads: [{ title: "Must not be created" }],
+          })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+
+      assert.equal(error.code, "parent_not_active");
+      assert.equal(
+        error.message,
+        "Thread creation requires an active parent in the target project.",
+      );
+      assert.equal(yield* Ref.get(projectionReads), 2);
+    }),
+  );
+
   it.effect("retries terminal acknowledgement with a fresh command id", () =>
     Effect.gen(function* () {
       const parentThreadId = ThreadId.make("thread:mcp-ack-parent");

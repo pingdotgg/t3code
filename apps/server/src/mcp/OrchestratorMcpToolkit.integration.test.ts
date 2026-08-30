@@ -2939,7 +2939,7 @@ describe("orchestrator MCP toolkit", () => {
               ).not.toBeNull();
 
               const threads = yield* ThreadManagement.ThreadManagementService;
-              const dispatchClientCommand = yield* ClientCommandDispatch.make;
+              const dispatchClientCommand = (yield* ClientCommandDispatch.make).dispatch;
               const acceptedCreateCommand = {
                 type: "thread.create",
                 createdBy: "agent",
