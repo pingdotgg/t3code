@@ -17,16 +17,27 @@ import {
   PreviewAutomationTabTargetInput,
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
+  PreviewMcpCloseInput,
+  PreviewMcpCloseResult,
+  PreviewMcpError,
+  PreviewMcpListInput,
+  PreviewMcpListResult,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as PreviewMcpService from "../../PreviewMcpService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
   PreviewAutomationBroker.PreviewAutomationBroker,
+];
+
+const previewMcpDependencies = [
+  McpInvocationContext.McpInvocationContext,
+  PreviewMcpService.PreviewMcpService,
 ];
 
 const PreviewActionResult = Schema.Record(Schema.String, Schema.Never).annotate({
@@ -56,6 +67,32 @@ export const PreviewStatusTool = Tool.make("preview_status", {
   .annotate(Tool.Title, "Get preview status")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+export const PreviewListTool = Tool.make("preview_list", {
+  description:
+    "List a bounded page of collaborative browser tabs owned by the calling thread. This only reads server-tracked sessions and never opens, attaches, navigates, or launches a browser.",
+  parameters: PreviewMcpListInput,
+  success: PreviewMcpListResult,
+  failure: PreviewMcpError,
+  dependencies: previewMcpDependencies,
+})
+  .annotate(Tool.Title, "List preview tabs")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+export const PreviewCloseTool = Tool.make("preview_close", {
+  description:
+    "Close one exact collaborative browser tab owned by the calling thread. tabId is required; this never closes every tab or a tab from another thread.",
+  parameters: PreviewMcpCloseInput,
+  success: PreviewMcpCloseResult,
+  failure: PreviewMcpError,
+  dependencies: previewMcpDependencies,
+})
+  .annotate(Tool.Title, "Close preview tab")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, true);
 
 export const PreviewOpenTool = browserTool(
@@ -209,6 +246,8 @@ export const PreviewRecordingStopTool = safeBrowserTool(
 
 export const PreviewToolkit = Toolkit.make(
   PreviewStatusTool,
+  PreviewListTool,
+  PreviewCloseTool,
   PreviewOpenTool,
   PreviewNavigateTool,
   PreviewResizeTool,
@@ -226,6 +265,8 @@ export const PreviewToolkit = Toolkit.make(
 
 export const PreviewStandardToolkit = Toolkit.make(
   PreviewStatusTool,
+  PreviewListTool,
+  PreviewCloseTool,
   PreviewOpenTool,
   PreviewNavigateTool,
   PreviewResizeTool,

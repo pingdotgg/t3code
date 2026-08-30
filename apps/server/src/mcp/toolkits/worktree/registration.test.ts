@@ -19,6 +19,7 @@ import { VcsStatusBroadcaster } from "../../../vcs/VcsStatusBroadcaster.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as PreviewManager from "../../../preview/Manager.ts";
 
 const StubServicesLive = Layer.mergeAll(
   Layer.mock(ThreadManagementService)({}),
@@ -37,7 +38,11 @@ const ToolsListPayload = Schema.fromJsonString(
       tools: Schema.Array(
         Schema.Struct({
           name: Schema.String,
-          inputSchema: Schema.Struct({ type: Schema.optional(Schema.String) }),
+          inputSchema: Schema.Struct({
+            type: Schema.optional(Schema.String),
+            properties: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+            required: Schema.optional(Schema.Array(Schema.String)),
+          }),
           annotations: Schema.optional(
             Schema.Struct({
               readOnlyHint: Schema.optional(Schema.Boolean),
@@ -66,6 +71,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
           }),
         ),
         Layer.provide(PreviewAutomationBroker.layer),
+        Layer.provide(PreviewManager.layer),
         Layer.provide(StubServicesLive),
         Layer.build,
       );
@@ -113,6 +119,8 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       // The worktree registration merges alongside the other toolkits rather
       // than replacing them.
       expect(toolNames).toContain("preview_status");
+      expect(toolNames).toContain("preview_list");
+      expect(toolNames).toContain("preview_close");
       expect(toolNames).toContain("delegate_task");
 
       // The handoff tool mutates thread state, reaches the network (origin
@@ -125,6 +133,15 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const status = tools.find((tool) => tool.name === "t3_worktree_status");
       expect(status?.annotations?.readOnlyHint).toBe(true);
       expect(status?.annotations?.destructiveHint).toBe(false);
+      const previewList = tools.find((tool) => tool.name === "preview_list");
+      expect(previewList?.annotations?.readOnlyHint).toBe(true);
+      expect(previewList?.annotations?.destructiveHint).toBe(false);
+      expect(previewList?.inputSchema.properties).toHaveProperty("cursor");
+      expect(previewList?.inputSchema.properties).toHaveProperty("limit");
+      const previewClose = tools.find((tool) => tool.name === "preview_close");
+      expect(previewClose?.annotations?.readOnlyHint).toBe(false);
+      expect(previewClose?.annotations?.destructiveHint).toBe(true);
+      expect(previewClose?.inputSchema.required).toContain("tabId");
 
       // MCP requires every tool input schema to be a top-level object schema.
       // A non-object schema (e.g. the anyOf produced by an empty

@@ -4,6 +4,8 @@ import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts
 import {
   PREVIEW_VIEWPORT_MAX_AREA,
   PreviewRenderedViewportSize,
+  PreviewSessionLookupError,
+  PreviewSessionSnapshot,
   PreviewTabId,
   PreviewViewportPresetId,
   PreviewViewportSetting,
@@ -21,6 +23,58 @@ const OptionalTimeoutMs = Schema.optional(
     .check(Schema.isLessThanOrEqualTo(60_000))
     .annotate({ description: "Maximum wait in milliseconds. Defaults to 15000; maximum 60000." }),
 ).annotate({ description: "Maximum wait in milliseconds. Defaults to 15000; maximum 60000." });
+
+export const PREVIEW_MCP_LIST_DEFAULT_LIMIT = 20;
+export const PREVIEW_MCP_LIST_MAX_LIMIT = 100;
+
+export const PreviewMcpCursor = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
+export type PreviewMcpCursor = typeof PreviewMcpCursor.Type;
+
+export const PreviewMcpListInput = Schema.Struct({
+  cursor: Schema.optional(
+    PreviewMcpCursor.annotate({
+      description: "Opaque continuation cursor returned by a previous preview_list call.",
+    }),
+  ).annotate({
+    description: "Opaque continuation cursor returned by a previous preview_list call.",
+  }),
+  limit: Schema.optional(
+    Schema.Int.check(
+      Schema.isBetween({ minimum: 1, maximum: PREVIEW_MCP_LIST_MAX_LIMIT }),
+    ).annotate({
+      description: `Maximum tabs to return. Defaults to ${PREVIEW_MCP_LIST_DEFAULT_LIMIT}; maximum ${PREVIEW_MCP_LIST_MAX_LIMIT}.`,
+    }),
+  ).annotate({
+    description: `Maximum tabs to return. Defaults to ${PREVIEW_MCP_LIST_DEFAULT_LIMIT}; maximum ${PREVIEW_MCP_LIST_MAX_LIMIT}.`,
+  }),
+});
+export type PreviewMcpListInput = typeof PreviewMcpListInput.Type;
+
+export const PreviewMcpListResult = Schema.Struct({
+  sessions: Schema.Array(PreviewSessionSnapshot).check(
+    Schema.isMaxLength(PREVIEW_MCP_LIST_MAX_LIMIT),
+  ),
+  nextCursor: Schema.NullOr(PreviewMcpCursor),
+  serverEpoch: TrimmedNonEmptyString,
+  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type PreviewMcpListResult = typeof PreviewMcpListResult.Type;
+
+export const PreviewMcpCloseInput = Schema.Struct({
+  tabId: Schema.String.check(Schema.isTrimmed())
+    .check(Schema.isNonEmpty())
+    .check(Schema.isMaxLength(128))
+    .annotate({
+      description: "Exact collaborative browser tab to close in the calling thread.",
+    }),
+});
+export type PreviewMcpCloseInput = typeof PreviewMcpCloseInput.Type;
+
+export const PreviewMcpCloseResult = Schema.Struct({
+  tabId: PreviewTabId,
+  closed: Schema.Literal(true),
+});
+export type PreviewMcpCloseResult = typeof PreviewMcpCloseResult.Type;
 
 /** Operations understood by desktop hosts predating viewport resizing. */
 export const PREVIEW_AUTOMATION_V1_OPERATIONS = [
@@ -873,6 +927,24 @@ export const PreviewAutomationError = Schema.Union([
   PreviewAutomationMalformedResponseError,
 ]);
 export type PreviewAutomationError = typeof PreviewAutomationError.Type;
+
+export class PreviewMcpInvalidCursorError extends Schema.TaggedErrorClass<PreviewMcpInvalidCursorError>()(
+  "PreviewMcpInvalidCursorError",
+  {
+    cursorLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  },
+) {
+  override get message(): string {
+    return "The preview list cursor is invalid or belongs to a different thread.";
+  }
+}
+
+export const PreviewMcpError = Schema.Union([
+  PreviewAutomationUnavailableError,
+  PreviewSessionLookupError,
+  PreviewMcpInvalidCursorError,
+]);
+export type PreviewMcpError = typeof PreviewMcpError.Type;
 
 export const PreviewUrlResolution = Schema.Struct({
   requestedUrl: Schema.String,

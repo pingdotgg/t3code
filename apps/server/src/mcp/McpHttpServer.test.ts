@@ -11,6 +11,7 @@ import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/uns
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -37,6 +38,7 @@ const client = McpSchema.McpServerClient.of({
 const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
+  Layer.provideMerge(PreviewManager.layer),
 );
 
 it("normalizes empty successful notification responses to accepted", () => {
@@ -156,6 +158,7 @@ it.effect("registers annotated tools and preserves authenticated request context
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
       const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const previewManager = yield* PreviewManager.PreviewManager;
       const routedRequests: Array<{
         readonly operation: string;
         readonly tabId?: string | undefined;
@@ -228,6 +231,27 @@ it.effect("registers annotated tools and preserves authenticated request context
       const navigateTool = server.tools.find(({ tool }) => tool.name === "preview_navigate");
       expect(navigateTool?.tool.annotations?.destructiveHint).toBe(false);
       expect(navigateTool?.tool.annotations?.openWorldHint).toBe(true);
+
+      const opened = yield* previewManager.open({ threadId });
+      const listed = yield* server
+        .callTool({ name: "preview_list", arguments: { limit: 1 } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(listed.isError).toBe(false);
+      expect(listed.structuredContent).toMatchObject({
+        sessions: [{ threadId, tabId: opened.tabId }],
+      });
+      const closed = yield* server
+        .callTool({ name: "preview_close", arguments: { tabId: opened.tabId } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(closed.isError).toBe(false);
+      expect(closed.structuredContent).toEqual({ tabId: opened.tabId, closed: true });
+      expect((yield* previewManager.list({ threadId })).sessions).toHaveLength(0);
 
       const status = yield* server
         .callTool({ name: "preview_status", arguments: {} })

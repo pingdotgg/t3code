@@ -24,6 +24,7 @@ import {
   FILL_PREVIEW_VIEWPORT,
   PreviewSessionLookupError,
   type PreviewSessionSnapshot,
+  type PreviewTabId,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
 import {
@@ -54,6 +55,10 @@ export class PreviewManager extends Context.Service<
     ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
     readonly refresh: (input: PreviewRefreshInput) => Effect.Effect<void, PreviewError>;
     readonly close: (input: PreviewCloseInput) => Effect.Effect<void, PreviewError>;
+    readonly closeExact: (input: {
+      readonly threadId: PreviewCloseInput["threadId"];
+      readonly tabId: PreviewTabId;
+    }) => Effect.Effect<boolean>;
     readonly list: (input: PreviewListInput) => Effect.Effect<PreviewListResult>;
     readonly events: Stream.Stream<PreviewEvent>;
     readonly subscribeEvents: Effect.Effect<PubSub.Subscription<PreviewEvent>, never, Scope.Scope>;
@@ -393,42 +398,54 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     },
   );
 
+  const closeSessions = Effect.fn("PreviewManager.closeSessions")(function* (
+    input: PreviewCloseInput,
+  ) {
+    const createdAt = yield* currentIsoTimestamp;
+    return yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+      const eventsToEmit: PreviewEvent[] = [];
+      const sessions = new Map(state.sessions);
+      const targets = input.tabId
+        ? [state.sessions.get(compositeKey(input.threadId, input.tabId))].filter(
+            (entry): entry is PreviewSessionState => entry !== undefined,
+          )
+        : sessionsForThread(state, input.threadId);
+      let revision = state.revision;
+      for (const target of targets) {
+        revision += 1;
+        sessions.delete(compositeKey(target.threadId, target.tabId));
+        eventsToEmit.push({
+          type: "closed",
+          threadId: target.threadId,
+          tabId: target.tabId,
+          createdAt,
+          serverEpoch,
+          revision,
+        });
+      }
+      if (eventsToEmit.length === 0) {
+        return Effect.succeed([0, state] as const);
+      }
+      return Effect.as(
+        Effect.forEach(eventsToEmit, (event) => PubSub.publish(eventsPubSub, event), {
+          discard: true,
+        }),
+        [eventsToEmit.length, { sessions, revision }] as const,
+      );
+    });
+  });
+
   const close: PreviewManager["Service"]["close"] = Effect.fn("PreviewManager.close")(
     function* (input) {
-      const createdAt = yield* currentIsoTimestamp;
-      yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-        const eventsToEmit: PreviewEvent[] = [];
-        const sessions = new Map(state.sessions);
-        const targets = input.tabId
-          ? [state.sessions.get(compositeKey(input.threadId, input.tabId))].filter(
-              (entry): entry is PreviewSessionState => entry !== undefined,
-            )
-          : sessionsForThread(state, input.threadId);
-        let revision = state.revision;
-        for (const target of targets) {
-          revision += 1;
-          sessions.delete(compositeKey(target.threadId, target.tabId));
-          eventsToEmit.push({
-            type: "closed",
-            threadId: target.threadId,
-            tabId: target.tabId,
-            createdAt,
-            serverEpoch,
-            revision,
-          });
-        }
-        if (eventsToEmit.length === 0) {
-          return Effect.succeed([undefined, state] as const);
-        }
-        return Effect.as(
-          Effect.forEach(eventsToEmit, (event) => PubSub.publish(eventsPubSub, event), {
-            discard: true,
-          }),
-          [undefined, { sessions, revision }] as const,
-        );
-      });
+      yield* closeSessions(input);
     },
   );
+
+  const closeExact: PreviewManager["Service"]["closeExact"] = Effect.fn(
+    "PreviewManager.closeExact",
+  )(function* (input) {
+    return (yield* closeSessions(input)) === 1;
+  });
 
   const list: PreviewManager["Service"]["list"] = Effect.fn("PreviewManager.list")(
     function* (input) {
@@ -451,6 +468,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     resize,
     refresh,
     close,
+    closeExact,
     list,
     events,
     subscribeEvents: PubSub.subscribe(eventsPubSub),

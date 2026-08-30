@@ -52,6 +52,10 @@ export class PreviewAutomationBroker extends Context.Service<
     readonly respond: (
       response: PreviewAutomationResponse,
     ) => Effect.Effect<void, PreviewAutomationError>;
+    readonly forgetClosedTab: (
+      scope: McpInvocationContext.McpInvocationScope,
+      tabId: PreviewTabId,
+    ) => Effect.Effect<void>;
     readonly invoke: <A = unknown>(
       request: PreviewAutomationInvokeInput,
     ) => Effect.Effect<A, PreviewAutomationError>;
@@ -423,6 +427,27 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     }
   });
 
+  const forgetClosedTab: PreviewAutomationBroker["Service"]["forgetClosedTab"] = Effect.fn(
+    "PreviewAutomationBroker.forgetClosedTab",
+  )(function* (scope, tabId) {
+    yield* SynchronizedRef.update(state, (current) => {
+      const assignmentKey = hostAssignmentKey(scope);
+      const assignment = current.assignments.get(assignmentKey);
+      if (assignment?.tabId !== tabId) return current;
+      const assignments = new Map(current.assignments);
+      const { tabId: _tabId, ...withoutTabId } = assignment;
+      assignments.set(assignmentKey, {
+        ...withoutTabId,
+        tabSequence: current.requestSequence,
+      });
+      return {
+        ...current,
+        assignments,
+        requestSequence: current.requestSequence + 1,
+      };
+    });
+  });
+
   const invoke = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
     input: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0],
   ): Effect.fn.Return<A, PreviewAutomationError> {
@@ -581,7 +606,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     return result;
   });
 
-  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });
+  return PreviewAutomationBroker.of({ connect, focusHost, respond, forgetClosedTab, invoke });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
 export const layer = Layer.effect(PreviewAutomationBroker, make);
