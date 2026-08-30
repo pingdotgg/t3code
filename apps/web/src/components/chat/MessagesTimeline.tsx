@@ -7,6 +7,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
 import type { AgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   emptyAgentPanelModel,
@@ -15,7 +16,7 @@ import {
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
-const NOOP_DOWNLOAD_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
+const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
@@ -44,6 +45,7 @@ import {
   type ChatImageAttachment,
   isFileAttachment,
   isImageAttachment,
+  isVideoAttachment,
   type TurnDiffSummary,
 } from "../../types";
 import {
@@ -66,6 +68,7 @@ import {
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
+  PlayIcon,
   SearchIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -152,7 +155,8 @@ interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
-  onFileDownload: (attachment: ChatFileAttachment) => void;
+  onFileOpen: (attachment: ChatFileAttachment) => void;
+  openingVideoAttachmentId: string | null;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
@@ -231,7 +235,8 @@ interface MessagesTimelineProps {
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
-  onFileDownload?: (attachment: ChatFileAttachment) => void;
+  onFileOpen?: (attachment: ChatFileAttachment) => void;
+  openingVideoAttachmentId: string | null;
   activeThreadEnvironmentId: EnvironmentId;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
@@ -277,7 +282,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onRevertUserMessage,
   isRevertingCheckpoint,
   onImageExpand,
-  onFileDownload = NOOP_DOWNLOAD_ATTACHMENT,
+  onFileOpen = NOOP_OPEN_ATTACHMENT,
+  openingVideoAttachmentId,
   activeThreadEnvironmentId,
   markdownCwd,
   resolvedTheme,
@@ -536,7 +542,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
-      onFileDownload,
+      onFileOpen,
+      openingVideoAttachmentId,
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
@@ -553,7 +560,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
-      onFileDownload,
+      onFileOpen,
+      openingVideoAttachmentId,
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
@@ -1004,6 +1012,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   // comparisons) split it. Unknown types render as inert rows below the files.
   const userImages = (row.message.attachments ?? []).filter(isImageAttachment);
   const userFiles = (row.message.attachments ?? []).filter(isFileAttachment);
+  const userVideos = userFiles.filter(isVideoAttachment);
+  const otherUserFiles = userFiles.filter((file) => !isVideoAttachment(file));
   const unknownAttachments = (row.message.attachments ?? []).filter(
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
@@ -1029,7 +1039,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   return (
     <div className="group flex flex-col items-end gap-1">
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
-        {regularImages.length > 0 && (
+        {(regularImages.length > 0 || userVideos.length > 0) && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
             {regularImages.map((image) => (
               <div
@@ -1060,6 +1070,35 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 )}
               </div>
             ))}
+            {userVideos.map((file) => {
+              const isOpening = ctx.openingVideoAttachmentId === file.id;
+              return (
+                <div
+                  key={file.id}
+                  className="overflow-hidden rounded-lg border border-border/80 bg-black"
+                >
+                  <button
+                    type="button"
+                    disabled={file.downloadable === false}
+                    className="flex min-h-[72px] w-full cursor-zoom-in flex-col items-center justify-center gap-1 px-2 py-2 text-white disabled:cursor-default disabled:opacity-50 aria-disabled:cursor-default aria-disabled:opacity-50"
+                    aria-busy={isOpening || undefined}
+                    aria-disabled={isOpening || undefined}
+                    aria-label={`${isOpening ? "Loading" : "Play"} ${file.name}`}
+                    onClick={() => {
+                      if (isOpening) return;
+                      ctx.onFileOpen(file);
+                    }}
+                  >
+                    {isOpening ? (
+                      <span className="text-[11px]">Loading…</span>
+                    ) : (
+                      <PlayIcon className="size-8 fill-current" />
+                    )}
+                    <span className="max-w-full truncate text-[11px]">{file.name}</span>
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
         {previewAnnotations.map((annotation, index) => (
@@ -1069,9 +1108,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             image={previewImages[index] ?? null}
           />
         ))}
-        {userFiles.length > 0 || unknownAttachments.length > 0 ? (
+        {otherUserFiles.length > 0 || unknownAttachments.length > 0 ? (
           <div className="mb-2 flex flex-col gap-1">
-            {userFiles.map((file) => {
+            {otherUserFiles.map((file) => {
               const content = (
                 <>
                   <FileIcon className="size-4 shrink-0 text-secondary-label" />
@@ -1099,7 +1138,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   key={file.id}
                   type="button"
                   aria-label={`Download ${file.name}`}
-                  onClick={() => ctx.onFileDownload(file)}
+                  onClick={() => ctx.onFileOpen(file)}
                   className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
                 >
                   {content}
@@ -2287,176 +2326,6 @@ function workEntryRawCommand(
     return null;
   }
   return rawCommand === workEntry.command.trim() ? null : rawCommand;
-}
-
-type CommandWrapper = "env" | "sudo";
-
-const COMMAND_WRAPPER_OPTIONS_WITH_VALUE: Record<CommandWrapper, ReadonlySet<string>> = {
-  env: new Set(["-C", "--chdir", "-S", "--split-string", "-u", "--unset"]),
-  sudo: new Set(["-C", "--close-from", "-D", "--chdir", "-g", "--group", "-u", "--user"]),
-};
-
-const COMMAND_WRAPPER_FLAGS: Record<CommandWrapper, ReadonlySet<string>> = {
-  env: new Set(["-0", "--null", "-i", "--ignore-environment", "--debug", "-v"]),
-  sudo: new Set(["-A", "--askpass", "-b", "--background", "-E", "-H", "-i", "-n", "-S"]),
-};
-
-function tokenizeShellCommand(command: string): string[] | null {
-  const input = command.trim();
-  const tokens: string[] = [];
-  let current = "";
-  let quote: '"' | "'" | null = null;
-  let escaping = false;
-  let substitutionDepth = 0;
-  let tokenStarted = false;
-
-  for (let index = 0; index < input.length; index += 1) {
-    const character = input[index]!;
-    if (escaping) {
-      current += character;
-      escaping = false;
-      tokenStarted = true;
-      continue;
-    }
-    if (character === "\\" && quote !== "'") {
-      const nextCharacter = input[index + 1];
-      const isWindowsDrivePath = quote === null && /^[A-Za-z]:/.test(current);
-      if (
-        (quote === '"' || isWindowsDrivePath) &&
-        nextCharacter !== undefined &&
-        nextCharacter !== '"' &&
-        nextCharacter !== "\\" &&
-        nextCharacter !== "$" &&
-        nextCharacter !== "`" &&
-        nextCharacter !== "\n"
-      ) {
-        current += character;
-        tokenStarted = true;
-        continue;
-      }
-      escaping = true;
-      tokenStarted = true;
-      continue;
-    }
-    if (quote !== null) {
-      if (character === quote) {
-        quote = null;
-      } else {
-        current += character;
-      }
-      tokenStarted = true;
-      continue;
-    }
-    if (character === "$" && input[index + 1] === "(") {
-      current += "$(";
-      substitutionDepth += 1;
-      tokenStarted = true;
-      index += 1;
-      continue;
-    }
-    if (character === ")" && substitutionDepth > 0) {
-      current += character;
-      substitutionDepth -= 1;
-      tokenStarted = true;
-      continue;
-    }
-    if (character === '"' || character === "'") {
-      quote = character;
-      tokenStarted = true;
-      continue;
-    }
-    if (/\s/u.test(character)) {
-      if (substitutionDepth > 0) {
-        current += character;
-        tokenStarted = true;
-        continue;
-      }
-      if (tokenStarted) {
-        tokens.push(current);
-        current = "";
-        tokenStarted = false;
-      }
-      continue;
-    }
-    current += character;
-    tokenStarted = true;
-  }
-
-  if (quote !== null || escaping || substitutionDepth > 0) return null;
-  if (tokenStarted) tokens.push(current);
-  return tokens;
-}
-
-function commandProgramName(command: string, depth = 0): string | null {
-  if (depth >= 8) return null;
-  const tokens = tokenizeShellCommand(command);
-  if (tokens === null) return null;
-  let index = 0;
-  let wrapper: CommandWrapper | null = null;
-
-  while (index < tokens.length) {
-    const token = tokens[index];
-    if (!token) return null;
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
-      index += 1;
-      continue;
-    }
-    const tokenProgram = token.split(/[\\/]/).at(-1);
-    if (tokenProgram === "env" || tokenProgram === "sudo") {
-      wrapper = tokenProgram;
-      index += 1;
-      continue;
-    }
-    if (wrapper !== null && token === "--") {
-      wrapper = null;
-      index += 1;
-      continue;
-    }
-    if (wrapper !== null && token.startsWith("-")) {
-      if (wrapper === "env" && (token === "-S" || token === "--split-string")) {
-        const splitCommand = tokens[index + 1];
-        return splitCommand ? commandProgramName(splitCommand, depth + 1) : null;
-      }
-      if (wrapper === "env" && token.startsWith("--split-string=")) {
-        return commandProgramName(token.slice("--split-string=".length), depth + 1);
-      }
-      if (COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(token)) {
-        if (tokens[index + 1] === undefined) return null;
-        index += 2;
-        continue;
-      }
-      if (COMMAND_WRAPPER_FLAGS[wrapper].has(token)) {
-        index += 1;
-        continue;
-      }
-      const equalsIndex = token.indexOf("=");
-      if (token.startsWith("--") && equalsIndex > 2) {
-        if (!COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(token.slice(0, equalsIndex))) {
-          return null;
-        }
-        index += 1;
-        continue;
-      }
-      if (/^-[A-Za-z].+/.test(token) && !token.startsWith("--")) {
-        let consumesNextToken = false;
-        for (const [optionIndex, option] of token.slice(1).split("").entries()) {
-          const shortOption = `-${option}`;
-          if (COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(shortOption)) {
-            consumesNextToken = optionIndex === token.length - 2;
-            break;
-          }
-          if (!COMMAND_WRAPPER_FLAGS[wrapper].has(shortOption)) return null;
-        }
-        if (consumesNextToken && tokens[index + 1] === undefined) return null;
-        index += consumesNextToken ? 2 : 1;
-        continue;
-      }
-      return null;
-    }
-    return token.split(/[\\/]/).at(-1) || null;
-  }
-
-  return null;
 }
 
 function liveWorkEntryLabel(

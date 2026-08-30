@@ -39,6 +39,17 @@ export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function shoulderTabReserve(overlay: HTMLElement): number {
+  if (overlay.querySelector(".chat-composer-tasks-tab")) return 0;
+  const tab = overlay.querySelector<HTMLElement>(".chat-composer-shoulder-tab");
+  const surface = overlay.querySelector<HTMLElement>('[data-chat-composer-main-surface="true"]');
+  if (!tab || !surface) return 0;
+  return Math.max(
+    0,
+    Math.round(surface.getBoundingClientRect().top - tab.getBoundingClientRect().top),
+  );
+}
+
 export function shouldDockDraftHeroForSubmission(input: {
   isDraftHeroState: boolean;
   activeThreadKey: string | null;
@@ -277,6 +288,21 @@ export function revokeBlobPreviewUrl(previewUrl: string | undefined): void {
     return;
   }
   URL.revokeObjectURL(previewUrl);
+}
+
+export async function loadVideoPreviewUrl(url: string, signal?: AbortSignal): Promise<string> {
+  const response = await fetch(url, signal ? { signal } : {});
+  if (!response.ok) throw new Error(`Could not load video (${response.status}).`);
+  return URL.createObjectURL(await response.blob());
+}
+
+export function isVideoPreviewRequestCurrent(
+  requestThreadKey: string,
+  currentThreadKey: string,
+  requestId: number,
+  currentRequestId: number,
+): boolean {
+  return requestThreadKey === currentThreadKey && requestId === currentRequestId;
 }
 
 export function revokeUserMessagePreviewUrls(message: ChatMessage): void {

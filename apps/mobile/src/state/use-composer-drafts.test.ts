@@ -510,6 +510,74 @@ describe("mobile composer drafts", () => {
     expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
   });
 
+  it.each(["draft", "outbox", "inbox"] as const)(
+    "preserves relocated files still referenced by a persisted %s",
+    async (owner) => {
+      const fileName = "33333333-3333-4333-8333-333333333333-report.pdf";
+      const oldFile = {
+        id: "file-relocated",
+        type: "file" as const,
+        name: "report.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 42,
+        fileUri: `file:///private/var/mobile/Containers/Data/Application/11111111-1111-4111-8111-111111111111/Documents/t3-composer-attachments/${fileName}`,
+      };
+      const currentFile = {
+        ...oldFile,
+        fileUri: `file:///var/mobile/Containers/Data/Application/22222222-2222-4222-8222-222222222222/Documents/t3-composer-attachments/${fileName}`,
+      };
+      const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+      onTestFinished(() => outboxLoad.mockRestore());
+      if (owner === "draft") {
+        composerDraftFileMocks.setDocument({
+          schemaVersion: 1,
+          drafts: { "environment-1:thread-1": { text: "Saved draft", attachments: [oldFile] } },
+        });
+        resetComposerDraftsLoadState();
+      } else if (owner === "outbox") {
+        outboxLoad.mockImplementation(async () => {
+          appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {
+            "environment-1:thread-1": [
+              {
+                environmentId: EnvironmentId.make("environment-1"),
+                threadId: ThreadId.make("thread-1"),
+                messageId: MessageId.make("message-relocated"),
+                commandId: CommandId.make("command-relocated"),
+                text: "Queued draft",
+                attachments: [oldFile],
+                createdAt: "2026-08-28T12:00:00.000Z",
+              },
+            ],
+          });
+          return true;
+        });
+      } else {
+        incomingShareStorageMocks.load.mockResolvedValue([
+          {
+            schemaVersion: 1,
+            id: "share-relocated",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            text: "Incoming file",
+            attachments: [oldFile],
+            warnings: [],
+          },
+        ]);
+      }
+
+      await releaseUnusedComposerAttachmentFiles([currentFile]);
+
+      expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
+
+      appAtomRegistry.set(composerDraftsAtom, {});
+      appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {});
+      outboxLoad.mockResolvedValue(true);
+      incomingShareStorageMocks.load.mockResolvedValue([]);
+      await releaseUnusedComposerAttachmentFiles([currentFile]);
+
+      expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(currentFile.fileUri);
+    },
+  );
+
   it("does not delete attachment files when the draft removal cannot be saved", async () => {
     const file = {
       id: "file-unsaved",

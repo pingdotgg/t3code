@@ -12,6 +12,10 @@ import {
 } from "@t3tools/contracts";
 import type { PickMultipleFilesResult } from "expo-file-system";
 import { estimateBase64ByteSize } from "./base64";
+import {
+  COMPOSER_ATTACHMENT_DIRECTORY,
+  resolveOwnedComposerAttachmentFileUri,
+} from "./composerAttachmentFiles";
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
 
@@ -47,7 +51,6 @@ export function toUploadChatImageAttachments(
 }
 
 const OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste";
-const OWNED_ATTACHMENT_DIRECTORY = "t3-composer-attachments";
 const ATTACHMENT_COPY_CHUNK_BYTES = 64 * 1024;
 
 export async function persistComposerAttachmentFile(
@@ -56,7 +59,7 @@ export async function persistComposerAttachmentFile(
   maxBytes?: number,
 ): Promise<string> {
   const { Directory, File, FileMode, Paths } = await import("expo-file-system");
-  const directory = new Directory(Paths.document, OWNED_ATTACHMENT_DIRECTORY);
+  const directory = new Directory(Paths.document, COMPOSER_ATTACHMENT_DIRECTORY);
   directory.create({ idempotent: true, intermediates: true });
   const safeName =
     Array.from(name, (character) =>
@@ -140,12 +143,12 @@ export async function persistComposerAttachmentFile(
 
 export async function removePersistedComposerAttachmentFile(uri: string): Promise<void> {
   try {
-    const path = new URL(uri).pathname;
-    if (!path.split("/").includes(OWNED_ATTACHMENT_DIRECTORY)) {
+    const { File, Paths } = await import("expo-file-system");
+    const ownedUri = resolveOwnedComposerAttachmentFileUri(uri, Paths.document.uri);
+    if (ownedUri === null) {
       return;
     }
-    const { File } = await import("expo-file-system");
-    const file = new File(uri);
+    const file = new File(ownedUri);
     if (file.exists) {
       file.delete();
     }

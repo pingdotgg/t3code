@@ -15,6 +15,7 @@ import { Atom } from "effect/unstable/reactivity";
 
 import { writeFileAtomically } from "../lib/atomic-file";
 import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
+import { composerAttachmentFileReferenceKey } from "../lib/composerAttachmentFiles";
 import type { DraftComposerAttachment } from "../lib/composerImages";
 import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
 import { appAtomRegistry } from "./atom-registry";
@@ -286,13 +287,16 @@ export async function flushComposerDrafts(): Promise<void> {
 }
 
 function isComposerAttachmentFileReferenced(fileUri: string): boolean {
+  const referenceKey = composerAttachmentFileReferenceKey(fileUri);
   const drafts = Object.values(appAtomRegistry.get(composerDraftsAtom));
   const queuedMessages = Object.values(
     appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
   ).flat();
   return [...drafts, ...queuedMessages].some((owner) =>
     owner.attachments.some(
-      (attachment) => attachment.type === "file" && attachment.fileUri === fileUri,
+      (attachment) =>
+        attachment.type === "file" &&
+        composerAttachmentFileReferenceKey(attachment.fileUri) === referenceKey,
     ),
   );
 }
@@ -371,7 +375,9 @@ export async function releaseUnusedComposerAttachmentFiles(
     incomingShareFileUris = new Set(
       incomingShares.flatMap((share) =>
         share.attachments.flatMap((attachment) =>
-          attachment.type === "file" ? [attachment.fileUri] : [],
+          attachment.type === "file"
+            ? [composerAttachmentFileReferenceKey(attachment.fileUri)]
+            : [],
         ),
       ),
     );
@@ -384,7 +390,10 @@ export async function releaseUnusedComposerAttachmentFiles(
   for (const fileUri of candidates) {
     // Re-check ownership immediately before each deletion: a restore or edit
     // can re-own a file after an earlier scan decided it was unused.
-    if (isComposerAttachmentFileReferenced(fileUri) || incomingShareFileUris.has(fileUri)) {
+    if (
+      isComposerAttachmentFileReferenced(fileUri) ||
+      incomingShareFileUris.has(composerAttachmentFileReferenceKey(fileUri))
+    ) {
       continue;
     }
     await removePersistedComposerAttachmentFile(fileUri);

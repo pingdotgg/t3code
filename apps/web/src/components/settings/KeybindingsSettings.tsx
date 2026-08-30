@@ -3,7 +3,6 @@ import {
   CircleXIcon,
   EllipsisIcon,
   FileJsonIcon,
-  InfoIcon,
   MinusIcon,
   PlusIcon,
   SearchIcon,
@@ -44,12 +43,12 @@ import {
   serverEnvironment,
 } from "../../state/server";
 import { usePrimaryEnvironment } from "../../state/environments";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Kbd, KbdGroup } from "../ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
-import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Toggle } from "../ui/toggle";
 import { toastManager } from "../ui/toast";
@@ -69,17 +68,23 @@ import {
   unknownWhenVariables,
   whenAstToExpression,
 } from "./KeybindingsSettings.logic";
-import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 function KeybindingPill({ value }: { value: string }) {
-  const parts = value.split("+");
+  // Keys dedupe repeated parts; a literal "+" in a shortcut splits into empty strings.
+  const seenParts = new Map<string, number>();
+  const parts = value.split("+").map((part) => {
+    const seen = seenParts.get(part) ?? 0;
+    seenParts.set(part, seen + 1);
+    return { part, key: seen === 0 ? part : `${part}-${seen}` };
+  });
   return (
     <KbdGroup className="bg-transparent p-0 shadow-none">
-      {parts.map((part) => (
-        <Kbd key={part} className="min-w-6 justify-center px-1.5">
+      {parts.map(({ part, key }) => (
+        <Kbd key={key} className="min-w-6 justify-center px-1.5">
           {part === "mod"
             ? navigator.platform.toLowerCase().includes("mac")
               ? "⌘"
@@ -231,6 +236,41 @@ function defaultWhenGroup(operator: BooleanOperator = "and"): KeybindingWhenNode
   };
 }
 
+/** Warning glyph whose explanation lives in a tooltip; the one owner of that affordance here. */
+function WarningTooltipIcon({
+  label,
+  focusable = true,
+  className,
+  children,
+}: {
+  label: string;
+  focusable?: boolean;
+  className?: string | undefined;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            tabIndex={focusable ? 0 : undefined}
+            aria-label={label}
+            className={cn(
+              "inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-warning outline-none transition-colors hover:bg-warning/10 focus-visible:ring-[3px] focus-visible:ring-warning/25",
+              className,
+            )}
+          />
+        }
+      >
+        <TriangleAlertIcon className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-relaxed">
+        {children}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function UnknownWhenVariableWarning({
   identifiers,
   focusable = true,
@@ -245,23 +285,10 @@ function UnknownWhenVariableWarning({
       : `Unknown conditions: ${identifiers.join(", ")}`;
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            tabIndex={focusable ? 0 : undefined}
-            aria-label={label}
-            className="inline-flex size-4.5 shrink-0 items-center justify-center rounded-sm text-warning outline-none transition-colors hover:bg-warning/10 focus-visible:ring-[3px] focus-visible:ring-warning/25"
-          >
-            <TriangleAlertIcon className="size-3.5" />
-          </span>
-        }
-      />
-      <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-relaxed">
-        T3 Code does not recognize this condition yet. It can still be saved, but it may not match
-        unless the runtime provides it.
-      </TooltipPopup>
-    </Tooltip>
+    <WarningTooltipIcon label={label} focusable={focusable} className="size-4.5">
+      T3 Code does not recognize this condition yet. It can still be saved, but it may not match
+      unless the runtime provides it.
+    </WarningTooltipIcon>
   );
 }
 
@@ -273,22 +300,9 @@ function KeybindingConflictWarning({ labels }: { labels: ReadonlyArray<string> }
       : `Conflicts with ${labels.slice(0, 3).join(", ")}${labels.length > 3 ? ", and more" : ""}.`;
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            tabIndex={0}
-            aria-label={description}
-            className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-warning outline-none transition-colors hover:bg-warning/10 focus-visible:ring-[3px] focus-visible:ring-warning/25"
-          >
-            <TriangleAlertIcon className="size-3.5" />
-          </span>
-        }
-      />
-      <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-relaxed">
-        {description} The most recent matching binding wins when both conditions can apply.
-      </TooltipPopup>
-    </Tooltip>
+    <WarningTooltipIcon label={description}>
+      {description} The most recent matching binding wins when both conditions can apply.
+    </WarningTooltipIcon>
   );
 }
 
@@ -733,32 +747,20 @@ function rowKeybindingTarget(row: KeybindingRow): ServerRemoveKeybindingInput {
   };
 }
 
-function KeybindingTableRow({
+/** Draft state and actions for editing one existing binding; layouts decide how to render it. */
+function useKeybindingRowEditor({
   row,
   allRows,
-  variables,
-  isSaving,
   onSave,
-  onReset,
-  onRemove,
 }: {
   row: KeybindingRow;
   allRows: ReadonlyArray<KeybindingRow>;
-  variables: ReadonlyArray<WhenVariableOption>;
-  isSaving: boolean;
   onSave: (input: ServerUpsertKeybindingInput) => void;
-  onReset: (row: KeybindingRow) => void;
-  onRemove: (row: KeybindingRow) => void;
 }) {
   const [draft, setDraft] = useReducer(keybindingRowDraftReducer, row, createKeybindingRowDraft);
   const { keyDraft, whenDraft, isRecording, isWhenDraftValid } = draft;
   const whenDraftExpression = whenAstToExpression(whenDraft);
   const isDirty = keyDraft !== row.key || whenDraftExpression !== row.when;
-  const displayShortcut = formatShortcutLabel(row.binding.shortcut);
-  const canReset = row.source === "Custom" && row.defaultKey !== null;
-  const canRemove = row.source !== "Default";
-  const hasRowActions = canReset || canRemove;
-  const showPill = !isRecording && keyDraft === row.key && row.key.length > 0 && !isDirty;
   const conflictLabels = keybindingConflictLabels(allRows, {
     rowId: row.id,
     key: keyDraft,
@@ -786,139 +788,277 @@ function KeybindingTableRow({
     setDraft({ keyDraft: next, isRecording: false });
   };
 
+  return {
+    keyDraft,
+    whenDraft,
+    isRecording,
+    isWhenDraftValid,
+    whenDraftExpression,
+    isDirty,
+    conflictLabels,
+    setDraft,
+    save,
+    captureKeybinding,
+  };
+}
+
+type KeybindingRowEditor = ReturnType<typeof useKeybindingRowEditor>;
+
+interface KeybindingRowActions {
+  allRows: ReadonlyArray<KeybindingRow>;
+  variables: ReadonlyArray<WhenVariableOption>;
+  onSave: (input: ServerUpsertKeybindingInput) => void;
+  onReset: (row: KeybindingRow) => void;
+  onRemove: (row: KeybindingRow) => void;
+}
+
+type KeybindingRowProps = KeybindingRowActions & { row: KeybindingRow; isSaving: boolean };
+
+/** Shortcut pill that turns into a capture input when clicked, plus Save once the draft changes. */
+function KeybindingKeyControl({
+  row,
+  editor,
+  isSaving,
+  pillClassName,
+}: {
+  row: KeybindingRow;
+  editor: KeybindingRowEditor;
+  isSaving: boolean;
+  pillClassName?: string | undefined;
+}) {
+  const { keyDraft, isRecording, isDirty, isWhenDraftValid, setDraft, save, captureKeybinding } =
+    editor;
+  const showPill = !isRecording && keyDraft === row.key && row.key.length > 0 && !isDirty;
+
   return (
-    <div className="grid grid-cols-[minmax(190px,1.1fr)_minmax(220px,0.85fr)_minmax(210px,1fr)_60px] items-center px-4 py-1.5 text-sm even:bg-muted/15 hover:bg-accent/40">
-      <div className="min-w-0 pr-4">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <div
-                  aria-label={row.command}
-                  className="truncate text-[13px] font-medium text-foreground"
-                />
-              }
-            >
-              {commandLabel(row.command)}
-            </TooltipTrigger>
-            <TooltipPopup side="top">{row.command}</TooltipPopup>
-          </Tooltip>
-        </div>
-      </div>
-      <div className="flex min-w-0 items-center gap-2 pr-4">
-        {showPill ? (
-          <button
-            type="button"
-            onClick={() => setDraft({ isRecording: true })}
-            aria-label={`Edit shortcut for ${commandLabel(row.command)}`}
-            className="group inline-flex h-7 items-center gap-1.5 rounded-md border border-transparent px-1.5 outline-none transition-colors hover:border-border/70 hover:bg-background focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24"
-          >
-            <KeybindingPill value={row.key} />
-            <span className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground/0 transition-opacity group-hover:text-muted-foreground/70 group-focus-visible:text-muted-foreground/70">
-              Edit
-            </span>
-          </button>
-        ) : (
-          <Input
-            data-keybinding-capture=""
-            autoFocus={isRecording}
-            aria-label={`Keybinding for ${commandLabel(row.command)}`}
-            value={isRecording ? "" : keyDraft}
-            placeholder={isRecording ? "Press shortcut" : "Unassigned"}
-            className={cn(
-              "h-7 w-44 rounded-md font-mono text-[12px] sm:h-7",
-              isRecording && "border-primary/70 bg-primary/5",
-            )}
-            onFocus={() => setDraft({ isRecording: true })}
-            onBlur={() => setDraft({ isRecording: false })}
-            onChange={(event) => setDraft({ keyDraft: event.currentTarget.value })}
-            onKeyDown={captureKeybinding}
-          />
-        )}
-        {isDirty ? (
-          <Button
-            size="compact"
-            disabled={isSaving || keyDraft.trim().length === 0 || !isWhenDraftValid}
-            onClick={save}
-          >
-            {isSaving ? "Saving" : "Save"}
-          </Button>
-        ) : null}
-      </div>
-      <div className="pr-4">
-        <Popover>
-          <PopoverTrigger
-            className={cn(
-              "inline-flex h-7 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-2.5 text-left font-mono text-[12px] text-foreground shadow-xs/5 outline-none transition-colors hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24",
-              !whenDraftExpression && "text-muted-foreground",
-            )}
-            aria-label={`Edit when clause for ${commandLabel(row.command)}`}
-          >
-            <span className="truncate">{whenDraftExpression || "Always"}</span>
-            <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
-          </PopoverTrigger>
-          <PopoverContent align="start" sideOffset={6}>
-            <WhenExpressionBuilder
-              value={whenDraft}
-              variables={variables}
-              onChange={(nextWhenDraft) => setDraft({ whenDraft: nextWhenDraft })}
-              onValidityChange={(nextIsValid) => setDraft({ isWhenDraftValid: nextIsValid })}
-            />
-          </PopoverContent>
-        </Popover>
-      </div>
-      <div className="flex items-center justify-end gap-1">
-        <KeybindingConflictWarning labels={conflictLabels} />
-        {hasRowActions ? (
-          <Menu>
-            <MenuTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="size-7 text-muted-foreground hover:text-foreground sm:size-7"
-                  disabled={isSaving}
-                  aria-label={`Actions for ${commandLabel(row.command)}`}
-                />
-              }
-            >
-              <EllipsisIcon className="size-3.5" />
-            </MenuTrigger>
-            <MenuPopup align="end" className="min-w-36">
-              {canReset ? (
-                <MenuItem disabled={isSaving} onClick={() => onReset(row)}>
-                  Reset to default
-                </MenuItem>
-              ) : null}
-              {canRemove ? (
-                <MenuItem variant="destructive" disabled={isSaving} onClick={() => onRemove(row)}>
-                  Remove
-                </MenuItem>
-              ) : null}
-            </MenuPopup>
-          </Menu>
-        ) : null}
-        <span className="sr-only">{displayShortcut}</span>
-      </div>
-    </div>
+    <>
+      {isDirty ? (
+        <Button
+          size="compact"
+          disabled={isSaving || keyDraft.trim().length === 0 || !isWhenDraftValid}
+          onClick={save}
+        >
+          {isSaving ? "Saving" : "Save"}
+        </Button>
+      ) : null}
+      {showPill ? (
+        <button
+          type="button"
+          onClick={() => setDraft({ isRecording: true })}
+          aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${formatShortcutLabel(row.binding.shortcut)}`}
+          className={cn(
+            "inline-flex h-7 cursor-pointer items-center rounded-md border border-transparent px-1.5 outline-none transition-colors hover:border-border/70 hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24",
+            pillClassName,
+          )}
+        >
+          <KeybindingPill value={row.key} />
+        </button>
+      ) : (
+        <Input
+          data-keybinding-capture=""
+          autoFocus={isRecording}
+          aria-label={`Keybinding for ${commandLabel(row.command)}`}
+          value={isRecording ? "" : keyDraft}
+          placeholder={isRecording ? "Press shortcut" : "Unassigned"}
+          size="compact"
+          className={cn("w-44 font-mono", isRecording && "border-primary/70 bg-primary/5")}
+          onFocus={() => setDraft({ isRecording: true })}
+          onBlur={() => setDraft({ isRecording: false })}
+          onChange={(event) => setDraft({ keyDraft: event.currentTarget.value })}
+          onKeyDown={captureKeybinding}
+        />
+      )}
+    </>
   );
 }
 
-function NewKeybindingTableRow({
-  commandOptions,
-  allRows,
+/** Quiet inline trigger showing the when clause; opens the expression builder. */
+function WhenClauseControl({
+  label,
+  expression,
+  value,
   variables,
-  isSaving,
-  onSave,
-  onCancel,
+  onChange,
+  onValidityChange,
 }: {
-  commandOptions: ReadonlyArray<KeybindingCommandOption>;
-  allRows: ReadonlyArray<KeybindingRow>;
+  label: string;
+  expression: string;
+  value: KeybindingWhenNode | undefined;
   variables: ReadonlyArray<WhenVariableOption>;
+  onChange: (value: KeybindingWhenNode | undefined) => void;
+  onValidityChange: (valid: boolean) => void;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            variant={expression ? "ghost" : "ghost-muted"}
+            size="micro"
+            className="min-w-0 shrink font-mono"
+          />
+        }
+        aria-label={`Edit when clause for ${label}`}
+      >
+        <span className="truncate">{expression || "Always"}</span>
+        <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
+      </PopoverTrigger>
+      <PopoverContent align="start" sideOffset={6}>
+        <WhenExpressionBuilder
+          value={value}
+          variables={variables}
+          onChange={onChange}
+          onValidityChange={onValidityChange}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function KeybindingRowMenu({
+  row,
+  isSaving,
+  onReset,
+  onRemove,
+}: {
+  row: KeybindingRow;
   isSaving: boolean;
+  onReset: (row: KeybindingRow) => void;
+  onRemove: (row: KeybindingRow) => void;
+}) {
+  const canReset = row.source === "Custom" && row.defaultKey !== null;
+  const canRemove = row.source !== "Default";
+  if (!canReset && !canRemove) return null;
+
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-7 text-muted-foreground hover:text-foreground sm:size-7"
+            disabled={isSaving}
+            aria-label={`Actions for ${commandLabel(row.command)}`}
+          />
+        }
+      >
+        <EllipsisIcon className="size-3.5" />
+      </MenuTrigger>
+      <MenuPopup align="end" className="min-w-36">
+        {canReset ? (
+          <MenuItem disabled={isSaving} onClick={() => onReset(row)}>
+            Reset to default
+          </MenuItem>
+        ) : null}
+        {canRemove ? (
+          <MenuItem variant="destructive" disabled={isSaving} onClick={() => onRemove(row)}>
+            Remove
+          </MenuItem>
+        ) : null}
+      </MenuPopup>
+    </Menu>
+  );
+}
+
+function KeybindingSourceBadge({ source }: { source: KeybindingRow["source"] }) {
+  if (source === "Default") return null;
+  return (
+    <Badge variant="outline" size="sm" className="font-normal text-muted-foreground">
+      {source}
+    </Badge>
+  );
+}
+
+function KeybindingRowTitle({ row }: { row: KeybindingRow }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="flex items-center gap-2" />}>
+        {commandLabel(row.command)}
+        <KeybindingSourceBadge source={row.source} />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{row.command}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function KeybindingRowWhen({
+  row,
+  editor,
+  variables,
+}: {
+  row: KeybindingRow;
+  editor: KeybindingRowEditor;
+  variables: ReadonlyArray<WhenVariableOption>;
+}) {
+  return (
+    <span className="flex h-6 items-center gap-1.5">
+      <span className="text-[12px] leading-none text-muted-foreground/70">When</span>
+      <WhenClauseControl
+        label={commandLabel(row.command)}
+        expression={editor.whenDraftExpression}
+        value={editor.whenDraft}
+        variables={variables}
+        onChange={(whenDraft) => editor.setDraft({ whenDraft })}
+        onValidityChange={(isWhenDraftValid) => editor.setDraft({ isWhenDraftValid })}
+      />
+    </span>
+  );
+}
+
+/** Row actions that stay hidden until the row is hovered or holds focus. */
+function KeybindingHoverRowMenu(props: {
+  row: KeybindingRow;
+  isSaving: boolean;
+  onReset: (row: KeybindingRow) => void;
+  onRemove: (row: KeybindingRow) => void;
+}) {
+  return (
+    <span className="flex items-center opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100 has-data-popup-open:opacity-100 pointer-coarse:opacity-100">
+      <KeybindingRowMenu {...props} />
+    </span>
+  );
+}
+
+/** One binding as a settings row: pills flush right, actions fading in beside them on hover. */
+function KeybindingSettingsRow(props: KeybindingRowProps) {
+  const { row, isSaving, allRows, variables, onSave, onReset, onRemove } = props;
+  const editor = useKeybindingRowEditor({ row, allRows, onSave });
+
+  return (
+    <SettingsRow
+      className="group/row rounded-none"
+      title={<KeybindingRowTitle row={row} />}
+      description={<KeybindingRowWhen row={row} editor={editor} variables={variables} />}
+      control={
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          <KeybindingConflictWarning labels={editor.conflictLabels} />
+          <KeybindingHoverRowMenu
+            row={row}
+            isSaving={isSaving}
+            onReset={onReset}
+            onRemove={onRemove}
+          />
+          <KeybindingKeyControl
+            row={row}
+            editor={editor}
+            isSaving={isSaving}
+            pillClassName="-mr-1.5"
+          />
+        </div>
+      }
+    />
+  );
+}
+
+/** Draft state for a binding that does not exist yet. */
+function useNewKeybindingDraft({
+  allRows,
+  onSave,
+}: {
+  allRows: ReadonlyArray<KeybindingRow>;
   onSave: (input: ServerUpsertKeybindingInput) => void;
-  onCancel: () => void;
 }) {
   const [commandDraft, setCommandDraft] = useState<KeybindingCommand | "">("");
   const [draft, setDraft] = useReducer(keybindingRowDraftReducer, {
@@ -935,6 +1075,7 @@ function NewKeybindingTableRow({
     when: whenDraftExpression,
   });
   const commandLabelText = commandDraft ? commandLabel(commandDraft) : "new keybinding";
+  const canSave = Boolean(commandDraft) && keyDraft.trim().length > 0 && isWhenDraftValid;
 
   const save = () => {
     if (!commandDraft) return;
@@ -957,93 +1098,222 @@ function NewKeybindingTableRow({
     setDraft({ keyDraft: next, isRecording: false });
   };
 
+  return {
+    commandDraft,
+    setCommandDraft,
+    keyDraft,
+    whenDraft,
+    whenDraftExpression,
+    isRecording,
+    conflictLabels,
+    commandLabelText,
+    canSave,
+    setDraft,
+    save,
+    captureKeybinding,
+  };
+}
+
+type NewKeybindingDraft = ReturnType<typeof useNewKeybindingDraft>;
+
+interface NewKeybindingProps {
+  commandOptions: ReadonlyArray<KeybindingCommandOption>;
+  allRows: ReadonlyArray<KeybindingRow>;
+  variables: ReadonlyArray<WhenVariableOption>;
+  isSaving: boolean;
+  onSave: (input: ServerUpsertKeybindingInput) => void;
+  onCancel: () => void;
+}
+
+function NewKeybindingCommandSelect({
+  draft,
+  commandOptions,
+  className,
+}: {
+  draft: NewKeybindingDraft;
+  commandOptions: ReadonlyArray<KeybindingCommandOption>;
+  className?: string | undefined;
+}) {
   return (
-    <div className="grid grid-cols-[minmax(190px,1.1fr)_minmax(220px,0.85fr)_minmax(210px,1fr)_60px] items-center px-4 py-1.5 text-sm even:bg-muted/15 hover:bg-accent/40">
-      <div className="min-w-0 pr-4">
-        <Select
-          value={commandDraft}
-          onValueChange={(value) => setCommandDraft(value as KeybindingCommand)}
-        >
-          <SelectTrigger size="compact" className="w-full max-w-60">
-            <SelectValue placeholder="Command" />
-          </SelectTrigger>
-          <SelectContent
-            alignItemWithTrigger={false}
-            matchTriggerWidth={false}
-            className="max-h-72 w-fit min-w-56"
-          >
-            {commandOptions.map((command) => (
-              <SelectItem key={command} value={command} className="min-h-7 w-full py-1 text-[12px]">
-                <span className="truncate">{commandLabel(command)}</span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="flex min-w-0 items-center gap-2 pr-4">
-        <Input
-          data-keybinding-capture=""
-          aria-label={`Keybinding for ${commandLabelText}`}
-          value={isRecording ? "" : keyDraft}
-          placeholder={isRecording ? "Press shortcut" : "Unassigned"}
-          size="compact"
-          className={cn("w-44 font-mono", isRecording && "border-primary/70 bg-primary/5")}
-          onFocus={() => setDraft({ isRecording: true })}
-          onBlur={() => setDraft({ isRecording: false })}
-          onChange={(event) => setDraft({ keyDraft: event.currentTarget.value })}
-          onKeyDown={captureKeybinding}
+    <Select
+      value={draft.commandDraft}
+      onValueChange={(value) => draft.setCommandDraft(value as KeybindingCommand)}
+    >
+      <SelectTrigger size="compact" className={className}>
+        <SelectValue placeholder="Command" />
+      </SelectTrigger>
+      <SelectContent
+        alignItemWithTrigger={false}
+        matchTriggerWidth={false}
+        className="max-h-72 w-fit min-w-56"
+      >
+        {commandOptions.map((command) => (
+          <SelectItem key={command} value={command} className="min-h-7 w-full py-1 text-[12px]">
+            <span className="truncate">{commandLabel(command)}</span>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function NewKeybindingKeyInput({
+  draft,
+  autoFocus = false,
+  className,
+}: {
+  draft: NewKeybindingDraft;
+  autoFocus?: boolean;
+  className?: string | undefined;
+}) {
+  return (
+    <Input
+      data-keybinding-capture=""
+      autoFocus={autoFocus}
+      aria-label={`Keybinding for ${draft.commandLabelText}`}
+      value={draft.isRecording ? "" : draft.keyDraft}
+      placeholder={draft.isRecording ? "Press shortcut" : "Unassigned"}
+      size="compact"
+      className={cn("font-mono", draft.isRecording && "border-primary/70 bg-primary/5", className)}
+      onFocus={() => draft.setDraft({ isRecording: true })}
+      onBlur={() => draft.setDraft({ isRecording: false })}
+      onChange={(event) => draft.setDraft({ keyDraft: event.currentTarget.value })}
+      onKeyDown={draft.captureKeybinding}
+    />
+  );
+}
+
+function NewKeybindingWhen({
+  draft,
+  variables,
+}: {
+  draft: NewKeybindingDraft;
+  variables: ReadonlyArray<WhenVariableOption>;
+}) {
+  return (
+    <WhenClauseControl
+      label={draft.commandLabelText}
+      expression={draft.whenDraftExpression}
+      value={draft.whenDraft}
+      variables={variables}
+      onChange={(whenDraft) => draft.setDraft({ whenDraft })}
+      onValidityChange={(isWhenDraftValid) => draft.setDraft({ isWhenDraftValid })}
+    />
+  );
+}
+
+function NewKeybindingCancelIcon({
+  isSaving,
+  onCancel,
+}: {
+  isSaving: boolean;
+  onCancel: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-7 text-muted-foreground hover:text-foreground"
+            disabled={isSaving}
+            aria-label="Cancel new keybinding"
+            onClick={onCancel}
+          />
+        }
+      >
+        <XIcon className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Cancel</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/** Add-binding form shaped like the binding rows below it. */
+function NewKeybindingSettingsRow(props: NewKeybindingProps) {
+  const { commandOptions, allRows, variables, isSaving, onSave, onCancel } = props;
+  const draft = useNewKeybindingDraft({ allRows, onSave });
+
+  return (
+    <SettingsRow
+      className="rounded-none bg-muted/15"
+      title="New keybinding"
+      description={
+        <span className="flex h-6 items-center gap-1.5">
+          <span className="text-[12px] leading-none text-muted-foreground/70">When</span>
+          <NewKeybindingWhen draft={draft} variables={variables} />
+        </span>
+      }
+      control={
+        <div className="flex flex-wrap items-center gap-2">
+          <NewKeybindingCommandSelect
+            draft={draft}
+            commandOptions={commandOptions}
+            className="w-56"
+          />
+          <KeybindingConflictWarning labels={draft.conflictLabels} />
+          <NewKeybindingKeyInput draft={draft} className="w-44" />
+          <Button size="compact" disabled={isSaving || !draft.canSave} onClick={draft.save}>
+            {isSaving ? "Saving" : "Save"}
+          </Button>
+          <NewKeybindingCancelIcon isSaving={isSaving} onCancel={onCancel} />
+        </div>
+      }
+    />
+  );
+}
+
+interface KeybindingsListProps extends KeybindingRowActions {
+  rows: ReadonlyArray<KeybindingRow>;
+  commandOptions: ReadonlyArray<KeybindingCommandOption>;
+  savingCommand: KeybindingCommand | null;
+  isAddingBinding: boolean;
+  onCancelAdd: () => void;
+}
+
+/** The add-binding row, one settings row per binding, and the empty state. */
+function KeybindingsList(props: KeybindingsListProps) {
+  const { rows, commandOptions, savingCommand, isAddingBinding, onCancelAdd, ...rowActions } =
+    props;
+  const newProps: NewKeybindingProps = {
+    commandOptions,
+    allRows: rows,
+    variables: rowActions.variables,
+    isSaving: savingCommand !== null,
+    onSave: rowActions.onSave,
+    onCancel: onCancelAdd,
+  };
+  return (
+    <div>
+      {isAddingBinding ? <NewKeybindingSettingsRow {...newProps} /> : null}
+      {rows.map((row) => (
+        <KeybindingSettingsRow
+          key={row.id}
+          row={row}
+          isSaving={savingCommand === row.command}
+          {...rowActions}
         />
-        <Button
-          size="compact"
-          disabled={isSaving || !commandDraft || keyDraft.trim().length === 0 || !isWhenDraftValid}
-          onClick={save}
-        >
-          {isSaving ? "Saving" : "Save"}
-        </Button>
-      </div>
-      <div className="pr-4">
-        <Popover>
-          <PopoverTrigger
-            className={cn(
-              "inline-flex h-7 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-2.5 text-left font-mono text-[12px] text-foreground shadow-xs/5 outline-none transition-colors hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24",
-              !whenDraftExpression && "text-muted-foreground",
-            )}
-            aria-label={`Edit when clause for ${commandLabelText}`}
-          >
-            <span className="truncate">{whenDraftExpression || "Always"}</span>
-            <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
-          </PopoverTrigger>
-          <PopoverContent align="start" sideOffset={6}>
-            <WhenExpressionBuilder
-              value={whenDraft}
-              variables={variables}
-              onChange={(nextWhenDraft) => setDraft({ whenDraft: nextWhenDraft })}
-              onValidityChange={(nextIsValid) => setDraft({ isWhenDraftValid: nextIsValid })}
-            />
-          </PopoverContent>
-        </Popover>
-      </div>
-      <div className="flex items-center justify-end gap-1">
-        <KeybindingConflictWarning labels={conflictLabels} />
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="size-7 text-muted-foreground hover:text-foreground"
-                disabled={isSaving}
-                aria-label="Cancel new keybinding"
-                onClick={onCancel}
-              />
-            }
-          >
-            <XIcon className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">Cancel</TooltipPopup>
-        </Tooltip>
-      </div>
+      ))}
+      {rows.length === 0 && !isAddingBinding ? (
+        <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+          No keybindings match your search.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Shown in the browser build only; the desktop app receives every shortcut. */
+function BrowserKeybindingNotice() {
+  return (
+    <div className="flex items-center gap-1.5 px-3 pb-2 text-[12px] text-muted-foreground sm:px-4">
+      <TriangleAlertIcon className="size-3.5 shrink-0 text-warning" aria-hidden />
+      <span>
+        Some shortcuts may be claimed by the browser before T3 Code sees them. Use the desktop app
+        for better keybinding support.
+      </span>
     </div>
   );
 }
@@ -1187,6 +1457,8 @@ export function KeybindingsSettingsPanel() {
     [saveKeybinding],
   );
 
+  const cancelAdd = useCallback(() => setIsAddingBinding(false), []);
+
   const bindingsCount = (
     <span className="text-[11px] text-muted-foreground">
       {rows.length + (isAddingBinding ? 1 : 0)}{" "}
@@ -1194,8 +1466,21 @@ export function KeybindingsSettingsPanel() {
     </span>
   );
 
+  const listProps: KeybindingsListProps = {
+    rows,
+    allRows: rows,
+    commandOptions,
+    variables: whenVariables,
+    savingCommand,
+    isAddingBinding,
+    onCancelAdd: cancelAdd,
+    onSave: saveKeybinding,
+    onReset: resetKeybinding,
+    onRemove: removeKeybinding,
+  };
+
   return (
-    <SettingsPageContainer width="wide">
+    <SettingsPageContainer>
       <SettingsSection
         {...searchableSetting("keybindings")}
         headerAction={
@@ -1244,58 +1529,9 @@ export function KeybindingsSettingsPanel() {
           </div>
         }
       >
-        {!isElectron ? (
-          <div className="flex items-start gap-2 border-b border-warning/20 bg-warning/5 px-3 py-2.5 text-[12px] leading-relaxed text-muted-foreground sm:px-4">
-            <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
-            <p>
-              Some shortcuts may be claimed by the browser before T3 Code sees them. Use the desktop
-              app for better keybinding support.
-            </p>
-          </div>
-        ) : null}
+        {!isElectron ? <BrowserKeybindingNotice /> : null}
 
-        <ScrollArea
-          chainVerticalScroll
-          scrollFade
-          hideScrollbars
-          className="w-full max-w-full rounded-none"
-        >
-          <div className="grid min-w-[680px] grid-cols-[minmax(190px,1.1fr)_minmax(220px,0.85fr)_minmax(210px,1fr)_60px] border-b border-border/70 bg-muted/25 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
-            <div>Command</div>
-            <div>Keybinding</div>
-            <div>When</div>
-            <div>Status</div>
-          </div>
-          <div className="min-w-[680px] divide-y divide-border/60">
-            {isAddingBinding ? (
-              <NewKeybindingTableRow
-                commandOptions={commandOptions}
-                allRows={rows}
-                variables={whenVariables}
-                isSaving={savingCommand !== null}
-                onSave={saveKeybinding}
-                onCancel={() => setIsAddingBinding(false)}
-              />
-            ) : null}
-            {rows.map((row) => (
-              <KeybindingTableRow
-                key={row.id}
-                row={row}
-                allRows={rows}
-                variables={whenVariables}
-                isSaving={savingCommand === row.command}
-                onSave={saveKeybinding}
-                onReset={resetKeybinding}
-                onRemove={removeKeybinding}
-              />
-            ))}
-            {rows.length === 0 && !isAddingBinding ? (
-              <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-                No keybindings match your search.
-              </div>
-            ) : null}
-          </div>
-        </ScrollArea>
+        <KeybindingsList {...listProps} />
       </SettingsSection>
     </SettingsPageContainer>
   );

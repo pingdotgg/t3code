@@ -18,6 +18,7 @@ import { appAtomRegistry } from "../state/atom-registry";
 import { assetEnvironment } from "../state/assets";
 import { attachmentEnvironment } from "../state/attachments";
 import { environmentSession } from "../state/session";
+import { resolveOwnedComposerAttachmentFileUri } from "./composerAttachmentFiles";
 import { toUploadChatImageAttachments, type DraftComposerAttachment } from "./composerImages";
 
 /**
@@ -148,8 +149,11 @@ async function uploadFileBytes(
   attachment: Extract<DraftComposerAttachment, { readonly type: "file" }>,
   url: string,
 ): Promise<void> {
-  const { File, UploadType } = await import("expo-file-system");
-  const result = await new File(attachment.fileUri).upload(url, {
+  const { File, Paths, UploadType } = await import("expo-file-system");
+  const fileUri =
+    resolveOwnedComposerAttachmentFileUri(attachment.fileUri, Paths.document.uri) ??
+    attachment.fileUri;
+  const result = await new File(fileUri).upload(url, {
     httpMethod: "POST",
     uploadType: UploadType.BINARY_CONTENT,
     headers: { "Content-Type": attachment.mimeType },

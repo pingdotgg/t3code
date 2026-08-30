@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
+  documentUri: "file:///documents",
   createAssetUrl: vi.fn(),
   createUploadUrl: Symbol("create-upload-url"),
   executeAtomQuery: vi.fn(),
@@ -57,6 +58,11 @@ vi.mock("expo-file-system", () => ({
     upload(url: string, options: unknown) {
       return mocks.upload(this.uri, url, options);
     }
+  },
+  Paths: {
+    get document() {
+      return { uri: mocks.documentUri };
+    },
   },
   UploadType: { BINARY_CONTENT: 0 },
 }));
@@ -144,6 +150,7 @@ function removeCallsFor(attachmentId: string): number {
 
 describe("prepareTurnAttachments", () => {
   beforeEach(() => {
+    mocks.documentUri = "file:///documents";
     mocks.createAssetUrl.mockReset();
     mocks.createAssetUrl.mockImplementation((target: unknown) => target);
     mocks.executeAtomQuery.mockReset();
@@ -225,6 +232,35 @@ describe("prepareTurnAttachments", () => {
     expect(mocks.upload).toHaveBeenCalledWith(
       file.fileUri,
       "https://new-environment.example/api/attachments/upload/signed",
+      expect.anything(),
+    );
+  });
+
+  it("uploads a restored draft file from the current iOS document container", async () => {
+    const fileName = "33333333-3333-4333-8333-333333333333-report%20%23.pdf";
+    const restoredFile = {
+      ...file,
+      fileUri: `file:///private/var/mobile/Containers/Data/Application/11111111-1111-4111-8111-111111111111/Documents/t3-composer-attachments/${fileName}`,
+    };
+    mocks.documentUri =
+      "file:///var/mobile/Containers/Data/Application/22222222-2222-4222-8222-222222222222/Documents";
+    const currentUri = `${mocks.documentUri}/t3-composer-attachments/${fileName}`;
+    mocks.upload.mockImplementation(async (uri: string) => {
+      if (uri !== currentUri) {
+        throw new Error("File does not exist in the previous application container.");
+      }
+      return { status: 204, body: "", headers: {} };
+    });
+
+    const prepared = await prepareTurnAttachments({
+      environmentId,
+      attachments: [restoredFile],
+    });
+
+    expect(prepared.status).toBe("ready");
+    expect(mocks.upload).toHaveBeenCalledWith(
+      currentUri,
+      "https://environment.example/api/attachments/upload/signed",
       expect.anything(),
     );
   });

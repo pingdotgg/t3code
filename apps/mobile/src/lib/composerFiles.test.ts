@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
+  documentUri: "file:///documents",
   pickFile: vi.fn(),
   copy: vi.fn(),
   delete: vi.fn(),
@@ -12,8 +13,8 @@ vi.mock("expo-file-system", () => {
   class Directory {
     readonly uri: string;
 
-    constructor(root: string, name: string) {
-      this.uri = `${root}/${name}`;
+    constructor(root: string | { readonly uri: string }, name: string) {
+      this.uri = `${typeof root === "string" ? root : root.uri}/${name}`;
     }
 
     create(): void {}
@@ -55,7 +56,11 @@ vi.mock("expo-file-system", () => {
     Directory,
     File,
     FileMode: { ReadOnly: "r", WriteOnly: "w" },
-    Paths: { document: "file:///documents" },
+    Paths: {
+      get document() {
+        return { uri: mocks.documentUri };
+      },
+    },
   };
 });
 
@@ -69,6 +74,7 @@ import {
 
 describe("pickComposerFiles", () => {
   beforeEach(() => {
+    mocks.documentUri = "file:///documents";
     mocks.pickFile.mockReset();
     mocks.copy.mockReset();
     mocks.delete.mockReset();
@@ -342,5 +348,39 @@ describe("pickComposerFiles", () => {
     expect(mocks.delete).toHaveBeenCalledWith(
       "file:///documents/t3-composer-attachments/report.pdf",
     );
+  });
+
+  it("removes a restored attachment from the current iOS document container", async () => {
+    const fileName = "33333333-3333-4333-8333-333333333333-report%20%23.pdf";
+    const oldUri = `file:///private/var/mobile/Containers/Data/Application/11111111-1111-4111-8111-111111111111/Documents/t3-composer-attachments/${fileName}`;
+    mocks.documentUri =
+      "file:///var/mobile/Containers/Data/Application/22222222-2222-4222-8222-222222222222/Documents";
+
+    await removePersistedComposerAttachmentFile(oldUri);
+    await removePersistedComposerAttachmentFile(
+      `file:///var/mobile/Containers/Shared/FileProvider/other/Documents/t3-composer-attachments/${fileName}`,
+    );
+    await removePersistedComposerAttachmentFile(
+      `${mocks.documentUri}/t3-composer-attachments/..%2F..%2Fsender.pdf`,
+    );
+
+    expect(mocks.delete.mock.calls).toEqual([
+      [`${mocks.documentUri}/t3-composer-attachments/${fileName}`],
+    ]);
+  });
+
+  it("copies an open-in-place source from its actual container without rebasing it", async () => {
+    const sourceUri =
+      "file:///var/mobile/Containers/Data/Application/11111111-1111-4111-8111-111111111111/Documents/t3-composer-attachments/33333333-3333-4333-8333-333333333333-report.pdf";
+    mocks.documentUri =
+      "file:///var/mobile/Containers/Data/Application/22222222-2222-4222-8222-222222222222/Documents";
+
+    await persistComposerAttachmentFile(sourceUri, "report.pdf");
+
+    expect(mocks.copy).toHaveBeenCalledWith(
+      sourceUri,
+      `${mocks.documentUri}/t3-composer-attachments/attachment-id-report.pdf`,
+    );
+    expect(mocks.delete).not.toHaveBeenCalled();
   });
 });

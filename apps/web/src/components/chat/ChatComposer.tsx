@@ -1,5 +1,6 @@
 import type {
   ApprovalRequestId,
+  ChatFileAttachment,
   EnvironmentId,
   ModelSelection,
   PreviewAnnotationPayload,
@@ -55,6 +56,8 @@ import {
   type DraftId,
   type PersistedComposerFileAttachment,
   type PersistedComposerImageAttachment,
+  composerFileDedupKey,
+  composerFileMatchesReattachMarker,
   composerFileNeedsReattach,
   composerTargetKey,
   hydrateImagesFromPersisted,
@@ -86,6 +89,7 @@ import {
   classifyComposerAttachmentFile,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
+  isPreviewableComposerVideo,
   normalizeComposerImageFileMimeType,
   shouldHandleComposerAttachmentPaste,
 } from "./composerAttachmentFiles";
@@ -142,7 +146,11 @@ import {
 } from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { resolveContextWindowModelDisplayName } from "./ContextWindowMeter.logic";
-import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
+import {
+  attachVideoThumbnail,
+  buildExpandedImagePreview,
+  type ExpandedImagePreview,
+} from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
@@ -152,6 +160,30 @@ import {
   submitComposerDraft,
 } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
+
+function ComposerVideoThumbnail({ file }: { file: File }) {
+  const setVideo = useCallback(
+    (video: HTMLVideoElement | null) => {
+      if (!video) return;
+      return attachVideoThumbnail(video, file);
+    },
+    [file],
+  );
+
+  return (
+    <video
+      ref={setVideo}
+      muted
+      playsInline
+      preload="metadata"
+      aria-hidden="true"
+      onLoadedMetadata={(event) => {
+        event.currentTarget.currentTime = Math.min(0.1, event.currentTarget.duration || 0);
+      }}
+      className="pointer-events-none absolute inset-0 size-full object-cover"
+    />
+  );
+}
 
 type ComposerCommandMenuPosition = {
   bottom: number;
@@ -259,6 +291,7 @@ import {
   FileIcon,
   PaperclipIcon,
   PencilRulerIcon,
+  PlayIcon,
   type LucideIcon,
   LockIcon,
   LockOpenIcon,
@@ -280,7 +313,7 @@ import {
 } from "../../providerInstances";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
-import type { SessionPhase, Thread } from "../../types";
+import { type SessionPhase, type Thread, videoMimeType } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
 import type { ContextWindowSnapshot } from "../../lib/contextWindow";
@@ -683,6 +716,8 @@ export interface ChatComposerProps {
   scheduleComposerFocus: () => void;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   onExpandImage: (preview: ExpandedImagePreview) => void;
+  onFileOpen: (attachment: ChatFileAttachment) => void;
+  openingVideoAttachmentId: string | null;
 }
 
 // --------------------------------------------------------------------------
@@ -762,6 +797,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     scheduleComposerFocus,
     setThreadError,
     onExpandImage,
+    onFileOpen,
+    openingVideoAttachmentId,
   } = props;
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
@@ -774,6 +811,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
   const composerFiles = composerDraft.files;
+  const composerVideos = composerFiles.filter((file) =>
+    isPreviewableComposerVideo(file, environmentId),
+  );
+  const composerOtherFiles = composerFiles.filter(
+    (file) => !isPreviewableComposerVideo(file, environmentId),
+  );
   const composerTerminalContexts = composerDraft.terminalContexts;
   const composerElementContexts = composerDraft.elementContexts;
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
@@ -2363,11 +2406,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       let restoredFileCount = 0;
       const stashedFiles = entry.files ?? [];
       if (stashedFiles.length > 0) {
-        const fileDedupKey = (file: {
-          readonly mimeType: string;
-          readonly sizeBytes: number;
-          readonly name: string;
-        }) => `${file.mimeType}\u0000${file.sizeBytes}\u0000${file.name}`;
         const composerFilesNow = composerFilesRef.current;
         const existingFileIds = new Set(composerFilesNow.map((file) => file.id));
         const retainedUploadIds = new Set(
@@ -2375,16 +2413,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             file.uploadedAttachmentId ? [file.uploadedAttachmentId] : [],
           ),
         );
-        const existingFileKeys = new Set(composerFilesNow.map(fileDedupKey));
-        const reattachMarkerKeys = new Set(
-          composerFilesNow.filter(composerFileNeedsReattach).map(fileDedupKey),
-        );
+        const existingFileKeys = new Set(composerFilesNow.map(composerFileDedupKey));
+        const reattachMarkers = composerFilesNow.filter(composerFileNeedsReattach);
+        const restoredMarkerIds = new Set<string>();
         const duplicateFiles: PersistedComposerFileAttachment[] = [];
         const markerReplacements: ComposerFileAttachment[] = [];
         const appendedFiles: ComposerFileAttachment[] = [];
         for (const file of stashedFiles) {
           const expired = expiredAttachmentIds.has(file.attachmentId);
-          const key = fileDedupKey(file);
+          const key = composerFileDedupKey(file);
           const restored: ComposerFileAttachment = {
             type: "file",
             id: file.id,
@@ -2404,23 +2441,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             }
             continue;
           }
-          if (existingFileKeys.has(key)) {
-            if (reattachMarkerKeys.has(key)) {
-              // The draft row with this identity is a needs-reattach marker,
-              // not a real duplicate. Replace it (addFiles swaps a matching
-              // marker in place) instead of deleting the only uploaded copy.
-              reattachMarkerKeys.delete(key);
-              existingFileIds.add(file.id);
-              if (expired) {
-                // The draft's marker already says "attach again"; nothing to
-                // restore or release, but say why the stash copy is gone.
-                expiredFileNames.push(file.name);
-              } else {
-                retainedUploadIds.add(file.attachmentId);
-                markerReplacements.push(restored);
-              }
-              continue;
+          const reattachMarker = reattachMarkers.find(
+            (marker) =>
+              !restoredMarkerIds.has(marker.id) && composerFileMatchesReattachMarker(marker, file),
+          );
+          if (reattachMarker) {
+            restoredMarkerIds.add(reattachMarker.id);
+            existingFileIds.add(file.id);
+            existingFileKeys.add(key);
+            if (expired) {
+              expiredFileNames.push(file.name);
+            } else {
+              retainedUploadIds.add(file.attachmentId);
+              markerReplacements.push(restored);
             }
+            continue;
+          }
+          if (existingFileKeys.has(key)) {
             if (!expired && !retainedUploadIds.has(file.attachmentId)) {
               duplicateFiles.push(file);
             }
@@ -2956,22 +2993,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // A pick that matches a needs-reattach marker replaces it in the draft, so
     // it must not consume a slot; a draft full of markers would otherwise hit
     // the capacity error before the replacement path could run.
-    const reattachKeys = new Set(
-      composerFilesRef.current
-        .filter(composerFileNeedsReattach)
-        .map((file) => `${file.mimeType}\u0000${file.sizeBytes}\u0000${file.name}`),
-    );
+    const reattachMarkers = composerFilesRef.current.filter(composerFileNeedsReattach);
+    const replacedReattachMarkerIds = new Set<string>();
     const acceptedImages: File[] = [];
     const acceptedFiles: ComposerFileAttachment[] = [];
     let error: string | null = null;
     for (const file of files) {
       const attachmentKind = classifyComposerAttachmentFile(file);
-      const replacesReattachMarker =
-        attachmentKind === "file" &&
-        reattachKeys.delete(
-          `${file.type || "application/octet-stream"}\u0000${file.size}\u0000${file.name || "file"}`,
-        );
-      if (!replacesReattachMarker && reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      const fileMimeType =
+        attachmentKind === "file"
+          ? (videoMimeType({ name: file.name, mimeType: file.type }) ??
+            (file.type || "application/octet-stream"))
+          : file.type;
+      const matchingReattachMarker =
+        attachmentKind === "file"
+          ? reattachMarkers.find(
+              (marker) =>
+                !replacedReattachMarkerIds.has(marker.id) &&
+                composerFileMatchesReattachMarker(marker, {
+                  name: file.name || "file",
+                  mimeType: fileMimeType,
+                  sizeBytes: file.size,
+                }),
+            )
+          : undefined;
+      if (matchingReattachMarker) {
+        replacedReattachMarkerIds.add(matchingReattachMarker.id);
+      }
+      if (!matchingReattachMarker && reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
         error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`;
         // Keep scanning: a later file in this batch can still replace a
         // needs-reattach marker without needing a free slot.
@@ -2996,16 +3045,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           error = fileAttachmentTooLargeMessage(file.name, fileStagingLimit);
           continue;
         }
+        const attachmentFile =
+          file.type === fileMimeType
+            ? file
+            : new File([file], file.name, { type: fileMimeType, lastModified: file.lastModified });
         acceptedFiles.push({
           type: "file",
           id: randomUUID(),
-          name: file.name || "file",
-          mimeType: file.type || "application/octet-stream",
-          sizeBytes: file.size,
-          file,
+          name: attachmentFile.name || "file",
+          mimeType: fileMimeType,
+          sizeBytes: attachmentFile.size,
+          file: attachmentFile,
         });
       }
-      if (!replacesReattachMarker) {
+      if (!matchingReattachMarker) {
         reservedCount += 1;
       }
     }
@@ -3686,10 +3739,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               {!isComposerCollapsedMobile &&
                 !isComposerApprovalState &&
                 pendingUserInputs.length === 0 &&
-                composerImages.some(
-                  (image) =>
-                    !composerPreviewAnnotations.some((annotation) => annotation.id === image.id),
-                ) && (
+                (composerVideos.length > 0 ||
+                  composerImages.some(
+                    (image) =>
+                      !composerPreviewAnnotations.some((annotation) => annotation.id === image.id),
+                  )) && (
                   <div className="mb-3 flex flex-wrap gap-2">
                     {composerImages
                       .filter(
@@ -3800,15 +3854,102 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           </div>
                         );
                       })}
+                    {composerVideos.map((file) => {
+                      const fileCanUpload =
+                        supportsAttachmentUploads &&
+                        maxFileAttachmentBytes !== null &&
+                        file.sizeBytes <= maxFileAttachmentBytes;
+                      const upload = fileCanUpload ? uploadsByImageId[file.id] : undefined;
+                      const isOpening = file.uploadedAttachmentId === openingVideoAttachmentId;
+                      return (
+                        <div
+                          key={file.id}
+                          className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-black"
+                        >
+                          <button
+                            type="button"
+                            className="flex h-full w-full cursor-zoom-in flex-col items-center justify-center gap-1 px-1 text-white aria-disabled:cursor-default aria-disabled:opacity-50"
+                            aria-busy={isOpening || undefined}
+                            aria-disabled={isOpening || undefined}
+                            aria-label={`${isOpening ? "Loading" : "Play"} ${file.name}`}
+                            onClick={() => {
+                              if (isOpening) return;
+                              if (file.file !== null) {
+                                const preview = buildExpandedImagePreview([file], file.id);
+                                if (preview) onExpandImage(preview);
+                                return;
+                              }
+                              if (!file.uploadedAttachmentId) return;
+                              onFileOpen({ ...file, id: file.uploadedAttachmentId });
+                            }}
+                          >
+                            {file.file && (
+                              <>
+                                <ComposerVideoThumbnail file={file.file} />
+                                <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-black/10" />
+                              </>
+                            )}
+                            {isOpening ? (
+                              <span className="relative z-10 text-[10px]">Loading…</span>
+                            ) : (
+                              <PlayIcon className="relative z-10 size-4 fill-current drop-shadow-md" />
+                            )}
+                          </button>
+                          {upload?.status === "uploading" && (
+                            <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/85 px-1 text-center text-[10px] text-foreground">
+                              {formatAttachmentUploadProgress(upload.progress)}
+                            </span>
+                          )}
+                          {upload?.status === "failed" && (
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    className="absolute bottom-1 left-1 bg-background/85 hover:bg-background/95"
+                                    onClick={() =>
+                                      retryAttachmentUpload({
+                                        environmentId,
+                                        image: file,
+                                        draftTarget: composerDraftTarget,
+                                      })
+                                    }
+                                    aria-label={`Retry upload for ${file.name}`}
+                                  />
+                                }
+                              >
+                                <RotateCcwIcon />
+                              </TooltipTrigger>
+                              <TooltipPopup
+                                side="top"
+                                className="max-w-64 whitespace-normal leading-tight"
+                              >
+                                {upload.reason}
+                              </TooltipPopup>
+                            </Tooltip>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
+                            onClick={() => removeComposerFileFromDraft(file.id)}
+                            aria-label={`Remove ${file.name}`}
+                          >
+                            <XIcon />
+                          </Button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 
               {!isComposerCollapsedMobile &&
                 !isComposerApprovalState &&
                 pendingUserInputs.length === 0 &&
-                composerFiles.length > 0 && (
+                composerOtherFiles.length > 0 && (
                   <div className="mb-3 flex flex-col gap-1">
-                    {composerFiles.map((file) => {
+                    {composerOtherFiles.map((file) => {
                       const fileCanUpload =
                         supportsAttachmentUploads &&
                         maxFileAttachmentBytes !== null &&
