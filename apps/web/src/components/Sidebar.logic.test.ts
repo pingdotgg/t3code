@@ -10,6 +10,7 @@ import {
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   pruneDisabledEnvironmentIds,
+  resolveSidebarProjectMenuLabel,
   resolveAdjacentThreadId,
   reduceSidebarProjectScopeMenuState,
   getFallbackThreadIdAfterDelete,
@@ -1888,5 +1889,44 @@ describe("pruneDisabledEnvironmentIds", () => {
       connectedEnvironmentIds: new Set(),
     });
     expect(next.size).toBe(0);
+  });
+});
+
+describe("resolveSidebarProjectMenuLabel", () => {
+  const envA = EnvironmentId.make("env-a");
+  const envB = EnvironmentId.make("env-b");
+  const memberProjects = [
+    { environmentId: envA, title: "Project on A" },
+    { environmentId: envB, title: "Project on B" },
+  ];
+
+  it("keeps the cross-environment label when multiple environments are enabled", () => {
+    expect(
+      resolveSidebarProjectMenuLabel({
+        displayName: "Shared project",
+        memberProjects,
+        enabledEnvironmentIds: new Set([envA, envB]),
+      }),
+    ).toBe("Shared project");
+  });
+
+  it("uses the physical project title when one environment is enabled", () => {
+    expect(
+      resolveSidebarProjectMenuLabel({
+        displayName: "Shared project",
+        memberProjects,
+        enabledEnvironmentIds: new Set([envB]),
+      }),
+    ).toBe("Project on B");
+  });
+
+  it("falls back to the display name while an environment catalog update settles", () => {
+    expect(
+      resolveSidebarProjectMenuLabel({
+        displayName: "Shared project",
+        memberProjects,
+        enabledEnvironmentIds: new Set([EnvironmentId.make("env-c")]),
+      }),
+    ).toBe("Shared project");
   });
 });

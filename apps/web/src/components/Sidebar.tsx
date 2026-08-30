@@ -137,6 +137,7 @@ import {
   pruneDisabledEnvironmentIds,
   reduceSidebarProjectScopeMenuState,
   resolveAdjacentThreadId,
+  resolveSidebarProjectMenuLabel,
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
@@ -1981,6 +1982,15 @@ export default function Sidebar() {
     [configuredDisabledEnvironmentIds, connectedEnvironmentIds],
   );
   const isEnvironmentFilterActive = disabledEnvironmentIds.size > 0;
+  const enabledEnvironmentIds = useMemo(
+    () =>
+      new Set(
+        environments
+          .filter((environment) => !disabledEnvironmentIds.has(environment.environmentId))
+          .map((environment) => environment.environmentId),
+      ),
+    [disabledEnvironmentIds, environments],
+  );
   // An environment that leaves the catalog must not keep filtering from
   // beyond the grave: prune it so its threads reappear if it reconnects.
   useEffect(() => {
@@ -2026,10 +2036,14 @@ export default function Sidebar() {
       { value: "all", label: "All projects" },
       ...menuProjectGroups.map((project) => ({
         value: project.projectKey,
-        label: project.displayName,
+        label: resolveSidebarProjectMenuLabel({
+          displayName: project.displayName,
+          memberProjects: project.memberProjects,
+          enabledEnvironmentIds,
+        }),
       })),
     ],
-    [menuProjectGroups],
+    [enabledEnvironmentIds, menuProjectGroups],
   );
   const projectGroupByScopeKey = useMemo(
     () => new Map(projectGroups.map((project) => [project.projectKey, project] as const)),
@@ -3666,7 +3680,7 @@ export default function Sidebar() {
                       <FolderIcon className="size-4 shrink-0" />
                     )}
                     <span className="min-w-0 flex-1 truncate">
-                      {scopedProjectGroup?.displayName ?? "All projects"}
+                      {selectedProjectScopeItem.label}
                     </span>
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
                   </ComboboxTrigger>
@@ -3792,7 +3806,12 @@ export default function Sidebar() {
                             onCheckedChange={(checked) =>
                               handleToggleEnvironment(environment.environmentId, checked)
                             }
-                            className="[&>span:last-child]:min-w-0"
+                            className={cn(
+                              "[&>span:last-child]:min-w-0",
+                              isEnabled
+                                ? "text-foreground data-disabled:opacity-100"
+                                : "text-muted-foreground",
+                            )}
                           >
                             <span className="flex min-w-0 flex-col">
                               <span className="truncate">{environment.label}</span>
