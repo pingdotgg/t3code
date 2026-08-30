@@ -197,7 +197,7 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
   }
 }
 
-/** Summarizes at most two action categories while retaining omitted failures in the status. */
+/** Summarizes at most two action categories; every omitted call still counts in the remainder. */
 export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEntry>): {
   summary: string;
   hasFailure: boolean;
@@ -233,7 +233,6 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
             toolGroupActionCount(group.action, group.entries),
           ),
           failedCount: group.entries.filter(workEntryDisplayIndicatesToolFailure).length,
-          unfinishedCount: 0,
         }),
   }));
   const selected = [...summaries]
@@ -252,13 +251,7 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
     sentenceLabels.length < 3
       ? sentenceLabels.join(" and ")
       : `${sentenceLabels.slice(0, -1).join(", ")}, and ${sentenceLabels.at(-1)}`;
-  const failedCount = summaries.reduce((count, group) => count + group.failedCount, 0);
-  const unfinishedCount = summaries.reduce((count, group) => count + group.unfinishedCount, 0);
-  const statuses = [
-    ...(failedCount > 0 ? [`${failedCount} failed`] : []),
-    ...(unfinishedCount > 0 ? [`${unfinishedCount} unfinished`] : []),
-  ];
-  return { summary: [...statuses, summary].join(" · "), hasFailure: failedCount > 0 };
+  return { summary, hasFailure: summaries.some((group) => group.failedCount > 0) };
 }
 
 export function toolGroupSummaryKind(
