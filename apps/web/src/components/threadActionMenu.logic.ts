@@ -61,13 +61,6 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   return [
-    ...(state.projectFilter
-      ? [
-          state.projectFilter.isActive
-            ? { id: "filter-by-project" as const, label: "Show all projects" }
-            : { id: "filter-by-project" as const, label: "Filter by project" },
-        ]
-      : []),
     ...(state.branch
       ? [
           {
@@ -122,6 +115,21 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+    ...(state.projectFilter
+      ? [
+          state.projectFilter.isActive
+            ? {
+                id: "filter-by-project" as const,
+                label: "Show all projects",
+                icon: "folder-tree",
+              }
+            : {
+                id: "filter-by-project" as const,
+                label: "Filter by project",
+                icon: "folder-tree",
+              },
+        ]
+      : []),
     {
       id: "copy",
       label: "Copy",

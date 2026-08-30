@@ -43,15 +43,28 @@ describe("buildThreadActionMenuItems", () => {
       buildThreadActionMenuItems({ ...baseState, projectFilter: { isActive: false } }).find(
         (item) => item.id === "filter-by-project",
       ),
-    ).toMatchObject({ label: "Filter by project" });
+    ).toMatchObject({ label: "Filter by project", icon: "folder-tree" });
   });
 
   it("offers the way back to all projects once the list is scoped", () => {
-    const item = buildThreadActionMenuItems({
+    const items = buildThreadActionMenuItems({
       ...baseState,
       projectFilter: { isActive: true },
-    }).find((candidate) => candidate.id === "filter-by-project");
+    });
+    const item = items.find((candidate) => candidate.id === "filter-by-project");
     expect(item).toMatchObject({ label: "Show all projects" });
+    expect(items.map((candidate) => candidate.id)).toEqual([
+      "pin",
+      "settle",
+      "snooze",
+      "rename",
+      "regenerate-title",
+      "mark-unread",
+      "filter-by-project",
+      "copy",
+      "archive",
+      "delete",
+    ]);
   });
 
   it("includes branch items only for threads with a branch", () => {
