@@ -216,6 +216,7 @@ interface CreateManagerOptions {
   maxRetainedInactiveSessions?: number;
   historyByteLimit?: number;
   ptyAdapter?: FakePtyAdapter;
+  processEventDrainRunner?: (effect: Effect.Effect<void>) => void;
 }
 
 interface ManagerFixture {
@@ -259,6 +260,9 @@ const createManager = (
         processKillGraceMs: options.processKillGraceMs ?? 1,
         ...(options.maxRetainedInactiveSessions !== undefined
           ? { maxRetainedInactiveSessions: options.maxRetainedInactiveSessions }
+          : {}),
+        ...(options.processEventDrainRunner !== undefined
+          ? { processEventDrainRunner: options.processEventDrainRunner }
           : {}),
       });
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
@@ -480,6 +484,40 @@ it.layer(
 
       yield* manager.close({ threadId: "thread-1", terminalId: "term-a" });
       assert.isNull(yield* manager.inspectSession({ threadId: "thread-1", terminalId: "term-a" }));
+    }),
+  );
+
+  it.effect("preserves a queued PTY exit across clear", () =>
+    Effect.gen(function* () {
+      const queuedDrains: Array<Effect.Effect<void>> = [];
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+        processEventDrainRunner: (effect) => {
+          queuedDrains.push(effect);
+        },
+      });
+      yield* manager.openFresh(openInput({ terminalId: "term-clear-exit" }));
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("discarded by clear\n");
+      process.emitExit({ exitCode: 17, signal: null });
+      expect(queuedDrains).toHaveLength(1);
+
+      yield* manager.clear({ threadId: "thread-1", terminalId: "term-clear-exit" });
+      expect(
+        yield* manager.inspectSession({ threadId: "thread-1", terminalId: "term-clear-exit" }),
+      ).toMatchObject({ status: "running", history: "" });
+
+      yield* queuedDrains[0]!;
+      expect(
+        yield* manager.inspectSession({ threadId: "thread-1", terminalId: "term-clear-exit" }),
+      ).toMatchObject({ status: "exited", history: "", exitCode: 17 });
+      expect(
+        (yield* getEvents)
+          .filter((event) => event.type === "cleared" || event.type === "exited")
+          .map((event) => event.type),
+      ).toEqual(["cleared", "exited"]);
     }),
   );
 

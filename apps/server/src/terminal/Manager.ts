@@ -1385,6 +1385,7 @@ interface TerminalManagerOptions {
     readonly threadId: string;
     readonly terminalId: string;
   }) => Effect.Effect<void>;
+  processEventDrainRunner?: (effect: Effect.Effect<void>) => void;
 }
 
 export const make = Effect.fn("TerminalManager.make")(function* () {
@@ -1406,6 +1407,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const path = yield* Path.Path;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
+  const runProcessEventDrain =
+    options.processEventDrainRunner ?? ((effect: Effect.Effect<void>) => void runFork(effect));
 
   const logsDir = options.logsDir;
   const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
@@ -2171,13 +2174,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {
                 return;
               }
-              runFork(drainProcessEvents(session, processPid));
+              runProcessEventDrain(
+                withThreadLock(session.threadId, drainProcessEvents(session, processPid)),
+              );
             });
             const unsubscribeExit = ptyProcess.onExit((event) => {
               if (!enqueueProcessEvent(session, processPid, { type: "exit", event })) {
                 return;
               }
-              runFork(drainProcessEvents(session, processPid));
+              runProcessEventDrain(
+                withThreadLock(session.threadId, drainProcessEvents(session, processPid)),
+              );
             });
 
             let eventStamp: ReturnType<typeof advanceEventSequence> = {
@@ -2971,9 +2978,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const session = yield* requireSession(input.threadId, terminalId);
     session.history.clear();
     session.pendingHistoryControlSequence = "";
-    session.pendingProcessEvents = [];
+    session.pendingProcessEvents = session.pendingProcessEvents
+      .slice(session.pendingProcessEventIndex)
+      .filter((event) => event.type === "exit");
     session.pendingProcessEventIndex = 0;
-    session.processEventDrainRunning = false;
     const eventStamp = advanceEventSequence(session);
     yield* persistHistory(input.threadId, terminalId, session.history);
     yield* publishEvent({
