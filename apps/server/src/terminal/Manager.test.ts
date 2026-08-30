@@ -521,6 +521,49 @@ it.layer(
     }),
   );
 
+  it.effect("keeps replacement process events when an older drain runs after restart", () =>
+    Effect.gen(function* () {
+      const queuedDrains: Array<Effect.Effect<void>> = [];
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processEventDrainRunner: (effect) => {
+          queuedDrains.push(effect);
+        },
+      });
+      const input = openInput({ terminalId: "term-restart-drain" });
+      yield* manager.openFresh(input);
+      const originalProcess = ptyAdapter.processes[0];
+      expect(originalProcess).toBeDefined();
+      if (!originalProcess) return;
+
+      originalProcess.emitData("old process output\n");
+      expect(queuedDrains).toHaveLength(1);
+
+      yield* manager.restart({ ...input, cols: 120, rows: 30 });
+      const replacementProcess = ptyAdapter.processes[1];
+      expect(replacementProcess).toBeDefined();
+      if (!replacementProcess) return;
+
+      replacementProcess.emitExit({ exitCode: 23, signal: null });
+      expect(queuedDrains).toHaveLength(2);
+
+      yield* queuedDrains[0]!;
+      expect(
+        yield* manager.inspectSession({
+          threadId: input.threadId,
+          terminalId: input.terminalId,
+        }),
+      ).toMatchObject({ status: "running", history: "" });
+
+      yield* queuedDrains[1]!;
+      expect(
+        yield* manager.inspectSession({
+          threadId: input.threadId,
+          terminalId: input.terminalId,
+        }),
+      ).toMatchObject({ status: "exited", history: "", exitCode: 23 });
+    }),
+  );
+
   it.effect("atomically rejects duplicate fresh terminal ids", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
