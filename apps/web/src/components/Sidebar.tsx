@@ -3789,7 +3789,7 @@ export default function Sidebar() {
                         const isEnabled = !disabledEnvironmentIds.has(environment.environmentId);
                         const isLastEnabled =
                           isEnabled && environments.length - disabledEnvironmentIds.size === 1;
-                        return (
+                        const item = (
                           <MenuCheckboxItem
                             key={environment.environmentId}
                             checked={isEnabled}
@@ -3799,19 +3799,14 @@ export default function Sidebar() {
                             // at-least-one constraint instead of a checkbox
                             // that silently snaps back.
                             disabled={isLastEnabled}
-                            title={
-                              isLastEnabled
-                                ? "At least one environment must remain selected"
-                                : undefined
-                            }
                             onCheckedChange={(checked) =>
                               handleToggleEnvironment(environment.environmentId, checked)
                             }
                             className={cn(
                               "[&>span:last-child]:min-w-0",
                               isEnabled
-                                ? "text-foreground data-highlighted:text-foreground"
-                                : "text-muted-foreground data-highlighted:text-muted-foreground",
+                                ? "text-foreground"
+                                : "text-muted-foreground data-highlighted:text-accent-foreground/70",
                               isLastEnabled &&
                                 "data-disabled:pointer-events-auto data-disabled:bg-accent/40 data-disabled:opacity-100",
                             )}
@@ -3825,6 +3820,15 @@ export default function Sidebar() {
                               ) : null}
                             </span>
                           </MenuCheckboxItem>
+                        );
+                        if (!isLastEnabled) return item;
+                        return (
+                          <Tooltip key={environment.environmentId}>
+                            <TooltipTrigger render={item} />
+                            <TooltipPopup side="top" className="max-w-80">
+                              At least one environment must remain selected
+                            </TooltipPopup>
+                          </Tooltip>
                         );
                       })}
                     </MenuPopup>
