@@ -172,6 +172,9 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
                   binaryPath: effectiveConfig.binaryPath,
                   directory: cwd,
                   serverUrl: effectiveConfig.serverUrl,
+                  ...(effectiveConfig.serverPassword
+                    ? { serverPassword: effectiveConfig.serverPassword }
+                    : {}),
                   environment: processEnv,
                 });
                 const client = openCodeRuntime.createOpenCodeSdkClient({
@@ -181,24 +184,14 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
                     ? { serverPassword: effectiveConfig.serverPassword }
                     : {}),
                 });
-                return openCodeRuntime.loadOpenCodeSkills
-                  ? yield* openCodeRuntime.loadOpenCodeSkills(client)
-                  : (yield* openCodeRuntime.loadOpenCodeInventory(client)).skills;
+                return yield* openCodeRuntime.loadOpenCodeSkills(client);
               }),
             )
-          : openCodeRuntime.loadSkillsFromCli
-            ? openCodeRuntime.loadSkillsFromCli({
-                binaryPath: effectiveConfig.binaryPath,
-                cwd,
-                environment: processEnv,
-              })
-            : openCodeRuntime
-                .loadInventoryFromCli({
-                  binaryPath: effectiveConfig.binaryPath,
-                  cwd,
-                  environment: processEnv,
-                })
-                .pipe(Effect.map((inventory) => inventory.skills));
+          : openCodeRuntime.loadSkillsFromCli({
+              binaryPath: effectiveConfig.binaryPath,
+              cwd,
+              environment: processEnv,
+            });
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>(
@@ -241,24 +234,26 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         enabled,
         snapshot,
         snapshotForCwd: (cwd) =>
-          Effect.all([
-            snapshot.getSnapshot,
-            loadSkillsForCwd(cwd).pipe(Effect.timeout("20 seconds")),
-          ]).pipe(
-            Effect.map(([machineSnapshot, skills]) => ({
-              ...machineSnapshot,
-              skills: openCodeSkillsToServerProviderSkills(skills),
-            })),
-            Effect.mapError(
-              (cause) =>
-                new ProviderDriverError({
-                  driver: DRIVER_KIND,
-                  instanceId,
-                  detail: `Failed to probe OpenCode skills for '${cwd}'`,
-                  cause,
-                }),
-            ),
-          ),
+          !effectiveConfig.enabled
+            ? snapshot.getSnapshot
+            : Effect.all([
+                snapshot.getSnapshot,
+                loadSkillsForCwd(cwd).pipe(Effect.timeout("20 seconds")),
+              ]).pipe(
+                Effect.map(([machineSnapshot, skills]) => ({
+                  ...machineSnapshot,
+                  skills: openCodeSkillsToServerProviderSkills(skills),
+                })),
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderDriverError({
+                      driver: DRIVER_KIND,
+                      instanceId,
+                      detail: `Failed to probe OpenCode skills for '${cwd}'`,
+                      cause,
+                    }),
+                ),
+              ),
         adapter,
         textGeneration,
       } satisfies ProviderInstance;

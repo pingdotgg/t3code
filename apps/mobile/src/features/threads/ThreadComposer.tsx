@@ -320,11 +320,21 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     if (!workspaceCwd || !selectedProviderStatus) return;
     const key = `${props.environmentId}:${selectedProviderStatus.instanceId}:${workspaceCwd}`;
     if (workspaceRefreshKeyRef.current === key) return;
-    workspaceRefreshKeyRef.current = key;
     void refreshProviders({
       environmentId: props.environmentId,
       input: { instanceId: selectedProviderStatus.instanceId, cwd: workspaceCwd },
-    });
+    }).then(
+      (result) => {
+        if (result._tag === "Success") {
+          workspaceRefreshKeyRef.current = key;
+        } else if (workspaceRefreshKeyRef.current === key) {
+          workspaceRefreshKeyRef.current = null;
+        }
+      },
+      () => {
+        if (workspaceRefreshKeyRef.current === key) workspaceRefreshKeyRef.current = null;
+      },
+    );
   }, [props.environmentId, refreshProviders, selectedProviderStatus, workspaceCwd]);
 
   const composerMenu = useComposerCommandMenu({

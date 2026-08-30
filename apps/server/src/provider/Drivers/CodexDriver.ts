@@ -222,31 +222,33 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         ),
       );
       const snapshotForCwd = (cwd: string) =>
-        Effect.all([
-          snapshot.getSnapshot,
-          probeCodexSkillsForCwd({
-            binaryPath: effectiveConfig.binaryPath,
-            homePath: effectiveConfig.homePath,
-            launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
-            cwd,
-            environment: processEnv,
-          }).pipe(
-            Effect.scoped,
-            Effect.timeout("20 seconds"),
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          ),
-        ]).pipe(
-          Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
-          Effect.mapError(
-            (cause) =>
-              new ProviderDriverError({
-                driver: DRIVER_KIND,
-                instanceId,
-                detail: `Failed to probe Codex skills for '${cwd}'`,
-                cause,
-              }),
-          ),
-        );
+        !effectiveConfig.enabled
+          ? snapshot.getSnapshot
+          : Effect.all([
+              snapshot.getSnapshot,
+              probeCodexSkillsForCwd({
+                binaryPath: effectiveConfig.binaryPath,
+                homePath: effectiveConfig.homePath,
+                launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+                cwd,
+                environment: processEnv,
+              }).pipe(
+                Effect.scoped,
+                Effect.timeout("20 seconds"),
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              ),
+            ]).pipe(
+              Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail: `Failed to probe Codex skills for '${cwd}'`,
+                    cause,
+                  }),
+              ),
+            );
 
       return {
         instanceId,

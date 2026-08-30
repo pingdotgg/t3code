@@ -788,7 +788,8 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverRefreshProviders,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId }) => environmentId,
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.instanceId ?? "all"}:${input.cwd ?? "machine"}`,
       },
     }),
     updateProvider: createEnvironmentRpcCommand(runtime, {

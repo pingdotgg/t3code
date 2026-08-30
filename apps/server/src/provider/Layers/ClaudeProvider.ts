@@ -3,6 +3,7 @@ import {
   type ModelCapabilities,
   type ModelSelection,
   type ServerProviderModel,
+  type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -625,7 +626,7 @@ function nonEmptyProbeString(value: string): string | undefined {
   return candidate ? candidate : undefined;
 }
 
-type ClaudeCapabilitiesProbe = {
+export type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
@@ -723,7 +724,7 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
  * This is used as a fallback when `claude auth status` does not include
  * subscription type information.
  */
-const probeClaudeCapabilities = (
+const probeClaudeCapabilitiesStrict = (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
@@ -773,6 +774,15 @@ const probeClaudeCapabilities = (
         if (!abort.signal.aborted) abort.abort();
       }),
     ),
+  );
+};
+
+const probeClaudeCapabilities = (
+  claudeSettings: ClaudeSettings,
+  environment?: NodeJS.ProcessEnv,
+  cwd?: string,
+) =>
+  probeClaudeCapabilitiesStrict(claudeSettings, environment, cwd).pipe(
     Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
     Effect.result,
     Effect.map((result) => {
@@ -780,7 +790,29 @@ const probeClaudeCapabilities = (
       return Option.isSome(result.success) ? result.success.value : undefined;
     }),
   );
-};
+
+export const makeClaudeWorkspaceCatalog = (
+  skills: ReadonlyArray<ServerProviderSkill>,
+  capabilities: ClaudeCapabilitiesProbe | undefined,
+) => ({
+  skills,
+  ...(capabilities ? { slashCommands: dedupeSlashCommands(capabilities.slashCommands) } : {}),
+});
+
+export const probeClaudeWorkspaceCatalog = Effect.fn("probeClaudeWorkspaceCatalog")(function* (
+  claudeSettings: ClaudeSettings,
+  environment: NodeJS.ProcessEnv | undefined,
+  cwd: string,
+) {
+  const [capabilities, skills] = yield* Effect.all(
+    [
+      probeClaudeCapabilities(claudeSettings, environment, cwd),
+      discoverClaudeSkills(claudeSettings, cwd, environment ?? process.env),
+    ],
+    { concurrency: "unbounded" },
+  );
+  return makeClaudeWorkspaceCatalog(skills, capabilities);
+});
 
 const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,
@@ -972,14 +1004,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
     },
   });
-});
-
-export const probeClaudeWorkspaceSkills = Effect.fn("probeClaudeWorkspaceSkills")(function* (
-  claudeSettings: ClaudeSettings,
-  environment: NodeJS.ProcessEnv | undefined,
-  cwd: string,
-) {
-  return yield* discoverClaudeSkills(claudeSettings, cwd, environment ?? process.env);
 });
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);

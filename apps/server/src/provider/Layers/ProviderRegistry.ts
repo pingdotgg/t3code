@@ -777,7 +777,11 @@ export const ProviderRegistryLive = Layer.effect(
     }) {
       const providers = yield* Ref.get(providersRef);
       const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
-      if (!provider || provider.workspaceSnapshots?.some((s) => s.cwd === input.cwd)) {
+      if (
+        !provider ||
+        !provider.enabled ||
+        provider.workspaceSnapshots?.some((s) => s.cwd === input.cwd)
+      ) {
         return providers;
       }
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
@@ -795,6 +799,8 @@ export const ProviderRegistryLive = Layer.effect(
           if (scopedSnapshot.status === "error") {
             return Ref.get(providersRef);
           }
+          const currentInstance = yield * instanceRegistry.getInstance(input.instanceId);
+          if (currentInstance !== instance) return Ref.get(providersRef);
           return Ref.modify(providersRef, (currentProviders) => {
             const nextProviders = currentProviders.map((candidate) =>
               candidate.instanceId === input.instanceId &&

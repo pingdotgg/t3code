@@ -254,7 +254,7 @@ export interface OpenCodeRuntimeShape {
   readonly loadOpenCodeInventory: (
     client: OpencodeClient,
   ) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
-  readonly loadOpenCodeSkills?: (
+  readonly loadOpenCodeSkills: (
     client: OpencodeClient,
   ) => Effect.Effect<ReadonlyArray<OpenCodeSkill>, OpenCodeRuntimeError>;
   readonly loadInventoryFromCli: (input: {
@@ -262,7 +262,7 @@ export interface OpenCodeRuntimeShape {
     readonly cwd: string;
     readonly environment?: NodeJS.ProcessEnv;
   }) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
-  readonly loadSkillsFromCli?: (input: {
+  readonly loadSkillsFromCli: (input: {
     readonly binaryPath: string;
     readonly cwd: string;
     readonly environment?: NodeJS.ProcessEnv;

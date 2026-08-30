@@ -41,6 +41,7 @@ import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistr
 import {
   haveProvidersChanged,
   mergeProviderSnapshot,
+  upsertProviderWorkspaceSnapshot,
   ProviderRegistryLive,
 } from "./ProviderRegistry.ts";
 import * as ServerConfig from "../../config.ts";
@@ -561,6 +562,41 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ] as const satisfies ReadonlyArray<ServerProvider>;
 
         assert.strictEqual(haveProvidersChanged(providers, [...providers]), false);
+      });
+
+      it("stores workspace skills and commands without changing machine metadata", () => {
+        const provider = {
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-03-25T00:00:00.000Z",
+          version: "1.0.0",
+          models: [],
+          slashCommands: [{ name: "global" }],
+          skills: [{ name: "global", path: "/global/SKILL.md", enabled: true }],
+        } satisfies ServerProvider;
+        const scopedSnapshot = {
+          ...provider,
+          checkedAt: "2026-03-25T00:01:00.000Z",
+          slashCommands: [{ name: "project" }],
+          skills: [{ name: "project", path: "/project/SKILL.md", enabled: true }],
+        } satisfies ServerProvider;
+
+        const result = upsertProviderWorkspaceSnapshot(provider, "/project", scopedSnapshot);
+
+        assert.deepStrictEqual(result.slashCommands, provider.slashCommands);
+        assert.deepStrictEqual(result.skills, provider.skills);
+        assert.deepStrictEqual(result.workspaceSnapshots, [
+          {
+            cwd: "/project",
+            checkedAt: scopedSnapshot.checkedAt,
+            slashCommands: scopedSnapshot.slashCommands,
+            skills: scopedSnapshot.skills,
+          },
+        ]);
       });
 
       it("preserves previously discovered provider models when a refresh returns none", () => {

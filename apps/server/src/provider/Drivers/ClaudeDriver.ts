@@ -33,7 +33,7 @@ import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
   probeClaudeCapabilities,
-  probeClaudeWorkspaceSkills,
+  probeClaudeWorkspaceCatalog,
 } from "../Layers/ClaudeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -223,24 +223,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         ),
       );
       const snapshotForCwd = (workspaceCwd: string) =>
-        Effect.all([
-          snapshot.getSnapshot,
-          probeClaudeWorkspaceSkills(effectiveConfig, processEnv, workspaceCwd).pipe(
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-            Effect.provideService(Path.Path, path),
-          ),
-        ]).pipe(
-          Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
-          Effect.mapError(
-            (cause) =>
-              new ProviderDriverError({
-                driver: DRIVER_KIND,
-                instanceId,
-                detail: `Failed to probe Claude skills for '${workspaceCwd}'`,
-                cause,
-              }),
-          ),
-        );
+        !effectiveConfig.enabled
+          ? snapshot.getSnapshot
+          : Effect.all([
+              snapshot.getSnapshot,
+              probeClaudeWorkspaceCatalog(effectiveConfig, processEnv, workspaceCwd).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+              ),
+            ]).pipe(
+              Effect.map(([machineSnapshot, catalog]) => ({ ...machineSnapshot, ...catalog })),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail: `Failed to probe Claude skills for '${workspaceCwd}'`,
+                    cause,
+                  }),
+              ),
+            );
 
       return {
         instanceId,

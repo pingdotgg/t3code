@@ -1073,11 +1073,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (!gitCwd || !selectedProviderEntry) return;
     const key = `${environmentId}:${selectedProviderEntry.instanceId}:${gitCwd}`;
     if (workspaceRefreshKeyRef.current === key) return;
-    workspaceRefreshKeyRef.current = key;
     void refreshProviders({
       environmentId,
       input: { instanceId: selectedProviderEntry.instanceId, cwd: gitCwd },
-    });
+    }).then(
+      (result) => {
+        if (result._tag === "Success") {
+          workspaceRefreshKeyRef.current = key;
+        } else if (workspaceRefreshKeyRef.current === key) {
+          workspaceRefreshKeyRef.current = null;
+        }
+      },
+      () => {
+        if (workspaceRefreshKeyRef.current === key) workspaceRefreshKeyRef.current = null;
+      },
+    );
   }, [environmentId, gitCwd, refreshProviders, selectedProviderEntry]);
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],

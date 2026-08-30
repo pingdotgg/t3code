@@ -655,12 +655,11 @@ const make = Effect.gen(function* () {
       thread,
       projects: project ? [project] : [],
     });
-    const refreshWorkspaceSnapshot =
-      effectiveCwd && providerRegistry.refreshWorkspaceSnapshot
-        ? providerRegistry
-            .refreshWorkspaceSnapshot({ instanceId: desiredInstanceId, cwd: effectiveCwd })
-            .pipe(Effect.forkDetach)
-        : Effect.void;
+    const refreshWorkspaceSnapshot = effectiveCwd
+      ? providerRegistry
+          .refreshWorkspaceSnapshot({ instanceId: desiredInstanceId, cwd: effectiveCwd })
+          .pipe(Effect.forkDetach)
+      : Effect.void;
 
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
