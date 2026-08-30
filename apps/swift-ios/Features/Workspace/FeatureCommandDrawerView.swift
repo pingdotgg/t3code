@@ -167,6 +167,17 @@ enum FeatureCommandDrawerResponderLookup {
     }
 }
 
+/// The exact window that hosts this drawer's representable.
+///
+/// A process can have multiple foreground iPad scenes, so selecting the first
+/// application-wide key window can capture another scene's responder or apply
+/// its keyboard geometry. The UIKit installer resolves its own window and this
+/// narrow weak reference exposes only that scene-local owner to presentation.
+@MainActor
+final class FeatureCommandDrawerWindowReference {
+    weak var window: UIWindow?
+}
+
 /// The command gesture uses a native pan recognizer for the same reason the
 /// detail surface's back swipe does: a SwiftUI `DragGesture` can begin before
 /// it knows the axis of the motion and would compete with Home's recycled
@@ -176,6 +187,7 @@ enum FeatureCommandDrawerResponderLookup {
 struct FeatureCommandDrawerGestureView: UIViewRepresentable {
     let reveal: CGFloat
     let isOpen: Bool
+    let windowReference: FeatureCommandDrawerWindowReference
     let onBegan: (UIResponder?) -> Void
     let onChanged: (CGFloat) -> Void
     let onEnded: (CGFloat) -> Void
@@ -255,6 +267,7 @@ struct FeatureCommandDrawerGestureView: UIViewRepresentable {
         view.update(
             reveal: reveal,
             isOpen: isOpen,
+            windowReference: windowReference,
             onBegan: onBegan,
             onChanged: onChanged,
             onEnded: onEnded,
@@ -269,6 +282,7 @@ struct FeatureCommandDrawerGestureView: UIViewRepresentable {
         private var onChanged: ((CGFloat) -> Void)?
         private var onEnded: ((CGFloat) -> Void)?
         private var onCancelled: (() -> Void)?
+        private weak var windowReference: FeatureCommandDrawerWindowReference?
         private weak var gestureHost: UIView?
         private var panGesture: UIPanGestureRecognizer?
         private var gestureDelegate: GestureDelegate?
@@ -284,6 +298,7 @@ struct FeatureCommandDrawerGestureView: UIViewRepresentable {
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
+            windowReference?.window = window
             if window == nil {
                 uninstallGesture()
             } else {
@@ -294,6 +309,7 @@ struct FeatureCommandDrawerGestureView: UIViewRepresentable {
         func update(
             reveal: CGFloat,
             isOpen: Bool,
+            windowReference: FeatureCommandDrawerWindowReference,
             onBegan: @escaping (UIResponder?) -> Void,
             onChanged: @escaping (CGFloat) -> Void,
             onEnded: @escaping (CGFloat) -> Void,
@@ -301,6 +317,8 @@ struct FeatureCommandDrawerGestureView: UIViewRepresentable {
         ) {
             self.reveal = reveal
             self.isOpen = isOpen
+            self.windowReference = windowReference
+            windowReference.window = window
             self.onBegan = onBegan
             self.onChanged = onChanged
             self.onEnded = onEnded

@@ -20,6 +20,7 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
 
     @FocusState private var isQueryFocused: Bool
     @State private var responderOwnership = FeatureCommandDrawerResponderOwnership()
+    @State private var windowReference = FeatureCommandDrawerWindowReference()
     @State private var hasRenewedSearchFocusAfterSettle = false
 
     /// Measured in the drawer layer, which is the only place that needs
@@ -51,6 +52,7 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
                         measuredOpenHeight: openHeight
                     ),
                     isOpen: state.isOpen,
+                    windowReference: windowReference,
                     onBegan: { responder in
                         responderOwnership.begin(from: responder)
                         state.synchronize(openHeight: openHeight)
@@ -138,21 +140,13 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
     /// shorten the drawer.
     private func applyKeyboardFrame(from note: Notification) {
         guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-              let window = activeKeyWindow
+              let window = windowReference.window
         else { return }
         let windowFrame = window.screen.coordinateSpace.convert(window.bounds, from: window)
         keyboardHeight = FeatureCommandDrawerGeometry.keyboardOverlap(
             keyboardFrame: frame,
             windowFrame: windowFrame
         )
-    }
-
-    private var activeKeyWindow: UIWindow? {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .filter { $0.activationState == .foregroundActive }
-            .flatMap(\.windows)
-            .first(where: \.isKeyWindow)
     }
 
     private var progress: CGFloat {
@@ -226,7 +220,7 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
     private func openFromRequest() {
         guard !state.isOpen else { return }
         responderOwnership.begin(
-            from: activeKeyWindow.flatMap {
+            from: windowReference.window.flatMap {
                 FeatureCommandDrawerResponderLookup.firstResponder(in: $0)
             }
         )

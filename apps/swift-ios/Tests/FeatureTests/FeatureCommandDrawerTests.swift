@@ -471,6 +471,31 @@ struct FeatureCommandDrawerTests {
     }
 
     @Test @MainActor
+    func gestureInstallerPublishesOnlyItsOwnHostingWindow() {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let root = UIViewController()
+        let reference = FeatureCommandDrawerWindowReference()
+        let installer = FeatureCommandDrawerGestureView.InstallerView()
+        root.view.addSubview(installer)
+        window.rootViewController = root
+        window.isHidden = false
+
+        installer.update(
+            reveal: 0,
+            isOpen: false,
+            windowReference: reference,
+            onBegan: { _ in },
+            onChanged: { _ in },
+            onEnded: { _ in },
+            onCancelled: {}
+        )
+
+        #expect(reference.window === window)
+        installer.removeFromSuperview()
+        #expect(reference.window == nil)
+    }
+
+    @Test @MainActor
     func UIKitEligibilityAlsoChecksAControllerRespondersView() {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         let controller = TestViewController()
