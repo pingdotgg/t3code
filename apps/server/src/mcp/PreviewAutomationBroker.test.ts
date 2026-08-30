@@ -7,6 +7,7 @@ import {
   PreviewAutomationMalformedResponseError,
   PreviewAutomationNoAvailableHostError,
   PreviewAutomationTargetNotEditableError,
+  PreviewAutomationTimeoutError,
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
@@ -19,6 +20,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
@@ -224,7 +226,115 @@ it.effect("blocks a closed in-flight tab without discarding another selected tab
   ),
 );
 
-it.effect("commits a response tab before delivery so a following close cannot be undone", () =>
+it.effect("allows an older response for another tab after closing the selected tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const selectedTabId = PreviewTabId.make("tab-selected-before-close");
+      const otherTabId = PreviewTabId.make("tab-other-in-flight");
+      const connected = yield* Deferred.make<void>();
+      const otherRequestRouted = yield* Deferred.make<void>();
+      const releaseOtherResponse = yield* Deferred.make<void>();
+      const routedRequests: RoutedRequest[] = [];
+      const events = yield* broker.connect(makeHost());
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        const request = { ...event.request, connectionId: event.connectionId };
+        routedRequests.push(request);
+        return Effect.gen(function* () {
+          if (request.tabId === otherTabId) {
+            yield* Deferred.succeed(otherRequestRouted, undefined);
+            yield* Deferred.await(releaseOtherResponse);
+          }
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result:
+              request.operation === "open"
+                ? { available: true, tabId: selectedTabId }
+                : request.tabId === otherTabId
+                  ? { available: true, tabId: otherTabId }
+                  : { url: "http://localhost:3200" },
+          });
+        }).pipe(Effect.forkScoped, Effect.asVoid);
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+
+      yield* broker.invoke({ scope, operation: "open", input: {} });
+      const other = yield* broker
+        .invoke({ scope, operation: "status", input: {}, tabId: otherTabId })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(otherRequestRouted);
+      yield* broker.forgetClosedTab(scope, selectedTabId);
+      yield* Deferred.succeed(releaseOtherResponse, undefined);
+      yield* Fiber.join(other);
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+
+      expect(routedRequests.at(-1)?.tabId).toBe(otherTabId);
+    }),
+  ),
+);
+
+it.effect("does not install a host response after the caller has timed out", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const lateTabId = PreviewTabId.make("tab-after-timeout");
+      const connected = yield* Deferred.make<void>();
+      const requestRouted = yield* Deferred.make<void>();
+      const releaseResponse = yield* Deferred.make<void>();
+      const responseHandled = yield* Deferred.make<void>();
+      const routedRequests: RoutedRequest[] = [];
+      const events = yield* broker.connect(makeHost());
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        const request = { ...event.request, connectionId: event.connectionId };
+        routedRequests.push(request);
+        return Effect.gen(function* () {
+          if (request.operation === "status") {
+            yield* Deferred.succeed(requestRouted, undefined);
+            yield* Deferred.await(releaseResponse);
+          }
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result:
+              request.operation === "status"
+                ? { available: true, tabId: lateTabId }
+                : { url: "http://localhost:3200" },
+          });
+          if (request.operation === "status") {
+            yield* Deferred.succeed(responseHandled, undefined);
+          }
+        }).pipe(Effect.forkScoped, Effect.asVoid);
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+
+      const timedOut = yield* broker
+        .invoke<{ readonly available: boolean }>({
+          scope,
+          operation: "status",
+          input: {},
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(requestRouted);
+      yield* TestClock.adjust("1 second");
+      expect(yield* Fiber.join(timedOut)).toBeInstanceOf(PreviewAutomationTimeoutError);
+      yield* Deferred.succeed(releaseResponse, undefined);
+      yield* Deferred.await(responseHandled);
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+
+      expect(routedRequests.at(-1)?.tabId).toBeUndefined();
+    }),
+  ),
+);
+
+it.effect("keeps a response pending until close can reject its returned tab", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const broker = yield* makeBroker;

@@ -430,21 +430,42 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const respond: PreviewAutomationBroker["Service"]["respond"] = Effect.fn(
     "PreviewAutomationBroker.respond",
   )(function* (response) {
-    const pending = yield* SynchronizedRef.modify(state, (current) => {
-      const entry = current.pending.get(response.requestId);
-      if (
-        !entry ||
-        entry.context.clientId !== response.clientId ||
-        entry.context.connectionId !== response.connectionId
-      ) {
-        return [undefined, current] as const;
-      }
-      const nextPending = new Map(current.pending);
-      nextPending.delete(response.requestId);
-      let assignments: ReadonlyMap<string, HostAssignment> = current.assignments;
-      if (response.ok) {
+    const pending = yield* SynchronizedRef.get(state).pipe(
+      Effect.map((current) => {
+        const entry = current.pending.get(response.requestId);
+        if (
+          !entry ||
+          entry.context.clientId !== response.clientId ||
+          entry.context.connectionId !== response.connectionId
+        ) {
+          return undefined;
+        }
+        return entry;
+      }),
+    );
+    if (!pending) return;
+    if (response.ok) {
+      yield* Deferred.succeed(pending.deferred, response.result);
+    } else {
+      yield* Deferred.fail(
+        pending.deferred,
+        response.error
+          ? classifyResponseError(pending.context, response.error)
+          : new PreviewAutomationMalformedResponseError(pending.context),
+      );
+    }
+  });
+
+  const commitSuccessfulResponse = Effect.fn("PreviewAutomationBroker.commitSuccessfulResponse")(
+    function* (requestId: string, result: unknown) {
+      yield* SynchronizedRef.update(state, (current) => {
+        const entry = current.pending.get(requestId);
+        if (entry === undefined) return current;
+        const pending = new Map(current.pending);
+        pending.delete(requestId);
+        let assignments: ReadonlyMap<string, HostAssignment> = current.assignments;
         const assignment = assignments.get(entry.assignmentKey);
-        const responseTabId = readResultTabId(response.result);
+        const responseTabId = readResultTabId(result);
         const resultTabId =
           responseTabId === undefined && entry.tabIdExplicit ? entry.context.tabId : responseTabId;
         if (
@@ -473,22 +494,11 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           }
           assignments = nextAssignments;
         }
-      }
-      assignments = pruneClosedTabBarriers(assignments, nextPending, entry.assignmentKey);
-      return [entry, { ...current, assignments, pending: nextPending }] as const;
-    });
-    if (!pending) return;
-    if (response.ok) {
-      yield* Deferred.succeed(pending.deferred, response.result);
-    } else {
-      yield* Deferred.fail(
-        pending.deferred,
-        response.error
-          ? classifyResponseError(pending.context, response.error)
-          : new PreviewAutomationMalformedResponseError(pending.context),
-      );
-    }
-  });
+        assignments = pruneClosedTabBarriers(assignments, pending, entry.assignmentKey);
+        return { ...current, assignments, pending };
+      });
+    },
+  );
 
   const forgetClosedTab: PreviewAutomationBroker["Service"]["forgetClosedTab"] = Effect.fn(
     "PreviewAutomationBroker.forgetClosedTab",
@@ -513,7 +523,6 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         const { tabId: _tabId, ...withoutTabId } = assignment;
         assignments.set(assignmentKey, {
           ...withoutTabId,
-          tabSequence: current.requestSequence,
           ...(closedTabSequences.size === 0 ? {} : { closedTabSequences }),
         });
       } else {
@@ -673,7 +682,10 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         onSome: (value) => Effect.succeed(value as A),
       });
     });
-    const result = yield* awaitResponse().pipe(Effect.ensuring(removePending));
+    const result = yield* awaitResponse().pipe(
+      Effect.tap((response) => commitSuccessfulResponse(requestId, response)),
+      Effect.ensuring(removePending),
+    );
     return result;
   });
 
