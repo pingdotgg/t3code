@@ -5212,8 +5212,10 @@ function ChatViewContent(props: ChatViewProps) {
         terminalOpen: Boolean(terminalUiState.terminalOpen),
         modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
       };
+      const commandPaletteOpen = isCommandPaletteOpen();
 
       if (
+        !commandPaletteOpen &&
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
         shouldTypeToFocusComposer(event)
@@ -5236,7 +5238,7 @@ function ChatViewContent(props: ChatViewProps) {
         toggleSidebar();
         return;
       }
-      if (isCommandPaletteOpen()) return;
+      if (commandPaletteOpen) return;
 
       if (command === "thread.settle") {
         event.preventDefault();
