@@ -2,13 +2,13 @@
  * @file vt.h
  *
  * libghostty-vt - Virtual terminal emulator library
- * 
+ *
  * This library provides functionality for parsing and handling terminal
  * escape sequences as well as maintaining terminal state such as styles,
  * cursor position, screen, scrollback, and more.
  *
  * WARNING: This is an incomplete, work-in-progress API. It is not yet
- * stable and is definitely going to change. 
+ * stable and is definitely going to change.
  */
 
 /**
@@ -19,7 +19,7 @@
  *
  * libghostty-vt contains the logic for handling the core parts of a terminal
  * emulator: parsing terminal escape sequences, maintaining terminal state,
- * encoding input events, etc. It can handle scrollback, line wrapping, 
+ * encoding input events, etc. It can handle scrollback, line wrapping,
  * reflow on resize, and more.
  *
  * @warning This library is currently in development and the API is not yet stable.

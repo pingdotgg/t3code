@@ -16,7 +16,7 @@
  *
  * 1. Create an encoder instance with ghostty_key_encoder_new()
  * 2. Configure encoder options with ghostty_key_encoder_setopt()
- *    or ghostty_key_encoder_setopt_from_terminal() if you have a 
+ *    or ghostty_key_encoder_setopt_from_terminal() if you have a
  *    GhosttyTerminal.
  * 3. For each key event:
  *    - Create a key event with ghostty_key_event_new()
