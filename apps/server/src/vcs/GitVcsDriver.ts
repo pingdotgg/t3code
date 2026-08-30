@@ -450,6 +450,7 @@ const gitCommand = (
     readonly maxOutputBytes?: number;
     readonly outputMode?: VcsProcess.VcsProcessInput["outputMode"];
     readonly appendTruncationMarker?: boolean;
+    readonly stdoutDigest?: "sha256";
   },
 ) =>
   process.run({
@@ -469,6 +470,7 @@ const gitCommand = (
     ...(options?.appendTruncationMarker !== undefined
       ? { appendTruncationMarker: options.appendTruncationMarker }
       : {}),
+    ...(options?.stdoutDigest === undefined ? {} : { stdoutDigest: options.stdoutDigest }),
   });
 
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
@@ -756,47 +758,27 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             detail: "git write-tree returned an empty tree oid.",
           });
         }
-        const indexTreeResult = yield* execute({
+        const index = yield* gitCommand(
+          vcsProcess,
           operation,
           cwd,
-          args: ["write-tree"],
-        });
-        const indexTreeOid = indexTreeResult.stdout.trim();
-        if (indexTreeOid.length === 0) {
+          ["ls-files", "--stage", "-z", "--", "."],
+          { stdoutDigest: "sha256" },
+        );
+        if (index.stdoutDigest === undefined) {
           return yield* new VcsProcessExitError({
             operation,
-            command: "git write-tree",
+            command: "git ls-files --stage",
             cwd,
-            exitCode: 0,
-            detail: "git write-tree returned an empty index tree oid.",
+            exitCode: index.exitCode,
+            detail: "git ls-files did not return a staged-state digest.",
           });
         }
-        const prefixResult = yield* execute({
-          operation,
-          cwd,
-          args: ["rev-parse", "--show-prefix"],
-        });
-        const prefix = prefixResult.stdout.replace(/\r?\n$/, "").replace(/\/$/, "");
-        const indexWorkspaceOid =
-          prefix.length === 0
-            ? indexTreeOid
-            : yield* execute({
-                operation,
-                cwd,
-                args: ["rev-parse", "--verify", `${indexTreeOid}:${prefix}`],
-                allowNonZeroExit: true,
-              }).pipe(
-                Effect.flatMap((result) =>
-                  result.exitCode === 0
-                    ? Effect.succeed(result.stdout.trim())
-                    : Effect.succeed("empty"),
-                ),
-              );
         return NodeCrypto.createHash("sha256")
           .update("worktree\0")
           .update(treeOid)
           .update("\0index\0")
-          .update(indexWorkspaceOid)
+          .update(index.stdoutDigest)
           .digest("hex");
       }).pipe(Effect.ensuring(cleanupTempIndex));
     },

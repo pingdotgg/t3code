@@ -71,6 +71,35 @@ function git(
   });
 }
 
+function gitAllowNonZero(cwd: string, args: ReadonlyArray<string>) {
+  return Effect.gen(function* () {
+    const process = yield* VcsProcess.VcsProcess;
+    return yield* process.run({
+      operation: "CheckpointStore.test.gitAllowNonZero",
+      command: "git",
+      cwd,
+      args,
+      timeoutMs: 10_000,
+      allowNonZeroExit: true,
+    });
+  });
+}
+
+function gitWithStdin(cwd: string, args: ReadonlyArray<string>, stdin: string) {
+  return Effect.gen(function* () {
+    const process = yield* VcsProcess.VcsProcess;
+    const result = yield* process.run({
+      operation: "CheckpointStore.test.gitWithStdin",
+      command: "git",
+      cwd,
+      args,
+      stdin,
+      timeoutMs: 10_000,
+    });
+    return result.stdout.trim();
+  });
+}
+
 function initRepoWithCommit(
   cwd: string,
 ): Effect.Effect<
@@ -166,6 +195,11 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         expect(stagedOnly).not.toBe(initial);
         expect(stagedAfter).toBe(stagedBefore);
         expect(yield* git(tmp, ["diff", "--", "README.md"])).not.toBe("");
+
+        const oddPath = "odd\tname\n.txt";
+        yield* writeTextFile(NodePath.join(tmp, oddPath), "odd staged path\n");
+        yield* git(tmp, ["add", "--", oddPath]);
+        expect(yield* checkpointStore.readWorkspaceFingerprint(tmp)).not.toBe(stagedOnly);
       }),
     );
 
@@ -189,6 +223,80 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         yield* git(tmp, ["add", "."]);
 
         expect(yield* checkpointStore.readWorkspaceFingerprint(tmp)).not.toBe(initial);
+      }),
+    );
+
+    it.effect("ignores unmerged index stages outside a nested restore cwd", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const nested = NodePath.join(tmp, "packages", "nested");
+        const sibling = NodePath.join(tmp, "sibling.txt");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(nested, { recursive: true });
+        yield* writeTextFile(NodePath.join(nested, "file.txt"), "nested\n");
+        yield* writeTextFile(sibling, "base\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "add scoped files"]);
+        const baseBranch = yield* git(tmp, ["branch", "--show-current"]);
+
+        yield* git(tmp, ["checkout", "-b", "conflict-side"]);
+        yield* writeTextFile(sibling, "side\n");
+        yield* git(tmp, ["commit", "-am", "change sibling on side"]);
+        yield* git(tmp, ["checkout", baseBranch]);
+        yield* writeTextFile(sibling, "main\n");
+        yield* git(tmp, ["commit", "-am", "change sibling on main"]);
+
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const beforeConflict = yield* checkpointStore.readWorkspaceFingerprint(nested);
+        const merge = yield* gitAllowNonZero(tmp, ["merge", "conflict-side"]);
+        expect(merge.exitCode).not.toBe(0);
+        expect(yield* git(tmp, ["ls-files", "--unmerged", "--", "sibling.txt"])).not.toBe("");
+        expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).toBe(beforeConflict);
+      }),
+    );
+
+    it.effect("changes when an in-scope conflict stage changes", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const nested = NodePath.join(tmp, "packages", "nested");
+        const nestedFile = NodePath.join(nested, "file.txt");
+        const replacement = NodePath.join(tmp, "replacement-stage.txt");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(nested, { recursive: true });
+        yield* writeTextFile(nestedFile, "base\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "add nested conflict file"]);
+        const baseBranch = yield* git(tmp, ["branch", "--show-current"]);
+
+        yield* git(tmp, ["checkout", "-b", "nested-conflict-side"]);
+        yield* writeTextFile(nestedFile, "side\n");
+        yield* git(tmp, ["commit", "-am", "change nested file on side"]);
+        yield* git(tmp, ["checkout", baseBranch]);
+        yield* writeTextFile(nestedFile, "main\n");
+        yield* git(tmp, ["commit", "-am", "change nested file on main"]);
+        expect((yield* gitAllowNonZero(tmp, ["merge", "nested-conflict-side"])).exitCode).not.toBe(
+          0,
+        );
+
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const beforeStageChange = yield* checkpointStore.readWorkspaceFingerprint(nested);
+        const stages = (yield* git(tmp, ["ls-files", "--stage", "--", "packages/nested/file.txt"]))
+          .split("\n")
+          .filter((line) => line.length > 0);
+        expect(stages).toHaveLength(3);
+        expect(stages.map((line) => line.split(/\s+/, 3)[2])).toEqual(["1", "2", "3"]);
+
+        yield* writeTextFile(replacement, "replacement stage two\n");
+        const replacementOid = yield* git(tmp, ["hash-object", "-w", "--", replacement]);
+        yield* gitWithStdin(
+          tmp,
+          ["update-index", "--index-info"],
+          `100644 ${replacementOid} 2\tpackages/nested/file.txt\n`,
+        );
+
+        expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).not.toBe(beforeStageChange);
       }),
     );
 
