@@ -67,6 +67,7 @@ describe("QueuedRunsControl automatic completion delivery", () => {
         threadId={"thread:test" as never}
         editingRunId={null}
         onEditQueuedRun={() => undefined}
+        onCancelEdit={() => undefined}
       />,
     );
 
@@ -107,6 +108,7 @@ describe("QueuedRunsControl attachments and edit mode", () => {
         threadId={"thread:test" as never}
         editingRunId={null}
         onEditQueuedRun={() => undefined}
+        onCancelEdit={() => undefined}
       />,
     );
 
@@ -142,6 +144,7 @@ describe("QueuedRunsControl attachments and edit mode", () => {
         threadId={"thread:test" as never}
         editingRunId={null}
         onEditQueuedRun={() => undefined}
+        onCancelEdit={() => undefined}
       />,
     );
 
@@ -159,9 +162,10 @@ describe("QueuedRunsControl attachments and edit mode", () => {
         threadId={"thread:test" as never}
         editingRunId={"run:queued" as never}
         onEditQueuedRun={() => undefined}
+        onCancelEdit={() => undefined}
       />,
     );
 
-    expect(html).toBe("");
+    expect(html).not.toContain("Queued with a screenshot");
   });
 });
