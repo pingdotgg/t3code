@@ -756,25 +756,47 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             detail: "git write-tree returned an empty tree oid.",
           });
         }
-        const index = yield* execute({
+        const indexTreeResult = yield* execute({
           operation,
           cwd,
-          args: ["ls-files", "--stage", "-z", "--", "."],
+          args: ["write-tree"],
         });
-        if (index.stdoutTruncated) {
+        const indexTreeOid = indexTreeResult.stdout.trim();
+        if (indexTreeOid.length === 0) {
           return yield* new VcsProcessExitError({
             operation,
-            command: "git ls-files --stage",
+            command: "git write-tree",
             cwd,
-            exitCode: index.exitCode,
-            detail: "git ls-files returned incomplete staged-state output.",
+            exitCode: 0,
+            detail: "git write-tree returned an empty index tree oid.",
           });
         }
+        const prefixResult = yield* execute({
+          operation,
+          cwd,
+          args: ["rev-parse", "--show-prefix"],
+        });
+        const prefix = prefixResult.stdout.replace(/\r?\n$/, "").replace(/\/$/, "");
+        const indexWorkspaceOid =
+          prefix.length === 0
+            ? indexTreeOid
+            : yield* execute({
+                operation,
+                cwd,
+                args: ["rev-parse", "--verify", `${indexTreeOid}:${prefix}`],
+                allowNonZeroExit: true,
+              }).pipe(
+                Effect.flatMap((result) =>
+                  result.exitCode === 0
+                    ? Effect.succeed(result.stdout.trim())
+                    : Effect.succeed("empty"),
+                ),
+              );
         return NodeCrypto.createHash("sha256")
           .update("worktree\0")
           .update(treeOid)
           .update("\0index\0")
-          .update(index.stdout)
+          .update(indexWorkspaceOid)
           .digest("hex");
       }).pipe(Effect.ensuring(cleanupTempIndex));
     },

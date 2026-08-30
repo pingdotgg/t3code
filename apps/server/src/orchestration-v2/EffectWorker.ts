@@ -51,7 +51,6 @@ const isOrchestrationEffectExecutionError = Schema.is(OrchestrationEffectExecuti
 function isGuardedCheckpointRestore(effect: OrchestrationEffectV2): boolean {
   return (
     effect.request.type === "provider-thread.rollback" &&
-    effect.request.expectedIdle === true &&
     effect.request.expectedWorkspaceFingerprint !== undefined
   );
 }

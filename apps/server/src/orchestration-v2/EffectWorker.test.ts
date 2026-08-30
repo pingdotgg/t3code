@@ -257,9 +257,27 @@ it.effect("classifies retry-unsafe rollback failures only for guarded MCP reques
       Effect.provide(layer),
       Effect.flip,
     );
+    const fingerprintOnlyEffect = rollbackEffect(now, false);
+    const fingerprintOnly = yield* OrchestrationEffectExecutorV2.pipe(
+      Effect.flatMap((executor) =>
+        executor.execute({
+          ...fingerprintOnlyEffect,
+          request: {
+            type: "provider-thread.rollback",
+            providerThreadId,
+            checkpointId: CheckpointId.make("checkpoint:effect-worker-rollback"),
+            scopeId: CheckpointScopeId.make("scope:effect-worker-rollback"),
+            expectedWorkspaceFingerprint: "workspace-before",
+          },
+        }),
+      ),
+      Effect.provide(layer),
+      Effect.flip,
+    );
 
     assert.isUndefined(legacy.failureCode);
     assert.equal(guarded.failureCode, "checkpoint_restore_partial");
+    assert.equal(fingerprintOnly.failureCode, "checkpoint_restore_partial");
   }),
 );
 

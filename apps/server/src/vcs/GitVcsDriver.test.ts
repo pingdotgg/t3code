@@ -113,18 +113,14 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
   );
 });
 
-it.effect("GitVcsDriver rejects a fingerprint built from truncated staged-state output", () =>
+it.effect("GitVcsDriver fingerprints staged state with bounded tree identities", () =>
   Effect.gen(function* () {
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
     const checkpoints = driver.checkpoints;
     assert.ok(checkpoints);
 
-    const error = yield* checkpoints.readWorkspaceFingerprint("/repo").pipe(Effect.flip);
-
-    assert.equal(error._tag, "VcsProcessExitError");
-    if (error._tag === "VcsProcessExitError") {
-      assert.match(error.detail, /incomplete staged-state output/);
-    }
+    const fingerprint = yield* checkpoints.readWorkspaceFingerprint("/repo");
+    assert.isNotEmpty(fingerprint);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -132,15 +128,18 @@ it.effect("GitVcsDriver rejects a fingerprint built from truncated staged-state 
         Layer.mock(VcsProcess.VcsProcess)({
           run: (input) => {
             const args = input.args.join(" ");
+            assert.notInclude(args, "ls-files --stage");
             return Effect.succeed({
               exitCode: ChildProcessSpawner.ExitCode(0),
               stdout: args.includes("--git-common-dir")
                 ? ".git\n"
                 : args.includes("write-tree")
                   ? "tree-oid\n"
-                  : "",
+                  : args.includes("--show-prefix")
+                    ? "\n"
+                    : "",
               stderr: "",
-              stdoutTruncated: args.includes("ls-files --stage"),
+              stdoutTruncated: false,
               stderrTruncated: false,
             });
           },

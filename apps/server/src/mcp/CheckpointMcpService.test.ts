@@ -718,7 +718,7 @@ it.effect("reports provider failure after filesystem restore as partial", () => 
     effectStatus: "failed",
     effectFailureCode: "checkpoint_restore_partial",
     effectError:
-      "Provider conversation rollback failed after the filesystem checkpoint was restored; the result is partial.",
+      "private /Users/example/worktree path and provider stderr must not leave the server",
   });
   return Effect.gen(function* () {
     const service = yield* CheckpointMcpService;
@@ -730,5 +730,8 @@ it.effect("reports provider failure after filesystem restore as partial", () => 
     });
     assert.equal(result.status, "PARTIAL");
     assert.equal(result.effectStatus, "failed");
+    assert.include(result.detail ?? "", "may have changed filesystem or provider state");
+    assert.notInclude(result.detail ?? "", "/Users/example/worktree");
+    assert.notInclude(result.detail ?? "", "provider stderr");
   }).pipe(Effect.provide(harness.serviceLayer));
 });

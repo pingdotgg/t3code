@@ -2280,7 +2280,24 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
             scopeId,
           },
         },
+        {
+          id: "effect:c-foundation-fingerprint-rollback",
+          commandId,
+          threadId: ThreadId.make("thread:foundation-fingerprint-rollback-process-loss"),
+          request: {
+            type: "provider-thread.rollback",
+            providerThreadId: rollbackProviderThreadId,
+            checkpointId,
+            scopeId,
+            expectedWorkspaceFingerprint: "workspace-before-restore",
+          },
+        },
       ]);
+      assert.isTrue(
+        Option.isSome(
+          yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
+        ),
+      );
       assert.isTrue(
         Option.isSome(
           yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
@@ -2316,6 +2333,13 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
         assert.equal(guarded.value.status, "failed");
         assert.equal(guarded.value.failureCode, "checkpoint_restore_partial");
         assert.include(guarded.value.lastError ?? "", "outcome is uncertain");
+      }
+      const fingerprintGuarded = yield* outbox.get("effect:c-foundation-fingerprint-rollback");
+      assert.isTrue(Option.isSome(fingerprintGuarded));
+      if (Option.isSome(fingerprintGuarded)) {
+        assert.equal(fingerprintGuarded.value.status, "failed");
+        assert.equal(fingerprintGuarded.value.failureCode, "checkpoint_restore_partial");
+        assert.include(fingerprintGuarded.value.lastError ?? "", "outcome is uncertain");
       }
       const recovered = yield* outbox.claimNext({
         workerId: "recovery-worker",

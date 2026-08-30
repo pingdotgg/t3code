@@ -490,7 +490,6 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           .filter(
             (effect) =>
               effect.request.type === "provider-thread.rollback" &&
-              effect.request.expectedIdle === true &&
               effect.request.expectedWorkspaceFingerprint !== undefined,
           )
           .map((effect) => effect.id);

@@ -169,6 +169,29 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       }),
     );
 
+    it.effect("fingerprints an index whose staged listing exceeds the process output cap", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const initial = yield* checkpointStore.readWorkspaceFingerprint(tmp);
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        yield* Effect.forEach(
+          Array.from({ length: 4_000 }, (_, index) => index),
+          (index) =>
+            fileSystem.writeFileString(
+              NodePath.join(tmp, `${String(index).padStart(4, "0")}-${"x".repeat(220)}.txt`),
+              "staged\n",
+            ),
+          { concurrency: 64, discard: true },
+        );
+        yield* git(tmp, ["add", "."]);
+
+        expect(yield* checkpointStore.readWorkspaceFingerprint(tmp)).not.toBe(initial);
+      }),
+    );
+
     it.effect("limits staged-state fingerprints to a nested restore cwd", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
