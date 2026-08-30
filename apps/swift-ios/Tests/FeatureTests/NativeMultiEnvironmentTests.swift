@@ -101,14 +101,34 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         XCTAssertEqual(detail.thread.environmentName, "Steam Box")
 
         try await fixture.client.renameThread(id: remoteThread.id, title: "Remote rename")
+        let selection = FeatureSelection(
+            providerID: "codex",
+            modelID: "gpt-5.6-sol",
+            options: [
+                .init(id: "reasoningEffort", value: .string("xhigh")),
+                .init(id: "serviceTier", value: .string("priority")),
+            ]
+        )
         try await fixture.client.sendMessage(
             threadID: remoteThread.id,
             text: "Run this on Steam Box",
-            selection: nil
+            selection: selection
         )
 
-        let routedHosts = await fixture.transport.dispatchHosts()
-        XCTAssertEqual(routedHosts, ["two.example", "two.example"])
+        let records = await fixture.transport.dispatchRecords()
+        XCTAssertEqual(records.map(\.host), ["two.example", "two.example"])
+        let turnSelection = try XCTUnwrap(
+            records.last?.command["modelSelection"]?.decode(ModelSelection.self)
+        )
+        XCTAssertEqual(turnSelection.instanceId, selection.providerID)
+        XCTAssertEqual(turnSelection.model, selection.modelID)
+        XCTAssertEqual(
+            turnSelection.options,
+            [
+                .init(id: "reasoningEffort", value: .string("xhigh")),
+                .init(id: "serviceTier", value: .string("priority")),
+            ]
+        )
         await fixture.client.disconnect()
     }
 
