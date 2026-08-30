@@ -130,6 +130,8 @@ export function useThreadComposerState() {
     () => (selectedThreadKey ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []) : []),
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
+  const selectedThreadAttempts = selectedThreadProjection?.projection.attempts;
+  const selectedThreadNodes = selectedThreadProjection?.projection.nodes;
   const selectedThreadFeed = useMemo(() => {
     const submissions = selectedThreadKey
       ? (feedbackSubmissionsByThreadKey[selectedThreadKey] ?? [])
@@ -140,8 +142,16 @@ export function useThreadComposerState() {
           ? []
           : [codexFeedbackMessage(submission), codexFeedbackMessage(submission, "assistant")],
       ),
+      attempts: selectedThreadAttempts,
+      nodes: selectedThreadNodes,
     });
-  }, [feedbackSubmissionsByThreadKey, selectedThreadKey, selectedThreadVisibleTurnItems]);
+  }, [
+    feedbackSubmissionsByThreadKey,
+    selectedThreadKey,
+    selectedThreadAttempts,
+    selectedThreadNodes,
+    selectedThreadVisibleTurnItems,
+  ]);
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
