@@ -312,6 +312,26 @@ Without `runId`, it selects the newest interruptible run. A terminal run is
 returned unchanged, and a thread with no active provider turn returns
 `no_active_run`.
 
+## Current-environment usage
+
+`t3_environment_usage` is an authenticated read path over the existing
+`UsageService`; it does not add a transcript collector. The service validates
+the credential's environment, then asks the shared usage instance for a bounded
+daily or hourly summary. This explicit query can refresh the existing pricing
+and scan caches.
+
+The MCP projection pages deterministically ordered buckets and exposes only
+provider/model aggregates, safe source status counts, and pricing provenance.
+Model names, pricing source labels, and diagnostic messages are bounded by
+Unicode code points. Source fingerprints are deliberately removed because they
+contain host IDs, provider-home paths, and filesystem identities. Raw
+transcript records and internal failures never cross the MCP boundary.
+
+Pagination is not snapshot-isolated: each page reads a live summary and may
+shift as transcripts change. Cost fields remain API-equivalent estimates, and
+missing or failed provider sources remain visible rather than being converted
+to zero usage.
+
 ## Delegated Task Lifecycle
 
 The MCP server is a command ingress into V2. It does not call provider adapters

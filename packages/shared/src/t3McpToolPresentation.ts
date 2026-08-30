@@ -51,6 +51,7 @@ const T3_MCP_TOOLS: Record<
   t3_thread_send: { displayName: "Send to a T3 thread", summaryAction: "thread-send" },
   t3_thread_wait: { displayName: "Wait for a T3 thread", summaryAction: "thread-wait" },
   t3_thread_interrupt: { displayName: "Interrupt a T3 thread", summaryAction: "thread-interrupt" },
+  t3_environment_usage: { displayName: "Read environment usage" },
   t3_worktree_handoff: { displayName: "Hand off thread to a git worktree" },
   t3_worktree_status: { displayName: "Get thread worktree status" },
   preview_status: { displayName: "Get preview browser status" },

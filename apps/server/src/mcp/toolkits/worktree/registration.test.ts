@@ -15,6 +15,7 @@ import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRu
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as UsageService from "../../../usage/UsageService.ts";
 import { VcsStatusBroadcaster } from "../../../vcs/VcsStatusBroadcaster.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
@@ -29,6 +30,7 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster)({}),
+  UsageService.layerTest,
 );
 
 const ToolsListPayload = Schema.fromJsonString(
@@ -37,7 +39,10 @@ const ToolsListPayload = Schema.fromJsonString(
       tools: Schema.Array(
         Schema.Struct({
           name: Schema.String,
-          inputSchema: Schema.Struct({ type: Schema.optional(Schema.String) }),
+          inputSchema: Schema.Struct({
+            type: Schema.optional(Schema.String),
+            properties: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+          }),
           annotations: Schema.optional(
             Schema.Struct({
               readOnlyHint: Schema.optional(Schema.Boolean),
@@ -114,6 +119,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       // than replacing them.
       expect(toolNames).toContain("preview_status");
       expect(toolNames).toContain("delegate_task");
+      expect(toolNames).toContain("t3_environment_usage");
 
       // The handoff tool mutates thread state, reaches the network (origin
       // fetch), and runs project setup scripts, so its MCP hints must not
@@ -125,6 +131,20 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const status = tools.find((tool) => tool.name === "t3_worktree_status");
       expect(status?.annotations?.readOnlyHint).toBe(true);
       expect(status?.annotations?.destructiveHint).toBe(false);
+      const usage = tools.find((tool) => tool.name === "t3_environment_usage");
+      expect(usage?.annotations?.readOnlyHint).toBe(true);
+      expect(usage?.annotations?.destructiveHint).toBe(false);
+      expect(usage?.annotations?.openWorldHint).toBe(true);
+      expect(Object.keys(usage?.inputSchema.properties ?? {})).toEqual(
+        expect.arrayContaining([
+          "sinceDay",
+          "untilDay",
+          "timeZone",
+          "resolution",
+          "bucketCursor",
+          "bucketLimit",
+        ]),
+      );
 
       // MCP requires every tool input schema to be a top-level object schema.
       // A non-object schema (e.g. the anyOf produced by an empty
