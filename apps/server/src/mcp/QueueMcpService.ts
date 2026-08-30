@@ -80,7 +80,6 @@ function errorMessage(error: unknown): string {
   if (typeof error === "object" && error !== null && "cause" in error) {
     const cause = (error as { readonly cause: unknown }).cause;
     if (typeof cause === "string") return cause;
-    if (cause instanceof Error) return cause.message;
   }
   return error instanceof Error ? error.message : String(error);
 }

@@ -234,6 +234,11 @@ describe("QueueMcpService", () => {
         ),
       );
       assert.equal(broken.code, "orchestration_error");
+      assert.include(
+        broken.message,
+        `Unable to load thread ${targetThreadId} in project ${projectId}.`,
+      );
+      assert.notInclude(broken.message, "database unavailable");
     }),
   );
 
