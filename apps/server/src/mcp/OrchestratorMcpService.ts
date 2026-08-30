@@ -1745,7 +1745,10 @@ const make = Effect.gen(function* () {
                 }
               }).pipe(Effect.uninterruptible);
               const projection = yield* loadProjection(threadId);
-              const run = projection.runs.at(-1);
+              const accepted = hasInitialMessage
+                ? yield* acceptedMessageResult(projection, initialMessageId, "auto")
+                : undefined;
+              const run = accepted?.run;
               yield* threadManagement
                 .dispatch({
                   type: "thread.created.record",
@@ -1778,9 +1781,7 @@ const make = Effect.gen(function* () {
                 creationSource: projection.thread.creationSource,
                 providerInstanceId: target.modelSelection.instanceId,
                 model: target.modelSelection.model,
-                attachments:
-                  projection.messages.find((message) => message.id === initialMessageId)
-                    ?.attachments ?? [],
+                attachments: accepted?.message.attachments ?? [],
               } satisfies OrchestratorMcpCreatedThread;
             }),
           { concurrency: 1 },

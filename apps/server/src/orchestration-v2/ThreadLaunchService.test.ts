@@ -369,6 +369,7 @@ it.effect("reports an initial-message replay that wins after the receipt preflig
     });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
       const input = launchInput({
         command: "command:launch:message-replay",
         thread: "thread:launch:message-replay",
@@ -378,13 +379,29 @@ it.effect("reports an initial-message replay that wins after the receipt preflig
       const first = yield* launches.launch(input).pipe(Effect.forkChild);
       yield* Deferred.await(receiptLookupCompleted);
       const accepted = yield* launches.launch(input);
+      const acceptedRunId = accepted.initialMessageRunId;
+      assert.isNotNull(acceptedRunId);
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("command:launch:message-replay:later-message"),
+        threadId: accepted.threadId,
+        messageId: MessageId.make("message:launch:message-replay:later-message"),
+        text: "A later queued message",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
       yield* Deferred.succeed(allowReceiptLookup, undefined);
       const replayed = yield* Fiber.join(first);
 
       assert.isFalse(accepted.initialMessageReplayed);
       assert.isTrue(replayed.initialMessageReplayed);
-      assert.lengthOf(replayed.projection.messages, 1);
-      assert.lengthOf(replayed.projection.runs, 1);
+      assert.equal(replayed.initialMessageRunId, acceptedRunId);
+      assert.lengthOf(replayed.projection.messages, 2);
+      assert.lengthOf(replayed.projection.runs, 2);
+      assert.notEqual(replayed.projection.runs.at(-1)?.id, replayed.initialMessageRunId);
     }).pipe(Effect.provide(harness.layer));
   }),
 );

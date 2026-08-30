@@ -76,6 +76,8 @@ export interface ThreadLaunchResult {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly resumed: boolean;
   readonly initialMessageReplayed: boolean;
+  /** The durable run created for `initialMessage`, or null when no initial message was requested. */
+  readonly initialMessageRunId: RunId | null;
 }
 
 export class ThreadLaunchError extends Schema.TaggedErrorClass<ThreadLaunchError>()(
@@ -582,6 +584,7 @@ export const make = Effect.gen(function* () {
           projection,
           resumed: Option.isSome(launchReceipt) || messageWasAlreadyAccepted,
           initialMessageReplayed,
+          initialMessageRunId: runId,
         };
       });
     },
