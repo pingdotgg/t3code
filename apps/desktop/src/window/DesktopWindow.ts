@@ -137,11 +137,15 @@ const windowsWithoutAcrylicBackdrop = new WeakSet<Electron.BrowserWindow>();
 const windowsManagedForBackdrop = new WeakSet<Electron.BrowserWindow>();
 const windowsWithBackdropStateListener = new WeakSet<Electron.BrowserWindow>();
 
+export function isWindowBackdropEnabled(window: Electron.BrowserWindow): boolean {
+  return windowsWithAcrylicBackdrop.has(window);
+}
+
 function sendWindowBackdropState(window: Electron.BrowserWindow): void {
   if (window.isDestroyed()) return;
 
   try {
-    window.webContents.send(WINDOW_BACKDROP_STATE_CHANNEL, windowsWithAcrylicBackdrop.has(window));
+    window.webContents.send(WINDOW_BACKDROP_STATE_CHANNEL, isWindowBackdropEnabled(window));
   } catch {
     // The renderer may not be ready yet. The did-finish-load listener retries it.
   }

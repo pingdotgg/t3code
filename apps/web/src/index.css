@@ -2063,6 +2063,15 @@ html.electron-windows [data-slot="sidebar-inner"] {
   background-color: var(--desktop-window-sidebar) !important;
 }
 
+/* A route can contain several named canvas owners (for example SidebarInset,
+   ChatView, and a terminal drawer). Only the outermost owner should paint the
+   alpha layer; nested owners must let that layer and the native material show
+   through instead of compounding opacity. */
+html.electron-windows .desktop-window-canvas .desktop-window-canvas,
+html.electron-windows [data-app-sidebar] [data-slot="sidebar-inner"] {
+  background-color: transparent !important;
+}
+
 /* App-chrome grain. Baked into each surface's own background (behind
    content) rather than a fixed overlay on top: a full-viewport overlay
    forces the compositor to re-blend every frame any animation produces,

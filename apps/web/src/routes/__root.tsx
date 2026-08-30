@@ -169,12 +169,31 @@ function ContrastAppearanceSync() {
 function GlassAppearanceSync() {
   const glassOpacity = useClientSettings((settings) => settings.glassOpacity);
   const desktopBackdropEnabled = useClientSettings((settings) => settings.desktopBackdropEnabled);
-  const [nativeBackdropEnabled, setNativeBackdropEnabled] = useState<boolean | null>(null);
+  const [nativeBackdropEnabled, setNativeBackdropEnabled] = useState<boolean | null>(() => {
+    if (typeof window === "undefined") return null;
+    const getState = window.desktopBridge?.getWindowBackdropState;
+    if (typeof getState !== "function") return null;
+    try {
+      return getState();
+    } catch {
+      return null;
+    }
+  });
 
   useEffect(() => {
-    const subscribe = window.desktopBridge?.onWindowBackdropStateChange;
-    if (!subscribe) return;
-    return subscribe(setNativeBackdropEnabled);
+    const bridge = window.desktopBridge;
+    if (!bridge) return;
+
+    if (typeof bridge.getWindowBackdropState === "function") {
+      try {
+        setNativeBackdropEnabled(bridge.getWindowBackdropState());
+      } catch {
+        // Older shells or a very early renderer can reject the synchronous query.
+      }
+    }
+
+    if (typeof bridge.onWindowBackdropStateChange !== "function") return;
+    return bridge.onWindowBackdropStateChange(setNativeBackdropEnabled);
   }, []);
 
   useEffect(() => {
