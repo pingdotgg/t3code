@@ -9,7 +9,8 @@ import { GhosttyRuntime, loadGhosttyRuntime } from "./runtime";
 
 const GHOSTTY_SUCCESS = 0;
 const GHOSTTY_OUT_OF_SPACE = -3;
-const MAX_SCROLLBACK_ROWS = 10_000;
+const SCROLLBACK_MAX_LINES = 10_000;
+const SCROLLBACK_MAX_BYTES = 32 * 1024 * 1024;
 // wasm32 C ABI layout for GhosttyTerminalSelectionFormatOptions at the
 // libghostty-vt revision pinned alongside this module.
 const SELECTION_FORMAT_OPTIONS_SIZE = 16;
@@ -245,16 +246,17 @@ export class GhosttyTerminalCore {
     theme: GhosttyTheme,
     onPtyData: (data: string) => void,
   ): void {
-    const optionsSize = this.runtime.layout("GhosttyTerminalOptions").size;
-    const options = this.runtime.alloc(optionsSize);
-    this.runtime.setField(options, "GhosttyTerminalOptions", "cols", cols);
-    this.runtime.setField(options, "GhosttyTerminalOptions", "rows", rows);
-    this.runtime.setField(options, "GhosttyTerminalOptions", "max_scrollback", MAX_SCROLLBACK_ROWS);
     this.terminalSlot = this.runtime.allocOpaque();
-    const terminalResult = this.runtime.call("ghostty_terminal_new", 0, this.terminalSlot, options);
-    this.runtime.free(options, optionsSize);
+    const terminalResult = this.runtime.call(
+      "ghostty_terminal_new",
+      0,
+      this.terminalSlot,
+      cols,
+      rows,
+    );
     this.assertSuccess("ghostty_terminal_new", terminalResult);
     this.terminal = this.runtime.readPointer(this.terminalSlot);
+    this.applyScrollbackLimits();
     this.applyDefaultCursorBlink();
     this.ptyWriter = onPtyData;
     this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, onPtyData);
@@ -312,6 +314,25 @@ export class GhosttyTerminalCore {
     this.resize(cols, rows, cellWidth, cellHeight);
   }
 
+  private applyScrollbackLimits(): void {
+    const value = this.runtime.alloc(4);
+    try {
+      const view = this.runtime.view(value, 4);
+      view.setUint32(0, SCROLLBACK_MAX_BYTES, true);
+      this.assertSuccess(
+        "ghostty_terminal_set scrollback bytes",
+        this.runtime.call("ghostty_terminal_set", this.terminal, 27, value),
+      );
+      view.setUint32(0, SCROLLBACK_MAX_LINES, true);
+      this.assertSuccess(
+        "ghostty_terminal_set scrollback lines",
+        this.runtime.call("ghostty_terminal_set", this.terminal, 28, value),
+      );
+    } finally {
+      this.runtime.free(value, 4);
+    }
+  }
+
   write(data: string | Uint8Array): void {
     this.ensureActive();
     const bytes = typeof data === "string" ? encoder.encode(data) : data;
@@ -325,9 +346,6 @@ export class GhosttyTerminalCore {
   resetAndWrite(data: string): void {
     this.ensureActive();
     this.runtime.call("ghostty_terminal_reset", this.terminal);
-    // RIS returns the cursor to Ghostty's built-in steady default, so the
-    // embedder default has to be applied again before the replay runs.
-    this.applyDefaultCursorBlink();
     this.rows = [];
     if (data.length === 0) return;
     const writer = this.ptyWriter;
