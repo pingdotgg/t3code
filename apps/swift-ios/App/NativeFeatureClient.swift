@@ -5453,7 +5453,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                         isDefault: $0.isDefault ?? false
                     )
                 },
-                defaultValue: defaultValue.map(FeatureModelOptionValue.string)
+                defaultValue: defaultValue.map(FeatureModelOptionValue.string),
+                promptInjectedValues: value.promptInjectedValues
             )
         case let .boolean(value):
             return FeatureModelOptionDescriptor(

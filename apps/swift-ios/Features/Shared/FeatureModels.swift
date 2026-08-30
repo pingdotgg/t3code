@@ -764,6 +764,7 @@ public struct FeatureModelOptionDescriptor: Identifiable, Sendable, Equatable, H
     public var kind: FeatureModelOptionKind
     public var choices: [FeatureModelOptionChoice]
     public var defaultValue: FeatureModelOptionValue?
+    public var promptInjectedValues: [String]?
 
     public init(
         id: String,
@@ -771,7 +772,8 @@ public struct FeatureModelOptionDescriptor: Identifiable, Sendable, Equatable, H
         detail: String? = nil,
         kind: FeatureModelOptionKind,
         choices: [FeatureModelOptionChoice] = [],
-        defaultValue: FeatureModelOptionValue? = nil
+        defaultValue: FeatureModelOptionValue? = nil,
+        promptInjectedValues: [String]? = nil
     ) {
         self.id = id
         self.label = label
@@ -779,6 +781,7 @@ public struct FeatureModelOptionDescriptor: Identifiable, Sendable, Equatable, H
         self.kind = kind
         self.choices = choices
         self.defaultValue = defaultValue
+        self.promptInjectedValues = promptInjectedValues
     }
 }
 

@@ -5,6 +5,7 @@ struct FeatureComposerView: View {
     @State private var isManuallyExpanded = false
     @State private var isAttachmentFlowActive = false
     @State private var isModelPickerPresented = false
+    @State private var isTraitsPickerPresented = false
     @State private var restoresFocusAfterModelPickerDismissal = false
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
     @State private var pathEntries: [FeatureComposerPathEntry] = []
@@ -122,7 +123,9 @@ struct FeatureComposerView: View {
                     isFocused: focused,
                     textIsEmpty: textIsEmpty,
                     attachmentsAreEmpty: attachments.isEmpty,
-                    isAttachmentFlowActive: isAttachmentFlowActive || isModelPickerPresented,
+                    isAttachmentFlowActive: isAttachmentFlowActive
+                        || isModelPickerPresented
+                        || isTraitsPickerPresented,
                     isPreparingAttachments: attachmentPreparation.isPreparing
                 ) {
                     isManuallyExpanded = false
@@ -300,9 +303,9 @@ struct FeatureComposerView: View {
             .frame(maxWidth: 220, alignment: .leading)
             .layoutPriority(1)
 
-            if let reasoningControl {
-                reasoningLevelControl(reasoningControl)
-                    .frame(minWidth: 28, maxWidth: 104, alignment: .trailing)
+            if let traitsControl {
+                traitsPicker(traitsControl)
+                    .frame(minWidth: 28, maxWidth: 148, alignment: .trailing)
                     .layoutPriority(2)
             }
 
@@ -320,63 +323,50 @@ struct FeatureComposerView: View {
         .padding(.bottom, 8)
     }
 
-    /// Levels come from the model descriptor and are written back through the
-    /// composer's existing selection binding, which is the same value the model
-    /// picker configures.
-    @ViewBuilder
-    private func reasoningLevelControl(
-        _ control: FeatureComposerReasoningControl
-    ) -> some View {
-        if control.isInteractive {
-            Menu {
-                Section(control.descriptorLabel) {
-                    ForEach(control.choices) { choice in
-                        Button {
-                            selection = control.selection(choosing: choice.id)
-                        } label: {
-                            if choice.id == control.currentChoiceID {
-                                Label(choice.label, systemImage: "checkmark")
-                            } else {
-                                Text(choice.label)
-                            }
-                        }
-                        .accessibilityIdentifier("composer-reasoning-choice-\(choice.id)")
-                    }
-                }
-            } label: {
-                reasoningLevelLabel(control.value, showsChevron: true)
-                    .frame(
-                        minWidth: T3Metrics.minimumTapTarget,
-                        minHeight: T3Metrics.minimumTapTarget
-                    )
-                    .contentShape(Rectangle())
-            }
-            // The composer sits at the bottom of the screen, so an adaptive menu
-            // would flip the descriptor's lowest-first order and put the highest
-            // level under the finger. Read the levels in their declared order.
-            .menuOrder(.fixed)
-            .buttonStyle(.plain)
-            .accessibilityLabel("Reasoning level")
-            .accessibilityValue(control.value)
-            .accessibilityIdentifier("composer-reasoning-level")
-        } else {
-            reasoningLevelLabel(control.value, showsChevron: false)
-                .accessibilityLabel("Reasoning level")
-                .accessibilityValue(control.value)
-                .accessibilityIdentifier("composer-reasoning-level")
+    /// The popover keeps all descriptor sections together and preserves their
+    /// catalog order, including option descriptions that a system Menu would
+    /// flatten away.
+    private func traitsPicker(_ control: FeatureComposerTraitsControl) -> some View {
+        Button {
+            isTraitsPickerPresented.toggle()
+        } label: {
+            traitsPickerLabel(control)
+                .frame(
+                    minWidth: T3Metrics.minimumTapTarget,
+                    minHeight: T3Metrics.minimumTapTarget
+                )
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .popover(
+            isPresented: $isTraitsPickerPresented,
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .bottom
+        ) {
+            FeatureComposerTraitsMenu(control: control) { descriptorID, choiceID in
+                selection = control.selection(choosing: choiceID, in: descriptorID)
+                isTraitsPickerPresented = false
+            }
+            .presentationCompactAdaptation(.popover)
+        }
+        .accessibilityLabel("Model traits")
+        .accessibilityValue(control.triggerLabel)
+        .accessibilityIdentifier("composer-traits-picker")
     }
 
-    private func reasoningLevelLabel(_ value: String, showsChevron: Bool) -> some View {
+    private func traitsPickerLabel(_ control: FeatureComposerTraitsControl) -> some View {
         HStack(spacing: 3) {
-            Text(value)
+            if control.showsFastModeIcon {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .accessibilityHidden(true)
+            }
+            Text(control.triggerLabel)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            if showsChevron {
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .fixedSize()
-            }
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 8, weight: .bold))
+                .fixedSize()
         }
         .font(T3Typography.supporting)
         .foregroundStyle(T3Colors.textSecondary)
@@ -458,8 +448,8 @@ struct FeatureComposerView: View {
         )
     }
 
-    private var reasoningControl: FeatureComposerReasoningControl? {
-        FeatureComposerReasoningControl.resolve(
+    private var traitsControl: FeatureComposerTraitsControl? {
+        FeatureComposerTraitsControl.resolve(
             explicit: selection,
             inherited: threadSelection,
             providers: providers,
@@ -659,6 +649,103 @@ struct FeatureComposerView: View {
         guard imagesAllowed, !providers.isEmpty else { return false }
         attachImageProviders(providers)
         return true
+    }
+}
+
+private struct FeatureComposerTraitsMenu: View {
+    let control: FeatureComposerTraitsControl
+    let onSelect: (String, String) -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(Array(control.sections.enumerated()), id: \.element.id) { index, section in
+                    if index > 0 {
+                        Divider()
+                            .overlay(T3Colors.separator)
+                            .padding(.vertical, 5)
+                    }
+                    traitSection(section)
+                }
+            }
+            .padding(6)
+        }
+        .scrollIndicators(.hidden)
+        .frame(width: 292)
+        .frame(maxHeight: 520)
+        .background(T3Colors.surface)
+        .accessibilityIdentifier("composer-traits-menu")
+    }
+
+    private func traitSection(_ section: FeatureComposerTraitsControl.Section) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(section.label)
+                .font(T3Typography.supportingStrong)
+                .foregroundStyle(T3Colors.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.top, 5)
+                .padding(.bottom, 3)
+
+            ForEach(section.choices) { choice in
+                let isCurrent = choice.id == section.currentChoiceID
+                Button {
+                    onSelect(section.id, choice.id)
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 5) {
+                                Text(choice.label)
+                                    .font(T3Typography.control)
+                                    .foregroundStyle(T3Colors.textPrimary)
+                                    .lineLimit(1)
+                                if choice.isDefault {
+                                    Text("Default")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(T3Colors.textSecondary)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(T3Colors.subtleStrong, in: Capsule())
+                                }
+                            }
+                            if let detail = choice.detail {
+                                Text(detail)
+                                    .font(T3Typography.supporting)
+                                    .foregroundStyle(T3Colors.textTertiary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        Spacer(minLength: 4)
+                        if isCurrent {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(T3Colors.accent)
+                                .padding(.top, 3)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, choice.detail == nil ? 1 : 4)
+                    .background(
+                        isCurrent ? T3Colors.accent.opacity(0.12) : .clear,
+                        in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(choice.label)
+                .accessibilityValue(
+                    [choice.isDefault ? "Default" : nil, isCurrent ? "Current" : nil]
+                        .compactMap { $0 }
+                        .joined(separator: ", ")
+                )
+                .accessibilityIdentifier(
+                    "composer-trait-\(section.id)-choice-\(choice.id)"
+                )
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(section.label)
+        .accessibilityIdentifier("composer-trait-section-\(section.id)")
     }
 }
 
