@@ -54,7 +54,7 @@ const requireCapability = (scope: McpInvocationScope) =>
         ),
       );
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const fileSystem = yield* FileSystem.FileSystem;
