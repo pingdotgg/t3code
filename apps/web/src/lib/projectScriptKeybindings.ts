@@ -2,7 +2,6 @@ import {
   KeybindingRule as KeybindingRuleSchema,
   type KeybindingCommand,
   type KeybindingRule,
-  type ResolvedKeybindingRule,
   type ResolvedKeybindingsConfig,
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
@@ -58,42 +57,24 @@ type ProjectScriptKeybindingMutation =
   | { type: "upsert"; input: ServerUpsertKeybindingInput }
   | { type: "remove"; input: ServerRemoveKeybindingInput };
 
-function keybindingTargetForResolvedRule(
-  rule: ResolvedKeybindingRule,
-): ServerRemoveKeybindingInput {
-  const when = whenAstToExpression(rule.whenAst);
-  return {
-    key: shortcutToKeybindingInput(rule.shortcut),
-    command: rule.command,
-    ...(when.length > 0 ? { when } : {}),
-  };
-}
-
-function isSameKeybindingTarget(
-  left: ServerRemoveKeybindingInput,
-  right: ServerRemoveKeybindingInput,
-): boolean {
-  return (
-    left.key === right.key &&
-    left.command === right.command &&
-    (left.when ?? undefined) === (right.when ?? undefined)
-  );
-}
-
 export function deriveProjectScriptKeybindingMutations(input: {
   keybindings: ResolvedKeybindingsConfig;
   keybinding: string | null | undefined;
   command: KeybindingCommand;
 }): ReadonlyArray<ProjectScriptKeybindingMutation> {
   const nextRule = decodeProjectScriptKeybindingRule(input);
-  const previousTargets: ServerRemoveKeybindingInput[] = [];
+  const targetsByKey = new Map<string, ServerRemoveKeybindingInput>();
   for (const binding of input.keybindings) {
     if (binding.command !== input.command) continue;
-    const target = keybindingTargetForResolvedRule(binding);
-    if (!previousTargets.some((candidate) => isSameKeybindingTarget(candidate, target))) {
-      previousTargets.push(target);
-    }
+    const when = whenAstToExpression(binding.whenAst);
+    const target = {
+      key: shortcutToKeybindingInput(binding.shortcut),
+      command: binding.command,
+      ...(when.length > 0 ? { when } : {}),
+    };
+    targetsByKey.set(`${target.key}\u0000${when}`, target);
   }
+  const previousTargets = [...targetsByKey.values()];
 
   if (nextRule) {
     const replace = previousTargets.at(-1);

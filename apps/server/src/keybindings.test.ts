@@ -439,18 +439,23 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
-  it.effect("removes only the targeted custom keybinding", () =>
+  it.effect("removes semantically equivalent custom keybinding targets", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
-        { key: "mod+r", command: "script.run-tests.run" },
+        {
+          key: "option+r",
+          command: "script.run-tests.run",
+          when: "terminalFocus&&(!terminalOpen)",
+        },
         { key: "mod+shift+r", command: "script.run-tests.run" },
       ]);
       yield* Effect.gen(function* () {
         const keybindings = yield* Keybindings.Keybindings;
         return yield* keybindings.removeKeybindingRule({
-          key: "mod+r",
+          key: "alt+r",
           command: "script.run-tests.run",
+          when: "terminalFocus && !terminalOpen",
         });
       });
 

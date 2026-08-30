@@ -2833,6 +2833,15 @@ function ChatViewContent(props: ChatViewProps) {
   const environmentKeybindings =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
     DEFAULT_RESOLVED_KEYBINDINGS;
+  const chatKeybindings = useMemo(
+    () => [
+      ...keybindings.filter((binding) => projectScriptIdFromCommand(binding.command) === null),
+      ...environmentKeybindings.filter(
+        (binding) => projectScriptIdFromCommand(binding.command) !== null,
+      ),
+    ],
+    [environmentKeybindings, keybindings],
+  );
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   // Prefer an instance-id match so a custom Codex instance (e.g.
   // `codex_personal`) surfaces its own status/message in the banner rather
@@ -5215,7 +5224,7 @@ function ChatViewContent(props: ChatViewProps) {
         }
       }
 
-      const command = resolveShortcutCommand(event, keybindings, {
+      const command = resolveShortcutCommand(event, chatKeybindings, {
         context: shortcutContext,
       });
       if (!command) return;
@@ -5380,6 +5389,7 @@ function ChatViewContent(props: ChatViewProps) {
     runProjectScript,
     splitTerminal,
     splitPanelTerminal,
+    chatKeybindings,
     keybindings,
     handleUnsettleActiveThread,
     isServerThread,

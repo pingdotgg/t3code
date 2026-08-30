@@ -63,7 +63,30 @@ describe("projectScriptKeybindings", () => {
   it("reads latest matching keybinding value for a command", () => {
     const command = commandForProjectScript("test");
     const value = keybindingValueForCommand(
-      [resolvedBinding(command, "mod+esc"), resolvedBinding(command, "mod+shift+k")],
+      [
+        {
+          command,
+          shortcut: {
+            key: "escape",
+            metaKey: false,
+            ctrlKey: false,
+            shiftKey: false,
+            altKey: false,
+            modKey: true,
+          },
+        },
+        {
+          command,
+          shortcut: {
+            key: "k",
+            metaKey: false,
+            ctrlKey: false,
+            shiftKey: true,
+            altKey: false,
+            modKey: true,
+          },
+        },
+      ],
       command,
     );
 

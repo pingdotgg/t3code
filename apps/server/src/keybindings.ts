@@ -101,19 +101,19 @@ export const ResolvedKeybindingsFromConfig = Schema.Array(ResolvedKeybindingFrom
 );
 
 function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): boolean {
-  return (
-    left.command === right.command &&
-    left.key === right.key &&
-    (left.when ?? undefined) === (right.when ?? undefined)
-  );
+  if (left.command !== right.command) return false;
+  const leftContext = keybindingShortcutContext(left);
+  const rightContext = keybindingShortcutContext(right);
+  return leftContext !== null && leftContext === rightContext;
 }
 
 function keybindingShortcutContext(rule: KeybindingRule): string | null {
-  const parsed = parseKeybindingShortcut(rule.key);
-  if (!parsed) return null;
-  const encoded = encodeShortcut(parsed);
+  const resolved = compileResolvedKeybindingRule(rule);
+  if (!resolved) return null;
+  const encoded = encodeShortcut(resolved.shortcut);
   if (!encoded) return null;
-  return `${encoded}\u0000${rule.when ?? ""}`;
+  const when = resolved.whenAst ? encodeWhenAst(resolved.whenAst) : "";
+  return `${encoded}\u0000${when}`;
 }
 
 function hasSameShortcutContext(left: KeybindingRule, right: KeybindingRule): boolean {
