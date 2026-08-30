@@ -619,29 +619,48 @@ const make = Effect.gen(function* () {
           .filter((recordedPath) => !branchByWorkspacePath.has(recordedPath)),
       ),
     ];
+    const selectedWorkspacePaths = new Set(
+      selectedWorktrees.map(([workspacePath]) => workspacePath),
+    );
+    const isWithinWorkspace = (workspacePath: string, candidatePath: string) => {
+      const relative = path.relative(workspacePath, candidatePath);
+      return (
+        relative === "" ||
+        (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+      );
+    };
+    const candidateRecordedPaths = unresolvedRecordedPaths.filter((recordedPath) => {
+      const nearestListedRoot = [...branchByWorkspacePath.keys()]
+        .filter((workspacePath) => isWithinWorkspace(workspacePath, recordedPath))
+        .toSorted((left, right) => right.length - left.length)[0];
+      return nearestListedRoot !== undefined && selectedWorkspacePaths.has(nearestListedRoot);
+    });
     const bindingPathResolutionLimit = Math.min(400, selectedWorktrees.length * bindingLimit);
-    const recordedPathsToResolve = unresolvedRecordedPaths.slice(0, bindingPathResolutionLimit);
+    const recordedPathsToResolve = candidateRecordedPaths.slice(0, bindingPathResolutionLimit);
     const physicalRootByRecordedPath = new Map<string, string>();
-    yield* Effect.forEach(
+    const candidateResults = yield* Effect.forEach(
       recordedPathsToResolve,
       (recordedPath) =>
-        Effect.option(loadWorktrees(recordedPath)).pipe(
-          Effect.map((candidateInventory) => {
-            if (
-              Option.isSome(candidateInventory) &&
-              candidateInventory.value.repositoryCommonDir === inventory.repositoryCommonDir &&
-              candidateInventory.value.currentWorktreeRoot !== null &&
-              branchByWorkspacePath.has(candidateInventory.value.currentWorktreeRoot)
-            ) {
-              physicalRootByRecordedPath.set(
-                recordedPath,
-                candidateInventory.value.currentWorktreeRoot,
-              );
-            }
-          }),
+        Effect.exit(loadWorktrees(recordedPath)).pipe(
+          Effect.map((candidateExit) => ({ recordedPath, candidateExit })),
         ),
       { concurrency: 8 },
     );
+    let failedCandidateCount = 0;
+    for (const { recordedPath, candidateExit } of candidateResults) {
+      if (Exit.isFailure(candidateExit)) {
+        failedCandidateCount += 1;
+        continue;
+      }
+      const candidateInventory = candidateExit.value;
+      if (
+        candidateInventory.repositoryCommonDir === inventory.repositoryCommonDir &&
+        candidateInventory.currentWorktreeRoot !== null &&
+        branchByWorkspacePath.has(candidateInventory.currentWorktreeRoot)
+      ) {
+        physicalRootByRecordedPath.set(recordedPath, candidateInventory.currentWorktreeRoot);
+      }
+    }
     const threadWorkspaces = recordedThreadWorkspaces.map(
       ([thread, recordedPath]) =>
         [thread, physicalRootByRecordedPath.get(recordedPath) ?? recordedPath] as const,
@@ -724,9 +743,12 @@ const make = Effect.gen(function* () {
       repositoryCommonDir: inventory.repositoryCommonDir,
       projectWorktreeRoot,
       bindingPathResolution: {
-        totalCandidates: unresolvedRecordedPaths.length,
+        totalCandidates: candidateRecordedPaths.length,
         attemptedCandidates: recordedPathsToResolve.length,
-        truncated: recordedPathsToResolve.length < unresolvedRecordedPaths.length,
+        truncated: recordedPathsToResolve.length < candidateRecordedPaths.length,
+        complete:
+          recordedPathsToResolve.length === candidateRecordedPaths.length &&
+          failedCandidateCount === 0,
       },
       worktrees,
       nextCursor,

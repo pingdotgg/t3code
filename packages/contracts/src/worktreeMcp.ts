@@ -175,6 +175,7 @@ export const WorktreeMcpListResult = Schema.Struct({
     totalCandidates: NonNegativeInt,
     attemptedCandidates: NonNegativeInt,
     truncated: Schema.Boolean,
+    complete: Schema.Boolean,
   }),
   worktrees: Schema.Array(WorktreeMcpListEntry),
   nextCursor: Schema.NullOr(NonNegativeInt),

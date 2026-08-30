@@ -1565,9 +1565,100 @@ describe("t3_worktree_list", () => {
         totalCandidates: 3,
         attemptedCandidates: 1,
         truncated: true,
+        complete: false,
       });
       expect(result.worktrees[0]?.bindingCount).toBe(2);
       expect(harness.listWorktrees).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it.effect("resolves only nested binding candidates for the selected worktree page", () => {
+    const firstWorktree = "/worktrees/project-a";
+    const secondWorktree = "/worktrees/project-b";
+    const firstNestedPath = `${firstWorktree}/packages/app`;
+    const secondNestedPath = `${secondWorktree}/packages/app`;
+    const listedWorktrees = [
+      { path: workspaceRoot, refName: "dev" },
+      { path: firstWorktree, refName: "feature/a" },
+      { path: secondWorktree, refName: "feature/b" },
+    ];
+    const harness = makeHarness({
+      worktrees: listedWorktrees,
+      projectThreads: [
+        {
+          id: ThreadId.make("thread-off-page-nested-binding"),
+          title: "Off-page nested binding",
+          branch: "feature/a",
+          worktreePath: firstNestedPath,
+        },
+        {
+          id: threadId,
+          title: "Selected-page nested binding",
+          branch: "feature/b",
+          worktreePath: secondNestedPath,
+        },
+      ],
+      worktreeInventories: {
+        [firstNestedPath]: {
+          repositoryCommonDir: "/repo/.git",
+          currentWorktreeRoot: firstWorktree,
+          worktrees: listedWorktrees,
+        },
+        [secondNestedPath]: {
+          repositoryCommonDir: "/repo/.git",
+          currentWorktreeRoot: secondWorktree,
+          worktrees: listedWorktrees,
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness, { cursor: 2, limit: 1, bindingLimit: 1 });
+
+      expect(result.bindingPathResolution).toEqual({
+        totalCandidates: 1,
+        attemptedCandidates: 1,
+        truncated: false,
+        complete: true,
+      });
+      expect(result.worktrees[0]).toMatchObject({
+        path: secondWorktree,
+        bindingCount: 1,
+        bindings: [expect.objectContaining({ threadId })],
+      });
+      expect(harness.listWorktrees).toHaveBeenCalledTimes(2);
+      expect(harness.listWorktrees).not.toHaveBeenCalledWith(firstNestedPath);
+      expect(harness.listWorktrees).toHaveBeenCalledWith(secondNestedPath);
+    });
+  });
+
+  it.effect("reports incomplete binding counts when a candidate inventory read fails", () => {
+    const nestedPath = `${workspaceRoot}/packages/unreadable`;
+    const harness = makeHarness({
+      worktrees: [{ path: workspaceRoot, refName: "dev" }],
+      projectThreads: [
+        {
+          id: threadId,
+          title: "Unreadable nested binding",
+          branch: "dev",
+          worktreePath: nestedPath,
+        },
+      ],
+      worktreeInventoryFailsFor: new Set([nestedPath]),
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness, { limit: 1 });
+
+      expect(result.bindingPathResolution).toEqual({
+        totalCandidates: 1,
+        attemptedCandidates: 1,
+        truncated: false,
+        complete: false,
+      });
+      expect(result.worktrees[0]).toMatchObject({
+        path: workspaceRoot,
+        bindingCount: 0,
+        bindings: [],
+      });
     });
   });
 

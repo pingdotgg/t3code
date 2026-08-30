@@ -328,10 +328,13 @@ worktree root and Git common directory. Each entry includes its listed and actua
 state, and threads bound to the checkout.
 Bindings keep each thread's recorded branch and worktree path separate from the actual checkout.
 Results are paginated before status reads, and each entry returns a bounded binding list with its
-full binding count when every nested or aliased recorded path was resolved. Path resolution is
-bounded by the page and binding limits, with a hard ceiling of 400 lookups. The result reports how
-many candidate paths were attempted and whether binding counts are lower bounds because that scan
-was truncated. A missing or unreadable checkout remains in the page with an availability and error
+full binding count when every nested or aliased recorded path for that page was resolved. Path
+resolution first selects recorded paths whose nearest listed physical checkout is on the requested
+page, then verifies each candidate through Git repository and worktree identity. The work is bounded
+by the page and binding limits, with a hard ceiling of 400 lookups. The result reports how many
+page candidates were attempted, whether the candidate list was truncated, and whether resolution
+completed without a Git inventory failure. Binding counts are lower bounds unless resolution is
+complete. A missing or unreadable checkout remains in the page with an availability and error
 instead of failing discovery of the other worktrees. The tool does not create, remove, prune, or
 repair worktrees.
 
