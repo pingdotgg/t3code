@@ -434,8 +434,7 @@ describe("summarizeToolGroup", () => {
         status,
       ]),
     ).toEqual({
-      summary:
-        "1 failed · Ran 1 command, sent 1 message to 1 thread, and performed 5 other actions",
+      summary: "Ran 1 command, sent 1 message to 1 thread, and performed 5 other actions",
       hasFailure: true,
     });
   });
@@ -1764,7 +1763,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       kind: "work-toggle",
-      summary: "1 failed · Ran 2 commands",
+      summary: "Ran 2 commands",
       hasFailure: true,
     });
   });

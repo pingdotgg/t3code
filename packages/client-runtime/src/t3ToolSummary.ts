@@ -78,7 +78,7 @@ function quantity(count: number, noun: string): string {
 export function summarizeT3ToolCalls(
   action: T3McpToolSummaryAction,
   calls: ReadonlyArray<T3ToolSummaryCall>,
-): { label: string; failedCount: number; unfinishedCount: number } {
+): { label: string; failedCount: number } {
   const results = calls.map((call) => {
     const result = readResult(call.output);
     return {
@@ -89,7 +89,6 @@ export function summarizeT3ToolCalls(
   });
   const completed = results.filter((call) => call.outcome === "completed");
   const failedCount = results.filter((call) => call.outcome === "failed").length;
-  const unfinishedCount = results.filter((call) => call.outcome === "unfinished").length;
   const selected = completed.length > 0 ? completed : results;
   const times = quantity(selected.length, "time");
   const phrase = (past: string, infinitive: string, object: string) =>
@@ -187,5 +186,5 @@ export function summarizeT3ToolCalls(
       label = phrase("Checked", "check", `orchestration capabilities ${times}`);
       break;
   }
-  return { label, failedCount, unfinishedCount };
+  return { label, failedCount };
 }
