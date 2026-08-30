@@ -2962,18 +2962,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     />
   ) : null;
   const showShoulderTabs =
-    !hasBannerItems &&
-    !showComposerTopDrawer &&
-    !isTasksDrawerOpen &&
-    !isComposerCollapsedMobile &&
-    activityStatus?.kind !== "waiting";
-  const hasShoulderTab =
+    !hasBannerItems && !showComposerTopDrawer && !isTasksDrawerOpen && !isComposerCollapsedMobile;
+  const hasShoulderActivity =
     showShoulderTabs &&
     (activityStatus !== undefined ||
-      (stashQueue.length > 0 && !showInlineStashBadge) ||
       (activeTasksProgress !== null &&
         activeTaskSteps !== null &&
         activeTasksProgress.totalSteps > 0));
+  const showStashMenu =
+    isStashMenuOpen && !composerMenuOpen && !isComposerApprovalState && !isComposerCollapsedMobile;
   const tasksHostActivityStatus =
     activeTasksProgress !== null &&
     activeTasksProgress.totalSteps > 0 &&
@@ -3516,28 +3513,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       className="mx-auto w-full min-w-0 max-w-(--chat-content-max-width)"
       data-chat-composer-form="true"
     >
-      {props.queuedRunsControl}
-      {isStashMenuOpen &&
-      !composerMenuOpen &&
-      !isComposerApprovalState &&
-      !isComposerCollapsedMobile ? (
-        <ComposerBanner.Attachment>
-          <ComposerStashMenu
-            entries={stashQueue}
-            stashShortcutLabel={shortcutLabelForCommand(keybindings, "composer.stash", {
-              context: {
-                terminalFocus: false,
-                terminalOpen,
-                modelPickerOpen: false,
-              },
-            })}
-            onRestore={restoreStashEntry}
-            onDelete={deleteStashEntry}
-            onClose={() => setIsStashMenuOpen(false)}
-          />
-        </ComposerBanner.Attachment>
-      ) : (
-        <>
+      <ComposerBanner.Dock>
+        <ComposerBanner.Column className={showStashMenu ? "hidden" : undefined}>
+          {props.queuedRunsControl}
           <ComposerBannerStack
             key={activeThreadId}
             className="relative z-0"
@@ -3677,8 +3655,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               activityStatus={activityStatus}
             />
           ) : null}
-          {hasShoulderTab ? (
-            <ComposerBanner.Dock>
+          {hasShoulderActivity ? (
+            <ComposerBanner.Attachment>
               {standaloneActivityStatus ? (
                 <ComposerBanner.Root width="content" data-composer-shoulder-tab>
                   <ComposerActivityRow
@@ -3696,19 +3674,37 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   activityStatus={activityStatus}
                 />
               ) : null}
-              {!showInlineStashBadge ? (
-                <ComposerStashBadge
-                  count={stashQueue.length}
-                  menuOpen={isStashMenuOpen}
-                  pulseKey={stashPulse.key}
-                  pulsing={stashPulse.active}
-                  onToggleMenu={toggleStashMenu}
-                />
-              ) : null}
-            </ComposerBanner.Dock>
+            </ComposerBanner.Attachment>
           ) : null}
-        </>
-      )}
+        </ComposerBanner.Column>
+        {showStashMenu ? (
+          <ComposerBanner.Attachment>
+            <ComposerStashMenu
+              entries={stashQueue}
+              stashShortcutLabel={shortcutLabelForCommand(keybindings, "composer.stash", {
+                context: {
+                  terminalFocus: false,
+                  terminalOpen,
+                  modelPickerOpen: false,
+                },
+              })}
+              onRestore={restoreStashEntry}
+              onDelete={deleteStashEntry}
+              onClose={() => setIsStashMenuOpen(false)}
+            />
+          </ComposerBanner.Attachment>
+        ) : showShoulderTabs && !showInlineStashBadge && stashQueue.length > 0 ? (
+          <ComposerBanner.Attachment className="ml-auto w-auto shrink-0">
+            <ComposerStashBadge
+              count={stashQueue.length}
+              menuOpen={isStashMenuOpen}
+              pulseKey={stashPulse.key}
+              pulsing={stashPulse.active}
+              onToggleMenu={toggleStashMenu}
+            />
+          </ComposerBanner.Attachment>
+        ) : null}
+      </ComposerBanner.Dock>
       <div className="relative">
         <ComposerSurface.Main className={composerProviderState.composerFrameClassName}>
           <div

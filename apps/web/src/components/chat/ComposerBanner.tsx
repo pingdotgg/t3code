@@ -104,9 +104,10 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
     <div
       data-slot="composer-banner-attachment"
       className={cn(
-        "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2.75rem)] max-w-[calc(var(--chat-content-max-width)-2.75rem)]",
+        "-mb-[calc(1rem+1px)] w-full",
         // Adjacent attachments share their outline.
         "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0",
+        "not-first:*:data-[composer-banner-width=content]:w-full",
         className,
       )}
       {...props}
@@ -114,14 +115,27 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-/** Standalone tabs draw their own cards; joined tabs share their parent's outline. */
-function Dock({ className, children, ...props }: ComponentProps<"div">) {
+/** Each column keeps its own outline and meets the same composer edge. */
+function Dock({ className, ...props }: ComponentProps<"div">) {
   return (
-    <Attachment className={cn("group/composer-dock", className)} {...props}>
-      <Surface className="flex items-end gap-1 group-first/composer-dock:before:hidden *:data-[composer-banner-width=fill]:flex-1 group-not-first/composer-dock:*:data-[composer-shoulder-tab]:before:hidden">
-        {children}
-      </Surface>
-    </Attachment>
+    <div
+      data-slot="composer-banner-dock"
+      className={cn(
+        "mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(var(--chat-content-max-width)-2.75rem)] items-end gap-1",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+function Column({ className, ...props }: ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="composer-banner-column"
+      className={cn("flex min-w-0 flex-1 flex-col empty:hidden", className)}
+      {...props}
+    />
   );
 }
 
@@ -321,6 +335,7 @@ export const ComposerBanner = {
   Peek,
   Attachment,
   Dock,
+  Column,
   Root,
   Row,
   Icon,
