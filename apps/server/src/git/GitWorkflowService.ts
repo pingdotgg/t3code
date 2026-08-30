@@ -327,13 +327,15 @@ export const make = Effect.gen(function* () {
             operation: "GitWorkflowService.currentBranch",
             cwd,
             args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
-            allowNonZeroExit: true,
           }),
         ),
         Effect.map((result) => {
           const branch = result.stdout.trim();
-          return result.exitCode === 0 && branch.length > 0 ? branch : null;
+          return branch.length > 0 ? branch : null;
         }),
+        Effect.catchTag("GitCommandError", (error) =>
+          error.exitCode === 1 ? Effect.succeed(null) : Effect.fail(error),
+        ),
       ),
     fetchRemote: (input) =>
       ensureGitCommand("GitWorkflowService.fetchRemote", input.cwd).pipe(
