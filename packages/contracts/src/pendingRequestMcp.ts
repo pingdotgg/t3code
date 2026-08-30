@@ -28,7 +28,7 @@ const PendingRequestMcpClientRequestId = TrimmedNonEmptyString.check(
 ).annotate({ description: "Stable idempotency key to reuse when retrying this response." });
 const PendingRequestMcpAnswer = Schema.Union([
   TrimmedNonEmptyString,
-  Schema.Number,
+  Schema.Number.check(Schema.isFinite()),
   Schema.Boolean,
   Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
 ]);

@@ -44,6 +44,13 @@ describe("pending-request MCP contracts", () => {
       retries: 3,
       confirmed: true,
     });
+    expect(() =>
+      decodeRespond({
+        childThreadId: "thread:child",
+        requestId: "request:questions",
+        answers: { retries: Number.POSITIVE_INFINITY },
+      }),
+    ).toThrow();
   });
 
   it("bounds list pages and requires stable target identifiers", () => {
