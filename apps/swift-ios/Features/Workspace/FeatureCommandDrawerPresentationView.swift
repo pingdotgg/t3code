@@ -122,18 +122,15 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
             }
     }
 
-    @ViewBuilder
     private var presentedContent: some View {
-        if FeatureCommandDrawerAccessibility.workspaceIsHidden(state) {
-            // NavigationSplitView hosts UIKit accessibility descendants that a
-            // dynamic hidden modifier alone can leave exposed. Collapse those
-            // descendants into this boundary before hiding it.
-            content
-                .accessibilityElement(children: .ignore)
-                .accessibilityHidden(true)
-        } else {
-            content
-        }
+        let hidesWorkspace = FeatureCommandDrawerAccessibility.workspaceIsHidden(state)
+        // Keep one content identity across presentation. Branching between two
+        // separately modified copies rebuilds SwiftUI text fields and destroys
+        // the exact responder the drawer must restore. NavigationSplitView's
+        // UIKit descendants still need a collapsed boundary while hidden.
+        return content
+            .accessibilityElement(children: hidesWorkspace ? .ignore : .contain)
+            .accessibilityHidden(hidesWorkspace)
     }
 
     /// The reported frame is in screen coordinates. Measure it against this
