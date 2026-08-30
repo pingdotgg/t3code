@@ -87,6 +87,7 @@ import {
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
   normalizeComposerImageFileMimeType,
+  snapshotComposerFilesBeforeInputReset,
   shouldHandleComposerAttachmentPaste,
 } from "./composerAttachmentFiles";
 import {
@@ -4053,10 +4054,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         multiple
                         className="hidden"
                         onChange={(event) => {
-                          const files = Array.from(event.currentTarget.files ?? []);
-                          event.currentTarget.value = "";
-                          void addComposerAttachments(files);
-                          focusComposer();
+                          const input = event.currentTarget;
+                          void snapshotComposerFilesBeforeInputReset(
+                            Array.from(input.files ?? []),
+                            () => {
+                              input.value = "";
+                            },
+                          ).then((files) => {
+                            void addComposerAttachments(files);
+                            focusComposer();
+                          });
                         }}
                       />
                       <Tooltip>

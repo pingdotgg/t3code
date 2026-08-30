@@ -9,6 +9,7 @@ import {
   fileAttachmentStagingLimit,
   inferImageMimeTypeFromName,
   normalizeComposerImageFileMimeType,
+  snapshotComposerFilesBeforeInputReset,
   shouldHandleComposerAttachmentPaste,
 } from "./composerAttachmentFiles";
 
@@ -111,6 +112,37 @@ describe("composer attachment files", () => {
     expect(normalizeComposerImageFileMimeType(binary)).toBe(binary);
     expect(normalizeComposerImageFileMimeType(document)).toBe(document);
     expect(normalizeComposerImageFileMimeType(explicitImage)).toBe(explicitImage);
+  });
+
+  it("snapshots a generic input file before reset preserves its upload bytes", async () => {
+    const bytes = new Uint8Array([80, 75, 3, 4, 10, 20, 30]);
+    const file = new File([bytes], "seo-by-rank-math-pro (5).zip", {
+      type: "application/zip",
+      lastModified: 1_725_000_000_000,
+    });
+    let inputOwnsFile = true;
+    let readWhileInputOwned = false;
+    Object.defineProperty(file, "arrayBuffer", {
+      value: async () => {
+        readWhileInputOwned = inputOwnsFile;
+        return bytes.buffer.slice(0);
+      },
+    });
+
+    const [snapshot] = await snapshotComposerFilesBeforeInputReset([file], () => {
+      inputOwnsFile = false;
+    });
+
+    expect(readWhileInputOwned).toBe(true);
+    expect(inputOwnsFile).toBe(false);
+    expect(snapshot).not.toBe(file);
+    expect(snapshot).toMatchObject({
+      name: file.name,
+      type: file.type,
+      lastModified: file.lastModified,
+      size: file.size,
+    });
+    expect(new Uint8Array(await snapshot!.arrayBuffer())).toEqual(bytes);
   });
 
   it("uses the hard local limit while server config is unknown", () => {
