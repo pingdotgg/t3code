@@ -55,6 +55,7 @@ const questions = [
     id: "editor",
     header: "Editor",
     question: "Which editor should the delegated task configure?",
+    multiSelect: true,
     options: [
       { label: "Vim", description: "Use Vim." },
       { label: "Zed", description: "Use Zed." },
@@ -487,6 +488,36 @@ describe("PendingRequestMcpService", () => {
         }),
       ),
     );
+  });
+
+  it.effect("marks duplicate provider question IDs invalid and refuses ambiguous answers", () => {
+    const dispatch = vi.fn(() => Effect.die("invalid requests must not dispatch"));
+    const duplicateQuestions = [questions[0]!, { ...questions[0]!, header: "Second editor" }];
+    const invalid = childProjectionWithRequests({
+      childThreadId,
+      requests: [{ requestId, questions: duplicateQuestions }],
+    });
+
+    return Effect.gen(function* () {
+      const service = yield* PendingRequestMcpService;
+      const read = yield* service.read(scope, { childThreadId, requestId });
+      assert.equal(read.questionPayloadStatus, "invalid");
+      assert.equal(read.questionCount, 2);
+      assert.deepEqual(read.questions, []);
+      assert.isFalse(read.answerable);
+
+      const rejected = yield* service
+        .respond(scope, {
+          childThreadId,
+          requestId,
+          answers: { editor: ["Vim", "Zed"] },
+          clientRequestId: "duplicate-question-ids",
+        })
+        .pipe(Effect.flip);
+      assert.equal(rejected.code, "invalid_answers");
+      assert.match(rejected.message, /duplicate question IDs/u);
+      assert.equal(dispatch.mock.calls.length, 0);
+    }).pipe(Effect.provide(serviceLayer({ getChild: () => invalid, dispatch })));
   });
 
   it.effect("keeps projection defects out of MCP failure messages", () =>

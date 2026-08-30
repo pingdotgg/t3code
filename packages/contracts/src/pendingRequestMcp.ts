@@ -62,6 +62,7 @@ const PendingRequestMcpQuestion = Schema.Struct({
   id: TrimmedNonEmptyString.check(Schema.isMaxLength(PENDING_REQUEST_MCP_MAX_QUESTION_ID_CHARS)),
   header: TrimmedNonEmptyString.check(Schema.isMaxLength(PENDING_REQUEST_MCP_MAX_HEADER_CHARS)),
   question: TrimmedNonEmptyString.check(Schema.isMaxLength(PENDING_REQUEST_MCP_MAX_QUESTION_CHARS)),
+  multiSelect: Schema.optional(Schema.Boolean),
   options: Schema.Array(
     Schema.Struct({
       label: TrimmedNonEmptyString.check(
@@ -86,13 +87,22 @@ export const PendingRequestMcpRequest = Schema.Struct({
   resumable: Schema.Boolean,
   answerable: Schema.Boolean,
   questionCount: NonNegativeInt,
-  questionPayloadStatus: Schema.Literals(["complete", "too_large"]),
+  questionPayloadStatus: Schema.Literals(["complete", "too_large", "invalid"]),
   questions: Schema.Array(PendingRequestMcpQuestion).check(
     Schema.isMaxLength(PENDING_REQUEST_MCP_MAX_QUESTIONS),
   ),
   createdAt: IsoDateTime,
   resolvedAt: Schema.NullOr(IsoDateTime),
-});
+}).check(
+  Schema.makeFilter((request) => {
+    if (request.questionPayloadStatus !== "complete") return true;
+    const questionIds = request.questions.map((question) => question.id);
+    return (
+      new Set(questionIds).size === questionIds.length ||
+      "Complete pending-request question IDs must be unique."
+    );
+  }),
+);
 export type PendingRequestMcpRequest = typeof PendingRequestMcpRequest.Type;
 
 export const PendingRequestMcpListResult = Schema.Struct({

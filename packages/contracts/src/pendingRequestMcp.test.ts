@@ -84,6 +84,7 @@ describe("pending-request MCP contracts", () => {
           id: "editor",
           header: "Editor",
           question: "q".repeat(PENDING_REQUEST_MCP_MAX_QUESTION_CHARS + 1),
+          multiSelect: true,
           options: [],
         },
       ],
@@ -104,5 +105,41 @@ describe("pending-request MCP contracts", () => {
       questionPayloadStatus: "too_large",
       questions: [],
     });
+  });
+
+  it("preserves multi-select questions and rejects duplicate IDs in complete payloads", () => {
+    const request = {
+      taskId: "node:task",
+      childThreadId: "thread:child",
+      runId: null,
+      nodeId: "node:request",
+      requestId: "request:questions",
+      providerInstanceId: "codex",
+      driverKind: "codex",
+      status: "pending",
+      resumable: true,
+      answerable: true,
+      questionCount: 1,
+      questionPayloadStatus: "complete",
+      questions: [
+        {
+          id: "features",
+          header: "Features",
+          question: "Which features?",
+          multiSelect: true,
+          options: [],
+        },
+      ],
+      createdAt: "2026-08-29T12:00:00.000Z",
+      resolvedAt: null,
+    } as const;
+    expect(decodeReadResult(request).questions[0]?.multiSelect).toBe(true);
+    expect(() =>
+      decodeReadResult({
+        ...request,
+        questionCount: 2,
+        questions: [request.questions[0], request.questions[0]],
+      }),
+    ).toThrow(/unique/u);
   });
 });

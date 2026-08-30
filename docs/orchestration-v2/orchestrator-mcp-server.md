@@ -249,6 +249,10 @@ Question payloads are bounded by count, field length, and total text. A request
 that exceeds those bounds remains discoverable with its stable IDs,
 `questionPayloadStatus: "too_large"`, `answerable: false`, and no partial
 question set. Such a request cannot be answered through MCP.
+Malformed provider payloads with duplicate question IDs remain discoverable in
+the same bounded form with `questionPayloadStatus: "invalid"`; their ambiguous
+answers are rejected. Complete payloads preserve each question's optional
+`multiSelect` requirement.
 
 ### `t3_pending_request_respond`
 

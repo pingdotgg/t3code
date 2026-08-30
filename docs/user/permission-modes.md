@@ -23,7 +23,7 @@ Providers enforce permissions differently. Some read-only actions can proceed in
 including OpenCode and Antigravity, fall back to asking.
 
 When an agent delegates work to a T3-owned child conversation, it can relay that child's
-structured questions and send your answers back. This applies only to user-input questions from
+structured questions, including multi-select questions, and send your answers back. This applies only to user-input questions from
 that direct child. It does not let either agent approve permission requests or expand the child's
 permission mode. Exceptionally large question sets remain visible as unavailable instead of being
 partially shown or answered.

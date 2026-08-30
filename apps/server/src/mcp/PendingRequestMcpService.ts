@@ -167,19 +167,22 @@ function findUserInputItem(
   );
 }
 
-function questionPayloadFits(
+function questionPayloadStatus(
   questions: Extract<OrchestrationV2TurnItem, { readonly type: "user_input_request" }>["questions"],
-): boolean {
-  if (questions.length > PENDING_REQUEST_MCP_MAX_QUESTIONS) return false;
+): "complete" | "too_large" | "invalid" {
+  if (questions.length > PENDING_REQUEST_MCP_MAX_QUESTIONS) return "too_large";
+  const questionIds = new Set<string>();
   let totalChars = 0;
   for (const question of questions) {
+    if (questionIds.has(question.id)) return "invalid";
+    questionIds.add(question.id);
     if (
       question.id.length > PENDING_REQUEST_MCP_MAX_QUESTION_ID_CHARS ||
       question.header.length > PENDING_REQUEST_MCP_MAX_HEADER_CHARS ||
       question.question.length > PENDING_REQUEST_MCP_MAX_QUESTION_CHARS ||
       question.options.length > PENDING_REQUEST_MCP_MAX_OPTIONS_PER_QUESTION
     ) {
-      return false;
+      return "too_large";
     }
     totalChars += question.id.length + question.header.length + question.question.length;
     for (const option of question.options) {
@@ -187,13 +190,13 @@ function questionPayloadFits(
         option.label.length > PENDING_REQUEST_MCP_MAX_OPTION_LABEL_CHARS ||
         option.description.length > PENDING_REQUEST_MCP_MAX_OPTION_DESCRIPTION_CHARS
       ) {
-        return false;
+        return "too_large";
       }
       totalChars += option.label.length + option.description.length;
     }
-    if (totalChars > PENDING_REQUEST_MCP_MAX_TOTAL_QUESTION_CHARS) return false;
+    if (totalChars > PENDING_REQUEST_MCP_MAX_TOTAL_QUESTION_CHARS) return "too_large";
   }
-  return true;
+  return "complete";
 }
 
 function requestSummary(input: {
@@ -216,7 +219,7 @@ function requestSummary(input: {
       ),
     );
   }
-  const payloadFits = questionPayloadFits(input.item.questions);
+  const payloadStatus = questionPayloadStatus(input.item.questions);
   return Effect.succeed({
     taskId: input.task.id,
     childThreadId: input.task.childThreadId,
@@ -230,10 +233,10 @@ function requestSummary(input: {
     answerable:
       input.request.status === "pending" &&
       input.request.responseCapability.type === "live" &&
-      payloadFits,
+      payloadStatus === "complete",
     questionCount: input.item.questions.length,
-    questionPayloadStatus: payloadFits ? "complete" : "too_large",
-    questions: payloadFits ? input.item.questions : [],
+    questionPayloadStatus: payloadStatus,
+    questions: payloadStatus === "complete" ? input.item.questions : [],
     createdAt: DateTime.formatIso(input.request.createdAt),
     resolvedAt:
       input.request.resolvedAt === null ? null : DateTime.formatIso(input.request.resolvedAt),
@@ -527,10 +530,17 @@ export const make = Effect.gen(function* () {
         if (request.responseCapability.type !== "live") {
           return yield* failure("request_not_resumable", request.responseCapability.reason);
         }
-        if (!questionPayloadFits(item.questions)) {
+        const payloadStatus = questionPayloadStatus(item.questions);
+        if (payloadStatus === "too_large") {
           return yield* failure(
             "request_payload_too_large",
             `User-input request '${request.id}' exceeds the bounded MCP question payload and cannot be answered through this tool.`,
+          );
+        }
+        if (payloadStatus === "invalid") {
+          return yield* failure(
+            "invalid_answers",
+            `User-input request '${request.id}' contains duplicate question IDs and cannot be answered through this tool.`,
           );
         }
         const expectedIds = new Set(item.questions.map((question) => question.id));
