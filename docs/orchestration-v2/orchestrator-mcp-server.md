@@ -252,6 +252,10 @@ durable commands. If a fresh policy check or provider admission rejects the
 message after creation, the empty thread is retained because concurrent work
 may already own it. The failed key remains a rejected replay and does not
 repeat schedule bookkeeping; use a new key after correcting the rejection.
+If thread creation was accepted but no initial-message receipt exists, an exact
+retry may finish that missing message through the ordinary launch path. This
+resume does not rewrite `runCount`, `nextRunAt`, or the latest run status. Those
+fields may describe the earlier failed attempt or a newer logical run.
 
 ### `create_threads`
 

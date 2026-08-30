@@ -531,7 +531,7 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
     },
   );
 
-  it.effect("resumes an accepted unbound create without counting another schedule run", () =>
+  it.effect("resumes an accepted unbound create without rewriting newer task bookkeeping", () =>
     Effect.gen(function* () {
       let failAfterCreate = true;
       const harness = makeHarness({
@@ -577,6 +577,23 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
         expect(afterFailure).toMatchObject({ runCount: 1, lastRunStatus: "failed" });
         expect((yield* threads.getThreadProjection(targetThreadId)).messages).toHaveLength(0);
 
+        const newerInput = manualRunInput({
+          taskId,
+          key: "partial-create-newer-run",
+          unboundThreadId: ThreadId.make("thread:scheduled-run-now:partial-create-newer-run"),
+        });
+        const newerRun = yield* scheduler.runNowIdempotent(newerInput);
+        const afterNewerRun = (yield* scheduler.list()).tasks.find((task) => task.id === taskId);
+        expect(newerRun.receipt).toMatchObject({
+          commandType: "message.dispatch",
+          status: "accepted",
+        });
+        expect(afterNewerRun).toMatchObject({
+          runCount: 2,
+          lastRunStatus: "succeeded",
+          nextRunAt: expect.any(String),
+        });
+
         const resumed = yield* scheduler.runNowIdempotent(input);
         expect(resumed).toMatchObject({
           threadId: targetThreadId,
@@ -585,10 +602,11 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
           receipt: { commandType: "message.dispatch", status: "accepted" },
         });
         expect(resumed.task).toMatchObject({
-          runCount: 1,
-          lastRunStatus: "failed",
-          nextRunAt: afterFailure?.nextRunAt,
+          runCount: 2,
+          lastRunStatus: "succeeded",
+          nextRunAt: afterNewerRun?.nextRunAt,
         });
+        expect(resumed.task).toEqual(afterNewerRun);
         expect((yield* threads.getThreadProjection(targetThreadId)).messages).toHaveLength(1);
       }).pipe(Effect.provide(harness), Effect.scoped);
     }),
