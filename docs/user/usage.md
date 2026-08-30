@@ -25,8 +25,9 @@ headline and chart.
 Agents can call `t3_environment_usage` to inspect the current environment's aggregated usage. The
 query accepts at most 31 calendar days at daily resolution or 24 hours at hourly resolution. Large
 bucket sets are paged; pages read the live cache and can shift when new transcript records arrive.
-For hourly queries, the day labels must match the supplied instants in the requested time zone;
-`untilTime` is exclusive, including when it lands on local midnight or across a daylight-saving
+For hourly queries, `sinceDay` must match the local day of `sinceTime`, while `untilDay` must match
+the local day of the last included instant (`untilTime - 1 ms`). `untilTime` is exclusive, so an
+exclusive local-midnight boundary uses the preceding local day, including across a daylight-saving
 transition.
 
 The result reports token totals, cache savings, pricing status, and whether each bucket was priced
