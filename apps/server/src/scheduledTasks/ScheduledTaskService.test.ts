@@ -18,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
@@ -35,12 +36,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
-import {
-  ScheduledTaskManualRunConflictError,
-  ScheduledTaskManualRunRuntimeCeilingError,
-  ScheduledTaskService,
-  layer as scheduledTaskLayer,
-} from "./ScheduledTaskService.ts";
+import * as ScheduledTasks from "./ScheduledTaskService.ts";
 
 const projectId = ProjectId.make("project:scheduled-run-now");
 const otherProjectId = ProjectId.make("project:scheduled-run-now-other");
@@ -75,6 +71,9 @@ const adapter = {
 interface HarnessOptions {
   readonly getProject?: ProjectService.ProjectService["Service"]["getById"];
   readonly providerAdapter?: ProviderAdapterV2Shape | null;
+  readonly mapThreadManagement?: (
+    service: ThreadManagement.ThreadManagementService["Service"],
+  ) => ThreadManagement.ThreadManagementService["Service"];
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -88,6 +87,18 @@ function makeHarness(options: HarnessOptions = {}) {
     { databaseLayer: database, runEffectWorker: false },
   );
   const threads = ThreadManagement.layer.pipe(Layer.provide(orchestrator));
+  const schedulerThreads =
+    options.mapThreadManagement === undefined
+      ? threads
+      : Layer.effect(
+          ThreadManagement.ThreadManagementService,
+          Effect.gen(function* () {
+            const service = yield* ThreadManagement.ThreadManagementService;
+            return ThreadManagement.ThreadManagementService.of(
+              options.mapThreadManagement!(service),
+            );
+          }),
+        ).pipe(Layer.provide(threads));
   const receipts = CommandReceiptStore.layer.pipe(Layer.provide(database));
   const externalServices = Layer.mergeAll(
     Layer.succeed(
@@ -124,8 +135,8 @@ function makeHarness(options: HarnessOptions = {}) {
   const launches = ThreadLaunch.layer.pipe(
     Layer.provide(Layer.mergeAll(externalServices, threads, receipts, IdAllocator.layer)),
   );
-  const scheduler = scheduledTaskLayer.pipe(
-    Layer.provide(Layer.mergeAll(database, launches, threads)),
+  const scheduler = ScheduledTasks.layer.pipe(
+    Layer.provide(Layer.mergeAll(database, launches, schedulerThreads)),
   );
   return Layer.mergeAll(database, orchestrator, threads, launches, scheduler).pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -212,7 +223,7 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
     (it) => {
       it.effect("dispatches through ThreadManagement and ThreadLaunch", () =>
         Effect.gen(function* () {
-          const scheduler = yield* ScheduledTaskService;
+          const scheduler = yield* ScheduledTasks.ScheduledTaskService;
           const threads = yield* ThreadManagement.ThreadManagementService;
           yield* createThread({ commandId: "command:caller:create", threadId: callerThreadId });
           yield* createThread({ commandId: "command:bound:create", threadId: boundThreadId });
@@ -272,8 +283,9 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
   it.layer(makeHarness(), { timeout: "30 seconds" })("accepted retry behavior", (it) => {
     it.effect("replays after task deletion and rejects the same key for another task", () =>
       Effect.gen(function* () {
-        const scheduler = yield* ScheduledTaskService;
+        const scheduler = yield* ScheduledTasks.ScheduledTaskService;
         const threads = yield* ThreadManagement.ThreadManagementService;
+        const orchestrator = yield* OrchestratorV2;
         yield* createThread({ commandId: "command:caller:retry", threadId: callerThreadId });
         yield* createThread({ commandId: "command:bound:retry", threadId: boundThreadId });
 
@@ -281,6 +293,12 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
         const firstInput = manualRunInput({ taskId: firstTaskId, key: "accepted-replay" });
         yield* scheduler.upsert(taskInput({ id: firstTaskId, threadId: boundThreadId }));
         const accepted = yield* scheduler.runNowIdempotent(firstInput);
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("command:caller:accepted-replay:downgrade"),
+          threadId: callerThreadId,
+          runtimeMode: "approval-required",
+        });
         yield* scheduler.delete({ id: firstTaskId });
         const replayed = yield* scheduler.runNowIdempotent(firstInput);
         expect(replayed).toEqual({ ...accepted, task: null, replayed: true });
@@ -294,8 +312,161 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
             commandId: firstInput.commandId,
           }),
         );
-        expect(conflict).toBeInstanceOf(ScheduledTaskManualRunConflictError);
+        expect(conflict).toBeInstanceOf(ScheduledTasks.ScheduledTaskManualRunConflictError);
         expect((yield* threads.getThreadProjection(boundThreadId)).messages).toHaveLength(1);
+      }),
+    );
+  });
+
+  it.effect("serializes a manual command from receipt lookup through bookkeeping", () =>
+    Effect.gen(function* () {
+      const receiptLookupCompleted = yield* Deferred.make<void>();
+      const releaseReceiptLookup = yield* Deferred.make<void>();
+      const taskId = ScheduledTaskId.make("scheduled-task:concurrent-command");
+      const input = manualRunInput({ taskId, key: "concurrent-command" });
+      let gated = false;
+      const harness = makeHarness({
+        mapThreadManagement: (service) => ({
+          ...service,
+          getCommandReceipt: (commandId) =>
+            service.getCommandReceipt(commandId).pipe(
+              Effect.flatMap((receipt) => {
+                if (gated || commandId !== input.commandId || Option.isSome(receipt)) {
+                  return Effect.succeed(receipt);
+                }
+                gated = true;
+                return Deferred.succeed(receiptLookupCompleted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseReceiptLookup)),
+                  Effect.as(receipt),
+                );
+              }),
+            ),
+        }),
+      });
+
+      yield* Effect.gen(function* () {
+        const scheduler = yield* ScheduledTasks.ScheduledTaskService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        yield* createThread({ commandId: "command:caller:concurrent", threadId: callerThreadId });
+        yield* createThread({ commandId: "command:bound:concurrent", threadId: boundThreadId });
+        yield* scheduler.upsert(taskInput({ id: taskId, threadId: boundThreadId }));
+
+        const first = yield* scheduler.runNowIdempotent(input).pipe(Effect.forkChild);
+        yield* Deferred.await(receiptLookupCompleted);
+        const retry = yield* scheduler.runNowIdempotent(input).pipe(Effect.forkChild);
+        yield* Deferred.succeed(releaseReceiptLookup, undefined);
+
+        const accepted = yield* Fiber.join(first);
+        const replayed = yield* Fiber.join(retry);
+        expect(accepted.replayed).toBe(false);
+        expect(replayed).toEqual({ ...accepted, task: null, replayed: true });
+        expect((yield* threads.getThreadProjection(boundThreadId)).messages).toHaveLength(1);
+        expect((yield* scheduler.list()).tasks.find((task) => task.id === taskId)).toMatchObject({
+          runCount: 1,
+          nextRunAt: accepted.task?.nextRunAt,
+        });
+      }).pipe(Effect.provide(harness), Effect.scoped);
+    }),
+  );
+
+  it.effect("rejects concurrent cross-task reuse before mutating the losing task", () =>
+    Effect.gen(function* () {
+      const receiptLookupCompleted = yield* Deferred.make<void>();
+      const releaseReceiptLookup = yield* Deferred.make<void>();
+      const firstTaskId = ScheduledTaskId.make("scheduled-task:concurrent-key-first");
+      const secondTaskId = ScheduledTaskId.make("scheduled-task:concurrent-key-second");
+      const firstInput = manualRunInput({ taskId: firstTaskId, key: "concurrent-cross-task" });
+      const secondInput = {
+        ...manualRunInput({ taskId: secondTaskId, key: "concurrent-cross-task" }),
+        commandId: firstInput.commandId,
+      };
+      let gated = false;
+      const harness = makeHarness({
+        mapThreadManagement: (service) => ({
+          ...service,
+          getCommandReceipt: (commandId) =>
+            service.getCommandReceipt(commandId).pipe(
+              Effect.flatMap((receipt) => {
+                if (gated || commandId !== firstInput.commandId || Option.isSome(receipt)) {
+                  return Effect.succeed(receipt);
+                }
+                gated = true;
+                return Deferred.succeed(receiptLookupCompleted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseReceiptLookup)),
+                  Effect.as(receipt),
+                );
+              }),
+            ),
+        }),
+      });
+
+      yield* Effect.gen(function* () {
+        const scheduler = yield* ScheduledTasks.ScheduledTaskService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        yield* createThread({ commandId: "command:caller:cross-task", threadId: callerThreadId });
+        yield* createThread({ commandId: "command:bound:cross-task", threadId: boundThreadId });
+        yield* scheduler.upsert(taskInput({ id: firstTaskId, threadId: boundThreadId }));
+        yield* scheduler.upsert(taskInput({ id: secondTaskId, threadId: boundThreadId }));
+
+        const first = yield* scheduler.runNowIdempotent(firstInput).pipe(Effect.forkChild);
+        yield* Deferred.await(receiptLookupCompleted);
+        const second = yield* scheduler.runNowIdempotent(secondInput).pipe(Effect.forkChild);
+        yield* Deferred.succeed(releaseReceiptLookup, undefined);
+
+        yield* Fiber.join(first);
+        const conflict = yield* Fiber.join(second).pipe(Effect.flip);
+        expect(conflict).toBeInstanceOf(ScheduledTasks.ScheduledTaskManualRunConflictError);
+        expect((yield* threads.getThreadProjection(boundThreadId)).messages).toHaveLength(1);
+        const tasks = (yield* scheduler.list()).tasks;
+        expect(tasks.find((task) => task.id === firstTaskId)?.runCount).toBe(1);
+        expect(tasks.find((task) => task.id === secondTaskId)?.runCount).toBe(0);
+      }).pipe(Effect.provide(harness), Effect.scoped);
+    }),
+  );
+
+  it.layer(makeHarness(), { timeout: "30 seconds" })("fresh target lifecycle acceptance", (it) => {
+    it.effect("rejects when archive wins after the caller preflight", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* OrchestratorV2;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        yield* createThread({ commandId: "command:caller:archive-race", threadId: callerThreadId });
+        yield* createThread({ commandId: "command:target:archive-race", threadId: boundThreadId });
+        const preflightCompleted = yield* Deferred.make<void>();
+        const allowAcceptance = yield* Deferred.make<void>();
+
+        const send = yield* Effect.gen(function* () {
+          const target = yield* threads.getProjectThread({ projectId, threadId: boundThreadId });
+          expect(target.thread.archivedAt).toBeNull();
+          yield* Deferred.succeed(preflightCompleted, undefined);
+          yield* Deferred.await(allowAcceptance);
+          return yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("command:target:archive-race:message"),
+            threadId: boundThreadId,
+            messageId: MessageId.make("message:target:archive-race"),
+            text: "Run after the preflight.",
+            attachments: [],
+            policyCeiling: {
+              callerThreadId,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+            },
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "agent",
+            creationSource: "mcp",
+          });
+        }).pipe(Effect.forkChild);
+
+        yield* Deferred.await(preflightCompleted);
+        yield* orchestrator.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("command:target:archive-race:archive"),
+          threadId: boundThreadId,
+        });
+        yield* Deferred.succeed(allowAcceptance, undefined);
+        const failure = yield* Fiber.join(send).pipe(Effect.flip);
+        expect(failure._tag).toBe("OrchestratorDispatchError");
+        expect((yield* threads.getThreadProjection(boundThreadId)).messages).toHaveLength(0);
       }),
     );
   });
@@ -305,7 +476,7 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
     (it) => {
       it.effect("does not duplicate an unbound thread after provider dispatch rejection", () =>
         Effect.gen(function* () {
-          const scheduler = yield* ScheduledTaskService;
+          const scheduler = yield* ScheduledTasks.ScheduledTaskService;
           const orchestrator = yield* OrchestratorV2;
           yield* createThread({ commandId: "command:caller:partial", threadId: callerThreadId });
           const taskId = ScheduledTaskId.make("scheduled-task:partial-launch");
@@ -365,7 +536,7 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
       });
 
       yield* Effect.gen(function* () {
-        const scheduler = yield* ScheduledTaskService;
+        const scheduler = yield* ScheduledTasks.ScheduledTaskService;
         const orchestrator = yield* OrchestratorV2;
         yield* createThread({ commandId: "command:caller:race", threadId: callerThreadId });
         const taskId = ScheduledTaskId.make("scheduled-task:admission-race");
@@ -382,7 +553,7 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
         const overlap = yield* Effect.flip(
           scheduler.runNowIdempotent(manualRunInput({ taskId, key: "admission-race-overlap" })),
         );
-        expect(overlap).toBeInstanceOf(ScheduledTaskManualRunConflictError);
+        expect(overlap).toBeInstanceOf(ScheduledTasks.ScheduledTaskManualRunConflictError);
 
         yield* orchestrator.dispatch({
           type: "thread.runtime-mode.set",
@@ -418,7 +589,7 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
       });
 
       yield* Effect.gen(function* () {
-        const scheduler = yield* ScheduledTaskService;
+        const scheduler = yield* ScheduledTasks.ScheduledTaskService;
         yield* createThread({ commandId: "command:caller:recurring", threadId: callerThreadId });
         const taskId = ScheduledTaskId.make("scheduled-task:recurring-overlap");
         yield* scheduler.upsert(taskInput({ id: taskId, threadId: null }));
@@ -438,7 +609,7 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
         const overlap = yield* Effect.flip(
           scheduler.runNowIdempotent(manualRunInput({ taskId, key: "recurring-overlap-manual" })),
         );
-        expect(overlap).toBeInstanceOf(ScheduledTaskManualRunConflictError);
+        expect(overlap).toBeInstanceOf(ScheduledTasks.ScheduledTaskManualRunConflictError);
         yield* Deferred.succeed(allowLookup, undefined);
         const snapshot = yield* Fiber.join(completed);
         expect(Option.getOrThrow(snapshot)?.tasks.find((task) => task.id === taskId)).toMatchObject(
@@ -451,10 +622,61 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
     }),
   );
 
+  it.effect("does not apply a stale missed-run reschedule after the task is disabled", () =>
+    Effect.gen(function* () {
+      const firstDispatchEntered = yield* Deferred.make<void>();
+      const releaseFirstDispatch = yield* Deferred.make<void>();
+      let lookupCount = 0;
+      const harness = makeHarness({
+        getProject: (id) => {
+          lookupCount += 1;
+          return lookupCount === 1
+            ? Deferred.succeed(firstDispatchEntered, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFirstDispatch)),
+                Effect.as(id === projectId ? Option.some(project) : Option.none()),
+              )
+            : Effect.succeed(id === projectId ? Option.some(project) : Option.none());
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const scheduler = yield* ScheduledTasks.ScheduledTaskService;
+        const sql = yield* SqlClient.SqlClient;
+        const blockerTaskId = ScheduledTaskId.make("scheduled-task:a-poll-blocker");
+        const staleTaskId = ScheduledTaskId.make("scheduled-task:z-stale-fixed-time");
+        yield* scheduler.upsert({
+          ...taskInput({ id: staleTaskId, threadId: null }),
+          schedule: { type: "fixed_time", timeOfDay: "09:00" },
+        });
+        yield* scheduler.upsert(taskInput({ id: blockerTaskId, threadId: null }));
+        const staleDueAt = "1969-12-30T00:00:00.000Z";
+        yield* sql`
+          UPDATE scheduled_tasks
+          SET next_run_at = ${staleDueAt}
+          WHERE task_id IN (${blockerTaskId}, ${staleTaskId})
+        `;
+
+        const poll = yield* TestClock.adjust(Duration.seconds(5)).pipe(Effect.forkChild);
+        yield* Deferred.await(firstDispatchEntered);
+        yield* scheduler.setEnabled({ id: staleTaskId, enabled: false });
+        yield* Deferred.succeed(releaseFirstDispatch, undefined);
+        yield* Fiber.join(poll);
+
+        expect(
+          (yield* scheduler.list()).tasks.find((task) => task.id === staleTaskId),
+        ).toMatchObject({
+          enabled: false,
+          nextRunAt: null,
+          runCount: 0,
+        });
+      }).pipe(Effect.provide(harness), Effect.scoped);
+    }),
+  );
+
   it.layer(makeHarness(), { timeout: "30 seconds" })("fresh scope and ceiling checks", (it) => {
     it.effect("rejects a higher-mode bound target and a task from another project", () =>
       Effect.gen(function* () {
-        const scheduler = yield* ScheduledTaskService;
+        const scheduler = yield* ScheduledTasks.ScheduledTaskService;
         yield* createThread({
           commandId: "command:caller:limited",
           threadId: callerThreadId,
@@ -473,7 +695,9 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
             }),
           ),
         );
-        expect(ceilingFailure).toBeInstanceOf(ScheduledTaskManualRunRuntimeCeilingError);
+        expect(ceilingFailure).toBeInstanceOf(
+          ScheduledTasks.ScheduledTaskManualRunRuntimeCeilingError,
+        );
 
         const otherTaskId = ScheduledTaskId.make("scheduled-task:other-project");
         yield* scheduler.upsert(

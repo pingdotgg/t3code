@@ -45,6 +45,13 @@ const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512)
 const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(256),
 ).annotate({ description: "Stable idempotency key to reuse when retrying this mutation." });
+const OrchestratorMcpWellFormedClientRequestId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(256),
+).check(
+  Schema.makeFilter(
+    (value) => value.isWellFormed() || "Idempotency key must contain well-formed Unicode.",
+  ),
+);
 
 /**
  * OpenCode 1.15 has been observed serializing nested MCP union objects as JSON
@@ -564,7 +571,7 @@ export type OrchestratorMcpDeleteScheduledTaskResult =
 
 export const OrchestratorMcpRunScheduledTaskNowInput = Schema.Struct({
   scheduledTaskId: ScheduledTaskId,
-  clientRequestId: OrchestratorMcpClientRequestId.annotate({
+  clientRequestId: OrchestratorMcpWellFormedClientRequestId.annotate({
     description:
       "Required stable idempotency key. Reuse it only when retrying this exact manual run.",
   }),

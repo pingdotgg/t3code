@@ -41,6 +41,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/unstable/ai";
@@ -1285,6 +1286,10 @@ describe("orchestrator MCP toolkit", () => {
               },
               required: expect.arrayContaining(["scheduledTaskId", "clientRequestId"]),
             });
+            const runNowInputSchema = runScheduledTaskNowTool?.tool.inputSchema as
+              | { readonly properties?: Record<string, unknown> }
+              | undefined;
+            expect(runNowInputSchema?.properties?.clientRequestId).toEqual({ type: "string" });
             expect(runScheduledTaskNowTool?.tool.annotations).toMatchObject({
               destructiveHint: true,
               idempotentHint: true,
@@ -1354,6 +1359,17 @@ describe("orchestrator MCP toolkit", () => {
               },
               runCount: 1,
             });
+
+            const malformedScheduledRunNowCall = yield* Effect.result(
+              invoke("run_scheduled_task_now", {
+                scheduledTaskId,
+                clientRequestId: "run-scheduled-\ud800",
+              }),
+            );
+            expect(Result.isFailure(malformedScheduledRunNowCall)).toBe(true);
+            if (Result.isFailure(malformedScheduledRunNowCall)) {
+              expect(String(malformedScheduledRunNowCall.failure)).toContain("well-formed Unicode");
+            }
 
             // delete_scheduled_task removes it entirely.
             const scheduledDeleteCall = yield* invoke("delete_scheduled_task", { scheduledTaskId });
