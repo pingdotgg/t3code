@@ -1935,10 +1935,11 @@ export const makeCodexSessionRuntime = (
             }
           }
         } else if (
-          completedEmptyCollabWait ||
-          notification.method === "turn/started" ||
-          notification.method === "turn/completed" ||
-          isMeaningfulItemCompletion(notification)
+          rootConversation &&
+          (completedEmptyCollabWait ||
+            notification.method === "turn/started" ||
+            notification.method === "turn/completed" ||
+            isMeaningfulItemCompletion(notification))
         ) {
           yield* Ref.set(emptyCollabWaitGuardRef, {
             turnId: activeTurnId,
