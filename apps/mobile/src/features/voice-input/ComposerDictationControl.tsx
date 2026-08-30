@@ -40,7 +40,8 @@ const DICTATION_LAYOUT =
     : LinearTransition.duration(DICTATION_TIMING.duration).reduceMotion(ReduceMotion.System);
 const DICTATION_ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
 const DICTATION_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
-const WAVEFORM_BAR_HEIGHT = 28;
+const WAVEFORM_BAR_HEIGHT = 32;
+const WAVEFORM_MIN_BAR_HEIGHT = 2;
 const WAVEFORM_BAR_SPACING = 5;
 const WAVEFORM_TIMING = {
   duration: 100,
@@ -86,7 +87,15 @@ const WaveformBar = memo(function WaveformBar(props: {
     const level = audioLevels.value[sampleIndex] ?? 0;
     return {
       opacity: withTiming(0.22 + level * 0.78, WAVEFORM_TIMING),
-      transform: [{ scaleY: withTiming((2 + level * 26) / WAVEFORM_BAR_HEIGHT, WAVEFORM_TIMING) }],
+      transform: [
+        {
+          scaleY: withTiming(
+            (WAVEFORM_MIN_BAR_HEIGHT + level * (WAVEFORM_BAR_HEIGHT - WAVEFORM_MIN_BAR_HEIGHT)) /
+              WAVEFORM_BAR_HEIGHT,
+            WAVEFORM_TIMING,
+          ),
+        },
+      ],
     };
   });
 
@@ -118,7 +127,8 @@ const VoiceWaveform = memo(function VoiceWaveform(props: {
     <View
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
-      className="h-7 min-w-0 flex-1 flex-row items-center justify-between overflow-hidden"
+      className="min-w-0 flex-1 flex-row items-center justify-between overflow-hidden"
+      style={{ height: WAVEFORM_BAR_HEIGHT }}
       onLayout={handleLayout}
     >
       {Array.from({ length: barCount }, (_, index) => (
@@ -145,7 +155,7 @@ function VoiceActionButton(props: {
   useLayoutEffect(() => {
     loadingVisibility.value = withTiming(props.loading ? 1 : 0, DICTATION_TIMING);
   }, [loadingVisibility, props.loading]);
-  const loadingStyle = useAnimatedStyle(() => ({ opacity: loadingVisibility.value }));
+  const primaryStyle = useAnimatedStyle(() => ({ opacity: 1 - loadingVisibility.value }));
 
   return (
     <Pressable
@@ -164,11 +174,14 @@ function VoiceActionButton(props: {
       <View
         className={cn(
           "items-center justify-center",
-          variant === "primary" ? "size-11 rounded-full bg-primary" : "size-9",
+          variant === "primary" ? "size-11 rounded-full bg-subtle" : "size-9",
         )}
       >
         {variant === "primary" ? (
-          <Animated.View className="absolute inset-0 rounded-full bg-subtle" style={loadingStyle} />
+          <Animated.View
+            className="absolute inset-0 rounded-full bg-primary"
+            style={primaryStyle}
+          />
         ) : null}
         <Animated.View
           key={props.loading ? "loading" : "icon"}

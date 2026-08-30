@@ -146,6 +146,8 @@ export const COMPOSER_LAYOUT_TRANSITION =
     ? undefined
     : LinearTransition.duration(COMPOSER_TRANSITION_DURATION_MS).reduceMotion(ReduceMotion.System);
 
+const AnimatedGlassSurface = Animated.createAnimatedComponent(GlassSurface);
+
 export function ComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
@@ -167,13 +169,14 @@ export function ComposerSurface(props: {
   const animatedShapeStyle = useAnimatedStyle(() => ({
     borderRadius: animatedBorderRadius.value,
   }));
+  const layoutTransition = shouldAnimate ? COMPOSER_LAYOUT_TRANSITION : undefined;
 
-  // Clipping here keeps the expanded toolbar inside the glass while the
-  // bottom-anchored host owns the geometry transition.
+  // Each native frame follows the same transition. Animating only the outer
+  // clip leaves the glass and content at their final height on the first frame.
   return (
     <Animated.View
       className="shadow-[0_6px_28px] shadow-adaptive-black-a15-a35"
-      layout={props.animateLayout === false ? undefined : COMPOSER_LAYOUT_TRANSITION}
+      layout={layoutTransition}
       style={[
         animatedShapeStyle,
         {
@@ -183,7 +186,7 @@ export function ComposerSurface(props: {
         },
       ]}
     >
-      <GlassSurface
+      <AnimatedGlassSurface
         chrome="none"
         fallbackClassName="border border-border bg-card-translucent"
         glassEffectStyle="regular"
@@ -191,15 +194,18 @@ export function ComposerSurface(props: {
         // Keep native glass out of the interactive content's layout path.
         pointerEvents="none"
         tintColor="transparent"
-        style={{
-          position: "absolute",
-          inset: 0,
-          borderRadius: targetBorderRadius,
-        }}
+        layout={layoutTransition}
+        style={[{ position: "absolute", inset: 0 }, animatedShapeStyle]}
       >
         {null}
-      </GlassSurface>
-      <View style={props.style}>{props.children}</View>
+      </AnimatedGlassSurface>
+      <Animated.View
+        collapsable={false}
+        layout={layoutTransition}
+        style={[props.style, animatedShapeStyle]}
+      >
+        {props.children}
+      </Animated.View>
     </Animated.View>
   );
 }
@@ -353,9 +359,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     voiceInput.elapsedSeconds,
   );
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
-  const isExpanded =
-    !voiceInput.isBusy &&
-    (isFocused || settingsSheetPresentation.isActive || isVoiceInputPresented);
+  // Dictation changes the card's height, but the focused native editor keeps
+  // its text layout while it fades out and back in.
+  const isDraftExpanded =
+    isFocused ||
+    settingsSheetPresentation.isActive ||
+    (!voiceInput.isBusy && isVoiceInputPresented);
+  const isExpanded = !voiceInput.isBusy && isDraftExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
   const canSend = hasContent && !voiceInput.blocksSubmission;
 
@@ -582,26 +592,27 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 }
           }
         >
-          {/* Attachment strip — inside the card, above the text input */}
-          {isExpanded ? (
-            <Animated.View
-              className={props.draftAttachments.length > 0 ? "pb-2.5" : undefined}
-              entering={FadeIn.duration(160)}
-              exiting={FadeOut.duration(120)}
-            >
-              <ComposerAttachmentStrip
-                attachments={props.draftAttachments}
-                onRemove={props.onRemoveDraftImage}
-                onPressImage={onPressImage}
-              />
-            </Animated.View>
-          ) : null}
-
           <ComposerDictationDraftContent
-            className={isExpanded ? undefined : "flex-row items-center"}
+            className={isDraftExpanded ? undefined : "flex-row items-center"}
             collapsed={voiceInput.isBusy}
           >
-            <View className={isExpanded ? undefined : "min-w-0 flex-1"}>
+            {isDraftExpanded ? (
+              <Animated.View
+                className={props.draftAttachments.length > 0 ? "pb-2.5" : undefined}
+                entering={FadeIn.duration(160)}
+                exiting={FadeOut.duration(120)}
+              >
+                <ComposerAttachmentStrip
+                  attachments={props.draftAttachments}
+                  onRemove={props.onRemoveDraftImage}
+                  onPressImage={onPressImage}
+                />
+              </Animated.View>
+            ) : null}
+            <Animated.View
+              className={isDraftExpanded ? undefined : "min-w-0 flex-1"}
+              layout={COMPOSER_LAYOUT_TRANSITION}
+            >
               <ComposerEditor
                 ref={inputRef}
                 multiline
@@ -616,13 +627,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 onFocus={handleFocus}
                 onBlur={handleBlur}
                 onSubmit={handleSend}
-                scrollEnabled={isExpanded}
+                scrollEnabled={isDraftExpanded}
                 // Android: collapsed single line centers natively (gravity) in
                 // a pill-height box matching the send button; iOS keeps insets.
-                singleLineCentered={!isExpanded}
-                contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
+                singleLineCentered={!isDraftExpanded}
+                contentInsetVertical={isDraftExpanded || Platform.OS === "android" ? 0 : 6}
                 style={
-                  isExpanded
+                  isDraftExpanded
                     ? {
                         minHeight: 72,
                         maxHeight: 160,
@@ -639,7 +650,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   color: foregroundColor,
                 }}
               />
-            </View>
+            </Animated.View>
             {!isExpanded && !voiceInput.isBusy && props.draftAttachments.length > 0 ? (
               <View className="flex-row gap-1 pl-1">
                 {props.draftAttachments.slice(0, 3).map((attachment) =>
@@ -700,11 +711,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 )}
               </Animated.View>
             ) : null}
+            {isDraftExpanded ? <View className="h-1" /> : null}
           </ComposerDictationDraftContent>
-          <View
+          <Animated.View
             accessibilityElementsHidden={!isToolbarVisible}
             collapsable={false}
             importantForAccessibility={isToolbarVisible ? "auto" : "no-hide-descendants"}
+            layout={COMPOSER_LAYOUT_TRANSITION}
             pointerEvents={isToolbarVisible ? "auto" : "none"}
             style={
               isToolbarVisible
@@ -716,11 +729,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   }
             }
           >
-            <ComposerToolbarRow
-              paddingBottom={0}
-              paddingHorizontal={0}
-              paddingTop={voiceInput.isBusy ? 0 : 4}
-            >
+            <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={0}>
               <ComposerDictationCancelAction
                 presentation={voicePresentation}
                 onCancel={voiceInput.cancel}
@@ -795,7 +804,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 ) : null}
               </View>
             </ComposerToolbarRow>
-          </View>
+          </Animated.View>
         </ComposerSurface>
 
         {/* Queue count */}

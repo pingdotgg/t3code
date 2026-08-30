@@ -1160,101 +1160,100 @@ export function NewTaskDraftScreen(props: {
           ) : null}
 
           {promptEditor}
+          <View className="h-1" />
         </ComposerDictationDraftContent>
 
-        <ComposerToolbarRow
-          paddingBottom={0}
-          paddingHorizontal={0}
-          paddingTop={voiceInput.isBusy ? 0 : 4}
-        >
-          <ComposerDictationCancelAction
-            presentation={voicePresentation}
-            onCancel={voiceInput.cancel}
-          />
-          {isVoiceInputPresented ? (
-            <ComposerDictationStatus
-              audioLevels={voiceInput.audioLevels}
-              elapsedSeconds={voiceInput.elapsedSeconds}
-              phase={voiceInput.state.phase}
+        <Animated.View layout={COMPOSER_LAYOUT_TRANSITION} collapsable={false}>
+          <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={0}>
+            <ComposerDictationCancelAction
               presentation={voicePresentation}
-              onDismissError={voiceInput.cancel}
+              onCancel={voiceInput.cancel}
             />
-          ) : (
-            <ComposerToolbarScroller contentPaddingRight={8} fadeSurface="sheet">
-              <ComposerToolbarButton
-                accessibilityLabel="Add attachment"
-                disabled={isComposerInteractionLocked}
-                icon="plus"
-                onPress={() => {
-                  if (selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments) {
-                    Alert.alert("Add attachment", undefined, [
-                      { text: "Photos", onPress: () => void handlePickImages() },
-                      { text: "Files", onPress: () => void handlePickFiles() },
-                      { text: "Cancel", style: "cancel" },
-                    ]);
-                    return;
-                  }
-                  void handlePickImages();
-                }}
-                showChevron={false}
+            {isVoiceInputPresented ? (
+              <ComposerDictationStatus
+                audioLevels={voiceInput.audioLevels}
+                elapsedSeconds={voiceInput.elapsedSeconds}
+                phase={voiceInput.state.phase}
+                presentation={voicePresentation}
+                onDismissError={voiceInput.cancel}
               />
-              <ComposerInlineControl
-                accessibilityLabel="Model and reasoning settings"
-                disabled={isComposerInteractionLocked}
-                emphasized
-                iconNode={
-                  <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
-                }
-                label={flow.selectedModelOption?.label ?? "Choose model"}
-                maxWidth={152}
-                onPress={settingsSheetPresentation.open}
-              />
-              {flow.planModeEnabled ? (
-                <ComposerInlineControl
-                  accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
-                  accessibilityLabel={`Interaction mode: ${flow.interactionMode === "plan" ? "Plan" : "Build"}`}
+            ) : (
+              <ComposerToolbarScroller contentPaddingRight={8} fadeSurface="sheet">
+                <ComposerToolbarButton
+                  accessibilityLabel="Add attachment"
                   disabled={isComposerInteractionLocked}
-                  emphasized
-                  icon={
-                    flow.interactionMode === "plan"
-                      ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
-                      : { ios: "hammer", android: "construction" }
-                  }
-                  label={flow.interactionMode === "plan" ? "Plan" : "Build"}
-                  onPress={() =>
-                    flow.setInteractionMode(flow.interactionMode === "plan" ? "default" : "plan")
-                  }
+                  icon="plus"
+                  onPress={() => {
+                    if (selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments) {
+                      Alert.alert("Add attachment", undefined, [
+                        { text: "Photos", onPress: () => void handlePickImages() },
+                        { text: "Files", onPress: () => void handlePickFiles() },
+                        { text: "Cancel", style: "cancel" },
+                      ]);
+                      return;
+                    }
+                    void handlePickImages();
+                  }}
                   showChevron={false}
                 />
-              ) : null}
-            </ComposerToolbarScroller>
-          )}
-          <ComposerDictationPrimaryAction
-            state={voiceInput.state}
-            presentation={voicePresentation}
-            isAvailable={voiceInput.isAvailable}
-            disabled={isIncomingShareTransferPending || isImportingShare || flow.submitting}
-            onStart={voiceInput.start}
-            onConfirm={voiceInput.stop}
-            onCancel={voiceInput.cancel}
-          />
-          {voicePresentation.showsSend ? (
-            <ComposerToolbarButton
-              accessibilityLabel={
-                flow.submitting
-                  ? "Starting task"
-                  : environmentConnected
-                    ? "Start task"
-                    : "Queue task"
-              }
-              disabled={!canStart}
-              icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
-              onPress={() => void handleStart()}
-              showChevron={false}
-              variant="primary"
+                <ComposerInlineControl
+                  accessibilityLabel="Model and reasoning settings"
+                  disabled={isComposerInteractionLocked}
+                  emphasized
+                  iconNode={
+                    <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
+                  }
+                  label={flow.selectedModelOption?.label ?? "Choose model"}
+                  maxWidth={152}
+                  onPress={settingsSheetPresentation.open}
+                />
+                {flow.planModeEnabled ? (
+                  <ComposerInlineControl
+                    accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
+                    accessibilityLabel={`Interaction mode: ${flow.interactionMode === "plan" ? "Plan" : "Build"}`}
+                    disabled={isComposerInteractionLocked}
+                    emphasized
+                    icon={
+                      flow.interactionMode === "plan"
+                        ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
+                        : { ios: "hammer", android: "construction" }
+                    }
+                    label={flow.interactionMode === "plan" ? "Plan" : "Build"}
+                    onPress={() =>
+                      flow.setInteractionMode(flow.interactionMode === "plan" ? "default" : "plan")
+                    }
+                    showChevron={false}
+                  />
+                ) : null}
+              </ComposerToolbarScroller>
+            )}
+            <ComposerDictationPrimaryAction
+              state={voiceInput.state}
+              presentation={voicePresentation}
+              isAvailable={voiceInput.isAvailable}
+              disabled={isIncomingShareTransferPending || isImportingShare || flow.submitting}
+              onStart={voiceInput.start}
+              onConfirm={voiceInput.stop}
+              onCancel={voiceInput.cancel}
             />
-          ) : null}
-        </ComposerToolbarRow>
+            {voicePresentation.showsSend ? (
+              <ComposerToolbarButton
+                accessibilityLabel={
+                  flow.submitting
+                    ? "Starting task"
+                    : environmentConnected
+                      ? "Start task"
+                      : "Queue task"
+                }
+                disabled={!canStart}
+                icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
+                onPress={() => void handleStart()}
+                showChevron={false}
+                variant="primary"
+              />
+            ) : null}
+          </ComposerToolbarRow>
+        </Animated.View>
       </ComposerSurface>
     </View>
   );
