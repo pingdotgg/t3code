@@ -573,6 +573,36 @@ it.effect("distinguishes malformed remote failures", () =>
   ),
 );
 
+it.effect("does not swallow a failed navigation-start response", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          phase: "started",
+          ok: false,
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const error = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "navigate",
+          input: { url: "https://example.com" },
+          timeoutMs: 2_000,
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(PreviewAutomationMalformedResponseError);
+    }),
+  ),
+);
+
 it.effect("rejects calls when no connected host exists", () =>
   Effect.gen(function* () {
     const broker = yield* makeBroker;

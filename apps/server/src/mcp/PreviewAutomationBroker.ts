@@ -416,7 +416,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       ) {
         return [undefined, current] as const;
       }
-      if (response.phase === "started") {
+      if (response.phase === "started" && response.ok) {
         return [entry, current] as const;
       }
       const next = new Map(current.pending);
@@ -424,7 +424,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       return [entry, { ...current, pending: next }] as const;
     });
     if (!pending) return;
-    if (response.phase === "started") {
+    if (response.phase === "started" && response.ok) {
       yield* Deferred.succeed(pending.started, undefined);
       return;
     }
