@@ -50,6 +50,7 @@ import { McpSchema, McpServer } from "effect/unstable/ai";
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
+import { CommandReceiptStoreV2 } from "../orchestration-v2/CommandReceiptStore.ts";
 import { OrchestratorV2, type OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
 import {
   layer as threadManagementServiceLayer,
@@ -670,6 +671,7 @@ describe("orchestrator MCP toolkit", () => {
 
           yield* Effect.gen(function* () {
             const orchestrator = yield* OrchestratorV2;
+            const commandReceipts = yield* CommandReceiptStoreV2;
             const server = yield* McpServer.McpServer;
             yield* orchestrator.dispatch({
               type: "thread.create",
@@ -3214,18 +3216,28 @@ describe("orchestrator MCP toolkit", () => {
               clientRequestId: "configuration-target-restore-after-restrictions",
             });
 
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-configuration:caller-restrict-for-replay"),
+              threadId: parentThreadId,
+              runtimeMode: "approval-required",
+            });
+            const stalePartialInput = {
+              threadId: lateParentThreadId,
+              options: [{ id: "reasoning", value: "high" }],
+              runtimeMode: "approval-required",
+              interactionMode: "plan",
+              clientRequestId: "configuration-stale-partial-selection",
+            } as const;
             yield* Ref.set(selectionPlanArmed, true);
             const stalePartialFiber = yield* Effect.forkChild(
-              invoke("t3_thread_configure", {
-                threadId: lateParentThreadId,
-                options: [{ id: "reasoning", value: "high" }],
-                clientRequestId: "configuration-stale-partial-selection",
-              }),
+              invoke("t3_thread_configure", stalePartialInput),
             );
             yield* Deferred.await(selectionPlanEntered);
             const concurrentSelection = {
               instanceId: codexInstanceId,
-              model: "gpt-5.5-concurrent",
+              model: codexModel,
+              options: [{ id: "reasoning", value: "low" }],
             } satisfies ModelSelection;
             yield* orchestrator.dispatch({
               type: "thread.model-selection.set",
@@ -3234,14 +3246,84 @@ describe("orchestrator MCP toolkit", () => {
               modelSelection: concurrentSelection,
             });
             yield* Deferred.succeed(selectionPlanRelease, undefined);
-            const stalePartialCall = yield* Fiber.join(stalePartialFiber);
-            expect(stalePartialCall.structuredContent).toMatchObject({
-              _tag: "OrchestratorMcpFailure",
-              code: "orchestration_error",
+            const stalePartial = yield* decodeConfigureResult(
+              (yield* Fiber.join(stalePartialFiber)).structuredContent,
+            );
+            expect(stalePartial).toMatchObject({
+              outcome: "partially_applied",
+              changes: [
+                { setting: "runtime_mode", receipt: expect.any(Object) },
+                { setting: "interaction_mode", receipt: expect.any(Object) },
+              ],
+              errors: [{ setting: "selection", message: expect.any(String) }],
             });
-            expect(
-              (yield* orchestrator.getThreadProjection(lateParentThreadId)).thread.modelSelection,
-            ).toEqual(concurrentSelection);
+            const selectionCommandId = CommandId.make(
+              [
+                "command",
+                "mcp",
+                encodeURIComponent(invocation.providerSessionId),
+                encodeURIComponent(lateParentThreadId),
+                "thread-configure-selection",
+                encodeURIComponent(stalePartialInput.clientRequestId),
+              ].join(":"),
+            );
+            const selectionReceipt = yield* commandReceipts.getByCommandId(selectionCommandId);
+            const interactionReceiptId = stalePartial.changes.find(
+              (change) => change.setting === "interaction_mode",
+            )?.receipt?.commandId;
+            if (interactionReceiptId === undefined || Option.isNone(selectionReceipt)) {
+              return yield* Effect.die(
+                new Error("Expected durable interaction and rejected selection receipts."),
+              );
+            }
+            const interactionReceipt = yield* commandReceipts.getByCommandId(interactionReceiptId);
+            expect(selectionReceipt.value.status).toBe("rejected");
+            expect(Option.getOrThrow(interactionReceipt).status).toBe("accepted");
+            expect(Option.getOrThrow(interactionReceipt).resultSequence).toBe(
+              selectionReceipt.value.resultSequence,
+            );
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make(
+                "command:mcp-configuration:caller-interaction-restrict-for-replay",
+              ),
+              threadId: parentThreadId,
+              interactionMode: "plan",
+            });
+            const beforeStalePartialRetry =
+              yield* orchestrator.getThreadProjection(lateParentThreadId);
+            const repeatedStalePartial = yield* decodeConfigureResult(
+              (yield* invoke("t3_thread_configure", stalePartialInput)).structuredContent,
+            );
+            expect(repeatedStalePartial.changes).toEqual(stalePartial.changes);
+            expect(repeatedStalePartial.errors[0]?.message).toContain("previously rejected");
+            const afterStalePartialRetry =
+              yield* orchestrator.getThreadProjection(lateParentThreadId);
+            expect(afterStalePartialRetry.thread).toEqual(beforeStalePartialRetry.thread);
+            expect(afterStalePartialRetry.providerSessions).toEqual(
+              beforeStalePartialRetry.providerSessions,
+            );
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-configuration:caller-restore-after-replay"),
+              threadId: parentThreadId,
+              runtimeMode: "full-access",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make(
+                "command:mcp-configuration:caller-interaction-restore-after-replay",
+              ),
+              threadId: parentThreadId,
+              interactionMode: "default",
+            });
+            yield* invoke("t3_thread_configure", {
+              threadId: lateParentThreadId,
+              options: [],
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              clientRequestId: "configuration-target-restore-after-replay",
+            });
 
             const crossProviderInput = {
               threadId: lateParentThreadId,

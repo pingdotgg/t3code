@@ -652,20 +652,22 @@ export const make = Effect.gen(function* () {
             : setting === "runtime_mode"
               ? priorRuntimeReceipt
               : priorInteractionReceipt;
+        const durableReplayOrder = (
+          left: (typeof pending)[number],
+          right: (typeof pending)[number],
+        ) => {
+          const leftReceipt = Option.getOrUndefined(priorReceiptForSetting(left.setting));
+          const rightReceipt = Option.getOrUndefined(priorReceiptForSetting(right.setting));
+          const sequenceDifference =
+            Number(leftReceipt?.resultSequence ?? Number.MAX_SAFE_INTEGER) -
+            Number(rightReceipt?.resultSequence ?? Number.MAX_SAFE_INTEGER);
+          if (sequenceDifference !== 0) return sequenceDifference;
+          if (leftReceipt?.status === rightReceipt?.status) return 0;
+          return leftReceipt?.status === "accepted" ? -1 : 1;
+        };
         const dispatchOrder = [...pending].sort((left, right) =>
           hasRejectedReceipt
-            ? Option.getOrElse(
-                Option.map(priorReceiptForSetting(left.setting), (receipt) =>
-                  Number(receipt.resultSequence),
-                ),
-                () => Number.MAX_SAFE_INTEGER,
-              ) -
-              Option.getOrElse(
-                Option.map(priorReceiptForSetting(right.setting), (receipt) =>
-                  Number(receipt.resultSequence),
-                ),
-                () => Number.MAX_SAFE_INTEGER,
-              )
+            ? durableReplayOrder(left, right)
             : dispatchPriority(left) - dispatchPriority(right),
         );
         const errors: Array<{ setting: ConfigurationSetting; message: string }> = [];
