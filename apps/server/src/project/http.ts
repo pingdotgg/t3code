@@ -39,6 +39,9 @@ export const projectMutationOperation = (
         projectId: mutation.projectId,
         title: mutation.title,
         workspaceRoot: mutation.workspaceRoot,
+        ...(mutation.createWorkspaceRootIfMissing === undefined
+          ? {}
+          : { createWorkspaceRootIfMissing: mutation.createWorkspaceRootIfMissing }),
         ...(mutation.defaultModelSelection === undefined
           ? {}
           : { defaultModelSelection: mutation.defaultModelSelection }),

@@ -53,6 +53,7 @@ it.effect(
           projectId,
           title: project.title,
           workspaceRoot: project.workspaceRoot,
+          createWorkspaceRootIfMissing: true,
           defaultThreadEnvMode: "worktree",
           faviconPath: "/workspace/project/icon.png",
         });
@@ -69,6 +70,7 @@ it.effect(
           projectId,
           title: project.title,
           workspaceRoot: project.workspaceRoot,
+          createWorkspaceRootIfMissing: false,
           defaultThreadEnvMode: null,
           faviconPath: null,
         });
@@ -93,15 +95,18 @@ it.effect(
         });
       }).pipe(Effect.provide(projectLayer));
 
-      const [createSupplied, createOmitted, createNull] = yield* Ref.get(createInputs);
+      const [createSupplied, createOmitted, createNullAndFalse] = yield* Ref.get(createInputs);
       const [updateSupplied, updateOmitted, updateNull] = yield* Ref.get(updateInputs);
 
       assert.equal(createSupplied?.defaultThreadEnvMode, "worktree");
       assert.equal(createSupplied?.faviconPath, "/workspace/project/icon.png");
+      assert.strictEqual(createSupplied?.createWorkspaceRootIfMissing, true);
       assert.equal(Object.hasOwn(createOmitted!, "defaultThreadEnvMode"), false);
       assert.equal(Object.hasOwn(createOmitted!, "faviconPath"), false);
-      assert.strictEqual(createNull?.defaultThreadEnvMode, null);
-      assert.strictEqual(createNull?.faviconPath, null);
+      assert.equal(Object.hasOwn(createOmitted!, "createWorkspaceRootIfMissing"), false);
+      assert.strictEqual(createNullAndFalse?.defaultThreadEnvMode, null);
+      assert.strictEqual(createNullAndFalse?.faviconPath, null);
+      assert.strictEqual(createNullAndFalse?.createWorkspaceRootIfMissing, false);
       assert.equal(updateSupplied?.defaultThreadEnvMode, "worktree");
       assert.equal(updateSupplied?.faviconPath, "/workspace/project/icon.png");
       assert.equal(Object.hasOwn(updateOmitted!, "defaultThreadEnvMode"), false);
