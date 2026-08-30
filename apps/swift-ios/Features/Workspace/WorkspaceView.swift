@@ -64,6 +64,7 @@ public struct WorkspaceView: View {
     @State private var commandDrawer = FeatureCommandDrawerState()
     @State private var commandDrawerQuery = ""
     @State private var commandDrawerRestoresPriorResponderOnClose = true
+    @State private var commandDrawerOpenRequestID: UUID?
     @FocusState private var isSearchFocused: Bool
 
     public init(
@@ -138,6 +139,7 @@ public struct WorkspaceView: View {
             state: $commandDrawer,
             query: $commandDrawerQuery,
             restoresPriorResponderOnClose: $commandDrawerRestoresPriorResponderOnClose,
+            openRequestID: commandDrawerOpenRequestID,
             items: commandDrawerItems,
             onSelect: selectCommand
         ) {
@@ -344,7 +346,8 @@ public struct WorkspaceView: View {
                 model: model,
                 thread: thread,
                 submitMessage: submitMessage,
-                onNavigateBack: closeSelectedThread
+                onNavigateBack: closeSelectedThread,
+                onOpenCommandDrawer: requestCommandDrawer
             )
             .id(id)
         } else {
@@ -371,6 +374,16 @@ public struct WorkspaceView: View {
         HStack(spacing: 2) {
             connectionBrand
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: requestCommandDrawer) {
+                Image(systemName: "command")
+                    .font(.system(size: 17, weight: .medium))
+                    .frame(width: 40, height: T3Metrics.minimumTapTarget)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(T3Colors.textSecondary)
+            .accessibilityLabel(FeatureCommandDrawerAccessibility.openLabel)
+            .accessibilityIdentifier(FeatureCommandDrawerAccessibility.openHomeIdentifier)
 
             Button {
                 withAnimation(.easeOut(duration: 0.16)) {
@@ -409,6 +422,10 @@ public struct WorkspaceView: View {
         .padding(.trailing, 8)
         .frame(height: 49)
         .background(T3Colors.background)
+    }
+
+    private func requestCommandDrawer() {
+        commandDrawerOpenRequestID = UUID()
     }
 
     @ViewBuilder

@@ -96,6 +96,9 @@ enum FeatureCommandDrawerPresentationGeometry {
 }
 
 enum FeatureCommandDrawerAccessibility {
+    static let openHomeIdentifier = "open-command-drawer-home"
+    static let openThreadIdentifier = "open-command-drawer-thread"
+    static let openLabel = "Open commands"
     static let drawerIdentifier = "command-drawer"
     static let searchIdentifier = "command-drawer-search-field"
     static let searchLabel = "Search commands"

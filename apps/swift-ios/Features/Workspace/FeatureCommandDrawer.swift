@@ -214,6 +214,15 @@ struct FeatureCommandDrawerState: Equatable, Sendable {
 
     var isVisible: Bool { isOpen || isDragging || reveal > 0 }
 
+    /// Programmatic presentation has no drag geometry yet. The presentation
+    /// layer resolves an open rest state against its measured height.
+    mutating func open() {
+        isDragging = false
+        isOpen = true
+        reveal = 0
+        dragBaseline = 0
+    }
+
     mutating func beginDrag() {
         isDragging = true
         dragBaseline = reveal

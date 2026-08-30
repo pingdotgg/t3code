@@ -13,6 +13,7 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
     @Binding var state: FeatureCommandDrawerState
     @Binding var query: String
     @Binding var restoresPriorResponderOnClose: Bool
+    let openRequestID: UUID?
     let items: [FeatureCommandDrawerItem]
     let onSelect: (FeatureCommandDrawerItem) -> Void
     @ViewBuilder let content: Content
@@ -94,6 +95,10 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
                 }
                 renewSearchFocusIfNeeded()
             }
+            .onChange(of: openRequestID) { _, requestID in
+                guard requestID != nil else { return }
+                openFromRequest()
+            }
             .onReceive(
                 NotificationCenter.default.publisher(
                     for: UIResponder.keyboardWillChangeFrameNotification
@@ -129,17 +134,21 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
     /// shorten the drawer.
     private func applyKeyboardFrame(from note: Notification) {
         guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-              let window = UIApplication.shared.connectedScenes
-                  .compactMap({ $0 as? UIWindowScene })
-                  .filter({ $0.activationState == .foregroundActive })
-                  .flatMap(\.windows)
-                  .first(where: \.isKeyWindow)
+              let window = activeKeyWindow
         else { return }
         let windowFrame = window.screen.coordinateSpace.convert(window.bounds, from: window)
         keyboardHeight = FeatureCommandDrawerGeometry.keyboardOverlap(
             keyboardFrame: frame,
             windowFrame: windowFrame
         )
+    }
+
+    private var activeKeyWindow: UIWindow? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .filter { $0.activationState == .foregroundActive }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)
     }
 
     private var progress: CGFloat {
@@ -207,6 +216,21 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
             // a swipe can settle open before the search field was ever on
             // screen, and a request made then is dropped with no further state
             // change to retry from.
+            renewSearchFocusIfNeeded()
+        }
+    }
+
+    private func openFromRequest() {
+        guard !state.isOpen else { return }
+        responderOwnership.begin(
+            from: activeKeyWindow.flatMap {
+                FeatureCommandDrawerResponderLookup.firstResponder(in: $0)
+            }
+        )
+        restoresPriorResponderOnClose = true
+        withAnimation(settleAnimation) {
+            state.open()
+        } completion: {
             renewSearchFocusIfNeeded()
         }
     }

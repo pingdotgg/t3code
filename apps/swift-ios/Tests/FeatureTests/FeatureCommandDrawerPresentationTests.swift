@@ -178,6 +178,14 @@ struct FeatureCommandDrawerPresentationTests {
         ])
         #expect(FeatureCommandDrawerAccessibility.searchLabel == "Search commands")
         #expect(FeatureCommandDrawerAccessibility.scrimLabel == "Close commands")
+        #expect(FeatureCommandDrawerAccessibility.openLabel == "Open commands")
+        #expect(
+            FeatureCommandDrawerAccessibility.openHomeIdentifier == "open-command-drawer-home"
+        )
+        #expect(
+            FeatureCommandDrawerAccessibility.openThreadIdentifier
+                == "open-command-drawer-thread"
+        )
 
         var state = FeatureCommandDrawerState()
         #expect(FeatureCommandDrawerAccessibility.drawerIsHidden(state))
@@ -196,6 +204,23 @@ struct FeatureCommandDrawerPresentationTests {
         #expect(FeatureCommandDrawerAccessibility.drawerIsHidden(state))
         #expect(FeatureCommandDrawerAccessibility.scrimIsHidden(state))
         #expect(FeatureCommandDrawerAccessibility.workspaceIsHidden(state) == false)
+    }
+
+    @Test
+    func programmaticEntryUsesTheSameOpenRestStateAsACompletedPull() {
+        var state = FeatureCommandDrawerState()
+
+        state.open()
+
+        #expect(state.isOpen)
+        #expect(state.isVisible)
+        #expect(state.isDragging == false)
+        #expect(
+            FeatureCommandDrawerPresentationGeometry.reveal(
+                state: state,
+                measuredOpenHeight: 640
+            ) == 640
+        )
     }
 
     @Test
