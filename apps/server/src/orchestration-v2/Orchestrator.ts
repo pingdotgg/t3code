@@ -596,6 +596,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             );
       if (
         callerProjection.thread.deletedAt !== null ||
+        callerProjection.thread.archivedAt !== null ||
         callerProjection.thread.projectId !== targetProjection.thread.projectId
       ) {
         return yield* new OrchestratorDispatchError({

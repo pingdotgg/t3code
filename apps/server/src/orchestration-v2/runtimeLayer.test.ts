@@ -1632,6 +1632,104 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(cancelAgainError._tag, "OrchestratorDispatchError");
     }),
   );
+
+  it.effect("rejects queued prompt mutations from an archived caller", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const projectId = ProjectId.make("runtime-layer-queued-archived-caller-project");
+      const callerThreadId = ThreadId.make("runtime-layer-queued-archived-caller");
+      const targetThreadId = ThreadId.make("runtime-layer-queued-archived-target");
+
+      for (const [threadId, title] of [
+        [callerThreadId, "Archived queue caller"],
+        [targetThreadId, "Archived queue target"],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`command:${threadId}:create`),
+          threadId,
+          projectId,
+          title,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: `/tmp/${threadId}`,
+        });
+      }
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-queued-archived-target-active"),
+        threadId: targetThreadId,
+        messageId: MessageId.make("runtime-layer-queued-archived-target-active"),
+        text: "Keep the target active.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const queuedMessageId = MessageId.make("runtime-layer-queued-archived-target-queued");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-queued-archived-target-queued"),
+        threadId: targetThreadId,
+        messageId: queuedMessageId,
+        text: "Do not mutate this queued prompt.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+      });
+      const queuedRun = (yield* orchestrator.getThreadProjection(targetThreadId)).runs.find(
+        (run) => run.userMessageId === queuedMessageId,
+      );
+      assert.isDefined(queuedRun);
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-layer-queued-archived-caller-archive"),
+        threadId: callerThreadId,
+      });
+
+      const policyCeiling = {
+        callerThreadId,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+      };
+      const editError = yield* orchestrator
+        .dispatch({
+          type: "queued-run.edit",
+          commandId: CommandId.make("runtime-layer-queued-archived-caller-edit"),
+          threadId: targetThreadId,
+          runId: queuedRun.id,
+          text: "This edit must be rejected.",
+          policyCeiling,
+        })
+        .pipe(Effect.flip);
+      assert.equal(editError._tag, "OrchestratorDispatchError");
+      const promoteError = yield* orchestrator
+        .dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("runtime-layer-queued-archived-caller-promote"),
+          threadId: targetThreadId,
+          queuedRunId: queuedRun.id,
+          targetRunId: RunId.make("runtime-layer-queued-archived-target-active-run"),
+          policyCeiling,
+        })
+        .pipe(Effect.flip);
+      assert.equal(promoteError._tag, "OrchestratorDispatchError");
+
+      const projection = yield* orchestrator.getThreadProjection(targetThreadId);
+      assert.equal(
+        projection.messages.find((message) => message.id === queuedMessageId)?.text,
+        "Do not mutate this queued prompt.",
+      );
+      assert.equal(projection.runs.find((run) => run.id === queuedRun.id)?.status, "queued");
+    }),
+  );
 });
 
 it.layer(SharedApplicationDataPlaneTestLayer)("pending provider interruption", (it) => {
