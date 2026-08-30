@@ -171,6 +171,11 @@ export const WorktreeMcpListResult = Schema.Struct({
   projectWorkspaceRoot: TrimmedNonEmptyString,
   repositoryCommonDir: TrimmedNonEmptyString,
   projectWorktreeRoot: TrimmedNonEmptyString,
+  bindingPathResolution: Schema.Struct({
+    totalCandidates: NonNegativeInt,
+    attemptedCandidates: NonNegativeInt,
+    truncated: Schema.Boolean,
+  }),
   worktrees: Schema.Array(WorktreeMcpListEntry),
   nextCursor: Schema.NullOr(NonNegativeInt),
   total: NonNegativeInt,

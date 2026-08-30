@@ -328,9 +328,12 @@ worktree root and Git common directory. Each entry includes its listed and actua
 state, and threads bound to the checkout.
 Bindings keep each thread's recorded branch and worktree path separate from the actual checkout.
 Results are paginated before status reads, and each entry returns a bounded binding list with its
-full binding count. A missing or unreadable checkout remains in the page with an availability and
-error instead of failing discovery of the other worktrees. The tool does not create, remove,
-prune, or repair worktrees.
+full binding count when every nested or aliased recorded path was resolved. Path resolution is
+bounded by the page and binding limits, with a hard ceiling of 400 lookups. The result reports how
+many candidate paths were attempted and whether binding counts are lower bounds because that scan
+was truncated. A missing or unreadable checkout remains in the page with an availability and error
+instead of failing discovery of the other worktrees. The tool does not create, remove, prune, or
+repair worktrees.
 
 ## Delegated Task Lifecycle
 

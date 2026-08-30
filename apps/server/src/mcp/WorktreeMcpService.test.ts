@@ -1530,6 +1530,47 @@ describe("t3_worktree_list", () => {
     });
   });
 
+  it.effect("bounds nested binding identity reads by the requested page", () => {
+    const nestedOne = `${workspaceRoot}/packages/one`;
+    const nestedTwo = `${workspaceRoot}/packages/two`;
+    const nestedThree = `${workspaceRoot}/packages/three`;
+    const harness = makeHarness({
+      worktrees: [{ path: workspaceRoot, refName: "dev" }],
+      projectThreads: [
+        { id: threadId, title: "Caller", branch: "dev", worktreePath: null },
+        {
+          id: ThreadId.make("thread-nested-binding-one"),
+          title: "Nested one",
+          branch: "dev",
+          worktreePath: nestedOne,
+        },
+        {
+          id: ThreadId.make("thread-nested-binding-two"),
+          title: "Nested two",
+          branch: "dev",
+          worktreePath: nestedTwo,
+        },
+        {
+          id: ThreadId.make("thread-nested-binding-three"),
+          title: "Nested three",
+          branch: "dev",
+          worktreePath: nestedThree,
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness, { limit: 1, bindingLimit: 1 });
+
+      expect(result.bindingPathResolution).toEqual({
+        totalCandidates: 3,
+        attemptedCandidates: 1,
+        truncated: true,
+      });
+      expect(result.worktrees[0]?.bindingCount).toBe(2);
+      expect(harness.listWorktrees).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it.effect("includes archived thread bindings retained on a physical checkout", () => {
     const archivedThreadId = ThreadId.make("thread-archived-list-owner");
     const harness = makeHarness({

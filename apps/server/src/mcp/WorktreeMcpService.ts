@@ -619,9 +619,11 @@ const make = Effect.gen(function* () {
           .filter((recordedPath) => !branchByWorkspacePath.has(recordedPath)),
       ),
     ];
+    const bindingPathResolutionLimit = Math.min(400, selectedWorktrees.length * bindingLimit);
+    const recordedPathsToResolve = unresolvedRecordedPaths.slice(0, bindingPathResolutionLimit);
     const physicalRootByRecordedPath = new Map<string, string>();
     yield* Effect.forEach(
-      unresolvedRecordedPaths,
+      recordedPathsToResolve,
       (recordedPath) =>
         Effect.option(loadWorktrees(recordedPath)).pipe(
           Effect.map((candidateInventory) => {
@@ -721,6 +723,11 @@ const make = Effect.gen(function* () {
       projectWorkspaceRoot,
       repositoryCommonDir: inventory.repositoryCommonDir,
       projectWorktreeRoot,
+      bindingPathResolution: {
+        totalCandidates: unresolvedRecordedPaths.length,
+        attemptedCandidates: recordedPathsToResolve.length,
+        truncated: recordedPathsToResolve.length < unresolvedRecordedPaths.length,
+      },
       worktrees,
       nextCursor,
       total: allWorktrees.length,
