@@ -5,6 +5,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
 
@@ -153,6 +154,20 @@ type WindowBackdropState = {
   readonly windowsWithBackdropStateListener: WeakSet<Electron.BrowserWindow>;
 };
 
+const WindowsBackdropMaterial = Schema.Literals(["acrylic", "none"]);
+
+class DesktopWindowBackdropError extends Schema.TaggedErrorClass<DesktopWindowBackdropError>()(
+  "DesktopWindowBackdropError",
+  {
+    material: WindowsBackdropMaterial,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to apply Windows backdrop material "${this.material}".`;
+  }
+}
+
 function sendWindowBackdropState(
   window: Electron.BrowserWindow,
   backdropState: WindowBackdropState,
@@ -232,11 +247,13 @@ function applyWindowsBackdrop(
     return Effect.void;
   }
 
+  const useAcrylic = desktopBackdropEnabled && windowsAcrylicSupported;
+  const material = useAcrylic ? WINDOWS_ACRYLIC_MATERIAL : "none";
+
   return Effect.try({
     try: () => {
       backdropState.windowsManagedForBackdrop.add(window);
-      const useAcrylic = desktopBackdropEnabled && windowsAcrylicSupported;
-      window.setBackgroundMaterial(useAcrylic ? WINDOWS_ACRYLIC_MATERIAL : "none");
+      window.setBackgroundMaterial(material);
       if (useAcrylic) {
         backdropState.windowsWithAcrylicBackdrop.add(window);
         backdropState.windowsWithoutAcrylicBackdrop.delete(window);
@@ -247,24 +264,25 @@ function applyWindowsBackdrop(
         window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
       }
     },
-    catch: (cause) => cause,
+    catch: (cause) => new DesktopWindowBackdropError({ material, cause }),
   }).pipe(
     Effect.andThen(Effect.sync(() => registerWindowBackdropStateSync(window, backdropState))),
-    Effect.catchCause((cause) =>
-      Effect.gen(function* () {
-        backdropState.windowsWithAcrylicBackdrop.delete(window);
-        backdropState.windowsWithoutAcrylicBackdrop.add(window);
-        try {
-          window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
-        } catch {
-          // Preserve the original backdrop failure; window creation must stay best effort.
-        }
-        registerWindowBackdropStateSync(window, backdropState);
-        yield* logWindowWarning("Windows backdrop material unavailable; using solid background", {
-          cause,
-        });
-      }),
-    ),
+    Effect.catchTags({
+      DesktopWindowBackdropError: (error) =>
+        Effect.gen(function* () {
+          backdropState.windowsWithAcrylicBackdrop.delete(window);
+          backdropState.windowsWithoutAcrylicBackdrop.add(window);
+          try {
+            window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+          } catch {
+            // Preserve the original backdrop failure; window creation must stay best effort.
+          }
+          registerWindowBackdropStateSync(window, backdropState);
+          yield* logWindowWarning("Windows backdrop material unavailable; using solid background", {
+            cause: error.cause,
+          });
+        }),
+    }),
   );
 }
 
