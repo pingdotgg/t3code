@@ -358,10 +358,12 @@ dedicated worktree bound to another thread is rejected, as is mutating a shared 
 another live thread is bound there. Moving to a shared project root without switching its branch is
 allowed unless another root-bound thread has an active run.
 
-Changing the worktree path detaches the calling provider session. If `continuationPrompt` is
-present, the service writes the new binding and then durably queues the next turn before the detach
-can interrupt the MCP call. The next provider session derives its working directory from the new
-thread projection. Same-path branch changes do not detach the session.
+Changing the worktree path detaches the calling provider session and ends the current turn. If
+`continuationPrompt` is present, the service writes the new binding and then durably queues a
+replacement turn before the detach can interrupt the MCP call. The replacement provider session
+derives its working directory from the new thread projection. Without `continuationPrompt`, the
+thread stays idle in the selected checkout until it receives another message. Same-path branch
+changes do not detach the session.
 
 `t3_worktree_handoff` remains the direct convenience tool for creating a new worktree and uses the
 same binding, continuation, race, and rollback rules. Neither tool removes an existing source or

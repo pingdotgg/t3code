@@ -91,6 +91,8 @@ const make = Effect.gen(function* () {
   // Serializes workspace transitions per thread so two calls cannot both
   // mutate Git and then race to write different durable bindings.
   const workspaceTransitionsInFlight = new Set<string>();
+  const physicalWorkspaceGuardKey = (repositoryCommonDir: string, workspacePath: string) =>
+    `workspace:${repositoryCommonDir}:${workspacePath}`;
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("worktree")
@@ -475,6 +477,7 @@ const make = Effect.gen(function* () {
     }
 
     const ids = yield* transitionIds(scope, "worktree-handoff");
+    let acquiredPhysicalWorkspaceGuard: string | null = null;
 
     // uninterruptibleMask: only the potentially slow worktree creation itself
     // stays interruptible (restore). From the moment it succeeds, through the
@@ -497,7 +500,86 @@ const make = Effect.gen(function* () {
             })
             .pipe(asOperationFailed("Unable to create the worktree")),
         );
-        const worktreePath = worktree.worktree.path;
+        const createdInventoryExit = yield* Effect.exit(loadWorktrees(worktree.worktree.path));
+        if (Exit.isFailure(createdInventoryExit)) {
+          return yield* failure(
+            "partial_failure",
+            `The worktree was created, but Git could not resolve its physical checkout identity: ${errorMessage(Cause.squash(createdInventoryExit.cause))}`,
+            {
+              workspacePath: worktree.worktree.path,
+              recordedBranch: projection.thread.branch,
+              actualBranch: worktree.worktree.refName,
+              rollback: "not_possible",
+            },
+          );
+        }
+        const createdInventory = createdInventoryExit.value;
+        const worktreePath = createdInventory.currentWorktreeRoot;
+        if (
+          worktreePath === null ||
+          createdInventory.repositoryCommonDir !== projectInventory.repositoryCommonDir
+        ) {
+          return yield* failure(
+            "partial_failure",
+            "The worktree was created, but Git resolved it outside the calling thread's repository. The durable binding was not changed and the checkout was retained.",
+            {
+              workspacePath: worktree.worktree.path,
+              recordedBranch: projection.thread.branch,
+              actualBranch: worktree.worktree.refName,
+              rollback: "not_possible",
+            },
+          );
+        }
+        const workspaceGuardKey = physicalWorkspaceGuardKey(
+          createdInventory.repositoryCommonDir,
+          worktreePath,
+        );
+        if (workspaceTransitionsInFlight.has(workspaceGuardKey)) {
+          return yield* failure(
+            "partial_failure",
+            `The worktree was created, but another workspace transition acquired '${worktreePath}' before the handoff could reserve it. The durable thread binding was not changed and the worktree was retained.`,
+            {
+              workspacePath: worktreePath,
+              recordedBranch: projection.thread.branch,
+              actualBranch: worktree.worktree.refName,
+              rollback: "not_possible",
+            },
+          );
+        }
+        workspaceTransitionsInFlight.add(workspaceGuardKey);
+        acquiredPhysicalWorkspaceGuard = workspaceGuardKey;
+
+        const ownerBindingsExit = yield* Effect.exit(
+          loadActiveWorkspaceBindings(projectInventory.repositoryCommonDir),
+        );
+        if (Exit.isFailure(ownerBindingsExit)) {
+          return yield* failure(
+            "partial_failure",
+            `The worktree was created, but its ownership could not be verified before binding: ${errorMessage(Cause.squash(ownerBindingsExit.cause))}`,
+            {
+              workspacePath: worktreePath,
+              recordedBranch: projection.thread.branch,
+              actualBranch: worktree.worktree.refName,
+              rollback: "not_possible",
+            },
+          );
+        }
+        const competingOwner = ownerBindingsExit.value.find(
+          ([thread, workspacePath]) =>
+            thread.id !== scope.threadId && workspacePath === worktreePath,
+        );
+        if (competingOwner !== undefined) {
+          return yield* failure(
+            "partial_failure",
+            `The created worktree '${worktreePath}' became bound to thread '${competingOwner[0].id}' before this handoff could commit. The calling thread binding was not changed and the worktree was retained.`,
+            {
+              workspacePath: worktreePath,
+              recordedBranch: projection.thread.branch,
+              actualBranch: worktree.worktree.refName,
+              rollback: "not_possible",
+            },
+          );
+        }
 
         // Shared shape for "the handoff already succeeded, so report the failure
         // in the result instead of failing the call" (continuation, setup script).
@@ -511,19 +593,51 @@ const make = Effect.gen(function* () {
             }).pipe(Effect.as({ status: "failed", detail } as const));
           });
 
-        // Removing the new worktree is safe because this call still owns its
-        // path. Retain the branch: after concurrent Git activity, branch-name
-        // identity alone is not enough to authorize deleting the ref.
         let createdWorktreeRemoved = false;
-        const removeCreatedWorktree = Effect.suspend(() =>
-          gitWorkflow.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }).pipe(
-            Effect.tap(() =>
-              Effect.sync(() => {
-                createdWorktreeRemoved = true;
-              }),
+        const removeCreatedWorktreeIfOwned = Effect.fn(
+          "WorktreeMcpService.removeCreatedWorktreeIfOwned",
+        )(function* () {
+          const verificationExit = yield* Effect.exit(
+            Effect.all(
+              [
+                loadActiveWorkspaceBindings(projectInventory.repositoryCommonDir),
+                threadManagement.getThreadProjection(scope.threadId),
+                loadWorktrees(worktreePath),
+                readWorkspaceStatus(worktreePath),
+              ],
+              { concurrency: 4 },
             ),
-          ),
-        );
+          );
+          if (Exit.isFailure(verificationExit)) {
+            return "not_possible" as const;
+          }
+          const [bindings, callerProjection, worktreeInventory, worktreeStatus] =
+            verificationExit.value;
+          const competingBinding = bindings.some(
+            ([thread, workspacePath]) =>
+              thread.id !== scope.threadId && workspacePath === worktreePath,
+          );
+          const callerStillUnbound =
+            callerProjection.thread.branch === projection.thread.branch &&
+            callerProjection.thread.worktreePath === projection.thread.worktreePath;
+          const checkoutStillCreatedByThisCall =
+            worktreeInventory.repositoryCommonDir === projectInventory.repositoryCommonDir &&
+            worktreeInventory.currentWorktreeRoot === worktreePath &&
+            worktreeStatus.isRepo &&
+            !worktreeStatus.hasWorkingTreeChanges &&
+            worktreeStatus.refName === worktree.worktree.refName;
+          if (competingBinding || !callerStillUnbound || !checkoutStillCreatedByThisCall) {
+            return "not_possible" as const;
+          }
+          const removalExit = yield* Effect.exit(
+            gitWorkflow.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }),
+          );
+          if (Exit.isFailure(removalExit)) {
+            return "failed" as const;
+          }
+          createdWorktreeRemoved = true;
+          return "removed" as const;
+        });
 
         const recheckExit = yield* Effect.exit(
           Effect.gen(function* () {
@@ -556,16 +670,16 @@ const make = Effect.gen(function* () {
           if (Cause.hasInterruptsOnly(recheckExit.cause)) {
             return yield* Effect.failCause(recheckExit.cause as Cause.Cause<never>);
           }
-          const cleanupExit = yield* Effect.exit(removeCreatedWorktree);
-          if (Exit.isFailure(cleanupExit)) {
+          const cleanup = yield* removeCreatedWorktreeIfOwned();
+          if (cleanup !== "removed") {
             return yield* failure(
               "partial_failure",
-              `The handoff failed before binding and the created worktree could not be removed: ${errorMessage(Cause.squash(recheckExit.cause))}`,
+              `The handoff failed before binding and the created worktree was ${cleanup === "failed" ? "not removed" : "retained because exclusive ownership could not be proven"}: ${errorMessage(Cause.squash(recheckExit.cause))}`,
               {
                 workspacePath: worktreePath,
                 recordedBranch: projection.thread.branch,
                 actualBranch: createdWorktreeRemoved ? null : worktree.worktree.refName,
-                rollback: "failed",
+                rollback: cleanup === "failed" ? "failed" : "not_possible",
               },
             );
           }
@@ -616,16 +730,16 @@ const make = Effect.gen(function* () {
               },
             );
           } else {
-            const cleanupExit = yield* Effect.exit(removeCreatedWorktree);
-            if (Exit.isFailure(cleanupExit)) {
+            const cleanup = yield* removeCreatedWorktreeIfOwned();
+            if (cleanup !== "removed") {
               return yield* failure(
                 "partial_failure",
-                `The worktree binding failed and the created worktree could not be removed: ${dispatchDetail}`,
+                `The worktree binding failed and the created worktree was ${cleanup === "failed" ? "not removed" : "retained because exclusive ownership could not be proven"}: ${dispatchDetail}`,
                 {
                   workspacePath: worktreePath,
                   recordedBranch: bindingAfterDispatch.branch,
                   actualBranch: createdWorktreeRemoved ? null : worktree.worktree.refName,
-                  rollback: "failed",
+                  rollback: cleanup === "failed" ? "failed" : "not_possible",
                 },
               );
             }
@@ -704,6 +818,14 @@ const make = Effect.gen(function* () {
         };
         return result;
       }),
+    ).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (acquiredPhysicalWorkspaceGuard !== null) {
+            workspaceTransitionsInFlight.delete(acquiredPhysicalWorkspaceGuard);
+          }
+        }),
+      ),
     );
   });
 
@@ -1285,8 +1407,11 @@ const make = Effect.gen(function* () {
     }
 
     const ids = yield* transitionIds(scope, "checkout");
-    const workspaceGuardKey = `workspace:${inventory.repositoryCommonDir}:${targetWorkspacePath}`;
-    return yield* Effect.uninterruptibleMask(() =>
+    const workspaceGuardKey = physicalWorkspaceGuardKey(
+      inventory.repositoryCommonDir,
+      targetWorkspacePath,
+    );
+    return yield* Effect.uninterruptibleMask((restore) =>
       Effect.suspend(() => {
         if (workspaceTransitionsInFlight.has(workspaceGuardKey)) {
           return Effect.fail(
@@ -1299,14 +1424,16 @@ const make = Effect.gen(function* () {
         workspaceTransitionsInFlight.add(workspaceGuardKey);
         return Effect.gen(function* () {
           const [latestProjection, latestInventory, latestBindings, latestTargetBefore] =
-            yield* Effect.all(
-              [
-                loadThread(scope),
-                loadWorktrees(projectWorkspaceRoot),
-                loadActiveWorkspaceBindings(inventory.repositoryCommonDir),
-                readWorkspaceStatus(targetWorkspacePath),
-              ],
-              { concurrency: 4 },
+            yield* restore(
+              Effect.all(
+                [
+                  loadThread(scope),
+                  loadWorktrees(projectWorkspaceRoot),
+                  loadActiveWorkspaceBindings(inventory.repositoryCommonDir),
+                  readWorkspaceStatus(targetWorkspacePath),
+                ],
+                { concurrency: 4 },
+              ),
             );
           if (
             latestProjection.thread.branch !== projection.thread.branch ||
@@ -1385,17 +1512,21 @@ const make = Effect.gen(function* () {
             targetWorkspacePath === currentWorkspacePath ? "unchanged" : "reused";
           let resolvedBranch: string | null = targetBefore.refName;
           const targetBeforeCommit = shouldMutateCheckout
-            ? yield* gitWorkflow
-                .resolveCommit({ cwd: targetWorkspacePath, revision: "HEAD" })
-                .pipe(asOperationFailed("Unable to record the checkout's current commit"))
+            ? yield* restore(
+                gitWorkflow
+                  .resolveCommit({ cwd: targetWorkspacePath, revision: "HEAD" })
+                  .pipe(asOperationFailed("Unable to record the checkout's current commit")),
+              )
             : null;
           const requestedTransitionCommit =
             shouldMutateCheckout && requestedBranch !== undefined
               ? createBranch
                 ? targetBeforeCommit
-                : yield* gitWorkflow
-                    .resolveCommit({ cwd: targetWorkspacePath, revision: requestedBranch })
-                    .pipe(asOperationFailed(`Unable to resolve ref '${requestedBranch}'`))
+                : yield* restore(
+                    gitWorkflow
+                      .resolveCommit({ cwd: targetWorkspacePath, revision: requestedBranch })
+                      .pipe(asOperationFailed(`Unable to resolve ref '${requestedBranch}'`)),
+                  )
               : null;
           let ownedCheckoutState: {
             readonly refName: string | null;
@@ -1474,13 +1605,15 @@ const make = Effect.gen(function* () {
           );
 
           if (shouldMutateCheckout && requestedBranch !== undefined) {
-            const [mutationProjection, mutationBindings, mutationTargetBefore] = yield* Effect.all(
-              [
-                loadThread(scope),
-                loadActiveWorkspaceBindings(inventory.repositoryCommonDir),
-                readWorkspaceStatus(targetWorkspacePath),
-              ],
-              { concurrency: 3 },
+            const [mutationProjection, mutationBindings, mutationTargetBefore] = yield* restore(
+              Effect.all(
+                [
+                  loadThread(scope),
+                  loadActiveWorkspaceBindings(inventory.repositoryCommonDir),
+                  readWorkspaceStatus(targetWorkspacePath),
+                ],
+                { concurrency: 3 },
+              ),
             );
             if (
               mutationProjection.thread.branch !== projection.thread.branch ||
