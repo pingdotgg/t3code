@@ -66,6 +66,10 @@ function getClientSettingsSnapshot(): ClientSettings {
   return clientSettingsSnapshot;
 }
 
+function getShowFileLinkPathsSnapshot(): boolean {
+  return clientSettingsSnapshot.showFileLinkPaths;
+}
+
 function replaceClientSettingsSnapshot(settings: ClientSettings): void {
   clientSettingsSnapshot = settings;
   emitClientSettingsChange();
@@ -240,6 +244,15 @@ export function useClientSettings<T = ClientSettings>(
   return useMemo(() => (selector ? selector(settings) : (settings as T)), [selector, settings]);
 }
 
+/** Subscribe only to the file-chip preference, not the full settings object. */
+export function useShowFileLinkPaths(): boolean {
+  return useSyncExternalStore(
+    subscribeClientSettings,
+    getShowFileLinkPathsSnapshot,
+    () => DEFAULT_CLIENT_SETTINGS.showFileLinkPaths,
+  );
+}
+
 export function resolveEnvironmentIdentificationMode(input: {
   mode: EnvironmentIdentificationMode;
   settingsHydrated: boolean;
@@ -369,7 +382,7 @@ export function __resetClientSettingsPersistenceForTests(): void {
 
 export function __setClientSettingsForTests(settings: ClientSettings): void {
   clientSettingsHydrationGeneration += 1;
-  clientSettingsSnapshot = settings;
+  replaceClientSettingsSnapshot(settings);
   clientSettingsHydrated = true;
   clientSettingsHydrationPromise = null;
 }

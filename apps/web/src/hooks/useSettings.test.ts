@@ -4,9 +4,106 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { describe, expect, it } from "vite-plus/test";
+import { createElement } from "react";
+import { flushSync } from "react-dom";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { installReactTestDom } from "~/test/reactDomHarness";
 
-import { mergeEnvironmentSettings, resolveEnvironmentIdentificationMode } from "./useSettings";
+const persistenceMocks = vi.hoisted(() => ({
+  persistedSettings: null as typeof DEFAULT_CLIENT_SETTINGS | null,
+}));
+
+vi.mock("~/localApi", () => ({
+  ensureLocalApi: () => ({
+    persistence: {
+      getClientSettings: async () => persistenceMocks.persistedSettings,
+      setClientSettings: async () => undefined,
+    },
+  }),
+}));
+
+import {
+  __resetClientSettingsPersistenceForTests,
+  __setClientSettingsForTests,
+  ensureClientSettingsHydrated,
+  getClientSettings,
+  mergeEnvironmentSettings,
+  resolveEnvironmentIdentificationMode,
+  useShowFileLinkPaths,
+} from "./useSettings";
+
+afterEach(() => {
+  persistenceMocks.persistedSettings = null;
+  __resetClientSettingsPersistenceForTests();
+  vi.unstubAllGlobals();
+});
+
+describe("useShowFileLinkPaths", () => {
+  it("hydrates the persisted preference and updates the selected value", async () => {
+    persistenceMocks.persistedSettings = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      showFileLinkPaths: true,
+    };
+    const document = installReactTestDom(vi.stubGlobal);
+    const { createRoot } = await import("react-dom/client");
+    const root = createRoot(document.createElement("div") as unknown as Element);
+    const observed: boolean[] = [];
+
+    function Probe() {
+      observed.push(useShowFileLinkPaths());
+      return null;
+    }
+
+    try {
+      flushSync(() => root.render(createElement(Probe)));
+      expect(observed.at(-1)).toBe(false);
+
+      await ensureClientSettingsHydrated();
+      flushSync(() => undefined);
+      expect(observed.at(-1)).toBe(true);
+    } finally {
+      flushSync(() => root.unmount());
+    }
+  });
+
+  it("ignores unrelated setting writes but rerenders for a real toggle", async () => {
+    const document = installReactTestDom(vi.stubGlobal);
+    const { createRoot } = await import("react-dom/client");
+    const root = createRoot(document.createElement("div") as unknown as Element);
+    const renderCount = vi.fn();
+
+    function Probe() {
+      renderCount();
+      useShowFileLinkPaths();
+      return null;
+    }
+
+    try {
+      flushSync(() => root.render(createElement(Probe)));
+      await ensureClientSettingsHydrated();
+      flushSync(() => undefined);
+      const settledRenderCount = renderCount.mock.calls.length;
+
+      flushSync(() =>
+        __setClientSettingsForTests({
+          ...getClientSettings(),
+          legacySidebarEnabled: !getClientSettings().legacySidebarEnabled,
+        }),
+      );
+      expect(renderCount).toHaveBeenCalledTimes(settledRenderCount);
+
+      flushSync(() =>
+        __setClientSettingsForTests({
+          ...getClientSettings(),
+          showFileLinkPaths: true,
+        }),
+      );
+      expect(renderCount).toHaveBeenCalledTimes(settledRenderCount + 1);
+    } finally {
+      flushSync(() => root.unmount());
+    }
+  });
+});
 
 describe("resolveEnvironmentIdentificationMode", () => {
   it("keeps identification hidden until client settings hydrate", () => {
