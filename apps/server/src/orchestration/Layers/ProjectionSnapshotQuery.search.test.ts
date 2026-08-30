@@ -60,7 +60,7 @@ it.effect("searches bounded durable thread content without changing the legacy s
     const deletedThreadId = ThreadId.make("thread:search-deleted");
     const otherThreadId = ThreadId.make("thread:search-other");
     const legacyOnlyThreadId = ThreadId.make("thread:search-legacy-only");
-    const longText = `${"prefix ".repeat(2_000)}literal %_! needle😀終 ${"suffix ".repeat(2_000)}`;
+    const longText = `${"prefix ".repeat(2_000)}literal %_! alpha\tbeta needle😀終 ${"suffix ".repeat(2_000)}`;
     const longTitle = `Needle active title ${"x".repeat(2_000)} hidden-title-match`;
 
     yield* sql`
@@ -323,6 +323,17 @@ it.effect("searches bounded durable thread content without changing the legacy s
       literal.hits.map((hit) => hit.messageId),
       [MessageId.make("message:v2-visible")],
     );
+
+    const literalWhitespace = yield* query.searchThreadContent({
+      projectId,
+      threadId: activeThreadId,
+      query: "alpha\tbeta",
+      includeArchived: false,
+      offset: 0,
+      limit: 10,
+      snippetChars: 64,
+    });
+    assert.include(literalWhitespace.hits[0]?.snippet ?? "", "alpha\tbeta");
 
     const nonAscii = yield* query.searchThreadContent({
       projectId,

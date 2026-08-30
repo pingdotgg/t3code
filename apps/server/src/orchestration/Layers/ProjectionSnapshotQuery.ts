@@ -300,7 +300,7 @@ function buildBoundedSearchSnippet(input: {
   readonly fragmentStart: number;
   readonly totalChars: number;
 }): string {
-  const normalizedFragment = input.fragment.replace(/\s+/g, " ").trim();
+  const normalizedFragment = input.fragment.trim();
   const fragmentChars = Array.from(input.fragment).length;
   const leading = input.fragmentStart > 1 ? "…" : "";
   const trailing = input.fragmentStart - 1 + fragmentChars < input.totalChars ? "…" : "";
