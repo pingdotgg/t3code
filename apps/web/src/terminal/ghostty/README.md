@@ -17,3 +17,7 @@ It is intentionally not an xterm compatibility layer.
 
 Keep browser behavior here and terminal transport in the existing client runtime. Do not add React
 state to the render loop. Both WASM artifacts are ordinary read-only assets, not executables.
+
+Each terminal requests 10,000 physical scrollback lines with a separate 32 MiB page-storage cap.
+WebAssembly cannot use Ghostty's page compression, so the cap is sized for uncompressed pages and
+was verified at representative widths up to 320 columns.

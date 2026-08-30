@@ -22,6 +22,11 @@ Android implements the same view contract with upstream `libghostty-vt` for term
 reflow, and scrollback. An Android Canvas view renders compact snapshots produced by the JNI bridge,
 so the React Native screen and RPC code stay platform-neutral.
 
+Each Android terminal requests 10,000 physical scrollback lines with a separate 32 MiB page-storage
+cap. Compression is supported by the 64-bit Android libraries but not the 32-bit libraries, and T3
+does not schedule it through the C ABI on any Android architecture. The same deliberate uncompressed
+cap is therefore used across all four ABIs.
+
 Vendored Ghostty revision and license details are in `THIRD_PARTY_NOTICES.md`.
 
 ## Rebuilding GhosttyKit
