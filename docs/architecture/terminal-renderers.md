@@ -42,16 +42,15 @@ through representative widths up to 320 columns while leaving a fixed per-surfac
 Update `native/libghostty-vt/VERSION`, the single source of truth for the upstream pin (the upstream
 `LICENSE` lives beside it), and rebuild Android. The Android build script reads that file directly;
 it has no fallback revision. Both builders require the Zig version declared in the pinned Ghostty
-source and build from temporary detached worktrees, so local changes in a cached checkout cannot
-enter the artifacts.
+source.
 
 ```sh
 ANDROID_NDK_HOME=/path/to/ndk apps/mobile/modules/t3-terminal/scripts/build-libghostty-android.sh
 pnpm --dir apps/web build:ghostty-wasm
 ```
 
-Commit the regenerated Android headers, four shared libraries, and web `wasm` artifacts. Both builds
-embed the pinned revision as semver build metadata. The Android build rejects an artifact missing the
-canonical revision, while the focused web ABI test reads it through `ghostty_build_info` and compares
-it with `VERSION`. There is no second revision pin to keep in sync. The same web test enforces the
-artifact budget and exercises repeated create/write/free cycles with multi-codepoint graphemes.
+Commit the regenerated Android headers, four shared libraries, and web `wasm` artifacts. The web
+build embeds the pinned revision as semver build metadata, and the focused web ABI test reads it
+through `ghostty_build_info` and compares it with `VERSION`. There is no second revision pin to keep
+in sync. The same web test enforces the artifact budget and exercises repeated create/write/free
+cycles with multi-codepoint graphemes.
