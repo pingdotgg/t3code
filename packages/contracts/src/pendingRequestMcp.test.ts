@@ -127,13 +127,14 @@ describe("pending-request MCP contracts", () => {
           header: "Features",
           question: "Which features?",
           multiSelect: true,
-          options: [],
+          options: [{ label: "Vim", description: "" }],
         },
       ],
       createdAt: "2026-08-29T12:00:00.000Z",
       resolvedAt: null,
     } as const;
     expect(decodeReadResult(request).questions[0]?.multiSelect).toBe(true);
+    expect(decodeReadResult(request).questions[0]?.options[0]?.description).toBe("");
     expect(() =>
       decodeReadResult({
         ...request,

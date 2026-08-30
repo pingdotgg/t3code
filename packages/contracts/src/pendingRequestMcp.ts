@@ -68,7 +68,7 @@ const PendingRequestMcpQuestion = Schema.Struct({
       label: TrimmedNonEmptyString.check(
         Schema.isMaxLength(PENDING_REQUEST_MCP_MAX_OPTION_LABEL_CHARS),
       ),
-      description: TrimmedNonEmptyString.check(
+      description: Schema.String.check(
         Schema.isMaxLength(PENDING_REQUEST_MCP_MAX_OPTION_DESCRIPTION_CHARS),
       ),
     }),

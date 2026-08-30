@@ -449,6 +449,31 @@ describe("PendingRequestMcpService", () => {
     }),
   );
 
+  it.effect("keeps provider options without descriptions answerable", () => {
+    const withoutDescription = childProjectionWithRequests({
+      childThreadId,
+      requests: [
+        {
+          requestId,
+          questions: [
+            {
+              ...questions[0]!,
+              options: [{ label: "Vim", description: "" }],
+            },
+          ],
+        },
+      ],
+    });
+
+    return Effect.gen(function* () {
+      const service = yield* PendingRequestMcpService;
+      const read = yield* service.read(scope, { childThreadId, requestId });
+      assert.equal(read.questionPayloadStatus, "complete");
+      assert.isTrue(read.answerable);
+      assert.equal(read.questions[0]?.options[0]?.description, "");
+    }).pipe(Effect.provide(serviceLayer({ getChild: () => withoutDescription })));
+  });
+
   it.effect("marks oversized provider questions as unavailable and refuses partial answers", () => {
     const dispatch = vi.fn(() => Effect.die("oversized requests must not dispatch"));
     const oversizedQuestions = [
