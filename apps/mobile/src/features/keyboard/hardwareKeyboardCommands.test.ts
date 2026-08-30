@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  getHardwareBackFallback,
+  getHardwareBackFallbackPath,
   hasHardwareBackTarget,
   parseActiveThreadPath,
 } from "./hardwareKeyboardCommands";
@@ -46,28 +46,22 @@ describe("hasHardwareBackTarget", () => {
   });
 });
 
-describe("getHardwareBackFallback", () => {
+describe("getHardwareBackFallbackPath", () => {
   it("returns Home from a cold-start thread root", () => {
-    expect(getHardwareBackFallback("/threads/environment-1/thread-1")).toEqual({ route: "Home" });
-    expect(getHardwareBackFallback("/threads/environment-1/thread-1?panel=details")).toEqual({
-      route: "Home",
-    });
+    expect(getHardwareBackFallbackPath("/threads/environment-1/thread-1")).toBe("/");
+    expect(getHardwareBackFallbackPath("/threads/environment-1/thread-1?panel=details")).toBe("/");
   });
 
   it("returns the thread from a cold-start thread subroute", () => {
-    expect(getHardwareBackFallback("/threads/environment-1/thread-1/files/src/index.ts")).toEqual({
-      route: "Thread",
-      params: { environmentId: "environment-1", threadId: "thread-1" },
-    });
+    expect(getHardwareBackFallbackPath("/threads/environment-1/thread-1/files/src/index.ts")).toBe(
+      "/threads/environment-1/thread-1",
+    );
     expect(
-      getHardwareBackFallback("/threads/environment-1/thread-1/review?file=README.md"),
-    ).toEqual({
-      route: "Thread",
-      params: { environmentId: "environment-1", threadId: "thread-1" },
-    });
+      getHardwareBackFallbackPath("/threads/environment-1/thread-1/review?file=README.md"),
+    ).toBe("/threads/environment-1/thread-1");
   });
 
   it("returns no fallback outside a thread", () => {
-    expect(getHardwareBackFallback("/settings")).toBeNull();
+    expect(getHardwareBackFallbackPath("/settings")).toBeNull();
   });
 });

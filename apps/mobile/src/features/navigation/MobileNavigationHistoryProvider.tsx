@@ -17,6 +17,7 @@ import {
 interface MobileNavigationHistoryValue extends MobileNavigationHistorySnapshot {
   readonly back: () => void;
   readonly forward: () => void;
+  readonly replace: (pathname: string) => void;
 }
 const MobileNavigationHistoryContext = createContext<MobileNavigationHistoryValue | null>(null);
 export function MobileNavigationHistoryProvider({
@@ -29,8 +30,11 @@ export function MobileNavigationHistoryProvider({
     history.getSnapshot,
     history.getSnapshot,
   );
-  const { back, forward } = useMobileNavigationHistoryCoordinator(history, location);
-  const value = useMemo(() => ({ ...snapshot, back, forward }), [back, forward, snapshot]);
+  const { back, forward, replace } = useMobileNavigationHistoryCoordinator(history, location);
+  const value = useMemo(
+    () => ({ ...snapshot, back, forward, replace }),
+    [back, forward, replace, snapshot],
+  );
   return (
     <MobileNavigationHistoryContext.Provider value={value}>
       {children}
@@ -80,7 +84,19 @@ function useMobileNavigationHistoryCoordinator(
     () => requestTraversal(history.requestForward()),
     [history, requestTraversal],
   );
-  return { back, forward };
+  const replace = useCallback(
+    (pathname: string) => {
+      if (!history.requestReplacement(pathname)) return;
+      const action = buildAction(pathname);
+      if (action.type !== "NAVIGATE") {
+        history.cancelPendingTraversal();
+        return;
+      }
+      navigation.dispatch(StackActions.replace(action.payload.name, action.payload.params));
+    },
+    [buildAction, history, navigation],
+  );
+  return { back, forward, replace };
 }
 function useCancelBlockedTraversal(history: ReturnType<typeof createMobileNavigationHistory>) {
   const navigation = useNavigation();

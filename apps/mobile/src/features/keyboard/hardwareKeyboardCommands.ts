@@ -80,20 +80,14 @@ export function parseActiveThreadPath(pathname: string): {
 }
 
 export function hasHardwareBackTarget(pathname: string, canGoBack: boolean): boolean {
-  return canGoBack || getHardwareBackFallback(pathname) !== null;
+  return canGoBack || getHardwareBackFallbackPath(pathname) !== null;
 }
 
-export function getHardwareBackFallback(pathname: string):
-  | { readonly route: "Home" }
-  | {
-      readonly route: "Thread";
-      readonly params: NonNullable<ReturnType<typeof parseActiveThreadPath>>;
-    }
-  | null {
+export function getHardwareBackFallbackPath(pathname: string): string | null {
   const thread = parseActiveThreadPath(pathname);
   if (!thread) return null;
   const pathOnly = pathname.replace(/[?#].*$/, "");
   return /^\/threads\/[^/]+\/[^/]+\/?$/.test(pathOnly)
-    ? { route: "Home" }
-    : { route: "Thread", params: thread };
+    ? "/"
+    : `/threads/${encodeURIComponent(thread.environmentId)}/${encodeURIComponent(thread.threadId)}`;
 }

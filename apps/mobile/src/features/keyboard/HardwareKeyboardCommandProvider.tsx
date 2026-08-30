@@ -1,10 +1,10 @@
-import { StackActions, useNavigation } from "@react-navigation/native";
+import { useNavigation } from "@react-navigation/native";
 import { useCallback, useMemo, useSyncExternalStore, type PropsWithChildren } from "react";
 
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import {
   dispatchHardwareKeyboardCommand,
-  getHardwareBackFallback,
+  getHardwareBackFallbackPath,
   getHardwareKeyboardCommandRegistrationVersion,
   getRegisteredHardwareKeyboardCommands,
   hasHardwareBackTarget,
@@ -50,12 +50,8 @@ export function HardwareKeyboardCommandProvider({
         if (navigationHistory.canGoBack) {
           navigationHistory.back();
         } else {
-          const fallback = getHardwareBackFallback(pathname);
-          if (fallback?.route === "Thread") {
-            navigation.dispatch(StackActions.replace("Thread", fallback.params));
-          } else if (fallback?.route === "Home") {
-            navigation.dispatch(StackActions.replace("Home"));
-          }
+          const fallbackPath = getHardwareBackFallbackPath(pathname);
+          if (fallbackPath) navigationHistory.replace(fallbackPath);
         }
         return;
       }

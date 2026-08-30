@@ -103,4 +103,16 @@ describe("createMobileNavigationHistory", () => {
     expect(history.requestBack()?.location.pathname).toBe("/threads/env/thread-c");
     expect(history.requestForward()).toBeNull();
   });
+
+  it("replaces a cold-start entry without making it a Back target", () => {
+    const history = createMobileNavigationHistory(
+      location("/threads/env/thread/files", "files-root"),
+    );
+
+    expect(history.requestReplacement("/threads/env/thread")).toBe(true);
+    history.visit(location("/threads/env/thread", "thread-root"));
+
+    expect(history.getSnapshot()).toEqual({ canGoBack: false, canGoForward: false });
+    expect(history.requestBack()).toBeNull();
+  });
 });

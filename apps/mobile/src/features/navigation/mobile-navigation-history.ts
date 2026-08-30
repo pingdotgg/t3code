@@ -23,11 +23,14 @@ export function createMobileNavigationHistory(initialLocation: MobileNavigationL
   let entries = [initialLocation];
   let cursor = 0;
   let snapshot = snapshotFor(cursor, entries.length);
-  let pendingTarget: {
-    direction: "back" | "forward";
-    index: number;
-    location: MobileNavigationLocation;
-  } | null = null;
+  let pendingTarget:
+    | {
+        direction: "back" | "forward";
+        index: number;
+        location: MobileNavigationLocation;
+      }
+    | { direction: "replace"; pathname: string }
+    | null = null;
   const listeners = new Set<() => void>();
   const request = (direction: "back" | "forward", index: number) => {
     if (pendingTarget) return null;
@@ -53,6 +56,11 @@ export function createMobileNavigationHistory(initialLocation: MobileNavigationL
     getSnapshot: () => snapshot,
     requestBack: () => request("back", cursor - 1),
     requestForward: () => request("forward", cursor + 1),
+    requestReplacement: (pathname: string) => {
+      if (pendingTarget) return false;
+      pendingTarget = { direction: "replace", pathname };
+      return true;
+    },
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -60,8 +68,14 @@ export function createMobileNavigationHistory(initialLocation: MobileNavigationL
     visit: (location: MobileNavigationLocation) => {
       const current = entries[cursor];
       const target = pendingTarget;
-      if (target?.location.pathname === location.pathname) {
+      const targetPathname =
+        target?.direction === "replace" ? target.pathname : target?.location.pathname;
+      if (target && targetPathname === location.pathname) {
         pendingTarget = null;
+        if (target.direction === "replace") {
+          entries = entries.map((entry, index) => (index === cursor ? location : entry));
+          return;
+        }
         const previousRoot = target.location.transitionKey.split("/")[0]!;
         const nextRoot = location.transitionKey.split("/")[0]!;
         entries = entries.map((entry, index) => {
