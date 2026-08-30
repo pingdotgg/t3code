@@ -10,10 +10,13 @@ import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
+import * as CheckpointMcpService from "./CheckpointMcpService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { CheckpointToolkitHandlersLive } from "./toolkits/checkpoint/handlers.ts";
+import { CheckpointToolkit } from "./toolkits/checkpoint/tools.ts";
 import { OrchestratorToolkitHandlersLive } from "./toolkits/orchestrator/handlers.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import {
@@ -226,6 +229,11 @@ export const OrchestratorToolkitRegistrationLive = McpServer.toolkit(Orchestrato
   Layer.provide(OrchestratorMcpService.layer),
 );
 
+export const CheckpointToolkitRegistrationLive = McpServer.toolkit(CheckpointToolkit).pipe(
+  Layer.provide(CheckpointToolkitHandlersLive),
+  Layer.provide(CheckpointMcpService.layer),
+);
+
 export const WorktreeToolkitRegistrationLive = McpServer.toolkit(WorktreeToolkit).pipe(
   Layer.provide(WorktreeToolkitHandlersLive),
   Layer.provide(WorktreeMcpService.layer),
@@ -241,5 +249,6 @@ const McpTransportLive = McpServer.layerHttp({
 export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   OrchestratorToolkitRegistrationLive,
+  CheckpointToolkitRegistrationLive,
   WorktreeToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

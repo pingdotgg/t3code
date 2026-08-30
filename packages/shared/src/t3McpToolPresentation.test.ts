@@ -35,6 +35,17 @@ describe("resolveT3McpToolPresentation", () => {
     });
   });
 
+  it("pretty prints checkpoint T3 MCP tool names", () => {
+    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_checkpoint_list")).toEqual({
+      displayName: "List thread checkpoints",
+      logo: "t3-code",
+    });
+    expect(resolveT3McpToolPresentation("t3-code.t3_checkpoint_diff")).toEqual({
+      displayName: "Read a checkpoint diff",
+      logo: "t3-code",
+    });
+  });
+
   it("pretty prints preview T3 MCP tool names", () => {
     expect(resolveT3McpToolPresentation("T3-code.preview_open")).toEqual({
       displayName: "Open a page in the preview browser",
