@@ -259,11 +259,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             : null));
   const submitTooltip =
     submitStatus ??
-    (isRunning && !isEditingQueuedMessage
-      ? isQueuing
-        ? "Mod+Enter to queue, Enter to steer"
-        : "Enter to steer, Mod+Enter to queue"
-      : submitLabel);
+    (isRunning && !isEditingQueuedMessage ? "Enter to steer, Mod+Enter to queue" : submitLabel);
 
   const sendButton = (
     <button
