@@ -18,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { makeDayFormatter } from "../usage/usageAggregation.ts";
 import { UsageService } from "../usage/UsageService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
@@ -116,6 +117,13 @@ const validateInput = Effect.fn("EnvironmentUsageMcpService.validateInput")(func
     if (durationMs <= 0 || durationMs > MAX_HOURLY_WINDOW_MS) {
       return yield* new EnvironmentUsageMcpFailure({ code: "invalid_request" });
     }
+    const toDay = makeDayFormatter(input.timeZone);
+    if (
+      toDay(DateTime.toEpochMillis(sinceTime.value)) !== input.sinceDay ||
+      toDay(DateTime.toEpochMillis(untilTime.value) - 1) !== input.untilDay
+    ) {
+      return yield* new EnvironmentUsageMcpFailure({ code: "invalid_request" });
+    }
   }
 
   return {
@@ -127,7 +135,7 @@ const validateInput = Effect.fn("EnvironmentUsageMcpService.validateInput")(func
   };
 });
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const usage = yield* UsageService;
 

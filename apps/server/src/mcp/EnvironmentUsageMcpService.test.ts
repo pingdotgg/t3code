@@ -15,10 +15,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { UsageService } from "../usage/UsageService.ts";
-import {
-  EnvironmentUsageMcpService,
-  layer as environmentUsageMcpLayer,
-} from "./EnvironmentUsageMcpService.ts";
+import * as EnvironmentUsageMcp from "./EnvironmentUsageMcpService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 const encodeEnvironmentUsageResult = Schema.encodeUnknownEffect(EnvironmentUsageMcpResult);
@@ -132,7 +129,7 @@ const environmentLayer = (id = environmentId) =>
   );
 
 const serviceLayer = (readSummary: UsageService["Service"]["readSummary"]) =>
-  environmentUsageMcpLayer.pipe(
+  EnvironmentUsageMcp.layer.pipe(
     Layer.provide(environmentLayer()),
     Layer.provide(Layer.succeed(UsageService, UsageService.of({ readSummary }))),
   );
@@ -141,7 +138,7 @@ it.effect(
   "returns a deterministic bounded page without source fingerprints or raw diagnostics",
   () =>
     Effect.gen(function* () {
-      const service = yield* EnvironmentUsageMcpService;
+      const service = yield* EnvironmentUsageMcp.EnvironmentUsageMcpService;
       const result = yield* service.read(scope, input);
       yield* encodeEnvironmentUsageResult(result);
 
@@ -206,38 +203,59 @@ it.effect(
     }).pipe(Effect.provide(serviceLayer(() => Effect.succeed(summary)))),
 );
 
-it.effect("validates the complete bounded window before reading usage", () => {
-  let calls = 0;
-  return Effect.gen(function* () {
-    const service = yield* EnvironmentUsageMcpService;
-    const invalidInputs = [
-      { ...input, untilDay: UsageDay.make("2026-09-01") },
-      { ...input, sinceDay: UsageDay.make("2026-08-31"), untilDay: UsageDay.make("2026-08-01") },
-      { ...input, timeZone: "Not/A_Real_Zone" },
-      {
-        ...input,
-        resolution: "hour" as const,
-        sinceTime: "2026-08-01T00:00:00Z",
-        untilTime: "2026-08-02T00:00:01Z",
-      },
-    ];
+it.effect(
+  "validates the complete bounded window and hourly day labels before reading usage",
+  () => {
+    let calls = 0;
+    return Effect.gen(function* () {
+      const service = yield* EnvironmentUsageMcp.EnvironmentUsageMcpService;
+      const invalidInputs = [
+        { ...input, untilDay: UsageDay.make("2026-09-01") },
+        { ...input, sinceDay: UsageDay.make("2026-08-31"), untilDay: UsageDay.make("2026-08-01") },
+        { ...input, timeZone: "Not/A_Real_Zone" },
+        {
+          ...input,
+          resolution: "hour" as const,
+          sinceTime: "2026-08-01T00:00:00Z",
+          untilTime: "2026-08-02T00:00:01Z",
+        },
+        {
+          ...input,
+          sinceDay: UsageDay.make("2026-01-01"),
+          untilDay: UsageDay.make("2026-01-01"),
+          resolution: "hour" as const,
+          sinceTime: "2026-08-01T07:00:00Z",
+          untilTime: "2026-08-01T08:00:00Z",
+        },
+      ];
 
-    for (const invalidInput of invalidInputs) {
-      const failure = yield* service.read(scope, invalidInput).pipe(Effect.flip);
-      assert.equal(failure.code, "invalid_request");
-    }
-    assert.equal(calls, 0);
-  }).pipe(
-    Effect.provide(
-      serviceLayer(() =>
-        Effect.sync(() => {
-          calls += 1;
-          return summary;
-        }),
+      for (const invalidInput of invalidInputs) {
+        const failure = yield* service.read(scope, invalidInput).pipe(Effect.flip);
+        assert.equal(failure.code, "invalid_request");
+      }
+      assert.equal(calls, 0);
+
+      yield* service.read(scope, {
+        ...input,
+        sinceDay: UsageDay.make("2026-03-08"),
+        untilDay: UsageDay.make("2026-03-08"),
+        resolution: "hour",
+        sinceTime: "2026-03-08T08:00:00Z",
+        untilTime: "2026-03-09T07:00:00Z",
+      });
+      assert.equal(calls, 1);
+    }).pipe(
+      Effect.provide(
+        serviceLayer(() =>
+          Effect.sync(() => {
+            calls += 1;
+            return summary;
+          }),
+        ),
       ),
-    ),
-  );
-});
+    );
+  },
+);
 
 it.effect("denies missing capability and environment mismatch before the usage scan", () =>
   Effect.gen(function* () {
@@ -249,9 +267,12 @@ it.effect("denies missing capability and environment mismatch before the usage s
       }),
     );
     const makeService = (id: typeof environmentId) =>
-      environmentUsageMcpLayer.pipe(Layer.provide(environmentLayer(id)), Layer.provide(usageLayer));
+      EnvironmentUsageMcp.layer.pipe(
+        Layer.provide(environmentLayer(id)),
+        Layer.provide(usageLayer),
+      );
 
-    const denied = yield* EnvironmentUsageMcpService.pipe(
+    const denied = yield* EnvironmentUsageMcp.EnvironmentUsageMcpService.pipe(
       Effect.flatMap((service) =>
         service.read({ ...scope, capabilities: new Set() }, input).pipe(Effect.flip),
       ),
@@ -259,7 +280,7 @@ it.effect("denies missing capability and environment mismatch before the usage s
     );
     assert.equal(denied.code, "capability_denied");
 
-    const mismatch = yield* EnvironmentUsageMcpService.pipe(
+    const mismatch = yield* EnvironmentUsageMcp.EnvironmentUsageMcpService.pipe(
       Effect.flatMap((service) => service.read(scope, input).pipe(Effect.flip)),
       Effect.provide(makeService(EnvironmentId.make("different-environment"))),
     );
@@ -270,7 +291,7 @@ it.effect("denies missing capability and environment mismatch before the usage s
 
 it.effect("maps usage scan failures to a finite public reason", () =>
   Effect.gen(function* () {
-    const service = yield* EnvironmentUsageMcpService;
+    const service = yield* EnvironmentUsageMcp.EnvironmentUsageMcpService;
     const failure = yield* service.read(scope, input).pipe(Effect.flip);
     assert.equal(failure.code, "usage_unavailable");
     expect(failure).not.toHaveProperty("cause");
@@ -292,7 +313,7 @@ it.effect("maps usage scan failures to a finite public reason", () =>
 
 it.effect("preserves the usage service invalid-window classification", () =>
   Effect.gen(function* () {
-    const service = yield* EnvironmentUsageMcpService;
+    const service = yield* EnvironmentUsageMcp.EnvironmentUsageMcpService;
     const failure = yield* service.read(scope, input).pipe(Effect.flip);
     assert.equal(failure.code, "invalid_request");
   }).pipe(

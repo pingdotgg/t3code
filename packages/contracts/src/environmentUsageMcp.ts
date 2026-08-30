@@ -18,10 +18,11 @@ export const ENVIRONMENT_USAGE_MCP_MAX_TEXT_CHARACTERS = 256;
 
 export const EnvironmentUsageMcpInput = Schema.Struct({
   sinceDay: UsageDay.annotate({
-    description: "Inclusive first calendar day in timeZone, formatted YYYY-MM-DD.",
+    description:
+      "Inclusive first calendar day in timeZone, formatted YYYY-MM-DD. For hourly queries, this must be the local day containing sinceTime.",
   }),
   untilDay: UsageDay.annotate({
-    description: `Inclusive last calendar day in timeZone, formatted YYYY-MM-DD. Daily windows may cover at most ${ENVIRONMENT_USAGE_MCP_MAX_DAYS} days.`,
+    description: `Inclusive last calendar day in timeZone, formatted YYYY-MM-DD. For hourly queries, this must be the local day containing the final included instant before untilTime. Daily windows may cover at most ${ENVIRONMENT_USAGE_MCP_MAX_DAYS} days.`,
   }),
   timeZone: TrimmedNonEmptyString.annotate({
     description: "IANA time-zone name used to bucket calendar days, such as America/Los_Angeles.",
