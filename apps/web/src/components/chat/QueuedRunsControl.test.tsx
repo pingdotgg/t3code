@@ -151,7 +151,7 @@ describe("QueuedRunsControl attachments and edit mode", () => {
     expect(html).toBe("");
   });
 
-  it("hides the row that is being edited in the composer", () => {
+  it("keeps the original queued message visible while editing", () => {
     state.projection = { projection: { messages: [] } };
     state.workflow = workflowWithAttachment();
 
@@ -166,6 +166,6 @@ describe("QueuedRunsControl attachments and edit mode", () => {
       />,
     );
 
-    expect(html).not.toContain("Queued with a screenshot");
+    expect(html).toContain("Queued with a screenshot");
   });
 });
