@@ -1086,7 +1086,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const hasWorkspaceSnapshot = selectedProviderStatus?.workspaceSnapshots?.some(
       (snapshot) => snapshot.cwd === gitCwd,
     );
-    if (workspaceRefreshKeyRef.current === key && hasWorkspaceSnapshot) return;
+    if (workspaceRefreshKeyRef.current === key) return;
     if (hasWorkspaceSnapshot) {
       workspaceRefreshKeyRef.current = key;
       return;
