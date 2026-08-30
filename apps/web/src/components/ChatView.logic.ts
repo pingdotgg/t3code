@@ -39,6 +39,17 @@ export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function shoulderTabReserve(overlay: HTMLElement): number {
+  if (overlay.querySelector(".chat-composer-tasks-tab")) return 0;
+  const tab = overlay.querySelector<HTMLElement>(".chat-composer-shoulder-tab");
+  const surface = overlay.querySelector<HTMLElement>('[data-chat-composer-main-surface="true"]');
+  if (!tab || !surface) return 0;
+  return Math.max(
+    0,
+    Math.round(surface.getBoundingClientRect().top - tab.getBoundingClientRect().top),
+  );
+}
+
 export function shouldDockDraftHeroForSubmission(input: {
   isDraftHeroState: boolean;
   activeThreadKey: string | null;

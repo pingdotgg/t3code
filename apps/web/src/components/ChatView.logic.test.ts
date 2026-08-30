@@ -32,6 +32,7 @@ import {
   resolveSendEnvMode,
   resolveDraftHeroState,
   scheduleEnvironmentReconnectWarning,
+  shoulderTabReserve,
   startNewThreadForProject,
   shouldDockDraftHeroForSubmission,
   shouldReleaseTimelineAnchorForToolActivity,
@@ -44,6 +45,24 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("shoulderTabReserve", () => {
+  it("ignores the top drawer when measuring the shoulder tab band", () => {
+    const elementAt = (top: number) => ({ getBoundingClientRect: () => ({ top }) }) as HTMLElement;
+    const elements = new Map<string, HTMLElement>([
+      ['[data-chat-composer-form="true"]', elementAt(20)],
+      [".chat-composer-shoulder-tab", elementAt(100)],
+      ['[data-chat-composer-main-surface="true"]', elementAt(128)],
+    ]);
+    const overlay = {
+      querySelector: (selector: string) => elements.get(selector) ?? null,
+    } as HTMLElement;
+
+    expect(shoulderTabReserve(overlay)).toBe(28);
+    elements.set(".chat-composer-tasks-tab", elementAt(100));
+    expect(shoulderTabReserve(overlay)).toBe(0);
+  });
+});
 
 describe("draft hero submission transition", () => {
   it("does not dock the composer before a background submission", () => {
