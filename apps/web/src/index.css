@@ -2058,8 +2058,7 @@ html.electron-windows[data-desktop-backdrop="on"] [data-app-sidebar] {
   --desktop-window-sidebar: color-mix(in srgb, var(--sidebar) var(--glass-opacity), transparent);
 }
 
-html.electron-windows [data-app-sidebar],
-html.electron-windows [data-slot="sidebar-inner"] {
+html.electron-windows [data-app-sidebar] {
   background-color: var(--desktop-window-sidebar) !important;
 }
 
