@@ -1072,7 +1072,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     if (!gitCwd || !selectedProviderEntry) return;
     const key = `${environmentId}:${selectedProviderEntry.instanceId}:${gitCwd}`;
-    const hasWorkspaceSnapshot = selectedProviderEntry.workspaceSnapshots?.some(
+    const hasWorkspaceSnapshot = selectedProviderStatus?.workspaceSnapshots?.some(
       (snapshot) => snapshot.cwd === gitCwd,
     );
     if (workspaceRefreshKeyRef.current === key && hasWorkspaceSnapshot) return;
