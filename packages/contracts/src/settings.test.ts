@@ -66,6 +66,22 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings file link paths", () => {
+  it("keeps short file-link labels by default", () => {
+    expect(decodeClientSettings({}).showFileLinkPaths).toBe(false);
+  });
+
+  it("persists an explicit compact-path preference", () => {
+    expect(decodeClientSettings({ showFileLinkPaths: true }).showFileLinkPaths).toBe(true);
+    expect(decodeClientSettingsPatch({ showFileLinkPaths: true }).showFileLinkPaths).toBe(true);
+  });
+
+  it("rejects non-boolean file-link preferences", () => {
+    expect(() => decodeClientSettings({ showFileLinkPaths: "yes" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ showFileLinkPaths: "yes" })).toThrow();
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

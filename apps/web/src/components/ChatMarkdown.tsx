@@ -102,11 +102,12 @@ import {
 import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
+import { formatFileChipLabel } from "../filePathDisplay";
 import { LRUCache } from "../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
-import { getClientSettings } from "../hooks/useSettings";
+import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
   serializeTableElementToCsv,
@@ -1814,6 +1815,7 @@ function ChatMarkdown({
   onImageExpand,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
+  const showFileLinkPaths = useClientSettings((settings) => settings.showFileLinkPaths);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
@@ -2076,15 +2078,15 @@ function ChatMarkdown({
       const parentSuffix = fileLinkParentSuffixByPath.get(
         fileLinkMeta.filePath.replaceAll("\\", "/"),
       );
-      const labelParts = [fileLinkMeta.basename];
-      if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
-        labelParts.push(parentSuffix);
-      }
-      if (fileLinkMeta.line) {
-        labelParts.push(
-          `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
-        );
-      }
+      const label = formatFileChipLabel({
+        showFileLinkPaths,
+        targetPath: fileLinkMeta.targetPath,
+        workspaceRoot: cwd,
+        basename: fileLinkMeta.basename,
+        parentSuffix,
+        line: fileLinkMeta.line,
+        column: fileLinkMeta.column,
+      });
 
       return (
         <MarkdownFileLink
@@ -2094,7 +2096,7 @@ function ChatMarkdown({
           displayPath={fileLinkMeta.displayPath}
           workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
           line={fileLinkMeta.line}
-          label={labelParts.join(" · ")}
+          label={label}
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
@@ -2437,6 +2439,7 @@ function ChatMarkdown({
     revealMarkdownFileInFileManager,
     revealInFileManagerLabel,
     skills,
+    showFileLinkPaths,
     text,
     threadRef,
     updateThreadPullRequestLink,
