@@ -219,8 +219,9 @@ describe("vendored libghostty-vt WebAssembly", () => {
     const optionsView = new DataView(memory.buffer, options, 8);
     optionsView.setUint16(0, 80, true);
     optionsView.setUint16(2, 10, true);
-    // This is the value currently passed to the pinned ABI as max_scrollback.
-    optionsView.setUint32(4, 10_000, true);
+    // The pinned Ghostty generation interprets max_scrollback as bytes. Use
+    // the uncompressed per-terminal budget shared by T3's embedded surfaces.
+    optionsView.setUint32(4, 32 * 1024 * 1024, true);
 
     const terminalSlot = call("ghostty_wasm_alloc_opaque");
     expect(call("ghostty_terminal_new", 0, terminalSlot, options)).toBe(0);
