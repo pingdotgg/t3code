@@ -105,22 +105,17 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.flatMap(HttpClientResponse.filterStatusOk),
         Effect.flatMap((response) => response.json),
-        Effect.timeout(FETCH_TIMEOUT_MS),
       );
     const decoded = yield* Schema.decodeUnknown(RepositorySchema)(repository).pipe(Effect.option);
     const avatarUrl = Option.isSome(decoded) ? decoded.value.owner?.avatar_url : undefined;
-    // A url returned inside a response is data, not instruction; only the
-    // GitHub avatar CDN may be fetched.
+    // A url from a response is data, not instruction: only the GitHub avatar CDN may be fetched.
     if (!avatarUrl || new URL(avatarUrl).host !== "avatars.githubusercontent.com") {
       return null;
     }
 
     const avatarResponse = yield* httpClient
       .execute(HttpClientRequest.get(avatarUrl))
-      .pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.timeout(FETCH_TIMEOUT_MS),
-      );
+      .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
     const bytes = new Uint8Array(yield* avatarResponse.arrayBuffer);
     if (bytes.byteLength === 0 || bytes.byteLength > MAX_AVATAR_BYTES) {
       return null;
@@ -139,6 +134,7 @@ export const make = Effect.gen(function* () {
       Effect.catchCause(() => Effect.void),
     );
     const avatar = yield* downloadAvatar(owner, name).pipe(
+      Effect.timeout(FETCH_TIMEOUT_MS),
       Effect.catchCause(() => Effect.succeed(null)),
     );
     if (avatar === null) {
