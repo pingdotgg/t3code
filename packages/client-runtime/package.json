@@ -158,6 +158,14 @@
     "./state/vcs": {
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"
+    },
+    "./work-log/presentation": {
+      "types": "./src/work-log/presentation.ts",
+      "default": "./src/work-log/presentation.ts"
+    },
+    "./work-log/command-label": {
+      "types": "./src/work-log/commandLabel.ts",
+      "default": "./src/work-log/commandLabel.ts"
     }
   },
   "scripts": {

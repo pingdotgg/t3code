@@ -21,6 +21,8 @@ import {
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getStartedThreadModelChangeBlockReason,
+  loadVideoPreviewUrl,
+  isVideoPreviewRequestCurrent,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
@@ -40,6 +42,31 @@ import {
   shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
+
+describe("loadVideoPreviewUrl", () => {
+  it("loads video bytes into an object URL", async () => {
+    const objectUrl = await loadVideoPreviewUrl("data:video/mp4;base64,AA==");
+    expect(objectUrl).toMatch(/^blob:/);
+    URL.revokeObjectURL(objectUrl);
+  });
+
+  it("stops loading when the preview request is cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      loadVideoPreviewUrl("data:video/mp4;base64,AA==", controller.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  });
+});
+
+describe("isVideoPreviewRequestCurrent", () => {
+  it("rejects changed threads and replaced previews", () => {
+    expect(isVideoPreviewRequestCurrent("thread-1", "thread-2", 1, 1)).toBe(false);
+    expect(isVideoPreviewRequestCurrent("thread-1", "thread-1", 1, 2)).toBe(false);
+    expect(isVideoPreviewRequestCurrent("thread-1", "thread-1", 2, 2)).toBe(true);
+  });
+});
 
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");

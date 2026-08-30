@@ -4,17 +4,23 @@ Messages can contain up to 120,000 characters. If a draft is longer, T3 Code kee
 composer and shows how many characters need to be removed. Shorten the draft or split it into
 multiple messages, then send again in the same thread.
 
-You can attach images up to 10 MB. On servers that support file uploads, web and desktop can also
+You can attach images up to 10 MB. On servers that support file uploads, you can also
 attach text files, PDFs, ZIP archives, and other files. Each file can be up to the limit advertised
 by the server, capped at 50 MB. Each message can contain up to eight attachments in total. Files
 upload directly to the environment, where your agent can read, copy, or edit them by their file path.
 
 On web and desktop, attachments upload as soon as you add them. The send button becomes available
-after every upload finishes. Failed uploads can be retried or removed. On mobile, attachments are
-currently limited to images.
+after every upload finishes. Failed uploads can be retried or removed. On mobile, the **+** control
+offers Photos, and adds Files when the connected server supports file uploads. You can share a file
+into T3 Code from any app through the system share sheet. Mobile uploads happen when the message
+sends, so queued messages keep their files until they deliver. Select a received file on mobile
+to save it or open it in another app through the system share sheet.
 
-If you reload before a file finishes uploading, the draft keeps the file's name and shows **Attach
-again** next to it. Attach the file again or remove it, then send.
+On web and desktop, select a video attachment before or after sending to play it with the browser's
+built-in controls. Playback depends on the video formats and codecs that the browser supports.
+
+On web and desktop, if you reload before a file finishes uploading, the draft keeps the file's name
+and shows **Attach again** next to it. Attach the file again or remove it, then send.
 
 On web and desktop, HEIC and HEIF photos are automatically converted to JPEG when you drag them into
 the composer or paste them into a message.

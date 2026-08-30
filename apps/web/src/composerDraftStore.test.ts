@@ -517,6 +517,34 @@ describe("composerDraftStore file attachments", () => {
     expect(files?.some(composerFileNeedsReattach)).toBe(false);
   });
 
+  it("replaces a legacy video marker after its MIME type is normalized", () => {
+    const store = useComposerDraftStore.getState();
+    const marker: ComposerFileAttachment = {
+      type: "file",
+      id: "file-marker",
+      name: "clip.mkv",
+      mimeType: "application/octet-stream",
+      sizeBytes: 6,
+      file: null,
+    };
+    store.addFiles(threadRef, [marker]);
+
+    const file = new File(["report"], marker.name, { type: "video/x-matroska" });
+    const repicked: ComposerFileAttachment = {
+      type: "file",
+      id: "file-repicked",
+      name: file.name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      file,
+    };
+    store.addFiles(threadRef, [repicked, { ...repicked, id: "file-repicked-duplicate" }]);
+
+    const files = store.getComposerDraft(threadRef)?.files;
+    expect(files?.map((entry) => entry.id)).toEqual(["file-repicked"]);
+    expect(files?.some(composerFileNeedsReattach)).toBe(false);
+  });
+
   it("replaces a needs-reattach marker with a stash-restored uploaded file", () => {
     const store = useComposerDraftStore.getState();
     const marker: ComposerFileAttachment = { ...makeFile("file-marker"), file: null };
@@ -550,6 +578,36 @@ describe("composerDraftStore file attachments", () => {
 
     expect(store.getComposerDraft(threadRef)?.files.map((file) => file.id)).toEqual([
       "file-original",
+    ]);
+  });
+
+  it("keeps same-name videos with different MIME types", () => {
+    const store = useComposerDraftStore.getState();
+    const mp4 = new File(["report"], "clip", { type: "video/mp4" });
+    const webm = new File(["report"], "clip", { type: "video/webm" });
+
+    store.addFiles(threadRef, [
+      {
+        type: "file",
+        id: "video-mp4",
+        name: mp4.name,
+        mimeType: mp4.type,
+        sizeBytes: mp4.size,
+        file: mp4,
+      },
+      {
+        type: "file",
+        id: "video-webm",
+        name: webm.name,
+        mimeType: webm.type,
+        sizeBytes: webm.size,
+        file: webm,
+      },
+    ]);
+
+    expect(store.getComposerDraft(threadRef)?.files.map((file) => file.id)).toEqual([
+      "video-mp4",
+      "video-webm",
     ]);
   });
 
