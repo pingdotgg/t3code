@@ -17,7 +17,6 @@ describe("summarizeT3ToolCalls", () => {
     expect(summarizeT3ToolCalls("thread-send", [...calls, calls[0]!])).toEqual({
       label: "Sent 5 messages to 2 threads",
       failedCount: 0,
-      unfinishedCount: 0,
     });
   });
 
@@ -95,12 +94,10 @@ describe("summarizeT3ToolCalls", () => {
     expect(summarizeT3ToolCalls("thread-send", calls)).toEqual({
       label: "Sent 1 message to 1 thread",
       failedCount: 2,
-      unfinishedCount: 1,
     });
     expect(summarizeT3ToolCalls("thread-send", [calls[1]!])).toEqual({
       label: "Tried to send 1 message to 1 thread",
       failedCount: 1,
-      unfinishedCount: 0,
     });
   });
 
@@ -111,7 +108,6 @@ describe("summarizeT3ToolCalls", () => {
     ).toEqual({
       label: "Delegated 1 task",
       failedCount: 0,
-      unfinishedCount: 0,
     });
     expect(
       summarizeT3ToolCalls(
@@ -126,7 +122,6 @@ describe("summarizeT3ToolCalls", () => {
     ).toEqual({
       label: "Waited on 1 thread",
       failedCount: 0,
-      unfinishedCount: 0,
     });
   });
 

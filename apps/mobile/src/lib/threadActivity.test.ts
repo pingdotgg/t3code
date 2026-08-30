@@ -600,7 +600,7 @@ describe("buildThreadFeed", () => {
 
     expect(presented.some((entry) => entry.type === "run-fold")).toBe(false);
     expect(presented.find((entry) => entry.type === "work-toggle")).toMatchObject({
-      summary: "1 failed · Ran 1 command",
+      summary: "Ran 1 command",
       hiddenCount: 1,
       hasFailure: true,
       live: false,

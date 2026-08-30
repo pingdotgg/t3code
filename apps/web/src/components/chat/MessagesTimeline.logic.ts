@@ -461,7 +461,6 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogEntry>): {
             toolGroupActionCount(group.action, group.entries),
           ),
           failedCount: group.entries.filter(workEntryDisplayIndicatesToolFailure).length,
-          unfinishedCount: 0,
         }),
   }));
   const selected = summaries
@@ -480,14 +479,7 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogEntry>): {
     sentenceLabels.length < 3
       ? sentenceLabels.join(" and ")
       : `${sentenceLabels.slice(0, -1).join(", ")}, and ${sentenceLabels.at(-1)}`;
-  const failedCount = summaries.reduce((count, group) => count + group.failedCount, 0);
-  const unfinishedCount = summaries.reduce((count, group) => count + group.unfinishedCount, 0);
-  const statuses = [
-    ...(failedCount > 0 ? [`${failedCount} failed`] : []),
-    ...(unfinishedCount > 0 ? [`${unfinishedCount} unfinished`] : []),
-  ];
-  // Keep failure counts visible when a narrow timeline truncates the action text.
-  return { summary: [...statuses, summary].join(" · "), hasFailure: failedCount > 0 };
+  return { summary, hasFailure: summaries.some((group) => group.failedCount > 0) };
 }
 
 function toolGroupSummaryKind(entries: ReadonlyArray<WorkLogEntry>): ToolGroupSummaryKind {
