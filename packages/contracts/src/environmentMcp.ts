@@ -141,10 +141,27 @@ export class EnvironmentMcpFailure extends Schema.TaggedErrorClass<EnvironmentMc
     code: Schema.Literals([
       "capability_denied",
       "environment_unavailable",
+      "environment_mismatch",
       "provider_registry_unavailable",
       "settings_unavailable",
       "operation_failed",
     ]),
-    message: Schema.String,
   },
-) {}
+) {
+  override get message(): string {
+    switch (this.code) {
+      case "capability_denied":
+        return "This MCP credential does not grant environment read capabilities.";
+      case "environment_unavailable":
+        return "The current environment descriptor is unavailable.";
+      case "environment_mismatch":
+        return "The MCP credential does not belong to the running environment.";
+      case "provider_registry_unavailable":
+        return "The provider registry is unavailable.";
+      case "settings_unavailable":
+        return "Server-owned preferences are unavailable.";
+      case "operation_failed":
+        return "The environment operation failed.";
+    }
+  }
+}

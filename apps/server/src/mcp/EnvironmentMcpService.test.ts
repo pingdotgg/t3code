@@ -22,6 +22,7 @@ import { EnvironmentMcpService, layer } from "./EnvironmentMcpService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 const encodeEnvironmentMcpReadResult = Schema.encodeUnknownEffect(EnvironmentMcpReadResult);
+const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const environmentId = EnvironmentId.make("environment-test");
 const scope: McpInvocationScope = {
   environmentId,
@@ -56,6 +57,7 @@ const provider = (input: {
     slug: `model-${index}`,
     name: `Sensitive model name ${index}`,
     isCustom: false,
+    capabilities: null,
   })),
   slashCommands: [],
   skills: [],
@@ -100,11 +102,17 @@ const serviceLayer = (input: {
           observability: {
             otlpTracesUrl: "https://SENTINEL_PRIVATE_OBSERVABILITY",
           },
-          providers: {
-            codex: {
-              environment: {
-                SENTINEL_SECRET_ENVIRONMENT: "SENTINEL_SECRET_VALUE",
-              },
+          providerInstances: {
+            [ProviderInstanceId.make("sentinel")]: {
+              driver: ProviderDriverKind.make("codex"),
+              config: {},
+              environment: [
+                {
+                  name: "SENTINEL_SECRET_ENVIRONMENT",
+                  value: "SENTINEL_SECRET_VALUE",
+                  sensitive: true,
+                },
+              ],
             },
           },
           sourceControlWritingStyle: {
@@ -151,7 +159,7 @@ describe("EnvironmentMcpService", () => {
         truncated: true,
       });
 
-      const serialized = JSON.stringify(encoded);
+      const serialized = encodeUnknownJsonString(encoded);
       expect(serialized).not.toContain("SENTINEL_");
       expect(serialized).not.toContain("Sensitive model name");
       expect(serialized).not.toContain("serverSelfUpdate");
@@ -233,4 +241,15 @@ describe("EnvironmentMcpService", () => {
       ),
     );
   });
+
+  it.effect("distinguishes a credential environment mismatch from service unavailability", () =>
+    Effect.gen(function* () {
+      const service = yield* EnvironmentMcpService;
+      const error = yield* Effect.flip(
+        service.read({ ...scope, environmentId: EnvironmentId.make("environment-other") }, {}),
+      );
+      expect(error.code).toBe("environment_mismatch");
+      expect(error.message).toBe("The MCP credential does not belong to the running environment.");
+    }).pipe(Effect.provide(serviceLayer({}))),
+  );
 });

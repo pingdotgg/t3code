@@ -29,19 +29,16 @@ export class EnvironmentMcpService extends Context.Service<
   }
 >()("t3/mcp/EnvironmentMcpService") {}
 
-const failure = (code: EnvironmentMcpFailure["code"], message: string) =>
-  new EnvironmentMcpFailure({ code, message });
-
-const unavailable = <A>(
-  effect: Effect.Effect<A, unknown>,
+const unavailable = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
   code: EnvironmentMcpFailure["code"],
-  message: string,
-): Effect.Effect<A, EnvironmentMcpFailure> =>
+): Effect.Effect<A, EnvironmentMcpFailure, R> =>
   effect.pipe(
-    Effect.catchCause((cause) =>
-      Cause.hasInterrupts(cause)
-        ? Effect.failCause(cause).pipe(Effect.orDie)
-        : Effect.fail(failure(code, message)),
+    Effect.catchCause(
+      (cause): Effect.Effect<never, EnvironmentMcpFailure> =>
+        Cause.hasInterrupts(cause)
+          ? Effect.failCause(cause).pipe(Effect.orDie)
+          : Effect.fail(new EnvironmentMcpFailure({ code })),
     ),
   );
 
@@ -122,33 +119,15 @@ const make = Effect.gen(function* () {
     read: (scope, input) =>
       Effect.gen(function* () {
         if (!scope.capabilities.has("orchestration")) {
-          return yield* failure(
-            "capability_denied",
-            "This MCP credential does not grant environment read capabilities.",
-          );
+          return yield* new EnvironmentMcpFailure({ code: "capability_denied" });
         }
         const [descriptor, providers, settings] = yield* Effect.all([
-          unavailable(
-            environment.getDescriptor,
-            "environment_unavailable",
-            "The current environment descriptor is unavailable.",
-          ),
-          unavailable(
-            providerRegistry.getProviders,
-            "provider_registry_unavailable",
-            "The provider registry is unavailable.",
-          ),
-          unavailable(
-            settingsService.getSettings,
-            "settings_unavailable",
-            "Server-owned preferences are unavailable.",
-          ),
+          unavailable(environment.getDescriptor, "environment_unavailable"),
+          unavailable(providerRegistry.getProviders, "provider_registry_unavailable"),
+          unavailable(settingsService.getSettings, "settings_unavailable"),
         ]);
         if (descriptor.environmentId !== scope.environmentId) {
-          return yield* failure(
-            "environment_unavailable",
-            "The MCP credential does not belong to the running environment.",
-          );
+          return yield* new EnvironmentMcpFailure({ code: "environment_mismatch" });
         }
 
         const ordered = [...providers].sort((left, right) =>
