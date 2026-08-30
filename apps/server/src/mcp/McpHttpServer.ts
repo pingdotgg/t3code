@@ -14,6 +14,7 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import * as ProjectScriptMcpService from "./ProjectScriptMcpService.ts";
 import { OrchestratorToolkitHandlersLive } from "./toolkits/orchestrator/handlers.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import {
@@ -25,6 +26,8 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import { ProjectScriptToolkitHandlersLive } from "./toolkits/project_script/handlers.ts";
+import { ProjectScriptToolkit } from "./toolkits/project_script/tools.ts";
 import { TerminalToolkitHandlersLive } from "./toolkits/terminal/handlers.ts";
 import { TerminalToolkit } from "./toolkits/terminal/tools.ts";
 import { WorktreeToolkitHandlersLive } from "./toolkits/worktree/handlers.ts";
@@ -239,6 +242,12 @@ export const TerminalToolkitRegistrationLive = McpServer.toolkit(TerminalToolkit
   Layer.provide(TerminalMcpService.layer),
 );
 
+export const ProjectScriptToolkitRegistrationLive = McpServer.toolkit(ProjectScriptToolkit).pipe(
+  Layer.provide(ProjectScriptToolkitHandlersLive),
+  Layer.provide(ProjectScriptMcpService.layer),
+  Layer.provide(TerminalMcpService.layer),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -249,6 +258,7 @@ const McpTransportLive = McpServer.layerHttp({
 export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   OrchestratorToolkitRegistrationLive,
+  ProjectScriptToolkitRegistrationLive,
   TerminalToolkitRegistrationLive,
   WorktreeToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

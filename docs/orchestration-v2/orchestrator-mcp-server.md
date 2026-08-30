@@ -168,7 +168,8 @@ accepted the bytes.
 
 ## Tool Surface
 
-The server exposes orchestration and managed-terminal tool families through the same endpoint.
+The server exposes orchestration, managed-terminal, and saved-project-script tool families through
+the same endpoint.
 
 ### `orchestrator_capabilities`
 

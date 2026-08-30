@@ -31,7 +31,10 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster)({}),
-  Layer.mock(TerminalManager.TerminalManager)({}),
+  Layer.mock(TerminalManager.TerminalManager)({
+    subscribe: () => Effect.succeed(() => {}),
+    subscribeSessionInvalidation: () => Effect.succeed(() => {}),
+  }),
   threadCommandExecutorLayer,
 );
 
@@ -122,6 +125,9 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       expect(toolNames).toContain("t3_terminal_read");
       expect(toolNames).toContain("t3_terminal_open");
       expect(toolNames).toContain("t3_terminal_write");
+      expect(toolNames).toContain("t3_project_script_list");
+      expect(toolNames).toContain("t3_project_script_run");
+      expect(toolNames).toContain("t3_project_script_stop");
 
       // The handoff tool mutates thread state, reaches the network (origin
       // fetch), and runs project setup scripts, so its MCP hints must not
