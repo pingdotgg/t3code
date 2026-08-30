@@ -1,5 +1,7 @@
 import {
   type ChatAttachment,
+  checkpointRollbackAppRunOrdinal,
+  CheckpointId,
   CommandId,
   MessageId,
   type ModelSelection,
@@ -152,6 +154,31 @@ export class OrchestratorCommandIdConflictError extends Schema.TaggedErrorClass<
   }
 }
 
+export class OrchestratorCheckpointRollbackNotIdleError extends Schema.TaggedErrorClass<OrchestratorCheckpointRollbackNotIdleError>()(
+  "OrchestratorCheckpointRollbackNotIdleError",
+  {
+    commandId: CommandId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return `Checkpoint rollback ${this.commandId} requires idle thread ${this.threadId} with no queued runs.`;
+  }
+}
+
+export class OrchestratorCheckpointRollbackTargetUnsupportedError extends Schema.TaggedErrorClass<OrchestratorCheckpointRollbackTargetUnsupportedError>()(
+  "OrchestratorCheckpointRollbackTargetUnsupportedError",
+  {
+    commandId: CommandId,
+    threadId: ThreadId,
+    checkpointId: CheckpointId,
+  },
+) {
+  override get message(): string {
+    return `Checkpoint ${this.checkpointId} does not identify a proven provider-history target for thread ${this.threadId}.`;
+  }
+}
+
 /**
  * A command receipt only proves that this exact command already ran for the
  * thread it was recorded against. Replaying it for a command aimed at another
@@ -172,6 +199,8 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorProviderAdapterError,
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorCommandIdConflictError,
+  OrchestratorCheckpointRollbackNotIdleError,
+  OrchestratorCheckpointRollbackTargetUnsupportedError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
 
@@ -6156,10 +6185,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
         )
       ) {
-        return yield* new OrchestratorDispatchError({
+        return yield* new OrchestratorCheckpointRollbackNotIdleError({
           commandId: command.commandId,
-          commandType: command.type,
-          cause: "Checkpoint rollback requires an idle thread with no queued runs.",
+          threadId: command.threadId,
         });
       }
       const providerThread = projection.providerThreads.find(
@@ -6228,7 +6256,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Checkpoint ${command.checkpointId} belongs to scope ${targetScope.id}, not ${command.scopeId}.`,
         });
       }
-      const targetOrdinal = targetCheckpoint.appRunOrdinal ?? 0;
+      const targetOrdinal = checkpointRollbackAppRunOrdinal(targetCheckpoint, targetScope);
+      if (targetOrdinal === null) {
+        return yield* new OrchestratorCheckpointRollbackTargetUnsupportedError({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          checkpointId: targetCheckpoint.id,
+        });
+      }
       if (targetOrdinal > 0) {
         const targetRun = projection.runs.find((run) => run.ordinal === targetOrdinal);
         const targetProviderTurn =
@@ -7438,6 +7473,7 @@ export const layer: Layer.Layer<
   | EventSinkV2
   | EffectOutboxV2
   | IdAllocatorV2
+  | ThreadDispatchLockV2
   | ProviderAdapterRegistryV2
   | ProviderSessionManagerV2
   | ProviderSwitchServiceV2

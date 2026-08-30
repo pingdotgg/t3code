@@ -34,6 +34,7 @@ import {
   ClaudeProviderCapabilitiesV2,
 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import type { OrchestrationEffectV2 } from "../orchestration-v2/EffectOutbox.ts";
+import { CommandReceiptStoreReadError } from "../orchestration-v2/CommandReceiptStore.ts";
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import {
   ThreadManagementProjectionLoadError,
@@ -202,6 +203,8 @@ function makeHarness(
     readonly readWorkspaceFingerprint?: CheckpointStore.CheckpointStore["Service"]["readWorkspaceFingerprint"];
     readonly effectStatus?: OrchestrationEffectV2["status"];
     readonly effectError?: string | null;
+    readonly effectFailureCode?: OrchestrationEffectV2["failureCode"];
+    readonly receiptReadFailsAfterDispatch?: boolean;
   } = {},
 ) {
   const projection = input.projection ?? makeProjection();
@@ -262,19 +265,26 @@ function makeHarness(
                   ),
           dispatch,
           getCommandReceipt: (commandId) =>
-            Effect.succeed(
-              acceptedCommandId === commandId
-                ? Option.some({
+            input.receiptReadFailsAfterDispatch === true && acceptedCommandId !== undefined
+              ? Effect.fail(
+                  new CommandReceiptStoreReadError({
                     commandId,
-                    threadId: projection.thread.id,
-                    commandType: "checkpoint.rollback",
-                    acceptedAt: now,
-                    resultSequence: 7,
-                    status: "accepted",
-                    error: null,
-                  })
-                : Option.none(),
-            ),
+                    cause: "simulated receipt read failure",
+                  }),
+                )
+              : Effect.succeed(
+                  acceptedCommandId === commandId
+                    ? Option.some({
+                        commandId,
+                        threadId: projection.thread.id,
+                        commandType: "checkpoint.rollback",
+                        acceptedAt: now,
+                        resultSequence: 7,
+                        status: "accepted",
+                        error: null,
+                      })
+                    : Option.none(),
+                ),
           listCommandEffects: (commandId) =>
             Effect.succeed([
               {
@@ -298,6 +308,9 @@ function makeHarness(
                 updatedAt: "2026-08-29T12:00:00.000Z",
                 completedAt: null,
                 lastError: input.effectError ?? null,
+                ...(input.effectFailureCode === undefined
+                  ? {}
+                  : { failureCode: input.effectFailureCode }),
               },
             ]),
         }),
@@ -597,6 +610,26 @@ it.effect("accepts an exact restore and reuses the same command identity", () =>
   }).pipe(Effect.provide(harness.serviceLayer));
 });
 
+it.effect("keeps the accepted outcome when post-commit observation fails", () => {
+  const harness = makeHarness({ receiptReadFailsAfterDispatch: true });
+  return Effect.gen(function* () {
+    const service = yield* CheckpointMcpService;
+    const result = yield* service.restore(invocation, {
+      scopeId,
+      checkpointId: makeCheckpoint(0).id,
+      discardChanges: true,
+      clientRequestId: "restore-observation-unavailable",
+    });
+
+    assert.equal(result.status, "REQUESTED");
+    assert.equal(result.effectStatus, "unavailable");
+    assert.equal(result.receipt.sequence, 7);
+    assert.include(result.detail ?? "", "was accepted");
+    assert.include(result.detail ?? "", "same clientRequestId");
+    assert.equal(harness.dispatch.mock.calls.length, 1);
+  }).pipe(Effect.provide(harness.serviceLayer));
+});
+
 it.effect("rejects missing checkpoints and unsupported provider rollback", () => {
   const missingHarness = makeHarness({
     projection: makeProjection({
@@ -683,6 +716,7 @@ it.effect("rejects queued work before capturing or dispatching a restore", () =>
 it.effect("reports provider failure after filesystem restore as partial", () => {
   const harness = makeHarness({
     effectStatus: "failed",
+    effectFailureCode: "checkpoint_restore_partial",
     effectError:
       "Provider conversation rollback failed after the filesystem checkpoint was restored; the result is partial.",
   });

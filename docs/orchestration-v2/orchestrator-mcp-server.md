@@ -353,24 +353,30 @@ Admission requires an idle thread with no queued run, a ready checkpoint ref,
 the active provider thread/session, and provider conversation rollback with a
 returned snapshot. The command carries optional constraints understood by old
 servers as absent: `expectedIdle` is enforced inside the thread's serialized
-decision, while a workspace tree fingerprint is compared inside the existing
-per-workspace checkpoint lock. The worker re-reads idle, archive, provider,
-and checkpoint state from that locked boundary before touching files.
+decision. The worker acquires that same per-thread admission boundary, re-reads
+idle, archive, provider, checkpoint, and provider-history target state, then
+compares the workspace-and-index fingerprint inside the existing per-workspace
+checkpoint lock. New same-thread commands wait until guarded restore
+finalization releases the admission boundary. An unrelated external process
+can still write while Git is executing; T3 does not claim an OS-wide lock.
 
 The result includes the durable command receipt and current outbox status:
 
-- `REQUESTED`: accepted, but the rollback effect is still pending or running;
+- `REQUESTED`: accepted, but the rollback effect is pending, running, or its
+  current observation is temporarily unavailable;
 - `APPLIED`: filesystem and required provider rollback completed;
-- `FAILED`: no complete restore was recorded; the detail explains the guard
-  or execution failure; and
-- `PARTIAL`: filesystem restore completed, but provider conversation rollback
-  failed.
+- `FAILED`: a guard rejected the restore before mutation or an unguarded
+  request failed; and
+- `PARTIAL`: filesystem/provider state may have changed, but the complete
+  durable outcome could not be recorded.
 
 Reusing the exact key returns the original command/effect state. A key already
-accepted for another target is rejected. Rollback effect failures are
-terminalized after their first execution attempt so a normal MCP retry cannot
-repeat filesystem or provider side effects. Process-loss recovery remains the
-existing outbox responsibility.
+accepted for another target is rejected. Guarded MCP rollback failures become
+terminal after a retry-unsafe or uncertain phase, so a normal retry cannot
+repeat filesystem or provider side effects. If the process ends while such an
+effect is running, durable outbox recovery records `PARTIAL` instead of
+replaying it. Older unguarded rollback commands retain their existing retry
+behavior.
 
 ## Delegated Task Lifecycle
 

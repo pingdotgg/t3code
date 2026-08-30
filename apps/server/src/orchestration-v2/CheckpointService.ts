@@ -82,6 +82,9 @@ export class CheckpointRestoreError extends Schema.TaggedErrorClass<CheckpointRe
   {
     scopeId: CheckpointScopeId,
     checkpointId: CheckpointId,
+    reason: Schema.optional(
+      Schema.Literals(["precondition-changed", "target-unavailable", "restore-outcome-unknown"]),
+    ),
     cause: Schema.Defect(),
   },
 ) {
@@ -500,6 +503,7 @@ export const layer: Layer.Layer<
             return yield* new CheckpointRestoreError({
               scopeId: input.scope.id,
               checkpointId: input.checkpoint.id,
+              reason: "target-unavailable",
               cause: `Checkpoint status is ${input.checkpoint.status}.`,
             });
           }
@@ -512,20 +516,34 @@ export const layer: Layer.Layer<
               return yield* new CheckpointRestoreError({
                 scopeId: input.scope.id,
                 checkpointId: input.checkpoint.id,
+                reason: "precondition-changed",
                 cause: "Workspace changed after rollback admission; current files were preserved.",
               });
             }
           }
 
-          const restored = yield* checkpointStore.restoreCheckpoint({
-            cwd: input.scope.cwd,
-            checkpointRef: input.checkpoint.ref,
-            fallbackToHead: false,
-          });
+          const restored = yield* checkpointStore
+            .restoreCheckpoint({
+              cwd: input.scope.cwd,
+              checkpointRef: input.checkpoint.ref,
+              fallbackToHead: false,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new CheckpointRestoreError({
+                    scopeId: input.scope.id,
+                    checkpointId: input.checkpoint.id,
+                    reason: "restore-outcome-unknown",
+                    cause,
+                  }),
+              ),
+            );
           if (!restored) {
             return yield* new CheckpointRestoreError({
               scopeId: input.scope.id,
               checkpointId: input.checkpoint.id,
+              reason: "target-unavailable",
               cause: "Checkpoint ref is unavailable.",
             });
           }

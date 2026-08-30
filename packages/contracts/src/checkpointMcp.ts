@@ -176,7 +176,7 @@ export const CheckpointMcpRestoreInput = Schema.Struct({
   }),
   discardChanges: Schema.Literal(true).annotate({
     description:
-      "Required acknowledgement that applying the checkpoint discards current tracked and untracked workspace changes covered by the checkpoint restore.",
+      "Required acknowledgement that applying the checkpoint discards current tracked, untracked and staged workspace changes covered by the checkpoint restore.",
   }),
   clientRequestId: CheckpointMcpClientRequestId,
 });
@@ -201,7 +201,14 @@ export const CheckpointMcpRestoreResult = Schema.Struct({
     acceptedAt: IsoDateTime,
     sequence: NonNegativeInt,
   }),
-  effectStatus: Schema.Literals(["pending", "running", "succeeded", "failed", "cancelled"]),
+  effectStatus: Schema.Literals([
+    "pending",
+    "running",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "unavailable",
+  ]),
   detail: Schema.NullOr(Schema.String),
 });
 export type CheckpointMcpRestoreResult = typeof CheckpointMcpRestoreResult.Type;

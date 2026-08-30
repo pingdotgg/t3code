@@ -22,7 +22,12 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
-import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
+import {
+  OrchestratorCheckpointRollbackNotIdleError,
+  OrchestratorCheckpointRollbackTargetUnsupportedError,
+  OrchestratorCommandIdConflictError,
+  OrchestratorProjectionError,
+} from "../orchestration-v2/Orchestrator.ts";
 import { ProjectionStoreThreadNotFoundError } from "../orchestration-v2/ProjectionStore.ts";
 import {
   ThreadManagementProjectionLoadError,
@@ -313,7 +318,7 @@ export const make = Effect.gen(function* () {
       rollbackEffect.status === "succeeded"
         ? ("APPLIED" as const)
         : rollbackEffect.status === "failed" &&
-            rollbackEffect.lastError?.includes("result is partial") === true
+            rollbackEffect.failureCode === "checkpoint_restore_partial"
           ? ("PARTIAL" as const)
           : rollbackEffect.status === "failed" || rollbackEffect.status === "cancelled"
             ? ("FAILED" as const)
@@ -608,6 +613,7 @@ export const make = Effect.gen(function* () {
           "provider_rollback_unsupported",
           "provider_snapshot_unsupported",
           "provider_turn_missing",
+          "rollback_target_ambiguous",
         ].includes(blocker),
       );
       return yield* failure(
@@ -637,21 +643,27 @@ export const make = Effect.gen(function* () {
         expectedWorkspaceFingerprint,
       })
       .pipe(
-        Effect.mapError((error) => {
-          const message = errorMessage(error);
-          const tag =
-            typeof error === "object" && error !== null && "_tag" in error
-              ? String(error._tag)
-              : "";
-          return failure(
-            tag.includes("CommandIdConflict")
-              ? "idempotency_conflict"
-              : message.includes("requires an idle thread")
-                ? "thread_active"
-                : "operation_failed",
-            `Checkpoint restore was not accepted: ${message}`,
-          );
+        Effect.catchTags({
+          OrchestratorCommandIdConflictError: (error: OrchestratorCommandIdConflictError) =>
+            failure(
+              "idempotency_conflict",
+              `Checkpoint restore was not accepted: ${error.message}`,
+            ),
+          OrchestratorCheckpointRollbackNotIdleError: (
+            error: OrchestratorCheckpointRollbackNotIdleError,
+          ) => failure("thread_active", `Checkpoint restore was not accepted: ${error.message}`),
+          OrchestratorCheckpointRollbackTargetUnsupportedError: (
+            error: OrchestratorCheckpointRollbackTargetUnsupportedError,
+          ) => failure("unsupported", `Checkpoint restore was not accepted: ${error.message}`),
         }),
+        Effect.mapError((error) =>
+          isCheckpointMcpFailure(error)
+            ? error
+            : failure(
+                "operation_failed",
+                `Checkpoint restore was not accepted: ${errorMessage(error)}`,
+              ),
+        ),
       );
     const rollbackEvent = dispatched.storedEvents.find(
       (stored) => stored.event.type === "checkpoint.rollback-requested",
@@ -667,12 +679,36 @@ export const make = Effect.gen(function* () {
       );
     }
 
-    const accepted = yield* readAcceptedRestore(scope, input, commandId);
-    if (Option.isSome(accepted)) return accepted.value;
-    return yield* failure(
-      "operation_failed",
-      `Accepted checkpoint restore '${commandId}' has no durable accepted receipt.`,
+    const observation = yield* readAcceptedRestore(scope, input, commandId).pipe(
+      Effect.match({
+        onFailure: (error) => ({ type: "unavailable" as const, error }),
+        onSuccess: (accepted) => ({ type: "available" as const, accepted }),
+      }),
     );
+    if (observation.type === "available" && Option.isSome(observation.accepted)) {
+      return observation.accepted.value;
+    }
+    if (observation.type === "unavailable" && observation.error.code === "idempotency_conflict") {
+      return yield* observation.error;
+    }
+    const observationDetail =
+      observation.type === "unavailable"
+        ? observation.error.message
+        : "The durable command receipt was not yet readable.";
+    return {
+      commandId,
+      threadId: projection.thread.id,
+      scopeId: checkpointScope.id,
+      checkpointId: checkpoint.id,
+      status: "REQUESTED",
+      receipt: {
+        status: "accepted",
+        acceptedAt: DateTime.formatIso(rollbackEvent.event.occurredAt),
+        sequence: dispatched.sequence,
+      },
+      effectStatus: "unavailable",
+      detail: `Checkpoint restore was accepted, but its effect status is unavailable: ${observationDetail} Reuse the same clientRequestId to observe this request.`,
+    };
   });
 
   return CheckpointMcpService.of({ list, diff, restore });

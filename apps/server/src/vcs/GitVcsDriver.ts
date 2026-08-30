@@ -756,7 +756,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             detail: "git write-tree returned an empty tree oid.",
           });
         }
-        return treeOid;
+        const index = yield* execute({
+          operation,
+          cwd,
+          args: ["ls-files", "--stage", "-z", "--", "."],
+        });
+        return NodeCrypto.createHash("sha256")
+          .update("worktree\0")
+          .update(treeOid)
+          .update("\0index\0")
+          .update(index.stdout)
+          .digest("hex");
       }).pipe(Effect.ensuring(cleanupTempIndex));
     },
   );

@@ -19,6 +19,7 @@ import { RunFinalizationService } from "./RunFinalizationService.ts";
 import { ResourceCleanupService } from "./ResourceCleanupService.ts";
 import {
   EffectOutboxV2,
+  OrchestrationEffectFailureCodeV2,
   REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS,
   type OrchestrationEffectV2,
 } from "./EffectOutbox.ts";
@@ -37,9 +38,20 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedErrorClass<O
   {
     effectId: Schema.String,
     effectType: Schema.String,
+    failureCode: Schema.optional(OrchestrationEffectFailureCodeV2),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+const isOrchestrationEffectExecutionError = Schema.is(OrchestrationEffectExecutionError);
+
+function isGuardedCheckpointRestore(effect: OrchestrationEffectV2): boolean {
+  return (
+    effect.request.type === "provider-thread.rollback" &&
+    effect.request.expectedIdle === true &&
+    effect.request.expectedWorkspaceFingerprint !== undefined
+  );
+}
 
 /**
  * Pure interrupt races with hard process teardown or a dead session produce
@@ -259,7 +271,8 @@ export const executorLayer: Layer.Layer<
                     }),
                 ),
               );
-          case "provider-thread.rollback":
+          case "provider-thread.rollback": {
+            const guardedRestore = isGuardedCheckpointRestore(effect);
             return checkpointRollback
               .execute({
                 threadId: effect.threadId,
@@ -276,15 +289,24 @@ export const executorLayer: Layer.Layer<
                     }),
               })
               .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
+                Effect.mapError((cause) => {
+                  const failureCode: OrchestrationEffectFailureCodeV2 | undefined = guardedRestore
+                    ? cause.reason === "provider-rollback-failed-after-restore" ||
+                      cause.reason === "post-restore-finalization-failed"
+                      ? "checkpoint_restore_partial"
+                      : cause.reason === "unexpected-failure"
+                        ? undefined
+                        : "checkpoint_restore_rejected"
+                    : undefined;
+                  return new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    ...(failureCode === undefined ? {} : { failureCode }),
+                    cause,
+                  });
+                }),
               );
+          }
           case "checkpoint.capture":
             return runFinalization
               .finalize({
@@ -434,13 +456,18 @@ export const layerWithOptions = (
                   }),
                 ),
               );
-      const terminalizeClaim = (effect: OrchestrationEffectV2, cause: Cause.Cause<unknown>) => {
+      const terminalizeClaim = (
+        effect: OrchestrationEffectV2,
+        cause: Cause.Cause<unknown>,
+        failureCode?: OrchestrationEffectFailureCodeV2,
+      ) => {
         if (Cause.hasInterruptsOnly(cause)) return Effect.void;
         return outbox
           .fail({
             effectId: effect.id,
             workerId,
             error: `Worker failed to settle a process-bound effect after execution started: ${Cause.pretty(cause)}`,
+            ...(failureCode === undefined ? {} : { failureCode }),
           })
           .pipe(
             Effect.flatMap((failed) =>
@@ -473,11 +500,13 @@ export const layerWithOptions = (
         effect: OrchestrationEffectV2,
         cause: Cause.Cause<unknown>,
       ) =>
-        REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS.some(
-          (effectType) => effectType === effect.request.type,
-        )
-          ? requeueClaim(effect, cause)
-          : terminalizeClaim(effect, cause);
+        isGuardedCheckpointRestore(effect)
+          ? terminalizeClaim(effect, cause, "checkpoint_restore_partial")
+          : REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS.some(
+                (effectType) => effectType === effect.request.type,
+              )
+            ? requeueClaim(effect, cause)
+            : terminalizeClaim(effect, cause);
 
       const runOnce = (excludeRestartContinuations = false) =>
         Effect.gen(function* () {
@@ -552,8 +581,15 @@ export const layerWithOptions = (
           }
 
           const error = Cause.pretty(exit.cause);
+          const executionError = Cause.findErrorOption(exit.cause).pipe(
+            Option.filter(isOrchestrationEffectExecutionError),
+          );
+          const failureCode = Option.isSome(executionError)
+            ? executionError.value.failureCode
+            : undefined;
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
-          const terminalRollbackFailure = effect.request.type === "provider-thread.rollback";
+          const terminalRollbackFailure =
+            effect.request.type === "provider-thread.rollback" && failureCode !== undefined;
           yield* Effect.logWarning("Orchestration effect execution failed", {
             effectId: effect.id,
             effectType: effect.request.type,
@@ -565,7 +601,12 @@ export const layerWithOptions = (
           // keep a failed interrupt around; fail only when we must not retry.
           const updated = terminalRollbackFailure
             ? yield* outbox
-                .fail({ effectId: effect.id, workerId, error })
+                .fail({
+                  effectId: effect.id,
+                  workerId,
+                  error,
+                  ...(failureCode === undefined ? {} : { failureCode }),
+                })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
             : nonRetryable
             ? yield* outbox

@@ -1,4 +1,7 @@
+import { ThreadId } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
@@ -53,3 +56,14 @@ export const makeKeyedSerialExecutor = <Key>(): Effect.Effect<KeyedSerialExecuto
         ),
     } satisfies KeyedSerialExecutor<Key>;
   });
+
+/** The single in-process admission boundary for commands targeting a V2 thread. */
+export class ThreadDispatchLockV2 extends Context.Service<
+  ThreadDispatchLockV2,
+  KeyedSerialExecutor<ThreadId>
+>()("t3/orchestration-v2/KeyedSerialExecutor/ThreadDispatchLockV2") {}
+
+export const threadDispatchLockLayer = Layer.effect(
+  ThreadDispatchLockV2,
+  makeKeyedSerialExecutor<ThreadId>(),
+);

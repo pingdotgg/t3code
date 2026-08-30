@@ -147,6 +147,55 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         expect(yield* git(tmp, ["status", "--short"])).toContain("new-file.txt");
       }),
     );
+
+    it.effect("tracks staged-only changes without modifying the user's index", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const readme = NodePath.join(tmp, "README.md");
+
+        const initial = yield* checkpointStore.readWorkspaceFingerprint(tmp);
+        yield* writeTextFile(readme, "# staged\n");
+        yield* git(tmp, ["add", "README.md"]);
+        yield* writeTextFile(readme, "# test\n");
+        const stagedBefore = yield* git(tmp, ["diff", "--cached", "--", "README.md"]);
+        const stagedOnly = yield* checkpointStore.readWorkspaceFingerprint(tmp);
+        const stagedAfter = yield* git(tmp, ["diff", "--cached", "--", "README.md"]);
+
+        expect(stagedOnly).not.toBe(initial);
+        expect(stagedAfter).toBe(stagedBefore);
+        expect(yield* git(tmp, ["diff", "--", "README.md"])).not.toBe("");
+      }),
+    );
+
+    it.effect("limits staged-state fingerprints to a nested restore cwd", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const nested = NodePath.join(tmp, "packages", "nested");
+        const sibling = NodePath.join(tmp, "sibling.txt");
+        const nestedFile = NodePath.join(nested, "file.txt");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(nested, { recursive: true });
+        yield* writeTextFile(nestedFile, "nested\n");
+        yield* writeTextFile(sibling, "sibling\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "nested files"]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        const initial = yield* checkpointStore.readWorkspaceFingerprint(nested);
+        yield* writeTextFile(sibling, "sibling staged\n");
+        yield* git(tmp, ["add", "sibling.txt"]);
+        yield* writeTextFile(sibling, "sibling\n");
+        expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).toBe(initial);
+
+        yield* writeTextFile(nestedFile, "nested staged\n");
+        yield* git(tmp, ["add", "packages/nested/file.txt"]);
+        yield* writeTextFile(nestedFile, "nested\n");
+        expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).not.toBe(initial);
+      }),
+    );
   });
 
   describe("diffCheckpoints", () => {

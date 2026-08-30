@@ -23,6 +23,7 @@ import { layerFromStores as eventSinkLayer } from "./EventSink.ts";
 import { layerFromOrchestrationEventStore as eventStoreLayer } from "./EventStore.ts";
 import { layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { layer as legacyV1ThreadImporterLayer } from "./LegacyV1ThreadImporter.ts";
+import { threadDispatchLockLayer } from "./KeyedSerialExecutor.ts";
 import { layer as orchestratorLayer } from "./Orchestrator.ts";
 import { layer as projectionStoreLayer } from "./ProjectionStore.ts";
 import { layer as projectionMaintenanceLayer } from "./ProjectionMaintenance.ts";
@@ -157,6 +158,7 @@ const checkpointRollbackServiceProvided = checkpointRollbackServiceLayer.pipe(
       projectionStoreLayer,
       providerSessionManagerProvided,
       runtimePolicyProvided,
+      threadDispatchLockLayer,
     ),
   ),
 );
@@ -194,6 +196,7 @@ const orchestratorProvided = orchestratorLayer.pipe(
       providerSwitchServiceProvided,
       runExecutionServiceProvided,
       threadForkServiceLayer,
+      threadDispatchLockLayer,
     ),
   ),
 );

@@ -24,15 +24,17 @@ is reported honestly rather than substituted with a different snapshot.
 ## Restore safety
 
 `t3_checkpoint_restore` restores one exact checkpoint selected from the list.
-It is destructive: current tracked and untracked changes covered by the
+It is destructive: current tracked, untracked, and staged changes covered by the
 restore are discarded, so the agent must explicitly acknowledge that outcome.
 The thread must be idle with no queued work, and the provider must support
 rolling its conversation back to the same point.
 
-T3 verifies that the workspace has not changed between the request and the
-locked restore. If files or thread state change concurrently, the restore
-fails and preserves the newer state. The result distinguishes a request that
-is still running, a fully applied restore, a failure, and a partial result
-where files were restored but the provider conversation could not be rolled
-back. Retrying with the same idempotency key reads the original result instead
-of starting another restore.
+Before the locked restore begins, T3 verifies that the covered workspace files
+and thread state still match the accepted request. If either changed while the
+request was waiting, the restore fails and preserves the newer state. As with
+other filesystem commands, an unrelated process can still write while Git is
+executing. The result distinguishes a request that is still running, a fully
+applied restore, a failure, and a partial result where files were restored but
+the provider conversation or durable finalization could not be completed.
+Retrying with the same idempotency key reads the original result instead of
+starting another restore.

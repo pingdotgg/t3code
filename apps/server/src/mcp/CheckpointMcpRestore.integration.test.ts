@@ -25,15 +25,18 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import { ServerConfig } from "../config.ts";
-import { layer as mcpSessionRegistryTestLayer } from "./McpSessionRegistry.testkit.ts";
+import * as McpSessionRegistryTestkit from "./McpSessionRegistry.testkit.ts";
 import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
@@ -43,7 +46,10 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { OrchestrationEffectWorkerV2 } from "../orchestration-v2/EffectWorker.ts";
 import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
-import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
+import {
+  OrchestratorCheckpointRollbackTargetUnsupportedError,
+  OrchestratorV2,
+} from "../orchestration-v2/Orchestrator.ts";
 import {
   ProviderAdapterRollbackThreadError,
   type ProviderAdapterV2SessionRuntime,
@@ -54,15 +60,13 @@ import {
   OrchestrationV2LayerLive,
 } from "../orchestration-v2/runtimeLayer.ts";
 import { checkpointWorkspace } from "../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
-import {
-  CheckpointMcpService,
-  layer as checkpointMcpServiceLayer,
-} from "./CheckpointMcpService.ts";
+import * as CheckpointMcp from "./CheckpointMcpService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = ProviderInstanceId.make("codex-checkpoint-restore-test");
 const modelSelection = { instanceId: providerInstanceId, model: "gpt-test" };
+const isRollbackTargetUnsupported = Schema.is(OrchestratorCheckpointRollbackTargetUnsupportedError);
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-checkpoint-mcp-restore-",
 });
@@ -135,6 +139,10 @@ function makeAdapter(input: {
 function makeIntegrationLayer(input: {
   readonly rollbackCount: Ref.Ref<number>;
   readonly failProviderRollback: boolean;
+  readonly fingerprintGate?: {
+    readonly entered: Deferred.Deferred<void>;
+    readonly release: Deferred.Deferred<void>;
+  };
 }) {
   const adapter = makeAdapter(input);
   const providerInstance = {
@@ -160,9 +168,34 @@ function makeIntegrationLayer(input: {
     Layer.provide(ServerConfigLayer),
     Layer.provide(NodeServices.layer),
   );
-  const checkpointStore = CheckpointStore.layer.pipe(Layer.provide(vcsRegistry));
+  const checkpointStoreLive = CheckpointStore.layer.pipe(Layer.provide(vcsRegistry));
+  const fingerprintGate = input.fingerprintGate;
+  const checkpointStore =
+    fingerprintGate === undefined
+      ? checkpointStoreLive
+      : Layer.effect(
+          CheckpointStore.CheckpointStore,
+          Effect.gen(function* () {
+            const store = yield* CheckpointStore.CheckpointStore;
+            let fingerprintReads = 0;
+            return CheckpointStore.CheckpointStore.of({
+              ...store,
+              readWorkspaceFingerprint: (cwd) =>
+                store.readWorkspaceFingerprint(cwd).pipe(
+                  Effect.tap(() => {
+                    fingerprintReads += 1;
+                    return fingerprintReads === 2
+                      ? Deferred.succeed(fingerprintGate.entered, undefined).pipe(
+                          Effect.andThen(Deferred.await(fingerprintGate.release)),
+                        )
+                      : Effect.void;
+                  }),
+                ),
+            });
+          }),
+        ).pipe(Layer.provide(checkpointStoreLive));
   const runtime = Layer.merge(OrchestrationV2LayerLive, OrchestrationV2EventSinkLayerLive).pipe(
-    Layer.provide(mcpSessionRegistryTestLayer),
+    Layer.provide(McpSessionRegistryTestkit.layer),
     Layer.provide(SqlitePersistenceMemory),
     Layer.provideMerge(checkpointStore),
     Layer.provide(ServerConfigLayer),
@@ -170,7 +203,7 @@ function makeIntegrationLayer(input: {
     Layer.provide(providerRegistry),
     Layer.provide(NodeServices.layer),
   );
-  return checkpointMcpServiceLayer.pipe(
+  return CheckpointMcp.layer.pipe(
     Layer.provideMerge(runtime),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -186,6 +219,7 @@ function seedRollbackProjection(input: {
   readonly checkpointId: CheckpointId;
   readonly checkpointRef: CheckpointRef;
   readonly cwd: string;
+  readonly checkpointOrdinal?: number;
 }) {
   return Effect.gen(function* () {
     const now = yield* DateTime.now;
@@ -278,9 +312,9 @@ function seedRollbackProjection(input: {
           nodeId: scopeNodeId,
           parentScopeId: null,
           providerThreadId: input.providerThreadId,
-          kind: "manual",
+          kind: "root_run",
           ordinalWithinParent: 0,
-          advancesAppRunCount: false,
+          advancesAppRunCount: true,
           cwd: input.cwd,
           createdAt: now,
         },
@@ -299,7 +333,7 @@ function seedRollbackProjection(input: {
           runId: null,
           nodeId: scopeNodeId,
           parentCheckpointId: null,
-          ordinalWithinScope: 0,
+          ordinalWithinScope: input.checkpointOrdinal ?? 0,
           appRunOrdinal: null,
           ref: input.checkpointRef,
           status: "ready",
@@ -316,6 +350,11 @@ function restoreScenario(
   input: {
     readonly failProviderRollback: boolean;
     readonly admitRunBeforeWorker?: boolean;
+    readonly raceMessageDuringRestore?: boolean;
+    readonly fingerprintGate?: {
+      readonly entered: Deferred.Deferred<void>;
+      readonly release: Deferred.Deferred<void>;
+    };
   },
   rollbackCount: Ref.Ref<number>,
 ) {
@@ -333,7 +372,7 @@ function restoreScenario(
       const orchestrator = yield* OrchestratorV2;
       const eventSink = yield* EventSinkV2;
       const worker = yield* OrchestrationEffectWorkerV2;
-      const service = yield* CheckpointMcpService;
+      const service = yield* CheckpointMcp.CheckpointMcpService;
       const threadId = ThreadId.make(
         input.admitRunBeforeWorker
           ? "thread:checkpoint-restore:concurrent-run"
@@ -440,7 +479,37 @@ function restoreScenario(
         });
       }
 
-      assert.isTrue(yield* worker.runOnce);
+      if (input.raceMessageDuringRestore === true) {
+        if (input.fingerprintGate === undefined) {
+          return yield* Effect.die("fingerprint gate is required for the admission race");
+        }
+        const workerFiber = yield* worker.runOnce.pipe(Effect.forkChild);
+        yield* Deferred.await(input.fingerprintGate.entered);
+        const messageFiber = yield* orchestrator
+          .dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "mcp",
+            commandId: CommandId.make(`command:message-during-restore:${threadId}`),
+            threadId,
+            messageId: MessageId.make(`message:during-restore:${threadId}`),
+            text: "Run after checkpoint restoration.",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+          })
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        assert.isTrue(
+          messageFiber.pollUnsafe() === undefined,
+          "same-thread message admission must wait for the guarded restore",
+        );
+        yield* Deferred.succeed(input.fingerprintGate.release, undefined);
+        assert.isTrue(yield* Fiber.join(workerFiber));
+        yield* Fiber.join(messageFiber);
+      } else {
+        assert.isTrue(yield* worker.runOnce);
+      }
       const settled = yield* service.restore(invocation, restoreInput);
       assert.equal(
         settled.status,
@@ -456,7 +525,7 @@ function restoreScenario(
         input.admitRunBeforeWorker === true,
       );
       assert.lengthOf(yield* orchestrator.listCommandEffects(requested.commandId), 1);
-      if (input.admitRunBeforeWorker !== true) {
+      if (input.admitRunBeforeWorker !== true && input.raceMessageDuringRestore !== true) {
         assert.isFalse(yield* worker.runOnce);
       }
     }),
@@ -487,6 +556,89 @@ it.effect("rejects work admitted after acceptance at the worker workspace bounda
     return yield* restoreScenario(
       { failProviderRollback: false, admitRunBeforeWorker: true },
       rollbackCount,
+    ).pipe(Effect.provide(makeIntegrationLayer({ rollbackCount, failProviderRollback: false })));
+  }),
+);
+
+it.effect("serializes message admission across the guarded restore critical section", () =>
+  Effect.gen(function* () {
+    const rollbackCount = yield* Ref.make(0);
+    const fingerprintGate = {
+      entered: yield* Deferred.make<void>(),
+      release: yield* Deferred.make<void>(),
+    };
+    return yield* restoreScenario(
+      {
+        failProviderRollback: false,
+        raceMessageDuringRestore: true,
+        fingerprintGate,
+      },
+      rollbackCount,
+    ).pipe(
+      Effect.provide(
+        makeIntegrationLayer({
+          rollbackCount,
+          failProviderRollback: false,
+          fingerprintGate,
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("rejects a nonzero materialized baseline in the serialized command decision", () =>
+  Effect.gen(function* () {
+    const rollbackCount = yield* Ref.make(0);
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("mcp-restore-ambiguous-baseline");
+        const orchestrator = yield* OrchestratorV2;
+        const eventSink = yield* EventSinkV2;
+        const threadId = ThreadId.make("thread:checkpoint-restore:ambiguous-baseline");
+        const providerSessionId = ProviderSessionId.make(`provider-session:${threadId}`);
+        const providerThreadId = ProviderThreadId.make(`provider-thread:${threadId}`);
+        const scopeId = CheckpointScopeId.make(`scope:${threadId}`);
+        const checkpointId = CheckpointId.make(`checkpoint:${threadId}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`command:create:${threadId}`),
+          threadId,
+          projectId: ProjectId.make("project:checkpoint-restore"),
+          title: "Ambiguous checkpoint baseline",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        yield* seedRollbackProjection({
+          eventSink,
+          threadId,
+          providerSessionId,
+          providerThreadId,
+          runId: RunId.make(`run:${threadId}:completed`),
+          scopeId,
+          checkpointId,
+          checkpointRef: CheckpointRef.make("refs/t3/test/ambiguous-baseline"),
+          cwd,
+          checkpointOrdinal: 2,
+        });
+
+        const error = yield* orchestrator
+          .dispatch({
+            type: "checkpoint.rollback",
+            commandId: CommandId.make(`command:rollback:${threadId}`),
+            threadId,
+            scopeId,
+            checkpointId,
+            expectedIdle: true,
+            expectedWorkspaceFingerprint: "workspace-before",
+          })
+          .pipe(Effect.flip);
+        assert.isTrue(isRollbackTargetUnsupported(error));
+      }),
     ).pipe(Effect.provide(makeIntegrationLayer({ rollbackCount, failProviderRollback: false })));
   }),
 );
