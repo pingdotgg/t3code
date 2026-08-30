@@ -619,7 +619,11 @@ describe("ProjectScriptMcpService", () => {
         });
         assert.equal(partial.outcome, "terminal_opened_input_failed");
         assert.equal(partial.inputAcceptance, null);
-        assert.match(partial.error ?? "", /write/i);
+        assert.equal(
+          partial.error,
+          "The terminal was opened, but its saved script input was not accepted.",
+        );
+        assert.notInclude(partial.error ?? "", "script PTY write failed");
         assert.isNotNull(
           yield* manager.inspectSession({
             threadId: targetThreadId,

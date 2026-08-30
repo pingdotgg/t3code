@@ -9,6 +9,7 @@ import {
   type ProjectScriptMcpRunResult,
   type ProjectScriptMcpStopInput,
   type ProjectScriptMcpStopResult,
+  type TerminalMcpFailure,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -29,6 +30,20 @@ interface ScriptRunOwnership {
 }
 
 type ScriptRuns = Map<ThreadId, Map<string, ScriptRunOwnership>>;
+
+function terminalFailure(error: TerminalMcpFailure): ProjectScriptMcpFailure {
+  return new ProjectScriptMcpFailure({
+    code: error.code,
+    message:
+      error.code === "operation_failed" ? "The saved script operation failed." : error.message,
+  });
+}
+
+function terminalInputFailureMessage(error: TerminalMcpFailure): string {
+  return error.code === "operation_failed"
+    ? "The terminal was opened, but its saved script input was not accepted."
+    : error.message;
+}
 
 export class ProjectScriptMcpService extends Context.Service<
   ProjectScriptMcpService,
@@ -93,13 +108,7 @@ export const make = Effect.gen(function* () {
     scope: McpInvocationScope,
     threadId: ThreadId | undefined,
   ) {
-    return yield* terminals
-      .resolveTarget(scope, threadId)
-      .pipe(
-        Effect.mapError(
-          (error) => new ProjectScriptMcpFailure({ code: error.code, message: error.message }),
-        ),
-      );
+    return yield* terminals.resolveTarget(scope, threadId).pipe(Effect.mapError(terminalFailure));
   });
 
   const unsubscribe = yield* terminalManager.subscribeSessionInvalidation((handle) =>
@@ -148,12 +157,7 @@ export const make = Effect.gen(function* () {
                 threadId: resolved.target.thread.id,
                 terminalId: input.terminalId,
               })
-              .pipe(
-                Effect.mapError(
-                  (error) =>
-                    new ProjectScriptMcpFailure({ code: error.code, message: error.message }),
-                ),
-              );
+              .pipe(Effect.mapError(terminalFailure));
             const ownership = {
               projectId: resolved.project.id,
               scriptId: script.id,
@@ -194,7 +198,7 @@ export const make = Effect.gen(function* () {
             outcome: "terminal_opened_input_failed" as const,
             terminal: opened.terminal,
             inputAcceptance: null,
-            error: error.message,
+            error: terminalInputFailureMessage(error),
             previewUrl: script.previewUrl ?? null,
             previewAutoOpened: false as const,
           }),
@@ -232,11 +236,7 @@ export const make = Effect.gen(function* () {
             terminalId: input.terminalId,
             handle: ownership.handle,
           })
-          .pipe(
-            Effect.mapError(
-              (error) => new ProjectScriptMcpFailure({ code: error.code, message: error.message }),
-            ),
-          );
+          .pipe(Effect.mapError(terminalFailure));
         if (!closed) {
           removeRun(resolved.target.thread.id, input.terminalId, ownership.handle);
           return yield* new ProjectScriptMcpFailure({
