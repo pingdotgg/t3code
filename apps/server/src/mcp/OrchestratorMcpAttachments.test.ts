@@ -27,7 +27,7 @@ import {
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
-import { layer, OrchestratorMcpService } from "./OrchestratorMcpService.ts";
+import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 
 it.effect(
   "retains fresh accepted claims and releases unused replay claims after projection errors",
@@ -84,10 +84,10 @@ it.effect(
         }),
         Layer.mock(ScheduledTaskService)({}),
       );
-      const testLayer = layer.pipe(Layer.provideMerge(dependencies));
+      const testLayer = OrchestratorMcpService.layer.pipe(Layer.provideMerge(dependencies));
 
       yield* Effect.gen(function* () {
-        const service = yield* OrchestratorMcpService;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         const config = yield* ServerConfig.ServerConfig;
         const scope: McpInvocationScope = {
           environmentId: EnvironmentId.make("environment:mcp-attachment-cleanup"),
