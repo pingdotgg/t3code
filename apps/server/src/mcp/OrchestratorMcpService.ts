@@ -202,13 +202,13 @@ function threadLaunchPolicyFailure(
   if (isRuntimeModeCeilingError(cause)) {
     return failure(
       "runtime_mode_escalation_denied",
-      `Child runtime mode ${cause.targetMode} is broader than the caller ceiling ${cause.capturedCallerMode}.`,
+      `Child runtime mode ${cause.targetMode} exceeds the caller ceiling (captured ${cause.capturedCallerMode}; current ${cause.currentCallerMode}).`,
     );
   }
   if (isInteractionModeCeilingError(cause)) {
     return failure(
       "interaction_mode_escalation_denied",
-      `Child interaction mode ${cause.targetMode} is broader than the caller ceiling ${cause.capturedCallerMode}.`,
+      `Child interaction mode ${cause.targetMode} exceeds the caller ceiling (captured ${cause.capturedCallerMode}; current ${cause.currentCallerMode}).`,
     );
   }
   return null;

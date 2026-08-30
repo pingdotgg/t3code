@@ -634,12 +634,19 @@ describe("orchestrator MCP toolkit", () => {
                 ...actual,
                 withProjectCreationAdmission: (input, effect) =>
                   actual.withProjectCreationAdmission(input, (receipt) =>
-                    input.commandId === deletionRaceCommandId && Option.isNone(receipt)
-                      ? Deferred.succeed(creationAdmissionEntered, undefined).pipe(
-                          Effect.andThen(Deferred.await(allowCreationAdmission)),
-                          Effect.andThen(effect(receipt)),
-                        )
-                      : effect(receipt),
+                    Effect.gen(function* () {
+                      if (input.commandId === deletionRaceCommandId && Option.isNone(receipt)) {
+                        yield* Deferred.succeed(creationAdmissionEntered, undefined);
+                        yield* Deferred.await(allowCreationAdmission);
+                      }
+                      const gate = launchReceiptReadGates.get(input.commandId);
+                      if (gate !== undefined) {
+                        yield* Deferred.succeed(gate.entered, undefined);
+                        yield* Deferred.await(gate.release);
+                        launchReceiptReadGates.delete(input.commandId);
+                      }
+                      return yield* effect(receipt);
+                    }),
                   ),
               });
             }),
@@ -2152,6 +2159,8 @@ describe("orchestrator MCP toolkit", () => {
             const preCreateCall = yield* Fiber.join(preCreateFiber);
             expect(preCreateCall.structuredContent).toMatchObject({
               code: "interaction_mode_escalation_denied",
+              message:
+                "Child interaction mode default exceeds the caller ceiling (captured default; current plan).",
             });
             const preCreateThreadId = ThreadId.make(
               `thread:mcp:mcp-provider-session-parent:${preCreateKey}:0`,
@@ -2204,6 +2213,8 @@ describe("orchestrator MCP toolkit", () => {
             const betweenCreateAndMessageCall = yield* Fiber.join(betweenCreateAndMessageFiber);
             expect(betweenCreateAndMessageCall.structuredContent).toMatchObject({
               code: "runtime_mode_escalation_denied",
+              message:
+                "Child runtime mode full-access exceeds the caller ceiling (captured full-access; current approval-required).",
             });
             const partialProjection = yield* orchestrator.getThreadProjection(
               betweenCreateAndMessageThreadId,

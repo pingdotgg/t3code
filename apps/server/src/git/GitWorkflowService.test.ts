@@ -1,13 +1,51 @@
 import { assert, describe, expect, it, vi } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { GitCommandError, VcsRepositoryDetectionError } from "@t3tools/contracts";
 
 import * as GitManager from "./GitManager.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriver from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+
+const unusedVcsDriver = VcsDriver.VcsDriver.of({
+  capabilities: {
+    kind: "git",
+    supportsWorktrees: true,
+    supportsBookmarks: false,
+    supportsAtomicSnapshot: false,
+    supportsPushDefaultRemote: true,
+    ignoreClassifier: "native",
+  },
+  execute: () => Effect.die("unused VCS driver execute"),
+  detectRepository: () => Effect.die("unused VCS repository detection"),
+  isInsideWorkTree: () => Effect.die("unused VCS worktree lookup"),
+  listWorkspaceFiles: () => Effect.die("unused VCS workspace listing"),
+  listRemotes: () => Effect.die("unused VCS remote listing"),
+  filterIgnoredPaths: () => Effect.die("unused VCS ignore classification"),
+  initRepository: () => Effect.die("unused VCS repository initialization"),
+});
+
+function gitHandle(cwd: string): VcsDriverRegistry.VcsDriverHandle {
+  return {
+    kind: "git",
+    repository: {
+      kind: "git",
+      rootPath: cwd,
+      metadataPath: `${cwd}/.git`,
+      freshness: {
+        source: "live-local",
+        observedAt: DateTime.makeUnsafe("2026-08-30T00:00:00.000Z"),
+        expiresAt: Option.none(),
+      },
+    },
+    driver: unusedVcsDriver,
+  };
+}
 
 function makeLayer(input: {
   readonly detect: VcsDriverRegistry.VcsDriverRegistry["Service"]["detect"];
@@ -221,7 +259,7 @@ describe("GitWorkflowService", () => {
       Effect.provide(
         makeLayer({
           detect: () => Effect.succeed(null),
-          resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+          resolve: ({ cwd }) => Effect.succeed(gitHandle(cwd)),
           execute: (input) => Effect.fail(input.cwd === "/detached" ? detached : corrupt),
         }),
       ),
