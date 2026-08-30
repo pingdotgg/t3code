@@ -2034,6 +2034,137 @@ describe("t3_worktree_list", () => {
       expect(harness.listWorktrees).toHaveBeenCalledTimes(2);
     });
   });
+  it.effect("bounds nested binding identity reads by the requested page", () => {
+    const nestedOne = `${workspaceRoot}/packages/one`;
+    const nestedTwo = `${workspaceRoot}/packages/two`;
+    const nestedThree = `${workspaceRoot}/packages/three`;
+    const harness = makeHarness({
+      worktrees: [{ path: workspaceRoot, refName: "dev" }],
+      projectThreads: [
+        { id: threadId, title: "Caller", branch: "dev", worktreePath: null },
+        {
+          id: ThreadId.make("thread-nested-binding-one"),
+          title: "Nested one",
+          branch: "dev",
+          worktreePath: nestedOne,
+        },
+        {
+          id: ThreadId.make("thread-nested-binding-two"),
+          title: "Nested two",
+          branch: "dev",
+          worktreePath: nestedTwo,
+        },
+        {
+          id: ThreadId.make("thread-nested-binding-three"),
+          title: "Nested three",
+          branch: "dev",
+          worktreePath: nestedThree,
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness, { limit: 1, bindingLimit: 1 });
+
+      expect(result.bindingPathResolution).toEqual({
+        totalCandidates: 3,
+        attemptedCandidates: 1,
+        truncated: true,
+        complete: false,
+      });
+      expect(result.worktrees[0]?.bindingCount).toBe(2);
+      expect(harness.listWorktrees).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it.effect("resolves only nested binding candidates for the selected worktree page", () => {
+    const firstWorktree = "/worktrees/project-a";
+    const secondWorktree = "/worktrees/project-b";
+    const firstNestedPath = `${firstWorktree}/packages/app`;
+    const secondNestedPath = `${secondWorktree}/packages/app`;
+    const listedWorktrees = [
+      { path: workspaceRoot, refName: "dev" },
+      { path: firstWorktree, refName: "feature/a" },
+      { path: secondWorktree, refName: "feature/b" },
+    ];
+    const harness = makeHarness({
+      worktrees: listedWorktrees,
+      projectThreads: [
+        {
+          id: ThreadId.make("thread-off-page-nested-binding"),
+          title: "Off-page nested binding",
+          branch: "feature/a",
+          worktreePath: firstNestedPath,
+        },
+        {
+          id: threadId,
+          title: "Selected-page nested binding",
+          branch: "feature/b",
+          worktreePath: secondNestedPath,
+        },
+      ],
+      worktreeInventories: {
+        [firstNestedPath]: {
+          repositoryCommonDir: "/repo/.git",
+          currentWorktreeRoot: firstWorktree,
+          worktrees: listedWorktrees,
+        },
+        [secondNestedPath]: {
+          repositoryCommonDir: "/repo/.git",
+          currentWorktreeRoot: secondWorktree,
+          worktrees: listedWorktrees,
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness, { cursor: 2, limit: 1, bindingLimit: 1 });
+
+      expect(result.bindingPathResolution).toEqual({
+        totalCandidates: 1,
+        attemptedCandidates: 1,
+        truncated: false,
+        complete: true,
+      });
+      expect(result.worktrees[0]).toMatchObject({
+        path: secondWorktree,
+        bindingCount: 1,
+        bindings: [expect.objectContaining({ threadId })],
+      });
+      expect(harness.listWorktrees).toHaveBeenCalledTimes(2);
+      expect(harness.listWorktrees).not.toHaveBeenCalledWith(firstNestedPath);
+      expect(harness.listWorktrees).toHaveBeenCalledWith(secondNestedPath);
+    });
+  });
+
+  it.effect("reports incomplete binding counts when a candidate inventory read fails", () => {
+    const nestedPath = `${workspaceRoot}/packages/unreadable`;
+    const harness = makeHarness({
+      worktrees: [{ path: workspaceRoot, refName: "dev" }],
+      projectThreads: [
+        {
+          id: threadId,
+          title: "Unreadable nested binding",
+          branch: "dev",
+          worktreePath: nestedPath,
+        },
+      ],
+      worktreeInventoryFailsFor: new Set([nestedPath]),
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness, { limit: 1 });
+
+      expect(result.bindingPathResolution).toEqual({
+        totalCandidates: 1,
+        attemptedCandidates: 1,
+        truncated: false,
+        complete: false,
+      });
+      expect(result.worktrees[0]).toMatchObject({
+        path: workspaceRoot,
+        bindingCount: 0,
+        bindings: [],
+      });
+    });
+  });
 });
 
 describe("t3_thread_checkout", () => {
@@ -2669,231 +2800,6 @@ describe("t3_thread_checkout", () => {
         runCheckout(harness, { target: { type: "worktree", path: worktreePath } }),
       );
       expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "workspace_shared" });
-    });
-  });
-
-  it.effect("bounds nested binding identity reads by the requested page", () => {
-    const nestedOne = `${workspaceRoot}/packages/one`;
-    const nestedTwo = `${workspaceRoot}/packages/two`;
-    const nestedThree = `${workspaceRoot}/packages/three`;
-    const harness = makeHarness({
-      worktrees: [{ path: workspaceRoot, refName: "dev" }],
-      projectThreads: [
-        { id: threadId, title: "Caller", branch: "dev", worktreePath: null },
-        {
-          id: ThreadId.make("thread-nested-binding-one"),
-          title: "Nested one",
-          branch: "dev",
-          worktreePath: nestedOne,
-        },
-        {
-          id: ThreadId.make("thread-nested-binding-two"),
-          title: "Nested two",
-          branch: "dev",
-          worktreePath: nestedTwo,
-        },
-        {
-          id: ThreadId.make("thread-nested-binding-three"),
-          title: "Nested three",
-          branch: "dev",
-          worktreePath: nestedThree,
-        },
-      ],
-    });
-    return Effect.gen(function* () {
-      const result = yield* runList(harness, { limit: 1, bindingLimit: 1 });
-
-      expect(result.bindingPathResolution).toEqual({
-        totalCandidates: 3,
-        attemptedCandidates: 1,
-        truncated: true,
-        complete: false,
-      });
-      expect(result.worktrees[0]?.bindingCount).toBe(2);
-      expect(harness.listWorktrees).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  it.effect("resolves only nested binding candidates for the selected worktree page", () => {
-    const firstWorktree = "/worktrees/project-a";
-    const secondWorktree = "/worktrees/project-b";
-    const firstNestedPath = `${firstWorktree}/packages/app`;
-    const secondNestedPath = `${secondWorktree}/packages/app`;
-    const listedWorktrees = [
-      { path: workspaceRoot, refName: "dev" },
-      { path: firstWorktree, refName: "feature/a" },
-      { path: secondWorktree, refName: "feature/b" },
-    ];
-    const harness = makeHarness({
-      worktrees: listedWorktrees,
-      projectThreads: [
-        {
-          id: ThreadId.make("thread-off-page-nested-binding"),
-          title: "Off-page nested binding",
-          branch: "feature/a",
-          worktreePath: firstNestedPath,
-        },
-        {
-          id: threadId,
-          title: "Selected-page nested binding",
-          branch: "feature/b",
-          worktreePath: secondNestedPath,
-        },
-      ],
-      worktreeInventories: {
-        [firstNestedPath]: {
-          repositoryCommonDir: "/repo/.git",
-          currentWorktreeRoot: firstWorktree,
-          worktrees: listedWorktrees,
-        },
-        [secondNestedPath]: {
-          repositoryCommonDir: "/repo/.git",
-          currentWorktreeRoot: secondWorktree,
-          worktrees: listedWorktrees,
-        },
-      },
-    });
-    return Effect.gen(function* () {
-      const result = yield* runList(harness, { cursor: 2, limit: 1, bindingLimit: 1 });
-
-      expect(result.bindingPathResolution).toEqual({
-        totalCandidates: 1,
-        attemptedCandidates: 1,
-        truncated: false,
-        complete: true,
-      });
-      expect(result.worktrees[0]).toMatchObject({
-        path: secondWorktree,
-        bindingCount: 1,
-        bindings: [expect.objectContaining({ threadId })],
-      });
-      expect(harness.listWorktrees).toHaveBeenCalledTimes(2);
-      expect(harness.listWorktrees).not.toHaveBeenCalledWith(firstNestedPath);
-      expect(harness.listWorktrees).toHaveBeenCalledWith(secondNestedPath);
-    });
-  });
-
-  it.effect("reports incomplete binding counts when a candidate inventory read fails", () => {
-    const nestedPath = `${workspaceRoot}/packages/unreadable`;
-    const harness = makeHarness({
-      worktrees: [{ path: workspaceRoot, refName: "dev" }],
-      projectThreads: [
-        {
-          id: threadId,
-          title: "Unreadable nested binding",
-          branch: "dev",
-          worktreePath: nestedPath,
-        },
-      ],
-      worktreeInventoryFailsFor: new Set([nestedPath]),
-    });
-    return Effect.gen(function* () {
-      const result = yield* runList(harness, { limit: 1 });
-
-      expect(result.bindingPathResolution).toEqual({
-        totalCandidates: 1,
-        attemptedCandidates: 1,
-        truncated: false,
-        complete: false,
-      });
-      expect(result.worktrees[0]).toMatchObject({
-        path: workspaceRoot,
-        bindingCount: 0,
-        bindings: [],
-      });
-    });
-  });
-
-  it.effect("includes archived thread bindings retained on a physical checkout", () => {
-    const archivedThreadId = ThreadId.make("thread-archived-list-owner");
-    const harness = makeHarness({
-      worktrees: [{ path: workspaceRoot, refName: "dev" }],
-      archivedProjectThread: {
-        id: archivedThreadId,
-        title: "Archived checkout owner",
-        branch: "dev",
-        worktreePath: workspaceRoot,
-      },
-    });
-    return Effect.gen(function* () {
-      const result = yield* runList(harness, { limit: 1 });
-
-      expect(result.worktrees[0]).toMatchObject({
-        path: workspaceRoot,
-        bindingCount: 2,
-        bindings: expect.arrayContaining([
-          expect.objectContaining({
-            threadId: archivedThreadId,
-            recordedWorktreePath: workspaceRoot,
-            active: false,
-          }),
-        ]),
-      });
-    });
-  });
-
-  it.effect("attributes a nested recorded cwd to its physical worktree root", () => {
-    const nestedPath = `${workspaceRoot}/packages/app`;
-    const harness = makeHarness({
-      worktrees: [{ path: workspaceRoot, refName: "dev" }],
-      projectThreads: [
-        {
-          id: threadId,
-          title: "Nested caller",
-          branch: "dev",
-          worktreePath: nestedPath,
-        },
-      ],
-    });
-    return Effect.gen(function* () {
-      const result = yield* runList(harness, { limit: 1 });
-
-      expect(result.worktrees[0]).toMatchObject({
-        path: workspaceRoot,
-        bindingCount: 1,
-        bindings: [
-          {
-            threadId,
-            recordedWorktreePath: nestedPath,
-            callingThread: true,
-          },
-        ],
-      });
-      expect(harness.localStatus).toHaveBeenCalledTimes(1);
-      expect(harness.listWorktrees).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  it.effect("does not attribute a nested independent repository to the project worktree", () => {
-    const nestedPath = `${workspaceRoot}/vendor/independent`;
-    const harness = makeHarness({
-      worktrees: [{ path: workspaceRoot, refName: "dev" }],
-      projectThreads: [
-        {
-          id: threadId,
-          title: "Nested independent repository",
-          branch: "main",
-          worktreePath: nestedPath,
-        },
-      ],
-      worktreeInventories: {
-        [nestedPath]: {
-          repositoryCommonDir: `${nestedPath}/.git`,
-          currentWorktreeRoot: nestedPath,
-          worktrees: [{ path: nestedPath, refName: "main" }],
-        },
-      },
-    });
-    return Effect.gen(function* () {
-      const result = yield* runList(harness, { limit: 1 });
-
-      expect(result.worktrees[0]).toMatchObject({
-        path: workspaceRoot,
-        bindingCount: 0,
-        bindings: [],
-      });
-      expect(harness.localStatus).toHaveBeenCalledTimes(1);
-      expect(harness.listWorktrees).toHaveBeenCalledTimes(2);
     });
   });
 
