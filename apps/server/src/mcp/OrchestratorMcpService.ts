@@ -900,7 +900,14 @@ const make = Effect.gen(function* () {
           failure("invalid_request", `Unable to read the workspace branch: ${errorMessage(error)}`),
         ),
       );
-    const branch = result.exitCode === 0 ? result.stdout.trim() : "";
+    if (result.exitCode === 1) return null;
+    if (result.exitCode !== 0) {
+      return yield* failure(
+        "invalid_request",
+        `Unable to read the workspace branch because Git exited with status ${result.exitCode}.`,
+      );
+    }
+    const branch = result.stdout.trim();
     return branch.length === 0 ? null : branch;
   });
 
@@ -918,6 +925,7 @@ const make = Effect.gen(function* () {
           canonicalExecutionPath: yield* canonicalPath(project.workspaceRoot, "project root"),
           canonicalWorktreeRoot: null,
           branch: null,
+          gitDetected: false,
         } as const;
       }
       if (projectRepository.kind !== "git") {
@@ -962,6 +970,7 @@ const make = Effect.gen(function* () {
         canonicalExecutionPath: canonicalCandidate,
         canonicalWorktreeRoot: canonicalCandidateRoot,
         branch: yield* actualGitBranch(candidateRepository, canonicalCandidate),
+        gitDetected: true,
       } as const;
     },
   );
@@ -990,21 +999,29 @@ const make = Effect.gen(function* () {
       if (explicitExisting !== undefined || useParentWorktree) {
         const requestedPath = explicitExisting?.worktreePath ?? parent.thread.worktreePath!;
         const workspace = yield* inspectLaunchWorkspace(project, requestedPath, true);
+        const expectedBranch = explicitExisting?.branch ?? workspace.branch;
         return {
           type: "existing_worktree",
           worktreePath: workspace.canonicalWorktreeRoot!,
           ...(workspace.branch === null ? {} : { branch: workspace.branch }),
-          ...(explicitExisting?.branch === undefined
-            ? {}
-            : { expectedBranch: explicitExisting.branch }),
+          ...(workspace.gitDetected ? { expectedBranch } : {}),
         };
       }
       const workspace = yield* inspectLaunchWorkspace(project, project.workspaceRoot, false);
-      const expectedBranch = requested?.type === "root" ? requested.branch : undefined;
+      if (!workspace.gitDetected && requested?.type === "root" && requested.branch !== undefined) {
+        return yield* failure(
+          "invalid_request",
+          `Project ${project.id} does not have a Git repository for branch '${requested.branch}'.`,
+        );
+      }
+      const expectedBranch =
+        requested?.type === "root" && requested.branch !== undefined
+          ? requested.branch
+          : workspace.branch;
       return {
         type: "root",
         ...(workspace.branch === null ? {} : { branch: workspace.branch }),
-        ...(expectedBranch === undefined ? {} : { expectedBranch }),
+        ...(workspace.gitDetected ? { expectedBranch } : {}),
       };
     },
   );
@@ -1661,51 +1678,179 @@ const make = Effect.gen(function* () {
           );
         }
         const parentNodeId = parentRun.rootNodeId;
-        const providers = yield* loadProviders;
         const key = yield* requestKey(input.clientRequestId);
         const created = yield* Effect.forEach(
           input.threads,
           (request, index) =>
             Effect.gen(function* () {
-              const target = yield* resolveTarget({
-                parent,
-                target: request.target,
-                providers,
-              });
-              const runtimeMode = resolveLaunchRuntimeMode(
-                parent.thread.runtimeMode,
-                request.runtimeMode,
-              );
-              const interactionMode = resolveLaunchInteractionMode(
-                parent.thread.interactionMode,
-                request.interactionMode,
-              );
               const projectId = yield* resolveProjectId(parent, request.projectId);
-              const project = yield* loadLaunchProject(projectId);
-              const workspaceStrategy = yield* resolveLaunchWorkspace(
-                parent,
-                project,
-                request.workspaceStrategy,
-              );
+              const commandId = stableCommandId({
+                scope,
+                requestKey: key,
+                operation: "create-thread",
+                index,
+              });
               const threadId = stableThreadId({
                 scope,
                 requestKey: key,
                 index,
               });
-              const title = threadTitle({
-                parentTitle: parent.thread.title,
-                prompt: request.prompt,
-                title: request.title,
-                index,
+              const initialMessageId = stableMessageId({ scope, requestKey: key, index });
+              const launchReceipt = yield* threadManagement
+                .withProjectCreationAdmission({ projectId, commandId }, (receipt) =>
+                  Effect.succeed(receipt),
+                )
+                .pipe(
+                  Effect.mapError(() =>
+                    failure(
+                      "orchestration_error",
+                      `Unable to read the accepted launch for thread ${index + 1}.`,
+                    ),
+                  ),
+                );
+              if (
+                Option.isSome(launchReceipt) &&
+                (launchReceipt.value.commandType !== "thread.create" ||
+                  launchReceipt.value.threadId !== threadId)
+              ) {
+                return yield* failure(
+                  "invalid_request",
+                  `clientRequestId conflicts with an existing command for thread ${index + 1}.`,
+                );
+              }
+              const acceptedProjection =
+                Option.isSome(launchReceipt) && launchReceipt.value.status === "accepted"
+                  ? Option.some(yield* loadProjection(threadId))
+                  : Option.none<OrchestrationV2ThreadProjection>();
+              if (
+                Option.isSome(acceptedProjection) &&
+                (acceptedProjection.value.thread.id !== threadId ||
+                  acceptedProjection.value.thread.projectId !== projectId)
+              ) {
+                return yield* failure(
+                  "invalid_request",
+                  `clientRequestId was already accepted for a different project at thread ${index + 1}.`,
+                );
+              }
+              const mayReplayDurableRoot = yield* Effect.gen(function* () {
+                if (
+                  Option.isNone(acceptedProjection) ||
+                  acceptedProjection.value.thread.worktreePath !== null ||
+                  request.workspaceStrategy?.type === "new_worktree"
+                ) {
+                  return false;
+                }
+                if (request.prompt === undefined) return true;
+                const messageCommandId = CommandId.make(`${commandId}:initial-message`);
+                const messageReceipt = yield* threadManagement
+                  .withProjectCreationAdmission(
+                    { projectId, commandId: messageCommandId },
+                    (receipt) => Effect.succeed(receipt),
+                  )
+                  .pipe(
+                    Effect.mapError(() =>
+                      failure(
+                        "orchestration_error",
+                        `Unable to read the accepted initial message for thread ${index + 1}.`,
+                      ),
+                    ),
+                  );
+                if (
+                  Option.isSome(messageReceipt) &&
+                  (messageReceipt.value.commandType !== "message.dispatch" ||
+                    messageReceipt.value.threadId !== threadId)
+                ) {
+                  return yield* failure(
+                    "invalid_request",
+                    `clientRequestId conflicts with an existing initial message for thread ${index + 1}.`,
+                  );
+                }
+                if (Option.isNone(messageReceipt) || messageReceipt.value.status !== "accepted") {
+                  return false;
+                }
+                const initialMessage = acceptedProjection.value.messages.find(
+                  (message) => message.id === initialMessageId,
+                );
+                if (initialMessage?.runId === null || initialMessage?.runId === undefined) {
+                  return false;
+                }
+                const initialRun = acceptedProjection.value.runs.find(
+                  (run) => run.id === initialMessage.runId,
+                );
+                return initialRun !== undefined && initialRun.status !== "preparing";
               });
+              const target = Option.isSome(acceptedProjection)
+                ? { modelSelection: acceptedProjection.value.thread.modelSelection }
+                : Option.isSome(launchReceipt)
+                  ? { modelSelection: parent.thread.modelSelection }
+                  : yield* resolveTarget({
+                      parent,
+                      target: request.target,
+                      providers: yield* loadProviders,
+                    });
+              const runtimeMode = Option.isSome(acceptedProjection)
+                ? acceptedProjection.value.thread.runtimeMode
+                : resolveLaunchRuntimeMode(parent.thread.runtimeMode, request.runtimeMode);
+              const interactionMode = Option.isSome(acceptedProjection)
+                ? acceptedProjection.value.thread.interactionMode
+                : resolveLaunchInteractionMode(
+                    parent.thread.interactionMode,
+                    request.interactionMode,
+                  );
+              const title = Option.isSome(acceptedProjection)
+                ? acceptedProjection.value.thread.title
+                : threadTitle({
+                    parentTitle: parent.thread.title,
+                    prompt: request.prompt,
+                    title: request.title,
+                    index,
+                  });
+              const workspaceStrategy: ThreadLaunch.ThreadLaunchWorkspaceStrategy = Option.isSome(
+                acceptedProjection,
+              )
+                ? acceptedProjection.value.thread.worktreePath !== null
+                  ? {
+                      type: "existing_worktree",
+                      worktreePath: acceptedProjection.value.thread.worktreePath,
+                      ...(acceptedProjection.value.thread.branch === null
+                        ? {}
+                        : { branch: acceptedProjection.value.thread.branch }),
+                    }
+                  : request.workspaceStrategy?.type === "new_worktree"
+                    ? {
+                        type: "worktree",
+                        baseRef: request.workspaceStrategy.baseRef,
+                        ...(acceptedProjection.value.thread.branch === null
+                          ? request.workspaceStrategy.branch === undefined
+                            ? {}
+                            : { branch: request.workspaceStrategy.branch }
+                          : { branch: acceptedProjection.value.thread.branch }),
+                        ...(request.workspaceStrategy.startFromOrigin === undefined
+                          ? {}
+                          : { startFromOrigin: request.workspaceStrategy.startFromOrigin }),
+                      }
+                    : mayReplayDurableRoot
+                      ? {
+                          type: "root",
+                          ...(acceptedProjection.value.thread.branch === null
+                            ? {}
+                            : { branch: acceptedProjection.value.thread.branch }),
+                        }
+                      : yield* resolveLaunchWorkspace(
+                          parent,
+                          yield* loadLaunchProject(projectId),
+                          request.workspaceStrategy,
+                        )
+                : Option.isSome(launchReceipt)
+                  ? { type: "root" }
+                  : yield* resolveLaunchWorkspace(
+                      parent,
+                      yield* loadLaunchProject(projectId),
+                      request.workspaceStrategy,
+                    );
               const launched = yield* threadLaunch
                 .launch({
-                  commandId: stableCommandId({
-                    scope,
-                    requestKey: key,
-                    operation: "create-thread",
-                    index,
-                  }),
+                  commandId,
                   threadId,
                   projectId,
                   title,
@@ -1724,7 +1869,7 @@ const make = Effect.gen(function* () {
                     ? {}
                     : {
                         initialMessage: {
-                          messageId: stableMessageId({ scope, requestKey: key, index }),
+                          messageId: initialMessageId,
                           text: request.prompt,
                           attachments: [],
                         },
@@ -1743,6 +1888,12 @@ const make = Effect.gen(function* () {
                   ),
                 );
               const projection = launched.projection;
+              if (projection.thread.id !== threadId || projection.thread.projectId !== projectId) {
+                return yield* failure(
+                  "invalid_request",
+                  `clientRequestId resolved to a different thread or project at thread ${index + 1}.`,
+                );
+              }
               const run =
                 launched.initialMessageRunId === null
                   ? undefined
@@ -1751,7 +1902,7 @@ const make = Effect.gen(function* () {
                     );
               yield* threadManagement
                 .recordServerCreatedThread({
-                  targetProjectId: projectId,
+                  targetProjectId: projection.thread.projectId,
                   command: {
                     type: "thread.created.record",
                     commandId: stableCommandId({
@@ -1763,7 +1914,7 @@ const make = Effect.gen(function* () {
                     parentThreadId: scope.threadId,
                     parentRunId: parentRun.id,
                     parentNodeId,
-                    targetThreadId: threadId,
+                    targetThreadId: projection.thread.id,
                     targetRunId: launched.initialMessageRunId,
                   },
                 })
@@ -1776,15 +1927,15 @@ const make = Effect.gen(function* () {
                   ),
                 );
               return {
-                threadId,
-                projectId,
+                threadId: projection.thread.id,
+                projectId: projection.thread.projectId,
                 runId: launched.initialMessageRunId,
                 status: run?.status ?? "idle",
                 title: projection.thread.title,
                 createdBy: projection.thread.createdBy,
                 creationSource: projection.thread.creationSource,
-                providerInstanceId: target.modelSelection.instanceId,
-                model: target.modelSelection.model,
+                providerInstanceId: projection.thread.modelSelection.instanceId,
+                model: projection.thread.modelSelection.model,
               } satisfies OrchestratorMcpCreatedThread;
             }),
           { concurrency: 1 },

@@ -38,6 +38,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -516,6 +517,7 @@ describe("orchestrator MCP toolkit", () => {
           const deletionRaceProjectState = yield* Ref.make<Project>(deletionRaceProject);
           const creationAdmissionEntered = yield* Deferred.make<void>();
           const allowCreationAdmission = yield* Deferred.make<void>();
+          const deletionRaceAdmissionReads = yield* Ref.make(0);
           const deletionLockAttemptSettled = yield* Deferred.make<void>();
           const deletionLockAcquired = yield* Deferred.make<void>();
           const allowDeletion = yield* Deferred.make<void>();
@@ -524,6 +526,11 @@ describe("orchestrator MCP toolkit", () => {
           const deletionRaceCommandId = CommandId.make(
             "command:mcp:mcp-provider-session-delete-race:create-thread:delete-create-race:0",
           );
+          const missingWorkspaceReplayThreadId = ThreadId.make(
+            "thread:mcp:mcp-provider-session-parent:create-existing-worktree-replay-after-removal:0",
+          );
+          const missingWorkspaceSetupEntered = yield* Deferred.make<void>();
+          const allowMissingWorkspaceSetup = yield* Deferred.make<void>();
           const targetWorkspace = yield* checkpointWorkspace("orchestrator-mcp-target");
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
@@ -640,7 +647,14 @@ describe("orchestrator MCP toolkit", () => {
                 withProjectCreationAdmission: (input, effect) =>
                   actual.withProjectCreationAdmission(input, (receipt) =>
                     Effect.gen(function* () {
-                      if (input.commandId === deletionRaceCommandId && Option.isNone(receipt)) {
+                      const deletionRaceRead =
+                        input.commandId === deletionRaceCommandId
+                          ? yield* Ref.modify(deletionRaceAdmissionReads, (count) => [
+                              count + 1,
+                              count + 1,
+                            ])
+                          : 0;
+                      if (deletionRaceRead === 2 && Option.isNone(receipt)) {
                         yield* Deferred.succeed(creationAdmissionEntered, undefined);
                         yield* Deferred.await(allowCreationAdmission);
                       }
@@ -857,7 +871,13 @@ describe("orchestrator MCP toolkit", () => {
                     ),
                 }),
                 Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
-                  runForThread: () => Effect.succeed({ status: "no-script" }),
+                  runForThread: (input) =>
+                    input.threadId === missingWorkspaceReplayThreadId
+                      ? Deferred.succeed(missingWorkspaceSetupEntered, undefined).pipe(
+                          Effect.andThen(Deferred.await(allowMissingWorkspaceSetup)),
+                          Effect.as({ status: "no-script" } as const),
+                        )
+                      : Effect.succeed({ status: "no-script" }),
                 }),
                 Layer.mock(TextGeneration.TextGeneration)({}),
                 ServerSettings.layerTest({}),
@@ -889,10 +909,11 @@ describe("orchestrator MCP toolkit", () => {
             Layer.provide(threadLaunchLayer),
             Layer.provide(vcsDriverRegistryLayer),
             Layer.provideMerge(vcsProcessLayer),
-            Layer.provide(NodeServices.layer),
+            Layer.provideMerge(NodeServices.layer),
           );
 
           yield* Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
             const orchestrator = yield* OrchestratorV2;
             const server = yield* McpServer.McpServer;
             yield* orchestrator.dispatch({
@@ -1965,6 +1986,22 @@ describe("orchestrator MCP toolkit", () => {
             ).toMatchObject({ state: "disposed" });
             yield* expectOffersToStay(0);
 
+            const vcsProcess = yield* VcsProcess.VcsProcess;
+            const currentBranch = (yield* vcsProcess.run({
+              operation: "OrchestratorMcpToolkit.integration.currentBranch",
+              command: "git",
+              cwd,
+              args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+              timeoutMs: 10_000,
+            })).stdout.trim();
+            const canonicalCwd = yield* fileSystem.realPath(cwd);
+            yield* Ref.set(
+              currentLaunchBranches,
+              new Map([
+                [cwd, currentBranch],
+                [canonicalCwd, currentBranch],
+              ]),
+            );
             const createInput = {
               clientRequestId: "create-thread-batch-1",
               threads: [
@@ -1982,6 +2019,7 @@ describe("orchestrator MCP toolkit", () => {
             };
             const createCall = yield* invoke("create_threads", createInput);
             expect(createCall.isError).toBe(false);
+            expect(createCall.structuredContent).toHaveProperty("threads");
             const created = yield* decodeCreateThreadsResult(createCall.structuredContent).pipe(
               Effect.orDie,
             );
@@ -2057,7 +2095,6 @@ describe("orchestrator MCP toolkit", () => {
               },
             ]);
 
-            const vcsProcess = yield* VcsProcess.VcsProcess;
             const targetBranch = (yield* vcsProcess.run({
               operation: "OrchestratorMcpToolkit.integration.currentBranch",
               command: "git",
@@ -2065,7 +2102,15 @@ describe("orchestrator MCP toolkit", () => {
               args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
               timeoutMs: 10_000,
             })).stdout.trim();
-            yield* Ref.set(currentLaunchBranches, new Map([[targetWorkspace, targetBranch]]));
+            const canonicalTargetWorkspace = yield* fileSystem.realPath(targetWorkspace);
+            const setTargetLaunchBranch = (branch: string) =>
+              Ref.update(currentLaunchBranches, (branches) => {
+                const updated = new Map(branches);
+                updated.set(targetWorkspace, branch);
+                updated.set(canonicalTargetWorkspace, branch);
+                return updated;
+              });
+            yield* setTargetLaunchBranch(targetBranch);
             const crossProjectInput = {
               clientRequestId: "create-cross-project-thread-1",
               threads: [
@@ -2081,6 +2126,7 @@ describe("orchestrator MCP toolkit", () => {
             } as const;
             const crossProjectCall = yield* invoke("create_threads", crossProjectInput);
             expect(crossProjectCall.isError).toBe(false);
+            expect(crossProjectCall.structuredContent).toHaveProperty("threads");
             const crossProjectCreated = yield* decodeCreateThreadsResult(
               crossProjectCall.structuredContent,
             ).pipe(Effect.orDie);
@@ -2118,10 +2164,7 @@ describe("orchestrator MCP toolkit", () => {
               args: ["switch", "-c", "mcp-accepted-replay-branch"],
               timeoutMs: 10_000,
             });
-            yield* Ref.set(
-              currentLaunchBranches,
-              new Map([[targetWorkspace, "mcp-accepted-replay-branch"]]),
-            );
+            yield* setTargetLaunchBranch("mcp-accepted-replay-branch");
             const untrustedCrossProjectRecord = yield* orchestrator
               .dispatch({
                 type: "thread.created.record",
@@ -2245,17 +2288,44 @@ describe("orchestrator MCP toolkit", () => {
               threadId: parentThreadId,
               interactionMode: "plan",
             });
+            const laterCrossProjectDispatch = yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("command:mcp-cross-project:later-run"),
+              threadId: crossProjectThread.threadId,
+              messageId: MessageId.make("message:mcp-cross-project:later-run"),
+              text: "A later run must not replace the launch receipt result.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "defer_start" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            const laterCrossProjectRun = laterCrossProjectDispatch.storedEvents.find(
+              (stored) => stored.event.type === "run.created",
+            );
+            expect(laterCrossProjectRun?.event.type).toBe("run.created");
             const replayedCrossProjectCall = yield* invoke("create_threads", crossProjectInput);
             expect(replayedCrossProjectCall.isError).toBe(false);
+            expect(replayedCrossProjectCall.structuredContent).toHaveProperty("threads");
             const replayedCrossProject = yield* decodeCreateThreadsResult(
               replayedCrossProjectCall.structuredContent,
             ).pipe(Effect.orDie);
             expect(replayedCrossProject.threads[0]?.threadId).toBe(crossProjectThread.threadId);
+            expect(replayedCrossProject.threads[0]?.runId).toBe(crossProjectThread.runId);
             const replayedCrossProjectProjection = yield* orchestrator.getThreadProjection(
               crossProjectThread.threadId,
             );
-            expect(replayedCrossProjectProjection.messages).toHaveLength(1);
-            expect(replayedCrossProjectProjection.runs).toHaveLength(1);
+            expect(replayedCrossProjectProjection.messages).toHaveLength(2);
+            expect(replayedCrossProjectProjection.runs).toHaveLength(2);
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).visibleTurnItems
+                .map((row) => row.item)
+                .find(
+                  (item) =>
+                    item.type === "thread_created" &&
+                    item.targetThreadId === crossProjectThread.threadId,
+                ),
+            ).toMatchObject({ targetRunId: crossProjectThread.runId });
             yield* orchestrator.dispatch({
               type: "thread.runtime-mode.set",
               commandId: CommandId.make("command:mcp-parent:runtime-restore-after-replay"),
@@ -2284,6 +2354,113 @@ describe("orchestrator MCP toolkit", () => {
                 yield* Effect.option(orchestrator.getThreadProjection(freshMismatchedThreadId)),
               ),
             ).toBe(true);
+
+            const freshObservedBranchKey = "create-cross-project-thread-observed-mismatch";
+            yield* Effect.gen(function* () {
+              yield* setTargetLaunchBranch("simulated-external-branch");
+              const freshObservedBranchCall = yield* invoke("create_threads", {
+                clientRequestId: freshObservedBranchKey,
+                threads: [
+                  {
+                    projectId: targetProjectId,
+                    title: "Reject an observed branch race",
+                    prompt: "Do not launch after the observed branch changes.",
+                    workspaceStrategy: { type: "root" },
+                  },
+                ],
+              });
+              expect(freshObservedBranchCall.structuredContent).toMatchObject({
+                code: "orchestration_error",
+              });
+              const freshObservedBranchThreadId = ThreadId.make(
+                `thread:mcp:mcp-provider-session-parent:${freshObservedBranchKey}:0`,
+              );
+              expect(
+                Option.isNone(
+                  yield* Effect.option(
+                    orchestrator.getThreadProjection(freshObservedBranchThreadId),
+                  ),
+                ),
+              ).toBe(true);
+            }).pipe(Effect.ensuring(setTargetLaunchBranch("mcp-accepted-replay-branch")));
+
+            const missingWorkspaceReplayKey = "create-existing-worktree-replay-after-removal";
+            const missingWorkspaceInput = {
+              clientRequestId: missingWorkspaceReplayKey,
+              threads: [
+                {
+                  projectId: targetProjectId,
+                  title: "Existing worktree replay",
+                  prompt: "Replay this accepted launch after its workspace disappears.",
+                  target: {
+                    providerInstanceId: codexInstanceId,
+                    model: codexModel,
+                  },
+                  workspaceStrategy: {
+                    type: "existing_worktree",
+                    worktreePath: targetWorkspace,
+                  },
+                },
+              ],
+            } as const;
+            const originalMissingWorkspaceThread = yield* Effect.gen(function* () {
+              const missingWorkspaceCreateCall = yield* invoke(
+                "create_threads",
+                missingWorkspaceInput,
+              );
+              expect(missingWorkspaceCreateCall.isError).toBe(false);
+              expect(missingWorkspaceCreateCall.structuredContent).toHaveProperty("threads");
+              const missingWorkspaceCreated = yield* decodeCreateThreadsResult(
+                missingWorkspaceCreateCall.structuredContent,
+              ).pipe(Effect.orDie);
+              const original = missingWorkspaceCreated.threads[0]!;
+              expect(original.threadId).toBe(missingWorkspaceReplayThreadId);
+              yield* Deferred.await(missingWorkspaceSetupEntered);
+              const movedTargetWorkspace = `${targetWorkspace}-temporarily-missing`;
+              yield* Effect.gen(function* () {
+                yield* fileSystem.rename(targetWorkspace, movedTargetWorkspace);
+                const replayCall = yield* invoke("create_threads", missingWorkspaceInput);
+                expect(replayCall.structuredContent).toHaveProperty("threads");
+                const replayed = yield* decodeCreateThreadsResult(
+                  replayCall.structuredContent,
+                ).pipe(Effect.orDie);
+                expect(replayed.threads[0]).toEqual(original);
+                const replayedProjection = yield* orchestrator.getThreadProjection(
+                  original.threadId,
+                );
+                expect(replayedProjection.messages).toHaveLength(1);
+                expect(replayedProjection.thread.worktreePath).toBe(canonicalTargetWorkspace);
+              }).pipe(
+                Effect.ensuring(
+                  fileSystem.rename(movedTargetWorkspace, targetWorkspace).pipe(Effect.orDie),
+                ),
+              );
+              return original;
+            }).pipe(Effect.ensuring(Deferred.succeed(allowMissingWorkspaceSetup, undefined)));
+
+            const conflictingReplayCall = yield* invoke("create_threads", {
+              clientRequestId: missingWorkspaceReplayKey,
+              threads: [
+                {
+                  projectId,
+                  title: "Conflicting replay metadata",
+                  prompt: "Do not replace the accepted launch identity.",
+                  target: {
+                    providerInstanceId: claudeInstanceId,
+                    model: claudeModel,
+                  },
+                  workspaceStrategy: { type: "root" },
+                },
+              ],
+            });
+            expect(conflictingReplayCall.structuredContent).toMatchObject({
+              code: "invalid_request",
+              message: expect.stringContaining("different project"),
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(originalMissingWorkspaceThread.threadId))
+                .thread.projectId,
+            ).toBe(targetProjectId);
 
             const repeatedCreateCall = yield* invoke("create_threads", createInput);
             const repeatedCreated = yield* decodeCreateThreadsResult(

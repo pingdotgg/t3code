@@ -40,13 +40,13 @@ export type ThreadLaunchWorkspaceStrategy =
   | {
       readonly type: "root";
       readonly branch?: string | undefined;
-      readonly expectedBranch?: string | undefined;
+      readonly expectedBranch?: string | null | undefined;
     }
   | {
       readonly type: "existing_worktree";
       readonly worktreePath: string;
       readonly branch?: string | undefined;
-      readonly expectedBranch?: string | undefined;
+      readonly expectedBranch?: string | null | undefined;
     }
   | {
       readonly type: "worktree";
@@ -492,12 +492,16 @@ export const make = Effect.gen(function* () {
                       Effect.mapError(mapError(input, "validate-workspace", candidateThreadId)),
                     );
                   if (currentBranch !== input.workspaceStrategy.expectedBranch) {
+                    const expectedBranch =
+                      input.workspaceStrategy.expectedBranch === null
+                        ? "expected a detached HEAD"
+                        : `requested branch '${input.workspaceStrategy.expectedBranch}'`;
                     return yield* mapError(
                       input,
                       "validate-workspace",
                       candidateThreadId,
                     )(
-                      `Workspace '${cwd}' is on ${currentBranch === null ? "a detached HEAD" : `branch '${currentBranch}'`}, not requested branch '${input.workspaceStrategy.expectedBranch}'.`,
+                      `Workspace '${cwd}' is on ${currentBranch === null ? "a detached HEAD" : `branch '${currentBranch}'`}, not ${expectedBranch}.`,
                     );
                   }
                   initialBranch = currentBranch;

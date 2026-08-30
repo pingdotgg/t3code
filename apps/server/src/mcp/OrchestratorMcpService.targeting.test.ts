@@ -220,7 +220,9 @@ describe("OrchestratorMcpService project targeting", () => {
                   thread: {
                     ...target.thread,
                     id: input.threadId!,
+                    projectId: input.projectId,
                     title: input.title,
+                    providerInstanceId: input.modelSelection.instanceId,
                     modelSelection: input.modelSelection,
                     runtimeMode: input.runtimeMode,
                     interactionMode: input.interactionMode,
@@ -237,6 +239,7 @@ describe("OrchestratorMcpService project targeting", () => {
           launchLayer,
           Layer.mock(ThreadManagementService)({
             getThreadProjection: () => Effect.succeed(parent),
+            withProjectCreationAdmission: (_input, effect) => effect(Option.none()),
             dispatch: () => Effect.succeed({} as never),
             recordServerCreatedThread: () => Effect.succeed({} as never),
           }),
@@ -276,13 +279,18 @@ describe("OrchestratorMcpService project targeting", () => {
                 type: "existing_worktree",
                 worktreePath: "/caller/worktree",
                 branch: "caller-branch",
+                expectedBranch: "caller-branch",
               },
               modelSelection: parent.thread.modelSelection,
               runtimeMode: parent.thread.runtimeMode,
             },
             {
               projectId: targetProjectId,
-              workspaceStrategy: { type: "root", branch: "target-main" },
+              workspaceStrategy: {
+                type: "root",
+                branch: "target-main",
+                expectedBranch: "target-main",
+              },
               modelSelection: parent.thread.modelSelection,
               runtimeMode: parent.thread.runtimeMode,
             },
@@ -414,13 +422,28 @@ describe("OrchestratorMcpService project targeting", () => {
           title: "Nested project",
           workspaceRoot: nestedProjectRoot,
         } satisfies Project;
+        const plainProjectId = ProjectId.make("project:mcp-target-plain");
+        const plainProject = {
+          ...project,
+          id: plainProjectId,
+          title: "Plain project",
+          workspaceRoot: plainDirectory,
+        } satisfies Project;
         const launches = yield* Ref.make<ReadonlyArray<ThreadLaunch.ThreadLaunchInput>>([]);
         const dependencies = Layer.mergeAll(
           NodeServices.layer,
           Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([provider]) }),
           Layer.mock(ProjectService.ProjectService)({
             getById: (projectId) =>
-              Effect.succeed(Option.some(projectId === nestedProjectId ? nestedProject : project)),
+              Effect.succeed(
+                Option.some(
+                  projectId === nestedProjectId
+                    ? nestedProject
+                    : projectId === plainProjectId
+                      ? plainProject
+                      : project,
+                ),
+              ),
           }),
           Layer.mock(ScheduledTaskService)({}),
           Layer.mock(ThreadLaunch.ThreadLaunchService)({
@@ -448,6 +471,7 @@ describe("OrchestratorMcpService project targeting", () => {
           }),
           Layer.mock(ThreadManagementService)({
             getThreadProjection: () => Effect.succeed(parent),
+            withProjectCreationAdmission: (_input, effect) => effect(Option.none()),
             dispatch: () => Effect.succeed({} as never),
             recordServerCreatedThread: () => Effect.succeed({} as never),
           }),
@@ -512,7 +536,7 @@ describe("OrchestratorMcpService project targeting", () => {
               expectedBranch: "feature",
             },
             { type: "root", branch: "main", expectedBranch: "main" },
-            { type: "root", branch: "main" },
+            { type: "root", branch: "main", expectedBranch: "main" },
           ],
         );
 
@@ -526,6 +550,13 @@ describe("OrchestratorMcpService project targeting", () => {
           const error = yield* create(clientRequestId, workspaceStrategy).pipe(Effect.flip);
           assert.equal(error.code, "invalid_request");
         }
+        const nonGitBranchError = yield* create(
+          "non-git-root-branch",
+          { type: "root", branch: "main" },
+          plainProjectId,
+        ).pipe(Effect.flip);
+        assert.equal(nonGitBranchError.code, "invalid_request");
+        assert.match(nonGitBranchError.message, /does not have a Git repository/u);
         assert.equal((yield* Ref.get(launches)).length, 4);
       }).pipe(Effect.provide(realVcsInfrastructureLayer)),
     ),

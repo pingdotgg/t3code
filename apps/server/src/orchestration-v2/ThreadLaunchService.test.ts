@@ -230,6 +230,43 @@ it.effect("rechecks an expected branch immediately before launch acceptance", ()
   }),
 );
 
+it.effect("rechecks a detached HEAD snapshot immediately before launch acceptance", () =>
+  Effect.gen(function* () {
+    const branch = yield* Ref.make<string | null>(null);
+    const branchReadEntered = yield* Deferred.make<void>();
+    const allowBranchRead = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      currentBranch: () =>
+        Deferred.succeed(branchReadEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(allowBranchRead)),
+          Effect.andThen(Ref.get(branch)),
+        ),
+    });
+
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+        command: "command:launch:expected-detached-race",
+        thread: "thread:launch:expected-detached-race",
+        workspace: { type: "root", expectedBranch: null },
+      });
+      const launchFiber = yield* Effect.forkChild(launches.launch(input));
+
+      yield* Deferred.await(branchReadEntered);
+      yield* Ref.set(branch, "main");
+      yield* Deferred.succeed(allowBranchRead, undefined);
+
+      const error = yield* Fiber.join(launchFiber).pipe(Effect.flip);
+      assert.equal(error.operation, "validate-workspace");
+      assert.match(String(error.cause), /branch 'main'.*expected a detached HEAD/u);
+      assert.isTrue(
+        Exit.isFailure(yield* threads.getThreadProjection(input.threadId).pipe(Effect.exit)),
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("replays an accepted launch before rechecking mutable branch state", () =>
   Effect.gen(function* () {
     const branch = yield* Ref.make<string | null>("main");
