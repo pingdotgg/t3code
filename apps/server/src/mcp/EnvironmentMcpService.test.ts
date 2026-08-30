@@ -279,7 +279,12 @@ describe("EnvironmentMcpService", () => {
       Effect.provide(
         EnvironmentMcp.layer.pipe(
           Layer.provide(
-            Layer.mergeAll(environmentLayer("Test", "1.0.0"), providerLayer, settingsLayer),
+            Layer.mergeAll(
+              environmentLayer("Test", "1.0.0"),
+              providerLayer,
+              settingsLayer,
+              mutationDependencies,
+            ),
           ),
         ),
       ),
