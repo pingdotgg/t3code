@@ -572,6 +572,30 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
   }),
 );
 
+it.effect("decodes persisted orchestration events with CLI origin metadata", () =>
+  Effect.gen(function* () {
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 43_854,
+      eventId: "event-cli-origin-1",
+      aggregateKind: "project",
+      aggregateId: "project-1",
+      type: "project.meta-updated",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-cli-origin-1",
+      causationEventId: null,
+      correlationId: "cmd-cli-origin-1",
+      metadata: { origin: { surface: "cli" } },
+      payload: {
+        projectId: "project-1",
+        title: "Updated from CLI",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    assert.deepStrictEqual(event.metadata.origin, { surface: "cli" });
+  }),
+);
+
 it.effect("decodes thread archived and unarchived events", () =>
   Effect.gen(function* () {
     const archived = yield* decodeOrchestrationEvent({

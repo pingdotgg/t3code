@@ -1401,13 +1401,21 @@ export const OrchestrationClientOrigin = Schema.Struct({
 });
 export type OrchestrationClientOrigin = typeof OrchestrationClientOrigin.Type;
 
+// Historical event stores can contain CLI-authored project metadata events.
+// Keep that compatibility at the persistence boundary: ClientSurface still
+// describes only web, desktop, and mobile connection/auth surfaces.
+const PersistedOrchestrationOrigin = Schema.Struct({
+  surface: Schema.optional(Schema.Union([ClientSurface, Schema.Literal("cli")])),
+  appVersion: Schema.optional(TrimmedNonEmptyString),
+});
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
   adapterKey: Schema.optional(TrimmedNonEmptyString),
   requestId: Schema.optional(ApprovalRequestId),
   ingestedAt: Schema.optional(IsoDateTime),
-  origin: Schema.optional(OrchestrationClientOrigin),
+  origin: Schema.optional(PersistedOrchestrationOrigin),
 });
 export type OrchestrationEventMetadata = typeof OrchestrationEventMetadata.Type;
 
