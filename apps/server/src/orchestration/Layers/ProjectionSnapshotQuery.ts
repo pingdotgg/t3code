@@ -166,6 +166,7 @@ const ProjectionThreadContentSearchRequest = Schema.Struct({
   offset: Schema.Int,
   snippetBodyChars: Schema.Int,
   snippetContextChars: Schema.Int,
+  titleChars: Schema.Int,
 });
 const ProjectionThreadContentSearchSource = Schema.Literals(["title", "user", "assistant"]);
 const ProjectionThreadContentSearchOrigin = Schema.Literals(["legacy", "v2"]);
@@ -173,6 +174,7 @@ const ProjectionThreadContentSearchRow = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   threadTitle: Schema.String,
+  threadTitleTruncated: Schema.Number,
   archived: Schema.Number,
   source: ProjectionThreadContentSearchSource,
   origin: ProjectionThreadContentSearchOrigin,
@@ -991,16 +993,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       offset,
       snippetBodyChars,
       snippetContextChars,
+      titleChars,
     }) =>
       sql`
-        WITH thread_meta AS (
+        WITH v2_thread_meta AS (
           SELECT
             threads.thread_id AS thread_id,
             threads.project_id AS project_id,
             threads.title AS thread_title,
             threads.updated_at AS thread_updated_at,
-            CASE WHEN threads.archived_at IS NULL THEN 0 ELSE 1 END AS archived
-          FROM projection_threads AS threads
+            CASE WHEN threads.archived_at IS NULL THEN 0 ELSE 1 END AS archived,
+            'v2' AS thread_origin
+          FROM orchestration_v2_projection_threads AS threads
           INNER JOIN projection_projects AS projects
             ON projects.project_id = threads.project_id
           WHERE threads.project_id = ${projectId}
@@ -1009,6 +1013,33 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             AND (${includeArchived ? 1 : 0} = 1 OR threads.archived_at IS NULL)
             ${threadId === null ? sql`` : sql`AND threads.thread_id = ${threadId}`}
         ),
+        legacy_thread_meta AS (
+          SELECT
+            threads.thread_id AS thread_id,
+            threads.project_id AS project_id,
+            threads.title AS thread_title,
+            threads.updated_at AS thread_updated_at,
+            CASE WHEN threads.archived_at IS NULL THEN 0 ELSE 1 END AS archived,
+            'legacy' AS thread_origin
+          FROM projection_threads AS threads
+          INNER JOIN projection_projects AS projects
+            ON projects.project_id = threads.project_id
+          WHERE threads.project_id = ${projectId}
+            AND threads.deleted_at IS NULL
+            AND projects.deleted_at IS NULL
+            AND (${includeArchived ? 1 : 0} = 1 OR threads.archived_at IS NULL)
+            ${threadId === null ? sql`` : sql`AND threads.thread_id = ${threadId}`}
+            AND NOT EXISTS (
+              SELECT 1
+              FROM orchestration_v2_projection_threads AS v2_thread
+              WHERE v2_thread.thread_id = threads.thread_id
+            )
+        ),
+        thread_meta AS (
+          SELECT * FROM v2_thread_meta
+          UNION ALL
+          SELECT * FROM legacy_thread_meta
+        ),
         candidate AS (
           SELECT
             meta.thread_id,
@@ -1016,7 +1047,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             meta.thread_title,
             meta.archived,
             'title' AS source,
-            'legacy' AS origin,
+            meta.thread_origin AS origin,
             meta.thread_title AS match_text,
             meta.thread_updated_at AS matched_at,
             NULL AS source_thread_id,
@@ -1131,7 +1162,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
-          thread_title AS "threadTitle",
+          substr(thread_title, 1, ${titleChars}) AS "threadTitle",
+          CASE WHEN length(thread_title) > ${titleChars} THEN 1 ELSE 0 END
+            AS "threadTitleTruncated",
           archived,
           source,
           origin,
@@ -2743,32 +2776,74 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     };
   });
 
+  const boundedIntegerSearchInputError = (
+    field: "limit" | "offset" | "snippetChars",
+    actual: number,
+    minimum: number,
+    maximum: number,
+  ): ProjectionThreadContentSearchInputError | null => {
+    if (!Number.isInteger(actual)) {
+      return new ProjectionThreadContentSearchInputError({
+        field,
+        constraint: {
+          type: "integer",
+          ...(Number.isFinite(actual) ? { actual } : {}),
+        },
+      });
+    }
+    return actual < minimum || actual > maximum
+      ? new ProjectionThreadContentSearchInputError({
+          field,
+          constraint: { type: "range", minimum, maximum, actual },
+        })
+      : null;
+  };
+
   const searchThreadContent: ProjectionSnapshotQueryShape["searchThreadContent"] = Effect.fn(
     "ProjectionSnapshotQuery.searchThreadContent",
   )(function* (input) {
     const limits = PROJECTION_THREAD_CONTENT_SEARCH_LIMITS;
+    if (input.query !== input.query.trim()) {
+      return yield* new ProjectionThreadContentSearchInputError({
+        field: "query",
+        constraint: { type: "trimmed" },
+      });
+    }
+    if (input.query.includes("\0")) {
+      return yield* new ProjectionThreadContentSearchInputError({
+        field: "query",
+        constraint: { type: "no_nul" },
+      });
+    }
     const queryCodeUnits = input.query.length;
     const queryChars =
-      queryCodeUnits <= limits.queryMaxChars * 2 ? Array.from(input.query).length : 0;
-    const validInput =
-      input.query === input.query.trim() &&
-      queryChars >= limits.queryMinChars &&
-      queryChars <= limits.queryMaxChars &&
-      Number.isInteger(input.limit) &&
-      input.limit >= 1 &&
-      input.limit <= limits.pageMax &&
-      Number.isInteger(input.offset) &&
-      input.offset >= 0 &&
-      input.offset <= limits.offsetMax &&
-      Number.isInteger(input.snippetChars) &&
-      input.snippetChars >= limits.snippetMinChars &&
-      input.snippetChars <= limits.snippetMaxChars;
-    if (!validInput) {
-      return yield* Effect.fail(
-        new ProjectionThreadContentSearchInputError(
-          "Thread content search input is outside the supported query, page, cursor, or snippet bounds.",
-        ),
+      queryCodeUnits <= limits.queryMaxChars * 2 ? Array.from(input.query).length : null;
+    if (
+      queryChars === null ||
+      queryChars < limits.queryMinChars ||
+      queryChars > limits.queryMaxChars
+    ) {
+      return yield* new ProjectionThreadContentSearchInputError({
+        field: "query",
+        constraint: {
+          type: "range",
+          minimum: limits.queryMinChars,
+          maximum: limits.queryMaxChars,
+          ...(queryChars === null ? {} : { actual: queryChars }),
+        },
+      });
+    }
+    const numericInputError =
+      boundedIntegerSearchInputError("limit", input.limit, 1, limits.pageMax) ??
+      boundedIntegerSearchInputError("offset", input.offset, 0, limits.offsetMax) ??
+      boundedIntegerSearchInputError(
+        "snippetChars",
+        input.snippetChars,
+        limits.snippetMinChars,
+        limits.snippetMaxChars,
       );
+    if (numericInputError !== null) {
+      return yield* numericInputError;
     }
 
     const escapedQuery = escapeLikePattern(input.query);
@@ -2782,6 +2857,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       offset: input.offset,
       snippetBodyChars: input.snippetChars - 2,
       snippetContextChars: Math.floor((input.snippetChars - 2) / 3),
+      titleChars: limits.titleMaxChars,
     }).pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
@@ -2797,6 +2873,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         threadId: row.threadId,
         projectId: row.projectId,
         threadTitle: row.threadTitle,
+        threadTitleTruncated: row.threadTitleTruncated === 1,
         archived: row.archived === 1,
         source: row.source,
         origin: row.origin,

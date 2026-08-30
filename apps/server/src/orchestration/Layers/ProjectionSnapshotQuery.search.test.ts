@@ -59,7 +59,9 @@ it.effect("searches bounded durable thread content without changing the legacy s
     const archivedThreadId = ThreadId.make("thread:search-archived");
     const deletedThreadId = ThreadId.make("thread:search-deleted");
     const otherThreadId = ThreadId.make("thread:search-other");
+    const legacyOnlyThreadId = ThreadId.make("thread:search-legacy-only");
     const longText = `${"prefix ".repeat(2_000)}literal %_! needle😀終 ${"suffix ".repeat(2_000)}`;
+    const longTitle = `Needle active title ${"x".repeat(2_000)} hidden-title-match`;
 
     yield* sql`
       INSERT INTO projection_projects (
@@ -77,7 +79,7 @@ it.effect("searches bounded durable thread content without changing the legacy s
         branch, worktree_path, latest_turn_id, created_at, updated_at, archived_at,
         settled_override, settled_at, deleted_at
       ) VALUES
-        (${activeThreadId}, ${projectId}, 'Needle active title', '{}', 'full-access', 'default',
+        (${activeThreadId}, ${projectId}, ${longTitle}, '{}', 'full-access', 'default',
           'main', '/tmp/search-current', NULL, '2026-01-01T00:00:00.000Z',
           '2026-01-10T00:00:00.000Z', NULL, NULL, NULL, NULL),
         (${archivedThreadId}, ${projectId}, 'Archived history', '{}', 'full-access', 'default',
@@ -88,7 +90,29 @@ it.effect("searches bounded durable thread content without changing the legacy s
           '2026-01-08T00:00:00.000Z', NULL, NULL, NULL, '2026-01-08T00:00:00.000Z'),
         (${otherThreadId}, ${otherProjectId}, 'Other needle', '{}', 'full-access', 'default',
           'main', '/tmp/search-other', NULL, '2026-01-01T00:00:00.000Z',
-          '2026-01-07T00:00:00.000Z', NULL, NULL, NULL, NULL)
+          '2026-01-07T00:00:00.000Z', NULL, NULL, NULL, NULL),
+        (${legacyOnlyThreadId}, ${projectId}, 'Legacy only history', '{}', 'full-access', 'default',
+          'main', '/tmp/search-current', NULL, '2026-01-01T00:00:00.000Z',
+          '2026-01-02T00:00:00.000Z', NULL, NULL, NULL, NULL)
+    `;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_threads (
+        thread_id, project_id, title, default_provider, provider_instance_id,
+        runtime_mode, interaction_mode, active_provider_thread_id, created_at, updated_at,
+        archived_at, deleted_at, payload_json
+      ) VALUES
+        (${activeThreadId}, ${projectId}, ${longTitle}, 'codex', 'codex',
+          'full-access', 'default', NULL, '2026-01-01T00:00:00.000Z',
+          '2026-01-10T00:00:00.000Z', NULL, NULL, '{}'),
+        (${archivedThreadId}, ${projectId}, 'Archived history', 'codex', 'codex',
+          'full-access', 'default', NULL, '2026-01-01T00:00:00.000Z',
+          '2026-01-09T00:00:00.000Z', '2026-01-09T00:00:00.000Z', NULL, '{}'),
+        (${deletedThreadId}, ${projectId}, 'Deleted needle', 'codex', 'codex',
+          'full-access', 'default', NULL, '2026-01-01T00:00:00.000Z',
+          '2026-01-08T00:00:00.000Z', NULL, '2026-01-08T00:00:00.000Z', '{}'),
+        (${otherThreadId}, ${otherProjectId}, 'Other needle', 'codex', 'codex',
+          'full-access', 'default', NULL, '2026-01-01T00:00:00.000Z',
+          '2026-01-07T00:00:00.000Z', NULL, NULL, '{}')
     `;
     yield* sql`
       INSERT INTO projection_thread_messages (
@@ -100,7 +124,9 @@ it.effect("searches bounded durable thread content without changing the legacy s
         ('message:legacy-archived', ${archivedThreadId}, NULL, 'user', 'archived needle', '[]', 0,
           '2026-01-04T00:00:00.000Z', '2026-01-04T00:00:00.000Z'),
         ('message:legacy-other', ${otherThreadId}, NULL, 'user', 'secret needle', '[]', 0,
-          '2026-01-05T00:00:00.000Z', '2026-01-05T00:00:00.000Z')
+          '2026-01-05T00:00:00.000Z', '2026-01-05T00:00:00.000Z'),
+        ('message:legacy-only', ${legacyOnlyThreadId}, NULL, 'user', 'legacy-only-marker', '[]', 0,
+          '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z')
     `;
     yield* sql`
       INSERT INTO orchestration_v2_projection_runs (
@@ -121,6 +147,12 @@ it.effect("searches bounded durable thread content without changing the legacy s
         ('message:v2-visible', ${activeThreadId}, 'run:visible', NULL, 'assistant', 0,
           '2026-01-06T00:00:00.000Z', '2026-01-06T00:00:00.000Z',
           ${encodeUnknownJsonString({ text: longText })}),
+        ('message:v2-user', ${activeThreadId}, 'run:visible', NULL, 'user', 0,
+          '2026-01-05T00:00:00.000Z', '2026-01-05T00:00:00.000Z',
+          ${encodeUnknownJsonString({ text: "visible user needle" })}),
+        ('message:v2-streaming', ${activeThreadId}, 'run:visible', NULL, 'assistant', 1,
+          '2026-01-05T00:00:01.000Z', '2026-01-05T00:00:01.000Z',
+          ${encodeUnknownJsonString({ text: "streaming needle" })}),
         ('message:v2-rolled-back', ${activeThreadId}, 'run:rolled-back', NULL, 'assistant', 0,
           '2026-01-07T00:00:00.000Z', '2026-01-07T00:00:00.000Z',
           ${encodeUnknownJsonString({ text: "rolled-back needle" })}),
@@ -136,6 +168,12 @@ it.effect("searches bounded durable thread content without changing the legacy s
         ('item:v2-visible', ${activeThreadId}, 'run:visible', NULL, NULL, NULL, NULL, 1,
           'assistant_message', 'completed', '2026-01-06T00:00:00.000Z',
           ${encodeUnknownJsonString({ messageId: "message:v2-visible", text: longText, streaming: false })}),
+        ('item:v2-user', ${activeThreadId}, 'run:visible', NULL, NULL, NULL, NULL, 2,
+          'user_message', 'completed', '2026-01-05T00:00:00.000Z',
+          ${encodeUnknownJsonString({ messageId: "message:v2-user", text: "visible user needle", inputIntent: "direct" })}),
+        ('item:v2-streaming', ${activeThreadId}, 'run:visible', NULL, NULL, NULL, NULL, 3,
+          'assistant_message', 'streaming', '2026-01-05T00:00:01.000Z',
+          ${encodeUnknownJsonString({ messageId: "message:v2-streaming", text: "streaming needle", streaming: true })}),
         ('item:v2-rolled-back', ${activeThreadId}, 'run:rolled-back', NULL, NULL, NULL, NULL, 2,
           'assistant_message', 'completed', '2026-01-07T00:00:00.000Z',
           ${encodeUnknownJsonString({ messageId: "message:v2-rolled-back", text: "rolled-back needle", streaming: false })}),
@@ -158,7 +196,7 @@ it.effect("searches bounded durable thread content without changing the legacy s
     assert.deepEqual(
       firstPage.hits.map((hit) => [hit.source, hit.origin]),
       [
-        ["title", "legacy"],
+        ["title", "v2"],
         ["assistant", "v2"],
       ],
     );
@@ -169,6 +207,11 @@ it.effect("searches bounded durable thread content without changing the legacy s
     assert.match(anchored?.snippet ?? "", /needle/);
     assert.isAtMost(Array.from(anchored?.snippet ?? "").length, 80);
     assert.isTrue(anchored?.snippetTruncated ?? false);
+    assert.isAtMost(
+      Array.from(anchored?.threadTitle ?? "").length,
+      PROJECTION_THREAD_CONTENT_SEARCH_LIMITS.titleMaxChars,
+    );
+    assert.isTrue(anchored?.threadTitleTruncated ?? false);
 
     const secondPage = yield* query.searchThreadContent({
       projectId,
@@ -180,10 +223,17 @@ it.effect("searches bounded durable thread content without changing the legacy s
     });
     assert.deepEqual(
       secondPage.hits.map((hit) => hit.threadId),
-      [archivedThreadId, activeThreadId],
+      [activeThreadId, archivedThreadId, activeThreadId],
     );
-    assert.isNull(secondPage.hits[0]?.sourceThreadId ?? null);
-    assert.isTrue(secondPage.hits[0]?.archived ?? false);
+    assert.equal(secondPage.hits[0]?.messageId, "message:v2-user");
+    assert.equal(secondPage.hits[0]?.source, "user");
+    assert.equal(secondPage.hits[0]?.origin, "v2");
+    assert.isNull(secondPage.hits[1]?.sourceThreadId ?? null);
+    assert.isTrue(secondPage.hits[1]?.archived ?? false);
+    assert.notInclude(
+      secondPage.hits.map((hit) => hit.messageId),
+      MessageId.make("message:v2-streaming"),
+    );
     assert.notInclude(
       secondPage.hits.map((hit) => hit.threadId),
       otherThreadId,
@@ -202,6 +252,35 @@ it.effect("searches bounded durable thread content without changing the legacy s
       snippetChars: 80,
     });
     assert.isTrue(activeOnly.hits.every((hit) => !hit.archived));
+
+    const legacyOnly = yield* query.searchThreadContent({
+      projectId,
+      query: "legacy-only-marker",
+      includeArchived: false,
+      offset: 0,
+      limit: 10,
+      snippetChars: 64,
+    });
+    assert.equal(legacyOnly.hits[0]?.threadId, legacyOnlyThreadId);
+    assert.equal(legacyOnly.hits[0]?.origin, "legacy");
+    assert.isNull(legacyOnly.hits[0]?.sourceThreadId ?? null);
+
+    const titleTail = yield* query.searchThreadContent({
+      projectId,
+      threadId: activeThreadId,
+      query: "hidden-title-match",
+      includeArchived: false,
+      offset: 0,
+      limit: 10,
+      snippetChars: 64,
+    });
+    assert.equal(titleTail.hits[0]?.source, "title");
+    assert.isTrue(titleTail.hits[0]?.threadTitleTruncated ?? false);
+    assert.isAtMost(
+      Array.from(titleTail.hits[0]?.threadTitle ?? "").length,
+      PROJECTION_THREAD_CONTENT_SEARCH_LIMITS.titleMaxChars,
+    );
+    assert.match(titleTail.hits[0]?.snippet ?? "", /hidden-title-match/);
 
     const literal = yield* query.searchThreadContent({
       projectId,
@@ -250,6 +329,28 @@ it.effect("rejects out-of-bounds lower-layer requests before querying", () =>
       }),
     );
     assert.equal(failure._tag, "ProjectionThreadContentSearchInputError");
+    if (failure._tag !== "ProjectionThreadContentSearchInputError") {
+      return yield* Effect.die("Expected bounded input failure.");
+    }
+    assert.equal(failure.field, "offset");
+    assert.equal(failure.constraint.type, "range");
+
+    const nulFailure = yield* Effect.flip(
+      query.searchThreadContent({
+        projectId: ProjectId.make("project:unused"),
+        query: "unrelated\0needle",
+        includeArchived: false,
+        offset: 0,
+        limit: 1,
+        snippetChars: 64,
+      }),
+    );
+    assert.equal(nulFailure._tag, "ProjectionThreadContentSearchInputError");
+    if (nulFailure._tag !== "ProjectionThreadContentSearchInputError") {
+      return yield* Effect.die("Expected NUL input failure.");
+    }
+    assert.equal(nulFailure.field, "query");
+    assert.equal(nulFailure.constraint.type, "no_nul");
   }).pipe(Effect.provide(testLayer)),
 );
 
