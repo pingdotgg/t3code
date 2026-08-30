@@ -369,6 +369,39 @@ describe("buildCursorProviderSnapshot", () => {
       ],
     });
   });
+
+  it("forwards a provided skills array onto the snapshot", () => {
+    expect(
+      buildCursorProviderSnapshot({
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        cursorSettings: baseCursorSettings,
+        parsed: {
+          version: "2026.04.09-f2b0fcd",
+          status: "ready",
+          auth: { status: "authenticated", email: "cursor@example.com" },
+        },
+        skills: [
+          {
+            name: "review",
+            path: "/tmp/skills/review/SKILL.md",
+            enabled: true,
+            scope: "user",
+            description: "Review the changes.",
+          },
+        ],
+      }),
+    ).toMatchObject({
+      skills: [
+        {
+          name: "review",
+          path: "/tmp/skills/review/SKILL.md",
+          enabled: true,
+          scope: "user",
+          description: "Review the changes.",
+        },
+      ],
+    });
+  });
 });
 
 describe("buildCursorCapabilitiesFromConfigOptions", () => {
