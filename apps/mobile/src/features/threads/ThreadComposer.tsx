@@ -9,7 +9,16 @@ import type {
 } from "@t3tools/contracts";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import { ActivityIndicator, Image, Platform, Pressable, View, type ViewStyle } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import Animated, {
@@ -18,6 +27,9 @@ import Animated, {
   FadeOut,
   FadeOutDown,
   LinearTransition,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
 } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
@@ -31,7 +43,6 @@ import {
   ComposerInlineControl,
   ComposerToolbarButton,
   ComposerToolbarRow,
-  ComposerToolbarScroller,
 } from "../../components/ComposerToolbar";
 import { ControlPill } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
@@ -104,14 +115,17 @@ export interface ThreadComposerProps {
  * iOS 26+ devices and keeps the existing opaque fallback elsewhere.
  * Exported so NewTaskDraftScreen can render the same composer chrome.
  */
-// One timing for every piece of the expanded↔compact morph so the surface,
-// toolbar, and siblings move together instead of popping between layouts.
+// The bottom-anchored dock position and clipped surface height use the same
+// transition so the card grows upward without exposing its final-size content.
 // Android gets NO layout transition: the composer rides the keyboard via
 // KeyboardStickyView (frame-synced to the IME), and a time-based morph
 // running alongside that translate reads as jitter. Snapping the layout and
 // letting the keyboard-synced slide be the only motion looks native there.
-const COMPOSER_LAYOUT_TRANSITION =
-  Platform.OS === "android" ? undefined : LinearTransition.duration(220);
+export const COMPOSER_TRANSITION_DURATION_MS = 220;
+export const COMPOSER_LAYOUT_TRANSITION =
+  Platform.OS === "android"
+    ? undefined
+    : LinearTransition.duration(COMPOSER_TRANSITION_DURATION_MS);
 
 export function ComposerSurface(props: {
   readonly children: ReactNode;
@@ -119,29 +133,53 @@ export function ComposerSurface(props: {
   /** Existing thread composers morph between pill and card layouts. */
   readonly animateLayout?: boolean;
 }) {
-  // A box shadow follows the rounded surface even when the glass is transparent.
-  // Keep it outside the clipped content so the shadow can extend past the edge.
+  const targetBorderRadius =
+    typeof props.style.borderRadius === "number" ? props.style.borderRadius : 0;
+  const animatedBorderRadius = useSharedValue(targetBorderRadius);
+  const shouldAnimate = props.animateLayout !== false && Platform.OS !== "android";
+  useLayoutEffect(() => {
+    animatedBorderRadius.value = shouldAnimate
+      ? withTiming(targetBorderRadius, {
+          duration: COMPOSER_TRANSITION_DURATION_MS,
+        })
+      : targetBorderRadius;
+  }, [animatedBorderRadius, shouldAnimate, targetBorderRadius]);
+  const animatedShapeStyle = useAnimatedStyle(() => ({
+    borderRadius: animatedBorderRadius.value,
+  }));
+
+  // Clipping here keeps the expanded toolbar inside the glass while the
+  // bottom-anchored host owns the geometry transition.
   return (
     <Animated.View
       className="shadow-[0_6px_28px] shadow-adaptive-black-a15-a35"
       layout={props.animateLayout === false ? undefined : COMPOSER_LAYOUT_TRANSITION}
-      style={{
-        borderRadius: props.style.borderRadius,
-        // Android versions before 9 do not support outset box shadows.
-        elevation: Platform.OS === "android" && Platform.Version < 28 ? 10 : undefined,
-      }}
+      style={[
+        animatedShapeStyle,
+        {
+          overflow: "hidden",
+          // Android versions before 9 do not support outset box shadows.
+          elevation: Platform.OS === "android" && Platform.Version < 28 ? 10 : undefined,
+        },
+      ]}
     >
       <GlassSurface
         chrome="none"
         fallbackClassName="border border-border bg-card-translucent"
         glassEffectStyle="regular"
         // The composer is a passive material containing interactive controls.
-        // Expo GlassView defaults to non-interactive and both layouts share it.
+        // Keep native glass out of the interactive content's layout path.
+        pointerEvents="none"
         tintColor="transparent"
-        style={props.style}
+        style={{
+          position: "absolute",
+          inset: 0,
+          borderRadius: targetBorderRadius,
+        }}
       >
-        {props.children}
+        {null}
       </GlassSurface>
+      <View style={props.style}>{props.children}</View>
     </Animated.View>
   );
 }
@@ -254,9 +292,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const isExpanded = isFocused || settingsSheetPresentation.isActive;
   const canSend = hasContent;
 
-  // Notify the parent from the derived value, not focus events: the parent
-  // sizes the feed inset from this, and blur-during-sheet would otherwise
-  // report collapsed while the composer still renders expanded.
+  // Keep the parent's feed inset synchronized while the settings sheet keeps
+  // the composer expanded between editor focus events.
   useEffect(() => {
     onExpandedChange?.(isExpanded);
   }, [isExpanded, onExpandedChange]);
@@ -279,13 +316,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const onEditorFocusChange = props.onEditorFocusChange;
   const handleFocus = useCallback(() => {
     setIsFocused(true);
+    onExpandedChange?.(true);
     onEditorFocusChange?.(true);
-  }, [onEditorFocusChange]);
+  }, [onEditorFocusChange, onExpandedChange]);
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
+    if (!settingsSheetPresentation.isActive) {
+      onExpandedChange?.(false);
+    }
     onEditorFocusChange?.(false);
-  }, [onEditorFocusChange]);
+  }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.isActive]);
   const showStopAction =
     props.selectedThread.session?.status === "running" ||
     props.selectedThread.session?.status === "starting";
@@ -445,7 +486,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   return (
     <Animated.View
       className="px-4"
-      layout={COMPOSER_LAYOUT_TRANSITION}
       style={{
         paddingTop: isExpanded ? 8 : 6,
         paddingBottom: (props.bottomInset ?? 0) + (isExpanded ? 8 : 6),
@@ -460,7 +500,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       />
       <Animated.View
         className="relative w-full self-center"
-        layout={COMPOSER_LAYOUT_TRANSITION}
         style={{ maxWidth: props.contentMaxWidth }}
       >
         {composerMenu.trigger && composerMenu.items.length > 0 ? (
@@ -493,12 +532,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   paddingTop: 14,
                 }
               : {
-                  borderRadius: 999,
+                  // Keep the numeric radius close to the expanded card so the
+                  // shape morph stays bounded while rendering as a capsule.
+                  borderRadius: 27,
                   overflow: "hidden" as const,
-                  flexDirection: "row" as const,
-                  alignItems: "center" as const,
-                  paddingLeft: 18,
-                  paddingRight: 5,
+                  paddingHorizontal: 14,
                   paddingVertical: 5,
                 }
           }
@@ -518,95 +556,124 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             </Animated.View>
           ) : null}
 
-          <View className={isExpanded ? undefined : "min-w-0 flex-1"}>
-            <ComposerEditor
-              ref={inputRef}
-              multiline
-              value={props.draftMessage}
-              skills={selectedProviderStatus?.skills ?? []}
-              selection={composerMenu.selection}
-              onChangeText={props.onChangeDraftMessage}
-              onSelectionChange={composerMenu.onSelectionChange}
-              onPasteImages={(uris) => void props.onNativePasteImages(uris)}
-              placeholder={props.placeholder}
-              onFocus={handleFocus}
-              onBlur={handleBlur}
-              onSubmit={handleSend}
-              scrollEnabled={isExpanded}
-              // Android: collapsed single line centers natively (gravity) in
-              // a pill-height box matching the send button; iOS keeps insets.
-              singleLineCentered={!isExpanded}
-              contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
-              style={
-                isExpanded
-                  ? {
-                      minHeight: 72,
-                      maxHeight: 160,
-                      paddingHorizontal: 4,
-                      paddingVertical: 4,
-                    }
-                  : {
-                      height: 36,
-                    }
-              }
-              textStyle={{
-                ...bodyText,
-                color: foregroundColor,
-              }}
-            />
-          </View>
-          {!isExpanded && props.draftAttachments.length > 0 ? (
-            <View className="flex-row gap-1 pl-1">
-              {props.draftAttachments.slice(0, 3).map((image) => (
-                <Pressable key={image.id} onPress={() => onPressImage(image.previewUri)}>
-                  <Image
-                    source={{ uri: image.previewUri }}
-                    className="size-[30px] rounded-lg bg-subtle"
-                    resizeMode="cover"
-                  />
-                </Pressable>
-              ))}
-              {props.draftAttachments.length > 3 ? (
-                <View className="size-[30px] items-center justify-center rounded-lg bg-subtle-strong">
-                  <Text className="text-foreground-muted text-2xs font-t3-bold">
-                    +{props.draftAttachments.length - 3}
-                  </Text>
-                </View>
-              ) : null}
+          <View className={isExpanded ? undefined : "flex-row items-center"}>
+            <View className={isExpanded ? undefined : "min-w-0 flex-1"}>
+              <ComposerEditor
+                ref={inputRef}
+                multiline
+                value={props.draftMessage}
+                skills={selectedProviderStatus?.skills ?? []}
+                selection={composerMenu.selection}
+                onChangeText={props.onChangeDraftMessage}
+                onSelectionChange={composerMenu.onSelectionChange}
+                onPasteImages={(uris) => void props.onNativePasteImages(uris)}
+                placeholder={props.placeholder}
+                onFocus={handleFocus}
+                onBlur={handleBlur}
+                onSubmit={handleSend}
+                scrollEnabled={isExpanded}
+                // Android: collapsed single line centers natively (gravity) in
+                // a pill-height box matching the send button; iOS keeps insets.
+                singleLineCentered={!isExpanded}
+                contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
+                style={
+                  isExpanded
+                    ? {
+                        minHeight: 72,
+                        maxHeight: 160,
+                        paddingHorizontal: 4,
+                        paddingVertical: 4,
+                      }
+                    : {
+                        height: 36,
+                        paddingHorizontal: 4,
+                      }
+                }
+                textStyle={{
+                  ...bodyText,
+                  color: foregroundColor,
+                }}
+              />
             </View>
-          ) : null}
-          {!isExpanded ? (
-            <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(100)}>
-              {showStopAction ? (
-                <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
-              ) : (
-                <ControlPill
-                  icon="arrow.up"
-                  variant="primary"
-                  disabled={!canSend}
-                  onPress={handleSend}
-                />
-              )}
-            </Animated.View>
-          ) : null}
-          {isExpanded ? (
+            {!isExpanded && props.draftAttachments.length > 0 ? (
+              <View className="flex-row gap-1 pl-1">
+                {props.draftAttachments.slice(0, 3).map((image) => (
+                  <Pressable key={image.id} onPress={() => onPressImage(image.previewUri)}>
+                    <Image
+                      source={{ uri: image.previewUri }}
+                      className="size-[30px] rounded-lg bg-subtle"
+                      resizeMode="cover"
+                    />
+                  </Pressable>
+                ))}
+                {props.draftAttachments.length > 3 ? (
+                  <View className="size-[30px] items-center justify-center rounded-lg bg-subtle-strong">
+                    <Text className="text-foreground-muted text-2xs font-t3-bold">
+                      +{props.draftAttachments.length - 3}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+            {!isExpanded ? (
+              <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(100)}>
+                {showStopAction ? (
+                  <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
+                ) : (
+                  <ControlPill
+                    icon="arrow.up"
+                    variant="primary"
+                    disabled={!canSend}
+                    onPress={handleSend}
+                  />
+                )}
+              </Animated.View>
+            ) : null}
+          </View>
+          <View
+            accessibilityElementsHidden={!isExpanded}
+            collapsable={false}
+            importantForAccessibility={isExpanded ? "auto" : "no-hide-descendants"}
+            pointerEvents={isExpanded ? "auto" : "none"}
+            style={
+              isExpanded
+                ? undefined
+                : {
+                    height: 0,
+                    opacity: 0,
+                    overflow: "hidden",
+                  }
+            }
+          >
             <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={4}>
-              <ComposerToolbarScroller contentPaddingRight={8}>
+              <View className="min-w-0 flex-1 flex-row items-center gap-2">
                 <ComposerToolbarButton
                   accessibilityLabel="Add attachment"
                   icon="plus"
                   onPress={() => void props.onPickDraftImages()}
                   showChevron={false}
                 />
-                <ComposerInlineControl
-                  accessibilityLabel="Model and reasoning settings"
-                  emphasized
-                  iconNode={
-                    <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
-                  }
-                  label={currentModelOption?.label ?? currentModelSelection.model}
-                  maxWidth={152}
-                  onPress={openSettings}
+                <View className="min-w-0 flex-1" style={{ maxWidth: 152 }}>
+                  <ComposerInlineControl
+                    accessibilityLabel="Model and reasoning settings"
+                    emphasized
+                    iconNode={
+                      <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
+                    }
+                    label={currentModelOption?.label ?? currentModelSelection.model}
+                    maxWidth={152}
+                    onPress={openSettings}
+                  />
+                </View>
+              </View>
+              <View className="shrink-0 flex-row items-center gap-2">
+                <ComposerToolbarButton
+                  accessibilityLabel={sendLabel}
+                  icon="arrow.up"
+                  variant="primary"
+                  disabled={!canSend}
+                  onPress={handleSend}
+                  showChevron={false}
                 />
                 {showStopAction ? (
                   <ComposerToolbarButton
@@ -617,17 +684,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     showChevron={false}
                   />
                 ) : null}
-              </ComposerToolbarScroller>
-              <ComposerToolbarButton
-                accessibilityLabel={sendLabel}
-                icon="arrow.up"
-                variant="primary"
-                disabled={!canSend}
-                onPress={handleSend}
-                showChevron={false}
-              />
+              </View>
             </ComposerToolbarRow>
-          ) : null}
+          </View>
         </ComposerSurface>
 
         {/* Queue count */}

@@ -4,7 +4,6 @@ import { type LegendListRef } from "@legendapp/list/react-native";
 import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
-import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useNavigation } from "@react-navigation/native";
@@ -45,7 +44,13 @@ import {
 import { TouchableOpacity } from "react-native-gesture-handler";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  FadeInUp,
+  FadeOut,
+  LinearTransition,
+  type SharedValue,
+} from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useFontFamily } from "../../lib/useFontFamily";
@@ -84,9 +89,7 @@ import {
 import {
   resolveMarkdownFontSizes,
   resolveNativeMarkdownTypography,
-  scaledTypographyLineHeight,
 } from "../../lib/appearancePreferences";
-import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
@@ -105,6 +108,7 @@ import {
   collapsedWorkLogHeight,
   ThreadWorkGroupToggle,
   ThreadWorkLog,
+  THREAD_DISCLOSURE_TRANSITION_MS,
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
@@ -134,9 +138,10 @@ function formatMessageTime(input: string): string {
 // so its height is a constant; a drifted value costs one correction on
 // measure, not a persistent offset.
 const TURN_FOLD_HEIGHT = 56; // min-h-11 (44) + mb-3 (12)
-// The working row has no min-height clamp — its height follows the scaled
-// text-xs line height (see workingRowHeight in ThreadFeed).
-const WORKING_ROW_VERTICAL_EXTRAS = 24; // py-1 (8) + mb-4 (16)
+const THREAD_FEED_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
+const THREAD_FEED_DISCLOSURE_ENTER_TRANSITION = FadeIn.duration(140);
+const THREAD_FEED_DISCLOSURE_EXIT_TRANSITION = FadeOut.duration(120);
+const EMPTY_DISCLOSURE_ENTRY_IDS: ReadonlySet<string> = new Set();
 
 // Entering animations must only play for rows born just now — LegendList
 // remounts rows when they scroll back into view, and replaying an entrance for
@@ -985,10 +990,6 @@ function renderFeedEntry(
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
 
-  if (entry.type === "working") {
-    return <WorkingTimelineRow startedAt={entry.createdAt} />;
-  }
-
   if (entry.type === "turn-fold") {
     return (
       <Pressable
@@ -1017,7 +1018,10 @@ function renderFeedEntry(
         expanded={entry.expanded}
         hiddenCount={entry.hiddenCount}
         iconSubtleColor={iconSubtleColor}
-        onlyToolActivities={entry.onlyToolActivities}
+        summary={entry.summary}
+        summaryKind={entry.summaryKind}
+        hasFailure={entry.hasFailure}
+        shimmer={entry.shimmer}
         onToggle={() => props.onToggleWorkGroup(entry.groupId)}
       />
     );
@@ -1179,32 +1183,6 @@ function renderFeedEntry(
     />
   );
 }
-
-const WorkingTimelineRow = memo(function WorkingTimelineRow(props: { readonly startedAt: string }) {
-  const [nowMs, setNowMs] = useState(() => Date.now());
-
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      setNowMs(Date.now());
-    }, 1_000);
-    return () => clearInterval(intervalId);
-  }, [props.startedAt]);
-
-  const durationLabel = formatElapsed(props.startedAt, new Date(nowMs).toISOString()) ?? "0s";
-
-  return (
-    <View className="mb-4 flex-row items-center gap-2 px-1.5 py-1">
-      <View className="flex-row items-center gap-1">
-        <View className="h-1 w-1 rounded-full bg-adaptive-neutral-400-500" />
-        <View className="h-1 w-1 rounded-full bg-adaptive-neutral-400-a80-500-a80" />
-        <View className="h-1 w-1 rounded-full bg-adaptive-neutral-400-a60-500-a60" />
-      </View>
-      <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
-        Working for {durationLabel}
-      </Text>
-    </View>
-  );
-});
 
 function UserMessageContent(props: {
   readonly text: string;
@@ -1479,14 +1457,14 @@ function ThreadFeedPlaceholder(props: {
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const navigation = useNavigation();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const foldSettleFrameRef = useRef<number | null>(null);
-  const foldSettleSecondFrameRef = useRef<number | null>(null);
+  const disclosureSettleFrameRef = useRef<number | null>(null);
+  const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
+  const previousPresentedFeedRef = useRef<ReadonlyArray<ThreadFeedEntry> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
   const previousLatestTurnRef = useRef(props.latestTurn);
   const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { width: windowWidth } = useWindowDimensions();
-  const { appearance } = useAppearancePreferences();
   const [viewportWidth, setViewportWidth] = useState(() =>
     props.layoutVariant === "split" ? 0 : windowWidth,
   );
@@ -1791,14 +1769,37 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.latestTurn,
     ],
   );
+  const disclosureEnteringEntryIds = useMemo(() => {
+    const anchorKey = disclosureAnchorKeyRef.current;
+    const previousPresentedFeed = previousPresentedFeedRef.current;
+    if (!disclosureToggleSettling || anchorKey === null || previousPresentedFeed === null) {
+      return EMPTY_DISCLOSURE_ENTRY_IDS;
+    }
 
-  // The empty↔filled key below remounts the list, which resets its imperative
-  // content-inset override — and useKeyboardChatComposerInset (mounted above
-  // the remount boundary) deduplicates by height, so it never re-reports the
-  // composer inset to the fresh instance. Re-report the measured overlay height
-  // (composer plus any pending approval / user-input card) so the remounted
-  // list's scroll math gets the true value; on Android the declarative
-  // contentInset floor below covers the window before this effect lands.
+    const previousIds = new Set(previousPresentedFeed.map((entry) => entry.id));
+    const anchorIndex = presentedFeed.findIndex((entry) => entry.id === anchorKey);
+    const enteringIds = new Set<string>();
+    if (anchorIndex < 0) {
+      return enteringIds;
+    }
+    for (let index = anchorIndex + 1; index < presentedFeed.length; index += 1) {
+      const entryId = presentedFeed[index]!.id;
+      if (previousIds.has(entryId)) {
+        break;
+      }
+      enteringIds.add(entryId);
+    }
+    return enteringIds;
+  }, [disclosureToggleSettling, presentedFeed]);
+
+  useLayoutEffect(() => {
+    previousPresentedFeedRef.current = presentedFeed;
+  }, [presentedFeed]);
+
+  // The empty↔filled key below remounts the list and resets its imperative
+  // content-inset override. Seed the fresh instance synchronously with the
+  // current overlay height before the scroll integration's next reaction;
+  // on Android the declarative contentInset floor covers this same window.
   const listMountKey = `${feedThreadKey}:${props.feed.length === 0 ? "empty" : "filled"}`;
   useLayoutEffect(() => {
     const bottom = props.contentInsetEndAdjustment.value;
@@ -1863,33 +1864,51 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       if (copyFeedbackTimeoutRef.current) {
         clearTimeout(copyFeedbackTimeoutRef.current);
       }
-      if (foldSettleFrameRef.current !== null) {
-        cancelAnimationFrame(foldSettleFrameRef.current);
+      if (disclosureSettleFrameRef.current !== null) {
+        cancelAnimationFrame(disclosureSettleFrameRef.current);
       }
-      if (foldSettleSecondFrameRef.current !== null) {
-        cancelAnimationFrame(foldSettleSecondFrameRef.current);
+      if (disclosureSettleSecondFrameRef.current !== null) {
+        cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
       }
     };
+  }, []);
+
+  const settleDisclosureAfterLayout = useCallback(() => {
+    if (disclosureSettleFrameRef.current !== null) {
+      cancelAnimationFrame(disclosureSettleFrameRef.current);
+    }
+    if (disclosureSettleSecondFrameRef.current !== null) {
+      cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
+    }
+    disclosureSettleFrameRef.current = requestAnimationFrame(() => {
+      disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
+        disclosureAnchorKeyRef.current = null;
+        setDisclosureToggleSettling(false);
+        disclosureSettleFrameRef.current = null;
+        disclosureSettleSecondFrameRef.current = null;
+      });
+    });
   }, []);
 
   const suspendEndScrollMaintenanceForDisclosure = useCallback((anchorKey: string | null) => {
     disclosureAnchorKeyRef.current = anchorKey;
     setDisclosureToggleSettling(true);
-    if (foldSettleFrameRef.current !== null) {
-      cancelAnimationFrame(foldSettleFrameRef.current);
-    }
-    if (foldSettleSecondFrameRef.current !== null) {
-      cancelAnimationFrame(foldSettleSecondFrameRef.current);
-    }
-    foldSettleFrameRef.current = requestAnimationFrame(() => {
-      foldSettleSecondFrameRef.current = requestAnimationFrame(() => {
-        disclosureAnchorKeyRef.current = null;
-        setDisclosureToggleSettling(false);
-        foldSettleFrameRef.current = null;
-        foldSettleSecondFrameRef.current = null;
-      });
-    });
   }, []);
+
+  // Start the quiet-frame countdown after React has committed the disclosure.
+  // Every measured item-size change restarts it, so end maintenance cannot
+  // wake between the data mutation and LegendList's final layout correction.
+  useLayoutEffect(() => {
+    if (disclosureAnchorKeyRef.current !== null) {
+      settleDisclosureAfterLayout();
+    }
+  }, [expandedTurnIds, expandedWorkGroups, expandedWorkRows, settleDisclosureAfterLayout]);
+
+  const handleItemSizeChanged = useCallback(() => {
+    if (disclosureAnchorKeyRef.current !== null) {
+      settleDisclosureAfterLayout();
+    }
+  }, [settleDisclosureAfterLayout]);
 
   const shouldRestoreVisibleContentPosition = useCallback((entry: ThreadFeedEntry) => {
     const disclosureAnchorKey = disclosureAnchorKeyRef.current;
@@ -1975,11 +1994,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // scrolling up through unmeasured content corrects each row's height as it
   // mounts — the feed visibly jumps. Fixed sizes make the small chrome rows
   // exact; message rows stay undefined and use LegendList's per-type running
-  // average once one of their type has been measured. Text-driven heights
-  // follow the configurable base font size via scaledTypographyLineHeight.
-  const workingRowHeight =
-    WORKING_ROW_VERTICAL_EXTRAS +
-    scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.label, appearance.baseFontSize);
+  // average once one of their type has been measured.
   const getFixedItemSize = useCallback(
     (entry: ThreadFeedEntry) => {
       switch (entry.type) {
@@ -1987,46 +2002,56 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           return TURN_FOLD_HEIGHT;
         case "work-toggle":
           return WORK_GROUP_TOGGLE_HEIGHT;
-        case "working":
-          return workingRowHeight;
         case "activity-group":
           // Expanded rows append a variable detail block — fall back to
           // measurement for those groups.
           return entry.activities.some((activity) => expandedWorkRows[activity.id])
             ? undefined
-            : collapsedWorkLogHeight(entry.activities, appearance.baseFontSize);
+            : collapsedWorkLogHeight(entry.activities);
         default:
           return undefined;
       }
     },
-    [expandedWorkRows, workingRowHeight, appearance.baseFontSize],
+    [expandedWorkRows],
   );
 
   const renderItem = useCallback(
-    (info: { item: ThreadFeedEntry; index: number }) =>
-      renderFeedEntry(info, {
-        environmentId: props.environmentId,
-        copiedRowId,
-        expandedWorkRows,
-        terminalAssistantMessageIds,
-        unsettledTurnId,
-        onCopyWorkRow,
-        onToggleWorkGroup,
-        onToggleWorkRow,
-        onToggleTurnFold,
-        onPressImage,
-        onMarkdownLinkPress,
-        renderMarkdownImage,
-        iconSubtleColor,
-        userBubbleColor,
-        markdownStyles,
-        reviewCommentColors,
-        reviewCommentBubbleWidth,
-        userBubbleMaxWidth,
-        skills: props.skills,
-      }),
+    (info: { item: ThreadFeedEntry; index: number }) => (
+      <Animated.View
+        key={info.item.id}
+        entering={
+          disclosureEnteringEntryIds.has(info.item.id)
+            ? THREAD_FEED_DISCLOSURE_ENTER_TRANSITION
+            : undefined
+        }
+        exiting={THREAD_FEED_DISCLOSURE_EXIT_TRANSITION}
+      >
+        {renderFeedEntry(info, {
+          environmentId: props.environmentId,
+          copiedRowId,
+          expandedWorkRows,
+          terminalAssistantMessageIds,
+          unsettledTurnId,
+          onCopyWorkRow,
+          onToggleWorkGroup,
+          onToggleWorkRow,
+          onToggleTurnFold,
+          onPressImage,
+          onMarkdownLinkPress,
+          renderMarkdownImage,
+          iconSubtleColor,
+          userBubbleColor,
+          markdownStyles,
+          reviewCommentColors,
+          reviewCommentBubbleWidth,
+          userBubbleMaxWidth,
+          skills: props.skills,
+        })}
+      </Animated.View>
+    ),
     [
       copiedRowId,
+      disclosureEnteringEntryIds,
       expandedWorkRows,
       terminalAssistantMessageIds,
       unsettledTurnId,
@@ -2093,7 +2118,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                 }
               : { scrollIndicatorInsets: { top: topContentInset, bottom: 0 } })}
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-            // Patched LegendList prop (patches/@legendapp__list@3.2.0.patch):
+            // Patched LegendList prop (patches/@legendapp__list@3.3.5.patch):
             // lets its scroll math clamp programmatic scrolls to -headerInset
             // instead of 0, so initialScrollAtEnd/maintainScrollAtEnd on short
             // content rest below the transparent header rather than at frame top.
@@ -2148,6 +2173,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               entry.type === "message" ? `message:${entry.message.role}` : entry.type
             }
             getFixedItemSize={getFixedItemSize}
+            itemLayoutAnimation={THREAD_FEED_LAYOUT_TRANSITION}
+            onItemSizeChanged={handleItemSizeChanged}
             // Measure rows well before they scroll into view so estimate→actual
             // corrections land offscreen instead of under the user's finger.
             drawDistance={500}
