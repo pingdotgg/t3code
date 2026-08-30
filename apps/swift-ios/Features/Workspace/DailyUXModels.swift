@@ -575,7 +575,8 @@ struct DailyUXSidebarIndex {
         snapshot: FeatureSnapshot,
         query: String,
         projectID: String? = nil,
-        now: Date = .now
+        now: Date = .now,
+        pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation] = [:]
     ) {
         let visible = snapshot.threads.filter { thread in
             guard !thread.isArchived else { return false }
@@ -586,16 +587,28 @@ struct DailyUXSidebarIndex {
         pinned = available
             .filter {
                 $0.pinnedAt != nil
-                    && !($0.canToggleSettlement && $0.isEffectivelySettled(at: now))
+                    && !($0.canToggleSettlement && $0.isEffectivelySettled(
+                        at: now,
+                        settings: snapshot.settings,
+                        pullRequest: pullRequestsByThreadID[$0.id]
+                    ))
             }
             .sorted(by: Self.creationOrder)
 
         active = available
             .filter {
                 $0.pinnedAt == nil
-                    && !($0.canToggleSettlement && $0.isEffectivelySettled(at: now))
+                    && !($0.canToggleSettlement && $0.isEffectivelySettled(
+                        at: now,
+                        settings: snapshot.settings,
+                        pullRequest: pullRequestsByThreadID[$0.id]
+                    ))
             }
-            .sorted(by: Self.creationOrder)
+            .sorted { lhs, rhs in
+                let leftAnchor = max(lhs.createdAt, lhs.unsettledAt ?? lhs.createdAt)
+                let rightAnchor = max(rhs.createdAt, rhs.unsettledAt ?? rhs.createdAt)
+                return leftAnchor == rightAnchor ? lhs.id < rhs.id : leftAnchor > rightAnchor
+            }
 
         snoozed = visible
             .filter { $0.isEffectivelySnoozed(at: now) }
@@ -611,7 +624,11 @@ struct DailyUXSidebarIndex {
         settled = available
             .filter {
                 $0.canToggleSettlement
-                    && $0.isEffectivelySettled(at: now)
+                    && $0.isEffectivelySettled(
+                        at: now,
+                        settings: snapshot.settings,
+                        pullRequest: pullRequestsByThreadID[$0.id]
+                    )
             }
             .sorted { lhs, rhs in
                 if lhs.settledSortDate != rhs.settledSortDate {
@@ -664,13 +681,20 @@ struct DailyUXSidebarIndex {
 enum DailyUXSidebarRefresh {
     static func nextBoundary(
         for threads: [FeatureThread],
-        after now: Date
+        after now: Date,
+        settings: FeatureSettings = .init(),
+        pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation] = [:]
     ) -> Date? {
         threads.reduce(nil as Date?) { earliest, thread in
             let snoozeBoundary = thread.isEffectivelySnoozed(at: now)
                 ? thread.snoozedUntil
                 : nil
-            let settlementBoundary = automaticSettlementBoundary(for: thread, after: now)
+            let settlementBoundary = automaticSettlementBoundary(
+                for: thread,
+                after: now,
+                settings: settings,
+                pullRequest: pullRequestsByThreadID[thread.id]
+            )
             let threadBoundary = [snoozeBoundary, settlementBoundary]
                 .compactMap { $0 }
                 .min()
@@ -682,22 +706,30 @@ enum DailyUXSidebarRefresh {
 
     private static func automaticSettlementBoundary(
         for thread: FeatureThread,
-        after now: Date
+        after now: Date,
+        settings: FeatureSettings,
+        pullRequest: HomeThreadPullRequestPresentation?
     ) -> Date? {
-        guard !thread.isArchived,
-              !thread.isSettled,
-              thread.pinnedAt == nil,
-              !thread.keepsActive,
-              let lastActivityAt = thread.lastActivityAt else {
+        guard !thread.isArchived else {
             return nil
         }
-        switch thread.state {
-        case .idle, .failed, .completed:
-            break
-        case .queued, .working, .monitoring, .waitingForApproval, .waitingForInput:
+
+        if let queuedBoundary = thread.queuedSettlementBoundary(after: now) {
+            return queuedBoundary
+        }
+
+        guard !thread.hasSettlementActivityBlock(at: now),
+              thread.effectiveSettlementOverride == nil,
+              pullRequest?.state != .open,
+              !thread.pullRequestAutoSettles(
+                  pullRequest,
+                  autoSettleOnMerge: settings.autoSettleOnMerge
+              ),
+              let days = settings.autoSettleAfterDays,
+              let lastActivityAt = thread.settlementLastActivityAt else {
             return nil
         }
-        let boundary = lastActivityAt.addingTimeInterval(3 * 24 * 60 * 60)
+        let boundary = lastActivityAt.addingTimeInterval(Double(days) * 24 * 60 * 60 + 0.001)
         return boundary > now ? boundary : nil
     }
 }
@@ -899,23 +931,134 @@ extension FeatureThread {
         state == .waitingForApproval || state == .waitingForInput || state == .failed
     }
 
-    func isEffectivelySettled(at now: Date) -> Bool {
-        switch state {
-        case .queued, .working, .monitoring, .waitingForApproval, .waitingForInput:
+    func isEffectivelySettled(
+        at now: Date,
+        settings: FeatureSettings = .init(),
+        pullRequest: HomeThreadPullRequestPresentation? = nil
+    ) -> Bool {
+        if hasHardSettlementActivityBlock {
             return false
-        case .idle, .failed, .completed:
+        }
+        if hasQueuedTurnStart(at: now) {
+            let queuedWasAdjudicated = effectiveSettlementOverride == .settled
+                && settledAt.map { settledAt in
+                    settlementFacts?.latestUserMessageAt.map { settledAt >= $0 } ?? false
+                } == true
+            if !queuedWasAdjudicated { return false }
+        }
+
+        switch effectiveSettlementOverride {
+        case .settled:
+            return true
+        case .active:
+            return false
+        case nil:
             break
         }
-        if isSettled {
+
+        if pullRequestAutoSettles(
+            pullRequest,
+            autoSettleOnMerge: settings.autoSettleOnMerge
+        ) {
             return true
         }
-        if keepsActive {
+        if pullRequest?.state == .open || settings.autoSettleAfterDays == nil {
             return false
         }
-        guard let lastActivityAt else {
+        guard let lastActivityAt = settlementLastActivityAt,
+              let days = settings.autoSettleAfterDays else {
             return false
         }
-        return now.timeIntervalSince(lastActivityAt) >= 3 * 24 * 60 * 60
+        return lastActivityAt < now.addingTimeInterval(-Double(days) * 24 * 60 * 60)
+    }
+
+    func canSettleNow(at now: Date = .now) -> Bool {
+        guard canToggleSettlement else { return false }
+        return !hasSettlementActivityBlock(at: now)
+    }
+
+    var effectiveSettlementOverride: FeatureThreadSettlementOverride? {
+        if let settlementFacts { return settlementFacts.settlementOverride }
+        if keepsActive { return .active }
+        if isSettled { return .settled }
+        return nil
+    }
+
+    var settlementLastActivityAt: Date? {
+        guard let facts = settlementFacts else { return lastActivityAt }
+        return [
+            facts.latestUserMessageAt,
+            facts.latestTurn?.requestedAt,
+            facts.latestTurn?.startedAt,
+            facts.latestTurn?.completedAt,
+        ].compactMap { $0 }.max()
+    }
+
+    func hasSettlementActivityBlock(at now: Date) -> Bool {
+        guard settlementFacts != nil else {
+            return [.queued, .working, .monitoring, .waitingForApproval, .waitingForInput]
+                .contains(state)
+        }
+        if hasHardSettlementActivityBlock { return true }
+        return hasQueuedTurnStart(at: now)
+    }
+
+    var hasHardSettlementActivityBlock: Bool {
+        guard let facts = settlementFacts else {
+            return [
+                .queued,
+                .working,
+                .monitoring,
+                .waitingForApproval,
+                .waitingForInput,
+            ].contains(state)
+        }
+        return facts.hasPendingApprovals
+            || facts.hasPendingUserInput
+            || facts.sessionStatus == "starting"
+            || facts.sessionStatus == "running"
+    }
+
+    func hasQueuedTurnStart(at now: Date) -> Bool {
+        guard let facts = settlementFacts,
+              facts.sessionStatus != "error",
+              let messageAt = facts.latestUserMessageAt,
+              abs(now.timeIntervalSince(messageAt)) <= 2 * 60 else {
+            return false
+        }
+        guard let turn = facts.latestTurn else { return true }
+        if turn.requestedAtIsInvalid || turn.startedAtIsInvalid || turn.completedAtIsInvalid {
+            return false
+        }
+        return [turn.requestedAt, turn.startedAt, turn.completedAt].allSatisfy {
+            $0 == nil || $0! < messageAt
+        }
+    }
+
+    func queuedSettlementBoundary(after now: Date) -> Date? {
+        guard hasQueuedTurnStart(at: now),
+              let messageAt = settlementFacts?.latestUserMessageAt else {
+            return nil
+        }
+        let boundary = messageAt.addingTimeInterval(2 * 60 + 0.001)
+        return boundary > now ? boundary : nil
+    }
+
+    func pullRequestAutoSettles(
+        _ pullRequest: HomeThreadPullRequestPresentation?,
+        autoSettleOnMerge: Bool
+    ) -> Bool {
+        guard let pullRequest else { return false }
+        let isTerminal = pullRequest.state == .closed
+            || (pullRequest.state == .merged && autoSettleOnMerge)
+        guard isTerminal else { return false }
+        guard let updatedAt = pullRequest.updatedAt else { return true }
+        let userActivityAnchor = [
+            createdAt,
+            settlementFacts?.latestUserMessageAt,
+            settlementFacts?.latestTurn?.requestedAt,
+        ].compactMap { $0 }.max() ?? createdAt
+        return updatedAt >= userActivityAnchor
     }
 
     func isEffectivelySnoozed(at now: Date) -> Bool {

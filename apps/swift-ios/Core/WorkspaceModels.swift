@@ -322,6 +322,7 @@ public struct VCSChangeRequest: Codable, Equatable, Sendable {
     public let baseRef: String
     public let headRef: String
     public let state: String
+    public var updatedAt: String? = nil
 }
 
 public struct VCSLocalStatus: Codable, Equatable, Sendable {

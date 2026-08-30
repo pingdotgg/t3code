@@ -17,6 +17,22 @@ struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
     }
 }
 
+struct WorkspaceThreadSelection: Equatable {
+    private(set) var selectedID: String?
+    private(set) var lastOpenedID: String?
+
+    var highlightedID: String? { selectedID ?? lastOpenedID }
+
+    mutating func open(_ id: String) {
+        selectedID = id
+        lastOpenedID = id
+    }
+
+    mutating func close() {
+        selectedID = nil
+    }
+}
+
 public struct WorkspaceView: View {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -26,14 +42,14 @@ public struct WorkspaceView: View {
     private let submitNewTask: (NewTaskRequest) async -> FeatureThread?
     private let submitMessage: (FeatureMessageSubmission) async -> Bool
 
-    @State private var selectedThreadID: String?
+    @State private var threadSelection = WorkspaceThreadSelection()
     @State private var selectedProjectID: String?
     @State private var searchText = ""
     @State private var isSearching = false
     @AppStorage("t3.swiftui.home.snoozedExpanded") private var isSnoozedExpanded = false
     @AppStorage("t3.swiftui.home.settledExpanded") private var isSettledExpanded = true
     @AppStorage("t3.swiftui.home.archiveExpanded") private var isArchiveExpanded = false
-    @State private var settledLimit = 12
+    @State private var settledLimit = 10
     @State private var showingNewTask = false
     @State private var newTaskInitialProjectID: String?
     @State private var showingAddProject = false
@@ -252,7 +268,7 @@ public struct WorkspaceView: View {
         .background(T3Colors.background)
         .toolbar(.hidden, for: .navigationBar)
         .onChange(of: selectedProjectID) {
-            settledLimit = 12
+            settledLimit = 10
         }
     }
 
@@ -262,7 +278,8 @@ public struct WorkspaceView: View {
             revision: model.homePresentationRevision,
             query: searchText,
             projectID: selectedProjectID,
-            now: sidebarBoundaryNow
+            now: sidebarBoundaryNow,
+            pullRequestsByThreadID: model.pullRequestsByThreadID
         )
 
         return VStack(spacing: 0) {
@@ -271,9 +288,11 @@ public struct WorkspaceView: View {
                 presentation: presentation,
                 projectFaviconClient: model.client,
                 query: searchText,
-                selectedThreadID: selectedThreadID,
+                selectedThreadID: threadSelection.highlightedID,
                 forceRichRows: dynamicTypeSize.isAccessibilitySize,
                 hapticsEnabled: model.snapshot.settings.hapticsEnabled,
+                settings: model.snapshot.settings,
+                pullRequestsByThreadID: model.pullRequestsByThreadID,
                 isSnoozedExpanded: isSnoozedExpanded,
                 isSettledExpanded: isSettledExpanded,
                 isArchiveExpanded: isArchiveExpanded,
@@ -304,6 +323,13 @@ public struct WorkspaceView: View {
                 },
                 onDelete: { thread in
                     deletingThread = thread
+                },
+                onPullRequestChange: { threadID, observationIdentity, pullRequest in
+                    model.updatePullRequest(
+                        pullRequest,
+                        threadID: threadID,
+                        observationIdentity: observationIdentity
+                    )
                 }
             )
         }
@@ -593,7 +619,9 @@ public struct WorkspaceView: View {
     private var nextSidebarBoundary: Date? {
         DailyUXSidebarRefresh.nextBoundary(
             for: model.snapshot.threads,
-            after: sidebarBoundaryNow
+            after: max(sidebarBoundaryNow, .now),
+            settings: model.snapshot.settings,
+            pullRequestsByThreadID: model.pullRequestsByThreadID
         )
     }
 
@@ -602,18 +630,20 @@ public struct WorkspaceView: View {
         return model.snapshot.threads.contains { $0.id == selectedThreadID }
     }
 
+    private var selectedThreadID: String? { threadSelection.selectedID }
+
     private var selectedProjectIsAvailable: Bool {
         guard let selectedProjectID else { return true }
         return model.snapshot.projects.contains { $0.id == selectedProjectID }
     }
 
     private func openThread(_ id: String) {
-        selectedThreadID = id
+        threadSelection.open(id)
         preferredCompactColumn = .detail
     }
 
     private func closeSelectedThread() {
-        selectedThreadID = nil
+        threadSelection.close()
         preferredCompactColumn = .sidebar
     }
 
@@ -729,12 +759,19 @@ struct HomePresentation {
     let searchResults: [FeatureThread]
     let rowContexts: [String: HomeThreadRowContext]
 
-    init(snapshot: FeatureSnapshot, query: String, projectID: String?, now: Date) {
+    init(
+        snapshot: FeatureSnapshot,
+        query: String,
+        projectID: String?,
+        now: Date,
+        pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation] = [:]
+    ) {
         let index = DailyUXSidebarIndex(
             snapshot: snapshot,
             query: "",
             projectID: projectID,
-            now: now
+            now: now,
+            pullRequestsByThreadID: pullRequestsByThreadID
         )
         let archived = snapshot.threads
             .filter { thread in
@@ -779,7 +816,8 @@ private final class HomePresentationCache {
         revision: UInt64,
         query: String,
         projectID: String?,
-        now: Date
+        now: Date,
+        pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation]
     ) -> HomePresentation {
         let key = Key(
             revision: revision,
@@ -795,7 +833,8 @@ private final class HomePresentationCache {
             snapshot: snapshot,
             query: query,
             projectID: projectID,
-            now: now
+            now: max(now, .now),
+            pullRequestsByThreadID: pullRequestsByThreadID
         )
         cachedKey = key
         cachedPresentation = presentation
@@ -919,6 +958,7 @@ struct HomeThreadPullRequestPresentation: Equatable {
 
     let number: Int
     let state: State
+    let updatedAt: Date?
 
     var label: String { "#\(number)" }
 
@@ -937,7 +977,11 @@ struct HomeThreadPullRequestPresentation: Equatable {
               let state = State(rawValue: pullRequest.state.lowercased()) else {
             return nil
         }
-        return Self(number: pullRequest.number, state: state)
+        return Self(
+            number: pullRequest.number,
+            state: state,
+            updatedAt: parseDate(pullRequest.updatedAt)
+        )
     }
 
     static func resolve(
@@ -949,7 +993,40 @@ struct HomeThreadPullRequestPresentation: Equatable {
               let state = State(rawValue: detail.state.rawValue) else {
             return nil
         }
-        return Self(number: detail.number, state: state)
+        return Self(
+            number: detail.number,
+            state: state,
+            updatedAt: parseDate(detail.updatedAt)
+        )
+    }
+
+    private static func parseDate(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+}
+
+extension FeatureThread {
+    var pullRequestObservationIdentity: String? {
+        let environment = environmentID ?? ""
+        if let linkedPullRequest {
+            return [
+                id,
+                environment,
+                projectID,
+                linkedPullRequest.projectId,
+                linkedPullRequest.repository.lowercased(),
+                String(linkedPullRequest.number),
+            ].joined(separator: "\u{0}")
+        }
+        guard let branch = branch?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !branch.isEmpty else {
+            return nil
+        }
+        return [id, environment, projectID, worktreePath ?? "", branch]
+            .joined(separator: "\u{0}")
     }
 }
 
@@ -1193,15 +1270,7 @@ struct FeatureThreadRow: View {
 
     private var pullRequestObservationID: String? {
         guard projectFaviconClient != nil else { return nil }
-        if let linked = thread.linkedPullRequest {
-            return "\(thread.id)\u{0}\(linked.projectId)\u{0}\(linked.repository)\u{0}\(linked.number)"
-        }
-        guard
-              let branch = thread.branch?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !branch.isEmpty else {
-            return nil
-        }
-        return "\(thread.id)\u{0}\(branch)"
+        return thread.pullRequestObservationIdentity
     }
 
     @MainActor

@@ -7,7 +7,7 @@ final class UsageContractTests: XCTestCase {
         let data = Data(
             #"""
             {
-              "contractVersion": 4,
+              "contractVersion": 5,
               "readAt": "2026-08-09T12:00:00.000Z",
               "timeZone": "America/Los_Angeles",
               "sinceDay": "2026-08-03",
@@ -15,8 +15,8 @@ final class UsageContractTests: XCTestCase {
               "buckets": [{
                 "day": "2026-08-09",
                 "hourStart": "2026-08-09T12:00:00.000Z",
-                "provider": "codex",
-                "model": "gpt-5.6-sol",
+                "provider": "grok",
+                "model": "grok-code-fast-1",
                 "totals": {
                   "uncachedInputTokens": 100,
                   "cachedInputTokens": 200,
@@ -34,8 +34,8 @@ final class UsageContractTests: XCTestCase {
               "sources": [{
                 "fingerprint": {
                   "hostId": "mac-1",
-                  "provider": "codex",
-                  "resolvedHomePath": "/Users/theo/.codex",
+                  "provider": "grok",
+                  "resolvedHomePath": "/Users/theo/.grok",
                   "volumeId": "1:2"
                 },
                 "status": "ok",
@@ -59,7 +59,8 @@ final class UsageContractTests: XCTestCase {
         let summary = try JSONDecoder.t3.decode(UsageSummary.self, from: data)
 
         XCTAssertEqual(summary.contractVersion, usageContractVersion)
-        XCTAssertEqual(summary.buckets.first?.provider, .codex)
+        XCTAssertEqual(summary.buckets.first?.provider, .grok)
+        XCTAssertEqual(summary.sources.first?.fingerprint.provider, .grok)
         XCTAssertEqual(summary.buckets.first?.totals.cachedInputTokens, 200)
         XCTAssertEqual(summary.sources.first?.fingerprint.volumeId, "1:2")
     }

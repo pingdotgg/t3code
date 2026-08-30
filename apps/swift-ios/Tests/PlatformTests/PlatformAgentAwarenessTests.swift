@@ -29,6 +29,8 @@ struct PlatformAgentAwarenessTests {
         #expect(!decoded.hapticsEnabled)
         #expect(!decoded.notificationsEnabled)
         #expect(decoded.liveActivitiesEnabled)
+        #expect(decoded.autoSettleOnMerge)
+        #expect(decoded.autoSettleAfterDays == 3)
 
         var disabled = decoded
         disabled.liveActivitiesEnabled = false
@@ -37,6 +39,15 @@ struct PlatformAgentAwarenessTests {
             from: JSONEncoder.t3.encode(disabled)
         )
         #expect(!roundTrip.liveActivitiesEnabled)
+
+        disabled.autoSettleOnMerge = false
+        disabled.autoSettleAfterDays = nil
+        let settlementRoundTrip = try JSONDecoder.t3.decode(
+            FeatureSettings.self,
+            from: JSONEncoder.t3.encode(disabled)
+        )
+        #expect(!settlementRoundTrip.autoSettleOnMerge)
+        #expect(settlementRoundTrip.autoSettleAfterDays == nil)
     }
 
     @Test

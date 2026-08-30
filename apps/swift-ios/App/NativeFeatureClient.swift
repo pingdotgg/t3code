@@ -1633,6 +1633,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let detail = mapDetail(
             snapshot.thread,
             environment: environment,
+            sourceSequence: snapshot.snapshotSequence,
             page: activeThreadPage
         )
         activeRawThread = snapshot.thread
@@ -2621,6 +2622,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             archivedAt: nil,
             settledOverride: thread.settledOverride,
             settledAt: thread.settledAt,
+            unsettledAt: thread.unsettledAt,
             snoozedUntil: thread.snoozedUntil,
             snoozedAt: thread.snoozedAt,
             pinnedAt: thread.pinnedAt,
@@ -3336,6 +3338,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             let detail = self.mapDetail(
                 rawThread,
                 environment: route.client.environment,
+                sourceSequence: self.activeThreadSequence ?? 0,
                 mutations: mutations,
                 page: self.activeThreadPage
             )
@@ -3744,6 +3747,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let detail = mapDetail(
             snapshot.thread,
             environment: environment,
+            sourceSequence: snapshot.snapshotSequence,
             page: activeThreadID == route.uiID ? activeThreadPage : featurePage(snapshot.page)
         )
         publish(detail, threadID: route.uiID)
@@ -3844,6 +3848,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             backgroundWorkIsActive: backgroundWorkIsActive,
             fallbackUpdatedAt: shellThread.updatedAt
         )
+        if shell.snapshotSequence >= (activeThreadSequence ?? .min) {
+            applySettlementAuthority(from: shellThread, to: &detail.thread)
+        }
         detail.backgroundWorkIsActive = backgroundWorkIsActive
         detail.activeSubagentCount = backgroundWorkIsActive || sessionIsLive
             ? detailRenderCaches[threadID]?.subagents.activeCount ?? 0
@@ -4240,6 +4247,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             isSettled: isSettled(thread.settledOverride, settledAt: thread.settledAt),
             keepsActive: thread.settledOverride == "active",
             settledAt: thread.settledAt.map(parseDate),
+            unsettledAt: thread.unsettledAt.flatMap(parseValidDate),
             lastActivityAt: lastActivityDate(
                 latestUserMessageAt: thread.latestUserMessageAt,
                 latestTurn: thread.latestTurn
@@ -4263,6 +4271,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 fallbackUpdatedAt: thread.updatedAt
             ),
             latestTurnCompletedAt: thread.latestTurn?.completedAt.map(parseDate),
+            settlementFacts: settlementFacts(
+                override: thread.settledOverride,
+                session: thread.session,
+                hasApprovals: thread.hasPendingApprovals,
+                hasUserInput: thread.hasPendingUserInput,
+                latestUserMessageAt: thread.latestUserMessageAt,
+                latestTurn: thread.latestTurn
+            ),
             runtimeMode: mapRuntimeMode(thread.runtimeMode),
             interactionMode: mapInteractionMode(thread.interactionMode)
         )
@@ -4312,6 +4328,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             isSettled: isSettled(thread.settledOverride, settledAt: thread.settledAt),
             keepsActive: thread.settledOverride == "active",
             settledAt: thread.settledAt.map(parseDate),
+            unsettledAt: thread.unsettledAt.flatMap(parseValidDate),
             lastActivityAt: lastActivityDate(
                 latestUserMessageAt: thread.messages.last(where: { $0.role == "user" })?.createdAt,
                 latestTurn: thread.latestTurn
@@ -4335,6 +4352,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 fallbackUpdatedAt: thread.updatedAt
             ),
             latestTurnCompletedAt: thread.latestTurn?.completedAt.map(parseDate),
+            settlementFacts: settlementFacts(
+                override: thread.settledOverride,
+                session: thread.session,
+                hasApprovals: false,
+                hasUserInput: false,
+                latestUserMessageAt: thread.messages.last(where: { $0.role == "user" })?.createdAt,
+                latestTurn: thread.latestTurn
+            ),
             runtimeMode: mapRuntimeMode(thread.runtimeMode),
             interactionMode: mapInteractionMode(thread.interactionMode)
         )
@@ -4343,6 +4368,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private func mapDetail(
         _ thread: OrchestrationThread,
         environment: Environment,
+        sourceSequence: Int,
         mutations: NativeDetailRenderMutations? = nil,
         page: FeatureThreadPage? = nil
     ) -> FeatureThreadDetail {
@@ -4403,6 +4429,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             hasUserInput: !cache.userInputs.isEmpty,
             backgroundLiveness: backgroundLiveness
         )
+        mappedThread.settlementFacts?.hasPendingApprovals = !cache.approvals.isEmpty
+        mappedThread.settlementFacts?.hasPendingUserInput = !cache.userInputs.isEmpty
+        if let shell = shellsByEnvironmentID[environment.id],
+           let shellThread = shell.threads.first(where: { $0.id == thread.id }),
+           shell.snapshotSequence >= sourceSequence {
+            applySettlementAuthority(from: shellThread, to: &mappedThread)
+        }
         return FeatureThreadDetail(
             thread: mappedThread,
             messages: cache.mergedMessages,
@@ -4587,6 +4620,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             archivedAt: loaded.archivedAt,
             settledOverride: loaded.settledOverride,
             settledAt: loaded.settledAt,
+            unsettledAt: loaded.unsettledAt,
             snoozedUntil: loaded.snoozedUntil,
             snoozedAt: loaded.snoozedAt,
             pinnedAt: loaded.pinnedAt,
@@ -5058,6 +5092,51 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private func isSettled(_ override: String?, settledAt: String?) -> Bool {
         if override == "active" { return false }
         return override == "settled" || settledAt != nil
+    }
+
+    private func settlementFacts(
+        override: String?,
+        session: OrchestrationSession?,
+        hasApprovals: Bool,
+        hasUserInput: Bool,
+        latestUserMessageAt: String?,
+        latestTurn: OrchestrationLatestTurn?
+    ) -> FeatureThreadSettlementFacts {
+        return FeatureThreadSettlementFacts(
+            settlementOverride: override.flatMap(FeatureThreadSettlementOverride.init(rawValue:)),
+            sessionStatus: session?.status,
+            hasPendingApprovals: hasApprovals,
+            hasPendingUserInput: hasUserInput,
+            latestUserMessageAt: latestUserMessageAt.flatMap(parseValidDate),
+            latestTurn: latestTurn.map {
+                FeatureThreadSettlementFacts.LatestTurn(
+                    requestedAt: parseValidDate($0.requestedAt),
+                    startedAt: $0.startedAt.flatMap(parseValidDate),
+                    completedAt: $0.completedAt.flatMap(parseValidDate),
+                    requestedAtIsInvalid: parseValidDate($0.requestedAt) == nil,
+                    startedAtIsInvalid: $0.startedAt.map { parseValidDate($0) == nil } ?? false,
+                    completedAtIsInvalid: $0.completedAt.map { parseValidDate($0) == nil } ?? false
+                )
+            }
+        )
+    }
+
+    private func applySettlementAuthority(
+        from shell: OrchestrationThreadShell,
+        to thread: inout FeatureThread
+    ) {
+        thread.isSettled = isSettled(shell.settledOverride, settledAt: shell.settledAt)
+        thread.keepsActive = shell.settledOverride == "active"
+        thread.settledAt = shell.settledAt.flatMap(parseValidDate)
+        thread.unsettledAt = shell.unsettledAt.flatMap(parseValidDate)
+        thread.settlementFacts = settlementFacts(
+            override: shell.settledOverride,
+            session: shell.session,
+            hasApprovals: shell.hasPendingApprovals,
+            hasUserInput: shell.hasPendingUserInput,
+            latestUserMessageAt: shell.latestUserMessageAt,
+            latestTurn: shell.latestTurn
+        )
     }
 
     private func mapRuntimeMode(_ mode: RuntimeMode) -> FeatureRuntimeMode {
@@ -5888,6 +5967,10 @@ enum NativeThreadDetailReducer {
         let result: NativeThreadDetailReductionResult
         var renderMutation = NativeDetailRenderMutation.metadata
         switch type {
+        case "thread.settled":
+            result = reduceSettled(payload: payload, thread: thread)
+        case "thread.unsettled":
+            result = reduceUnsettled(payload: payload, thread: thread)
         case "thread.meta-updated":
             result = reduceMetadata(payload: payload, occurredAt: occurredAt, thread: thread)
         case "thread.message-sent":
@@ -5923,6 +6006,50 @@ enum NativeThreadDetailReducer {
             sequence: sequence,
             result: result,
             renderMutation: renderMutation
+        )
+    }
+
+    private static func reduceSettled(
+        payload: JSONValue,
+        thread: OrchestrationThread
+    ) -> NativeThreadDetailReductionResult {
+        guard let settledAt = payload["settledAt"]?.stringValue,
+              let updatedAt = payload["updatedAt"]?.stringValue else {
+            return .refresh
+        }
+        return .updated(
+            replacing(
+                thread,
+                settlement: SettlementReplacement(
+                    override: "settled",
+                    settledAt: settledAt,
+                    unsettledAt: nil
+                ),
+                updatedAt: updatedAt
+            )
+        )
+    }
+
+    private static func reduceUnsettled(
+        payload: JSONValue,
+        thread: OrchestrationThread
+    ) -> NativeThreadDetailReductionResult {
+        guard let reason = payload["reason"]?.stringValue,
+              let updatedAt = payload["updatedAt"]?.stringValue else {
+            return .refresh
+        }
+        return .updated(
+            replacing(
+                thread,
+                settlement: SettlementReplacement(
+                    override: reason == "user" ? "active" : nil,
+                    settledAt: nil,
+                    unsettledAt: thread.settledOverride == "active"
+                        ? thread.unsettledAt
+                        : updatedAt
+                ),
+                updatedAt: updatedAt
+            )
         )
     }
 
@@ -6176,6 +6303,12 @@ enum NativeThreadDetailReducer {
         )
     }
 
+    private struct SettlementReplacement {
+        let override: String?
+        let settledAt: String?
+        let unsettledAt: String?
+    }
+
     private static func replacing(
         _ thread: OrchestrationThread,
         messages: [OrchestrationMessage]? = nil,
@@ -6183,6 +6316,7 @@ enum NativeThreadDetailReducer {
         checkpoints: [CheckpointSummary]? = nil,
         latestTurn: OrchestrationLatestTurn? = nil,
         session: OrchestrationSession? = nil,
+        settlement: SettlementReplacement? = nil,
         updatedAt: String
     ) -> OrchestrationThread {
         OrchestrationThread(
@@ -6199,8 +6333,9 @@ enum NativeThreadDetailReducer {
             createdAt: thread.createdAt,
             updatedAt: updatedAt,
             archivedAt: thread.archivedAt,
-            settledOverride: thread.settledOverride,
-            settledAt: thread.settledAt,
+            settledOverride: settlement == nil ? thread.settledOverride : settlement?.override,
+            settledAt: settlement == nil ? thread.settledAt : settlement?.settledAt,
+            unsettledAt: settlement == nil ? thread.unsettledAt : settlement?.unsettledAt,
             snoozedUntil: thread.snoozedUntil,
             snoozedAt: thread.snoozedAt,
             pinnedAt: thread.pinnedAt,
