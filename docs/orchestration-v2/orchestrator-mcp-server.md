@@ -400,7 +400,8 @@ orchestration_error
 
 ## Code Ownership
 
-- Shared schemas: `packages/contracts/src/orchestratorMcp.ts`
+- Shared schemas: `packages/contracts/src/orchestratorMcp.ts` and
+  `packages/contracts/src/threadMetadataMcp.ts`
 - MCP services: `apps/server/src/mcp/OrchestratorMcpService.ts` and the focused
   `apps/server/src/mcp/ThreadMetadataMcpService.ts`
 - Tool definitions and handlers:

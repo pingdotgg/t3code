@@ -147,6 +147,19 @@ const make = Effect.gen(function* () {
       );
     }
 
+    const parentShell = yield* threadManagement
+      .getThreadShell(scope.threadId)
+      .pipe(
+        Effect.mapError((error) =>
+          failure(
+            "orchestration_error",
+            `Unable to locate calling thread ${scope.threadId}: ${errorMessage(error)}`,
+          ),
+        ),
+      );
+    if (parentShell === null) {
+      return yield* failure("thread_not_found", `Calling thread ${scope.threadId} was not found.`);
+    }
     const parent = yield* threadManagement
       .getThreadProjection(scope.threadId)
       .pipe(
