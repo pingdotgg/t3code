@@ -24,8 +24,10 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  ProviderInteractionMode,
   type ProjectId,
   ProviderInstanceId,
+  RuntimeMode,
   type ProviderSessionId,
   RunId,
   ThreadId,
@@ -83,6 +85,34 @@ export class OrchestratorDispatchError extends Schema.TaggedErrorClass<Orchestra
 ) {
   override get message(): string {
     return `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`;
+  }
+}
+
+export class OrchestratorRuntimeModeCeilingError extends Schema.TaggedErrorClass<OrchestratorRuntimeModeCeilingError>()(
+  "OrchestratorRuntimeModeCeilingError",
+  {
+    callerThreadId: ThreadId,
+    targetMode: RuntimeMode,
+    capturedCallerMode: RuntimeMode,
+    currentCallerMode: RuntimeMode,
+  },
+) {
+  override get message(): string {
+    return `Target runtime mode ${this.targetMode} exceeds the caller runtime-mode ceiling.`;
+  }
+}
+
+export class OrchestratorInteractionModeCeilingError extends Schema.TaggedErrorClass<OrchestratorInteractionModeCeilingError>()(
+  "OrchestratorInteractionModeCeilingError",
+  {
+    callerThreadId: ThreadId,
+    targetMode: ProviderInteractionMode,
+    capturedCallerMode: ProviderInteractionMode,
+    currentCallerMode: ProviderInteractionMode,
+  },
+) {
+  override get message(): string {
+    return `Target interaction mode ${this.targetMode} exceeds the caller interaction-mode ceiling.`;
   }
 }
 
@@ -708,7 +738,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* new OrchestratorDispatchError({
         commandId: input.command.commandId,
         commandType: input.command.type,
-        cause: `Target runtime mode ${input.runtimeMode} exceeds the caller ceiling.`,
+        cause: new OrchestratorRuntimeModeCeilingError({
+          callerThreadId: ceiling.callerThreadId,
+          targetMode: input.runtimeMode,
+          capturedCallerMode: ceiling.runtimeMode,
+          currentCallerMode: caller.thread.runtimeMode,
+        }),
       });
     }
     if (
@@ -719,7 +754,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* new OrchestratorDispatchError({
         commandId: input.command.commandId,
         commandType: input.command.type,
-        cause: `Target interaction mode ${input.interactionMode} exceeds the caller ceiling.`,
+        cause: new OrchestratorInteractionModeCeilingError({
+          callerThreadId: ceiling.callerThreadId,
+          targetMode: input.interactionMode,
+          capturedCallerMode: ceiling.interactionMode,
+          currentCallerMode: caller.thread.interactionMode,
+        }),
       });
     }
   });

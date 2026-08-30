@@ -2151,7 +2151,7 @@ describe("orchestrator MCP toolkit", () => {
             yield* Deferred.succeed(preCreateGate.release, undefined);
             const preCreateCall = yield* Fiber.join(preCreateFiber);
             expect(preCreateCall.structuredContent).toMatchObject({
-              code: "orchestration_error",
+              code: "interaction_mode_escalation_denied",
             });
             const preCreateThreadId = ThreadId.make(
               `thread:mcp:mcp-provider-session-parent:${preCreateKey}:0`,
@@ -2203,7 +2203,7 @@ describe("orchestrator MCP toolkit", () => {
             yield* Deferred.succeed(messageGate.release, undefined);
             const betweenCreateAndMessageCall = yield* Fiber.join(betweenCreateAndMessageFiber);
             expect(betweenCreateAndMessageCall.structuredContent).toMatchObject({
-              code: "orchestration_error",
+              code: "runtime_mode_escalation_denied",
             });
             const partialProjection = yield* orchestrator.getThreadProjection(
               betweenCreateAndMessageThreadId,

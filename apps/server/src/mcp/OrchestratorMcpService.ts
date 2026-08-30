@@ -65,6 +65,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { isBuiltInProviderAdapterDriverV2 } from "../orchestration-v2/builtInProviderAdapterDrivers.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { subagentResultForRun } from "../orchestration-v2/SubagentProjection.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import {
@@ -161,6 +162,11 @@ export class OrchestratorMcpService extends Context.Service<
 >()("t3/mcp/OrchestratorMcpService") {}
 
 const isThreadManagementError = Schema.is(ThreadManagementError);
+const isOrchestratorDispatchError = Schema.is(Orchestrator.OrchestratorDispatchError);
+const isRuntimeModeCeilingError = Schema.is(Orchestrator.OrchestratorRuntimeModeCeilingError);
+const isInteractionModeCeilingError = Schema.is(
+  Orchestrator.OrchestratorInteractionModeCeilingError,
+);
 
 function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {
   return new OrchestratorMcpFailure({ code, message });
@@ -186,6 +192,26 @@ function threadManagementFailure(error: ThreadManagementError): OrchestratorMcpF
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function threadLaunchPolicyFailure(
+  error: ThreadLaunch.ThreadLaunchError,
+): OrchestratorMcpFailure | null {
+  if (!isOrchestratorDispatchError(error.cause)) return null;
+  const cause = error.cause.cause;
+  if (isRuntimeModeCeilingError(cause)) {
+    return failure(
+      "runtime_mode_escalation_denied",
+      `Child runtime mode ${cause.targetMode} is broader than the caller ceiling ${cause.capturedCallerMode}.`,
+    );
+  }
+  if (isInteractionModeCeilingError(cause)) {
+    return failure(
+      "interaction_mode_escalation_denied",
+      `Child interaction mode ${cause.targetMode} is broader than the caller ceiling ${cause.capturedCallerMode}.`,
+    );
+  }
+  return null;
 }
 
 /**
@@ -1698,11 +1724,13 @@ const make = Effect.gen(function* () {
                   creationSource: "mcp",
                 })
                 .pipe(
-                  Effect.mapError((error) =>
-                    failure(
-                      "orchestration_error",
-                      `Unable to launch thread ${index + 1}: ${errorMessage(error)}`,
-                    ),
+                  Effect.mapError(
+                    (error) =>
+                      threadLaunchPolicyFailure(error) ??
+                      failure(
+                        "orchestration_error",
+                        `Unable to launch thread ${index + 1}: ${errorMessage(error)}`,
+                      ),
                   ),
                 );
               const projection = launched.projection;
