@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
-import { MessageId, TurnId } from "@t3tools/contracts";
+import { RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import type { WorkLogEntry } from "../../session-logic";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
@@ -10,6 +12,7 @@ import {
   resolveAssistantMessageCopyState,
   resolveTimelineToolPresentation,
   shouldPreserveAssistantLineBreaks,
+  summarizeToolGroup,
 } from "./MessagesTimeline.logic";
 import {
   createMessageAttachmentPreviewProjector,
@@ -349,6 +352,122 @@ describe("streaming row projection", () => {
         : message,
     );
     check({ revertTurnCountByUserMessageId: new Map([[MessageId.make("live-user"), 3]]) });
+  });
+});
+
+describe("summarizeToolGroup", () => {
+  const now = DateTime.makeUnsafe("2026-08-29T00:00:00Z");
+  function work(overrides: Partial<WorkLogEntry> = {}): WorkLogEntry {
+    return {
+      id: "tool",
+      createdAt: "2026-08-29T00:00:00Z",
+      label: "Tool call",
+      tone: "tool",
+      toolLifecycleStatus: "completed",
+      ...overrides,
+    };
+  }
+  function t3(toolName: string, input: unknown = {}, output: unknown = {}): WorkLogEntry {
+    return work({
+      itemType: "dynamic_tool",
+      toolTitle: "Friendly display name",
+      structuredPayload: {
+        id: TurnItemId.make("tool"),
+        threadId: ThreadId.make("parent"),
+        runId: RunId.make("run"),
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed",
+        title: "Friendly display name",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "dynamic_tool",
+        toolName,
+        input,
+        output,
+      },
+    });
+  }
+
+  it("summarizes commands and thread messages using canonical names despite humanized titles", () => {
+    const entries = [
+      work({ command: "git diff" }),
+      ...["mcp__t3-code__t3_thread_send", "t3_code.t3_thread_send", "t3_thread_send"].map(
+        (toolName, i) =>
+          t3(
+            toolName,
+            { threadId: `thread-${i}` },
+            { messageId: `message-${i}`, threadId: `thread-${i}` },
+          ),
+      ),
+      work({ command: "git status" }),
+    ];
+    expect(summarizeToolGroup(entries)).toEqual({
+      summary: "Ran 2 commands and sent messages to 3 threads",
+      hasFailure: false,
+    });
+  });
+
+  it("prioritizes actions over polling, caps the clauses, and retains an omitted failure", () => {
+    const status = t3("task_status", { taskId: "task-1" }, { taskId: "task-1", status: "running" });
+    expect(
+      summarizeToolGroup([
+        status,
+        status,
+        status,
+        work({ command: "git diff" }),
+        t3(
+          "t3_thread_send",
+          { threadId: "thread-1" },
+          { threadId: "thread-1", messageId: "message-1" },
+        ),
+        t3(
+          "schedule_task",
+          {},
+          { isError: true, content: [{ type: "text", text: "Schedule rejected" }] },
+        ),
+        status,
+      ]),
+    ).toEqual({
+      summary:
+        "1 failed · Ran 1 command, sent 1 message to 1 thread, and performed 5 other actions",
+      hasFailure: true,
+    });
+  });
+
+  it("counts status checks without treating the reported child failure as a failed tool", () => {
+    const status = {
+      ...t3("task_status", { taskId: "task-1" }, { taskId: "task-1", status: "failed" }),
+      detail: "Child failed: command not found",
+    };
+    expect(
+      summarizeToolGroup([
+        t3("delegate_task", {}, { taskId: "task-1" }),
+        t3("delegate_task", {}, { taskId: "task-2" }),
+        status,
+        status,
+        status,
+        status,
+      ]),
+    ).toEqual({
+      summary: "Delegated 2 tasks and checked task status 4 times",
+      hasFailure: false,
+    });
+  });
+
+  it("leaves foreign, unknown, and preview tools generic instead of guessing from display titles", () => {
+    expect(
+      summarizeToolGroup([
+        { ...t3("mcp__github__t3_thread_send"), toolTitle: "t3-code.t3_thread_send" },
+        t3("t3-code.future_tool"),
+        t3("t3-code.preview_snapshot"),
+      ]),
+    ).toEqual({ summary: "Used 3 tools", hasFailure: false });
   });
 });
 
@@ -1604,36 +1723,36 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.at(-1)).toMatchObject({ kind: "thinking" });
   });
 
-  it("summarizes a settled tool group even when a command in it failed", () => {
+  it("retains a failed command in the summary after a later command succeeds", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
-          id: "work-entry-ok",
+          id: "work-entry-failed",
           kind: "work" as const,
           createdAt: "2026-01-01T00:00:01Z",
           entry: {
-            id: "work-ok",
-            createdAt: "2026-01-01T00:00:01Z",
-            label: "Ran command",
-            command: "true",
-            tone: "tool" as const,
-            itemType: "command_execution" as const,
-            toolLifecycleStatus: "completed" as const,
-          },
-        },
-        {
-          id: "work-entry-failed",
-          kind: "work" as const,
-          createdAt: "2026-01-01T00:00:02Z",
-          entry: {
             id: "work-failed",
-            createdAt: "2026-01-01T00:00:02Z",
+            createdAt: "2026-01-01T00:00:01Z",
             label: "Ran command",
             command: "ssh host true",
             detail: "connection refused",
             tone: "tool" as const,
             itemType: "command_execution" as const,
             toolLifecycleStatus: "failed" as const,
+          },
+        },
+        {
+          id: "work-entry-ok",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:02Z",
+          entry: {
+            id: "work-ok",
+            createdAt: "2026-01-01T00:00:02Z",
+            label: "Ran command",
+            command: "true",
+            tone: "tool" as const,
+            itemType: "command_execution" as const,
+            toolLifecycleStatus: "completed" as const,
           },
         },
       ],
@@ -1645,7 +1764,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       kind: "work-toggle",
-      summary: "Ran 2 commands",
+      summary: "1 failed · Ran 2 commands",
       hasFailure: true,
     });
   });

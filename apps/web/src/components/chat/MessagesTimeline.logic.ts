@@ -32,8 +32,14 @@ import {
 } from "@t3tools/contracts";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
 import {
+  summarizeT3ToolCalls,
+  type T3ToolSummaryCall,
+} from "@t3tools/client-runtime/t3ToolSummary";
+import {
   resolveT3McpToolPresentation,
+  resolveT3McpToolSummaryAction,
   type T3McpToolPresentation,
+  type T3McpToolSummaryAction,
 } from "@t3tools/shared/t3McpToolPresentation";
 
 export function workEntryIsVisibleInGroup(
@@ -376,24 +382,112 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
   }
 }
 
-/** Immediate, provider-neutral fallback while generated tool summaries are unavailable. */
-export function summarizeToolGroup(entries: ReadonlyArray<WorkLogEntry>): string {
-  const groupedEntries = new Map<ToolGroupAction, WorkLogEntry[]>();
-  for (const entry of entries) {
-    const action = toolGroupAction(entry);
-    const group = groupedEntries.get(action);
-    if (group) group.push(entry);
-    else groupedEntries.set(action, [entry]);
+function t3ToolSummaryCall(entry: WorkLogEntry): T3ToolSummaryCall {
+  const item = entry.structuredPayload ?? entry.projectedItem?.item;
+  const data =
+    entry.toolData !== null && typeof entry.toolData === "object"
+      ? (entry.toolData as Record<string, unknown>)
+      : undefined;
+  return {
+    input: item?.type === "dynamic_tool" ? item.input : data?.input,
+    output: item?.type === "dynamic_tool" ? item.output : data?.output,
+    // A status/read result may describe a failed child. Only the call's own lifecycle
+    // and MCP error envelope determine whether the orchestration action failed.
+    outcome:
+      entry.toolLifecycleStatus === "failed" ||
+      entry.toolLifecycleStatus === "declined" ||
+      entry.tone === "error"
+        ? "failed"
+        : entry.toolLifecycleStatus === "completed"
+          ? "completed"
+          : "unfinished",
+  };
+}
+
+function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction): number {
+  switch (action) {
+    case "command":
+    case "edit":
+    case "delegate":
+    case "task-cancel":
+    case "thread-create":
+    case "thread-send":
+    case "thread-interrupt":
+    case "schedule-create":
+    case "schedule-update":
+    case "schedule-delete":
+      return 0;
+    case "other":
+    case "update":
+      return 2;
+    default:
+      return 1;
   }
-  const labels = [...groupedEntries].map(([action, actionEntries]) =>
-    toolGroupActionLabel(action, toolGroupActionCount(action, actionEntries)),
-  );
+}
+
+/** Summarizes at most two action categories; every omitted call still counts in the remainder. */
+export function summarizeToolGroup(entries: ReadonlyArray<WorkLogEntry>): {
+  summary: string;
+  hasFailure: boolean;
+} {
+  const groups = new Map<
+    ToolGroupAction | T3McpToolSummaryAction,
+    {
+      action: ToolGroupAction;
+      t3Action: T3McpToolSummaryAction | null;
+      entries: WorkLogEntry[];
+    }
+  >();
+  for (const entry of entries) {
+    const item = entry.structuredPayload ?? entry.projectedItem?.item;
+    const t3Action = resolveT3McpToolSummaryAction(
+      (item?.type === "dynamic_tool" ? item.toolName : null) ?? entry.toolTitle ?? entry.label,
+    );
+    const action = toolGroupAction(entry);
+    const key = t3Action ?? action;
+    const group = groups.get(key);
+    if (group) group.entries.push(entry);
+    else groups.set(key, { action, t3Action, entries: [entry] });
+  }
+  const summaries = [...groups].map(([action, group], index) => ({
+    index,
+    count: group.entries.length,
+    priority: summaryActionPriority(action),
+    ...(group.t3Action
+      ? summarizeT3ToolCalls(group.t3Action, group.entries.map(t3ToolSummaryCall))
+      : {
+          label: toolGroupActionLabel(
+            group.action,
+            toolGroupActionCount(group.action, group.entries),
+          ),
+          failedCount: group.entries.filter(workEntryDisplayIndicatesToolFailure).length,
+          unfinishedCount: 0,
+        }),
+  }));
+  const selected = summaries
+    .toSorted((a, b) => a.priority - b.priority || a.index - b.index)
+    .slice(0, 2)
+    .sort((a, b) => a.index - b.index);
+  const labels = selected.map(({ label }) => label);
+  const remainingCount = entries.length - selected.reduce((count, group) => count + group.count, 0);
+  if (remainingCount > 0) {
+    labels.push(`Performed ${remainingCount} other ${remainingCount === 1 ? "action" : "actions"}`);
+  }
   const sentenceLabels = labels.map((label, index) =>
     index === 0 ? label : label.charAt(0).toLowerCase() + label.slice(1),
   );
-  if (sentenceLabels.length < 2) return sentenceLabels[0] ?? "";
-  if (sentenceLabels.length === 2) return sentenceLabels.join(" and ");
-  return `${sentenceLabels.slice(0, -1).join(", ")}, and ${sentenceLabels.at(-1)}`;
+  const summary =
+    sentenceLabels.length < 3
+      ? sentenceLabels.join(" and ")
+      : `${sentenceLabels.slice(0, -1).join(", ")}, and ${sentenceLabels.at(-1)}`;
+  const failedCount = summaries.reduce((count, group) => count + group.failedCount, 0);
+  const unfinishedCount = summaries.reduce((count, group) => count + group.unfinishedCount, 0);
+  const statuses = [
+    ...(failedCount > 0 ? [`${failedCount} failed`] : []),
+    ...(unfinishedCount > 0 ? [`${unfinishedCount} unfinished`] : []),
+  ];
+  // Keep failure counts visible when a narrow timeline truncates the action text.
+  return { summary: [...statuses, summary].join(" · "), hasFailure: failedCount > 0 };
 }
 
 function toolGroupSummaryKind(entries: ReadonlyArray<WorkLogEntry>): ToolGroupSummaryKind {
@@ -859,7 +953,7 @@ export function deriveMessagesTimelineRows(input: {
           const groupId = workGroupId(timelineEntry.id);
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
           const summaryKind = toolGroupSummaryKind(visibleGroupedEntries);
-          const latestToolEntry = visibleGroupedEntries.findLast(workLogEntryIsToolLike);
+          const groupSummary = summarizeToolGroup(visibleGroupedEntries);
           nextRows.push({
             kind: "work-toggle",
             id: `work-toggle:${timelineEntry.id}`,
@@ -871,11 +965,9 @@ export function deriveMessagesTimelineRows(input: {
               visibleGroupedEntries.length === 1 &&
               !workLogEntryIsToolLike(visibleGroupedEntries[0]!)
                 ? visibleGroupedEntries[0]!.label
-                : summarizeToolGroup(visibleGroupedEntries),
+                : groupSummary.summary,
             summaryKind,
-            hasFailure:
-              latestToolEntry !== undefined &&
-              workEntryDisplayIndicatesToolFailure(latestToolEntry),
+            hasFailure: groupSummary.hasFailure,
           });
           if (expanded) {
             for (const [entryIndex, workEntry] of visibleGroupedEntries.entries()) {

@@ -67,6 +67,10 @@
       "types": "./src/voice-input/index.ts",
       "default": "./src/voice-input/index.ts"
     },
+    "./t3ToolSummary": {
+      "types": "./src/t3ToolSummary.ts",
+      "default": "./src/t3ToolSummary.ts"
+    },
     "./relay": {
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
