@@ -39,24 +39,27 @@ export function WorkspaceFileExternalOpen(props: {
   }, []);
 
   // The controller holds cross-press state (in-flight guards, abort handle),
-  // so it lives in a ref rather than a discardable memo. Unmount aborts the
-  // download and keeps a late resolution from launching a viewer; a revived
-  // instance (StrictMode) just builds a fresh controller.
+  // so the effect owns its lifecycle: setup creates it, cleanup disposes it —
+  // unmount aborts the download and keeps a late resolution from launching a
+  // viewer, and StrictMode's dev-only cleanup/setup cycle re-arms cleanly.
   const controllerRef = useRef<ReturnType<typeof createExternalOpenController> | null>(null);
-  if (controllerRef.current === null || controllerRef.current.isDisposed()) {
-    controllerRef.current = createExternalOpenController({
+  useEffect(() => {
+    const controller = createExternalOpenController({
       fileName,
       mimeType: props.mimeType,
       downloadHandoffFile,
       launchViewer: launchExternalViewer,
       onStatusChange: setStatus,
     });
-  }
-  const controller = controllerRef.current;
-  useEffect(() => () => controller.dispose(), [controller]);
+    controllerRef.current = controller;
+    return () => {
+      controller.dispose();
+      controllerRef.current = null;
+    };
+  }, [fileName, props.mimeType]);
 
   const open = () =>
-    void controller.open(async () => {
+    void controllerRef.current?.open(async () => {
       if (httpBaseUrl === null) {
         throw new Error("Not connected to the environment.");
       }

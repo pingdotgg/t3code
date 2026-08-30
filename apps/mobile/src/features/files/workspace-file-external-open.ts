@@ -84,7 +84,6 @@ export function createExternalOpenController(deps: {
   };
 
   return {
-    isDisposed: () => disposed,
     /** Aborts any in-flight download and suppresses a not-yet-initiated
         launch; the screen is gone, so no viewer may open on its behalf. */
     dispose: () => {
