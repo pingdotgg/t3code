@@ -30,6 +30,7 @@ function shellState(input: {
   readonly snapshotSequence?: number;
 }): EnvironmentShellState {
   return {
+    wasLive: false,
     snapshot:
       input.updatedAt === undefined
         ? Option.none()

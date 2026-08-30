@@ -115,6 +115,7 @@ import { useDesktopUpdateState } from "../state/desktopUpdate";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
+import { useShellStreamHealth, useShellStreamHealthForEnvironments } from "../state/shell";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
@@ -452,11 +453,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   );
   const isThreadRunning =
     thread.session?.status === "running" && thread.session.activeTurnId != null;
+  const shellStreamHealth = useShellStreamHealth(thread.environmentId);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
       lastVisitedAt,
     },
+    streamHealth: shellStreamHealth,
   });
   const linkedPullRequestStatus = useLinkedThreadPullRequest(
     thread.environmentId,
@@ -1267,6 +1270,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     }
     return counts;
   }, [memberProjectByScopedKey, project.memberProjects, projectThreads]);
+  const memberEnvironmentIds = useMemo(
+    () => [...new Set(projectThreads.map((thread) => thread.environmentId))],
+    [projectThreads],
+  );
+  const memberHealths = useShellStreamHealthForEnvironments(memberEnvironmentIds);
 
   const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
     const lastVisitedAtByThreadKey = new Map(
@@ -1284,6 +1292,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...thread,
           ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
         },
+        streamHealth: memberHealths[thread.environmentId] ?? "connecting",
       });
     };
     const visibleProjectThreads = sortThreads(
@@ -1300,7 +1309,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       projectStatus,
       visibleProjectThreads,
     };
-  }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
+  }, [memberHealths, projectThreads, threadLastVisitedAts, threadSortOrder]);
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
     if (!activeThreadKey || projectExpanded) {
@@ -1336,6 +1345,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...thread,
           ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
         },
+        streamHealth: memberHealths[thread.environmentId] ?? "connecting",
       });
     };
     const hasOverflowingThreads = visibleProjectThreads.length > sidebarThreadPreviewCount;
@@ -1371,6 +1381,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     pinnedCollapsedThread,
     projectExpanded,
     projectThreads,
+    memberHealths,
     sidebarThreadPreviewCount,
     threadLastVisitedAts,
     visibleProjectThreads,

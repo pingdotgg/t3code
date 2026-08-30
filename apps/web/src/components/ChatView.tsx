@@ -41,6 +41,7 @@ import {
   submitCodexFeedback,
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
+import { environmentThreadStreamHealth } from "@t3tools/client-runtime/state/threadState";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -2342,6 +2343,18 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
+  // A running turn may only read as live work while the stream that would deliver
+  // the completion is attached; deleted navigates away via the route effect.
+  // Cold opens read Connecting until first attach — honest (nothing can deliver
+  // yet) and consistent with the sidebar vocabulary. Draft routes deliberately
+  // keep the detail-state hook empty; a promoted thread's progress arrives over
+  // the command channel until navigation, so only server routes carry a
+  // meaningful non-live signal.
+  const threadStreamHealth = environmentThreadStreamHealth(routeThreadState);
+  const streamHealthWhileWorking =
+    routeKind === "server" && threadStreamHealth !== "live" && threadStreamHealth !== "deleted"
+      ? (threadStreamHealth as "connecting" | "detached")
+      : null;
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const activeContextWindow = useMemo(
     () => deriveLatestContextWindowSnapshot(threadActivities),
@@ -7204,6 +7217,7 @@ function ChatViewContent(props: ChatViewProps) {
                 key={activeThread.id}
                 isWorking={isWorking}
                 workingStepLabel={workingStepLabel}
+                streamHealth={phase === "running" ? streamHealthWhileWorking : null}
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}

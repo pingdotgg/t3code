@@ -33,13 +33,31 @@ export interface EnvironmentShellState {
   readonly snapshot: Option.Option<OrchestrationShellSnapshot>;
   readonly status: EnvironmentShellStatus;
   readonly error: Option.Option<string>;
+  /** True once the shell stream has attached this session; distinguishes a
+      mid-session drop (detached) from a cold start (connecting). */
+  readonly wasLive: boolean;
 }
 
-const EMPTY_SHELL_STATE: EnvironmentShellState = {
+export const EMPTY_SHELL_STATE: EnvironmentShellState = {
   snapshot: Option.none(),
   status: "empty",
   error: Option.none(),
+  wasLive: false,
 };
+
+/** Derived shell stream health: live, dropped-after-attach, or never attached. */
+export function shellStreamHealth(state: EnvironmentShellState): ShellStreamHealth {
+  if (state.status === "live") {
+    return "live";
+  }
+  return state.wasLive ? "detached" : "connecting";
+}
+
+/**
+ * Shell stream health for one environment: "connecting" = never attached this
+ * session, "detached" = attached before but not now, "live" = attached.
+ */
+export type ShellStreamHealth = "live" | "connecting" | "detached";
 
 function shellStatusForSnapshot(
   snapshot: Option.Option<OrchestrationShellSnapshot>,
@@ -69,6 +87,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const state = yield* SubscriptionRef.make<EnvironmentShellState>({
     snapshot: cachedSnapshot,
     status: shellStatusForSnapshot(cachedSnapshot),
+    wasLive: false,
     error: Option.none(),
   });
   const awaitingCompletion = yield* Ref.make(false);
@@ -142,7 +161,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       yield* Ref.set(awaitingCompletion, false);
       yield* SubscriptionRef.update(state, (current) =>
         Option.isSome(current.snapshot)
-          ? { ...current, status: "live" as const, error: Option.none() }
+          ? { ...current, status: "live" as const, wasLive: true, error: Option.none() }
           : current,
       );
       return;
@@ -167,6 +186,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     yield* SubscriptionRef.set(state, {
       snapshot: Option.some(nextSnapshot),
       status: waiting ? "synchronizing" : "live",
+      wasLive: waiting ? current.wasLive : true,
       error: Option.none(),
     });
     if (item.kind === "snapshot") {
@@ -237,6 +257,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           yield* SubscriptionRef.update(state, (value) => ({
             ...value,
             status: "live" as const,
+            wasLive: true,
             error: Option.none(),
           }));
         }

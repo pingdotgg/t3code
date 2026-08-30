@@ -127,6 +127,10 @@
       "types": "./src/state/shell.ts",
       "default": "./src/state/shell.ts"
     },
+    "./state/threadState": {
+      "types": "./src/state/threadState.ts",
+      "default": "./src/state/threadState.ts"
+    },
     "./state/source-control": {
       "types": "./src/state/sourceControl.ts",
       "default": "./src/state/sourceControl.ts"

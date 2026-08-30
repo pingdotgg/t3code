@@ -112,6 +112,7 @@ import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
+import { useShellStreamHealth } from "../state/shell";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
@@ -828,6 +829,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // switching sidebars must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
+  const shellStreamHealth = useShellStreamHealth(thread.environmentId);
+  const shellStreamNonLive = shellStreamHealth !== "live";
+  const workingLabel =
+    shellStreamHealth === "detached"
+      ? "Reconnecting"
+      : shellStreamHealth === "connecting"
+        ? "Connecting"
+        : "Working";
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
   // an explicit act, so the pill clears only when the user re-engages:
@@ -861,7 +870,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const topStatus =
     status === "working"
       ? {
-          label: "Working",
+          label: workingLabel,
           icon: "working" as const,
           // No shimmer: a label that animates forever is noise in a sidebar
           // full of them (and repaints every vsync on high-refresh displays).
@@ -1500,7 +1509,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             wrapper around the ticking duration would make
                             screen readers announce every second. */}
                         <span role="status">{topStatus.label}</span>
-                        {status === "working" ? (
+                        {status === "working" && !shellStreamNonLive ? (
                           <span aria-hidden>
                             <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
                           </span>

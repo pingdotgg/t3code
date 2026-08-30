@@ -145,6 +145,7 @@ function shellState(snapshot: OrchestrationShellSnapshot): EnvironmentShellState
   return {
     snapshot: Option.some(snapshot),
     status: "live",
+    wasLive: true,
     error: Option.none(),
   };
 }
@@ -332,6 +333,7 @@ describe("environment entity projections", () => {
       AsyncResult.success<EnvironmentThreadState>({
         data: Option.some(detail),
         status: "live",
+        wasLive: true,
         error: Option.none(),
         page: Option.none(),
       }),
@@ -361,6 +363,7 @@ describe("environment entity projections", () => {
           },
         }),
         status: "live",
+        wasLive: true,
         error: Option.none(),
         page: Option.none(),
       }),

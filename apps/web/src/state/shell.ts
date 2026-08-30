@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import {
   AVAILABLE_CONNECTION_STATE,
   connectionProjectionPhase,
@@ -7,7 +8,10 @@ import {
   createEnvironmentShellSummaryAtom,
   createEnvironmentSnapshotAtom,
   createShellEnvironmentAtoms,
+  shellStreamHealth,
+  type ShellStreamHealth,
 } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -46,3 +50,41 @@ export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   }
   return true;
 }).pipe(Atom.withLabel("web-all-environment-shells-bootstrapped"));
+
+/**
+ * Derived per-environment shell stream health (the latch lives in the shell
+ * state machine itself, so environments without a mounted consumer still
+ * track attach/drop). Deriving here lets the atom's Object.is dedupe absorb
+ * per-item shell churn: rows re-render only on actual health flips.
+ */
+const shellStreamHealthAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => shellStreamHealth(get(environmentShell.stateValueAtom(environmentId)))).pipe(
+    Atom.withLabel(`web-shell-stream-health:${environmentId}`),
+  ),
+);
+
+/** Shell stream health for one environment (drives Working/Connecting/Reconnecting pills). */
+export function useShellStreamHealth(environmentId: EnvironmentId): ShellStreamHealth {
+  return useAtomValue(shellStreamHealthAtom(environmentId));
+}
+
+const healthByEnvironmentInAtom = Atom.family((environmentsKey: string) =>
+  Atom.make((get) => {
+    // Empty member list: no health lookups.
+    if (environmentsKey === "") return {};
+    // Null prototype: environment ids are server data, and a "__proto__" key
+    // must not resolve to Object.prototype.
+    const healths: Record<string, ShellStreamHealth> = Object.create(null);
+    for (const environmentId of environmentsKey.split("\u0000")) {
+      healths[environmentId] = get(shellStreamHealthAtom(environmentId as EnvironmentId));
+    }
+    return healths;
+  }).pipe(Atom.withLabel(`web-shell-stream-health-by-environments:${environmentsKey}`)),
+);
+
+/** Shell stream health for a set of environments, keyed by environment id (rollup paths). */
+export function useShellStreamHealthForEnvironments(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): Record<string, ShellStreamHealth> {
+  return useAtomValue(healthByEnvironmentInAtom([...environmentIds].sort().join("\u0000")));
+}

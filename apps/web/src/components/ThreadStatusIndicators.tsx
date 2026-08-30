@@ -13,6 +13,7 @@ import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { useProject } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { linkedPullRequestDetailAtom } from "../state/pullRequests";
+import { useShellStreamHealth } from "../state/shell";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
@@ -554,11 +555,13 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     pr,
     linkedPullRequest?.sourceControlProvider ?? gitStatus.data?.sourceControlProvider,
   );
+  const shellStreamHealth = useShellStreamHealth(thread.environmentId);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
       lastVisitedAt,
     },
+    streamHealth: shellStreamHealth,
   });
 
   if (!prStatus && !threadStatus) {

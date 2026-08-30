@@ -1,6 +1,7 @@
 import * as React from "react";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ShellStreamHealth } from "@t3tools/client-runtime/state/shell";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   activeThreadAnchorTimestampMs,
@@ -127,6 +128,7 @@ export function buildBulkTitleRegenerationContextMenuItem(input: {
 export interface ThreadStatusPill {
   label:
     | "Working"
+    | "Reconnecting"
     | "Monitoring"
     | "Connecting"
     | "Completed"
@@ -145,6 +147,7 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 6,
   "Awaiting Input": 5,
   Working: 4,
+  Reconnecting: 4,
   Connecting: 4,
   "Plan Ready": 3,
   Monitoring: 2,
@@ -682,8 +685,10 @@ export function formatWorkingDurationLabel(elapsedMs: number): string {
 
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
+  /** Shell stream health for this thread's environment (see useShellStreamHealth). */
+  streamHealth?: ShellStreamHealth;
 }): ThreadStatusPill | null {
-  const { thread } = input;
+  const { thread, streamHealth = "live" } = input;
 
   if (thread.hasPendingApprovals) {
     return {
@@ -703,13 +708,36 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.session?.status === "running") {
+  // In-flight work may only read as healthy while the event stream that would
+  // deliver its completion is alive. Pre-attach reads as Connecting (same
+  // vocabulary as a starting session); a dropped stream reads Reconnecting.
+  const workingPill = (): ThreadStatusPill => {
+    if (streamHealth === "detached") {
+      return {
+        label: "Reconnecting",
+        colorClass: "text-sky-600 dark:text-sky-300/80",
+        dotClass: "bg-sky-500 dark:bg-sky-300/80",
+        pulse: true,
+      };
+    }
+    if (streamHealth === "connecting") {
+      return {
+        label: "Connecting",
+        colorClass: "text-sky-600 dark:text-sky-300/80",
+        dotClass: "bg-sky-500 dark:bg-sky-300/80",
+        pulse: true,
+      };
+    }
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,
     };
+  };
+
+  if (thread.session?.status === "running") {
+    return workingPill();
   }
 
   if (thread.session?.status === "starting") {
@@ -742,12 +770,7 @@ export function resolveThreadStatusPill(input: {
   // loops (a parent agent babysitting a PR, tailing checks) with no other
   // live work. Same recede treatment as Working per inbox-zero.
   if (thread.backgroundLiveness === "working") {
-    return {
-      label: "Working",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: true,
-    };
+    return workingPill();
   }
 
   if (thread.backgroundLiveness === "monitoring") {

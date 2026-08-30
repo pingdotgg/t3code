@@ -159,6 +159,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // A cached windowed snapshot restores its page cursor so "load earlier"
     // works while rendering from cache; a cached full snapshot has no page.
     page: Option.flatMap(cached, (snapshot) => pageStateFromSnapshot(snapshot.page)),
+    wasLive: false,
   });
   // Seed the resume cursor from the cached snapshot so a warm cache can catch up
   // via `afterSequence` instead of re-downloading the full thread body.
@@ -264,6 +265,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       status: waiting ? ("synchronizing" as const) : ("live" as const),
       error: Option.none(),
       page: page === "keep" ? current.page : page,
+      wasLive: waiting ? current.wasLive : true,
     }));
     // Active threads can update many times per second and retain large tool
     // payloads. The server remains the source of truth while a turn is active;
@@ -294,11 +296,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
     yield* Ref.set(awaitingCompletion, false);
     yield* Ref.update(historyEpoch, (epoch) => epoch + 1);
+    const current = yield* SubscriptionRef.get(state);
     yield* SubscriptionRef.set(state, {
       data: Option.none(),
       status: "deleted",
       error: Option.none(),
       page: Option.none(),
+      wasLive: current.wasLive,
     });
     yield* cache.removeThread(environmentId, threadId).pipe(
       Effect.catch((error) =>
@@ -321,7 +325,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       yield* Ref.set(awaitingCompletion, false);
       yield* SubscriptionRef.update(state, (current) =>
         Option.isSome(current.data) && current.status !== "deleted"
-          ? { ...current, status: "live" as const, error: Option.none() }
+          ? { ...current, status: "live" as const, error: Option.none(), wasLive: true }
           : current,
       );
       return;
@@ -623,6 +627,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             ...value,
             status: value.status === "deleted" ? value.status : ("live" as const),
             error: Option.none(),
+            wasLive: value.status === "deleted" ? value.wasLive : true,
           }));
         }
 

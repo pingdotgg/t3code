@@ -35,3 +35,10 @@ pill** fallback because their colors are not controlled by T3 Code.
 To generate a fresh title from the conversation, open a thread's context menu and choose
 **Regenerate title**. While T3 Code is generating it, the action reads **Regenerating…** and cannot
 be selected again. The option is hidden when the connected environment needs a server update.
+
+## Connection interruptions
+
+If the connection to the server's event stream drops while a thread is working, the sidebar shows
+**Reconnecting** instead of **Working** while the app keeps retrying. Transient interruptions
+recover on their own; if the interruption persists, the thread stays in **Reconnecting** —
+restarting the app or restoring the server connection clears it.
