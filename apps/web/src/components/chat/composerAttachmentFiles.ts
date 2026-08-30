@@ -75,6 +75,38 @@ export function classifyComposerAttachmentFile(
   return isProviderSendTurnSupportedImageMimeType(file.type) ? "image" : "unsupported-image";
 }
 
+/**
+ * Detach generic files from a file input before clearing it. Electron on
+ * macOS can invalidate the input-owned `File` when its value is reset, so the
+ * upload queue must retain an in-memory snapshot instead of that native
+ * handle. Keep image files on their existing compression path.
+ */
+export async function snapshotComposerFilesBeforeInputReset(
+  files: ReadonlyArray<File>,
+  resetInput: () => void,
+): Promise<File[]> {
+  try {
+    return await Promise.all(
+      files.map(async (file) => {
+        if (classifyComposerAttachmentFile(file) !== "file") {
+          return file;
+        }
+        try {
+          const bytes = await file.arrayBuffer();
+          return new File([bytes], file.name, {
+            type: file.type,
+            lastModified: file.lastModified,
+          });
+        } catch {
+          return file;
+        }
+      }),
+    );
+  } finally {
+    resetInput();
+  }
+}
+
 /** Byte limit for adding a generic file to the local composer draft. */
 export function fileAttachmentStagingLimit(input: FileAttachmentCapabilityState): number | null {
   if (!input.attachmentUploadsCapabilityKnown) {
