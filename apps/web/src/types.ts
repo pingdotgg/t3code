@@ -1,5 +1,7 @@
 import type {
+  ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
+  ChatUnknownAttachment as ContractChatUnknownAttachment,
   OrchestrationCheckpointFile,
   OrchestrationCheckpointSummary,
   OrchestrationLatestTurn,
@@ -35,7 +37,52 @@ export interface ChatImageAttachment extends ContractChatImageAttachment {
   readonly previewUrl?: string;
 }
 
-export type ChatAttachment = ChatImageAttachment;
+export interface ChatFileAttachment extends ContractChatFileAttachment {
+  readonly previewUrl?: string;
+  readonly downloadable?: boolean;
+}
+
+// Attachment types this build does not know pass through with the contract
+// shape. The UI renders them as inert rows so a newer server cannot crash an
+// older client.
+export type ChatUnknownAttachment = ContractChatUnknownAttachment;
+
+export type ChatAttachment = ChatImageAttachment | ChatFileAttachment | ChatUnknownAttachment;
+
+// The union has an open member (`type: string`), so a literal comparison does
+// not narrow. Use these guards wherever type-specific fields are read.
+export function isImageAttachment(attachment: ChatAttachment): attachment is ChatImageAttachment {
+  return attachment.type === "image";
+}
+
+export function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAttachment {
+  return attachment.type === "file";
+}
+
+const VIDEO_MIME_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
+  avi: "video/x-msvideo",
+  m4v: "video/mp4",
+  mkv: "video/x-matroska",
+  mov: "video/quicktime",
+  mp4: "video/mp4",
+  ogv: "video/ogg",
+  webm: "video/webm",
+};
+
+export function videoMimeType(
+  attachment: Pick<ChatFileAttachment, "name" | "mimeType">,
+): string | null {
+  const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (mimeType.startsWith("video/")) return mimeType;
+  const dotIndex = attachment.name.lastIndexOf(".");
+  return dotIndex < 0
+    ? null
+    : (VIDEO_MIME_TYPE_BY_EXTENSION[attachment.name.slice(dotIndex + 1).toLowerCase()] ?? null);
+}
+
+export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
+  return videoMimeType(attachment) !== null;
+}
 
 export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;

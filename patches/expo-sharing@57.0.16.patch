@@ -1,0 +1,123 @@
+diff --git a/android/src/main/java/expo/modules/sharing/SharingRecords.kt b/android/src/main/java/expo/modules/sharing/SharingRecords.kt
+index 0b87b53f632e82f9b4c09c066d5a67e4ab2525a4..65f1c57faef3ba8caac9e137341f2b8312bb5f86 100644
+--- a/android/src/main/java/expo/modules/sharing/SharingRecords.kt
++++ b/android/src/main/java/expo/modules/sharing/SharingRecords.kt
+@@ -52,7 +52,8 @@ enum class ContentType(val value: String) : Enumerable {
+ internal data class SharePayload(
+   @Field var value: String = "",
+   @Field var shareType: ShareType = ShareType.Text,
+-  @Field var mimeType: String = "text/plain"
++  @Field var mimeType: String = "text/plain",
++  @Field var originalName: String? = null
+ ) : Record
+ 
+ @OptimizedRecord
+diff --git a/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt b/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
+index 8dd50e8f04022d183884a57e4d61a7e1711b9e49..481cdb4bc64ea5ae49919071f686324f6d56d55c 100644
+--- a/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
++++ b/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
+@@ -3,6 +3,7 @@ package expo.modules.sharing
+ import android.content.Context
+ import android.content.Intent
+ import android.net.Uri
++import android.provider.OpenableColumns
+ 
+ internal class SimpleShareIntentDataParser {
+   companion object {
+@@ -17,21 +18,26 @@ internal class SimpleShareIntentDataParser {
+     }
+ 
+     private fun handleSendAction(context: Context, intent: Intent, type: String): List<SharePayload> {
+-      return if (type == "text/plain") {
+-        val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return emptyList()
+-        val isUrl = android.util.Patterns.WEB_URL.matcher(text).matches()
+-
+-        listOf(
++      val stream = intent.getParcelableExtraCompat<Uri>(Intent.EXTRA_STREAM)
++      val text = intent.getStringExtra(Intent.EXTRA_TEXT)
++      if (stream == null) {
++        if (!type.startsWith("text/") || text == null) return emptyList()
++        return listOf(
+           SharePayload().apply {
+             value = text
+-            shareType = if (isUrl) ShareType.Url else ShareType.Text
+-            mimeType = "text/plain"
++            shareType = if (android.util.Patterns.WEB_URL.matcher(text).matches()) ShareType.Url else ShareType.Text
++            mimeType = type
+           }
+         )
+-      } else {
+-        val uri = intent.getParcelableExtraCompat<Uri>(Intent.EXTRA_STREAM)
+-        listOfNotNull(uri?.let { createUriPayload(context, it, type) })
+       }
++      val filePayload = createUriPayload(context, stream, type)
++      if (text.isNullOrBlank()) return listOf(filePayload)
++      val textPayload = SharePayload().apply {
++        value = text
++        shareType = if (android.util.Patterns.WEB_URL.matcher(text).matches()) ShareType.Url else ShareType.Text
++        mimeType = "text/plain"
++      }
++      return listOf(textPayload, filePayload)
+     }
+ 
+     private fun handleSendMultipleAction(context: Context, intent: Intent, type: String): List<SharePayload> {
+@@ -41,10 +47,25 @@ internal class SimpleShareIntentDataParser {
+ 
+     private fun createUriPayload(context: Context, uri: Uri, defaultType: String): SharePayload {
+       val specificType = context.contentResolver.getType(uri) ?: defaultType
++      // A blank DISPLAY_NAME must stay null: consumers treat originalName as
++      // the attachment name, and an empty name fails contract validation.
++      val displayName = runCatching {
++        context.contentResolver.query(
++          uri,
++          arrayOf(OpenableColumns.DISPLAY_NAME),
++          null,
++          null,
++          null
++        )?.use { cursor ->
++          val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
++          if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
++        }
++      }.getOrNull()?.takeIf { it.isNotBlank() }
+       return SharePayload().apply {
+         value = uri.toString()
+-        shareType = ShareType.fromMimeType(specificType)
++        shareType = if (specificType.startsWith("text/")) ShareType.File else ShareType.fromMimeType(specificType)
+         mimeType = specificType
++        originalName = displayName
+       }
+     }
+   }
+diff --git a/build/Sharing.types.d.ts b/build/Sharing.types.d.ts
+index e9820b061bddce91657ab7144fde98d0543a3b8e..364d63273cb3e209c6490de6dd869a01c8728fcc 100644
+--- a/build/Sharing.types.d.ts
++++ b/build/Sharing.types.d.ts
+@@ -77,6 +77,11 @@ export type SharePayload = {
+      * @default 'text/plain'
+      */
+     mimeType?: string;
++    /**
++     * The display name of a shared file, when the source app provided one.
++     * Populated on Android from the content resolver's `DISPLAY_NAME`.
++     */
++    originalName?: string | null;
+ };
+ export type BaseResolvedSharePayload = SharePayload & {
+     /**
+diff --git a/src/Sharing.types.ts b/src/Sharing.types.ts
+index d9a5ad38f5fe2856b365eb91b71abd640314a5cc..21ea45f04b88cce272e2e02de24c5e4eb8157e82 100644
+--- a/src/Sharing.types.ts
++++ b/src/Sharing.types.ts
+@@ -85,6 +85,12 @@ export type SharePayload = {
+    * @default 'text/plain'
+    */
+   mimeType?: string;
++
++  /**
++   * The display name of a shared file, when the source app provided one.
++   * Populated on Android from the content resolver's `DISPLAY_NAME`.
++   */
++  originalName?: string | null;
+ };
+ 
+ export type BaseResolvedSharePayload = SharePayload & {

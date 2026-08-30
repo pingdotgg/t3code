@@ -39,6 +39,7 @@ describe("buildOpenCodePermissionRules", () => {
   it("allows everything only under full access", () => {
     NodeAssert.deepEqual(buildOpenCodePermissionRules("full-access"), [
       { permission: "*", pattern: "*", action: "allow" },
+      { permission: "external_directory", pattern: "*", action: "allow" },
     ]);
   });
 });
