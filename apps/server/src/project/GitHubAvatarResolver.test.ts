@@ -44,7 +44,7 @@ const pngResponse = () =>
 const makeLayer = (input: {
   readonly identity: RepositoryIdentity | null;
   readonly count: { value: number };
-  readonly repository: () => Response;
+  readonly repository: () => Response | Promise<Response>;
   readonly avatar?: (url: string) => Response | null;
 }) =>
   GitHubAvatarResolver.layer.pipe(
@@ -67,7 +67,7 @@ const makeLayer = (input: {
               const response = target.includes("api.github.com/repos/")
                 ? input.repository()
                 : (input.avatar?.(target) ?? null);
-              return response === null
+              return response === undefined || response === null
                 ? Promise.reject(new TypeError(`unrouted request: ${target}`))
                 : Promise.resolve(response);
             }) as typeof fetch,
@@ -183,6 +183,60 @@ describe("GitHubAvatarResolver", () => {
       expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
       expect(count.value).toBe(2);
     }).pipe(Effect.provide(makeLayer({ identity, count, repository: () => jsonResponse({}, 404) }))),
+  );
+
+  it.effect("retries transport failures without a negative marker", () =>
+    Effect.gen(function* () {
+      const count = { value: 0 };
+      const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
+
+      expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
+      expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
+      expect(count.value).toBe(2);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          identity,
+          count,
+          repository: () => Promise.reject(new TypeError("offline")),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("retries rate-limited responses without a negative marker", () =>
+    Effect.gen(function* () {
+      const count = { value: 0 };
+      const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
+
+      expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
+      expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
+      expect(count.value).toBe(2);
+    }).pipe(Effect.provide(makeLayer({ identity, count, repository: () => jsonResponse({}, 403) }))),
+  );
+
+  it.effect("remembers oversized avatars as negative", () =>
+    Effect.gen(function* () {
+      const count = { value: 0 };
+      const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
+
+      expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
+      expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
+      expect(count.value).toBe(2);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          identity,
+          count,
+          repository: () => jsonResponse({ owner: { avatar_url: AVATAR_URL } }),
+          avatar: () =>
+            new Response(new Uint8Array(1024 * 1024 + 1), {
+              status: 200,
+              headers: { "content-type": "image/png" },
+            }),
+        }),
+      ),
+    ),
   );
 
   it.effect("refuses avatars outside the GitHub avatar host", () =>

@@ -8,6 +8,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Either from "effect/Either";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -15,14 +16,14 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const FETCH_TIMEOUT_MS = 5_000;
 const MAX_AVATAR_BYTES = 1024 * 1024;
-/** A failed or iconless repository is remembered this long before one retry. */
+/** A repository with no usable avatar is remembered this long before one retry. */
 const NEGATIVE_RESULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const AVATAR_EXTENSIONS_BY_CONTENT_TYPE: Record<string, string> = {
   "image/gif": ".gif",
@@ -92,36 +93,54 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.catchCause(() => Effect.void));
   });
 
+  type AvatarFetch =
+    | { readonly _tag: "avatar"; readonly bytes: Uint8Array; readonly extension: string }
+    | { readonly _tag: "negative" }
+    | { readonly _tag: "retry" };
+
   const downloadAvatar = Effect.fn("GitHubAvatarResolver.downloadAvatar")(function* (
     owner: string,
     name: string,
   ) {
-    const repository = yield* httpClient
-      .execute(
-        HttpClientRequest.get(
-          `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
-        ).pipe(HttpClientRequest.acceptJson),
-      )
-      .pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.flatMap((response) => response.json),
-      );
-    const decoded = yield* Schema.decodeUnknown(RepositorySchema)(repository).pipe(Effect.option);
-    const avatarUrl = Option.isSome(decoded) ? decoded.value.owner?.avatar_url : undefined;
+    // 404 means private or nonexistent; any other non-2xx (rate limits, 5xx) is
+    // transient and must retry on a later request rather than be remembered.
+    const repositoryResponse = yield* httpClient.execute(
+      HttpClientRequest.get(
+        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+      ).pipe(HttpClientRequest.acceptJson),
+    );
+    if (repositoryResponse.status === 404) return { _tag: "negative" } as const;
+    if (repositoryResponse.status < 200 || repositoryResponse.status >= 300) {
+      return { _tag: "retry" } as const;
+    }
+    const decoded = yield* Schema.decodeUnknown(RepositorySchema)(yield* repositoryResponse.json).pipe(
+      Effect.option,
+    );
+    if (Option.isNone(decoded)) return { _tag: "retry" } as const;
+    const avatarUrl = decoded.value.owner?.avatar_url;
     // A url from a response is data, not instruction: only the GitHub avatar CDN may be fetched.
     if (!avatarUrl || new URL(avatarUrl).host !== "avatars.githubusercontent.com") {
-      return null;
+      return { _tag: "negative" } as const;
     }
 
-    const avatarResponse = yield* httpClient
-      .execute(HttpClientRequest.get(avatarUrl))
-      .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+    const avatarResponse = yield* httpClient.execute(HttpClientRequest.get(avatarUrl));
+    if (avatarResponse.status < 200 || avatarResponse.status >= 300) {
+      return { _tag: "negative" } as const;
+    }
+    const declaredBytes = Number(avatarResponse.headers["content-length"] ?? Number.NaN);
+    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_AVATAR_BYTES) {
+      return { _tag: "negative" } as const;
+    }
     const bytes = new Uint8Array(yield* avatarResponse.arrayBuffer);
     if (bytes.byteLength === 0 || bytes.byteLength > MAX_AVATAR_BYTES) {
-      return null;
+      return { _tag: "negative" } as const;
     }
     const contentType = (avatarResponse.headers["content-type"] ?? "").split(";")[0]?.trim() ?? "";
-    return { bytes, extension: AVATAR_EXTENSIONS_BY_CONTENT_TYPE[contentType] ?? ".png" };
+    return {
+      _tag: "avatar",
+      bytes,
+      extension: AVATAR_EXTENSIONS_BY_CONTENT_TYPE[contentType] ?? ".png",
+    } as const;
   });
 
   const fetchAndCache = Effect.fn("GitHubAvatarResolver.fetchAndCache")(function* (
@@ -133,18 +152,22 @@ export const make = Effect.gen(function* () {
     yield* fileSystem.makeDirectory(cacheDir, { recursive: true }).pipe(
       Effect.catchCause(() => Effect.void),
     );
-    const avatar = yield* downloadAvatar(owner, name).pipe(
+    // Transport failures, timeouts and transient API states return null without
+    // a marker, so one blip never hides an icon for the negative TTL.
+    const outcome = yield* downloadAvatar(owner, name).pipe(
       Effect.timeout(FETCH_TIMEOUT_MS),
-      Effect.catchCause(() => Effect.succeed(null)),
+      Effect.either,
     );
-    if (avatar === null) {
+    if (Either.isLeft(outcome)) return null;
+    if (outcome.right._tag === "retry") return null;
+    if (outcome.right._tag === "negative") {
       yield* writeCacheEntry(cacheKey, { ok: false, fetchedAtMs: now });
       return null;
     }
-    const fileName = `${cacheKey}${avatar.extension}`;
-    const written = yield* fileSystem.writeFile(path.join(cacheDir, fileName), avatar.bytes).pipe(
-      Effect.option,
-    );
+    const fileName = `${cacheKey}${outcome.right.extension}`;
+    const written = yield* fileSystem
+      .writeFile(path.join(cacheDir, fileName), outcome.right.bytes)
+      .pipe(Effect.option);
     if (Option.isNone(written)) {
       yield* writeCacheEntry(cacheKey, { ok: false, fetchedAtMs: now });
       return null;
