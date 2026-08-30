@@ -15,7 +15,7 @@ import * as Ref from "effect/Ref";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { dispatchClientCommand } from "./ClientCommandDispatch.ts";
+import * as ClientCommandDispatch from "./ClientCommandDispatch.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -59,7 +59,7 @@ it.effect("routes WebSocket thread creation through receipt-aware project admiss
 
     yield* Effect.gen(function* () {
       const threads = yield* ThreadManagement.ThreadManagementService;
-      const projects = yield* ProjectService.ProjectService;
+      const dispatchClientCommand = yield* ClientCommandDispatch.make;
       const command = {
         type: "thread.create",
         createdBy: "user",
@@ -75,11 +75,11 @@ it.effect("routes WebSocket thread creation through receipt-aware project admiss
         worktreePath: null,
       } as const;
 
-      yield* dispatchClientCommand({ command, projects, threads });
+      yield* dispatchClientCommand(command);
       const sequenceBeforeReplay = yield* threads.getThreadEventSequence(command.threadId);
       yield* Ref.set(projectState, null);
 
-      yield* dispatchClientCommand({ command, projects, threads });
+      yield* dispatchClientCommand(command);
       expect(yield* threads.getThreadEventSequence(command.threadId)).toBe(sequenceBeforeReplay);
 
       const freshCommand = {
@@ -87,11 +87,7 @@ it.effect("routes WebSocket thread creation through receipt-aware project admiss
         commandId: CommandId.make("command:client-command-admission:fresh"),
         threadId: ThreadId.make("thread:client-command-admission:fresh"),
       };
-      const rejected = yield* dispatchClientCommand({
-        command: freshCommand,
-        projects,
-        threads,
-      }).pipe(Effect.flip);
+      const rejected = yield* dispatchClientCommand(freshCommand).pipe(Effect.flip);
       expect(rejected).toMatchObject({ _tag: "ProjectMutationError" });
       expect(
         Option.isNone(yield* Effect.option(threads.getThreadProjection(freshCommand.threadId))),
