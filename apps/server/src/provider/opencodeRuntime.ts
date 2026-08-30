@@ -487,14 +487,13 @@ export function toOpenCodePromptParts(input: {
   readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
 }) {
   const nativeFiles = toOpenCodeFileParts(input);
-  const fallbackPaths = (input.attachments ?? []).flatMap((attachment) => {
-    if (isOpenCodeNativeFilePart(attachment)) return [];
+  const attachmentPaths = (input.attachments ?? []).flatMap((attachment) => {
     const attachmentPath = input.resolveAttachmentPath(attachment);
     return attachmentPath === null
       ? []
       : [`[Attached ${attachment.type} "${attachment.name}" is saved at: ${attachmentPath}]`];
   });
-  const text = [input.text.trim(), fallbackPaths.join("\n")].filter(Boolean).join("\n\n");
+  const text = [input.text.trim(), attachmentPaths.join("\n")].filter(Boolean).join("\n\n");
   return [...(text.length === 0 ? [] : [{ type: "text" as const, text }]), ...nativeFiles];
 }
 

@@ -326,6 +326,7 @@ describe("toOpenCodeFileParts", () => {
       ["archive.zip", "/tmp/archive.zip"],
       ["vector.svg", "/tmp/vector.svg"],
       ["native.png", "/tmp/native.png"],
+      ["native.pdf", "/tmp/native.pdf"],
     ]);
     const parts = toOpenCodePromptParts({
       text: "Inspect every attachment.",
@@ -334,6 +335,7 @@ describe("toOpenCodeFileParts", () => {
         { ...attachment("application/zip"), name: "archive.zip" },
         { ...attachment("image/svg+xml"), name: "vector.svg" },
         { ...attachment("image/png"), name: "native.png" },
+        { ...attachment("application/pdf"), name: "native.pdf" },
       ],
       resolveAttachmentPath: (candidate) => paths.get(candidate.name) ?? null,
     });
@@ -345,10 +347,17 @@ describe("toOpenCodeFileParts", () => {
         filename: "native.png",
         url: "file:///tmp/native.png",
       },
+      {
+        type: "file",
+        mime: "application/pdf",
+        filename: "native.pdf",
+        url: "file:///tmp/native.pdf",
+      },
     ]);
-    NodeAssert.match(parts[0]?.type === "text" ? parts[0].text : "", /oversized\.pdf/);
-    NodeAssert.match(parts[0]?.type === "text" ? parts[0].text : "", /archive\.zip/);
-    NodeAssert.match(parts[0]?.type === "text" ? parts[0].text : "", /vector\.svg/);
-    NodeAssert.doesNotMatch(parts[0]?.type === "text" ? parts[0].text : "", /native\.png/);
+    const text = parts[0]?.type === "text" ? parts[0].text : "";
+    for (const [name, path] of paths) {
+      const cue = `[Attached file "${name}" is saved at: ${path}]`;
+      NodeAssert.equal(text.split(cue).length - 1, 1);
+    }
   });
 });
