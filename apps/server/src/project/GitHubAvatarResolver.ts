@@ -23,6 +23,13 @@ const FETCH_TIMEOUT_MS = 5_000;
 const MAX_AVATAR_BYTES = 1024 * 1024;
 /** A repository with no avatar is remembered this long before one retry. */
 const NEGATIVE_RESULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const AVATAR_EXTENSIONS_BY_CONTENT_TYPE: Record<string, string> = {
+  "image/gif": ".gif",
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+};
+const CACHED_AVATAR_EXTENSIONS = [".gif", ".jpg", ".jpeg", ".png", ".webp"] as const;
 
 export class GitHubAvatarResolver extends Context.Service<
   GitHubAvatarResolver,
@@ -69,7 +76,12 @@ export const make = Effect.gen(function* () {
     if (bytes.byteLength === 0 || bytes.byteLength > MAX_AVATAR_BYTES) {
       return { _tag: "negative" } as const;
     }
-    return { _tag: "avatar", bytes } as const;
+    const contentType = (response.headers["content-type"] ?? "").split(";")[0]?.trim() ?? "";
+    return {
+      _tag: "avatar",
+      bytes,
+      extension: AVATAR_EXTENSIONS_BY_CONTENT_TYPE[contentType] ?? ".png",
+    } as const;
   });
 
   // The miss file carries the marker epoch, so the negative TTL survives
@@ -106,23 +118,23 @@ export const make = Effect.gen(function* () {
       }
       return null;
     }
-    const targetPath = path.join(cacheDir, `${cacheKey}.png`);
+    const targetPath = path.join(cacheDir, `${cacheKey}${outcome.extension}`);
     const temporaryPath = `${targetPath}.tmp`;
     const written = yield* fileSystem.writeFile(temporaryPath, outcome.bytes).pipe(Effect.option);
     const renamed =
       Option.isSome(written) &&
       Option.isSome(yield* fileSystem.rename(temporaryPath, targetPath).pipe(Effect.option));
-    if (!renamed) {
-      yield* markMissing(cacheKey, now);
-      return null;
-    }
+    if (!renamed) return null;
     return targetPath;
   });
 
   const cachedAvatar = Effect.fn("GitHubAvatarResolver.cachedAvatar")(function* (cacheKey: string) {
-    const info = yield* fileSystem.stat(path.join(cacheDir, `${cacheKey}.png`)).pipe(Effect.option);
-    if (Option.isSome(info) && info.value.type === "File") {
-      return { _tag: "hit", path: path.join(cacheDir, `${cacheKey}.png`) } as const;
+    for (const extension of CACHED_AVATAR_EXTENSIONS) {
+      const cachedPath = path.join(cacheDir, `${cacheKey}${extension}`);
+      const info = yield* fileSystem.stat(cachedPath).pipe(Effect.option);
+      if (Option.isSome(info) && info.value.type === "File") {
+        return { _tag: "hit", path: cachedPath } as const;
+      }
     }
     const miss = yield* fileSystem
       .readFileString(path.join(cacheDir, `${cacheKey}.miss`))

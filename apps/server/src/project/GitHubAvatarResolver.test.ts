@@ -216,6 +216,30 @@ describe("GitHubAvatarResolver", () => {
     );
   });
 
+  it.effect("caches JPEG avatars with their own extension", () => {
+    const count = { value: 0 };
+    return Effect.gen(function* () {
+      const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
+
+      const first = yield* resolver.resolvePath("/worktrees/trino");
+      const second = yield* resolver.resolvePath("/worktrees/trino");
+
+      expect(first).not.toBeNull();
+      if (first === null) return;
+      expect(first).toBe(second);
+      expect(first).toMatch(/\.jpg$/);
+      expect(count.value).toBe(1);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          identity,
+          count,
+          response: () => new Response(pngBytes, { headers: { "content-type": "image/jpeg" } }),
+        }),
+      ),
+    );
+  });
+
   it.effect("remembers oversized avatars as negative", () => {
     const count = { value: 0 };
     return Effect.gen(function* () {
