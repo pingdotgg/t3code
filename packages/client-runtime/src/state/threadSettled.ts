@@ -436,8 +436,6 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
 
   const daysUntilMonday = (1 - now.getDay() + 7) % 7 || 7;
   const nextWeek = snoozeAtHour(addSnoozeDays(now, daysUntilMonday), MORNING_HOUR);
-  // On Sundays "Next week" is the same Monday 9:00 AM as "Tomorrow"; only
-  // offer it when it is actually a different wake time.
   if (nextWeek.getTime() !== tomorrow.getTime()) {
     presets.push({
       id: "next-week",
