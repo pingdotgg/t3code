@@ -70,7 +70,9 @@ describe("searchSettings", () => {
 
   it("hides desktop-only settings from browser search", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
+    expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "prevent-automatic-sleep")).toBe(true);
     expect(searchSettings("quit confirmation")).toEqual([]);
+    expect(searchSettings("prevent automatic sleep")).toEqual([]);
   });
 
   it("keeps catalog result ids unique", () => {
@@ -81,6 +83,10 @@ describe("searchSettings", () => {
   it("serves anchor props to panels from the catalog", () => {
     expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
     expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });
+    expect(searchableSetting("prevent-automatic-sleep")).toEqual({
+      id: "prevent-automatic-sleep",
+      title: "Prevent automatic sleep",
+    });
   });
 
   it("routes appearance settings to their current section", () => {
