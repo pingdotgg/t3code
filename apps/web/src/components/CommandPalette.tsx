@@ -2140,8 +2140,16 @@ function OpenCommandPaletteDialog(props: {
     window.desktopBridge !== undefined;
   const canOpenProjectFromFileManager = isBrowsing && canPickProjectFolder;
   const fileManagerInitialPath = useMemo(() => {
-    if (!canOpenProjectFromFileManager) {
+    if (!canPickProjectFolder) {
       return undefined;
+    }
+
+    // The `project.openFolder` hotkey opens the picker before a browse view
+    // exists, so there is no query to derive a directory from. Start at the
+    // environment's configured add-project directory instead; the desktop
+    // expands a leading `~` against the target's home, including over WSL.
+    if (!isBrowsing) {
+      return getAddProjectInitialQueryForEnvironment(browseEnvironmentId);
     }
 
     const trimmedQuery = query.trim();
@@ -2157,9 +2165,12 @@ function OpenCommandPaletteDialog(props: {
     return resolvedPath.length > 0 ? resolvedPath : undefined;
   }, [
     browseDirectoryPath,
+    browseEnvironmentId,
     browseResult?.parentPath,
-    canOpenProjectFromFileManager,
+    canPickProjectFolder,
     currentProjectCwdForBrowse,
+    getAddProjectInitialQueryForEnvironment,
+    isBrowsing,
     query,
   ]);
 
@@ -2347,36 +2358,28 @@ function OpenCommandPaletteDialog(props: {
     primaryEnvironmentId,
   ]);
 
-  const openFolderBrowseStartedRef = useRef(false);
-  // `project.openFolder` routes here: open the add-project browse view for the
-  // environment browsing would target, then hand off to the native picker once
-  // that view has committed so the picker starts at the environment's
-  // configured add-project directory. Falls back to the regular add-project
-  // flow when the picker can't run (web client, WSL instance not yet resolved)
-  // or environment selection is needed first.
+  // `project.openFolder` routes here: jump straight to the native folder
+  // picker against the environment browsing would target, opening the
+  // add-project browse view behind it so cancelling lands somewhere useful.
+  // Falls back to the regular add-project flow when the picker can't run (web
+  // client, WSL instance not yet resolved) or environment selection is needed.
   useLayoutEffect(() => {
     if (openIntent?.kind !== "open-folder") {
-      openFolderBrowseStartedRef.current = false;
-      return;
-    }
-    if (
-      browseEnvironmentId === null ||
-      !canPickProjectFolder ||
-      addProjectEnvironmentOptions.length > 1
-    ) {
-      clearOpenIntent();
-      openAddProjectFlow();
-      return;
-    }
-    if (!isBrowsing) {
-      if (!openFolderBrowseStartedRef.current) {
-        openFolderBrowseStartedRef.current = true;
-        void startAddProjectBrowse(browseEnvironmentId);
-      }
       return;
     }
     clearOpenIntent();
-    void handleOpenProjectFromFileManager();
+    if (
+      browseEnvironmentId !== null &&
+      canPickProjectFolder &&
+      addProjectEnvironmentOptions.length <= 1
+    ) {
+      if (!isBrowsing) {
+        void startAddProjectBrowse(browseEnvironmentId);
+      }
+      void handleOpenProjectFromFileManager();
+      return;
+    }
+    openAddProjectFlow();
   }, [
     addProjectEnvironmentOptions.length,
     browseEnvironmentId,
