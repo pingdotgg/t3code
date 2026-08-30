@@ -1,4 +1,5 @@
 import {
+  PREVIEW_MCP_NAV_DIAGNOSTIC_MAX_LENGTH,
   PREVIEW_MCP_LIST_DEFAULT_LIMIT,
   PreviewAutomationUnavailableError,
   PreviewMcpInvalidCursorError,
@@ -9,8 +10,11 @@ import {
   type PreviewMcpError,
   type PreviewMcpListInput,
   type PreviewMcpListResult,
+  type PreviewMcpSessionSnapshot,
+  type PreviewSessionSnapshot,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -20,8 +24,14 @@ import * as PreviewManager from "../preview/Manager.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
+const cursorThreadScope = (threadId: ThreadId): string =>
+  NodeCrypto.createHash("sha256").update(threadId).digest("base64url");
+
 const encodeCursor = (threadId: ThreadId, tabId: PreviewTabId): string =>
-  Buffer.from(`${threadId}\u0000${tabId}`, "utf8").toString("base64url");
+  Buffer.from(`v1\u0000${cursorThreadScope(threadId)}\u0000${tabId}`, "utf8").toString("base64url");
+
+const compareTabIds = (left: PreviewTabId, right: PreviewTabId): number =>
+  left < right ? -1 : left > right ? 1 : 0;
 
 const isPreviewTabId = Schema.is(PreviewTabId);
 
@@ -30,12 +40,11 @@ const decodeCursor = Effect.fn("PreviewMcpService.decodeCursor")(function* (
   cursor: string,
 ) {
   const decoded = Buffer.from(cursor, "base64url").toString("utf8");
-  const separator = decoded.indexOf("\u0000");
-  const cursorThreadId = decoded.slice(0, separator);
-  const tabId = decoded.slice(separator + 1);
+  const [version, scopeHash, tabId, ...rest] = decoded.split("\u0000");
   if (
-    separator <= 0 ||
-    cursorThreadId !== threadId ||
+    version !== "v1" ||
+    scopeHash !== cursorThreadScope(threadId) ||
+    rest.length > 0 ||
     !isPreviewTabId(tabId) ||
     encodeCursor(threadId, tabId) !== cursor
   ) {
@@ -43,6 +52,24 @@ const decodeCursor = Effect.fn("PreviewMcpService.decodeCursor")(function* (
   }
   return tabId;
 });
+
+const projectSession = (session: PreviewSessionSnapshot): PreviewMcpSessionSnapshot => {
+  if (session.navStatus._tag !== "LoadFailed") {
+    return { ...session, navStatus: session.navStatus };
+  }
+  const descriptionTruncated =
+    session.navStatus.description.length > PREVIEW_MCP_NAV_DIAGNOSTIC_MAX_LENGTH;
+  return {
+    ...session,
+    navStatus: {
+      ...session.navStatus,
+      description: descriptionTruncated
+        ? session.navStatus.description.slice(0, PREVIEW_MCP_NAV_DIAGNOSTIC_MAX_LENGTH)
+        : session.navStatus.description,
+      descriptionTruncated,
+    },
+  };
+};
 
 export class PreviewMcpService extends Context.Service<
   PreviewMcpService,
@@ -84,10 +111,10 @@ export const make = Effect.gen(function* PreviewMcpServiceMake() {
       const limit = input.limit ?? PREVIEW_MCP_LIST_DEFAULT_LIMIT;
       const state = yield* manager.list({ threadId: scope.threadId });
       const candidates = state.sessions
-        .toSorted((left, right) => left.tabId.localeCompare(right.tabId))
-        .filter((session) => boundary === undefined || session.tabId > boundary)
+        .toSorted((left, right) => compareTabIds(left.tabId, right.tabId))
+        .filter((session) => boundary === undefined || compareTabIds(session.tabId, boundary) > 0)
         .slice(0, limit + 1);
-      const sessions = candidates.slice(0, limit);
+      const sessions = candidates.slice(0, limit).map(projectSession);
       const hasMore = candidates.length > limit;
       const last = sessions.at(-1);
       return {
@@ -102,15 +129,22 @@ export const make = Effect.gen(function* PreviewMcpServiceMake() {
   const close: PreviewMcpService["Service"]["close"] = Effect.fn("PreviewMcpService.close")(
     function* (inputScope, input) {
       const scope = yield* requirePreviewScope(inputScope);
-      const closed = yield* manager.closeExact({ threadId: scope.threadId, tabId: input.tabId });
-      if (!closed) {
-        return yield* new PreviewSessionLookupError({
-          threadId: scope.threadId,
-          tabId: input.tabId,
-        });
-      }
-      yield* broker.forgetClosedTab(scope, input.tabId);
-      return { tabId: input.tabId, closed: true };
+      return yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          const closed = yield* manager.closeExact({
+            threadId: scope.threadId,
+            tabId: input.tabId,
+          });
+          if (!closed) {
+            return yield* new PreviewSessionLookupError({
+              threadId: scope.threadId,
+              tabId: input.tabId,
+            });
+          }
+          yield* broker.forgetClosedTab(scope, input.tabId);
+          return { tabId: input.tabId, closed: true } as const;
+        }),
+      );
     },
   );
 

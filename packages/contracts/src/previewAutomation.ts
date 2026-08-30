@@ -26,6 +26,7 @@ const OptionalTimeoutMs = Schema.optional(
 
 export const PREVIEW_MCP_LIST_DEFAULT_LIMIT = 20;
 export const PREVIEW_MCP_LIST_MAX_LIMIT = 100;
+export const PREVIEW_MCP_NAV_DIAGNOSTIC_MAX_LENGTH = 2_000;
 
 export const PreviewMcpCursor = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
 export type PreviewMcpCursor = typeof PreviewMcpCursor.Type;
@@ -50,8 +51,30 @@ export const PreviewMcpListInput = Schema.Struct({
 });
 export type PreviewMcpListInput = typeof PreviewMcpListInput.Type;
 
+const PreviewMcpUrl = TrimmedNonEmptyString.check(Schema.isMaxLength(2048));
+const PreviewMcpTitle = Schema.String.check(Schema.isMaxLength(512));
+export const PreviewMcpNavStatus = Schema.Union([
+  Schema.TaggedStruct("Idle", {}),
+  Schema.TaggedStruct("Loading", { url: PreviewMcpUrl, title: PreviewMcpTitle }),
+  Schema.TaggedStruct("Success", { url: PreviewMcpUrl, title: PreviewMcpTitle }),
+  Schema.TaggedStruct("LoadFailed", {
+    url: PreviewMcpUrl,
+    title: PreviewMcpTitle,
+    code: Schema.Int,
+    description: Schema.String.check(Schema.isMaxLength(PREVIEW_MCP_NAV_DIAGNOSTIC_MAX_LENGTH)),
+    descriptionTruncated: Schema.Boolean,
+  }),
+]);
+export type PreviewMcpNavStatus = typeof PreviewMcpNavStatus.Type;
+
+export const PreviewMcpSessionSnapshot = Schema.Struct({
+  ...PreviewSessionSnapshot.fields,
+  navStatus: PreviewMcpNavStatus,
+});
+export type PreviewMcpSessionSnapshot = typeof PreviewMcpSessionSnapshot.Type;
+
 export const PreviewMcpListResult = Schema.Struct({
-  sessions: Schema.Array(PreviewSessionSnapshot).check(
+  sessions: Schema.Array(PreviewMcpSessionSnapshot).check(
     Schema.isMaxLength(PREVIEW_MCP_LIST_MAX_LIMIT),
   ),
   nextCursor: Schema.NullOr(PreviewMcpCursor),

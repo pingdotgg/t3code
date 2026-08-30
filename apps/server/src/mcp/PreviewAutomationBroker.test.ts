@@ -173,6 +173,57 @@ it.effect("does not let an older response replace a newer explicit tab target", 
   ),
 );
 
+it.effect("blocks a closed in-flight tab without discarding another selected tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const selectedTabId = PreviewTabId.make("tab-selected-b");
+      const closingTabId = PreviewTabId.make("tab-closing-a");
+      const connected = yield* Deferred.make<void>();
+      const closingRequest = yield* Deferred.make<void>();
+      const releaseClosingResponse = yield* Deferred.make<void>();
+      const routedRequests: RoutedRequest[] = [];
+      const events = yield* broker.connect(makeHost());
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        const request = { ...event.request, connectionId: event.connectionId };
+        routedRequests.push(request);
+        return Effect.gen(function* () {
+          if (request.tabId === closingTabId) {
+            yield* Deferred.succeed(closingRequest, undefined);
+            yield* Deferred.await(releaseClosingResponse);
+          }
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result:
+              request.operation === "open"
+                ? { available: true, tabId: selectedTabId }
+                : request.tabId === closingTabId
+                  ? { available: true, tabId: closingTabId }
+                  : { url: "http://localhost:3200" },
+          });
+        }).pipe(Effect.forkScoped, Effect.asVoid);
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+
+      yield* broker.invoke({ scope, operation: "open", input: {} });
+      const delayed = yield* broker
+        .invoke({ scope, operation: "status", input: {}, tabId: closingTabId })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(closingRequest);
+      yield* broker.forgetClosedTab(scope, closingTabId);
+      yield* Deferred.succeed(releaseClosingResponse, undefined);
+      yield* Fiber.join(delayed);
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+
+      expect(routedRequests.at(-1)?.tabId).toBe(selectedTabId);
+    }),
+  ),
+);
+
 it.effect("tracks the tab returned by a targeted recording stop", () =>
   Effect.scoped(
     Effect.gen(function* () {
