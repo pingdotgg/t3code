@@ -115,6 +115,14 @@ interface BrokerState {
   readonly focusSequence: number;
 }
 
+const PREVIEW_AUTOMATION_RESPONSE_GRACE_MS = 1_000;
+
+const initialResponseTimeoutMs = (
+  operation: PreviewAutomationOperation,
+  timeoutMs: number,
+): number =>
+  operation === "navigate" ? timeoutMs * 2 + PREVIEW_AUTOMATION_RESPONSE_GRACE_MS : timeoutMs;
+
 const removeConnectionFromState = (
   current: BrokerState,
   clientId: string,
@@ -560,7 +568,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           Effect.exit,
           Effect.map((exit) => ({ _tag: "Completed" as const, exit })),
         ),
-      ).pipe(Effect.timeoutOption(timeoutMs));
+      ).pipe(Effect.timeoutOption(initialResponseTimeoutMs(input.operation, timeoutMs)));
       if (Option.isNone(first)) {
         return yield* new PreviewAutomationTimeoutError(requestContext);
       }
@@ -571,7 +579,9 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         return first.value.exit.value as A;
       }
 
-      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(timeoutMs + 1_000));
+      const result = yield* Deferred.await(deferred).pipe(
+        Effect.timeoutOption(timeoutMs + PREVIEW_AUTOMATION_RESPONSE_GRACE_MS),
+      );
       return yield* Option.match(result, {
         onNone: () => Effect.fail(new PreviewAutomationTimeoutError(requestContext)),
         onSome: (value) => Effect.succeed(value as A),

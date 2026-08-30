@@ -132,6 +132,93 @@ it.effect("starts a fresh response deadline when the host begins navigation", ()
   ).pipe(Effect.provide(TestClock.layer())),
 );
 
+it.effect("allows the host a setup budget before navigation starts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const requestReceived = yield* Deferred.make<void>();
+      const releaseStarted = yield* Deferred.make<void>();
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(requestReceived, undefined);
+          yield* Deferred.await(releaseStarted);
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            phase: "started",
+            ok: true,
+          });
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { loading: false },
+          });
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const invocation = yield* broker
+        .invoke<{ loading: boolean }>({
+          scope,
+          operation: "navigate",
+          input: { url: "https://example.com", timeoutMs: 100 },
+          timeoutMs: 100,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(requestReceived);
+      yield* TestClock.adjust("101 millis");
+
+      expect(invocation.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(releaseStarted, undefined);
+      expect(yield* Fiber.join(invocation)).toEqual({ loading: false });
+    }),
+  ).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("keeps response grace for hosts that do not report navigation start", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const requestReceived = yield* Deferred.make<void>();
+      const releaseResponse = yield* Deferred.make<void>();
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(requestReceived, undefined);
+          yield* Deferred.await(releaseResponse);
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { loading: false },
+          });
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const invocation = yield* broker
+        .invoke<{ loading: boolean }>({
+          scope,
+          operation: "navigate",
+          input: { url: "https://example.com", timeoutMs: 100 },
+          timeoutMs: 100,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(requestReceived);
+      yield* TestClock.adjust("1.1 seconds");
+
+      expect(invocation.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(releaseResponse, undefined);
+      expect(yield* Fiber.join(invocation)).toEqual({ loading: false });
+    }),
+  ).pipe(Effect.provide(TestClock.layer())),
+);
+
 it.effect("targets multiple tabs explicitly while retaining a default tab", () =>
   Effect.scoped(
     Effect.gen(function* () {
