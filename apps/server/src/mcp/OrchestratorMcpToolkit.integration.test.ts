@@ -182,6 +182,9 @@ function makeDeterministicAdapter(input: {
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly shouldComplete: (turn: ProviderAdapterV2TurnInput) => boolean;
+  readonly startedSignal?: (
+    turn: ProviderAdapterV2TurnInput,
+  ) => Deferred.Deferred<ProviderAdapterV2TurnInput> | undefined;
   readonly terminalGate?: (turn: ProviderAdapterV2TurnInput) => Deferred.Deferred<void> | undefined;
   readonly response: (turn: ProviderAdapterV2TurnInput) => string;
 }): ProviderAdapterV2Shape {
@@ -284,6 +287,10 @@ function makeDeterministicAdapter(input: {
                   },
                 },
               ]);
+              const startedSignal = input.startedSignal?.(turnInput);
+              if (startedSignal !== undefined) {
+                yield* Deferred.succeed(startedSignal, turnInput);
+              }
               const terminalGate = input.terminalGate?.(turnInput);
               if (terminalGate !== undefined) {
                 yield* Deferred.await(terminalGate);
@@ -494,9 +501,10 @@ describe("orchestrator MCP toolkit", () => {
           const deletionRaceProjectState = yield* Ref.make<Project>(deletionRaceProject);
           const creationAdmissionEntered = yield* Deferred.make<void>();
           const allowCreationAdmission = yield* Deferred.make<void>();
-          const deletionLockAttempted = yield* Deferred.make<void>();
+          const deletionLockAttemptSettled = yield* Deferred.make<void>();
           const deletionLockAcquired = yield* Deferred.make<void>();
           const allowDeletion = yield* Deferred.make<void>();
+          const deletionRaceProviderStarted = yield* Deferred.make<ProviderAdapterV2TurnInput>();
           const deletionRaceCommandId = CommandId.make(
             "command:mcp:mcp-provider-session-delete-race:create-thread:delete-create-race:0",
           );
@@ -513,6 +521,10 @@ describe("orchestrator MCP toolkit", () => {
                 turn.threadId !== parentThreadId &&
                 turn.threadId !== deletionRaceParentThreadId &&
                 turn.message.text !== cancellationPrompt,
+              startedSignal: (turn) =>
+                turn.threadId === deletionRaceParentThreadId
+                  ? deletionRaceProviderStarted
+                  : undefined,
               terminalGate: (turn) =>
                 turn.message.text.startsWith("Delegated task") ||
                 turn.message.text.startsWith("Delegated tasks")
@@ -604,8 +616,8 @@ describe("orchestrator MCP toolkit", () => {
                   ),
                 withProjectMutationLock: (lockedProjectId, effect) =>
                   lockedProjectId === deletionRaceProjectId
-                    ? Deferred.succeed(deletionLockAttempted, undefined).pipe(
-                        Effect.andThen(
+                    ? Effect.gen(function* () {
+                        const locked = yield* Effect.forkChild(
                           actual.withProjectMutationLock(
                             lockedProjectId,
                             Deferred.succeed(deletionLockAcquired, undefined).pipe(
@@ -613,8 +625,11 @@ describe("orchestrator MCP toolkit", () => {
                               Effect.andThen(effect),
                             ),
                           ),
-                        ),
-                      )
+                          { startImmediately: true },
+                        );
+                        yield* Deferred.succeed(deletionLockAttemptSettled, undefined);
+                        return yield* Fiber.join(locked);
+                      })
                     : actual.withProjectMutationLock(lockedProjectId, effect),
               });
             }),
@@ -2852,9 +2867,8 @@ describe("orchestrator MCP toolkit", () => {
               modelSelection: codexSelection,
               dispatchMode: { type: "start_immediately" },
             });
-            yield* waitForProjection(orchestrator, deletionRaceParentThreadId, (projection) =>
-              projection.runs.some((run) => run.status === "running"),
-            );
+            const startedRaceTurn = yield* Deferred.await(deletionRaceProviderStarted);
+            expect(startedRaceTurn.threadId).toBe(deletionRaceParentThreadId);
 
             const deletionRaceInvocation: McpInvocationContext.McpInvocationScope = {
               ...invocation,
@@ -2871,98 +2885,112 @@ describe("orchestrator MCP toolkit", () => {
                   ),
                   Effect.provideService(McpSchema.McpServerClient, client),
                 );
-            const creation = yield* Effect.forkChild(
-              invokeDeletionRace("create_threads", {
-                clientRequestId: "delete-create-race",
-                threads: [{ title: "Racing child" }],
-              }),
-              { startImmediately: true },
-            );
-            yield* Deferred.await(creationAdmissionEntered);
-            const deletion = yield* Effect.forkChild(
-              invokeDeletionRace("t3_project_delete", {
+            yield* Effect.gen(function* () {
+              const creation = yield* Effect.forkChild(
+                invokeDeletionRace("create_threads", {
+                  clientRequestId: "delete-create-race",
+                  threads: [{ title: "Racing child" }],
+                }),
+                { startImmediately: true },
+              );
+              yield* Deferred.await(creationAdmissionEntered);
+              const deletion = yield* Effect.forkChild(
+                invokeDeletionRace("t3_project_delete", {
+                  projectId: deletionRaceProjectId,
+                  cascadeThreads: true,
+                  clientRequestId: "delete-create-race-project",
+                }),
+                { startImmediately: true },
+              );
+              yield* Deferred.await(deletionLockAttemptSettled);
+              expect(yield* Deferred.isDone(deletionLockAcquired)).toBe(false);
+
+              yield* Deferred.succeed(allowCreationAdmission, undefined);
+              yield* Deferred.await(deletionLockAcquired);
+              const creationCall = yield* Fiber.join(creation);
+              expect(creationCall.isError).toBe(false);
+              const creationResult = yield* decodeCreateThreadsResult(
+                creationCall.structuredContent,
+              ).pipe(Effect.orDie);
+              const createdThread = creationResult.threads[0];
+              if (createdThread === undefined) {
+                return yield* Effect.die(new Error("Racing MCP thread was not created."));
+              }
+              expect(
+                (yield* orchestrator.getThreadProjection(createdThread.threadId)).thread.projectId,
+              ).toBe(deletionRaceProjectId);
+
+              yield* Deferred.succeed(allowDeletion, undefined);
+              const deletionCall = yield* Fiber.join(deletion);
+              expect(deletionCall.isError).toBe(false);
+              expect(deletionCall.structuredContent).toMatchObject({
                 projectId: deletionRaceProjectId,
-                cascadeThreads: true,
-                clientRequestId: "delete-create-race-project",
-              }),
-              { startImmediately: true },
+                deleted: true,
+                alreadyDeleted: false,
+                deletedThreadCount: 2,
+                workspaceFilesDeleted: false,
+              });
+              expect(
+                (yield* orchestrator.getThreadProjection(createdThread.threadId)).thread.deletedAt,
+              ).not.toBeNull();
+              expect(
+                (yield* orchestrator.getThreadProjection(deletionRaceParentThreadId)).thread
+                  .deletedAt,
+              ).not.toBeNull();
+
+              const threads = yield* ThreadManagement.ThreadManagementService;
+              const dispatchClientCommand = yield* ClientCommandDispatch.make;
+              const acceptedCreateCommand = {
+                type: "thread.create",
+                createdBy: "agent",
+                creationSource: "mcp",
+                commandId: deletionRaceCommandId,
+                threadId: createdThread.threadId,
+                projectId: deletionRaceProjectId,
+                title: "Racing child",
+                modelSelection: codexSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: cwd,
+              } as const;
+              const sequenceBeforeReplay = yield* threads.getThreadEventSequence(
+                createdThread.threadId,
+              );
+              const replayed = yield* dispatchClientCommand(acceptedCreateCommand);
+              expect(
+                replayed.storedEvents.some((stored) => stored.event.type === "thread.created"),
+              ).toBe(true);
+              expect(yield* threads.getThreadEventSequence(createdThread.threadId)).toBe(
+                sequenceBeforeReplay,
+              );
+              expect(
+                (yield* orchestrator.getThreadProjection(createdThread.threadId)).thread.deletedAt,
+              ).not.toBeNull();
+
+              const freshThreadId = ThreadId.make("thread:mcp-delete-race:fresh-after-delete");
+              const freshFailure = yield* dispatchClientCommand({
+                ...acceptedCreateCommand,
+                commandId: CommandId.make("command:mcp-delete-race:fresh-after-delete"),
+                threadId: freshThreadId,
+              }).pipe(Effect.flip);
+              expect(freshFailure).toMatchObject({ _tag: "ProjectMutationError" });
+              expect(
+                Option.isNone(
+                  yield* Effect.option(orchestrator.getThreadProjection(freshThreadId)),
+                ),
+              ).toBe(true);
+            }).pipe(
+              Effect.ensuring(
+                Effect.all(
+                  [
+                    Deferred.succeed(allowCreationAdmission, undefined),
+                    Deferred.succeed(allowDeletion, undefined),
+                  ],
+                  { discard: true },
+                ),
+              ),
             );
-            yield* Deferred.await(deletionLockAttempted);
-            expect(yield* Deferred.isDone(deletionLockAcquired)).toBe(false);
-
-            yield* Deferred.succeed(allowCreationAdmission, undefined);
-            yield* Deferred.await(deletionLockAcquired);
-            const creationCall = yield* Fiber.join(creation);
-            expect(creationCall.isError).toBe(false);
-            const creationResult = yield* decodeCreateThreadsResult(
-              creationCall.structuredContent,
-            ).pipe(Effect.orDie);
-            const createdThread = creationResult.threads[0];
-            if (createdThread === undefined) {
-              return yield* Effect.die(new Error("Racing MCP thread was not created."));
-            }
-            expect(
-              (yield* orchestrator.getThreadProjection(createdThread.threadId)).thread.projectId,
-            ).toBe(deletionRaceProjectId);
-
-            yield* Deferred.succeed(allowDeletion, undefined);
-            const deletionCall = yield* Fiber.join(deletion);
-            expect(deletionCall.isError).toBe(false);
-            expect(deletionCall.structuredContent).toMatchObject({
-              projectId: deletionRaceProjectId,
-              deleted: true,
-              alreadyDeleted: false,
-              deletedThreadCount: 2,
-              workspaceFilesDeleted: false,
-            });
-            expect(
-              (yield* orchestrator.getThreadProjection(createdThread.threadId)).thread.deletedAt,
-            ).not.toBeNull();
-            expect(
-              (yield* orchestrator.getThreadProjection(deletionRaceParentThreadId)).thread
-                .deletedAt,
-            ).not.toBeNull();
-
-            const threads = yield* ThreadManagement.ThreadManagementService;
-            const dispatchClientCommand = yield* ClientCommandDispatch.make;
-            const acceptedCreateCommand = {
-              type: "thread.create",
-              createdBy: "agent",
-              creationSource: "mcp",
-              commandId: deletionRaceCommandId,
-              threadId: createdThread.threadId,
-              projectId: deletionRaceProjectId,
-              title: "Racing child",
-              modelSelection: codexSelection,
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              branch: null,
-              worktreePath: cwd,
-            } as const;
-            const sequenceBeforeReplay = yield* threads.getThreadEventSequence(
-              createdThread.threadId,
-            );
-            const replayed = yield* dispatchClientCommand(acceptedCreateCommand);
-            expect(
-              replayed.storedEvents.some((stored) => stored.event.type === "thread.created"),
-            ).toBe(true);
-            expect(yield* threads.getThreadEventSequence(createdThread.threadId)).toBe(
-              sequenceBeforeReplay,
-            );
-            expect(
-              (yield* orchestrator.getThreadProjection(createdThread.threadId)).thread.deletedAt,
-            ).not.toBeNull();
-
-            const freshThreadId = ThreadId.make("thread:mcp-delete-race:fresh-after-delete");
-            const freshFailure = yield* dispatchClientCommand({
-              ...acceptedCreateCommand,
-              commandId: CommandId.make("command:mcp-delete-race:fresh-after-delete"),
-              threadId: freshThreadId,
-            }).pipe(Effect.flip);
-            expect(freshFailure).toMatchObject({ _tag: "ProjectMutationError" });
-            expect(
-              Option.isNone(yield* Effect.option(orchestrator.getThreadProjection(freshThreadId))),
-            ).toBe(true);
           }).pipe(Effect.provide(testLayer));
         }),
       ),
