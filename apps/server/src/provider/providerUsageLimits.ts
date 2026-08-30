@@ -23,7 +23,7 @@ export function windowKindFromDuration(input: {
   if (typeof duration !== "number" || !Number.isFinite(duration)) {
     return undefined;
   }
-  if (duration >= 30 * 24 * 60) {
+  if (duration > 30 * 24 * 60) {
     return "monthly";
   }
   if (
