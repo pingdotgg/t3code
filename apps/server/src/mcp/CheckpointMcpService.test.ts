@@ -351,6 +351,31 @@ it.effect("marks null provider targets ambiguous outside the root baseline", () 
   }).pipe(Effect.provide(harness.serviceLayer));
 });
 
+it.effect("does not advertise restore after the active provider selection changes", () => {
+  const projection = makeProjection();
+  const harness = makeHarness({
+    projection: {
+      ...projection,
+      thread: {
+        ...projection.thread,
+        modelSelection: {
+          ...projection.thread.modelSelection,
+          instanceId: ProviderInstanceId.make("different-provider"),
+        },
+      },
+    },
+  });
+
+  return Effect.gen(function* () {
+    const service = yield* CheckpointMcpService;
+    const result = yield* service.list(invocation, {});
+    assert.include(
+      result.checkpoints[0]?.restoreSupport.blockers ?? [],
+      "provider_thread_mismatch",
+    );
+  }).pipe(Effect.provide(harness.serviceLayer));
+});
+
 it.effect("distinguishes caller projection failures from missing target threads", () => {
   const harness = makeHarness({
     callerError: new OrchestratorProjectionError({

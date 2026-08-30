@@ -104,6 +104,9 @@ function restoreBlockers(input: {
     blockers.add("provider_session_missing");
     return [...blockers];
   }
+  if (providerThread.providerInstanceId !== projection.thread.modelSelection.instanceId) {
+    blockers.add("provider_thread_mismatch");
+  }
   const providerSession = projection.providerSessions.find(
     (candidate) => candidate.id === providerThread.providerSessionId,
   );
