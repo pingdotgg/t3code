@@ -62,9 +62,7 @@ function failure(code: ProjectMcpFailure["code"], message: string): ProjectMcpFa
 function redactOperationFailure(operation: string, publicMessage: string) {
   return <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, ProjectMcpFailure, R> =>
     effect.pipe(
-      Effect.tapError((error) =>
-        Effect.logWarning("Project MCP operation failed.", { operation, error }),
-      ),
+      Effect.tapError(() => Effect.logWarning("Project MCP operation failed.", { operation })),
       Effect.mapError(() => failure("operation_failed", publicMessage)),
     );
 }
@@ -340,10 +338,9 @@ const make = Effect.gen(function* () {
           ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
         })
         .pipe(
-          Effect.tapError((error) =>
+          Effect.tapError(() =>
             Effect.logWarning("Project MCP operation failed.", {
               operation: "update-project",
-              error,
             }),
           ),
           Effect.mapError((error) =>

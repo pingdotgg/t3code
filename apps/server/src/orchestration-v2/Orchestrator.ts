@@ -41,7 +41,7 @@ import * as Stream from "effect/Stream";
 
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { CommandPolicyV2 } from "./CommandPolicy.ts";
-import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
+import { CommandReceiptStoreReadError, CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -7456,7 +7456,13 @@ export const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
           cause: "Orchestration V2 live runtime is not configured.",
         }),
       ),
-    getCommandReceipt: () => Effect.die("Orchestration V2 live runtime is not configured."),
+    getCommandReceipt: (commandId) =>
+      Effect.fail(
+        new CommandReceiptStoreReadError({
+          commandId,
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
     getThreadProjection: (threadId) =>
       Effect.fail(
         new OrchestratorProjectionError({

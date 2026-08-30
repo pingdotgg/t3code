@@ -16,6 +16,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ClientCommandDispatch from "./ClientCommandDispatch.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -94,4 +95,41 @@ it.effect("routes WebSocket thread creation through receipt-aware project admiss
       ).toBe(true);
     }).pipe(Effect.provide(Layer.mergeAll(threadsLayer, projectsLayer)));
   }),
+);
+
+it.effect("returns a structured error when creation admission is unavailable", () =>
+  Effect.gen(function* () {
+    const dispatchClientCommand = (yield* ClientCommandDispatch.make).dispatch;
+    const command = {
+      type: "thread.create",
+      createdBy: "user",
+      creationSource: "web",
+      commandId: CommandId.make("command:client-command-admission:unavailable"),
+      threadId: ThreadId.make("thread:client-command-admission:unavailable"),
+      projectId: ProjectId.make("project:client-command-admission:unavailable"),
+      title: "Unavailable creation",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.1-codex",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+    } as const;
+
+    const error = yield* dispatchClientCommand(command).pipe(Effect.flip);
+    expect(error).toBeInstanceOf(Orchestrator.OrchestratorDispatchError);
+    expect(error).toMatchObject({
+      commandId: command.commandId,
+      commandType: "thread.create",
+    });
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ThreadManagement.layer.pipe(Layer.provide(Orchestrator.layerUnavailable)),
+        Layer.mock(ProjectService.ProjectService)({}),
+      ),
+    ),
+  ),
 );

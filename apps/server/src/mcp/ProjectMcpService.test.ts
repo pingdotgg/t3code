@@ -18,6 +18,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
@@ -233,6 +234,10 @@ it.effect("loads response settings before committing project mutations", () =>
 it.effect("redacts repository failures from public project MCP results", () =>
   Effect.gen(function* () {
     const secretRemote = "https://oauth-token@example.com/private/repo.git";
+    const logs: Array<unknown> = [];
+    const logger = Logger.make<unknown, void>(({ message }) => {
+      logs.push(message);
+    });
     const testLayer = ProjectMcp.layer.pipe(
       Layer.provide(
         Layer.mock(ProjectService.ProjectService)({
@@ -274,7 +279,11 @@ it.effect("redacts repository failures from public project MCP results", () =>
           clientRequestId: "private-clone",
         })
         .pipe(Effect.flip);
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(testLayer, Logger.layer([logger], { mergeWithExisting: false })),
+      ),
+    );
 
     expect(error).toMatchObject({
       code: "operation_failed",
@@ -282,6 +291,9 @@ it.effect("redacts repository failures from public project MCP results", () =>
     });
     expect(error.message).not.toMatch(/oauth-token|example\.com|fatal|authentication/i);
     expect(error).not.toHaveProperty("cause");
+    expect(logs).toEqual([
+      ["Project MCP operation failed.", { operation: "clone-project-repository" }],
+    ]);
   }),
 );
 
