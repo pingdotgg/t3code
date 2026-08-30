@@ -832,7 +832,7 @@ export function deriveAgentPanelModel({
       workflowMembers.length > 0 &&
       !(
         isActiveSubagentStatus(agent.status) &&
-        !workflowMembers.some((member) => isActiveSubagentStatus(member.status))
+        workflowMembers.every((member) => isTerminalSubagentStatus(member.status))
       );
 
     if (!standsInForMembers) {
