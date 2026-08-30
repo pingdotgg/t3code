@@ -13,7 +13,6 @@ import {
   GripVerticalIcon,
   ListOrderedIcon,
   PencilIcon,
-  XIcon,
 } from "lucide-react";
 import { useId, useMemo, useRef, useState } from "react";
 
@@ -230,17 +229,18 @@ export function QueuedRunsControl(props: {
           </ComposerBanner.Actions>
         </ComposerBanner.Row>
         <ComposerBanner.Scroll className={cn("max-h-32", !expanded && "hidden")}>
-          <ol id={queueListId}>
+          <ComposerBanner.Children render={<ol />} id={queueListId}>
             {items.map((item, index) => {
               const rowRunId = item.runId;
               const rowServerIndex = item.serverIndex;
               const rowDraggable =
                 rowRunId !== null && rowServerIndex !== null && canReorder && busyRunId === null;
               return (
-                <li
+                <ComposerBanner.Row
+                  render={<li />}
                   key={item.key}
                   className={cn(
-                    "relative flex min-w-0 items-center gap-1 border-border/45 border-t py-1 first:border-t-0",
+                    "relative",
                     dragState !== null && dragState.runId === item.runId && "opacity-50",
                   )}
                   draggable={rowDraggable}
@@ -289,130 +289,126 @@ export function QueuedRunsControl(props: {
                       className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 rounded bg-primary/70"
                     />
                   ) : null}
-                  {canReorder && rowRunId !== null && rowServerIndex !== null ? (
-                    <button
-                      type="button"
-                      aria-label="Reorder queued message (drag, or press the arrow keys)"
-                      className="flex size-5 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/50 hover:text-muted-foreground focus-visible:outline-2 active:cursor-grabbing disabled:cursor-default disabled:opacity-40"
-                      disabled={busyRunId !== null}
-                      onPointerDown={() => {
-                        dragArmedRunIdRef.current = rowRunId;
-                      }}
-                      onKeyDown={(event) => {
-                        if (busyRunId !== null) return;
-                        if (event.key === "ArrowUp" && rowServerIndex > 0) {
-                          event.preventDefault();
-                          void move(rowRunId, queued[rowServerIndex - 1]?.run.id ?? null);
-                        }
-                        if (event.key === "ArrowDown" && rowServerIndex < queued.length - 1) {
-                          event.preventDefault();
-                          void move(rowRunId, queued[rowServerIndex + 2]?.run.id ?? null);
+                  <ComposerBanner.Icon aria-hidden={false}>
+                    {canReorder && rowRunId !== null && rowServerIndex !== null ? (
+                      <Button
+                        size="icon-xs"
+                        variant="ghost-muted"
+                        aria-label="Reorder queued message (drag, or press the arrow keys)"
+                        className="cursor-grab active:cursor-grabbing disabled:cursor-default"
+                        disabled={busyRunId !== null}
+                        onPointerDown={() => {
+                          dragArmedRunIdRef.current = rowRunId;
+                        }}
+                        onKeyDown={(event) => {
+                          if (busyRunId !== null) return;
+                          if (event.key === "ArrowUp" && rowServerIndex > 0) {
+                            event.preventDefault();
+                            void move(rowRunId, queued[rowServerIndex - 1]?.run.id ?? null);
+                          }
+                          if (event.key === "ArrowDown" && rowServerIndex < queued.length - 1) {
+                            event.preventDefault();
+                            void move(rowRunId, queued[rowServerIndex + 2]?.run.id ?? null);
+                          }
+                        }}
+                      >
+                        <GripVerticalIcon />
+                      </Button>
+                    ) : null}
+                  </ComposerBanner.Icon>
+                  <ComposerBanner.Content className="text-foreground/80">
+                    <ComposerBanner.Count className="min-w-0">{index + 1}</ComposerBanner.Count>
+                    {item.pending ? (
+                      <Clock3Icon
+                        aria-label="Saving queued message"
+                        className="size-3 shrink-0 text-muted-foreground/60"
+                      />
+                    ) : null}
+                    {item.thumbnails.length > 0 ? (
+                      <span className="flex shrink-0 items-center gap-0.5">
+                        {item.thumbnails.map((thumbnail) => (
+                          <span
+                            key={thumbnail.key}
+                            className="size-4 overflow-hidden rounded border border-border/70 bg-background"
+                          >
+                            {thumbnail.url ? (
+                              <img
+                                src={thumbnail.url}
+                                alt={thumbnail.name}
+                                className="size-full object-cover"
+                              />
+                            ) : (
+                              <span
+                                aria-label={thumbnail.name}
+                                className="block size-full bg-muted/60"
+                              />
+                            )}
+                          </span>
+                        ))}
+                      </span>
+                    ) : null}
+                    <Tooltip>
+                      <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
+                        {item.text}
+                      </TooltipTrigger>
+                      <TooltipPopup side="top" className="max-w-96 break-words">
+                        {item.text}
+                      </TooltipPopup>
+                    </Tooltip>
+                  </ComposerBanner.Content>
+                  <ComposerBanner.Actions>
+                    <Button
+                      size="icon-xs"
+                      variant="ghost-muted"
+                      aria-label="Edit queued message"
+                      disabled={item.runId === null || busyRunId !== null}
+                      title="Edit in the composer"
+                      onClick={() => {
+                        if (item.runId !== null && item.messageId !== null) {
+                          props.onEditQueuedRun({
+                            runId: item.runId,
+                            messageId: item.messageId,
+                            text: item.text,
+                            attachments: item.attachments,
+                          });
                         }
                       }}
                     >
-                      <GripVerticalIcon className="size-3" />
-                    </button>
-                  ) : (
-                    <span className="w-5 shrink-0" />
-                  )}
-                  <span className="w-4 shrink-0 text-center text-[10px] tabular-nums text-muted-foreground/65">
-                    {index + 1}
-                  </span>
-                  {item.pending ? (
-                    <Clock3Icon
-                      aria-label="Saving queued message"
-                      className="size-3 shrink-0 text-muted-foreground/60"
+                      <PencilIcon />
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="ghost-muted"
+                      disabled={
+                        item.runId === null || busyRunId !== null || !workflow?.canPromoteToSteer
+                      }
+                      title={
+                        activeRun === null
+                          ? "There is no active run to steer"
+                          : "Send as a steer instead"
+                      }
+                      onClick={() => {
+                        if (item.runId !== null) {
+                          void steer(item.runId);
+                        }
+                      }}
+                    >
+                      <CornerUpRightIcon />
+                      Steer
+                    </Button>
+                    <ComposerBanner.Dismiss
+                      aria-label="Remove queued message"
+                      disabled={item.runId === null || busyRunId !== null}
+                      title="Remove from queue"
+                      onClick={() => {
+                        if (item.runId !== null) void remove(item.runId);
+                      }}
                     />
-                  ) : null}
-                  {item.thumbnails.length > 0 ? (
-                    <span className="flex shrink-0 items-center gap-0.5">
-                      {item.thumbnails.map((thumbnail) => (
-                        <span
-                          key={thumbnail.key}
-                          className="size-5 overflow-hidden rounded border border-border/70 bg-background"
-                        >
-                          {thumbnail.url ? (
-                            <img
-                              src={thumbnail.url}
-                              alt={thumbnail.name}
-                              className="size-full object-cover"
-                            />
-                          ) : (
-                            <span
-                              aria-label={thumbnail.name}
-                              className="block size-full bg-muted/60"
-                            />
-                          )}
-                        </span>
-                      ))}
-                    </span>
-                  ) : null}
-                  <Tooltip>
-                    <TooltipTrigger render={<span className="min-w-0 flex-1 truncate text-xs" />}>
-                      {item.text}
-                    </TooltipTrigger>
-                    <TooltipPopup side="top" className="max-w-96 break-words">
-                      {item.text}
-                    </TooltipPopup>
-                  </Tooltip>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label="Edit queued message"
-                    className="size-6 text-muted-foreground"
-                    disabled={item.runId === null || busyRunId !== null}
-                    title="Edit in the composer"
-                    onClick={() => {
-                      if (item.runId !== null && item.messageId !== null) {
-                        props.onEditQueuedRun({
-                          runId: item.runId,
-                          messageId: item.messageId,
-                          text: item.text,
-                          attachments: item.attachments,
-                        });
-                      }
-                    }}
-                  >
-                    <PencilIcon className="size-3" />
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground"
-                    disabled={
-                      item.runId === null || busyRunId !== null || !workflow?.canPromoteToSteer
-                    }
-                    title={
-                      activeRun === null
-                        ? "There is no active run to steer"
-                        : "Send as a steer instead"
-                    }
-                    onClick={() => {
-                      if (item.runId !== null) {
-                        void steer(item.runId);
-                      }
-                    }}
-                  >
-                    <CornerUpRightIcon className="size-3" />
-                    Steer
-                  </Button>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label="Remove queued message"
-                    className="size-6 text-muted-foreground"
-                    disabled={item.runId === null || busyRunId !== null}
-                    title="Remove from queue"
-                    onClick={() => {
-                      if (item.runId !== null) void remove(item.runId);
-                    }}
-                  >
-                    <XIcon className="size-3" />
-                  </Button>
-                </li>
+                  </ComposerBanner.Actions>
+                </ComposerBanner.Row>
               );
             })}
-          </ol>
+          </ComposerBanner.Children>
         </ComposerBanner.Scroll>
       </ComposerBanner.Root>
     </ComposerBanner.Attachment>
