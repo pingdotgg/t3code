@@ -2071,6 +2071,14 @@ html.electron-windows [data-app-sidebar] [data-slot="sidebar-inner"] {
   background-color: transparent !important;
 }
 
+/* Sheets and dialogs are portalled outside the window canvas and paint their
+   own opaque popup surface, so canvas owners inside them must stay solid
+   instead of blending toward the native material. */
+html.electron-windows [data-slot="sheet-popup"],
+html.electron-windows [data-slot="dialog-popup"] {
+  --desktop-window-canvas: var(--background);
+}
+
 /* App-chrome grain. Baked into each surface's own background (behind
    content) rather than a fixed overlay on top: a full-viewport overlay
    forces the compositor to re-blend every frame any animation produces,
