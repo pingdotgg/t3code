@@ -333,9 +333,10 @@ export const make = Effect.gen(function* () {
           const branch = result.stdout.trim();
           return branch.length > 0 ? branch : null;
         }),
-        Effect.catchTag("GitCommandError", (error) =>
-          error.exitCode === 1 ? Effect.succeed(null) : Effect.fail(error),
-        ),
+        Effect.catchTags({
+          GitCommandError: (error) =>
+            error.exitCode === 1 ? Effect.succeed(null) : Effect.fail(error),
+        }),
       ),
     fetchRemote: (input) =>
       ensureGitCommand("GitWorkflowService.fetchRemote", input.cwd).pipe(
