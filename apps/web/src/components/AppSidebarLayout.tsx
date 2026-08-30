@@ -86,6 +86,7 @@ function SidebarControl() {
     () => mergeProjectScriptKeybindings(primaryKeybindings, environmentKeybindings),
     [environmentKeybindings, primaryKeybindings],
   );
+  const chatHandlesSidebarShortcut = routeTarget !== null;
   const { toggleSidebar } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
@@ -96,7 +97,7 @@ function SidebarControl() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (chatHandlesSidebarShortcut || event.defaultPrevented) return;
       if (
         event.target instanceof HTMLElement &&
         event.target.closest("[data-keybinding-capture]")
@@ -113,7 +114,7 @@ function SidebarControl() {
     // Capture before focused editors consume commands such as Mod+B for rich-text formatting.
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [keybindings, toggleSidebar]);
+  }, [chatHandlesSidebarShortcut, keybindings, toggleSidebar]);
 
   return (
     // The right-side layout controls carry mr-px (border compensation inside

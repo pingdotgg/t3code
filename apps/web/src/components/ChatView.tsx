@@ -190,6 +190,7 @@ import {
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { useSidebar } from "./ui/sidebar";
 import {
   deriveProjectScriptKeybindingMutations,
   mergeProjectScriptKeybindings,
@@ -1289,6 +1290,7 @@ function ChatViewContent(props: ChatViewProps) {
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
   const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
+  const { toggleSidebar } = useSidebar();
   const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -2832,13 +2834,13 @@ function ChatViewContent(props: ChatViewProps) {
           input: { cwd: gitStatusCwd },
         }),
   );
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const primaryKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const environmentKeybindings =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
     DEFAULT_RESOLVED_KEYBINDINGS;
-  const chatKeybindings = useMemo(
-    () => mergeProjectScriptKeybindings(keybindings, environmentKeybindings),
-    [environmentKeybindings, keybindings],
+  const keybindings = useMemo(
+    () => mergeProjectScriptKeybindings(primaryKeybindings, environmentKeybindings),
+    [environmentKeybindings, primaryKeybindings],
   );
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   // Prefer an instance-id match so a custom Codex instance (e.g.
@@ -5222,10 +5224,17 @@ function ChatViewContent(props: ChatViewProps) {
         }
       }
 
-      const command = resolveShortcutCommand(event, chatKeybindings, {
+      const command = resolveShortcutCommand(event, keybindings, {
         context: shortcutContext,
       });
       if (!command) return;
+
+      if (command === "sidebar.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleSidebar();
+        return;
+      }
 
       if (command === "thread.settle") {
         event.preventDefault();
@@ -5387,7 +5396,6 @@ function ChatViewContent(props: ChatViewProps) {
     runProjectScript,
     splitTerminal,
     splitPanelTerminal,
-    chatKeybindings,
     keybindings,
     handleUnsettleActiveThread,
     isServerThread,
@@ -5399,6 +5407,7 @@ function ChatViewContent(props: ChatViewProps) {
     confirmAndUnpinThread,
     toggleRightPanel,
     toggleRightPanelMaximized,
+    toggleSidebar,
     toggleTerminalVisibility,
     composerRef,
   ]);
@@ -7087,7 +7096,7 @@ function ChatViewContent(props: ChatViewProps) {
             preferredScriptId={
               activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
             }
-            keybindings={chatKeybindings}
+            keybindings={keybindings}
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}

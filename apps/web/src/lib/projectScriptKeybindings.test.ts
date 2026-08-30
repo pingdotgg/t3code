@@ -102,46 +102,29 @@ describe("projectScriptKeybindings", () => {
       { key: "mod+r", command },
       { key: "mod+alt+r", command, when: compactWhen },
     ];
+    const derive = (keybinding: string | null) =>
+      deriveProjectScriptKeybindingMutations({ keybindings, keybinding, command });
+    const next = { key: "mod+shift+r", command, replace: targets[1] };
 
-    expect(
-      deriveProjectScriptKeybindingMutations({
-        keybindings,
-        keybinding: "mod+shift+r",
-        command,
-      }),
-    ).toEqual([
+    expect(derive("mod+shift+r")).toEqual([
       { type: "remove", input: targets[0] },
-      {
-        type: "upsert",
-        input: {
-          key: "mod+shift+r",
-          command,
-          replace: targets[1],
-        },
-      },
+      { type: "upsert", input: next },
     ]);
-
-    expect(
-      deriveProjectScriptKeybindingMutations({
-        keybindings,
-        keybinding: null,
-        command,
-      }),
-    ).toEqual(targets.map((input) => ({ type: "remove", input })));
+    expect(derive(null)).toEqual(targets.map((input) => ({ type: "remove", input })));
   });
 
   it("lets routed script bindings override primary commands", () => {
     const command = commandForProjectScript("test");
     const keybindings = mergeProjectScriptKeybindings(
       [resolvedBinding("sidebar.toggle", "mod+b"), resolvedBinding(command, "mod+r")],
-      [resolvedBinding(command, "mod+b")],
+      [resolvedBinding(command, "mod+b", "terminalFocus")],
     );
 
     expect(
       resolveShortcutCommand(
         { key: "b", metaKey: false, ctrlKey: true, altKey: false, shiftKey: false },
         keybindings,
-        { platform: "Linux" },
+        { platform: "Linux", context: { terminalFocus: true } },
       ),
     ).toBe(command);
   });
