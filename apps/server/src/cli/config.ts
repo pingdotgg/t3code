@@ -290,7 +290,9 @@ export const resolveServerConfig = (
       derivedPaths.settingsPath,
     );
     const serverTracePath = env.traceFile ?? derivedPaths.serverTracePath;
-    yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
+    if (env.traceMinLevel !== "None") {
+      yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
+    }
     const startupPresentation = options?.startupPresentation ?? "browser";
     const isHeadlessStartup = startupPresentation === "headless";
     const noBrowser = Option.getOrElse(
