@@ -20,6 +20,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import type { OrchestratorV2DispatchResult } from "../orchestration-v2/Orchestrator.ts";
@@ -44,6 +45,14 @@ export class ConversationTransferMcpService extends Context.Service<
 >()("t3/mcp/ConversationTransferMcpService") {}
 
 const isThreadNotFound = Schema.is(ThreadManagementThreadNotFoundError);
+
+function isProjectionNotFound(error: unknown): boolean {
+  return (
+    Predicate.hasProperty(error, "cause") &&
+    Predicate.hasProperty(error.cause, "_tag") &&
+    error.cause._tag === "ProjectionStoreThreadNotFoundError"
+  );
+}
 
 function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {
   return new OrchestratorMcpFailure({ code, message });
@@ -261,7 +270,19 @@ export const make = Effect.gen(function* () {
         yield* requireCapability(scope);
         const commandId = forkCommandId(scope, input.clientRequestId);
         const targetId = targetThreadId(scope, input.clientRequestId);
-        const existingTarget = yield* Effect.option(threads.getThreadProjection(targetId));
+        const existingTarget = yield* threads.getThreadProjection(targetId).pipe(
+          Effect.map(Option.some),
+          Effect.catch((error) =>
+            isProjectionNotFound(error)
+              ? Effect.succeed(Option.none())
+              : Effect.fail(
+                  failure(
+                    "orchestration_error",
+                    `Unable to inspect the fork target before dispatch: ${errorMessage(error)}`,
+                  ),
+                ),
+          ),
+        );
         const existingTransfer = Option.isSome(existingTarget)
           ? existingTarget.value.contextTransfers.find(
               (transfer) => transfer.type === "fork" && transfer.targetThreadId === targetId,

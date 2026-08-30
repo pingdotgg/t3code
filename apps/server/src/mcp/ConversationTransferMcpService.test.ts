@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
+import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as ConversationTransfer from "./ConversationTransferMcpService.ts";
@@ -50,11 +51,12 @@ function testLayer(input: {
   readonly parent: OrchestrationV2ThreadProjection;
   readonly source: OrchestrationV2ThreadProjection;
   readonly dispatch: ThreadManagementService["Service"]["dispatch"];
+  readonly getThreadProjection?: ThreadManagementService["Service"]["getThreadProjection"];
 }) {
   return ConversationTransfer.layer.pipe(
     Layer.provide(
       Layer.mock(ThreadManagementService)({
-        getThreadProjection: () => Effect.succeed(input.parent),
+        getThreadProjection: input.getThreadProjection ?? (() => Effect.succeed(input.parent)),
         getProjectThread: ({ threadId }) =>
           Effect.succeed(threadId === parentThreadId ? input.parent : input.source),
         dispatch: input.dispatch,
@@ -170,5 +172,50 @@ describe("ConversationTransferMcpService", () => {
       );
       assert.equal(error.code, "capability_denied");
     }),
+  );
+
+  it.effect(
+    "does not treat an operational target projection failure as an absent fork target",
+    () =>
+      Effect.gen(function* () {
+        const dispatched = yield* Ref.make(0);
+        const parent = projection({
+          threadId: parentThreadId,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        });
+        const error = yield* Effect.gen(function* () {
+          const service = yield* ConversationTransfer.ConversationTransferMcpService;
+          return yield* service
+            .fork(scope(), {
+              sourcePoint: { type: "latest_stable" },
+              clientRequestId: "projection-read-failure",
+            })
+            .pipe(Effect.flip);
+        }).pipe(
+          Effect.provide(
+            testLayer({
+              parent,
+              source: parent,
+              getThreadProjection: (threadId) =>
+                threadId === parentThreadId
+                  ? Effect.succeed(parent)
+                  : Effect.fail(
+                      new OrchestratorProjectionError({
+                        threadId,
+                        cause: new Error("storage unavailable"),
+                      }),
+                    ),
+              dispatch: () =>
+                Ref.update(dispatched, (count) => count + 1).pipe(
+                  Effect.andThen(Effect.die("dispatch must not run after a failed target read")),
+                ),
+            }),
+          ),
+        );
+
+        assert.equal(error.code, "orchestration_error");
+        assert.equal(yield* Ref.get(dispatched), 0);
+      }),
   );
 });
