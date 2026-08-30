@@ -2219,6 +2219,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ),
               );
       if (
+        runtimeModeRank(sourceProjection.thread.runtimeMode) >
+          runtimeModeRank(ceiling.runtimeMode) ||
+        runtimeModeRank(sourceProjection.thread.runtimeMode) >
+          runtimeModeRank(callerProjection.thread.runtimeMode)
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Merge-back source runtime mode ${sourceProjection.thread.runtimeMode} exceeds the caller ceiling.`,
+        });
+      }
+      if (
+        interactionModeRank(sourceProjection.thread.interactionMode) >
+          interactionModeRank(ceiling.interactionMode) ||
+        interactionModeRank(sourceProjection.thread.interactionMode) >
+          interactionModeRank(callerProjection.thread.interactionMode)
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Merge-back source interaction mode ${sourceProjection.thread.interactionMode} exceeds the caller ceiling.`,
+        });
+      }
+      if (
         runtimeModeRank(targetProjection.thread.runtimeMode) >
           runtimeModeRank(ceiling.runtimeMode) ||
         runtimeModeRank(targetProjection.thread.runtimeMode) >

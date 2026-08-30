@@ -515,6 +515,23 @@ export const make = Effect.gen(function* () {
         }
 
         const { parent, target: source } = yield* loadScoped(scope, input.sourceThreadId);
+        if (
+          runtimeModeRank(source.thread.runtimeMode) > runtimeModeRank(parent.thread.runtimeMode)
+        ) {
+          return yield* failure(
+            "runtime_mode_escalation_denied",
+            `The source thread's ${source.thread.runtimeMode} runtime mode exceeds the calling thread's ${parent.thread.runtimeMode} ceiling.`,
+          );
+        }
+        if (
+          interactionModeRank(source.thread.interactionMode) >
+          interactionModeRank(parent.thread.interactionMode)
+        ) {
+          return yield* failure(
+            "interaction_mode_escalation_denied",
+            `The source thread's ${source.thread.interactionMode} interaction mode exceeds the calling thread's ${parent.thread.interactionMode} ceiling.`,
+          );
+        }
         const recordedTargetId = source.thread.lineage.parentThreadId;
         if (source.thread.lineage.relationshipToParent !== "fork" || recordedTargetId === null) {
           return yield* failure(
