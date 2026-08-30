@@ -10,6 +10,7 @@ import { ChatAttachment } from "@t3tools/contracts";
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
   GetProjectionThreadMessageInput,
+  GetProjectionThreadTurnStartContextInput,
   ProjectionThreadMessageRepository,
   type ProjectionThreadMessageRepositoryShape,
   DeleteProjectionThreadMessagesInput,
@@ -23,6 +24,10 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
   }),
 );
+const ProjectionThreadTurnStartContextDbRowSchema = Schema.Struct({
+  ...ProjectionThreadMessageDbRowSchema.fields,
+  userMessageCount: Schema.Number,
+});
 
 function toProjectionThreadMessage(
   row: Schema.Schema.Type<typeof ProjectionThreadMessageDbRowSchema>,
@@ -116,6 +121,34 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       `,
   });
 
+  const getProjectionThreadTurnStartContextRow = SqlSchema.findOneOption({
+    Request: GetProjectionThreadTurnStartContextInput,
+    Result: ProjectionThreadTurnStartContextDbRowSchema,
+    execute: ({ threadId, messageId }) =>
+      sql`
+        SELECT
+          message_id AS "messageId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          role,
+          text,
+          attachments_json AS "attachments",
+          is_streaming AS "isStreaming",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          (
+            SELECT COUNT(*)
+            FROM projection_thread_messages AS user_messages
+            WHERE user_messages.thread_id = ${threadId}
+              AND user_messages.role = 'user'
+          ) AS "userMessageCount"
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId}
+          AND message_id = ${messageId}
+        LIMIT 1
+      `,
+  });
+
   const listProjectionThreadMessageRows = SqlSchema.findAll({
     Request: ListProjectionThreadMessagesInput,
     Result: ProjectionThreadMessageDbRowSchema,
@@ -159,6 +192,21 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       Effect.map(Option.map(toProjectionThreadMessage)),
     );
 
+  const getTurnStartContext: ProjectionThreadMessageRepositoryShape["getTurnStartContext"] = (
+    input,
+  ) =>
+    getProjectionThreadTurnStartContextRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionThreadMessageRepository.getTurnStartContext:query"),
+      ),
+      Effect.map(
+        Option.map((row) => ({
+          message: toProjectionThreadMessage(row),
+          userMessageCount: row.userMessageCount,
+        })),
+      ),
+    );
+
   const listByThreadId: ProjectionThreadMessageRepositoryShape["listByThreadId"] = (input) =>
     listProjectionThreadMessageRows(input).pipe(
       Effect.mapError(
@@ -177,6 +225,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
   return {
     upsert,
     getByMessageId,
+    getTurnStartContext,
     listByThreadId,
     deleteByThreadId,
   } satisfies ProjectionThreadMessageRepositoryShape;

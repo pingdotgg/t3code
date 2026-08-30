@@ -111,4 +111,63 @@ layer("ProjectionThreadMessageRepository", (it) => {
       assert.deepEqual(rows[0]?.attachments, []);
     }),
   );
+
+  it.effect("reads only the message context needed to start a provider turn", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-turn-start-context");
+      const otherThreadId = ThreadId.make("thread-turn-start-context-other");
+      const firstMessageId = MessageId.make("message-turn-start-context-first");
+      const secondMessageId = MessageId.make("message-turn-start-context-second");
+      const createdAt = "2026-02-28T19:20:00.000Z";
+
+      yield* Effect.forEach(
+        [
+          {
+            messageId: firstMessageId,
+            threadId,
+            role: "user" as const,
+            text: "first user message",
+          },
+          {
+            messageId: MessageId.make("message-turn-start-context-assistant"),
+            threadId,
+            role: "assistant" as const,
+            text: "assistant message",
+          },
+          {
+            messageId: secondMessageId,
+            threadId,
+            role: "user" as const,
+            text: "second user message",
+          },
+        ],
+        (message) =>
+          repository.upsert({
+            ...message,
+            turnId: null,
+            isStreaming: false,
+            createdAt,
+            updatedAt: createdAt,
+          }),
+        { discard: true },
+      );
+
+      const context = yield* repository.getTurnStartContext({
+        threadId,
+        messageId: secondMessageId,
+      });
+      assert.equal(context._tag, "Some");
+      if (context._tag === "Some") {
+        assert.equal(context.value.message.text, "second user message");
+        assert.equal(context.value.userMessageCount, 2);
+      }
+
+      const wrongThread = yield* repository.getTurnStartContext({
+        threadId: otherThreadId,
+        messageId: secondMessageId,
+      });
+      assert.equal(wrongThread._tag, "None");
+    }),
+  );
 });

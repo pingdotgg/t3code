@@ -44,6 +44,18 @@ export const GetProjectionThreadMessageInput = Schema.Struct({
 });
 export type GetProjectionThreadMessageInput = typeof GetProjectionThreadMessageInput.Type;
 
+export const GetProjectionThreadTurnStartContextInput = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+});
+export type GetProjectionThreadTurnStartContextInput =
+  typeof GetProjectionThreadTurnStartContextInput.Type;
+
+export interface ProjectionThreadTurnStartContext {
+  readonly message: ProjectionThreadMessage;
+  readonly userMessageCount: number;
+}
+
 export const DeleteProjectionThreadMessagesInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -68,6 +80,13 @@ export interface ProjectionThreadMessageRepositoryShape {
   readonly getByMessageId: (
     input: GetProjectionThreadMessageInput,
   ) => Effect.Effect<Option.Option<ProjectionThreadMessage>, ProjectionRepositoryError>;
+
+  /**
+   * Read the requested message and user-message count needed to start a provider turn.
+   */
+  readonly getTurnStartContext: (
+    input: GetProjectionThreadTurnStartContextInput,
+  ) => Effect.Effect<Option.Option<ProjectionThreadTurnStartContext>, ProjectionRepositoryError>;
 
   /**
    * List projected thread messages for a thread.
