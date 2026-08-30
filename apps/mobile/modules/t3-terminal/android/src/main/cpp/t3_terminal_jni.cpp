@@ -12,7 +12,8 @@ namespace {
 
 constexpr uint32_t kSnapshotMagic = 0x54563354;  // "T3VT" in little endian.
 constexpr uint16_t kSnapshotVersion = 1;
-constexpr size_t kMaxScrollbackRows = 10000;
+constexpr size_t kScrollbackMaxLines = 10000;
+constexpr size_t kScrollbackMaxBytes = 32 * 1024 * 1024;
 
 enum CellFlag : uint16_t {
   kBold = 1 << 0,
@@ -202,12 +203,14 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeCreate(
     JNIEnv* env, jclass, jint cols, jint rows, jint cell_width, jint cell_height,
     jint foreground, jint background, jint cursor, jintArray palette) {
   auto* session = new Session();
-  GhosttyTerminalOptions options = {
-      .cols = static_cast<uint16_t>(std::clamp(cols, 1, 65535)),
-      .rows = static_cast<uint16_t>(std::clamp(rows, 1, 65535)),
-      .max_scrollback = kMaxScrollbackRows,
-  };
-  if (ghostty_terminal_new(nullptr, &session->terminal, options) != GHOSTTY_SUCCESS ||
+  const auto terminal_cols = static_cast<uint16_t>(std::clamp(cols, 1, 65535));
+  const auto terminal_rows = static_cast<uint16_t>(std::clamp(rows, 1, 65535));
+  if (ghostty_terminal_new(nullptr, &session->terminal, terminal_cols, terminal_rows) !=
+          GHOSTTY_SUCCESS ||
+      ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES,
+                           &kScrollbackMaxBytes) != GHOSTTY_SUCCESS ||
+      ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES,
+                           &kScrollbackMaxLines) != GHOSTTY_SUCCESS ||
       ghostty_render_state_new(nullptr, &session->render_state) != GHOSTTY_SUCCESS ||
       ghostty_render_state_row_iterator_new(nullptr, &session->row_iterator) != GHOSTTY_SUCCESS ||
       ghostty_render_state_row_cells_new(nullptr, &session->row_cells) != GHOSTTY_SUCCESS) {
@@ -219,7 +222,7 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeCreate(
   ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
                        reinterpret_cast<const void*>(OnWritePty));
   ApplyTheme(session, foreground, background, cursor, env, palette);
-  ghostty_terminal_resize(session->terminal, options.cols, options.rows,
+  ghostty_terminal_resize(session->terminal, terminal_cols, terminal_rows,
                           static_cast<uint32_t>(std::max(cell_width, 1)),
                           static_cast<uint32_t>(std::max(cell_height, 1)));
   return static_cast<jlong>(reinterpret_cast<intptr_t>(session));
