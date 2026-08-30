@@ -1165,6 +1165,7 @@ const make = Effect.gen(function* () {
             batchThreadCreation: true,
             threadManagement: true,
             incrementalThreadRead: true,
+            threadSearch: true,
             scheduledTasks: true,
             maxBatchThreads: 20,
           },
@@ -1565,7 +1566,23 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { parent, target } = yield* loadScopedThread(scope, input.threadId);
         const view = input.view ?? "messages";
-        const afterPosition = input.afterPosition ?? -1;
+        const anchorRow =
+          input.anchor === undefined
+            ? undefined
+            : target.visibleTurnItems.find(
+                (row) =>
+                  row.sourceThreadId === input.anchor?.sourceThreadId &&
+                  (row.item.type === "user_message" || row.item.type === "assistant_message") &&
+                  row.item.messageId === input.anchor.messageId,
+              );
+        if (input.anchor !== undefined && anchorRow === undefined) {
+          return yield* failure(
+            "invalid_request",
+            `Message ${input.anchor.messageId} is not visible in thread ${input.threadId}.`,
+          );
+        }
+        const afterPosition =
+          anchorRow === undefined ? (input.afterPosition ?? -1) : anchorRow.position - 1;
         const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
         const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
         const matching = target.visibleTurnItems

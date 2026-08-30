@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 
 import { McpInvocationContext } from "../../McpInvocationContext.ts";
 import { OrchestratorMcpService } from "../../OrchestratorMcpService.ts";
+import { ThreadSearchMcpService } from "../../ThreadSearchMcpService.ts";
 
 const handlers = {
   orchestrator_capabilities: () =>
@@ -90,6 +91,12 @@ const handlers = {
       const scope = yield* McpInvocationContext;
       const service = yield* OrchestratorMcpService;
       return yield* service.readThread(scope, input);
+    }),
+  t3_thread_search: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext;
+      const service = yield* ThreadSearchMcpService;
+      return yield* service.search(scope, input);
     }),
   t3_thread_send: (input) =>
     Effect.gen(function* () {

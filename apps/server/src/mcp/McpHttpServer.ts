@@ -28,6 +28,7 @@ import {
 import { WorktreeToolkitHandlersLive } from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
+import * as ThreadSearchMcpService from "./ThreadSearchMcpService.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -224,6 +225,7 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
 export const OrchestratorToolkitRegistrationLive = McpServer.toolkit(OrchestratorToolkit).pipe(
   Layer.provide(OrchestratorToolkitHandlersLive),
   Layer.provide(OrchestratorMcpService.layer),
+  Layer.provide(ThreadSearchMcpService.layer),
 );
 
 export const WorktreeToolkitRegistrationLive = McpServer.toolkit(WorktreeToolkit).pipe(

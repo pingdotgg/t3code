@@ -21,6 +21,8 @@ import {
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadInput,
   OrchestratorMcpThreadReadResult,
+  OrchestratorMcpThreadSearchInput,
+  OrchestratorMcpThreadSearchResult,
   OrchestratorMcpThreadSendInput,
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadStartInput,
@@ -31,6 +33,7 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { OrchestratorMcpService } from "../../OrchestratorMcpService.ts";
+import { ThreadSearchMcpService } from "../../ThreadSearchMcpService.ts";
 
 const dependencies = [McpInvocationContext.McpInvocationContext, OrchestratorMcpService];
 
@@ -190,6 +193,20 @@ export const ThreadReadTool = Tool.make("t3_thread_read", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
+export const ThreadSearchTool = Tool.make("t3_thread_search", {
+  description:
+    "Search durable thread titles and visible user/assistant messages in the calling project. Archived threads are excluded unless includeArchived=true; deleted threads and other projects are never searched. Results and snippets are bounded. Pagination reads live projection state, so concurrent updates can shift later pages. A non-null readAnchor can be passed to t3_thread_read.anchor to open the visible hit.",
+  parameters: OrchestratorMcpThreadSearchInput,
+  success: OrchestratorMcpThreadSearchResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [McpInvocationContext.McpInvocationContext, ThreadSearchMcpService],
+})
+  .annotate(Tool.Title, "Search T3 threads")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 export const ThreadSendTool = Tool.make("t3_thread_send", {
   description:
     "Send a message to a T3 thread in the calling project. mode='auto' starts an idle thread, steers a fully active turn, or queues behind a turn that is not yet steerable. Use queue for a separate follow-up turn, steer for an in-flight update, or restart to interrupt-and-restart the active turn. clientRequestId makes retries idempotent.",
@@ -242,6 +259,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadStartTool,
   ThreadListTool,
   ThreadReadTool,
+  ThreadSearchTool,
   ThreadSendTool,
   ThreadWaitTool,
   ThreadInterruptTool,

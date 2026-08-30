@@ -17,6 +17,7 @@ import {
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
+  OrchestratorMcpThreadSearchResult,
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitResult,
   ProjectId,
@@ -43,7 +44,9 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/unstable/ai";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { ServerConfig } from "../config.ts";
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
@@ -69,7 +72,14 @@ import {
   decodeProviderReplayNdjson,
   materializeReplayTranscriptWorkspace,
 } from "../orchestration-v2/testkit/ReplayTranscriptNdjson.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as ProjectEnrichment from "../project/ProjectEnrichmentService.ts";
+import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
+import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
+import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -85,7 +95,8 @@ const parentPrompt = "Keep this parent turn active while orchestration tools are
 const delegatedPrompt = "Inspect the delegated API boundary and return the result.";
 const delegatedResult = "Delegated API boundary inspected.";
 const cancellationPrompt = "Remain active until the parent cancels this delegated task.";
-const createdThreadPrompt = "Complete the newly created ordinary thread.";
+const createdThreadPrompt = `${"😀".repeat(600)} needle newly created ordinary thread`;
+const createdThreadResponse = "Created ordinary thread completed.";
 const queuedFollowupPrompt = "Complete the queued follow-up and return the final result.";
 const queuedFollowupResult = "Queued delegated follow-up completed.";
 
@@ -98,6 +109,7 @@ const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
 );
 const decodeThreadListResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadListResult);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
+const decodeThreadSearchResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSearchResult);
 const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
 const decodeThreadWaitResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadWaitResult);
 
@@ -499,10 +511,13 @@ describe("orchestrator MCP toolkit", () => {
                 turn.message.text.startsWith("Delegated tasks")
                   ? deliveryTerminalGates.get(turn.threadId)
                   : parentTerminalGates.get(turn.threadId),
-              response: (turn) =>
-                turn.message.text === delegatedPrompt
-                  ? delegatedResult
-                  : `Claude completed: ${turn.message.text}`,
+              response: (turn) => {
+                if (turn.message.text === delegatedPrompt) return delegatedResult;
+                if (turn.message.text === createdThreadPrompt) {
+                  return createdThreadResponse;
+                }
+                return `Claude completed: ${turn.message.text}`;
+              },
             }),
           ]);
           // Captures parent-wake offers made when a delegated child
@@ -537,6 +552,7 @@ describe("orchestrator MCP toolkit", () => {
                 expect(yield* Ref.get(continuationOffers)).toHaveLength(count);
               }
             });
+          const databaseLayer = SqlitePersistenceMemory;
           const orchestratorLayer = makeOrchestratorV2ReplayLayerWithRegistry(
             {
               name: "orchestrator-mcp-toolkit",
@@ -551,6 +567,7 @@ describe("orchestrator MCP toolkit", () => {
               },
             },
             registryLayer,
+            { databaseLayer },
           ).pipe(Layer.provide(continuationProbeLayer));
           const orchestrationLayer = Layer.merge(
             orchestratorLayer,
@@ -611,9 +628,39 @@ describe("orchestrator MCP toolkit", () => {
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
             }),
           );
+          const projectionMetadataLayer = Layer.merge(
+            Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+              resolve: (workspaceRoot) =>
+                Effect.succeed({
+                  canonicalKey: `test:${workspaceRoot}`,
+                  locator: {
+                    source: "git-remote" as const,
+                    remoteName: "origin",
+                    remoteUrl: "https://example.test/search.git",
+                  },
+                  rootPath: workspaceRoot,
+                }),
+            }),
+            Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+              resolvePath: () => Effect.succeed(null),
+            }),
+          );
+          const projectionQueryLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
+            Layer.provideMerge(ThreadBackgroundLiveness.layer),
+            Layer.provideMerge(ThreadPlanProgress.layer),
+            Layer.provideMerge(ProjectEnrichment.layer),
+            Layer.provideMerge(projectionMetadataLayer),
+            Layer.provideMerge(databaseLayer),
+            Layer.provide(
+              ServerConfig.layerTest(process.cwd(), { prefix: "mcp-thread-search-test-" }),
+            ),
+            Layer.provide(NodeServices.layer),
+          );
           const testLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
             Layer.provideMerge(McpServer.McpServer.layer),
             Layer.provideMerge(orchestrationLayer),
+            Layer.provideMerge(databaseLayer),
+            Layer.provide(projectionQueryLayer),
             Layer.provide(providerRegistryLayer),
             Layer.provide(scheduledTaskStubLayer),
             Layer.provide(NodeServices.layer),
@@ -622,6 +669,18 @@ describe("orchestrator MCP toolkit", () => {
           yield* Effect.gen(function* () {
             const orchestrator = yield* OrchestratorV2;
             const server = yield* McpServer.McpServer;
+            const sql = yield* SqlClient.SqlClient;
+            // Projects remain environment-owned projection records; every
+            // thread/message/run/item searched below is written by V2.
+            yield* sql`
+              INSERT INTO projection_projects (
+                project_id, title, workspace_root, default_model_selection_json, scripts_json,
+                created_at, updated_at, deleted_at
+              ) VALUES (
+                ${projectId}, 'MCP orchestrator', ${cwd}, NULL, '[]',
+                '2026-06-17T00:00:00.000Z', '2026-06-17T00:00:00.000Z', NULL
+              )
+            `;
             yield* orchestrator.dispatch({
               type: "thread.create",
               createdBy: "user",
@@ -1804,6 +1863,78 @@ describe("orchestrator MCP toolkit", () => {
               creationSource: "mcp",
             });
             expect(promptedRead.hasMore).toBe(true);
+            const searchMessage = promptedRead.items[0]!;
+            expect(searchMessage.messageId).not.toBeNull();
+            const searchCall = yield* invoke("t3_thread_search", {
+              query: "needle",
+              threadId: promptedThread.threadId,
+              snippetChars: 1_000,
+            });
+            const searchResult = yield* decodeThreadSearchResult(searchCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(searchResult).toMatchObject({
+              projectId,
+              hasMore: false,
+              nextCursor: null,
+              traversalTruncated: false,
+              consistency: "live",
+            });
+            expect(searchResult.hits[0]?.readAnchor).toEqual({
+              sourceThreadId: promptedThread.threadId,
+              messageId: searchMessage.messageId,
+            });
+            expect(Array.from(searchResult.hits[0]?.snippet ?? "").length).toBeLessThanOrEqual(
+              1_000,
+            );
+            expect((searchResult.hits[0]?.snippet ?? "").length).toBeGreaterThan(1_000);
+            const anchoredReadCall = yield* invoke("t3_thread_read", {
+              threadId: promptedThread.threadId,
+              anchor: searchResult.hits[0]?.readAnchor,
+              limit: 1,
+            });
+            const anchoredRead = yield* decodeThreadReadResult(
+              anchoredReadCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(anchoredRead.items[0]?.messageId).toBe(searchMessage.messageId);
+            expect(anchoredRead.items[0]?.position).toBe(searchMessage.position);
+            const staleAnchorReadCall = yield* invoke("t3_thread_read", {
+              threadId: promptedThread.threadId,
+              anchor: {
+                sourceThreadId: promptedThread.threadId,
+                messageId: "message:missing-search-anchor",
+              },
+              limit: 1,
+            });
+            expect(staleAnchorReadCall.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "invalid_request",
+            });
+            const nulSearchCall = yield* invoke("t3_thread_search", {
+              query: "unrelated\0needle",
+              threadId: promptedThread.threadId,
+            });
+            expect(nulSearchCall.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "invalid_request",
+            });
+
+            yield* sql`
+              ALTER TABLE projection_projects
+              RENAME TO projection_projects_search_failure
+            `;
+            const unavailableSearchCall = yield* invoke("t3_thread_search", {
+              query: "malformed-search-boundary",
+            });
+            expect(unavailableSearchCall.structuredContent).toEqual({
+              _tag: "OrchestratorMcpFailure",
+              code: "orchestration_error",
+              message: `Unable to search thread content in project ${projectId}.`,
+            });
+            yield* sql`
+              ALTER TABLE projection_projects_search_failure
+              RENAME TO projection_projects
+            `;
             const promptedReadNextCall = yield* invoke("t3_thread_read", {
               threadId: promptedThread.threadId,
               afterPosition: promptedRead.nextPosition,
@@ -1813,9 +1944,7 @@ describe("orchestrator MCP toolkit", () => {
               promptedReadNextCall.structuredContent,
             ).pipe(Effect.orDie);
             expect(promptedReadNext.items.map((item) => item.type)).toEqual(["assistant_message"]);
-            expect(promptedReadNext.items[0]?.text).toBe(
-              `Claude completed: ${createdThreadPrompt}`,
-            );
+            expect(promptedReadNext.items[0]?.text).toBe(createdThreadResponse);
 
             const forkedThreadId = ThreadId.make("thread:mcp-orchestrator-inherited-read");
             yield* orchestrator.dispatch({
@@ -1995,6 +2124,14 @@ describe("orchestrator MCP toolkit", () => {
               threadId: foreignThreadId,
             });
             expect(foreignReadCall.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "thread_not_found",
+            });
+            const foreignSearchCall = yield* invoke("t3_thread_search", {
+              query: "foreign",
+              threadId: foreignThreadId,
+            });
+            expect(foreignSearchCall.structuredContent).toMatchObject({
               _tag: "OrchestratorMcpFailure",
               code: "thread_not_found",
             });
