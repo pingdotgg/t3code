@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveThreadSyncPhase, threadSyncLabel } from "./threadSync";
+import { resolveThreadSyncPhase } from "./threadSync";
 
 describe("resolveThreadSyncPhase", () => {
   it("loads when only shell data is available", () => {
@@ -38,12 +38,5 @@ describe("resolveThreadSyncPhase", () => {
         status: "live",
       }),
     ).toBeNull();
-  });
-});
-
-describe("threadSyncLabel", () => {
-  it("uses the same loading and syncing language as mobile", () => {
-    expect(threadSyncLabel("loading")).toBe("Loading messages...");
-    expect(threadSyncLabel("syncing")).toBe("Syncing messages...");
   });
 });

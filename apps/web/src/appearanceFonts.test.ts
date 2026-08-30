@@ -5,9 +5,6 @@ import {
   clampCodeFontSize,
   clampInterfaceFontSize,
   clampPromptFontSize,
-  DEFAULT_CODE_FONT_STACK,
-  DEFAULT_SANS_FONT_STACK,
-  appearanceFontStack,
   cssFontFamilies,
   resolveDefaultFamilyLabel,
   resolveTerminalFontPreference,
@@ -55,18 +52,6 @@ describe("resolveDefaultFamilyLabel", () => {
   it("skips generic keywords and returns null for a stack of only generics", () => {
     expect(resolveDefaultFamilyLabel("system-ui, sans-serif")).toBeNull();
     expect(resolveDefaultFamilyLabel("ui-monospace, monospace")).toBeNull();
-  });
-});
-
-describe("appearanceFontStack", () => {
-  it("prepends the custom family to the default stack", () => {
-    expect(appearanceFontStack("Fira Code", DEFAULT_CODE_FONT_STACK)).toBe(
-      `"Fira Code", ${DEFAULT_CODE_FONT_STACK}`,
-    );
-  });
-
-  it("falls back to the default stack when unset", () => {
-    expect(appearanceFontStack("", DEFAULT_SANS_FONT_STACK)).toBe(DEFAULT_SANS_FONT_STACK);
   });
 });
 

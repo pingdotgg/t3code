@@ -78,12 +78,6 @@ export function parseTimestampDate(isoDate: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-export function formatTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
-  const date = parseTimestampDate(isoDate);
-  if (!date) return "";
-  return getTimestampFormatter(timestampFormat, true).format(date);
-}
-
 // Deliberately not the host locale: the tooltip's ordinal suffix and
 // day-before-month order below are English, so a localized month alone would
 // read "4th Juni 2026". Localizing the whole label is a separate change.
@@ -226,31 +220,6 @@ export function formatElapsedDurationLabel(isoDate: string, nowMs: number = Date
 
   const days = Math.floor(hours / 24);
   return `${days}d`;
-}
-
-/**
- * Relative time until an ISO instant (e.g. expiry). Mirrors {@link formatRelativeTime} but for future times.
- */
-export function formatRelativeTimeUntil(isoDate: string): RelativeTimeParts | null {
-  const date = parseTimestampDate(isoDate);
-  if (!date) return null;
-  const diffMs = date.getTime() - Date.now();
-  if (diffMs <= 0) return { value: "Expired", suffix: null };
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 5) return { value: "Soon", suffix: null };
-  if (seconds < 60) return { value: `${seconds}s`, suffix: "left" };
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return { value: `${minutes}m`, suffix: "left" };
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return { value: `${hours}h`, suffix: "left" };
-  const days = Math.floor(hours / 24);
-  return { value: `${days}d`, suffix: "left" };
-}
-
-export function formatRelativeTimeUntilLabel(isoDate: string): string {
-  const relative = formatRelativeTimeUntil(isoDate);
-  if (!relative) return "";
-  return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
 }
 
 /**
