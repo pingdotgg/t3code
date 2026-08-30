@@ -1454,7 +1454,7 @@ index f1265fad74189591b5aae86cf2e3a31f9c0fdb02..59e218cb79f56c34995fb86c5de5a71f
        ref: refView,
        style: viewStyle,
        ...rest
-@@ -141,6 +162,96 @@ var ReanimatedPositionView = typedMemo(function ReanimatedPositionViewComponent(
+@@ -141,6 +162,101 @@ var ReanimatedPositionView = typedMemo(function ReanimatedPositionViewComponent(
      children
    );
  });
@@ -1545,13 +1545,18 @@ index f1265fad74189591b5aae86cf2e3a31f9c0fdb02..59e218cb79f56c34995fb86c5de5a71f
 +      }));
 +    })(logicalSize, previousLogicalSize, wasAnimating, run, epoch);
 +  }, [baseSize, animatedDelta, canAnimate, completeAnimation, ctx.state, logicalSize, renderEpoch, signalName, transition]);
-+  const sizeStyle = useAnimatedAxis ? animatedStyle : horizontal ? { width: logicalSize } : { height: logicalSize };
-+  return /* @__PURE__ */ React__namespace.createElement(Reanimated__default.default.View, { ...rest, style: [style, sizeStyle] }, children);
++  // Keep the content container under one animated size owner because detaching an
++  // animated dimension can leave its native override behind. The alignment spacer
++  // is empty, so it can safely remount as a numeric View for keyboard geometry.
++  const isContentContainer = signalName === "totalSize";
++  const sizeStyle = isContentContainer || useAnimatedAxis ? animatedStyle : horizontal ? { width: logicalSize } : { height: logicalSize };
++  const SizeView = isContentContainer || useAnimatedAxis ? Reanimated__default.default.View : ReactNative.View;
++  return /* @__PURE__ */ React__namespace.createElement(SizeView, { ...rest, style: [style, sizeStyle] }, children);
 +});
  function setSharedValueValue(sharedValue, value) {
    if (!sharedValue) {
      return;
-@@ -245,10 +356,19 @@ var LegendListForwardedRef = typedMemo(
+@@ -245,10 +361,19 @@ var LegendListForwardedRef = typedMemo(
          );
        };
      }, [hasItemLayoutAnimation, recycleItems]);
@@ -1627,7 +1632,7 @@ index 29a00d5dc084fd408a0e0a0a4d64e856d0ed1525..bd3c680eb4abeca786d538ebf7b23a57
        ref: refView,
        style: viewStyle,
        ...rest
-@@ -117,6 +138,96 @@ var ReanimatedPositionView = typedMemo(function ReanimatedPositionViewComponent(
+@@ -117,6 +138,101 @@ var ReanimatedPositionView = typedMemo(function ReanimatedPositionViewComponent(
      children
    );
  });
@@ -1718,13 +1723,18 @@ index 29a00d5dc084fd408a0e0a0a4d64e856d0ed1525..bd3c680eb4abeca786d538ebf7b23a57
 +      }));
 +    })(logicalSize, previousLogicalSize, wasAnimating, run, epoch);
 +  }, [baseSize, animatedDelta, canAnimate, completeAnimation, ctx.state, logicalSize, renderEpoch, signalName, transition]);
-+  const sizeStyle = useAnimatedAxis ? animatedStyle : horizontal ? { width: logicalSize } : { height: logicalSize };
-+  return /* @__PURE__ */ React.createElement(Reanimated.View, { ...rest, style: [style, sizeStyle] }, children);
++  // Keep the content container under one animated size owner because detaching an
++  // animated dimension can leave its native override behind. The alignment spacer
++  // is empty, so it can safely remount as a numeric View for keyboard geometry.
++  const isContentContainer = signalName === "totalSize";
++  const sizeStyle = isContentContainer || useAnimatedAxis ? animatedStyle : horizontal ? { width: logicalSize } : { height: logicalSize };
++  const SizeView = isContentContainer || useAnimatedAxis ? Reanimated.View : View;
++  return /* @__PURE__ */ React.createElement(SizeView, { ...rest, style: [style, sizeStyle] }, children);
 +});
  function setSharedValueValue(sharedValue, value) {
    if (!sharedValue) {
      return;
-@@ -221,10 +332,19 @@ var LegendListForwardedRef = typedMemo(
+@@ -221,10 +337,19 @@ var LegendListForwardedRef = typedMemo(
          );
        };
      }, [hasItemLayoutAnimation, recycleItems]);
