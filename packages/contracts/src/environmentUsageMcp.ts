@@ -106,6 +106,9 @@ export const EnvironmentUsageMcpSource = Schema.Struct({
 });
 export type EnvironmentUsageMcpSource = typeof EnvironmentUsageMcpSource.Type;
 
+export const EnvironmentUsageMcpPricingSource = Schema.Literals(["litellm_public_model_prices"]);
+export type EnvironmentUsageMcpPricingSource = typeof EnvironmentUsageMcpPricingSource.Type;
+
 export const EnvironmentUsageMcpResult = Schema.Struct({
   readAt: TrimmedNonEmptyString,
   timeZone: TrimmedNonEmptyString,
@@ -119,7 +122,7 @@ export const EnvironmentUsageMcpResult = Schema.Struct({
   sources: Schema.Array(EnvironmentUsageMcpSource),
   pricing: Schema.Struct({
     status: UsagePricingStatus,
-    source: EnvironmentUsageMcpTextWindow,
+    source: EnvironmentUsageMcpPricingSource,
     fetchedAt: Schema.NullOr(Schema.String),
     knownModels: NonNegativeInt,
   }),

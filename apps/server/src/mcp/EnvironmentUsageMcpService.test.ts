@@ -190,8 +190,8 @@ it.effect(
       ]);
       expect(result.sources[0]).not.toHaveProperty("fingerprint");
       expect(result.sources[0]?.message?.text).not.toContain("/Users/secret");
-      expect(result.pricing.source.characters).toBe(324);
-      expect(Array.from(result.pricing.source.text)).toHaveLength(256);
+      expect(result.pricing.source).toBe("litellm_public_model_prices");
+      expect(result.pricing).not.toHaveProperty("url");
       expect(result.costMeaning).toBe("api_equivalent_estimate");
       expect(result.paginationConsistency).toBe("live_summary");
       expect(result.cacheBehavior).toBe("may_refresh_existing_usage_caches");

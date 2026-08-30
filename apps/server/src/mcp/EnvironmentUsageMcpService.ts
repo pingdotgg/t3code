@@ -214,7 +214,7 @@ const make = Effect.gen(function* () {
       sources,
       pricing: {
         status: summary.pricing.status,
-        source: textWindow(summary.pricing.source),
+        source: "litellm_public_model_prices",
         fetchedAt: summary.pricing.fetchedAt,
         knownModels: summary.pricing.knownModels,
       },

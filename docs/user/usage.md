@@ -28,8 +28,9 @@ bucket sets are paged; pages read the live cache and can shift when new transcri
 
 The result reports token totals, cache savings, pricing status, and whether each bucket was priced
 from provider-reported cost, a model rate, or not priced. Dollar figures are API-equivalent
-estimates, not subscription charges. An absent or failed provider source is reported as such; it is
-not treated as proof of zero usage.
+estimates, not subscription charges. Pricing provenance uses a fixed public-catalog label rather
+than a service URL. An absent or failed provider source is reported as such; it is not treated as
+proof of zero usage.
 
 This is an explicit read, but it can scan provider transcript files, refresh the existing pricing
 cache, and update the existing scan cache. It never returns transcript contents, provider-home
