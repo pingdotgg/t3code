@@ -522,11 +522,6 @@ describe("OrchestratorMcpService project targeting", () => {
             { type: "existing_worktree", worktreePath: otherRepository },
           ],
           ["existing-plain-directory", { type: "existing_worktree", worktreePath: plainDirectory }],
-          [
-            "existing-wrong-branch",
-            { type: "existing_worktree", worktreePath: siblingWorktree, branch: "main" },
-          ],
-          ["root-wrong-branch", { type: "root", branch: "feature" }],
         ] as const) {
           const error = yield* create(clientRequestId, workspaceStrategy).pipe(Effect.flip);
           assert.equal(error.code, "invalid_request");

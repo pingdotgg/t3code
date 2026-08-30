@@ -933,20 +933,6 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const enforceExpectedBranch = (
-    expected: string | undefined,
-    actual: string | null,
-    cwd: string,
-  ): Effect.Effect<void, OrchestratorMcpFailure> =>
-    expected === undefined || expected === actual
-      ? Effect.void
-      : Effect.fail(
-          failure(
-            "invalid_request",
-            `Workspace '${cwd}' is on ${actual === null ? "a detached HEAD" : `branch '${actual}'`}, not requested branch '${expected}'.`,
-          ),
-        );
-
   const resolveLaunchWorkspace = Effect.fn("OrchestratorMcpService.resolveLaunchWorkspace")(
     function* (
       parent: OrchestrationV2ThreadProjection,
@@ -971,7 +957,6 @@ const make = Effect.gen(function* () {
       if (explicitExisting !== undefined || useParentWorktree) {
         const requestedPath = explicitExisting?.worktreePath ?? parent.thread.worktreePath!;
         const workspace = yield* inspectLaunchWorkspace(project, requestedPath, true);
-        yield* enforceExpectedBranch(explicitExisting?.branch, workspace.branch, requestedPath);
         return {
           type: "existing_worktree",
           worktreePath: workspace.canonicalWorktreeRoot!,
@@ -983,7 +968,6 @@ const make = Effect.gen(function* () {
       }
       const workspace = yield* inspectLaunchWorkspace(project, project.workspaceRoot, false);
       const expectedBranch = requested?.type === "root" ? requested.branch : undefined;
-      yield* enforceExpectedBranch(expectedBranch, workspace.branch, project.workspaceRoot);
       return {
         type: "root",
         ...(workspace.branch === null ? {} : { branch: workspace.branch }),
