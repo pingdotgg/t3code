@@ -429,6 +429,42 @@ struct FeatureComposerPowerTests {
         #expect(control.triggerLabel == "Thinking Off")
     }
 
+    @Test(
+        "Changing a visible trait preserves a hidden prompt-injected selection",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func visibleTraitChangesPreservePromptInjectedSelections() throws {
+        var provider = Self.solProvider
+        provider.models[0].options[0].promptInjectedValues = ["ultrathink"]
+        let control = try #require(
+            FeatureComposerTraitsControl.resolve(
+                explicit: .init(
+                    providerID: "codex",
+                    modelID: "gpt-5.6-sol",
+                    options: [
+                        .init(id: "reasoningEffort", value: .string("ultrathink")),
+                        .init(id: "serviceTier", value: .string("default")),
+                    ]
+                ),
+                inherited: nil,
+                providers: [provider],
+                materializesDefaultSelection: true
+            )
+        )
+
+        #expect(control.sections[0].choices.allSatisfy { $0.id != "ultrathink" })
+        #expect(control.sections[0].currentChoiceID == "ultrathink")
+        let selection = control.selection(choosing: "priority", in: "serviceTier")
+        #expect(
+            selection.options.first(where: { $0.id == "reasoningEffort" })?.value
+                == .string("ultrathink")
+        )
+        #expect(
+            selection.options.first(where: { $0.id == "serviceTier" })?.value
+                == .string("priority")
+        )
+    }
+
     /// Mirrors the live Codex descriptors Alex supplied for `gpt-5.6-sol`.
     private static let solProvider = FeatureProvider(
         id: "codex",
