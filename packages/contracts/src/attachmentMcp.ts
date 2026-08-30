@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import {
+  ChatAttachment,
   ChatAttachmentId,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -36,12 +37,13 @@ export type AttachmentMcpPrepareUploadInput = typeof AttachmentMcpPrepareUploadI
 
 export const AttachmentMcpPrepareUploadResult = Schema.Struct({
   attachmentId: ChatAttachmentId,
+  attachment: ChatAttachment,
   type: Schema.Literals(["image", "file"]),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
   mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
   sizeBytes: NonNegativeInt,
   upload: Schema.Struct({
-    method: Schema.Literal("PUT"),
+    method: Schema.Literal("POST"),
     relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
     expiresAt: IsoDateTime,
   }),

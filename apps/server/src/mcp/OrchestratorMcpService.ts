@@ -1,6 +1,7 @@
 import {
   type ChatAttachment,
   CommandId,
+  isProviderSendTurnSupportedImageMimeType,
   isProviderAvailable,
   MessageId,
   type ModelSelection,
@@ -193,6 +194,8 @@ function validateProviderAttachments(
     (attachment) =>
       (attachment.type !== "image" && attachment.type !== "file") ||
       !kinds.includes(attachment.type) ||
+      (attachment.type === "image" &&
+        !isProviderSendTurnSupportedImageMimeType(attachment.mimeType)) ||
       (provider.driver === "opencode" && !isOpenCodeNativeFilePart(attachment)),
   );
   return unsupported === undefined
@@ -788,6 +791,46 @@ function dispatchAcceptedError(
     : { accepted: false };
 }
 
+function acceptedMessageResult(
+  projection: OrchestrationV2ThreadProjection,
+  messageId: MessageId,
+  mode: "auto" | "queue" | "steer" | "restart",
+): Effect.Effect<
+  {
+    readonly message: OrchestrationV2ThreadProjection["messages"][number];
+    readonly run: OrchestrationV2Run;
+    readonly delivery: OrchestratorMcpThreadSendResult["delivery"];
+  },
+  OrchestratorMcpFailure
+> {
+  const message = projection.messages.find((candidate) => candidate.id === messageId);
+  const run =
+    message?.runId === null || message?.runId === undefined
+      ? undefined
+      : projection.runs.find((candidate) => candidate.id === message.runId);
+  const turnItem = projection.turnItems.find(
+    (candidate): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> =>
+      candidate.type === "user_message" && candidate.messageId === messageId,
+  );
+  if (message === undefined || run === undefined) {
+    return Effect.fail(
+      failure(
+        "orchestration_error",
+        `Accepted message ${messageId} is missing from thread ${projection.thread.id}.`,
+      ),
+    );
+  }
+  const delivery: OrchestratorMcpThreadSendResult["delivery"] =
+    turnItem === undefined || turnItem.inputIntent === "queued_turn"
+      ? "queued"
+      : turnItem.inputIntent === "turn_start"
+        ? "started"
+        : mode === "restart"
+          ? "restarted"
+          : "steered";
+  return Effect.succeed({ message, run, delivery });
+}
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -802,6 +845,27 @@ const make = Effect.gen(function* () {
     );
   const releaseAttachments = (paths: ReadonlyArray<string>) =>
     releaseClaimedAttachments(paths).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+  const acceptedReceipt = (input: {
+    readonly commandId: CommandId;
+    readonly threadId: ThreadId;
+    readonly commandType: string;
+  }) =>
+    threadManagement.getCommandReceipt(input.commandId).pipe(
+      Effect.map(
+        Option.exists(
+          (receipt) =>
+            receipt.status === "accepted" &&
+            receipt.threadId === input.threadId &&
+            receipt.commandType === input.commandType,
+        ),
+      ),
+      Effect.mapError((error) =>
+        failure(
+          "orchestration_error",
+          `Unable to inspect retry receipt ${input.commandId}: ${errorMessage(error)}`,
+        ),
+      ),
+    );
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
@@ -1493,19 +1557,122 @@ const make = Effect.gen(function* () {
           );
         }
         const parentNodeId = parentRun.rootNodeId;
-        const providers = yield* loadProviders;
         const key = yield* requestKey(input.clientRequestId);
+        let providersCache: ReadonlyArray<ServerProvider> | undefined;
         const created = yield* Effect.forEach(
           input.threads,
           (request, index) =>
             Effect.gen(function* () {
-              const target = yield* resolveTarget({
-                parent,
-                target: request.target,
-                providers,
+              const threadId = stableThreadId({
+                scope,
+                requestKey: key,
+                index,
               });
+              const createCommandId = stableCommandId({
+                scope,
+                requestKey: key,
+                operation: "create-thread",
+                index,
+              });
+              const dispatchCommandId = stableCommandId({
+                scope,
+                requestKey: key,
+                operation: "dispatch-thread",
+                index,
+              });
+              const initialMessageId = stableMessageId({
+                scope,
+                requestKey: key,
+                index,
+              });
+              const hasInitialMessage =
+                request.prompt !== undefined || (request.attachments?.length ?? 0) > 0;
+              const dispatchAccepted = hasInitialMessage
+                ? yield* acceptedReceipt({
+                    commandId: dispatchCommandId,
+                    threadId,
+                    commandType: "message.dispatch",
+                  })
+                : false;
+              if (dispatchAccepted) {
+                const projection = yield* loadProjection(threadId);
+                const accepted = yield* acceptedMessageResult(projection, initialMessageId, "auto");
+                yield* threadManagement
+                  .dispatch({
+                    type: "thread.created.record",
+                    commandId: stableCommandId({
+                      scope,
+                      requestKey: key,
+                      operation: "record-created-thread",
+                      index,
+                    }),
+                    parentThreadId: scope.threadId,
+                    parentRunId: parentRun.id,
+                    parentNodeId,
+                    targetThreadId: threadId,
+                    targetRunId: accepted.run.id,
+                  })
+                  .pipe(
+                    Effect.mapError((error) =>
+                      failure(
+                        "orchestration_error",
+                        `Unable to record thread ${index + 1} in the parent timeline: ${errorMessage(error)}`,
+                      ),
+                    ),
+                  );
+                return {
+                  threadId,
+                  runId: accepted.run.id,
+                  status: accepted.run.status,
+                  title: projection.thread.title,
+                  createdBy: projection.thread.createdBy,
+                  creationSource: projection.thread.creationSource,
+                  providerInstanceId: projection.thread.modelSelection.instanceId,
+                  model: projection.thread.modelSelection.model,
+                  attachments: accepted.message.attachments,
+                } satisfies OrchestratorMcpCreatedThread;
+              }
+
+              const createAccepted = yield* acceptedReceipt({
+                commandId: createCommandId,
+                threadId,
+                commandType: "thread.create",
+              });
+              const existingProjection = createAccepted
+                ? yield* loadProjection(threadId)
+                : undefined;
+              const providers = providersCache ?? (yield* loadProviders);
+              providersCache = providers;
+              const existingProvider =
+                existingProjection === undefined
+                  ? undefined
+                  : providers.find(
+                      (candidate) =>
+                        candidate.instanceId ===
+                        existingProjection.thread.modelSelection.instanceId,
+                    );
+              let target: ResolvedTarget;
+              if (existingProjection === undefined) {
+                target = yield* resolveTarget({
+                  parent,
+                  target: request.target,
+                  providers,
+                });
+              } else {
+                if (existingProvider === undefined) {
+                  return yield* failure(
+                    "provider_unavailable",
+                    `Provider instance ${existingProjection.thread.modelSelection.instanceId} is not registered.`,
+                  );
+                }
+                target = {
+                  modelSelection: existingProjection.thread.modelSelection,
+                  provider: existingProvider,
+                };
+              }
               const requestedAttachments = request.attachments ?? [];
               yield* validateProviderAttachments(target.provider, requestedAttachments);
+              yield* validateAttachmentOwnership(null, requestedAttachments);
               const runtimeMode = yield* resolveRuntimeMode(
                 parent.thread.runtimeMode,
                 request.runtimeMode,
@@ -1514,49 +1681,10 @@ const make = Effect.gen(function* () {
                 parent.thread.interactionMode,
                 request.interactionMode,
               );
-              const threadId = stableThreadId({
-                scope,
-                requestKey: key,
-                index,
-              });
               const title = threadTitle({
                 parentTitle: parent.thread.title,
                 prompt: request.prompt,
                 title: request.title,
-                index,
-              });
-              yield* threadManagement
-                .dispatch({
-                  type: "thread.create",
-                  createdBy: "agent",
-                  creationSource: "mcp",
-                  commandId: stableCommandId({
-                    scope,
-                    requestKey: key,
-                    operation: "create-thread",
-                    index,
-                  }),
-                  threadId,
-                  projectId: parent.thread.projectId,
-                  title,
-                  modelSelection: target.modelSelection,
-                  runtimeMode,
-                  interactionMode,
-                  branch: parent.thread.branch,
-                  worktreePath: parent.thread.worktreePath,
-                })
-                .pipe(
-                  Effect.mapError((error) =>
-                    failure(
-                      "orchestration_error",
-                      `Unable to create thread ${index + 1}: ${errorMessage(error)}`,
-                    ),
-                  ),
-                );
-              yield* validateAttachmentOwnership(null, requestedAttachments);
-              const initialMessageId = stableMessageId({
-                scope,
-                requestKey: key,
                 index,
               });
               yield* Effect.gen(function* () {
@@ -1564,18 +1692,39 @@ const make = Effect.gen(function* () {
                   threadId,
                   attachments: requestedAttachments,
                 }).pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-                if (request.prompt !== undefined || claimed.attachments.length > 0) {
+                if (!createAccepted) {
+                  yield* threadManagement
+                    .dispatch({
+                      type: "thread.create",
+                      createdBy: "agent",
+                      creationSource: "mcp",
+                      commandId: createCommandId,
+                      threadId,
+                      projectId: parent.thread.projectId,
+                      title,
+                      modelSelection: target.modelSelection,
+                      runtimeMode,
+                      interactionMode,
+                      branch: parent.thread.branch,
+                      worktreePath: parent.thread.worktreePath,
+                    })
+                    .pipe(
+                      Effect.tapError(() => releaseAttachments(claimed.claimedPaths)),
+                      Effect.mapError((error) =>
+                        failure(
+                          "orchestration_error",
+                          `Unable to create thread ${index + 1}: ${errorMessage(error)}`,
+                        ),
+                      ),
+                    );
+                }
+                if (hasInitialMessage) {
                   const dispatch = yield* threadManagement
                     .dispatch({
                       type: "message.dispatch",
                       createdBy: "agent",
                       creationSource: "mcp",
-                      commandId: stableCommandId({
-                        scope,
-                        requestKey: key,
-                        operation: "dispatch-thread",
-                        index,
-                      }),
+                      commandId: dispatchCommandId,
                       threadId,
                       messageId: initialMessageId,
                       text: request.prompt ?? "",
@@ -1747,6 +1896,28 @@ const make = Effect.gen(function* () {
           requestKey: key,
           operation: "thread-send",
         });
+        const commandId = stableCommandId({
+          scope,
+          requestKey: key,
+          operation: "thread-send",
+        });
+        if (
+          yield* acceptedReceipt({
+            commandId,
+            threadId: input.threadId,
+            commandType: "message.dispatch",
+          })
+        ) {
+          const accepted = yield* acceptedMessageResult(target, messageId, mode);
+          return {
+            threadId: input.threadId,
+            messageId,
+            runId: accepted.run.id,
+            status: accepted.run.status,
+            delivery: accepted.delivery,
+            attachments: accepted.message.attachments,
+          } satisfies OrchestratorMcpThreadSendResult;
+        }
         const requestedAttachments = input.attachments ?? [];
         if (requestedAttachments.length > 0) {
           const providers = yield* loadProviders;
@@ -1770,11 +1941,7 @@ const make = Effect.gen(function* () {
           return yield* threadManagement
             .sendToThread({
               projectId: parent.thread.projectId,
-              commandId: stableCommandId({
-                scope,
-                requestKey: key,
-                operation: "thread-send",
-              }),
+              commandId,
               threadId: input.threadId,
               messageId,
               text: input.message ?? "",

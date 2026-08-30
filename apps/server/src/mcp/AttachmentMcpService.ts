@@ -97,14 +97,22 @@ const make = Effect.gen(function* () {
             failure("upload_error", "Unable to prepare a signed attachment upload."),
           ),
         );
+        const attachment = {
+          id: issued.attachmentId,
+          type: input.type ?? "image",
+          name: input.name,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+        } as const;
         return {
           attachmentId: issued.attachmentId,
+          attachment,
           type: input.type ?? "image",
           name: input.name,
           mimeType: input.mimeType,
           sizeBytes: input.sizeBytes,
           upload: {
-            method: "PUT",
+            method: "POST",
             relativeUrl: issued.relativeUrl,
             expiresAt: IsoDateTime.make(DateTime.formatIso(DateTime.makeUnsafe(issued.expiresAt))),
           },

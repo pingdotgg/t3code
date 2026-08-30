@@ -323,10 +323,10 @@ server creates a new thread or claims a pending upload.
 ### `t3_attachment_prepare_upload`
 
 Allocates a pending attachment ID and returns a short-lived, signed relative
-URL for an HTTP `PUT`. The request supplies the attachment name, MIME type,
+URL for an HTTP `POST`. The request supplies the attachment name, MIME type,
 size, and optional `image` or `file` kind. The tool does not read arbitrary
 host files and does not accept base64 payloads. After the caller uploads the
-exact number of bytes, it passes the returned metadata as an attachment to
+exact number of bytes, it passes the returned `attachment` object unchanged to
 `create_threads`, `t3_thread_start`, or `t3_thread_send`.
 
 Preparation is intentionally non-idempotent: every call creates a new pending
@@ -336,8 +336,9 @@ as complete.
 ### `t3_attachment_discard_upload`
 
 Discards an unused pending upload. The request must include both the pending ID
-and its signed upload URL, so one MCP session cannot delete a pending upload it
-did not prepare. Repeating a discard is a successful no-op. Claimed,
+and its signed upload URL. The URL is bearer authorization rather than MCP
+session-bound authorization, and expires at the returned time. Repeating a
+discard is a successful no-op only while that URL remains valid. Claimed,
 thread-owned attachment IDs cannot be discarded through this tool.
 
 ### `t3_thread_wait`

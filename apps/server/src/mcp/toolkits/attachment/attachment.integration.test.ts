@@ -76,11 +76,18 @@ describe("attachment MCP toolkit", () => {
       expect(prepareCall.isError).toBe(false);
       const prepared = yield* decodePrepare(prepareCall.structuredContent).pipe(Effect.orDie);
       expect(prepared).toMatchObject({
+        attachment: {
+          id: prepared.attachmentId,
+          type: "image",
+          name: "screen.png",
+          mimeType: "image/png",
+          sizeBytes: 4,
+        },
         type: "image",
         name: "screen.png",
         mimeType: "image/png",
         sizeBytes: 4,
-        upload: { method: "PUT" },
+        upload: { method: "POST" },
       });
 
       const token = prepared.upload.relativeUrl.split("/").at(-1)!;

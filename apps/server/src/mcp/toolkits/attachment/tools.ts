@@ -14,7 +14,7 @@ const dependencies = [McpInvocationContext.McpInvocationContext, AttachmentMcpSe
 
 export const AttachmentPrepareUploadTool = Tool.make("t3_attachment_prepare_upload", {
   description:
-    "Prepare a bounded image or file attachment for a T3 thread message. Upload exactly sizeBytes with HTTP PUT to the returned environment-relative signed URL, then pass the returned attachment metadata to t3_thread_start, create_threads, or t3_thread_send. This tool does not read host files or upload bytes itself; each call issues a new pending attachment id.",
+    "Prepare a bounded image or file attachment for a T3 thread message. Upload exactly sizeBytes with HTTP POST to upload.relativeUrl, then pass attachment unchanged to t3_thread_start, create_threads, or t3_thread_send. The signed URL is bearer authorization until upload.expiresAt. This tool does not read host files or upload bytes itself; each call issues a new pending attachment id.",
   parameters: AttachmentMcpPrepareUploadInput,
   success: AttachmentMcpPrepareUploadResult,
   failure: AttachmentMcpFailure,
