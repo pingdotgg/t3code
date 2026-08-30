@@ -1544,6 +1544,27 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("rejects option-like branch names without changing upstream configuration", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+
+        const upstreamBefore = yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]);
+        const error = yield* driver
+          .createRef({ cwd, refName: "--unset-upstream" })
+          .pipe(Effect.flip);
+
+        assert.equal(error.operation, "GitVcsDriver.createRef.validate");
+        assert.equal(yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]), upstreamBefore);
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+      }),
+    );
+
     it.effect("returns the existing refName when rename source and target match", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
