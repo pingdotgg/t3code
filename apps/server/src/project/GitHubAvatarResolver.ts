@@ -188,7 +188,10 @@ export const make = Effect.gen(function* () {
       Effect.option,
     );
     const entry = Option.isNone(raw) ? null : decodeCacheEntry(raw.value);
-    if (entry === null) return { _tag: "miss" } as const;
+    // A cache hit must name a file of this cache; anything else is a miss.
+    if (entry === null || (entry.ok && entry.file !== undefined && path.basename(entry.file) !== entry.file)) {
+      return { _tag: "miss" } as const;
+    }
     if (entry.ok && entry.file !== undefined) {
       const cachedPath = path.join(cacheDir, entry.file);
       const info = yield* fileSystem.stat(cachedPath).pipe(Effect.option);
