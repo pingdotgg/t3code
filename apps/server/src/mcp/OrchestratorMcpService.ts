@@ -1908,7 +1908,8 @@ const make = Effect.gen(function* () {
             commandType: "message.dispatch",
           })
         ) {
-          const accepted = yield* acceptedMessageResult(target, messageId, mode);
+          const acceptedProjection = yield* loadProjection(input.threadId);
+          const accepted = yield* acceptedMessageResult(acceptedProjection, messageId, mode);
           return {
             threadId: input.threadId,
             messageId,
