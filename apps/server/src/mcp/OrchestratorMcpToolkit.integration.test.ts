@@ -2240,6 +2240,18 @@ describe("orchestrator MCP toolkit", () => {
             );
             expect(replayedCrossProjectProjection.messages).toHaveLength(1);
             expect(replayedCrossProjectProjection.runs).toHaveLength(1);
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-parent:runtime-restore-after-replay"),
+              threadId: parentThreadId,
+              runtimeMode: "full-access",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-parent:interaction-default-after-replay"),
+              threadId: parentThreadId,
+              interactionMode: "default",
+            });
             const freshMismatchedKey = "create-cross-project-thread-fresh-mismatch";
             const freshMismatchedCall = yield* invoke("create_threads", {
               ...crossProjectInput,
@@ -2256,18 +2268,6 @@ describe("orchestrator MCP toolkit", () => {
                 yield* Effect.option(orchestrator.getThreadProjection(freshMismatchedThreadId)),
               ),
             ).toBe(true);
-            yield* orchestrator.dispatch({
-              type: "thread.runtime-mode.set",
-              commandId: CommandId.make("command:mcp-parent:runtime-restore-after-replay"),
-              threadId: parentThreadId,
-              runtimeMode: "full-access",
-            });
-            yield* orchestrator.dispatch({
-              type: "thread.interaction-mode.set",
-              commandId: CommandId.make("command:mcp-parent:interaction-default-after-replay"),
-              threadId: parentThreadId,
-              interactionMode: "default",
-            });
 
             const repeatedCreateCall = yield* invoke("create_threads", createInput);
             const repeatedCreated = yield* decodeCreateThreadsResult(
