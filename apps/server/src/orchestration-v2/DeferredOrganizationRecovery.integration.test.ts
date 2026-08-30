@@ -9,19 +9,23 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
 import { runV2RecoveryPhase } from "../serverRuntimeStartup.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { OrchestratorV2 } from "./Orchestrator.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import { ProviderRuntimeRecoveryService } from "./ProviderRuntimeRecoveryService.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { makeLayer as makeProviderAdapterRegistryLayer } from "./ProviderAdapterRegistry.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 
 const modelSelection = {
@@ -36,6 +40,34 @@ const adapter = {
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
   openSession: () => Effect.die("provider sessions are not used in recovery coverage"),
 } as ProviderAdapterV2Shape;
+
+it.effect("retries one typed deferred repair failure without swallowing interruption", () =>
+  Effect.gen(function* () {
+    const attempts = yield* Ref.make(0);
+    yield* Orchestrator.runDeferredOrganizationRepair(
+      ThreadId.make("thread:deferred-organization-transient-repair"),
+      Effect.gen(function* () {
+        const attempt = yield* Ref.updateAndGet(attempts, (current) => current + 1);
+        if (attempt === 1) {
+          return yield* new ProjectionStore.ProjectionStoreReadError({
+            threadId: ThreadId.make("thread:deferred-organization-transient-repair"),
+            cause: "transient projection failure",
+          });
+        }
+      }),
+    );
+    assert.equal(yield* Ref.get(attempts), 2);
+
+    const interruption = yield* Orchestrator.runDeferredOrganizationRepair(
+      ThreadId.make("thread:deferred-organization-interruption"),
+      Effect.interrupt,
+    ).pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(interruption));
+    if (Exit.isFailure(interruption)) {
+      assert.isTrue(Cause.hasInterruptsOnly(interruption.cause));
+    }
+  }),
+);
 
 it.effect("discards a stale deferred organization intent after runtime restart", () =>
   Effect.scoped(
@@ -61,7 +93,7 @@ it.effect("discards a stale deferred organization intent after runtime restart",
 
       const runIds = yield* Effect.scoped(
         Effect.gen(function* () {
-          const orchestrator = yield* OrchestratorV2;
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
           const seed = (targetThreadId: ThreadId, suffix: string) =>
             Effect.gen(function* () {
               yield* orchestrator.dispatch({
@@ -135,7 +167,7 @@ it.effect("discards a stale deferred organization intent after runtime restart",
 
       const recovered = yield* Effect.scoped(
         Effect.gen(function* () {
-          const orchestrator = yield* OrchestratorV2;
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
           yield* orchestrator.recoverDeferredOrganization;
           return yield* orchestrator.getThreadProjection(threadId);
         }).pipe(Effect.provide(runtimeLayer("deferred-organization:second-runtime"))),
@@ -178,7 +210,7 @@ it.effect("discards an active-run intent after startup runtime reconciliation", 
 
       const runId = yield* Effect.scoped(
         Effect.gen(function* () {
-          const orchestrator = yield* OrchestratorV2;
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
           yield* orchestrator.dispatch({
             type: "thread.create",
             createdBy: "user",
@@ -220,7 +252,7 @@ it.effect("discards an active-run intent after startup runtime reconciliation", 
 
       const recovered = yield* Effect.scoped(
         Effect.gen(function* () {
-          const orchestrator = yield* OrchestratorV2;
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
           const providerRuntimeRecovery = yield* ProviderRuntimeRecoveryService;
           yield* runV2RecoveryPhase({
             recoverProviderRuntime: providerRuntimeRecovery.recover,
