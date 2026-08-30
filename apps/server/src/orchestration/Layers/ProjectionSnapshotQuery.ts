@@ -11,6 +11,8 @@ import {
   ProjectId,
   ProjectIconOverride,
   ThreadId,
+  RunId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import {
   OrchestrationCheckpointFile,
@@ -70,6 +72,9 @@ import {
   type ProjectionThreadCheckpointContext,
   type ProjectionThreadDetailQuery,
   type ProjectionSnapshotQueryShape,
+  PROJECTION_THREAD_CONTENT_SEARCH_LIMITS,
+  ProjectionThreadContentSearchInputError,
+  type ProjectionThreadContentSearchHit,
 } from "../Services/ProjectionSnapshotQuery.ts";
 
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
@@ -150,6 +155,35 @@ const ProjectionThreadSearchRow = Schema.Struct({
   source: OrchestrationThreadSearchSource,
   matchText: Schema.String,
   messageCreatedAt: Schema.NullOr(IsoDateTime),
+});
+const ProjectionThreadContentSearchRequest = Schema.Struct({
+  projectId: ProjectId,
+  threadId: Schema.NullOr(ThreadId),
+  pattern: Schema.String,
+  queryText: Schema.String,
+  includeArchived: Schema.Boolean,
+  limit: Schema.Int,
+  offset: Schema.Int,
+  snippetBodyChars: Schema.Int,
+  snippetContextChars: Schema.Int,
+});
+const ProjectionThreadContentSearchSource = Schema.Literals(["title", "user", "assistant"]);
+const ProjectionThreadContentSearchOrigin = Schema.Literals(["legacy", "v2"]);
+const ProjectionThreadContentSearchRow = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  threadTitle: Schema.String,
+  archived: Schema.Number,
+  source: ProjectionThreadContentSearchSource,
+  origin: ProjectionThreadContentSearchOrigin,
+  matchText: Schema.String,
+  matchTextChars: Schema.Int,
+  fragmentStart: Schema.Int,
+  matchedAt: IsoDateTime,
+  sourceThreadId: Schema.NullOr(ThreadId),
+  messageId: Schema.NullOr(MessageId),
+  runId: Schema.NullOr(RunId),
+  itemId: Schema.NullOr(TurnItemId),
 });
 const WorkspaceRootLookupInput = Schema.Struct({
   workspaceRoot: Schema.String,
@@ -257,6 +291,18 @@ function buildSearchSnippet(text: string, query: string): string {
   return `${start > 0 ? "…" : ""}${normalizedText.slice(start, end)}${
     end < normalizedText.length ? "…" : ""
   }`;
+}
+
+function buildBoundedSearchSnippet(input: {
+  readonly fragment: string;
+  readonly fragmentStart: number;
+  readonly totalChars: number;
+}): string {
+  const normalizedFragment = input.fragment.replace(/\s+/g, " ").trim();
+  const fragmentChars = Array.from(input.fragment).length;
+  const leading = input.fragmentStart > 1 ? "…" : "";
+  const trailing = input.fragmentStart - 1 + fragmentChars < input.totalChars ? "…" : "";
+  return `${leading}${normalizedFragment}${trailing}`;
 }
 
 function computeSnapshotSequence(
@@ -929,6 +975,183 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_updated_at DESC,
           thread_id ASC
         LIMIT ${limit}
+      `,
+  });
+
+  const searchThreadContentRows = SqlSchema.findAll({
+    Request: ProjectionThreadContentSearchRequest,
+    Result: ProjectionThreadContentSearchRow,
+    execute: ({
+      projectId,
+      threadId,
+      pattern,
+      queryText,
+      includeArchived,
+      limit,
+      offset,
+      snippetBodyChars,
+      snippetContextChars,
+    }) =>
+      sql`
+        WITH thread_meta AS (
+          SELECT
+            threads.thread_id AS thread_id,
+            threads.project_id AS project_id,
+            threads.title AS thread_title,
+            threads.updated_at AS thread_updated_at,
+            CASE WHEN threads.archived_at IS NULL THEN 0 ELSE 1 END AS archived
+          FROM projection_threads AS threads
+          INNER JOIN projection_projects AS projects
+            ON projects.project_id = threads.project_id
+          WHERE threads.project_id = ${projectId}
+            AND threads.deleted_at IS NULL
+            AND projects.deleted_at IS NULL
+            AND (${includeArchived ? 1 : 0} = 1 OR threads.archived_at IS NULL)
+            ${threadId === null ? sql`` : sql`AND threads.thread_id = ${threadId}`}
+        ),
+        candidate AS (
+          SELECT
+            meta.thread_id,
+            meta.project_id,
+            meta.thread_title,
+            meta.archived,
+            'title' AS source,
+            'legacy' AS origin,
+            meta.thread_title AS match_text,
+            meta.thread_updated_at AS matched_at,
+            NULL AS source_thread_id,
+            NULL AS message_id,
+            NULL AS run_id,
+            NULL AS item_id,
+            0 AS source_rank,
+            '' AS identity_key
+          FROM thread_meta AS meta
+          WHERE meta.thread_title LIKE ${pattern} ESCAPE '!'
+
+          UNION ALL
+
+          SELECT
+            meta.thread_id,
+            meta.project_id,
+            meta.thread_title,
+            meta.archived,
+            CASE messages.role WHEN 'user' THEN 'user' ELSE 'assistant' END AS source,
+            'legacy' AS origin,
+            messages.text AS match_text,
+            messages.created_at AS matched_at,
+            NULL AS source_thread_id,
+            messages.message_id AS message_id,
+            NULL AS run_id,
+            NULL AS item_id,
+            CASE messages.role WHEN 'user' THEN 1 ELSE 2 END AS source_rank,
+            messages.message_id AS identity_key
+          FROM projection_thread_messages AS messages
+          INNER JOIN thread_meta AS meta
+            ON meta.thread_id = messages.thread_id
+          WHERE messages.is_streaming = 0
+            AND (
+              messages.role = 'user'
+              OR (
+                messages.role = 'assistant'
+                AND messages.message_id IN (
+                  SELECT turns.assistant_message_id
+                  FROM projection_turns AS turns
+                  WHERE turns.assistant_message_id IS NOT NULL
+                )
+              )
+            )
+            AND messages.text LIKE ${pattern} ESCAPE '!'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM orchestration_v2_projection_turn_items AS duplicate_item
+              WHERE duplicate_item.thread_id = messages.thread_id
+                AND duplicate_item.type IN ('user_message', 'assistant_message')
+                AND json_extract(duplicate_item.payload_json, '$.messageId') = messages.message_id
+            )
+
+          UNION ALL
+
+          SELECT
+            meta.thread_id,
+            meta.project_id,
+            meta.thread_title,
+            meta.archived,
+            CASE items.type WHEN 'user_message' THEN 'user' ELSE 'assistant' END AS source,
+            'v2' AS origin,
+            json_extract(items.payload_json, '$.text') AS match_text,
+            messages.created_at AS matched_at,
+            items.thread_id AS source_thread_id,
+            messages.message_id AS message_id,
+            items.run_id AS run_id,
+            items.turn_item_id AS item_id,
+            CASE items.type WHEN 'user_message' THEN 1 ELSE 2 END AS source_rank,
+            items.turn_item_id AS identity_key
+          FROM orchestration_v2_projection_turn_items AS items
+          INNER JOIN thread_meta AS meta
+            ON meta.thread_id = items.thread_id
+          INNER JOIN orchestration_v2_projection_messages AS messages
+            ON messages.thread_id = items.thread_id
+            AND messages.message_id = json_extract(items.payload_json, '$.messageId')
+          LEFT JOIN orchestration_v2_projection_runs AS runs
+            ON runs.run_id = items.run_id
+          WHERE items.type IN ('user_message', 'assistant_message')
+            AND messages.role IN ('user', 'assistant')
+            AND messages.streaming = 0
+            AND (items.run_id IS NULL OR runs.status IS NULL OR runs.status <> 'rolled_back')
+            AND NOT (
+              items.type = 'user_message'
+              AND json_extract(items.payload_json, '$.inputIntent') = 'queued_turn'
+              AND runs.status = 'cancelled'
+            )
+            AND json_extract(items.payload_json, '$.text') LIKE ${pattern} ESCAPE '!'
+        ),
+        located AS (
+          SELECT
+            candidate.*,
+            length(match_text) AS match_text_chars,
+            instr(lower(match_text), lower(${queryText})) AS match_index
+          FROM candidate
+        ),
+        windowed AS (
+          SELECT
+            located.*,
+            min(
+              max(
+                1,
+                CASE
+                  WHEN match_index > ${snippetContextChars + 1}
+                    THEN match_index - ${snippetContextChars}
+                  ELSE 1
+                END
+              ),
+              max(1, match_text_chars - ${snippetBodyChars} + 1)
+            ) AS fragment_start
+          FROM located
+        )
+        SELECT
+          thread_id AS "threadId",
+          project_id AS "projectId",
+          thread_title AS "threadTitle",
+          archived,
+          source,
+          origin,
+          substr(match_text, fragment_start, ${snippetBodyChars}) AS "matchText",
+          match_text_chars AS "matchTextChars",
+          fragment_start AS "fragmentStart",
+          matched_at AS "matchedAt",
+          source_thread_id AS "sourceThreadId",
+          message_id AS "messageId",
+          run_id AS "runId",
+          item_id AS "itemId"
+        FROM windowed
+        ORDER BY
+          matched_at DESC,
+          thread_id ASC,
+          source_rank ASC,
+          origin ASC,
+          identity_key ASC
+        LIMIT ${limit}
+        OFFSET ${offset}
       `,
   });
 
@@ -2520,6 +2743,85 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     };
   });
 
+  const searchThreadContent: ProjectionSnapshotQueryShape["searchThreadContent"] = Effect.fn(
+    "ProjectionSnapshotQuery.searchThreadContent",
+  )(function* (input) {
+    const limits = PROJECTION_THREAD_CONTENT_SEARCH_LIMITS;
+    const queryCodeUnits = input.query.length;
+    const queryChars =
+      queryCodeUnits <= limits.queryMaxChars * 2 ? Array.from(input.query).length : 0;
+    const validInput =
+      input.query === input.query.trim() &&
+      queryChars >= limits.queryMinChars &&
+      queryChars <= limits.queryMaxChars &&
+      Number.isInteger(input.limit) &&
+      input.limit >= 1 &&
+      input.limit <= limits.pageMax &&
+      Number.isInteger(input.offset) &&
+      input.offset >= 0 &&
+      input.offset <= limits.offsetMax &&
+      Number.isInteger(input.snippetChars) &&
+      input.snippetChars >= limits.snippetMinChars &&
+      input.snippetChars <= limits.snippetMaxChars;
+    if (!validInput) {
+      return yield* Effect.fail(
+        new ProjectionThreadContentSearchInputError(
+          "Thread content search input is outside the supported query, page, cursor, or snippet bounds.",
+        ),
+      );
+    }
+
+    const escapedQuery = escapeLikePattern(input.query);
+    const rows = yield* searchThreadContentRows({
+      projectId: input.projectId,
+      threadId: input.threadId ?? null,
+      pattern: `%${escapedQuery}%`,
+      queryText: input.query,
+      includeArchived: input.includeArchived,
+      limit: input.limit + 1,
+      offset: input.offset,
+      snippetBodyChars: input.snippetChars - 2,
+      snippetContextChars: Math.floor((input.snippetChars - 2) / 3),
+    }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.searchThreadContent:query",
+          "ProjectionSnapshotQuery.searchThreadContent:decodeRows",
+        ),
+      ),
+    );
+    const hasMore = rows.length > input.limit;
+    const hits: ReadonlyArray<ProjectionThreadContentSearchHit> = rows
+      .slice(0, input.limit)
+      .map((row) => ({
+        threadId: row.threadId,
+        projectId: row.projectId,
+        threadTitle: row.threadTitle,
+        archived: row.archived === 1,
+        source: row.source,
+        origin: row.origin,
+        snippet: buildBoundedSearchSnippet({
+          fragment: row.matchText,
+          fragmentStart: row.fragmentStart,
+          totalChars: row.matchTextChars,
+        }),
+        snippetTruncated: row.matchTextChars > input.snippetChars - 2,
+        matchedAt: row.matchedAt,
+        sourceThreadId: row.sourceThreadId,
+        messageId: row.messageId,
+        runId: row.runId,
+        itemId: row.itemId,
+      }));
+    return {
+      hits,
+      hasMore,
+      nextOffset:
+        hasMore && input.offset + hits.length <= limits.offsetMax
+          ? input.offset + hits.length
+          : null,
+    };
+  });
+
   const getActiveProjectByWorkspaceRoot: ProjectionSnapshotQueryShape["getActiveProjectByWorkspaceRoot"] =
     (workspaceRoot) =>
       getActiveProjectRowByWorkspaceRoot({ workspaceRoot }).pipe(
@@ -3113,6 +3415,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getShellSnapshotWithoutEnrichment,
     getArchivedShellSnapshot,
     searchThreads,
+    searchThreadContent,
     getSnapshotSequence,
     getCounts,
     getEventReplayStats,
