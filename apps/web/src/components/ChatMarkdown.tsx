@@ -107,7 +107,7 @@ import { LRUCache } from "../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
-import { getClientSettings, useClientSettings } from "../hooks/useSettings";
+import { getClientSettings, useShowFileLinkPaths } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
   serializeTableElementToCsv,
@@ -1815,7 +1815,7 @@ function ChatMarkdown({
   onImageExpand,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
-  const showFileLinkPaths = useClientSettings((settings) => settings.showFileLinkPaths);
+  const showFileLinkPaths = useShowFileLinkPaths();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });

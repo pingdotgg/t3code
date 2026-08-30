@@ -1,9 +1,15 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+const clientSettingsMocks = vi.hoisted(() => ({ showFileLinkPaths: false }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+vi.mock("../hooks/useSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../hooks/useSettings")>()),
+  useShowFileLinkPaths: () => clientSettingsMocks.showFileLinkPaths,
+}));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../state/session", async (importOriginal) => ({
@@ -34,6 +40,10 @@ import ChatMarkdown, {
   orderedListGutterStyle,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
+
+beforeEach(() => {
+  clientSettingsMocks.showFileLinkPaths = false;
+});
 
 describe("canUseMarkdownFileShellActions", () => {
   const environmentId = EnvironmentId.make("environment-1");
@@ -93,6 +103,25 @@ describe("hasMarkdownFilePrimaryAction", () => {
 });
 
 describe("ChatMarkdown file option chips", () => {
+  it("shows the existing short label by default", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text="[Source](/tmp/project/src/main.ts)" />,
+    );
+
+    expect(html).toContain("main.ts");
+    expect(html).not.toContain("./src/main.ts");
+  });
+
+  it("shows the compact path when the preference is enabled", () => {
+    clientSettingsMocks.showFileLinkPaths = true;
+
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text="[Source](/tmp/project/src/main.ts)" />,
+    );
+
+    expect(html).toContain("./src/main.ts");
+  });
+
   it("keeps the fallback button text selectable", () => {
     const html = renderToStaticMarkup(
       <ChatMarkdown cwd="/tmp/project" text="[Source](/tmp/project/src/main.ts)" />,

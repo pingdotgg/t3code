@@ -59,19 +59,51 @@ describe("formatCompactFilePath", () => {
     expect(formatCompactFilePath(path, workspaceRoot)).toBe(expected);
   });
 
-  it("normalizes parent segments before choosing the shortest safe prefix", () => {
+  it("keeps authored dot segments absolute instead of guessing across symlinks", () => {
     const formatted = formatCompactFilePath(
       "/root/project/src/../../notes/todo.md:12:3",
       "/root/project",
     );
 
-    expect(formatted).toBe("~/notes/todo.md:12:3");
-    expect(formatted).not.toContain("../");
+    expect(formatted).toBe("/root/project/src/../../notes/todo.md:12:3");
+    expect(formatted).not.toMatch(/^\.\.\//);
   });
 
-  it("preserves UNC paths outside the workspace", () => {
-    expect(formatCompactFilePath("//server/share/docs/readme.md", "C:/Users/mike/project")).toBe(
-      "//server/share/docs/readme.md",
+  it.each([
+    ["/srv/Project/src/main.ts", "/srv/project", "/srv/Project/src/main.ts"],
+    ["C:/Users/MIKE/Project/src/main.ts", "c:/users/mike/project", "./src/main.ts"],
+    ["//server/share/Project/src/main.ts", "//server/share/Project", "./src/main.ts"],
+    [
+      "//server/share/project/src/main.ts",
+      "//server/share/Project",
+      "//server/share/project/src/main.ts",
+    ],
+    [
+      String.raw`\\wsl.localhost\Ubuntu\home\alice\Project\src\main.ts:12:3`,
+      String.raw`\\wsl.localhost\Ubuntu\home\alice\Project`,
+      "./src/main.ts:12:3",
+    ],
+    [
+      "//wsl.localhost/Ubuntu/home/alice/project/src/main.ts:12:3",
+      "//wsl.localhost/Ubuntu/home/alice/Project",
+      "//wsl.localhost/Ubuntu/home/alice/project/src/main.ts:12:3",
+    ],
+  ])("uses safe case rules for %s from %s", (path, workspaceRoot, expected) => {
+    expect(formatCompactFilePath(path, workspaceRoot)).toBe(expected);
+  });
+
+  it.each([
+    ["/src/main.ts", "/", "./src/main.ts"],
+    ["C:/src/main.ts", "C:/", "./src/main.ts"],
+    ["//server/share/src/main.ts", "//server/share/", "./src/main.ts"],
+    ["//server/share", "//server/share/", "./"],
+  ])("handles path roots and trailing separators for %s", (path, workspaceRoot, expected) => {
+    expect(formatCompactFilePath(path, workspaceRoot)).toBe(expected);
+  });
+
+  it("does not shorten against a workspace root containing dot segments", () => {
+    expect(formatCompactFilePath("/srv/project/src/main.ts", "/srv/link/../project")).toBe(
+      "/srv/project/src/main.ts",
     );
   });
 });

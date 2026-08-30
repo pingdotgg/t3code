@@ -23,23 +23,14 @@ function stripRelativePrefixes(path: string): string {
 
 function normalizeAbsolutePath(path: string): string {
   const normalized = canonicalizeWindowsDrivePath(normalizePathSeparators(path));
-  const drivePrefix = normalized.match(/^[A-Za-z]:\//)?.[0];
-  const prefix = drivePrefix ?? (normalized.startsWith("//") ? "//" : "/");
-  const isAbsolute = drivePrefix !== undefined || normalized.startsWith("/");
-  if (!isAbsolute) return normalized;
+  if (normalized === "/" || /^[A-Za-z]:\/$/.test(normalized)) return normalized;
+  return normalized.replace(/\/+$/, "");
+}
 
-  const remainder = normalized.slice(prefix.length);
-  const segments: string[] = [];
-  const minimumDepth = prefix === "//" ? 2 : 0;
-  for (const segment of remainder.split("/")) {
-    if (!segment || segment === ".") continue;
-    if (segment === "..") {
-      if (segments.length > minimumDepth) segments.pop();
-      continue;
-    }
-    segments.push(segment);
-  }
-  return `${prefix}${segments.join("/")}`;
+function hasDotPathSegment(path: string): boolean {
+  return normalizePathSeparators(path)
+    .split("/")
+    .some((segment) => segment === "." || segment === "..");
 }
 
 function homeDirectoryFromWorkspace(workspaceRoot: string): string | undefined {
@@ -52,7 +43,10 @@ function homeDirectoryFromWorkspace(workspaceRoot: string): string | undefined {
 }
 
 function comparisonPath(path: string): string {
-  return /^[A-Za-z]:\//.test(path) || path.startsWith("//") ? path.toLowerCase() : path;
+  // Drive-letter paths are owned by Windows. UNC paths may instead point at a
+  // case-sensitive WSL or SMB backend, so an exact-case match is the only safe
+  // browser-side containment claim for them.
+  return /^[A-Za-z]:\//.test(path) ? path.toLowerCase() : path;
 }
 
 function suffixWithin(path: string, parent: string): string | null {
@@ -74,7 +68,14 @@ export function formatCompactFilePath(
   const normalizedPath = normalizeAbsolutePath(path);
   let displayPath = normalizedPath;
 
-  if (workspaceRoot) {
+  // Resolving dot segments is filesystem-dependent when an earlier segment is
+  // a symlink. The browser does not own that filesystem (and it may be remote),
+  // so preserve the authored absolute target instead of falsely claiming ./ or
+  // ~/ containment.
+  const canSafelyShorten =
+    !hasDotPathSegment(path) && (!workspaceRoot || !hasDotPathSegment(workspaceRoot));
+
+  if (workspaceRoot && canSafelyShorten) {
     const normalizedWorkspaceRoot = normalizeAbsolutePath(workspaceRoot);
     const workspaceSuffix = suffixWithin(normalizedPath, normalizedWorkspaceRoot);
     if (workspaceSuffix !== null) {
