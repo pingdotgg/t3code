@@ -3,7 +3,7 @@ import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
-import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
+import type { LegendListRef } from "@legendapp/list/react";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -16,34 +16,23 @@ vi.mock("@legendapp/list/react", async () => {
     ListFooterComponent?: ReactNode;
     anchoredEndSpace?: {
       anchorIndex: number;
-      anchorMaxSize?: number;
-      anchorOffset?: number;
-      onReady?: (info: { anchorIndex: number }) => void;
     };
-    contentInsetEndAdjustment?: number;
-    className?: string;
-    maintainScrollAtEnd?: boolean | MaintainScrollAtEndOptions;
-    maintainVisibleContentPosition?:
+    maintainScrollAtEnd?:
       | boolean
       | {
-          data?: boolean;
-          size?: boolean;
-          shouldRestorePosition?: (item: { id: string }) => boolean;
+          animated?: boolean;
+          on?: {
+            dataChange?: boolean;
+            itemLayout?: boolean;
+            layout?: boolean;
+          };
         };
     ref?: Ref<LegendListRef>;
   }) => {
-    if (props.anchoredEndSpace) {
-      props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
-    }
     return (
       <div
         data-testid={legendListTestId}
         data-anchor-index={props.anchoredEndSpace?.anchorIndex}
-        data-anchor-max-size={props.anchoredEndSpace?.anchorMaxSize}
-        data-anchor-offset={props.anchoredEndSpace?.anchorOffset}
-        data-anchor-on-ready={Boolean(props.anchoredEndSpace?.onReady)}
-        data-content-inset-end={props.contentInsetEndAdjustment}
-        data-class-name={props.className}
         data-maintain-scroll-at-end={props.maintainScrollAtEnd ? "enabled" : undefined}
         data-maintain-scroll-at-end-animated={
           typeof props.maintainScrollAtEnd === "object"
@@ -55,11 +44,6 @@ vi.mock("@legendapp/list/react", async () => {
             ? props.maintainScrollAtEnd.on?.dataChange
             : undefined
         }
-        data-maintain-scroll-at-end-footer-layout={
-          typeof props.maintainScrollAtEnd === "object"
-            ? props.maintainScrollAtEnd.on?.footerLayout
-            : undefined
-        }
         data-maintain-scroll-at-end-item-layout={
           typeof props.maintainScrollAtEnd === "object"
             ? props.maintainScrollAtEnd.on?.itemLayout
@@ -68,26 +52,6 @@ vi.mock("@legendapp/list/react", async () => {
         data-maintain-scroll-at-end-layout={
           typeof props.maintainScrollAtEnd === "object"
             ? props.maintainScrollAtEnd.on?.layout
-            : undefined
-        }
-        data-maintain-visible-content-position={
-          typeof props.maintainVisibleContentPosition === "object"
-            ? "object"
-            : props.maintainVisibleContentPosition
-        }
-        data-maintain-visible-content-position-data={
-          typeof props.maintainVisibleContentPosition === "object"
-            ? props.maintainVisibleContentPosition.data
-            : undefined
-        }
-        data-maintain-visible-content-position-size={
-          typeof props.maintainVisibleContentPosition === "object"
-            ? props.maintainVisibleContentPosition.size
-            : undefined
-        }
-        data-maintain-visible-content-position-restore={
-          typeof props.maintainVisibleContentPosition === "object"
-            ? Boolean(props.maintainVisibleContentPosition.shouldRestorePosition)
             : undefined
         }
       >
@@ -177,7 +141,6 @@ const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
 function buildProps() {
   return {
     isWorking: false,
-    activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
     latestTurn: null,
     runningTurnId: null,
@@ -187,6 +150,7 @@ function buildProps() {
     revertTurnCountByUserMessageId: new Map(),
     onRevertUserMessage: () => {},
     isRevertingCheckpoint: false,
+    openingVideoAttachmentId: null,
     onImageExpand: () => {},
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,
     markdownCwd: undefined,
@@ -416,17 +380,14 @@ describe("MessagesTimeline", () => {
         scrollLength: 800,
       }),
     ).toBe(false);
-    // LegendList's isAtEnd is true anywhere within the composer-height band
-    // (it subtracts the inset); the last row is still hidden under the
-    // composer there, so the flag must not short-circuit the geometry.
+    // The composer inset is part of contentLength and must not count as
+    // distance-to-end.
     expect(
-      resolveTimelineIsAtEnd({
-        isAtEnd: true,
-        contentLength: 2000,
-        scroll: 1100,
-        scrollLength: 800,
-      }),
-    ).toBe(false);
+      resolveTimelineIsAtEnd(
+        { isAtEnd: false, contentLength: 2100, scroll: 1170, scrollLength: 800 },
+        100,
+      ),
+    ).toBe(true);
     // Geometry missing (older state shape): fall back to the strict flag.
     expect(resolveTimelineIsAtEnd({ isAtEnd: false })).toBe(false);
 
@@ -475,7 +436,7 @@ describe("MessagesTimeline", () => {
     expect(resolveTimelineMinimapInteractiveWidth(40, true)).toBe("22rem");
   });
 
-  it("gives browser documents separate preview and download controls", () => {
+  it("renders generic attachments as download links instead of image previews", () => {
     const entry = {
       ...buildUserTimelineEntry("Read the report."),
       message: {
@@ -497,13 +458,13 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
     );
 
-    expect(markup).toContain('aria-label="Preview report.pdf"');
-    expect(markup).toContain('aria-label="Download report.pdf"');
-    expect(markup).not.toContain('download="report.pdf"');
+    expect(markup).toContain(
+      '<a href="https://environment.test/api/assets/report.pdf" download="report.pdf" class="flex min-w-0 items-center gap-2 rounded-md py-1 text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
+    );
     expect(markup).not.toContain('alt="report.pdf"');
   });
 
-  it("renders video attachments with the shared video player", () => {
+  it("renders video attachments as play buttons", () => {
     const entry = {
       ...buildUserTimelineEntry("Watch the demo."),
       message: {
@@ -515,7 +476,6 @@ describe("MessagesTimeline", () => {
             name: "demo.mp4",
             mimeType: "video/mp4",
             sizeBytes: 42,
-            previewUrl: "https://environment.test/api/assets/demo.mp4",
           },
         ],
       },
@@ -524,39 +484,24 @@ describe("MessagesTimeline", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
     );
-
-    expect(markup).toContain("<video");
-    expect(markup).toContain('aria-label="demo.mp4"');
-    expect(markup).toContain('controls=""');
-    expect(markup).not.toContain("Expand demo.mp4");
-  });
-
-  it("shows the filename while an optimistic video is unavailable", () => {
-    const entry = {
-      ...buildUserTimelineEntry("Uploading the demo."),
-      message: {
-        ...buildUserTimelineEntry("Uploading the demo.").message,
-        attachments: [
-          {
-            type: "file" as const,
-            id: "optimistic-demo-mp4",
-            name: "pending-demo.mp4",
-            mimeType: "video/mp4",
-            sizeBytes: 42,
-            downloadable: false,
-          },
-        ],
-      },
-    };
-
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    const busyMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[entry]}
+        openingVideoAttachmentId="attachment-demo-mp4"
+      />,
     );
 
-    expect(markup).not.toContain("<video");
-    expect(markup).toContain(">pending-demo.mp4</div>");
+    expect(markup).toContain('aria-label="Play demo.mp4"');
+    expect(markup).toContain("min-h-[72px]");
+    expect(markup).toContain(">demo.mp4</span>");
+    expect(markup).not.toContain('aria-label="Download demo.mp4"');
+    expect(busyMarkup).toContain('aria-busy="true"');
+    expect(busyMarkup).toContain('aria-disabled="true"');
+    expect(busyMarkup).not.toContain('disabled=""');
+    expect(busyMarkup).toContain(">Loading…</span>");
   });
-  it("renders an ordinary file download button without creating its URL in advance", () => {
+  it("renders a file download button without creating its URL in advance", () => {
     const entry = {
       ...buildUserTimelineEntry("Read the report."),
       message: {
@@ -565,8 +510,8 @@ describe("MessagesTimeline", () => {
           {
             type: "file" as const,
             id: "attachment-report-pdf",
-            name: "archive.zip",
-            mimeType: "application/zip",
+            name: "report.pdf",
+            mimeType: "application/pdf",
             sizeBytes: 42,
           },
         ],
@@ -578,9 +523,9 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain(
-      '<button type="button" aria-label="Download archive.zip" class="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
+      '<button type="button" aria-label="Download report.pdf" class="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
     );
-    expect(markup).not.toContain("<a href=");
+    expect(markup).not.toContain("href=");
   });
 
   it("does not download an optimistic file before the server supplies its attachment ID", () => {
@@ -635,7 +580,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("voice-memo.ogg");
     expect(markup).not.toContain('aria-label="Download voice-memo.ogg"');
     expect(markup).not.toContain('alt="voice-memo.ogg"');
-    expect(markup).not.toContain("<a href=");
+    expect(markup).not.toContain("href=");
   });
 
   it("keeps reserved end space when tool work starts while reading history", () => {
@@ -645,7 +590,6 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline
         {...buildProps()}
         isWorking
-        activeTurnStartedAt={MESSAGE_CREATED_AT}
         latestTurn={{
           turnId,
           state: "running",
@@ -743,7 +687,6 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
     expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
     expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
-    expect(markup).toContain('data-maintain-scroll-at-end-footer-layout="false"');
     expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
     expect(markup).toContain('data-user-message-collapsed="true"');
@@ -977,7 +920,7 @@ describe("MessagesTimeline", () => {
             entry: {
               id: "work-1",
               createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Compacted context 899K → 19K tokens",
+              label: "Context compacted",
               tone: "info",
             },
           },
@@ -985,7 +928,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Compacted context 899K → 19K tokens");
+    expect(markup).toContain("Context compacted");
   });
 
   it("summarizes changed files in one line", () => {
@@ -1096,62 +1039,6 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("tool call failed");
   });
 
-  it("renders trailing tool calls as part of the terminal assistant block", () => {
-    const turnId = TurnId.make("turn-trailing-tools");
-    const assistantMessageId = MessageId.make("assistant-trailing-tools");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        latestTurn={{
-          turnId,
-          state: "error",
-          startedAt: "2026-03-17T19:12:20.000Z",
-          completedAt: "2026-03-17T19:12:30.000Z",
-        }}
-        timelineEntries={[
-          {
-            id: "assistant-entry",
-            kind: "message",
-            createdAt: MESSAGE_CREATED_AT,
-            message: {
-              id: assistantMessageId,
-              role: "assistant",
-              text: "I’ll search for it now.",
-              turnId,
-              createdAt: MESSAGE_CREATED_AT,
-              updatedAt: "2026-03-17T19:12:29.000Z",
-              streaming: false,
-            },
-          },
-          {
-            id: "trailing-work-entry",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:30.000Z",
-            entry: {
-              id: "trailing-work",
-              createdAt: "2026-03-17T19:12:30.000Z",
-              turnId,
-              label: "Ran command",
-              tone: "tool",
-              itemType: "command_execution",
-              toolLifecycleStatus: "failed",
-            },
-          },
-        ]}
-      />,
-    );
-
-    const messageIndex = markup.indexOf('data-timeline-row-id="assistant-entry"');
-    const toolIndex = markup.indexOf('data-timeline-row-id="trailing-work-entry"');
-    const metaIndex = markup.indexOf(
-      'data-timeline-row-id="assistant-meta:assistant-trailing-tools"',
-    );
-    expect(messageIndex).toBeGreaterThanOrEqual(0);
-    expect(toolIndex).toBeGreaterThan(messageIndex);
-    expect(metaIndex).toBeGreaterThan(toolIndex);
-    expect(markup.match(/I’ll search for it now\./gu)).toHaveLength(1);
-  });
-
   it("keeps mixed work logs neutral after a later tool call succeeds", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1208,7 +1095,6 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline
         {...buildProps()}
         isWorking
-        activeTurnStartedAt={MESSAGE_CREATED_AT}
         latestTurn={{
           turnId,
           state: "running",
@@ -1237,7 +1123,6 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Working for");
     expect(markup).toContain("Running pnpm");
   });
 
@@ -1247,7 +1132,6 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline
         {...buildProps()}
         isWorking
-        activeTurnStartedAt={MESSAGE_CREATED_AT}
         latestTurn={{
           turnId,
           state: "running",
@@ -1319,13 +1203,12 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-timeline-row-id="live-activity-row"');
   });
 
-  it("keeps the completed command in the shared activity row with a present-tense label", () => {
+  it("keeps the completed command in the shared activity row with a past-tense label", () => {
     const turnId = TurnId.make("turn-live");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
         isWorking
-        activeTurnStartedAt={MESSAGE_CREATED_AT}
         latestTurn={{
           turnId,
           state: "running",
@@ -1355,10 +1238,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Running pnpm");
-    expect(markup).toContain("lucide-terminal");
-    expect(markup).not.toContain("Ran pnpm");
-    expect(markup).not.toContain("Thinking");
-    expect(markup).not.toContain('data-timeline-row-kind="thinking"');
+    expect(markup).toContain("tool call failed");
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", () => {

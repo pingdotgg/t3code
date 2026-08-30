@@ -949,7 +949,8 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({ id: "after", kind: "tool.completed", summary: "Ran tests", sequence: 3 }),
     ];
     expect(deriveWorkLogEntries(activities).map((entry) => entry.id)).toEqual(["before", "after"]);
-    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toMatchObject([
+    expect(deriveTurnPlans(activities)).toHaveLength(1);
+    expect(deriveTurnPlans(activities)[0]?.plan.steps).toMatchObject([
       { step: "Verify the composer", status: "completed" },
     ]);
   });

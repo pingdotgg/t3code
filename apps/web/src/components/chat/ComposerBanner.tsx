@@ -104,7 +104,7 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
     <div
       data-slot="composer-banner-attachment"
       className={cn(
-        "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
+        "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2.75rem)] max-w-[45.25rem]",
         // Adjacent attachments share their outline, including notices outside the form.
         "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0",
         "[&+:has([data-chat-composer-form])_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:rounded-none [&+:has([data-chat-composer-form])_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:border-t-0",
@@ -118,24 +118,7 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
 function Dock({ className, ...props }: ComponentProps<"div">) {
   return (
     <Attachment
-      className={cn(
-        "flex items-end gap-1 not-has-data-[composer-banner-surface=attached]:hidden",
-        className,
-      )}
-      {...props}
-    />
-  );
-}
-
-/** Attachments share a column while neighboring tabs keep their own surface. */
-function Column({ className, ...props }: ComponentProps<"div">) {
-  return (
-    <div
-      className={cn(
-        "flex min-w-0 flex-1 flex-col empty:hidden",
-        "[&>[data-slot=composer-banner-attachment]]:w-full [&>[data-slot=composer-banner-attachment]:last-child]:mb-0",
-        className,
-      )}
+      className={cn("flex items-end gap-1 *:data-[composer-banner-width=fill]:flex-1", className)}
       {...props}
     />
   );
@@ -317,11 +300,7 @@ function ToggleIcon({ expanded, className }: { expanded: boolean; className?: st
   return (
     <span
       aria-hidden
-      className={cn(
-        buttonVariants({ size: "icon-xs", variant: "ghost" }),
-        "pointer-events-none",
-        className,
-      )}
+      className={cn(buttonVariants({ size: "icon-xs", variant: "ghost" }), className)}
     >
       <ChevronDownIcon className={cn("size-3.5", !expanded && "rotate-180")} />
     </span>
@@ -341,7 +320,6 @@ export const ComposerBanner = {
   Peek,
   Attachment,
   Dock,
-  Column,
   Root,
   Row,
   Icon,

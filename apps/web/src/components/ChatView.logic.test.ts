@@ -375,14 +375,6 @@ const helloWorldTemplate: CodexArtifactTemplate = {
   skillName: "artifact-template-hello-world",
 };
 
-describe("artifact template composer insertion", () => {
-  it("does not insert an already-present prompt", () => {
-    const prompt = "Create a document using this $artifact-template-hello-world about…";
-
-    expect(codexArtifactTemplatePromptToAppend(prompt, helloWorldTemplate)).toBeNull();
-  });
-});
-
 describe("draft hero submission transition", () => {
   it("does not dock the composer before a background submission", () => {
     expect(

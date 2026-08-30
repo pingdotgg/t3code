@@ -4,6 +4,11 @@ import { memo, type ComponentProps } from "react";
 import { formatDuration } from "../../session-logic";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
+import {
+  ComposerActivityIcon,
+  ComposerActivityLabel,
+  type ComposerActivityStatus,
+} from "./ComposerActivityStatus";
 
 export interface ComposerTasksProgress {
   readonly step: string;
@@ -60,18 +65,29 @@ function TaskSummary({
   expanded,
   progress,
   steps,
+  activityStatus,
 }: {
   readonly expanded: boolean;
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
+  readonly activityStatus: ComposerActivityStatus | undefined;
 }) {
   return (
     <>
-      <ComposerBanner.Icon>
-        <ListTodoIcon />
-      </ComposerBanner.Icon>
+      {activityStatus !== undefined ? (
+        <ComposerActivityIcon status={activityStatus} />
+      ) : (
+        <ComposerBanner.Icon>
+          <ListTodoIcon />
+        </ComposerBanner.Icon>
+      )}
       <ComposerBanner.Content>
-        <span className="shrink-0 text-muted-foreground">Tasks</span>
+        {activityStatus !== undefined ? (
+          <ComposerActivityLabel status={activityStatus} />
+        ) : (
+          <span className="shrink-0 text-muted-foreground">Tasks</span>
+        )}
+        {activityStatus !== undefined ? <ComposerBanner.Separator /> : null}
         <span
           className="min-w-0 flex-1 truncate text-left font-medium text-foreground/80"
           data-composer-task-current="true"
@@ -99,12 +115,14 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
   placement = "tab",
   progress,
   steps,
+  activityStatus,
 }: {
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly placement?: "inline" | "tab";
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
+  readonly activityStatus?: ComposerActivityStatus | undefined;
 }) {
   if (progress.totalSteps <= 0) return null;
 
@@ -117,7 +135,12 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
       onClick={onToggle}
       onPointerDown={(event) => event.preventDefault()}
     >
-      <TaskSummary expanded={expanded} progress={progress} steps={steps} />
+      <TaskSummary
+        expanded={expanded}
+        progress={progress}
+        steps={steps}
+        activityStatus={activityStatus}
+      />
     </ComposerBanner.Row>
   );
   return placement === "inline" ? (
@@ -134,11 +157,13 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
   onToggle,
   progress,
   steps,
+  activityStatus,
 }: {
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
+  readonly activityStatus?: ComposerActivityStatus | undefined;
 }) {
   return (
     <div
@@ -151,11 +176,12 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
         placement="inline"
         progress={progress}
         steps={steps}
+        activityStatus={activityStatus}
       />
       {expanded ? (
         <ComposerBanner.Scroll data-composer-tasks-scroll="true">
           <ComposerBanner.Children
-            render={<ul role="list" />}
+            render={<ul />}
             aria-label={`Task list. ${progress.completedSteps} of ${progress.totalSteps} complete.`}
             data-composer-tasks-list="true"
           >
@@ -202,6 +228,21 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
         </ComposerBanner.Scroll>
       ) : null}
     </div>
+  );
+});
+
+export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
+  onCollapse,
+  ...props
+}: Omit<ComponentProps<typeof ComposerTasksContent>, "expanded" | "onToggle"> & {
+  readonly onCollapse: () => void;
+}) {
+  return (
+    <ComposerBanner.Attachment>
+      <ComposerBanner.Root>
+        <ComposerTasksContent {...props} expanded onToggle={onCollapse} />
+      </ComposerBanner.Root>
+    </ComposerBanner.Attachment>
   );
 });
 
