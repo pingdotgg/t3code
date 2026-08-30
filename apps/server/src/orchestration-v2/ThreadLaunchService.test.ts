@@ -79,6 +79,9 @@ interface HarnessOptions {
   readonly generateBranchName?: TextGeneration.TextGeneration["Service"]["generateBranchName"];
   readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly providers?: ReadonlyArray<ServerProvider>;
+  readonly mapCommandReceipts?: (
+    service: CommandReceiptStore.CommandReceiptStoreV2["Service"],
+  ) => CommandReceiptStore.CommandReceiptStoreV2["Service"];
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -90,7 +93,14 @@ function makeHarness(options: HarnessOptions = {}) {
     { databaseLayer: database, runEffectWorker: false },
   );
   const threadManagement = ThreadManagement.layer.pipe(Layer.provide(orchestrator));
-  const receipts = CommandReceiptStore.layer.pipe(Layer.provide(database));
+  const baseReceipts = CommandReceiptStore.layer.pipe(Layer.provide(database));
+  const receipts =
+    options.mapCommandReceipts === undefined
+      ? baseReceipts
+      : Layer.effect(
+          CommandReceiptStore.CommandReceiptStoreV2,
+          Effect.map(CommandReceiptStore.CommandReceiptStoreV2, options.mapCommandReceipts),
+        ).pipe(Layer.provide(baseReceipts));
   const outbox = EffectOutbox.layer.pipe(Layer.provide(database));
   const createWorktree = vi.fn(
     options.createWorktree ??
@@ -426,6 +436,66 @@ it.effect("provisions independent launches concurrently instead of behind a glob
       yield* Deferred.await(bothEntered);
       assert.equal(yield* Ref.get(setupCount), 2);
       yield* Deferred.succeed(allowSetup, undefined);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("keeps the initial run identity when replay resumes after a later run", () =>
+  Effect.gen(function* () {
+    const receiptLookupCompleted = yield* Deferred.make<void>();
+    const allowReceiptLookup = yield* Deferred.make<void>();
+    const messageCommandId = CommandId.make("command:launch:message-replay:initial-message");
+    let gated = false;
+    const harness = makeHarness({
+      mapCommandReceipts: (service) => ({
+        ...service,
+        getByCommandId: (commandId) =>
+          service.getByCommandId(commandId).pipe(
+            Effect.flatMap((receipt) => {
+              if (gated || commandId !== messageCommandId || Option.isSome(receipt)) {
+                return Effect.succeed(receipt);
+              }
+              gated = true;
+              return Deferred.succeed(receiptLookupCompleted, undefined).pipe(
+                Effect.andThen(Deferred.await(allowReceiptLookup)),
+                Effect.as(receipt),
+              );
+            }),
+          ),
+      }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+        command: "command:launch:message-replay",
+        thread: "thread:launch:message-replay",
+        message: "Use the durable message once",
+      });
+
+      const delayedReplay = yield* launches.launch(input).pipe(Effect.forkChild);
+      yield* Deferred.await(receiptLookupCompleted);
+      const accepted = yield* launches.launch(input);
+      const acceptedRunId = accepted.initialMessageRunId;
+      assert.isNotNull(acceptedRunId);
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("command:launch:message-replay:later-message"),
+        threadId: accepted.threadId,
+        messageId: MessageId.make("message:launch:message-replay:later-message"),
+        text: "A later queued message",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* Deferred.succeed(allowReceiptLookup, undefined);
+      const replayed = yield* Fiber.join(delayedReplay);
+
+      assert.equal(replayed.initialMessageRunId, acceptedRunId);
+      assert.lengthOf(replayed.projection.runs, 2);
+      assert.notEqual(replayed.projection.runs.at(-1)?.id, replayed.initialMessageRunId);
     }).pipe(Effect.provide(harness.layer));
   }),
 );

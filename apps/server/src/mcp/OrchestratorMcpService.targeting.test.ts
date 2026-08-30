@@ -227,6 +227,8 @@ describe("OrchestratorMcpService project targeting", () => {
                   },
                 },
                 resumed: false,
+                initialMessageRunId:
+                  input.initialMessage === undefined ? null : (target.runs.at(-1)?.id ?? null),
               }),
             ),
         });
@@ -440,6 +442,7 @@ describe("OrchestratorMcpService project targeting", () => {
                     },
                   },
                   resumed: false,
+                  initialMessageRunId: null,
                 }),
               ),
           }),
