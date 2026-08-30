@@ -20,6 +20,11 @@ on the provider: Codex delegates routine approvals to an AI reviewer, Claude use
 permission mode, Cursor uses Smart Auto review, and providers without an equivalent (such as
 OpenCode) fall back to asking, like Supervised.
 
+For Cursor, **Supervised** runs the agent in Cursor's read-only Ask mode: it reads and answers,
+and proposes changes instead of making them. In the other modes Cursor applies workspace file
+edits without prompting; **Auto** uses Smart Auto review, and **Accept edits** still stops for
+commands Cursor considers risky.
+
 **Full access**: allow commands and edits without prompts. The default. The agent runs
 unattended until it finishes or asks a question of its own.
 

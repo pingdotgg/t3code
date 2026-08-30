@@ -19,7 +19,6 @@ import {
   getCursorFallbackModels,
   getCursorParameterizedModelPickerUnsupportedMessage,
   parseCursorAboutOutput,
-  parseCursorCliConfigChannel,
   parseCursorVersionDate,
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
@@ -576,7 +575,31 @@ describe("discoverCursorModelsViaAcp", () => {
   it("keeps the ACP probe runtime alive long enough to discover models", async () => {
     const wrapperPath = await runNode(makeMockAgentWrapper());
 
-    const models = await runNode(
+    const discovery = await runNode(
+      discoverCursorModelsViaAcp({
+        enabled: true,
+        binaryPath: wrapperPath,
+        apiEndpoint: "",
+        customModels: [],
+      }).pipe(Effect.scoped),
+    );
+    const models = discovery.models;
+    expect(discovery.slashCommands).toEqual([]);
+
+    expect(models.map((model) => model.slug)).toEqual([
+      "default",
+      "composer-2",
+      "gpt-5.4",
+      "claude-opus-4-6",
+    ]);
+  });
+
+  it("collects slash commands the agent advertises during the probe", async () => {
+    const wrapperPath = await runNode(
+      makeMockAgentWrapper({ T3_ACP_EMIT_AVAILABLE_COMMANDS: "1" }),
+    );
+
+    const discovery = await runNode(
       discoverCursorModelsViaAcp({
         enabled: true,
         binaryPath: wrapperPath,
@@ -585,11 +608,9 @@ describe("discoverCursorModelsViaAcp", () => {
       }).pipe(Effect.scoped),
     );
 
-    expect(models.map((model) => model.slug)).toEqual([
-      "default",
-      "composer-2",
-      "gpt-5.4",
-      "claude-opus-4-6",
+    expect(discovery.slashCommands).toEqual([
+      { name: "review", description: "Review the current changes" },
+      { name: "test", description: "Run the project's tests" },
     ]);
   });
 
@@ -686,18 +707,18 @@ describe("Cursor parameterized model picker preview gating", () => {
     expect(parseCursorVersionDate("not-a-version")).toBeUndefined();
   });
 
-  it("parses the Cursor CLI channel from cli-config.json", () => {
-    expect(parseCursorCliConfigChannel('{ "channel": "lab" }')).toBe("lab");
-    expect(parseCursorCliConfigChannel('{ "channel": "stable" }')).toBe("stable");
-    expect(parseCursorCliConfigChannel('{ "version": 1 }')).toBeUndefined();
-    expect(parseCursorCliConfigChannel("not-json")).toBeUndefined();
-  });
-
-  it("returns no warning when the preview requirements are met", () => {
+  it("returns no warning when the version requirement is met", () => {
     expect(
       getCursorParameterizedModelPickerUnsupportedMessage({
         version: "2026.04.08-c4e73a3",
-        channel: "lab",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns no warning when the version is unparseable", () => {
+    expect(
+      getCursorParameterizedModelPickerUnsupportedMessage({
+        version: "not-a-version",
       }),
     ).toBeUndefined();
   });
@@ -706,18 +727,8 @@ describe("Cursor parameterized model picker preview gating", () => {
     expect(
       getCursorParameterizedModelPickerUnsupportedMessage({
         version: "2026.04.07-c4e73a3",
-        channel: "lab",
       }),
     ).toContain("too old");
-  });
-
-  it("explains when the Cursor Agent channel is not lab", () => {
-    expect(
-      getCursorParameterizedModelPickerUnsupportedMessage({
-        version: "2026.04.08-c4e73a3",
-        channel: "stable",
-      }),
-    ).toContain("lab channel");
   });
 });
 

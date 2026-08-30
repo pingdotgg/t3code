@@ -21,9 +21,11 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -49,7 +51,11 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { acpPermissionOutcome, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import {
+  mapAcpToAdapterError,
+  selectAcpPermissionOptionId,
+  unifiedDiffFromToolCallContent,
+} from "../acp/AcpAdapterSupport.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -57,7 +63,9 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpTokenUsageEvent,
   makeAcpToolCallEvent,
+  makeAcpTurnDiffEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import {
   type AcpSessionMode,
@@ -86,6 +94,13 @@ const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonStri
 
 const PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_RESUME_VERSION = 1 as const;
+/**
+ * Tool kinds `auto-accept-edits` approves without asking: workspace file
+ * changes plus reads (strictly less dangerous than the edits it approves).
+ * Command execution and unknown kinds still prompt.
+ */
+const AUTO_ACCEPTED_EDIT_KINDS: ReadonlySet<string> = new Set(["edit", "delete", "move", "read"]);
+
 const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
 const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
 const ACP_APPROVAL_MODE_ALIASES = ["ask"];
@@ -116,7 +131,22 @@ export interface CursorAdapterLiveOptions {
    * the latest snapshot so the closure isn't stale.
    */
   readonly resolveSettings?: Effect.Effect<CursorSettings>;
+  /** Override the conservative turn liveness timeout in focused tests. */
+  readonly turnInactivityTimeoutMs?: number;
+  /** Override the longer active-tool liveness timeout in focused tests. */
+  readonly activeToolInactivityTimeoutMs?: number;
+  /** Override how long a stalled turn gets to wind down after cancel. */
+  readonly stallCancelGraceMs?: number;
 }
+
+const DEFAULT_CURSOR_TURN_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1_000;
+const DEFAULT_CURSOR_ACTIVE_TOOL_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1_000;
+const DEFAULT_CURSOR_STALL_CANCEL_GRACE_MS = 15_000;
+
+const normalizeTimeoutMs = (requested: number | undefined, fallback: number): number =>
+  typeof requested === "number" && Number.isFinite(requested)
+    ? Math.max(1, Math.floor(requested))
+    : fallback;
 
 interface PendingApproval {
   readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
@@ -139,6 +169,10 @@ interface CursorSessionContext {
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
   cursorSkillNames: ReadonlySet<string> | undefined;
+  /** Monotonic-ish activity clock the liveness watchdog reads; refreshed on
+   * every session notification and while approvals or user inputs pend. */
+  lastActivityAtMillis: number;
+  readonly activeToolCallIds: Set<string>;
   /** Number of sendTurn prompts currently in flight or being prepared.
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
@@ -220,35 +254,42 @@ function isPlanMode(mode: AcpSessionMode): boolean {
   return findModeByAliases([mode], ACP_PLAN_MODE_ALIASES) !== undefined;
 }
 
+interface ResolvedRequestedMode {
+  readonly modeId: string | undefined;
+  /** False when no alias matched and the id is a last-resort fallback. */
+  readonly aliasMatched: boolean;
+}
+
 function resolveRequestedModeId(input: {
   readonly interactionMode: ProviderInteractionMode | undefined;
   readonly runtimeMode: RuntimeMode;
   readonly modeState: AcpSessionModeState | undefined;
-}): string | undefined {
+}): ResolvedRequestedMode {
   const modeState = input.modeState;
   if (!modeState) {
-    return undefined;
+    return { modeId: undefined, aliasMatched: true };
   }
 
   if (input.interactionMode === "plan") {
-    return findModeByAliases(modeState.availableModes, ACP_PLAN_MODE_ALIASES)?.id;
+    const planModeId = findModeByAliases(modeState.availableModes, ACP_PLAN_MODE_ALIASES)?.id;
+    return { modeId: planModeId, aliasMatched: planModeId !== undefined };
   }
 
-  if (input.runtimeMode === "approval-required") {
-    return (
-      findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
-      findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
-      modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
-      modeState.currentModeId
-    );
+  const aliasOrder =
+    input.runtimeMode === "approval-required"
+      ? [ACP_APPROVAL_MODE_ALIASES, ACP_IMPLEMENT_MODE_ALIASES]
+      : [ACP_IMPLEMENT_MODE_ALIASES, ACP_APPROVAL_MODE_ALIASES];
+  for (const aliases of aliasOrder) {
+    const matched = findModeByAliases(modeState.availableModes, aliases)?.id;
+    if (matched !== undefined) {
+      return { modeId: matched, aliasMatched: true };
+    }
   }
-
-  return (
-    findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
-    findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
-    modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
-    modeState.currentModeId
-  );
+  return {
+    modeId:
+      modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ?? modeState.currentModeId,
+    aliasMatched: false,
+  };
 }
 
 function applyRequestedSessionConfiguration<E>(input: {
@@ -265,6 +306,8 @@ function applyRequestedSessionConfiguration<E>(input: {
     readonly cause: import("effect-acp/errors").AcpError;
     readonly method: "session/set_config_option" | "session/set_mode";
   }) => E;
+  /** Observes an alias-match miss, so the adapter can surface a config warning. */
+  readonly onModeAliasFallback?: (fallbackModeId: string) => Effect.Effect<void>;
 }): Effect.Effect<void, E> {
   return Effect.gen(function* () {
     if (input.modelSelection) {
@@ -280,16 +323,19 @@ function applyRequestedSessionConfiguration<E>(input: {
       });
     }
 
-    const requestedModeId = resolveRequestedModeId({
+    const requestedMode = resolveRequestedModeId({
       interactionMode: input.interactionMode,
       runtimeMode: input.runtimeMode,
       modeState: yield* input.runtime.getModeState,
     });
-    if (!requestedModeId) {
+    if (requestedMode.modeId === undefined) {
       return;
     }
+    if (!requestedMode.aliasMatched && input.onModeAliasFallback) {
+      yield* input.onModeAliasFallback(requestedMode.modeId);
+    }
 
-    yield* input.runtime.setMode(requestedModeId).pipe(
+    yield* input.runtime.setMode(requestedMode.modeId).pipe(
       Effect.mapError((cause) =>
         input.mapError({
           cause,
@@ -341,6 +387,19 @@ export function makeCursorAdapter(
     const sessions = new Map<ThreadId, CursorSessionContext>();
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+    const turnInactivityTimeoutMs = normalizeTimeoutMs(
+      options?.turnInactivityTimeoutMs,
+      DEFAULT_CURSOR_TURN_INACTIVITY_TIMEOUT_MS,
+    );
+    const activeToolInactivityTimeoutMs = normalizeTimeoutMs(
+      options?.activeToolInactivityTimeoutMs,
+      DEFAULT_CURSOR_ACTIVE_TOOL_INACTIVITY_TIMEOUT_MS,
+    );
+    const stallCancelGraceMs = normalizeTimeoutMs(
+      options?.stallCancelGraceMs,
+      DEFAULT_CURSOR_STALL_CANCEL_GRACE_MS,
+    );
+    const livenessPollMs = Math.min(Math.max(Math.floor(turnInactivityTimeoutMs / 4), 50), 1_000);
 
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const randomUUIDv4 = crypto.randomUUIDv4.pipe(
@@ -369,6 +428,26 @@ export function makeCursorAdapter(
 
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
+
+    // The CLI's mode ids are matched by alias strings; when none match we
+    // fall back to the current mode, and the user deserves to know their
+    // requested mode was not applied verbatim.
+    const emitModeAliasFallbackWarning = (threadId: ThreadId, fallbackModeId: string) =>
+      makeEventStamp().pipe(
+        Effect.flatMap((stamp) =>
+          offerRuntimeEvent({
+            type: "config.warning",
+            ...stamp,
+            provider: PROVIDER,
+            threadId,
+            payload: {
+              summary: "Cursor reported no session mode matching the requested T3 mode.",
+              details: `Staying on the Cursor mode "${fallbackModeId}". The CLI's mode names may have changed; approvals still apply as configured.`,
+            },
+          }),
+        ),
+        Effect.orDie,
+      );
 
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
@@ -462,7 +541,10 @@ export function makeCursorAdapter(
       return Effect.succeed(ctx);
     };
 
-    const stopSessionInternal = (ctx: CursorSessionContext) =>
+    const stopSessionInternal = (
+      ctx: CursorSessionContext,
+      exit?: { readonly kind: "graceful" | "error"; readonly reason?: string },
+    ) =>
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
@@ -478,7 +560,10 @@ export function makeCursorAdapter(
           ...(yield* makeEventStamp()),
           provider: PROVIDER,
           threadId: ctx.threadId,
-          payload: { exitKind: "graceful" },
+          payload: {
+            exitKind: exit?.kind ?? "graceful",
+            ...(exit?.reason !== undefined ? { reason: exit.reason } : {}),
+          },
         });
       });
 
@@ -679,7 +764,17 @@ export function makeCursorAdapter(
                     params,
                     "acp.jsonrpc",
                   );
-                  if (input.runtimeMode === "full-access") {
+                  const permissionRequest = parsePermissionRequest(params);
+                  // Per-mode decision table. Cursor exposes no acceptEdits-like
+                  // ACP session mode, so `auto-accept-edits` is applied here by
+                  // tool kind, and `auto` deliberately prompts — the blessed
+                  // fallback for providers without an equivalent mode (see
+                  // docs/user/permission-modes.md).
+                  const autoApprove =
+                    input.runtimeMode === "full-access" ||
+                    (input.runtimeMode === "auto-accept-edits" &&
+                      AUTO_ACCEPTED_EDIT_KINDS.has(permissionRequest.kind));
+                  if (autoApprove) {
                     const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
                     if (autoApprovedOptionId !== undefined) {
                       return {
@@ -690,7 +785,6 @@ export function makeCursorAdapter(
                       };
                     }
                   }
-                  const permissionRequest = parsePermissionRequest(params);
                   const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
                   const runtimeRequestId = RuntimeRequestId.make(requestId);
                   const decision = yield* Deferred.make<ProviderApprovalDecision>();
@@ -729,17 +823,40 @@ export function makeCursorAdapter(
                       decision: resolved,
                     }),
                   );
+                  // Ids come from the request's own options; answering with an
+                  // id the agent never offered would be a protocol violation,
+                  // so an unresolvable decision cancels instead.
+                  const selectedOptionId =
+                    resolved === "cancel"
+                      ? undefined
+                      : selectAcpPermissionOptionId(params, resolved);
                   return {
                     outcome:
-                      resolved === "cancel"
+                      selectedOptionId === undefined
                         ? ({ outcome: "cancelled" } as const)
                         : {
                             outcome: "selected" as const,
-                            optionId: acpPermissionOutcome(resolved),
+                            optionId: selectedOptionId,
                           },
                   };
                 }),
               ),
+            );
+            // Cheap diagnostics for extension methods this adapter does not
+            // know yet: log them instead of failing the whole notification
+            // stream silently when the Cursor CLI grows new surface.
+            yield* acp.handleUnknownExtRequest((method, params) =>
+              Effect.gen(function* () {
+                yield* Effect.ignore(logNative(input.threadId, method, params, "acp.jsonrpc"));
+                yield* Effect.logDebug("Unhandled Cursor ACP extension request.", { method });
+                return yield* EffectAcpErrors.AcpRequestError.methodNotFound(method);
+              }),
+            );
+            yield* acp.handleUnknownExtNotification((method, params) =>
+              Effect.gen(function* () {
+                yield* Effect.ignore(logNative(input.threadId, method, params, "acp.jsonrpc"));
+                yield* Effect.logDebug("Unhandled Cursor ACP extension notification.", { method });
+              }),
             );
             return yield* acp.start();
           }).pipe(
@@ -755,6 +872,8 @@ export function makeCursorAdapter(
             modelSelection: cursorModelSelection,
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
+            onModeAliasFallback: (fallbackModeId) =>
+              emitModeAliasFallbackWarning(input.threadId, fallbackModeId),
           });
 
           const now = yield* nowIso;
@@ -786,6 +905,8 @@ export function makeCursorAdapter(
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
             cursorSkillNames: undefined,
+            lastActivityAtMillis: yield* Clock.currentTimeMillis,
+            activeToolCallIds: new Set<string>(),
             promptsInFlight: 0,
             stopped: false,
           };
@@ -793,6 +914,19 @@ export function makeCursorAdapter(
           const nf = yield* Stream.runDrain(
             Stream.mapEffect(acp.getEvents(), (event) =>
               Effect.gen(function* () {
+                if (event._tag !== "EventStreamBarrier") {
+                  ctx.lastActivityAtMillis = yield* Clock.currentTimeMillis;
+                  if (event._tag === "ToolCallUpdated") {
+                    if (
+                      event.toolCall.status === "completed" ||
+                      event.toolCall.status === "failed"
+                    ) {
+                      ctx.activeToolCallIds.delete(event.toolCall.toolCallId);
+                    } else {
+                      ctx.activeToolCallIds.add(event.toolCall.toolCallId);
+                    }
+                  }
+                }
                 switch (event._tag) {
                   case "EventStreamBarrier":
                     yield* Deferred.succeed(event.acknowledge, undefined);
@@ -808,6 +942,7 @@ export function makeCursorAdapter(
                         turnId: ctx.activeTurnId,
                         itemId: event.itemId,
                         lifecycle: "item.started",
+                        ...(event.itemType !== undefined ? { itemType: event.itemType } : {}),
                       }),
                     );
                     return;
@@ -820,6 +955,7 @@ export function makeCursorAdapter(
                         turnId: ctx.activeTurnId,
                         itemId: event.itemId,
                         lifecycle: "item.completed",
+                        ...(event.itemType !== undefined ? { itemType: event.itemType } : {}),
                       }),
                     );
                     return;
@@ -838,7 +974,7 @@ export function makeCursorAdapter(
                       "session/update",
                     );
                     return;
-                  case "ToolCallUpdated":
+                  case "ToolCallUpdated": {
                     yield* logNative(
                       ctx.threadId,
                       "session/update",
@@ -855,7 +991,29 @@ export function makeCursorAdapter(
                         rawPayload: event.rawPayload,
                       }),
                     );
+                    // Cursor reports completed file edits with `diff` content
+                    // entries. Surface them as turn.diff.updated so the
+                    // orchestrator creates a placeholder checkpoint mid-turn
+                    // (verified live against cursor-agent 2026.08.25).
+                    if (event.toolCall.status === "completed") {
+                      const unifiedDiff = unifiedDiffFromToolCallContent(
+                        event.toolCall.data.content,
+                      );
+                      if (unifiedDiff !== undefined) {
+                        yield* offerRuntimeEvent(
+                          makeAcpTurnDiffEvent({
+                            stamp: yield* makeEventStamp(),
+                            provider: PROVIDER,
+                            threadId: ctx.threadId,
+                            turnId: ctx.activeTurnId,
+                            unifiedDiff,
+                            rawPayload: event.rawPayload,
+                          }),
+                        );
+                      }
+                    }
                     return;
+                  }
                   case "ContentDelta":
                     yield* logNative(
                       ctx.threadId,
@@ -871,6 +1029,51 @@ export function makeCursorAdapter(
                         turnId: ctx.activeTurnId,
                         ...(event.itemId ? { itemId: event.itemId } : {}),
                         text: event.text,
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
+                  case "ThoughtDelta":
+                    yield* logNative(
+                      ctx.threadId,
+                      "session/update",
+                      event.rawPayload,
+                      "acp.jsonrpc",
+                    );
+                    yield* offerRuntimeEvent(
+                      makeAcpContentDeltaEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: ctx.activeTurnId,
+                        ...(event.itemId ? { itemId: event.itemId } : {}),
+                        text: event.text,
+                        streamKind: "reasoning_text",
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
+                  case "AvailableCommandsUpdated":
+                    // Retained on the runtime for snapshot discovery; nothing
+                    // to project into the thread timeline.
+                    return;
+                  case "UsageUpdated":
+                    yield* logNative(
+                      ctx.threadId,
+                      "session/update",
+                      event.rawPayload,
+                      "acp.jsonrpc",
+                    );
+                    yield* offerRuntimeEvent(
+                      makeAcpTokenUsageEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: ctx.activeTurnId,
+                        usage: {
+                          usedTokens: event.usedTokens,
+                          ...(event.maxTokens !== undefined ? { maxTokens: event.maxTokens } : {}),
+                        },
                         rawPayload: event.rawPayload,
                       }),
                     );
@@ -892,6 +1095,89 @@ export function makeCursorAdapter(
           );
 
           ctx.notificationFiber = nf;
+
+          // Lean liveness guard: a prompt that produces no session activity
+          // for the deadline (longer while a tool runs; paused while an
+          // approval or question waits on the user) is cancelled, and an
+          // agent that ignores the cancel is settled as failed and shut down
+          // so the thread never hangs forever.
+          yield* Effect.gen(function* () {
+            while (true) {
+              yield* Effect.sleep(Duration.millis(livenessPollMs));
+              if (ctx.stopped) {
+                return;
+              }
+              if (ctx.promptsInFlight === 0) {
+                continue;
+              }
+              const now = yield* Clock.currentTimeMillis;
+              if (ctx.pendingApprovals.size > 0 || ctx.pendingUserInputs.size > 0) {
+                ctx.lastActivityAtMillis = now;
+                continue;
+              }
+              const deadlineMs =
+                ctx.activeToolCallIds.size > 0
+                  ? activeToolInactivityTimeoutMs
+                  : turnInactivityTimeoutMs;
+              if (now - ctx.lastActivityAtMillis < deadlineMs) {
+                continue;
+              }
+              const stalledTurnId = ctx.activeTurnId;
+              const idleMs = now - ctx.lastActivityAtMillis;
+              yield* Effect.logWarning("Cursor turn stalled without activity; cancelling.", {
+                threadId: input.threadId,
+                idleMs,
+              });
+              yield* offerRuntimeEvent({
+                type: "runtime.error",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId: stalledTurnId,
+                payload: {
+                  message: `The Cursor agent produced no activity for ${Math.round(idleMs / 1_000)}s; the turn was cancelled.`,
+                },
+              });
+              // The runtime settles the prompt locally on cancel even when
+              // the agent ignores it, so the turn always completes from here.
+              yield* Effect.ignore(ctx.acp.cancel);
+              yield* Effect.sleep(Duration.millis(stallCancelGraceMs));
+              if (ctx.stopped) {
+                return;
+              }
+              if (ctx.promptsInFlight === 0) {
+                continue;
+              }
+              // Backstop for a prompt that somehow survived the cancel.
+              const stallMessage =
+                "The Cursor agent stopped responding and did not react to a cancel; the session was shut down.";
+              yield* offerRuntimeEvent({
+                type: "turn.completed",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId: stalledTurnId,
+                payload: {
+                  state: "failed",
+                  stopReason: null,
+                  errorMessage: stallMessage,
+                },
+              });
+              // Detached: the stop closes ctx.scope, which interrupts this
+              // watchdog fiber — running it inline would deadlock on itself.
+              yield* Effect.forkDetach(
+                stopSessionInternal(ctx, {
+                  kind: "error",
+                  reason: stallMessage,
+                }),
+              );
+              return;
+            }
+          }).pipe(
+            Effect.catch((cause) => Effect.logError("Cursor liveness watchdog failed.", { cause })),
+            Effect.forkIn(ctx.scope),
+          );
+
           sessions.set(input.threadId, ctx);
           sessionScopeTransferred = true;
 
@@ -952,6 +1238,8 @@ export function makeCursorAdapter(
                   },
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
+            onModeAliasFallback: (fallbackModeId) =>
+              emitModeAliasFallbackWarning(input.threadId, fallbackModeId),
           });
           ctx.activeTurnId = turnId;
           if (steeringTurnId === undefined) {
@@ -1051,6 +1339,46 @@ export function makeCursorAdapter(
               Effect.mapError((error) =>
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
               ),
+              // A prompt failure must leave a user-visible trace: the turn
+              // settles as failed (unless a steer prompt still runs) and a
+              // dead agent process is reported as an error exit rather than
+              // a zombie session. Interrupt-driven teardown already stopped
+              // the session, so nothing fires then.
+              Effect.tapError((error) =>
+                Effect.gen(function* () {
+                  if (ctx.stopped) {
+                    return;
+                  }
+                  yield* offerRuntimeEvent({
+                    type: "runtime.error",
+                    ...(yield* makeEventStamp()),
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    turnId,
+                    payload: { message: `Cursor prompt failed: ${error.message}` },
+                  });
+                  if (ctx.promptsInFlight === 1) {
+                    yield* offerRuntimeEvent({
+                      type: "turn.completed",
+                      ...(yield* makeEventStamp()),
+                      provider: PROVIDER,
+                      threadId: input.threadId,
+                      turnId,
+                      payload: {
+                        state: "failed",
+                        stopReason: null,
+                        errorMessage: error.message,
+                      },
+                    });
+                  }
+                  if (error._tag === "ProviderAdapterSessionClosedError") {
+                    yield* stopSessionInternal(ctx, {
+                      kind: "error",
+                      reason: "The Cursor agent process exited unexpectedly.",
+                    });
+                  }
+                }),
+              ),
             );
 
           const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
@@ -1065,6 +1393,34 @@ export function makeCursorAdapter(
             updatedAt: yield* nowIso,
             model: resolvedModel,
           };
+
+          // Per-turn token totals ride the prompt response when the CLI
+          // reports them; the context-window figures stream separately as
+          // usage_update notifications.
+          const usage = result.usage;
+          if (usage && usage.totalTokens > 0) {
+            yield* offerRuntimeEvent(
+              makeAcpTokenUsageEvent({
+                stamp: yield* makeEventStamp(),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId,
+                usage: {
+                  usedTokens: usage.totalTokens,
+                  inputTokens: usage.inputTokens,
+                  outputTokens: usage.outputTokens,
+                  ...(typeof usage.cachedReadTokens === "number"
+                    ? { cachedInputTokens: usage.cachedReadTokens }
+                    : {}),
+                  ...(typeof usage.thoughtTokens === "number"
+                    ? { reasoningOutputTokens: usage.thoughtTokens }
+                    : {}),
+                  lastInputTokens: usage.inputTokens,
+                  lastOutputTokens: usage.outputTokens,
+                },
+              }),
+            );
+          }
 
           // Only the last remaining prompt settles the turn — a steer-
           // superseded prompt resolving (usually cancelled) while another is
@@ -1187,10 +1543,10 @@ export function makeCursorAdapter(
       });
 
     const stopAll: CursorAdapterShape["stopAll"] = () =>
-      Effect.forEach(sessions.values(), stopSessionInternal, { discard: true });
+      Effect.forEach(sessions.values(), (ctx) => stopSessionInternal(ctx), { discard: true });
 
     yield* Effect.addFinalizer(() =>
-      Effect.forEach(sessions.values(), stopSessionInternal, { discard: true }).pipe(
+      Effect.forEach(sessions.values(), (ctx) => stopSessionInternal(ctx), { discard: true }).pipe(
         Effect.catch((cause) =>
           Effect.logError("Failed to emit Cursor session shutdown event.", { cause }),
         ),

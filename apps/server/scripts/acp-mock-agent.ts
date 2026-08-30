@@ -7,9 +7,10 @@ import * as Effect from "effect/Effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 
+import * as Schema from "effect/Schema";
 import * as EffectAcpAgent from "effect-acp/agent";
 import * as AcpError from "effect-acp/errors";
-import type * as AcpSchema from "effect-acp/schema";
+import * as AcpSchema from "effect-acp/schema";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
@@ -28,6 +29,8 @@ const emitXAiAskUserQuestionThenHang =
 const emitContentThenHang = process.env.T3_ACP_EMIT_CONTENT_THEN_HANG === "1";
 const emitPlanThenHang = process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1";
 const emitActiveToolThenHang = process.env.T3_ACP_EMIT_ACTIVE_TOOL_THEN_HANG === "1";
+const emitToolDiff = process.env.T3_ACP_EMIT_TOOL_DIFF === "1";
+const decodePromptResponseUsage = Schema.decodeEffect(Schema.fromJsonString(AcpSchema.Usage));
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
@@ -498,6 +501,19 @@ const program = Effect.gen(function* () {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }
 
+      if (process.env.T3_ACP_EXIT_MID_PROMPT === "1") {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "about to crash" },
+          },
+        });
+        // Simulate the agent process dying mid-turn: the prompt request never
+        // gets a response, the transport just closes.
+        process.exit(1);
+      }
+
       if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 1) {
         return {
           stopReason: "end_turn",
@@ -591,6 +607,40 @@ const program = Effect.gen(function* () {
           },
         });
         return yield* Effect.never;
+      }
+
+      // Mirrors the real cursor-agent (2026.08.25) file-edit shape: an edit
+      // tool_call whose completed update carries `diff` content entries.
+      if (emitToolDiff) {
+        const toolCallId = "tool-call-diff-1";
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "Edit File",
+            kind: "edit",
+            status: "pending",
+            rawInput: {},
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: "completed",
+            content: [
+              {
+                type: "diff",
+                path: "/workspace/probe-note.txt",
+                oldText: null,
+                newText: "hi there",
+              },
+            ],
+          },
+        });
+        return { stopReason: "end_turn" };
       }
 
       if (emitActiveToolThenHang) {
@@ -776,7 +826,7 @@ const program = Effect.gen(function* () {
             toolCall: {
               toolCallId: index === 0 ? toolCallId : `${toolCallId}-${index + 1}`,
               title: process.env.T3_ACP_PERMISSION_TITLE ?? `\`${command}\``,
-              kind: "execute",
+              kind: (process.env.T3_ACP_PERMISSION_TOOL_KIND ?? "execute") as AcpSchema.ToolKind,
               status: "pending",
               rawInput: {
                 variant: "Bash",
@@ -795,10 +845,18 @@ const program = Effect.gen(function* () {
             },
             options: permissionOptions,
           });
+          // A selected id the agent never offered is a protocol violation the
+          // way a real agent would see it; treat it as unanswered so tests
+          // catch clients that fabricate option ids instead of resolving them.
+          const advertisedOptionIds = new Set(permissionOptions.map((option) => option.optionId));
+          const selectedUnknownOption =
+            permission.outcome.outcome === "selected" &&
+            !advertisedOptionIds.has(permission.outcome.optionId);
           cancelled =
             cancelled ||
             cancelledSessions.delete(requestedSessionId) ||
-            permission.outcome.outcome === "cancelled";
+            permission.outcome.outcome === "cancelled" ||
+            selectedUnknownOption;
           if (cancelled) {
             break;
           }
@@ -1040,6 +1098,23 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
+      if (process.env.T3_ACP_EMIT_THOUGHT_CHUNKS === "1") {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "thinking about the request" },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: " some more" },
+          },
+        });
+      }
+
       yield* agent.client.sessionUpdate({
         sessionId: requestedSessionId,
         update: {
@@ -1067,12 +1142,45 @@ const program = Effect.gen(function* () {
         },
       });
 
+      if (process.env.T3_ACP_EMIT_USAGE_UPDATE === "1") {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "usage_update",
+            used: 1_234,
+            size: 200_000,
+          },
+        });
+      }
+
+      const promptResponseUsageJson = process.env.T3_ACP_PROMPT_RESPONSE_USAGE;
+      if (promptResponseUsageJson) {
+        return {
+          stopReason: "end_turn",
+          usage: yield* decodePromptResponseUsage(promptResponseUsageJson).pipe(Effect.orDie),
+        };
+      }
+
       return { stopReason: "end_turn" };
     }),
   );
 
   yield* agent.handleUnknownExtRequest((method, params) => {
     if (method === "cursor/list_available_models") {
+      // Sent after session start like the real CLI does; stdio ordering puts
+      // the notification ahead of this request's response.
+      if (process.env.T3_ACP_EMIT_AVAILABLE_COMMANDS === "1") {
+        writeJsonRpcNotification("session/update", {
+          sessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              { name: "review", description: "Review the current changes" },
+              { name: "test", description: "Run the project's tests" },
+            ],
+          },
+        });
+      }
       return Effect.succeed({
         models: availableModels(),
       });

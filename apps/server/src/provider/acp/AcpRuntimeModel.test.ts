@@ -258,6 +258,84 @@ describe("AcpRuntimeModel", () => {
     }
   });
 
+  it("parses thought chunks and available-command updates", () => {
+    const thought = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "pondering" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(thought.events[0]).toMatchObject({ _tag: "ThoughtDelta", text: "pondering" });
+
+    const commands = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [
+          { name: " review ", description: " Review changes " },
+          { name: "", description: "dropped: blank name" },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(commands.events[0]).toMatchObject({
+      _tag: "AvailableCommandsUpdated",
+      commands: [{ name: "review", description: "Review changes" }],
+    });
+
+    const cleared = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [],
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(cleared.events[0]).toMatchObject({
+      _tag: "AvailableCommandsUpdated",
+      commands: [],
+    });
+  });
+
+  it("parses usage updates into context-window token figures", () => {
+    const result = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 1234.4,
+        size: 200_000,
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({
+      _tag: "UsageUpdated",
+      usedTokens: 1234,
+      maxTokens: 200_000,
+    });
+
+    const zeroUsed = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 0,
+        size: 200_000,
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(zeroUsed.events).toEqual([]);
+
+    const unsizedResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 10,
+        size: 0,
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(unsizedResult.events[0]).toEqual(
+      expect.not.objectContaining({ maxTokens: expect.anything() }),
+    );
+  });
+
   it("trims padded current mode updates before emitting a mode change", () => {
     const result = parseSessionUpdateEvent({
       sessionId: "session-1",

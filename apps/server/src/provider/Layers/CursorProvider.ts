@@ -1,4 +1,3 @@
-import * as NodeOS from "node:os";
 import type {
   CursorSettings,
   ModelCapabilities,
@@ -6,6 +5,7 @@ import type {
   ServerProvider,
   ServerProviderAuth,
   ServerProviderModel,
+  ServerProviderSlashCommand,
   ServerProviderState,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -52,7 +52,6 @@ const decodeCursorListAvailableModelsResponse = Schema.decodeUnknownEffect(
 );
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",
-  badgeLabel: "Early Access",
   showInteractionModeToggle: true,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -550,6 +549,11 @@ export function resolveCursorAcpConfigUpdates(
   return updates;
 }
 
+export interface CursorAcpDiscovery {
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+}
+
 const discoverCursorModelsViaListAvailableModels = (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
@@ -561,7 +565,17 @@ const discoverCursorModelsViaListAvailableModels = (
         yield* acp.start();
         const response = yield* acp.request("cursor/list_available_models", {});
         const decoded = yield* decodeCursorListAvailableModelsResponse(response);
-        return buildCursorDiscoveredModelsFromAvailableModelsResponse(decoded);
+        // Slash commands arrive as an `available_commands_update` notification
+        // shortly after session start; by the time the model request has
+        // round-tripped, any commands the agent sent are retained.
+        const commands = yield* acp.getAvailableCommands;
+        return {
+          models: buildCursorDiscoveredModelsFromAvailableModelsResponse(decoded),
+          slashCommands: commands.map((command) => ({
+            name: command.name,
+            ...(command.description ? { description: command.description } : {}),
+          })),
+        } satisfies CursorAcpDiscovery;
       }),
     environment,
   );
@@ -627,6 +641,7 @@ export function buildCursorProviderSnapshot(input: {
   readonly cursorSettings: CursorSettings;
   readonly parsed: CursorAboutResult;
   readonly discoveredModels?: ReadonlyArray<ServerProviderModel>;
+  readonly slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
   readonly discoveryWarning?: string;
 }): ServerProviderDraft {
   const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
@@ -639,6 +654,7 @@ export function buildCursorProviderSnapshot(input: {
       input.cursorSettings.customModels,
       EMPTY_CAPABILITIES,
     ),
+    ...(input.slashCommands !== undefined ? { slashCommands: input.slashCommands } : {}),
     probe: {
       installed: true,
       version: input.parsed.version,
@@ -663,24 +679,6 @@ export function parseCursorVersionDate(version: string | null | undefined): numb
   }
   const [, year, month, day] = match;
   return Number(`${year}${month}${day}`);
-}
-
-export function parseCursorCliConfigChannel(raw: string): string | undefined {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "channel" in parsed &&
-      typeof parsed.channel === "string"
-    ) {
-      const channel = parsed.channel.trim().toLowerCase();
-      return channel.length > 0 ? channel : undefined;
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
 }
 
 function toTitleCaseWords(value: string): string {
@@ -756,45 +754,20 @@ function isCursorAboutJsonFormatUnsupported(result: CommandResult): boolean {
   );
 }
 
-const readCursorCliConfigChannel = Effect.fn("readCursorCliConfigChannel")(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const configPath = path.join(NodeOS.homedir(), ".cursor", "cli-config.json");
-  const raw = yield* fileSystem.readFileString(configPath).pipe(Effect.orElseSucceed(() => ""));
-  return parseCursorCliConfigChannel(raw);
-});
-
+// The required ACP surface (parameterized model picker included) ships on the
+// stable channel since 2026 stable builds (verified live against
+// cursor-agent 2026.08.25), so only the version floor is checked.
 export function getCursorParameterizedModelPickerUnsupportedMessage(input: {
   readonly version: string | null | undefined;
-  readonly channel: string | null | undefined;
 }): string | undefined {
-  const reasons: Array<string> = [];
   const versionDate = parseCursorVersionDate(input.version);
   if (
-    versionDate !== undefined &&
-    versionDate < CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE
+    versionDate === undefined ||
+    versionDate >= CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE
   ) {
-    reasons.push(
-      `Cursor Agent CLI version ${input.version} is too old for Cursor ACP parameterized model picker`,
-    );
-  }
-
-  const normalizedChannel = input.channel?.trim().toLowerCase();
-  if (
-    normalizedChannel !== undefined &&
-    normalizedChannel.length > 0 &&
-    normalizedChannel !== "lab"
-  ) {
-    reasons.push(
-      `Cursor Agent CLI channel is ${JSON.stringify(input.channel)}, but parameterized model picker is only available on the lab channel`,
-    );
-  }
-
-  if (reasons.length === 0) {
     return undefined;
   }
-
-  return `${reasons.join(". ")}. Run \`agent set-channel lab && agent update\` and use Cursor Agent CLI 2026.04.08 or newer.`;
+  return `Cursor Agent CLI version ${input.version} is too old for Cursor ACP parameterized model picker. Run \`cursor-agent update\` and use Cursor Agent CLI 2026.04.08 or newer.`;
 }
 
 /**
@@ -1056,11 +1029,9 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   }
 
   const parsed = parseCursorAboutOutput(aboutProbe.success.value);
-  const cursorCliConfigChannel = yield* readCursorCliConfigChannel();
   const parameterizedModelPickerUnsupportedMessage =
     getCursorParameterizedModelPickerUnsupportedMessage({
       version: parsed.version,
-      channel: cursorCliConfigChannel,
     });
   if (parameterizedModelPickerUnsupportedMessage) {
     return buildServerProvider({
@@ -1080,7 +1051,8 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       },
     });
   }
-  let discoveredModels = Option.none<ReadonlyArray<ServerProviderModel>>();
+  let discoveredModels: ReadonlyArray<ServerProviderModel> = [];
+  let discoveredSlashCommands: ReadonlyArray<ServerProviderSlashCommand> = [];
   let discoveryWarning: string | undefined;
   if (parsed.auth.status !== "unauthenticated") {
     const discoveryExit = yield* Effect.exit(
@@ -1095,20 +1067,20 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       discoveryWarning = CURSOR_ACP_MODEL_DISCOVERY_FAILED_MESSAGE;
     } else if (Option.isNone(discoveryExit.value)) {
       discoveryWarning = `Cursor ACP model discovery timed out after ${CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`;
-    } else if (discoveryExit.value.value.length === 0) {
+    } else if (discoveryExit.value.value.models.length === 0) {
       discoveryWarning = "Cursor ACP model discovery returned no built-in models.";
+      discoveredSlashCommands = discoveryExit.value.value.slashCommands;
     } else {
-      discoveredModels = discoveryExit.value;
+      discoveredModels = discoveryExit.value.value.models;
+      discoveredSlashCommands = discoveryExit.value.value.slashCommands;
     }
   }
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,
     parsed,
-    discoveredModels: Option.getOrElse(
-      Option.filter(discoveredModels, (models) => models.length > 0),
-      () => [] as const,
-    ),
+    discoveredModels,
+    slashCommands: discoveredSlashCommands,
     ...(discoveryWarning ? { discoveryWarning } : {}),
   });
 });

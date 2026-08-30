@@ -5,7 +5,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Console from "effect/Console";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
@@ -93,6 +95,88 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
       Effect.scoped,
       Effect.provide(NodeServices.layer),
     ),
+  );
+
+  // Runs one real prompt that provokes a permission request and dumps the
+  // agent-defined option ids, plus every session-update kind observed along
+  // the way (usage_update, agent_thought_chunk, available_commands_update).
+  // This is the ground truth behind selectAcpPermissionOptionId and the
+  // token-usage / reasoning / slash-command parsing in AcpRuntimeModel.
+  it.effect(
+    "dumps permission options, modes, and session-update kinds from a real turn",
+    () =>
+      Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+        const observedUpdateKinds = new Set<string>();
+        yield* runtime.handleRequestPermission((params) =>
+          Effect.gen(function* () {
+            yield* Console.log(
+              "session/request_permission options:",
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify(params.options, null, 2),
+            );
+            const rejectOption = params.options.find((option) => option.kind === "reject_once");
+            return {
+              outcome:
+                rejectOption !== undefined
+                  ? { outcome: "selected" as const, optionId: rejectOption.optionId }
+                  : ({ outcome: "cancelled" } as const),
+            };
+          }),
+        );
+        const started = yield* runtime.start();
+        yield* Console.log(
+          "availableModes:",
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          JSON.stringify(started.sessionSetupResult.modes, null, 2),
+        );
+
+        yield* Stream.runForEach(runtime.getEvents(), (event) =>
+          event._tag === "EventStreamBarrier"
+            ? Deferred.succeed(event.acknowledge, undefined)
+            : Effect.sync(() => {
+                observedUpdateKinds.add(event._tag);
+              }),
+        ).pipe(Effect.forkChild);
+
+        yield* runtime.prompt({
+          prompt: [
+            {
+              type: "text",
+              text: "Run `ls` in the current directory, then reply with one word.",
+            },
+          ],
+        });
+        yield* runtime.drainEvents;
+        yield* Console.log("observed parsed event tags:", [...observedUpdateKinds].join(", "));
+        yield* Console.log(
+          "available commands:",
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          JSON.stringify(yield* runtime.getAvailableCommands, null, 2),
+        );
+        expect(typeof started.sessionId).toBe("string");
+      }).pipe(
+        Effect.provide(
+          AcpSessionRuntime.layer({
+            authMethodId: "cursor_login",
+            spawn: {
+              command: "cursor-agent",
+              args: ["acp"],
+              cwd: process.cwd(),
+            },
+            cwd: process.cwd(),
+            clientCapabilities: {
+              _meta: {
+                parameterizedModelPicker: true,
+              },
+            },
+            clientInfo: { name: "t3-probe", version: "0.0.0" },
+          }),
+        ),
+        Effect.scoped,
+        Effect.provide(NodeServices.layer),
+      ),
+    120_000,
   );
 
   it.effect("session/set_config_option switches the model in-session", () =>
