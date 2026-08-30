@@ -23,7 +23,10 @@ import {
   REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS,
   type OrchestrationEffectV2,
 } from "./EffectOutbox.ts";
-import { CheckpointRollbackServiceV2 } from "./CheckpointRollbackService.ts";
+import {
+  type CheckpointRollbackExecutionError,
+  CheckpointRollbackServiceV2,
+} from "./CheckpointRollbackService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderTurnControlServiceV2 } from "./ProviderTurnControlService.ts";
 import { ProviderTurnStartServiceV2 } from "./ProviderTurnStartService.ts";
@@ -51,6 +54,25 @@ function isGuardedCheckpointRestore(effect: OrchestrationEffectV2): boolean {
     effect.request.expectedIdle === true &&
     effect.request.expectedWorkspaceFingerprint !== undefined
   );
+}
+
+function guardedCheckpointRestoreFailureCode(
+  reason: CheckpointRollbackExecutionError["reason"],
+): OrchestrationEffectFailureCodeV2 | undefined {
+  switch (reason) {
+    case "provider-rollback-failed-after-restore":
+    case "post-restore-finalization-failed":
+      return "checkpoint_restore_partial";
+    case "unexpected-failure":
+      return undefined;
+    case "rollback-target-invalid":
+    case "rollback-target-ambiguous":
+    case "active-provider-changed":
+    case "provider-turn-unavailable":
+    case "thread-not-idle":
+    case "restore-precondition-changed":
+      return "checkpoint_restore_rejected";
+  }
 }
 
 /**
@@ -291,12 +313,7 @@ export const executorLayer: Layer.Layer<
               .pipe(
                 Effect.mapError((cause) => {
                   const failureCode: OrchestrationEffectFailureCodeV2 | undefined = guardedRestore
-                    ? cause.reason === "provider-rollback-failed-after-restore" ||
-                      cause.reason === "post-restore-finalization-failed"
-                      ? "checkpoint_restore_partial"
-                      : cause.reason === "unexpected-failure"
-                        ? undefined
-                        : "checkpoint_restore_rejected"
+                    ? guardedCheckpointRestoreFailureCode(cause.reason)
                     : undefined;
                   return new OrchestrationEffectExecutionError({
                     effectId: effect.id,
