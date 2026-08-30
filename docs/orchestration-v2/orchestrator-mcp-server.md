@@ -296,12 +296,13 @@ canonicalized and must resolve to the physical root of a Git worktree belonging 
 project's repository. A root launch still uses the project's configured workspace root, including
 when that execution directory is a subdirectory of the physical Git worktree.
 
-Project selection does not raise the caller's authority. Provider, model, runtime mode, and
-interaction mode still inherit from the caller, and requested modes cannot exceed its permission
-ceiling. Project model and workspace-mode defaults remain client defaults; the MCP request's
-explicit strategy wins, followed by current-checkout reuse in the current project, then target-root
-fallback for a different project. The new threads have no sub-agent lineage. Entries with a prompt
-use the normal deferred launch path; entries without a prompt remain idle.
+Project selection does not raise the caller's authority. Provider and model resolve from an
+explicit `target` when supplied and otherwise inherit from the caller. Runtime and interaction
+modes inherit by default, and requested modes cannot exceed the caller's permission ceiling.
+Project model and workspace-mode defaults remain client defaults; the MCP request's explicit
+strategy wins, followed by current-checkout reuse in the current project, then target-root fallback
+for a different project. The new threads have no sub-agent lineage. Entries with a prompt use the
+normal deferred launch path; entries without a prompt remain idle.
 
 The parent timeline records the selected project alongside each created thread. Cross-project
 recording uses a server-owned orchestration entry point that checks the MCP-selected project
