@@ -300,34 +300,22 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  const providerInstanceEntries = Object.entries(settings.providerInstances);
-  const enabledInstance = providerInstanceEntries.find(([, instance]) =>
-    resolveProviderInstanceEnabled(instance),
-  );
-  const configuredDrivers = new Set(providerInstanceEntries.map(([, instance]) => instance.driver));
-  const enabledLegacyProvider = Object.entries(settings.providers).find(
-    ([driver, provider]) =>
-      provider.enabled && !configuredDrivers.has(ProviderDriverKind.make(driver)),
-  );
-  const fallbackDriver =
-    enabledInstance?.[1].driver ??
-    (enabledLegacyProvider ? ProviderDriverKind.make(enabledLegacyProvider[0]) : undefined);
-  const fallbackInstanceId = enabledInstance
-    ? ProviderInstanceId.make(enabledInstance[0])
-    : fallbackDriver
-      ? ProviderInstanceId.make(fallbackDriver)
-      : undefined;
-  if (!fallbackDriver || !fallbackInstanceId) {
+  const fallbackEntry = Object.entries(settings.providers).find(([driver, provider]) => {
+    const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
+    return provider.enabled && (instance === undefined || resolveProviderInstanceEnabled(instance));
+  });
+  const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
+  if (!fallback) {
     return settings;
   }
 
   return {
     ...settings,
     textGenerationModelSelection: {
-      instanceId: fallbackInstanceId,
+      instanceId: ProviderInstanceId.make(fallback),
       model:
-        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallbackDriver] ??
-        DEFAULT_MODEL_BY_PROVIDER[fallbackDriver] ??
+        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback] ??
+        DEFAULT_MODEL_BY_PROVIDER[fallback] ??
         DEFAULT_TEXT_GENERATION_MODEL,
     } satisfies ModelSelection,
   };

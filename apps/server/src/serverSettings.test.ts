@@ -368,34 +368,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("prefers enabled provider instances for text generation fallbacks", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      const claudeInstanceId = ProviderInstanceId.make("claude_work");
-
-      const instanceFallback = yield* serverSettings.updateSettings({
-        providerInstances: {
-          [ProviderInstanceId.make("codex")]: {
-            driver: ProviderDriverKind.make("codex"),
-            enabled: false,
-            config: {},
-          },
-          [claudeInstanceId]: {
-            driver: ProviderDriverKind.make("claudeAgent"),
-            enabled: true,
-            config: {},
-          },
-        },
-      });
-
-      assert.deepEqual(instanceFallback.textGenerationModelSelection, {
-        instanceId: claudeInstanceId,
-        model: "claude-haiku-4-5",
-      });
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
-  it.effect("skips disabled instance drivers when falling back to legacy providers", () =>
+  it.effect("skips a legacy fallback when its explicit default instance is disabled", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
 
@@ -404,6 +377,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           [ProviderInstanceId.make("codex")]: {
             driver: ProviderDriverKind.make("codex"),
             enabled: false,
+            config: {},
+          },
+          [ProviderInstanceId.make("unavailable_custom")]: {
+            driver: ProviderDriverKind.make("unknown"),
+            enabled: true,
             config: {},
           },
         },
