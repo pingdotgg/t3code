@@ -2018,33 +2018,46 @@ body {
 
 .electron-windows {
   --desktop-window-right-resize-inset: 6px;
-  --desktop-window-canvas: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
-  --desktop-window-sidebar: color-mix(in srgb, var(--sidebar) var(--glass-opacity), transparent);
+  --desktop-window-canvas: var(--background);
 }
 
-html.electron-windows[data-desktop-backdrop="off"] {
-  --desktop-window-canvas: var(--background);
-  --desktop-window-sidebar: var(--sidebar);
+html.electron-windows[data-desktop-backdrop="on"] {
+  --desktop-window-canvas: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
 }
 
 /* Electron's Windows Acrylic backdrop is native to the BrowserWindow. The
    renderer must leave the window and its primary app surfaces translucent so
    that the native material can reach the entire client area. Reuse the
    existing glass opacity preference; web, macOS, Linux, and mobile keep their
-   current surface behavior. */
-html.electron-windows,
-html.electron-windows body,
-html.electron-windows #root,
-html.electron-windows [data-slot="sidebar-wrapper"] {
+   current surface behavior. The explicit canvas marker keeps controls and
+   nested cards on their normal theme surfaces. */
+html.electron-windows[data-desktop-backdrop="on"],
+html.electron-windows[data-desktop-backdrop="on"] body,
+html.electron-windows[data-desktop-backdrop="on"] #root,
+html.electron-windows[data-desktop-backdrop="on"] [data-slot="sidebar-wrapper"] {
   background-color: transparent !important;
 }
 
-html.electron-windows .bg-background,
-html.electron-windows [data-slot="sidebar-inset"] {
+html.electron-windows[data-desktop-backdrop="off"],
+html.electron-windows[data-desktop-backdrop="off"] body,
+html.electron-windows[data-desktop-backdrop="off"] #root,
+html.electron-windows[data-desktop-backdrop="off"] [data-slot="sidebar-wrapper"] {
+  background-color: var(--background) !important;
+}
+
+html.electron-windows [data-slot="sidebar-inset"],
+html.electron-windows .desktop-window-canvas {
   background-color: var(--desktop-window-canvas) !important;
 }
 
-html.electron-windows .bg-sidebar,
+html.electron-windows [data-app-sidebar] {
+  --desktop-window-sidebar: var(--sidebar);
+}
+
+html.electron-windows[data-desktop-backdrop="on"] [data-app-sidebar] {
+  --desktop-window-sidebar: color-mix(in srgb, var(--sidebar) var(--glass-opacity), transparent);
+}
+
 html.electron-windows [data-app-sidebar],
 html.electron-windows [data-slot="sidebar-inner"] {
   background-color: var(--desktop-window-sidebar) !important;

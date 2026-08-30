@@ -857,7 +857,7 @@ export default function FilePreviewPanel({
   }, [absolutePath, createAssetUrl, environmentHttpBaseUrl, openPreview, threadRef]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+    <div className="desktop-window-canvas flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {relativePath ? (
         <div
           className="flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
@@ -1066,7 +1066,7 @@ export default function FilePreviewPanel({
         {explorerOpen || relativePath === null ? (
           <aside
             className={cn(
-              "flex min-h-0 shrink-0 bg-background",
+              "desktop-window-canvas flex min-h-0 shrink-0 bg-background",
               relativePath
                 ? "w-[min(22rem,46%)] min-w-64 border-l border-border/60"
                 : "min-w-0 flex-1",

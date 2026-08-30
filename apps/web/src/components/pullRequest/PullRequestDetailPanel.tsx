@@ -1116,7 +1116,7 @@ export function PullRequestDetailPanel({
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col bg-background">
+    <div className="desktop-window-canvas flex h-full min-h-0 w-full flex-col bg-background">
       <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 border-b border-border/60">
         <div className="ml-4 grid h-7 min-w-0 items-center">
           <div

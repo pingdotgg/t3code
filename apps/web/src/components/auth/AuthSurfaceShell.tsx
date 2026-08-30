@@ -11,7 +11,7 @@ export function AuthSurfaceShell({ children }: { readonly children: ReactNode })
   const stageVariant = resolveSidebarStageBackdropVariant(APP_STAGE_LABEL);
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
+    <div className="desktop-window-canvas relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
       <div className="pointer-events-none absolute inset-0 opacity-80">
         <div className="absolute inset-x-0 top-0 h-72 bg-[radial-gradient(48rem_20rem_at_top,color-mix(in_srgb,var(--color-blue-500)_12%,transparent),transparent)]" />
         <div className="absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_94%,var(--color-black))_0%,var(--background)_62%)]" />

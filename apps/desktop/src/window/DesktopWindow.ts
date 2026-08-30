@@ -21,6 +21,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
+  WINDOW_BACKDROP_STATE_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -133,6 +134,32 @@ function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
 
 const windowsWithAcrylicBackdrop = new WeakSet<Electron.BrowserWindow>();
 const windowsWithoutAcrylicBackdrop = new WeakSet<Electron.BrowserWindow>();
+const windowsManagedForBackdrop = new WeakSet<Electron.BrowserWindow>();
+const windowsWithBackdropStateListener = new WeakSet<Electron.BrowserWindow>();
+
+function sendWindowBackdropState(window: Electron.BrowserWindow): void {
+  if (window.isDestroyed()) return;
+
+  try {
+    window.webContents.send(WINDOW_BACKDROP_STATE_CHANNEL, windowsWithAcrylicBackdrop.has(window));
+  } catch {
+    // The renderer may not be ready yet. The did-finish-load listener retries it.
+  }
+}
+
+function registerWindowBackdropStateSync(window: Electron.BrowserWindow): void {
+  if (!windowsWithBackdropStateListener.has(window)) {
+    try {
+      window.webContents.on("did-finish-load", () => sendWindowBackdropState(window));
+      windowsWithBackdropStateListener.add(window);
+    } catch {
+      // Native appearance must remain best effort if a test double or old shell
+      // does not expose the renderer event surface.
+    }
+  }
+
+  sendWindowBackdropState(window);
+}
 
 export function getWindowBackdropOptions(
   platform: NodeJS.Platform,
@@ -173,6 +200,8 @@ function applyWindowsBackdrop(
     return Effect.void;
   }
 
+  windowsManagedForBackdrop.add(window);
+
   return Effect.try({
     try: () => {
       window.setBackgroundMaterial(desktopBackdropEnabled ? WINDOWS_ACRYLIC_MATERIAL : "none");
@@ -188,6 +217,7 @@ function applyWindowsBackdrop(
     },
     catch: (cause) => cause,
   }).pipe(
+    Effect.andThen(Effect.sync(() => registerWindowBackdropStateSync(window))),
     Effect.catchCause((cause) =>
       Effect.gen(function* () {
         windowsWithAcrylicBackdrop.delete(window);
@@ -197,6 +227,7 @@ function applyWindowsBackdrop(
         } catch {
           // Preserve the original backdrop failure; window creation must stay best effort.
         }
+        registerWindowBackdropStateSync(window);
         yield* logWindowWarning("Windows backdrop material unavailable; using solid background", {
           cause,
         });
@@ -320,12 +351,19 @@ function syncWindowAppearance(
     }
 
     if (platform === "win32") {
-      if (desktopBackdropEnabled && windowsWithAcrylicBackdrop.has(window)) {
-        window.setBackgroundColor(WINDOWS_TRANSPARENT_BACKGROUND_COLOR);
-      } else if (!desktopBackdropEnabled && windowsWithoutAcrylicBackdrop.has(window)) {
-        window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
-      } else {
-        yield* applyWindowsBackdrop(window, platform, shouldUseDarkColors, desktopBackdropEnabled);
+      if (windowsManagedForBackdrop.has(window)) {
+        if (desktopBackdropEnabled && windowsWithAcrylicBackdrop.has(window)) {
+          window.setBackgroundColor(WINDOWS_TRANSPARENT_BACKGROUND_COLOR);
+        } else if (!desktopBackdropEnabled && windowsWithoutAcrylicBackdrop.has(window)) {
+          window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+        } else {
+          yield* applyWindowsBackdrop(
+            window,
+            platform,
+            shouldUseDarkColors,
+            desktopBackdropEnabled,
+          );
+        }
       }
     } else {
       window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));

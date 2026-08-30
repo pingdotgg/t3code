@@ -1147,6 +1147,8 @@ export interface DesktopBridge {
   onQuitShortcut?: (listener: (state: "down" | "up") => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
+  /** Effective native Windows backdrop state. Optional for older desktop shells. */
+  onWindowBackdropStateChange?: (listener: (enabled: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;

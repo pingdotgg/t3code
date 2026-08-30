@@ -127,6 +127,8 @@ function makeFakeBrowserWindow() {
     send: webContents.send,
     setZoomLevel: webContents.setZoomLevel,
     setBackgroundThrottling: webContents.setBackgroundThrottling,
+    setBackgroundColor: window.setBackgroundColor,
+    setBackgroundMaterial: window.setBackgroundMaterial,
     setAutoHideCursor: window.setAutoHideCursor,
     webContentsListeners,
     windowListeners,
@@ -177,17 +179,20 @@ const electronThemeLayer = Layer.succeed(ElectronTheme.ElectronTheme, {
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
-const desktopEnvironmentLayer = DesktopEnvironment.layer(environmentInput).pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      NodeServices.layer,
-      DesktopConfig.layerTest({
-        T3CODE_PORT: "3773",
-        VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
-      }),
+const makeDesktopEnvironmentLayer = (platform: NodeJS.Platform = environmentInput.platform) =>
+  DesktopEnvironment.layer({ ...environmentInput, platform }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest({
+          T3CODE_PORT: "3773",
+          VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+        }),
+      ),
     ),
-  ),
-);
+  );
+
+const desktopEnvironmentLayer = makeDesktopEnvironmentLayer();
 
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(
   DesktopAppSettings.DesktopWindowBoundsSchema,
@@ -206,6 +211,7 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly platform?: NodeJS.Platform;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -264,7 +270,7 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
-        desktopEnvironmentLayer,
+        makeDesktopEnvironmentLayer(input.platform),
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
         desktopServerExposureLayer,
@@ -416,6 +422,28 @@ describe("DesktopWindow", () => {
       backgroundColor: "#0a0a0a",
     });
   });
+
+  it.effect("does not apply the Windows backdrop to unowned auxiliary windows", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        platform: "win32",
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.syncAppearance;
+      }).pipe(Effect.provide(layer));
+
+      assert.equal(fakeWindow.setBackgroundMaterial.mock.calls.length, 0);
+      assert.equal(fakeWindow.setBackgroundColor.mock.calls.length, 0);
+    }),
+  );
 
   it("restores bounds only when the window fits within a connected display", () => {
     const persistedBounds = { x: 2040, y: 80, width: 1320, height: 880 };

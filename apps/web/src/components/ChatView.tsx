@@ -6849,7 +6849,7 @@ function ChatViewContent(props: ChatViewProps) {
     composerBannerItems.length > 0 || Boolean(threadSyncPhase && !activeEnvironmentUnavailable);
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+    <div className="desktop-window-canvas relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
       {rightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
       <div
         className={cn(
@@ -6863,7 +6863,7 @@ function ChatViewContent(props: ChatViewProps) {
           data-chat-header
           electron={isElectron}
           reserveNativeControls={reserveTitleBarControlInset && !inlineRightPanelOwnsTitleBar}
-          className="relative bg-background"
+          className="desktop-window-canvas relative bg-background"
         >
           {!rightPanelOpen ? panelLayoutControls : null}
           <ChatHeader
