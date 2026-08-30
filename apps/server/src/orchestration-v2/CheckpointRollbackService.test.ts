@@ -168,8 +168,8 @@ it.effect("rejects a non-ready checkpoint before opening a session or restoring 
       })
       .pipe(Effect.flip);
 
+    assert(error._tag === "CheckpointRollbackRejectedError");
     assert.equal(error.reason, "rollback-target-invalid");
-    assert.equal(error._tag, "CheckpointRollbackRejectedError");
     assert.equal(
       error.message,
       `Rollback target ${checkpointId} for provider thread ${providerThreadId} on thread ${threadId} is incomplete or invalid.`,
@@ -240,6 +240,7 @@ it.effect("rejects a rollback when another provider thread became active", () =>
       })
       .pipe(Effect.flip);
 
+    assert(error._tag === "CheckpointRollbackRejectedError");
     assert.equal(error.reason, "active-provider-changed");
     assert.equal(
       error.message,
@@ -313,6 +314,7 @@ it.effect("rejects a rollback when provider selection changed before execution",
       })
       .pipe(Effect.flip);
 
+    assert(error._tag === "CheckpointRollbackRejectedError");
     assert.equal(error.reason, "active-provider-changed");
     assert.equal(
       error.message,
@@ -381,6 +383,7 @@ it.effect("reports a missing provider turn as a structured rollback failure", ()
       })
       .pipe(Effect.flip);
 
+    assert(error._tag === "CheckpointRollbackRejectedError");
     assert.equal(error.reason, "provider-turn-unavailable");
     assert.equal(
       error.message,
@@ -391,7 +394,7 @@ it.effect("reports a missing provider turn as a structured rollback failure", ()
   }).pipe(Effect.provide(testLayer));
 });
 
-it.effect("wraps underlying failures with an unexpected-failure reason and cause", () => {
+it.effect("wraps underlying failures with a preflight tag and cause", () => {
   const threadId = ThreadId.make("thread:rollback-unexpected-failure");
   const providerThreadId = ProviderThreadId.make("provider-thread:rollback-unexpected-failure");
   const checkpointId = CheckpointId.make("checkpoint:rollback-unexpected-failure");
@@ -426,7 +429,6 @@ it.effect("wraps underlying failures with an unexpected-failure reason and cause
       })
       .pipe(Effect.flip);
 
-    assert.equal(error.reason, "unexpected-failure");
     assert.equal(error._tag, "CheckpointRollbackPreflightError");
     assert.equal(
       error.message,
@@ -479,7 +481,7 @@ it.effect("opens the provider session before restoring files for legacy rollback
       .execute({ threadId, providerThreadId, checkpointId, scopeId })
       .pipe(Effect.flip);
 
-    assert.equal(error.reason, "unexpected-failure");
+    assert.equal(error._tag, "CheckpointRollbackPreflightError");
     assert.strictEqual(error.cause, openError);
     assert.equal(restore.mock.calls.length, 0);
   }).pipe(Effect.provide(testLayer));
@@ -537,8 +539,8 @@ it.effect("reports an uncertain filesystem restore as partial before provider ro
       })
       .pipe(Effect.flip);
 
+    assert(error._tag === "CheckpointRollbackPartialError");
     assert.equal(error.reason, "post-restore-finalization-failed");
-    assert.equal(error._tag, "CheckpointRollbackPartialError");
     assert.strictEqual(error.cause, restoreError);
     assert.equal(rollbackThread.mock.calls.length, 0);
   }).pipe(Effect.provide(testLayer));
@@ -596,7 +598,7 @@ it.effect("keeps a proven pre-restore failure retryable", () => {
       })
       .pipe(Effect.flip);
 
-    assert.equal(error.reason, "unexpected-failure");
+    assert.equal(error._tag, "CheckpointRollbackPreflightError");
     assert.strictEqual(error.cause, restoreError);
     assert.equal(rollbackThread.mock.calls.length, 0);
   }).pipe(Effect.provide(testLayer));
@@ -648,6 +650,7 @@ it.effect("rejects an ambiguous null-ordinal target inside the worker boundary",
     const error = yield* service
       .execute({ threadId, providerThreadId, checkpointId, scopeId })
       .pipe(Effect.flip);
+    assert(error._tag === "CheckpointRollbackRejectedError");
     assert.equal(error.reason, "rollback-target-ambiguous");
     assert.equal(restore.mock.calls.length, 0);
     assert.equal(open.mock.calls.length, 0);
@@ -711,6 +714,7 @@ it.effect("reports persistence failure after provider rollback as partial", () =
       })
       .pipe(Effect.flip);
 
+    assert(error._tag === "CheckpointRollbackPartialError");
     assert.equal(error.reason, "post-restore-finalization-failed");
     assert.strictEqual(error.cause, persistenceError);
     assert.equal(rollbackThread.mock.calls.length, 1);

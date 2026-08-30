@@ -85,7 +85,6 @@ export class CheckpointRollbackPartialError extends Schema.TaggedErrorClass<Chec
 export class CheckpointRollbackPreflightError extends Schema.TaggedErrorClass<CheckpointRollbackPreflightError>()(
   "CheckpointRollbackPreflightError",
   {
-    reason: Schema.Literal("unexpected-failure"),
     ...CheckpointRollbackErrorFields,
   },
 ) {
@@ -415,7 +414,6 @@ export const layer: Layer.Layer<
             }
             return new CheckpointRollbackPreflightError({
               ...fields,
-              reason: "unexpected-failure",
             });
           }),
         );
@@ -546,7 +544,6 @@ export const layer: Layer.Layer<
             isCheckpointRollbackExecutionError(cause)
               ? cause
               : new CheckpointRollbackPreflightError({
-                  reason: "unexpected-failure",
                   threadId: input.threadId,
                   providerThreadId: input.providerThreadId,
                   checkpointId: input.checkpointId,
