@@ -411,10 +411,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     dispatchLockLayer,
     orchestratorProvided,
     effectWorkerProvided,
-  ).pipe(
-    Layer.provide(worktreeRepairDependenciesTestLayer),
-    Layer.provide(NodeServices.layer),
-  );
+  ).pipe(Layer.provide(worktreeRepairDependenciesTestLayer), Layer.provide(NodeServices.layer));
 
   // Build the daemon from the exact worker instance exposed alongside the
   // orchestrator. Keeping this acquisition in the replay layer makes the
