@@ -153,7 +153,9 @@ struct FeatureComposerTraitsControl: Equatable {
     ) -> String {
         if case .string(let selected)? = selections.first(where: {
             $0.id == descriptor.id
-        })?.value, choices.contains(where: { $0.id == selected }) {
+        })?.value,
+           choices.contains(where: { $0.id == selected })
+               || (descriptor.promptInjectedValues ?? []).contains(selected) {
             return selected
         }
         if case .string(let defaultID) = descriptor.defaultValue,
