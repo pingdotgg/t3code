@@ -37,9 +37,8 @@ import {
 } from "../orchestration-v2/Orchestrator.ts";
 import { ProjectionStoreThreadNotFoundError } from "../orchestration-v2/ProjectionStore.ts";
 import {
-  ThreadManagementProjectionLoadError,
+  type ThreadManagementError,
   ThreadManagementService,
-  ThreadManagementThreadNotFoundError,
 } from "../orchestration-v2/ThreadManagementService.ts";
 import { interactionModeWithinMcpCeiling, runtimeModeWithinMcpCeiling } from "./McpModeCeilings.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
@@ -104,18 +103,32 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-const isThreadNotFound = Schema.is(ThreadManagementThreadNotFoundError);
-const isProjectionLoadError = Schema.is(ThreadManagementProjectionLoadError);
 const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
 const isProjectionStoreThreadNotFound = Schema.is(ProjectionStoreThreadNotFoundError);
 
-function isMissingChild(error: unknown): boolean {
-  if (isThreadNotFound(error)) return true;
-  if (!isProjectionLoadError(error) || !isOrchestratorProjectionError(error.cause)) return false;
-  return isProjectionStoreThreadNotFound(error.cause.cause);
+function isMissingChild(error: ThreadManagementError): boolean {
+  switch (error._tag) {
+    case "ThreadManagementThreadNotFoundError":
+      return true;
+    case "ThreadManagementProjectionLoadError":
+      return (
+        isOrchestratorProjectionError(error.cause) &&
+        isProjectionStoreThreadNotFound(error.cause.cause)
+      );
+    case "ThreadManagementRunNotFoundError":
+    case "ThreadManagementThreadArchivedError":
+    case "ThreadManagementNoSteerableRunError":
+    case "ThreadManagementThreadNotInterruptibleError":
+    case "ThreadManagementProjectThreadsListError":
+    case "ThreadManagementDurableRunProjectionError":
+      return false;
+  }
 }
 
-function projectionFailure(error: unknown, threadId: ThreadId): PendingRequestMcpFailure {
+function projectionFailure(
+  error: ThreadManagementError,
+  threadId: ThreadId,
+): PendingRequestMcpFailure {
   return isMissingChild(error)
     ? failure("child_not_found", `Delegated child thread '${threadId}' was not found.`)
     : failure(
@@ -522,7 +535,7 @@ export const make = Effect.gen(function* () {
         }
         const expectedIds = new Set(item.questions.map((question) => question.id));
         const suppliedIds = Object.keys(input.answers);
-        const missing = [...expectedIds].filter((id) => !(id in input.answers));
+        const missing = [...expectedIds].filter((id) => !Object.hasOwn(input.answers, id));
         const unknown = suppliedIds.filter((answerId) => !expectedIds.has(answerId));
         if (missing.length > 0 || unknown.length > 0) {
           return yield* failure(

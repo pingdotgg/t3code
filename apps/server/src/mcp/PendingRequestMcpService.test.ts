@@ -690,6 +690,41 @@ describe("PendingRequestMcpService", () => {
     ),
   );
 
+  it.effect("requires own answers for prototype-named question IDs", () => {
+    const dispatch = vi.fn(() => Effect.die("missing answers must not dispatch"));
+    const prototypeQuestion = childProjectionWithRequests({
+      childThreadId,
+      requests: [
+        {
+          requestId,
+          questions: [{ ...questions[0]!, id: "toString" }],
+        },
+      ],
+    });
+
+    return Effect.gen(function* () {
+      const service = yield* PendingRequestMcpService;
+      const rejected = yield* service
+        .respond(scope, {
+          childThreadId,
+          requestId,
+          answers: {},
+          clientRequestId: "prototype-question-id",
+        })
+        .pipe(Effect.flip);
+      assert.equal(rejected.code, "invalid_answers");
+      assert.equal(rejected.message, "Missing question IDs: toString.");
+      assert.equal(dispatch.mock.calls.length, 0);
+    }).pipe(
+      Effect.provide(
+        serviceLayer({
+          getChild: () => prototypeQuestion,
+          dispatch,
+        }),
+      ),
+    );
+  });
+
   it.effect("keeps delegated answers within the caller's runtime and interaction ceilings", () =>
     Effect.gen(function* () {
       const service = yield* PendingRequestMcpService;
