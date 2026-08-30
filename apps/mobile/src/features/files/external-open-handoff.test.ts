@@ -160,6 +160,17 @@ describe("downloadHandoffFile", () => {
     expect(fake.state.directories.size).toBe(0);
   });
 
+  it("refuses to download when the abort lands during the prune await", async () => {
+    const abort = new AbortController();
+    // Not aborted at entry; the abort fires while the prune/import awaits are
+    // still settling, before the download could start.
+    const downloading = downloadHandoffFile("https://server/a", "scene.glb", abort.signal);
+    abort.abort();
+
+    await expect(downloading).rejects.toThrow("The download was cancelled.");
+    expect(handoffFiles()).toHaveLength(0);
+  });
+
   it("propagates a caller abort unchanged so a disposed screen stays silent", async () => {
     const abort = new AbortController();
     fake.state.nextDownload = ({ signal }) =>
