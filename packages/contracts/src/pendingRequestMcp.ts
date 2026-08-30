@@ -11,8 +11,16 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { OrchestrationV2UserInputQuestion } from "./orchestrationV2.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+
+export const PENDING_REQUEST_MCP_MAX_QUESTIONS = 20;
+export const PENDING_REQUEST_MCP_MAX_OPTIONS_PER_QUESTION = 20;
+export const PENDING_REQUEST_MCP_MAX_QUESTION_ID_CHARS = 256;
+export const PENDING_REQUEST_MCP_MAX_HEADER_CHARS = 256;
+export const PENDING_REQUEST_MCP_MAX_QUESTION_CHARS = 4_000;
+export const PENDING_REQUEST_MCP_MAX_OPTION_LABEL_CHARS = 256;
+export const PENDING_REQUEST_MCP_MAX_OPTION_DESCRIPTION_CHARS = 2_000;
+export const PENDING_REQUEST_MCP_MAX_TOTAL_QUESTION_CHARS = 32_000;
 
 const PendingRequestMcpLimit = PositiveInt.check(Schema.isLessThanOrEqualTo(50));
 const PendingRequestMcpClientRequestId = TrimmedNonEmptyString.check(
@@ -20,11 +28,13 @@ const PendingRequestMcpClientRequestId = TrimmedNonEmptyString.check(
 ).annotate({ description: "Stable idempotency key to reuse when retrying this response." });
 const PendingRequestMcpAnswer = Schema.Union([
   TrimmedNonEmptyString,
+  Schema.Number,
+  Schema.Boolean,
   Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
 ]);
 
 export const PendingRequestMcpListInput = Schema.Struct({
-  cursor: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))).annotate({
+  cursor: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(4_096))).annotate({
     description: "Opaque cursor returned by the previous list page.",
   }),
   limit: Schema.optional(PendingRequestMcpLimit),
@@ -42,11 +52,27 @@ export const PendingRequestMcpRespondInput = Schema.Struct({
   requestId: RuntimeRequestId,
   answers: Schema.Record(TrimmedNonEmptyString, PendingRequestMcpAnswer).annotate({
     description:
-      "Answers keyed by the exact question IDs returned by list/read. Every question must be answered; values may be one string or a non-empty string array.",
+      "Answers keyed by the exact question IDs returned by list/read. Every question must be answered; values may be a string, number, boolean, or non-empty string array.",
   }),
   clientRequestId: Schema.optional(PendingRequestMcpClientRequestId),
 });
 export type PendingRequestMcpRespondInput = typeof PendingRequestMcpRespondInput.Type;
+
+const PendingRequestMcpQuestion = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(PENDING_REQUEST_MCP_MAX_QUESTION_ID_CHARS)),
+  header: TrimmedNonEmptyString.check(Schema.isMaxLength(PENDING_REQUEST_MCP_MAX_HEADER_CHARS)),
+  question: TrimmedNonEmptyString.check(Schema.isMaxLength(PENDING_REQUEST_MCP_MAX_QUESTION_CHARS)),
+  options: Schema.Array(
+    Schema.Struct({
+      label: TrimmedNonEmptyString.check(
+        Schema.isMaxLength(PENDING_REQUEST_MCP_MAX_OPTION_LABEL_CHARS),
+      ),
+      description: TrimmedNonEmptyString.check(
+        Schema.isMaxLength(PENDING_REQUEST_MCP_MAX_OPTION_DESCRIPTION_CHARS),
+      ),
+    }),
+  ).check(Schema.isMaxLength(PENDING_REQUEST_MCP_MAX_OPTIONS_PER_QUESTION)),
+});
 
 export const PendingRequestMcpRequest = Schema.Struct({
   taskId: NodeId,
@@ -58,7 +84,12 @@ export const PendingRequestMcpRequest = Schema.Struct({
   driverKind: ProviderDriverKind,
   status: Schema.Literals(["pending", "resolved", "expired", "cancelled"]),
   resumable: Schema.Boolean,
-  questions: Schema.Array(OrchestrationV2UserInputQuestion),
+  answerable: Schema.Boolean,
+  questionCount: NonNegativeInt,
+  questionPayloadStatus: Schema.Literals(["complete", "too_large"]),
+  questions: Schema.Array(PendingRequestMcpQuestion).check(
+    Schema.isMaxLength(PENDING_REQUEST_MCP_MAX_QUESTIONS),
+  ),
   createdAt: IsoDateTime,
   resolvedAt: Schema.NullOr(IsoDateTime),
 });
@@ -95,6 +126,7 @@ export class PendingRequestMcpFailure extends Schema.TaggedErrorClass<PendingReq
       "interaction_mode_escalation_denied",
       "invalid_request",
       "invalid_answers",
+      "request_payload_too_large",
       "operation_rejected",
       "orchestration_error",
     ]),

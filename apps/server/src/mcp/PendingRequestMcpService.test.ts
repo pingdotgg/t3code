@@ -3,6 +3,7 @@ import { assert, describe, it, vi } from "@effect/vitest";
 import {
   EnvironmentId,
   NodeId,
+  PENDING_REQUEST_MCP_MAX_QUESTION_CHARS,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -21,7 +22,11 @@ import * as Ref from "effect/Ref";
 
 import type { CommandReceiptV2 } from "../orchestration-v2/CommandReceiptStore.ts";
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import { ProjectionStoreThreadNotFoundError } from "../orchestration-v2/ProjectionStore.ts";
+import {
+  ThreadManagementProjectionLoadError,
+  ThreadManagementService,
+} from "../orchestration-v2/ThreadManagementService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { layer, PendingRequestMcpService } from "./PendingRequestMcpService.ts";
 
@@ -150,10 +155,72 @@ function childProjection(
   } as unknown as OrchestrationV2ThreadProjection;
 }
 
+function parentProjectionWithTasks(
+  tasks: ReadonlyArray<{
+    readonly taskId: ReturnType<typeof NodeId.make>;
+    readonly childThreadId: ReturnType<typeof ThreadId.make>;
+    readonly updatedAt?: typeof now;
+  }>,
+) {
+  const parent = parentProjection();
+  const baseTask = parent.subagents[0];
+  if (baseTask === undefined) throw new Error("Pending-request parent fixture is incomplete.");
+  return {
+    ...parent,
+    subagents: tasks.map((task) => ({
+      ...baseTask,
+      id: task.taskId,
+      threadId: parentThreadId,
+      origin: "app_owned" as const,
+      childThreadId: task.childThreadId,
+      updatedAt: task.updatedAt ?? now,
+    })),
+  } as OrchestrationV2ThreadProjection;
+}
+
+function childProjectionWithRequests(input: {
+  readonly childThreadId: ReturnType<typeof ThreadId.make>;
+  readonly requests: ReadonlyArray<{
+    readonly requestId: ReturnType<typeof RuntimeRequestId.make>;
+    readonly status?: OrchestrationV2RuntimeRequest["status"];
+    readonly questions?: typeof questions;
+  }>;
+}) {
+  const base = childProjection();
+  const providerThread = base.providerThreads[0];
+  const item = base.turnItems.find((candidate) => candidate.type === "user_input_request");
+  if (providerThread === undefined || item?.type !== "user_input_request") {
+    throw new Error("Pending-request test fixture is incomplete.");
+  }
+  return {
+    ...base,
+    thread: { ...base.thread, id: input.childThreadId },
+    runtimeRequests: input.requests.map((request) => ({
+      ...base.runtimeRequests[0],
+      id: request.requestId,
+      nodeId: NodeId.make(`node:pending-request:${request.requestId}`),
+      status: request.status ?? "pending",
+      resolvedAt: request.status === undefined || request.status === "pending" ? null : now,
+    })),
+    turnItems: input.requests.map((request, index) => ({
+      ...item,
+      id: TurnItemId.make(`turn-item:pending-request:${index}`),
+      threadId: input.childThreadId,
+      nodeId: NodeId.make(`node:pending-request:${request.requestId}`),
+      requestId: request.requestId,
+      questions: request.questions ?? questions,
+      status:
+        request.status === undefined || request.status === "pending" ? "waiting" : "completed",
+      completedAt: request.status === undefined || request.status === "pending" ? null : now,
+    })),
+  } as OrchestrationV2ThreadProjection;
+}
+
 function serviceLayer(input: {
   readonly getParent?: () => OrchestrationV2ThreadProjection;
   readonly getChild: () => OrchestrationV2ThreadProjection;
   readonly getThreadProjection?: ThreadManagementService["Service"]["getThreadProjection"];
+  readonly getProjectThread?: ThreadManagementService["Service"]["getProjectThread"];
   readonly getReceipt?: ThreadManagementService["Service"]["getCommandReceipt"];
   readonly dispatch?: ThreadManagementService["Service"]["dispatch"];
 }) {
@@ -165,10 +232,12 @@ function serviceLayer(input: {
           getThreadProjection:
             input.getThreadProjection ??
             (() => Effect.succeed(input.getParent?.() ?? parentProjection())),
-          getProjectThread: ({ threadId }) =>
-            threadId === childThreadId
-              ? Effect.succeed(input.getChild())
-              : Effect.die(new Error(`Unexpected child projection read: ${threadId}`)),
+          getProjectThread:
+            input.getProjectThread ??
+            (({ threadId }) =>
+              threadId === childThreadId
+                ? Effect.succeed(input.getChild())
+                : Effect.die(new Error(`Unexpected child projection read: ${threadId}`))),
           getCommandReceipt: input.getReceipt ?? (() => Effect.succeed(Option.none())),
           dispatch:
             input.dispatch ??
@@ -191,6 +260,8 @@ describe("PendingRequestMcpService", () => {
         assert.equal(listed.requests[0]?.childThreadId, childThreadId);
         assert.equal(listed.requests[0]?.requestId, requestId);
         assert.deepEqual(listed.requests[0]?.questions, questions);
+        assert.equal(listed.requests[0]?.questionPayloadStatus, "complete");
+        assert.isTrue(listed.requests[0]?.answerable);
         assert.equal(listed.nextCursor, null);
 
         const read = yield* service.read(scope, { childThreadId, requestId });
@@ -200,6 +271,223 @@ describe("PendingRequestMcpService", () => {
         assert.isTrue(read.resumable);
       }).pipe(Effect.provide(serviceLayer({ getChild: () => childProjection() }))),
   );
+
+  it.effect("continues by stable task and request identities after prior results change", () =>
+    Effect.gen(function* () {
+      const taskA = NodeId.make("node:pending-request-task-a");
+      const taskB = NodeId.make("node:pending-request-task-b");
+      const childA = ThreadId.make("thread:pending-request-child-a");
+      const childB = ThreadId.make("thread:pending-request-child-b");
+      const requestA = RuntimeRequestId.make("request:pending-request-a");
+      const requestB = RuntimeRequestId.make("request:pending-request-b");
+      const requestC = RuntimeRequestId.make("request:pending-request-c");
+      let parent = parentProjectionWithTasks([
+        { taskId: taskB, childThreadId: childB },
+        { taskId: taskA, childThreadId: childA },
+      ]);
+      let projectionA = childProjectionWithRequests({
+        childThreadId: childA,
+        requests: [{ requestId: requestA }, { requestId: requestB }],
+      });
+      const projectionB = childProjectionWithRequests({
+        childThreadId: childB,
+        requests: [{ requestId: requestC }],
+      });
+
+      yield* Effect.gen(function* () {
+        const service = yield* PendingRequestMcpService;
+        const first = yield* service.list(scope, { limit: 1 });
+        assert.deepEqual(
+          first.requests.map((request) => request.requestId),
+          [requestA],
+        );
+        assert.isNotNull(first.nextCursor);
+
+        parent = parentProjectionWithTasks([
+          {
+            taskId: taskA,
+            childThreadId: childA,
+            updatedAt: DateTime.makeUnsafe("2026-08-29T12:02:00.000Z"),
+          },
+          {
+            taskId: taskB,
+            childThreadId: childB,
+            updatedAt: DateTime.makeUnsafe("2026-08-29T12:01:00.000Z"),
+          },
+        ]);
+        projectionA = childProjectionWithRequests({
+          childThreadId: childA,
+          requests: [{ requestId: requestA, status: "resolved" }, { requestId: requestB }],
+        });
+
+        const second = yield* service.list(scope, {
+          cursor: first.nextCursor ?? undefined,
+          limit: 2,
+        });
+        assert.deepEqual(
+          second.requests.map((request) => request.requestId),
+          [requestB, requestC],
+        );
+        assert.isNull(second.nextCursor);
+      }).pipe(
+        Effect.provide(
+          serviceLayer({
+            getParent: () => parent,
+            getChild: () => projectionA,
+            getProjectThread: ({ threadId }) =>
+              Effect.succeed(threadId === childA ? projectionA : projectionB),
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("bounds empty child scans and returns a continuation for unscanned children", () =>
+    Effect.gen(function* () {
+      const tasks = Array.from({ length: 22 }, (_, index) => ({
+        taskId: NodeId.make(`node:pending-request-empty-${String(index).padStart(2, "0")}`),
+        childThreadId: ThreadId.make(
+          `thread:pending-request-empty-${String(index).padStart(2, "0")}`,
+        ),
+      }));
+      const getProjectThread = vi.fn(({ threadId }) =>
+        Effect.succeed(childProjectionWithRequests({ childThreadId: threadId, requests: [] })),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* PendingRequestMcpService;
+        const first = yield* service.list(scope, { limit: 50 });
+        assert.deepEqual(first.requests, []);
+        assert.isNotNull(first.nextCursor);
+        assert.equal(getProjectThread.mock.calls.length, 20);
+
+        const second = yield* service.list(scope, { cursor: first.nextCursor ?? undefined });
+        assert.deepEqual(second.requests, []);
+        assert.isNull(second.nextCursor);
+        assert.equal(getProjectThread.mock.calls.length, 22);
+      }).pipe(
+        Effect.provide(
+          serviceLayer({
+            getParent: () => parentProjectionWithTasks(tasks),
+            getChild: () => childProjection(),
+            getProjectThread,
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("skips only typed missing children while surfacing projection storage failures", () =>
+    Effect.gen(function* () {
+      const missingTask = NodeId.make("node:pending-request-missing-a");
+      const validTask = NodeId.make("node:pending-request-valid-b");
+      const missingChild = ThreadId.make("thread:pending-request-missing-a");
+      const validChild = ThreadId.make("thread:pending-request-valid-b");
+      const validRequest = RuntimeRequestId.make("request:pending-request-valid");
+      const parent = parentProjectionWithTasks([
+        { taskId: missingTask, childThreadId: missingChild },
+        { taskId: validTask, childThreadId: validChild },
+      ]);
+      const missingCause = new ThreadManagementProjectionLoadError({
+        projectId,
+        threadId: missingChild,
+        cause: new OrchestratorProjectionError({
+          threadId: missingChild,
+          cause: new ProjectionStoreThreadNotFoundError({ threadId: missingChild }),
+        }),
+      });
+      const storageCause = new ThreadManagementProjectionLoadError({
+        projectId,
+        threadId: missingChild,
+        cause: new OrchestratorProjectionError({
+          threadId: missingChild,
+          cause: new Error("sqlite credentials leaked"),
+        }),
+      });
+
+      yield* Effect.gen(function* () {
+        const service = yield* PendingRequestMcpService;
+        const listed = yield* service.list(scope, {});
+        assert.deepEqual(
+          listed.requests.map((request) => request.requestId),
+          [validRequest],
+        );
+      }).pipe(
+        Effect.provide(
+          serviceLayer({
+            getParent: () => parent,
+            getChild: () => childProjection(),
+            getProjectThread: ({ threadId }) =>
+              threadId === missingChild
+                ? Effect.fail(missingCause)
+                : Effect.succeed(
+                    childProjectionWithRequests({
+                      childThreadId: validChild,
+                      requests: [{ requestId: validRequest }],
+                    }),
+                  ),
+          }),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* PendingRequestMcpService;
+        const failed = yield* service.list(scope, {}).pipe(Effect.flip);
+        assert.equal(failed.code, "orchestration_error");
+        assert.notInclude(failed.message, "sqlite credentials leaked");
+      }).pipe(
+        Effect.provide(
+          serviceLayer({
+            getParent: () =>
+              parentProjectionWithTasks([{ taskId: missingTask, childThreadId: missingChild }]),
+            getChild: () => childProjection(),
+            getProjectThread: () => Effect.fail(storageCause),
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("marks oversized provider questions as unavailable and refuses partial answers", () => {
+    const dispatch = vi.fn(() => Effect.die("oversized requests must not dispatch"));
+    const oversizedQuestions = [
+      {
+        ...questions[0]!,
+        question: "q".repeat(PENDING_REQUEST_MCP_MAX_QUESTION_CHARS + 1),
+      },
+    ];
+    const oversized = childProjectionWithRequests({
+      childThreadId,
+      requests: [{ requestId, questions: oversizedQuestions }],
+    });
+
+    return Effect.gen(function* () {
+      const service = yield* PendingRequestMcpService;
+      const read = yield* service.read(scope, { childThreadId, requestId });
+      assert.equal(read.questionPayloadStatus, "too_large");
+      assert.equal(read.questionCount, 1);
+      assert.deepEqual(read.questions, []);
+      assert.isFalse(read.answerable);
+
+      const rejected = yield* service
+        .respond(scope, {
+          childThreadId,
+          requestId,
+          answers: { editor: "Vim" },
+          clientRequestId: "oversized-question",
+        })
+        .pipe(Effect.flip);
+      assert.equal(rejected.code, "request_payload_too_large");
+      assert.equal(dispatch.mock.calls.length, 0);
+    }).pipe(
+      Effect.provide(
+        serviceLayer({
+          getChild: () => oversized,
+          dispatch,
+        }),
+      ),
+    );
+  });
 
   it.effect("keeps projection defects out of MCP failure messages", () =>
     Effect.gen(function* () {

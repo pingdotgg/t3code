@@ -1,5 +1,13 @@
 import {
   CommandId,
+  PENDING_REQUEST_MCP_MAX_HEADER_CHARS,
+  PENDING_REQUEST_MCP_MAX_OPTION_DESCRIPTION_CHARS,
+  PENDING_REQUEST_MCP_MAX_OPTION_LABEL_CHARS,
+  PENDING_REQUEST_MCP_MAX_OPTIONS_PER_QUESTION,
+  PENDING_REQUEST_MCP_MAX_QUESTION_CHARS,
+  PENDING_REQUEST_MCP_MAX_QUESTION_ID_CHARS,
+  PENDING_REQUEST_MCP_MAX_QUESTIONS,
+  PENDING_REQUEST_MCP_MAX_TOTAL_QUESTION_CHARS,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
@@ -24,6 +32,12 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
+  OrchestratorProjectionError,
+  type OrchestratorV2Error,
+} from "../orchestration-v2/Orchestrator.ts";
+import { ProjectionStoreThreadNotFoundError } from "../orchestration-v2/ProjectionStore.ts";
+import {
+  ThreadManagementProjectionLoadError,
   ThreadManagementService,
   ThreadManagementThreadNotFoundError,
 } from "../orchestration-v2/ThreadManagementService.ts";
@@ -31,23 +45,34 @@ import { interactionModeWithinMcpCeiling, runtimeModeWithinMcpCeiling } from "./
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 const DEFAULT_LIST_LIMIT = 20;
+const MAX_LIST_CHILD_PROJECTIONS = 20;
+
+interface ListCursor {
+  readonly taskId: string;
+  readonly requestId: string | null;
+}
 
 function parseListCursor(
   cursor: string | undefined,
-): Effect.Effect<
-  { readonly childIndex: number; readonly requestIndex: number },
-  PendingRequestMcpFailure
-> {
-  if (cursor === undefined) return Effect.succeed({ childIndex: 0, requestIndex: 0 });
-  const match = /^(0|[1-9]\d*):(0|[1-9]\d*)$/.exec(cursor);
+): Effect.Effect<ListCursor | null, PendingRequestMcpFailure> {
+  if (cursor === undefined) return Effect.succeed(null);
+  const match = /^v1:([^:]+):(.*)$/.exec(cursor);
   if (match === null) {
     return Effect.fail(failure("invalid_request", "The pending-request cursor is invalid."));
   }
-  const childIndex = Number(match[1]);
-  const requestIndex = Number(match[2]);
-  return Number.isSafeInteger(childIndex) && Number.isSafeInteger(requestIndex)
-    ? Effect.succeed({ childIndex, requestIndex })
-    : Effect.fail(failure("invalid_request", "The pending-request cursor is invalid."));
+  try {
+    const taskId = decodeURIComponent(match[1] ?? "");
+    const requestId = decodeURIComponent(match[2] ?? "");
+    return taskId.length === 0
+      ? Effect.fail(failure("invalid_request", "The pending-request cursor is invalid."))
+      : Effect.succeed({ taskId, requestId: requestId.length === 0 ? null : requestId });
+  } catch {
+    return Effect.fail(failure("invalid_request", "The pending-request cursor is invalid."));
+  }
+}
+
+function listCursor(taskId: string, requestId: string | null): string {
+  return `v1:${encodeURIComponent(taskId)}:${requestId === null ? "" : encodeURIComponent(requestId)}`;
 }
 
 export class PendingRequestMcpService extends Context.Service<
@@ -76,20 +101,22 @@ function failure(
 }
 
 function errorMessage(error: unknown): string {
-  if (typeof error === "object" && error !== null && "detail" in error) {
-    return String((error as { readonly detail: unknown }).detail);
-  }
-  if (typeof error === "object" && error !== null && "cause" in error) {
-    const cause = (error as { readonly cause: unknown }).cause;
-    if (typeof cause === "string") return cause;
-  }
   return error instanceof Error ? error.message : String(error);
 }
 
 const isThreadNotFound = Schema.is(ThreadManagementThreadNotFoundError);
+const isProjectionLoadError = Schema.is(ThreadManagementProjectionLoadError);
+const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
+const isProjectionStoreThreadNotFound = Schema.is(ProjectionStoreThreadNotFoundError);
+
+function isMissingChild(error: unknown): boolean {
+  if (isThreadNotFound(error)) return true;
+  if (!isProjectionLoadError(error) || !isOrchestratorProjectionError(error.cause)) return false;
+  return isProjectionStoreThreadNotFound(error.cause.cause);
+}
 
 function projectionFailure(error: unknown, threadId: ThreadId): PendingRequestMcpFailure {
-  return isThreadNotFound(error)
+  return isMissingChild(error)
     ? failure("child_not_found", `Delegated child thread '${threadId}' was not found.`)
     : failure(
         "orchestration_error",
@@ -97,16 +124,15 @@ function projectionFailure(error: unknown, threadId: ThreadId): PendingRequestMc
       );
 }
 
-function dispatchFailure(error: unknown): PendingRequestMcpFailure {
-  const tag =
-    typeof error === "object" && error !== null && "_tag" in error
-      ? String((error as { readonly _tag: unknown })._tag)
-      : "";
-  return tag === "OrchestratorDispatchError" ||
-    tag === "OrchestratorCommandPreviouslyRejectedError" ||
-    tag === "OrchestratorCommandIdConflictError"
-    ? failure("operation_rejected", errorMessage(error))
-    : failure("orchestration_error", errorMessage(error));
+function dispatchFailure(error: OrchestratorV2Error): PendingRequestMcpFailure {
+  switch (error._tag) {
+    case "OrchestratorDispatchError":
+    case "OrchestratorCommandPreviouslyRejectedError":
+    case "OrchestratorCommandIdConflictError":
+      return failure("operation_rejected", error.message);
+    default:
+      return failure("orchestration_error", error.message);
+  }
 }
 
 function directAppOwnedChildren(parent: OrchestrationV2ThreadProjection) {
@@ -115,11 +141,7 @@ function directAppOwnedChildren(parent: OrchestrationV2ThreadProjection) {
       (task): task is OrchestrationV2Subagent & { readonly childThreadId: ThreadId } =>
         task.origin === "app_owned" && task.childThreadId !== null,
     )
-    .toSorted(
-      (left, right) =>
-        DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
-        right.id.localeCompare(left.id),
-    );
+    .toSorted((left, right) => left.id.localeCompare(right.id));
 }
 
 function findUserInputItem(
@@ -130,6 +152,35 @@ function findUserInputItem(
     (item): item is Extract<OrchestrationV2TurnItem, { readonly type: "user_input_request" }> =>
       item.type === "user_input_request" && item.requestId === requestId,
   );
+}
+
+function questionPayloadFits(
+  questions: Extract<OrchestrationV2TurnItem, { readonly type: "user_input_request" }>["questions"],
+): boolean {
+  if (questions.length > PENDING_REQUEST_MCP_MAX_QUESTIONS) return false;
+  let totalChars = 0;
+  for (const question of questions) {
+    if (
+      question.id.length > PENDING_REQUEST_MCP_MAX_QUESTION_ID_CHARS ||
+      question.header.length > PENDING_REQUEST_MCP_MAX_HEADER_CHARS ||
+      question.question.length > PENDING_REQUEST_MCP_MAX_QUESTION_CHARS ||
+      question.options.length > PENDING_REQUEST_MCP_MAX_OPTIONS_PER_QUESTION
+    ) {
+      return false;
+    }
+    totalChars += question.id.length + question.header.length + question.question.length;
+    for (const option of question.options) {
+      if (
+        option.label.length > PENDING_REQUEST_MCP_MAX_OPTION_LABEL_CHARS ||
+        option.description.length > PENDING_REQUEST_MCP_MAX_OPTION_DESCRIPTION_CHARS
+      ) {
+        return false;
+      }
+      totalChars += option.label.length + option.description.length;
+    }
+    if (totalChars > PENDING_REQUEST_MCP_MAX_TOTAL_QUESTION_CHARS) return false;
+  }
+  return true;
 }
 
 function requestSummary(input: {
@@ -152,6 +203,7 @@ function requestSummary(input: {
       ),
     );
   }
+  const payloadFits = questionPayloadFits(input.item.questions);
   return Effect.succeed({
     taskId: input.task.id,
     childThreadId: input.task.childThreadId,
@@ -162,7 +214,13 @@ function requestSummary(input: {
     driverKind: providerThread.driver,
     status: input.request.status,
     resumable: input.request.responseCapability.type === "live",
-    questions: input.item.questions,
+    answerable:
+      input.request.status === "pending" &&
+      input.request.responseCapability.type === "live" &&
+      payloadFits,
+    questionCount: input.item.questions.length,
+    questionPayloadStatus: payloadFits ? "complete" : "too_large",
+    questions: payloadFits ? input.item.questions : [],
     createdAt: DateTime.formatIso(input.request.createdAt),
     resolvedAt:
       input.request.resolvedAt === null ? null : DateTime.formatIso(input.request.resolvedAt),
@@ -323,33 +381,73 @@ export const make = Effect.gen(function* () {
         const limit = input.limit ?? DEFAULT_LIST_LIMIT;
         const cursor = yield* parseListCursor(input.cursor);
         const requests: Array<PendingRequestMcpRequest> = [];
-        let childIndex = cursor.childIndex;
-        let requestIndex = cursor.requestIndex;
-        while (childIndex < children.length && requests.length < limit) {
+        let projectionCount = 0;
+        let continuation: string | null = null;
+        let lastScannedChildIndex = -1;
+
+        for (let childIndex = 0; childIndex < children.length; childIndex += 1) {
           const task = children[childIndex];
           if (task === undefined) break;
+          const taskComparison = cursor === null ? 1 : task.id.localeCompare(cursor.taskId);
+          if (taskComparison < 0 || (taskComparison === 0 && cursor?.requestId === null)) continue;
+          if (projectionCount >= MAX_LIST_CHILD_PROJECTIONS) {
+            break;
+          }
+          projectionCount += 1;
+          lastScannedChildIndex = childIndex;
           const projection = yield* threadManagement
             .getProjectThread({
               projectId: parent.thread.projectId,
               threadId: task.childThreadId,
             })
-            .pipe(Effect.mapError((error) => projectionFailure(error, task.childThreadId)));
-          const pending = projection.runtimeRequests.filter(
-            (request) => request.kind === "user_input" && request.status === "pending",
-          );
-          while (requestIndex < pending.length && requests.length < limit) {
+            .pipe(
+              Effect.matchEffect({
+                onFailure: (error) =>
+                  isMissingChild(error)
+                    ? Effect.void
+                    : Effect.fail(projectionFailure(error, task.childThreadId)),
+                onSuccess: Effect.succeed,
+              }),
+            );
+          continuation = listCursor(task.id, null);
+          if (projection === undefined) continue;
+
+          const pending = projection.runtimeRequests
+            .filter((request) => request.kind === "user_input" && request.status === "pending")
+            .toSorted((left, right) => left.id.localeCompare(right.id));
+          for (let requestIndex = 0; requestIndex < pending.length; requestIndex += 1) {
             const request = pending[requestIndex];
             if (request === undefined) break;
+            if (
+              cursor !== null &&
+              taskComparison === 0 &&
+              cursor.requestId !== null &&
+              request.id.localeCompare(cursor.requestId) <= 0
+            ) {
+              continue;
+            }
             requests.push(yield* resultFor({ task, projection, requestId: request.id }));
-            requestIndex += 1;
+            continuation = listCursor(task.id, request.id);
+            if (requests.length === limit) {
+              const hasMoreRequests = pending
+                .slice(requestIndex + 1)
+                .some((candidate) => candidate.id.localeCompare(request.id) > 0);
+              const hasMoreChildren = childIndex + 1 < children.length;
+              return {
+                requests,
+                nextCursor: hasMoreRequests || hasMoreChildren ? continuation : null,
+              } satisfies PendingRequestMcpListResult;
+            }
           }
-          if (requestIndex < pending.length) break;
-          childIndex += 1;
-          requestIndex = 0;
         }
         return {
           requests,
-          nextCursor: childIndex < children.length ? `${childIndex}:${requestIndex}` : null,
+          nextCursor:
+            projectionCount >= MAX_LIST_CHILD_PROJECTIONS &&
+            continuation !== null &&
+            lastScannedChildIndex + 1 < children.length
+              ? continuation
+              : null,
         } satisfies PendingRequestMcpListResult;
       }),
     read: (scope, input) =>
@@ -415,6 +513,12 @@ export const make = Effect.gen(function* () {
         }
         if (request.responseCapability.type !== "live") {
           return yield* failure("request_not_resumable", request.responseCapability.reason);
+        }
+        if (!questionPayloadFits(item.questions)) {
+          return yield* failure(
+            "request_payload_too_large",
+            `User-input request '${request.id}' exceeds the bounded MCP question payload and cannot be answered through this tool.`,
+          );
         }
         const expectedIds = new Set(item.questions.map((question) => question.id));
         const suppliedIds = Object.keys(input.answers);

@@ -16,7 +16,7 @@ const dependencies = [McpInvocationContext.McpInvocationContext, PendingRequestM
 
 export const PendingRequestListTool = Tool.make("t3_pending_request_list", {
   description:
-    "List pending user-input questions from direct app-owned delegated children of the calling thread. Results are bounded and never include approval requests or unrelated threads.",
+    "List pending user-input questions from direct app-owned delegated children of the calling thread. Results and child scans are bounded; an empty page can have a continuation cursor. Oversized question payloads are explicitly unavailable and never partial. Approval requests and unrelated threads are excluded.",
   parameters: PendingRequestMcpListInput,
   success: PendingRequestMcpListResult,
   failure: PendingRequestMcpFailure,
@@ -30,7 +30,7 @@ export const PendingRequestListTool = Tool.make("t3_pending_request_list", {
 
 export const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
   description:
-    "Read one structured user-input question from a direct app-owned delegated child. Resolved and stale requests remain readable; this tool never responds or approves anything.",
+    "Read one structured user-input question from a direct app-owned delegated child. Resolved and stale requests remain readable. Oversized question payloads are explicitly unavailable and never partial. This tool never responds or approves anything.",
   parameters: PendingRequestMcpReadInput,
   success: PendingRequestMcpReadResult,
   failure: PendingRequestMcpFailure,
@@ -44,7 +44,7 @@ export const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
 
 export const PendingRequestRespondTool = Tool.make("t3_pending_request_respond", {
   description:
-    "Answer a pending user-input question from a direct app-owned delegated child. Supply every exact question ID. This cannot answer approval requests, grant permissions, or target the calling agent or an unrelated thread. Acceptance is reported by a durable V2 command receipt; provider delivery may complete asynchronously.",
+    "Answer a pending user-input question from a direct app-owned delegated child. Supply every exact question ID from a complete bounded payload; oversized payloads cannot be answered through MCP. This cannot answer approval requests, grant permissions, or target the calling agent or an unrelated thread. Acceptance is reported by a durable V2 command receipt; provider delivery may complete asynchronously.",
   parameters: PendingRequestMcpRespondInput,
   success: PendingRequestMcpRespondResult,
   failure: PendingRequestMcpFailure,

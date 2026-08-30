@@ -233,7 +233,10 @@ reason. Use `t3_thread_interrupt` to interrupt a later follow-up run.
 Lists pending structured user-input questions from direct app-owned delegated
 children of the calling thread. The bounded page follows the parent's durable
 sub-agent records and never scans unrelated or provider-native child threads.
-Approval and permission requests are excluded.
+Approval and permission requests are excluded. Cursors continue from stable
+task/request identities, so resolving an earlier page does not shift later
+results. A page also caps child projections inspected and can therefore return
+an empty result with a continuation cursor.
 
 ### `t3_pending_request_read`
 
@@ -241,6 +244,11 @@ Reads one structured user-input request by exact child-thread and request IDs.
 Unlike the list path, read can return resolved, expired, or cancelled requests
 so callers can distinguish a stale response attempt from a missing request.
 The read path is non-mutating.
+
+Question payloads are bounded by count, field length, and total text. A request
+that exceeds those bounds remains discoverable with its stable IDs,
+`questionPayloadStatus: "too_large"`, `answerable: false`, and no partial
+question set. Such a request cannot be answered through MCP.
 
 ### `t3_pending_request_respond`
 
