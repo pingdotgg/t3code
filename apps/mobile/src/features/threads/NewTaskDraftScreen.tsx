@@ -12,6 +12,7 @@ import {
   KeyboardStickyView,
   useKeyboardState,
 } from "react-native-keyboard-controller";
+import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useFontFamily } from "../../lib/useFontFamily";
@@ -34,11 +35,12 @@ import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStri
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
-import { ComposerSurface } from "./ThreadComposer";
+import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
   ComposerDictationCancelAction,
+  ComposerDictationDraftContent,
   ComposerDictationPrimaryAction,
   ComposerDictationStatus,
 } from "../voice-input/ComposerDictationControl";
@@ -1114,7 +1116,7 @@ export function NewTaskDraftScreen(props: {
 
   const composerDock = (
     <View className="bg-sheet px-4 pt-1" style={{ paddingBottom: controlsBottomPadding }}>
-      {composerMenu.trigger && composerMenu.items.length > 0 ? (
+      {!voiceInput.isBusy && composerMenu.trigger && composerMenu.items.length > 0 ? (
         <View className="mb-2">
           <ComposerCommandPopover
             items={composerMenu.items}
@@ -1127,36 +1129,53 @@ export function NewTaskDraftScreen(props: {
       <View className="pb-1">{workspaceControls}</View>
 
       <ComposerSurface
-        animateLayout={false}
-        style={{
-          borderRadius: 26,
-          minHeight: 140,
-          overflow: "hidden",
-          paddingBottom: 6,
-          paddingHorizontal: 14,
-          paddingTop: 14,
-        }}
+        style={
+          voiceInput.isBusy
+            ? {
+                borderRadius: 27,
+                overflow: "hidden",
+                paddingHorizontal: 14,
+                paddingVertical: 2,
+              }
+            : {
+                borderRadius: 26,
+                minHeight: 140,
+                overflow: "hidden",
+                paddingBottom: 6,
+                paddingHorizontal: 14,
+                paddingTop: 14,
+              }
+        }
       >
-        {flow.attachments.length > 0 ? (
-          <View className="pb-2.5">
-            <ComposerAttachmentStrip
-              attachments={flow.attachments}
-              imageBorderRadius={16}
-              imageSize={72}
-              onRemove={isComposerInteractionLocked ? () => undefined : flow.removeAttachment}
-            />
-          </View>
-        ) : null}
+        <ComposerDictationDraftContent collapsed={voiceInput.isBusy}>
+          {flow.attachments.length > 0 ? (
+            <View className="pb-2.5">
+              <ComposerAttachmentStrip
+                attachments={flow.attachments}
+                imageBorderRadius={16}
+                imageSize={72}
+                onRemove={isComposerInteractionLocked ? () => undefined : flow.removeAttachment}
+              />
+            </View>
+          ) : null}
 
-        {promptEditor}
+          {promptEditor}
+        </ComposerDictationDraftContent>
 
-        <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={4}>
+        <ComposerToolbarRow
+          paddingBottom={0}
+          paddingHorizontal={0}
+          paddingTop={voiceInput.isBusy ? 0 : 4}
+        >
           <ComposerDictationCancelAction
             presentation={voicePresentation}
             onCancel={voiceInput.cancel}
           />
           {isVoiceInputPresented ? (
             <ComposerDictationStatus
+              audioLevels={voiceInput.audioLevels}
+              elapsedSeconds={voiceInput.elapsedSeconds}
+              phase={voiceInput.state.phase}
               presentation={voicePresentation}
               onDismissError={voiceInput.cancel}
             />
@@ -1276,10 +1295,17 @@ export function NewTaskDraftScreen(props: {
 
       {heroViewport}
       <KeyboardStickyView
-        style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+        pointerEvents="box-none"
+        style={{ position: "absolute", top: 0, bottom: 0, left: 0, right: 0 }}
         offset={{ closed: 0, opened: keyboardOpenedOffset }}
       >
-        {composerDock}
+        <Animated.View
+          layout={COMPOSER_LAYOUT_TRANSITION}
+          pointerEvents="box-none"
+          style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+        >
+          {composerDock}
+        </Animated.View>
       </KeyboardStickyView>
     </View>
   );

@@ -35,6 +35,7 @@ import Animated, {
   FadeOut,
   FadeOutDown,
   LinearTransition,
+  ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -64,6 +65,7 @@ import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
   ComposerDictationCancelAction,
+  ComposerDictationDraftContent,
   ComposerDictationPrimaryAction,
   ComposerDictationStatus,
 } from "../voice-input/ComposerDictationControl";
@@ -142,12 +144,12 @@ export const COMPOSER_TRANSITION_DURATION_MS = 220;
 export const COMPOSER_LAYOUT_TRANSITION =
   Platform.OS === "android"
     ? undefined
-    : LinearTransition.duration(COMPOSER_TRANSITION_DURATION_MS);
+    : LinearTransition.duration(COMPOSER_TRANSITION_DURATION_MS).reduceMotion(ReduceMotion.System);
 
 export function ComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
-  /** Existing thread composers morph between pill and card layouts. */
+  /** Morphs between the compact and expanded composer layouts. */
   readonly animateLayout?: boolean;
 }) {
   const targetBorderRadius =
@@ -158,6 +160,7 @@ export function ComposerSurface(props: {
     animatedBorderRadius.value = shouldAnimate
       ? withTiming(targetBorderRadius, {
           duration: COMPOSER_TRANSITION_DURATION_MS,
+          reduceMotion: ReduceMotion.System,
         })
       : targetBorderRadius;
   }, [animatedBorderRadius, shouldAnimate, targetBorderRadius]);
@@ -350,11 +353,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     voiceInput.elapsedSeconds,
   );
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
-  const isExpanded = isFocused || settingsSheetPresentation.isActive || isVoiceInputPresented;
+  const isExpanded =
+    !voiceInput.isBusy &&
+    (isFocused || settingsSheetPresentation.isActive || isVoiceInputPresented);
+  const isToolbarVisible = isExpanded || isVoiceInputPresented;
   const canSend = hasContent && !voiceInput.blocksSubmission;
 
-  // Keep the parent's feed inset synchronized while settings or dictation
-  // keep the composer expanded between editor focus events.
+  // Keep the feed inset aligned with the card or compact dictation strip.
   useEffect(() => {
     onExpandedChange?.(isExpanded);
   }, [isExpanded, onExpandedChange]);
@@ -377,9 +382,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const onEditorFocusChange = props.onEditorFocusChange;
   const handleFocus = useCallback(() => {
     setIsFocused(true);
-    onExpandedChange?.(true);
+    onExpandedChange?.(!voiceInput.isBusy);
     onEditorFocusChange?.(true);
-  }, [onEditorFocusChange, onExpandedChange]);
+  }, [onEditorFocusChange, onExpandedChange, voiceInput.isBusy]);
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
@@ -538,7 +543,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         className="relative w-full self-center"
         style={{ maxWidth: props.contentMaxWidth }}
       >
-        {composerMenu.trigger && composerMenu.items.length > 0 ? (
+        {!voiceInput.isBusy && composerMenu.trigger && composerMenu.items.length > 0 ? (
           <View className="absolute inset-x-0 bottom-full z-10 mb-2">
             <ComposerCommandPopover
               items={composerMenu.items}
@@ -573,7 +578,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   borderRadius: 27,
                   overflow: "hidden" as const,
                   paddingHorizontal: 14,
-                  paddingVertical: 5,
+                  paddingVertical: voiceInput.isBusy ? 2 : 5,
                 }
           }
         >
@@ -592,7 +597,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             </Animated.View>
           ) : null}
 
-          <View className={isExpanded ? undefined : "flex-row items-center"}>
+          <ComposerDictationDraftContent
+            className={isExpanded ? undefined : "flex-row items-center"}
+            collapsed={voiceInput.isBusy}
+          >
             <View className={isExpanded ? undefined : "min-w-0 flex-1"}>
               <ComposerEditor
                 ref={inputRef}
@@ -632,7 +640,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 }}
               />
             </View>
-            {!isExpanded && props.draftAttachments.length > 0 ? (
+            {!isExpanded && !voiceInput.isBusy && props.draftAttachments.length > 0 ? (
               <View className="flex-row gap-1 pl-1">
                 {props.draftAttachments.slice(0, 3).map((attachment) =>
                   attachment.type === "image" ? (
@@ -664,7 +672,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 ) : null}
               </View>
             ) : null}
-            {!isExpanded ? (
+            {!isExpanded && !voiceInput.isBusy ? (
               <Animated.View
                 className="flex-row items-center gap-1.5"
                 entering={FadeIn.duration(180)}
@@ -692,14 +700,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 )}
               </Animated.View>
             ) : null}
-          </View>
+          </ComposerDictationDraftContent>
           <View
-            accessibilityElementsHidden={!isExpanded}
+            accessibilityElementsHidden={!isToolbarVisible}
             collapsable={false}
-            importantForAccessibility={isExpanded ? "auto" : "no-hide-descendants"}
-            pointerEvents={isExpanded ? "auto" : "none"}
+            importantForAccessibility={isToolbarVisible ? "auto" : "no-hide-descendants"}
+            pointerEvents={isToolbarVisible ? "auto" : "none"}
             style={
-              isExpanded
+              isToolbarVisible
                 ? undefined
                 : {
                     height: 0,
@@ -708,13 +716,20 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   }
             }
           >
-            <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={4}>
+            <ComposerToolbarRow
+              paddingBottom={0}
+              paddingHorizontal={0}
+              paddingTop={voiceInput.isBusy ? 0 : 4}
+            >
               <ComposerDictationCancelAction
                 presentation={voicePresentation}
                 onCancel={voiceInput.cancel}
               />
               {isVoiceInputPresented ? (
                 <ComposerDictationStatus
+                  audioLevels={voiceInput.audioLevels}
+                  elapsedSeconds={voiceInput.elapsedSeconds}
+                  phase={voiceInput.state.phase}
                   presentation={voicePresentation}
                   onDismissError={voiceInput.cancel}
                 />

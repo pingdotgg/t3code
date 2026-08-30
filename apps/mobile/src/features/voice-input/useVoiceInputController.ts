@@ -4,13 +4,13 @@ import {
   setAudioModeAsync,
   setIsAudioActiveAsync,
   useAudioRecorder,
-  useAudioRecorderState,
   type RecordingStatus,
 } from "expo-audio";
 import { File } from "expo-file-system";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
+import { useSharedValue } from "react-native-reanimated";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import {
@@ -20,13 +20,20 @@ import {
 } from "../../native/voiceTranscription";
 import {
   VoiceInputController,
+  VOICE_RECORDING_LIMIT_SECONDS,
   voiceInputBlocksSubmission,
   voiceInputFreezesEditor,
   type VoiceDraftSnapshot,
   type VoiceInputState,
 } from "./voiceInputController";
+import { normalizeVoiceInputDecibels, VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
+const VOICE_METERING_INTERVAL_MS = 80;
+const VOICE_RECORDING_OPTIONS = {
+  ...RecordingPresets.HIGH_QUALITY,
+  isMeteringEnabled: true,
+};
 
 async function releaseVoiceRecordingAudio(): Promise<void> {
   try {
@@ -66,6 +73,10 @@ export function useVoiceInputController(input: {
   readonly onChangeSelection: (selection: ComposerEditorSelection) => void;
 }) {
   const [state, setState] = useState<VoiceInputState>(INITIAL_STATE);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const elapsedSecondsRef = useRef(0);
+  const audioLevelsRef = useRef(Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0));
+  const audioLevels = useSharedValue(audioLevelsRef.current);
   const controllerRef = useRef<VoiceInputController | null>(null);
   const previousDraftRef = useRef({ ownerKey: input.ownerKey, text: input.draftMessage });
   const revisionRef = useRef(0);
@@ -82,8 +93,7 @@ export function useVoiceInputController(input: {
   const handleRecorderStatus = useCallback((status: RecordingStatus) => {
     controllerRef.current?.handleRecorderStatus(status);
   }, []);
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY, handleRecorderStatus);
-  const recorderState = useAudioRecorderState(recorder, 1_000);
+  const recorder = useAudioRecorder(VOICE_RECORDING_OPTIONS, handleRecorderStatus);
 
   if (!controllerRef.current) {
     controllerRef.current = new VoiceInputController({
@@ -146,6 +156,47 @@ export function useVoiceInputController(input: {
 
   useEffect(() => () => controller.dispose(), [controller]);
 
+  useEffect(() => {
+    if (state.phase !== "preparing" && state.phase !== "recording") return;
+
+    if (audioLevelsRef.current.some((level) => level !== 0)) {
+      audioLevelsRef.current = Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0);
+      audioLevels.value = audioLevelsRef.current;
+    }
+    if (elapsedSecondsRef.current !== 0) {
+      elapsedSecondsRef.current = 0;
+      setElapsedSeconds(0);
+    }
+    if (state.phase !== "recording") return;
+
+    const sampleRecording = () => {
+      if (controller.currentState.phase !== "recording") return;
+      const status = recorder.getStatus();
+      if (!status.isRecording) return;
+
+      const level = normalizeVoiceInputDecibels(status.metering);
+      const history = audioLevelsRef.current;
+      if (level !== 0 || history.some((sample) => sample !== 0)) {
+        const nextLevels = [...history.slice(1), level];
+        audioLevelsRef.current = nextLevels;
+        audioLevels.value = nextLevels;
+      }
+
+      const nextElapsedSeconds = Math.min(
+        VOICE_RECORDING_LIMIT_SECONDS,
+        Math.max(0, Math.floor(status.durationMillis / 1_000)),
+      );
+      if (nextElapsedSeconds !== elapsedSecondsRef.current) {
+        elapsedSecondsRef.current = nextElapsedSeconds;
+        setElapsedSeconds(nextElapsedSeconds);
+      }
+    };
+
+    sampleRecording();
+    const intervalId = setInterval(sampleRecording, VOICE_METERING_INTERVAL_MS);
+    return () => clearInterval(intervalId);
+  }, [audioLevels, controller, recorder, state.phase]);
+
   const start = useCallback(() => {
     if (!latestInputRef.current.disabled) void controller.start();
   }, [controller]);
@@ -155,7 +206,8 @@ export function useVoiceInputController(input: {
   return {
     isAvailable: isVoiceTranscriptionAvailable(),
     state,
-    elapsedSeconds: Math.min(5 * 60, Math.max(0, Math.floor(recorderState.durationMillis / 1_000))),
+    audioLevels,
+    elapsedSeconds,
     isBusy: voiceInputBlocksSubmission(state),
     freezesEditor: voiceInputFreezesEditor(state),
     blocksSubmission: voiceInputBlocksSubmission(state),
