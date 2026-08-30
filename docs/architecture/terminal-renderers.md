@@ -26,17 +26,32 @@ and memory. Each visible terminal owns and frees its own terminal, render state,
 iterator, key and mouse encoder, and input event handles. Restoring captured scrollback temporarily
 detaches the PTY callback so historical device queries cannot emit replies into the current shell.
 
+Both C ABI adapters request 10,000 physical scrollback lines and independently cap Ghostty's page
+storage at 32 MiB per terminal. Ghostty prunes complete pages, so the retained row count is an
+approximation, and whichever limit is reached first wins. The explicit byte setting is required:
+libghostty-vt's low-level default is only 10,000 bytes.
+
+The 32 MiB cap is deliberate for the embedded builds. WebAssembly cannot use Ghostty's page
+compression. Compression is supported by the 64-bit Android libraries but not the 32-bit libraries,
+and T3 does not schedule compression through the C ABI on any Android architecture. The cap is
+therefore sized for uncompressed storage: measurements with the pinned build reached the line limit
+through representative widths up to 320 columns while leaving a fixed per-surface safety bound.
+
 ## Updating Ghostty
 
-Update and rebuild Android first, because mobile's `VERSION` file is the single source of truth for
-the upstream pin (the upstream `LICENSE` lives beside it). Then run:
+Update `native/libghostty-vt/VERSION`, the single source of truth for the upstream pin (the upstream
+`LICENSE` lives beside it), and rebuild Android. The Android build script reads that file directly;
+it has no fallback revision. Both builders require the Zig version declared in the pinned Ghostty
+source and build from temporary detached worktrees, so local changes in a cached checkout cannot
+enter the artifacts.
 
 ```sh
+ANDROID_NDK_HOME=/path/to/ndk apps/mobile/modules/t3-terminal/scripts/build-libghostty-android.sh
 pnpm --dir apps/web build:ghostty-wasm
 ```
 
-Commit the regenerated web `wasm` artifacts. The build embeds the pinned revision into the binary as
-semver build metadata, and the focused web ABI test reads it back through `ghostty_build_info` and
-compares it against mobile's `VERSION` — so the web vendor directory holds only the artifacts, drift
-cannot hide, and there is no second pin to keep in sync. The same test enforces the artifact budget
-and exercises repeated create/write/free cycles with multi-codepoint graphemes.
+Commit the regenerated Android headers, four shared libraries, and web `wasm` artifacts. Both builds
+embed the pinned revision as semver build metadata. The Android build rejects an artifact missing the
+canonical revision, while the focused web ABI test reads it through `ghostty_build_info` and compares
+it with `VERSION`. There is no second revision pin to keep in sync. The same web test enforces the
+artifact budget and exercises repeated create/write/free cycles with multi-codepoint graphemes.
