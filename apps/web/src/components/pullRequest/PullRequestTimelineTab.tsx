@@ -373,7 +373,7 @@ function CommitEvent({
   return (
     <button
       type="button"
-      className="group relative mb-5 block w-full rounded-sm pl-12 text-left outline-none [contain-intrinsic-block-size:48px] [content-visibility:auto] focus-visible:ring-2 focus-visible:ring-ring"
+      className="group relative mb-5 block w-full cursor-pointer rounded-sm pl-12 text-left outline-none [contain-intrinsic-block-size:48px] [content-visibility:auto] focus-visible:ring-2 focus-visible:ring-ring"
       aria-label={`View commit ${event.id}`}
       onClick={() => onOpen(event.id)}
     >

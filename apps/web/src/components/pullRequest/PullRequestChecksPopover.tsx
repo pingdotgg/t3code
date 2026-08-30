@@ -70,7 +70,7 @@ function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
           {check.url === null ? null : (
             <button
               type="button"
-              className="shrink-0 text-primary hover:underline"
+              className="shrink-0 cursor-pointer text-primary hover:underline"
               onClick={() => void readLocalApi()?.shell.openExternal(check.url ?? "")}
             >
               Details
