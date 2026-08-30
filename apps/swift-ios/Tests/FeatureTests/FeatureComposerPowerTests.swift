@@ -435,6 +435,9 @@ struct FeatureComposerPowerTests {
     )
     func visibleTraitChangesPreservePromptInjectedSelections() throws {
         var provider = Self.solProvider
+        provider.models[0].options[0].choices.append(
+            .init(id: "ultrathink", label: "Ultrathink")
+        )
         provider.models[0].options[0].promptInjectedValues = ["ultrathink"]
         let control = try #require(
             FeatureComposerTraitsControl.resolve(
@@ -454,6 +457,7 @@ struct FeatureComposerPowerTests {
 
         #expect(control.sections[0].choices.allSatisfy { $0.id != "ultrathink" })
         #expect(control.sections[0].currentChoiceID == "ultrathink")
+        #expect(control.triggerLabel == "Ultrathink")
         let selection = control.selection(choosing: "priority", in: "serviceTier")
         #expect(
             selection.options.first(where: { $0.id == "reasoningEffort" })?.value
