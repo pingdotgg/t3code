@@ -19,6 +19,9 @@ describe("attachment MCP contracts", () => {
       decodePrepare({ name: "screen.png", mimeType: "image/png", sizeBytes: 4 }),
     ).toMatchObject({ mimeType: "image/png", sizeBytes: 4 });
     expect(
+      decodePrepare({ name: "screen.png", mimeType: "IMAGE/PNG", sizeBytes: 4 }),
+    ).toMatchObject({ mimeType: "IMAGE/PNG", sizeBytes: 4 });
+    expect(
       decodePrepare({
         type: "file",
         name: "report.pdf",

@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import {
   ChatAttachment,
   ChatAttachmentId,
+  isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
@@ -20,11 +21,7 @@ export const AttachmentMcpPrepareUploadInput = Schema.Struct({
 }).check(
   Schema.makeFilter((input) => {
     if (input.type === "file") return true;
-    if (
-      !PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.includes(
-        input.mimeType as (typeof PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES)[number],
-      )
-    ) {
+    if (!isProviderSendTurnSupportedImageMimeType(input.mimeType)) {
       return `Image mimeType must be one of: ${PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.join(", ")}.`;
     }
     return (
