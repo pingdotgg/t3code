@@ -20,6 +20,10 @@ import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { layer as checkpointCaptureServiceLayer } from "../CheckpointCaptureService.ts";
 import { layer as checkpointServiceLayer } from "../CheckpointService.ts";
 import { layer as checkpointRollbackServiceLayer } from "../CheckpointRollbackService.ts";
+import {
+  ThreadCommandExecutor,
+  layer as threadCommandExecutorLayer,
+} from "../ThreadCommandExecutor.ts";
 import { layer as commandPolicyLayer } from "../CommandPolicy.ts";
 import { layer as commandReceiptStoreLayer } from "../CommandReceiptStore.ts";
 import { layer as contextHandoffServiceLayer } from "../ContextHandoffService.ts";
@@ -32,7 +36,7 @@ import {
 import { layerFromStores as eventSinkLayer } from "../EventSink.ts";
 import { layer as eventStoreLayer } from "../EventStore.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
-import { layer as orchestratorLayer } from "../Orchestrator.ts";
+import { layerFromThreadCommandExecutor as orchestratorLayer } from "../Orchestrator.ts";
 import { layer as projectionStoreLayer } from "../ProjectionStore.ts";
 import { OrchestratorV2, type OrchestratorV2Error } from "../Orchestrator.ts";
 import { ProviderAdapterRegistryV2 } from "../ProviderAdapterRegistry.ts";
@@ -239,8 +243,12 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     >;
     readonly enableLegacyTokenStreaming?: boolean;
     readonly runEffectWorker?: boolean;
+    readonly threadCommandExecutorLayer?: Layer.Layer<ThreadCommandExecutor>;
   } = {},
-): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
+): Layer.Layer<
+  OrchestratorV2 | ThreadCommandExecutor,
+  Error | MigrationError | PlatformError.PlatformError | SqlError
+> {
   const serverConfigLayer = Layer.effect(
     ServerConfig,
     makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
@@ -255,6 +263,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const serverSettingsLayer = ServerSettingsService.layerTest({
     enableLegacyTokenStreaming: options.enableLegacyTokenStreaming ?? false,
   }).pipe(Layer.orDie);
+  const dispatchLockLayer = options.threadCommandExecutorLayer ?? threadCommandExecutorLayer;
   const storesLayer = Layer.mergeAll(
     eventStoreLayer,
     projectionStoreLayer,
@@ -329,6 +338,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         Layer.mock(ProviderAuthService)({ tryHandlePromptCommand: () => Effect.succeed(false) }),
         runExecutionServiceProvided,
         runtimeLayer,
+        dispatchLockLayer,
       ),
     ),
   );
@@ -393,10 +403,15 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         providerSwitchServiceProvided,
         runExecutionServiceProvided,
         threadForkServiceLayer,
+        dispatchLockLayer,
       ),
     ),
   );
-  const replayRuntime = Layer.merge(orchestratorProvided, effectWorkerProvided).pipe(
+  const replayRuntime = Layer.mergeAll(
+    dispatchLockLayer,
+    orchestratorProvided,
+    effectWorkerProvided,
+  ).pipe(
     Layer.provide(worktreeRepairDependenciesTestLayer),
     Layer.provide(NodeServices.layer),
   );
@@ -405,14 +420,20 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   // orchestrator. Keeping this acquisition in the replay layer makes the
   // outbox lifecycle explicit and prevents test-only command-side draining.
   if (options.runEffectWorker === false) {
-    return orchestratorProvided.pipe(Layer.provide(NodeServices.layer));
+    return Layer.merge(
+      dispatchLockLayer,
+      orchestratorProvided.pipe(Layer.provide(NodeServices.layer)),
+    );
   }
-  return Layer.effect(
-    OrchestratorV2,
-    Effect.gen(function* () {
-      const orchestrator = yield* OrchestratorV2;
-      yield* runEffectWorkerDaemon.pipe(Effect.forkScoped);
-      return orchestrator;
-    }),
-  ).pipe(Layer.provide(replayRuntime));
+  return Layer.merge(
+    dispatchLockLayer,
+    Layer.effect(
+      OrchestratorV2,
+      Effect.gen(function* () {
+        const orchestrator = yield* OrchestratorV2;
+        yield* runEffectWorkerDaemon.pipe(Effect.forkScoped);
+        return orchestrator;
+      }),
+    ).pipe(Layer.provide(replayRuntime)),
+  );
 }

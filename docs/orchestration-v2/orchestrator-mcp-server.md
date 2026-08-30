@@ -11,7 +11,8 @@ agent can use this endpoint to:
 - create one or more ordinary top-level T3 threads;
 - list and incrementally read project threads;
 - send or steer follow-up messages; and
-- wait for or interrupt ordinary thread runs.
+- wait for or interrupt ordinary thread runs; and
+- inspect and control thread-scoped managed terminals.
 
 These are T3 orchestration operations, not provider-native sub-agent APIs.
 Delegated tasks always create a T3 child thread and run. The child receives
@@ -138,9 +139,36 @@ Capability discovery still reports other registered provider instances, but mark
 unavailable for orchestration when no V2 adapter exists. This keeps provider
 selection model-visible without allowing a request that cannot run.
 
+## Managed terminal boundary
+
+The MCP endpoint also exposes thread-scoped managed terminal tools. They use
+the existing `TerminalManager`, so lifecycle and metadata events reach web,
+desktop, and mobile clients even when no browser is open. MCP does not create a
+parallel process manager.
+
+List and read operations inspect retained in-memory sessions only. They do not
+attach to a session, open a PTY, or call the persisted-history reader, whose
+retention maintenance can rewrite its file. Output is bounded by the MCP
+contract and reports offsets, truncation, and the terminal event sequence.
+Evicted, closed, persisted-only, and never-loaded sessions are absent.
+
+Execution directories come from the target thread and project. An active
+provider session's nested `cwd` wins when available; `thread.worktreePath`
+remains the physical worktree binding, and the project workspace is the final
+fallback. Callers cannot provide a host path or environment.
+
+Terminal mutations require both caller and target to be in `full-access`
+runtime mode with `default` interaction mode. This is intentionally stricter
+than possessing an orchestration MCP credential: direct PTY input is host
+execution, not a provider prompt. The server rechecks both current thread
+policies and the target's project/worktree binding under the shared V2 thread
+admission locks, which remain held through the terminal side effect. Writes and
+restarts are non-idempotent, and a successful write means only that the PTY
+accepted the bytes.
+
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+The server exposes orchestration and managed-terminal tool families through the same endpoint.
 
 ### `orchestrator_capabilities`
 

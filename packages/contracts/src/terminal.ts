@@ -9,13 +9,16 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 export const DEFAULT_TERMINAL_ID = "term-1";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
-const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
+export const TerminalCols = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
   Schema.isLessThanOrEqualTo(1000),
 );
-const TerminalRowsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
+export type TerminalCols = typeof TerminalCols.Type;
+export const TerminalRows = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
   Schema.isLessThanOrEqualTo(500),
 );
-const TerminalIdSchema = TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(128));
+export type TerminalRows = typeof TerminalRows.Type;
+export const TerminalId = TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(128));
+export type TerminalId = typeof TerminalId.Type;
 const TerminalEnvKeySchema = Schema.String.check(
   Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
 ).check(Schema.isMaxLength(128));
@@ -32,7 +35,7 @@ export type TerminalThreadInput = typeof TerminalThreadInput.Type;
 /** Terminal ids are ALWAYS chosen by the client and sent explicitly — no server-side allocation. */
 const TerminalSessionInput = Schema.Struct({
   ...TerminalThreadInput.fields,
-  terminalId: TerminalIdSchema,
+  terminalId: TerminalId,
 });
 export type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionInput>;
 
@@ -40,8 +43,8 @@ export const TerminalOpenInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: TrimmedNonEmptyStringSchema,
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
-  cols: Schema.optional(TerminalColsSchema),
-  rows: Schema.optional(TerminalRowsSchema),
+  cols: Schema.optional(TerminalCols),
+  rows: Schema.optional(TerminalRows),
   env: Schema.optional(TerminalEnvSchema),
 });
 export type TerminalOpenInput = Schema.Codec.Encoded<typeof TerminalOpenInput>;
@@ -50,8 +53,8 @@ export const TerminalAttachInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: Schema.optional(TrimmedNonEmptyStringSchema),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
-  cols: Schema.optional(TerminalColsSchema),
-  rows: Schema.optional(TerminalRowsSchema),
+  cols: Schema.optional(TerminalCols),
+  rows: Schema.optional(TerminalRows),
   env: Schema.optional(TerminalEnvSchema),
   restartIfNotRunning: Schema.optional(Schema.Boolean),
 });
@@ -65,8 +68,8 @@ export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>
 
 export const TerminalResizeInput = Schema.Struct({
   ...TerminalSessionInput.fields,
-  cols: TerminalColsSchema,
-  rows: TerminalRowsSchema,
+  cols: TerminalCols,
+  rows: TerminalRows,
 });
 export type TerminalResizeInput = Schema.Codec.Encoded<typeof TerminalResizeInput>;
 
@@ -77,15 +80,15 @@ export const TerminalRestartInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: TrimmedNonEmptyStringSchema,
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
-  cols: TerminalColsSchema,
-  rows: TerminalRowsSchema,
+  cols: TerminalCols,
+  rows: TerminalRows,
   env: Schema.optional(TerminalEnvSchema),
 });
 export type TerminalRestartInput = Schema.Codec.Encoded<typeof TerminalRestartInput>;
 
 export const TerminalCloseInput = Schema.Struct({
   ...TerminalThreadInput.fields,
-  terminalId: Schema.optional(TerminalIdSchema),
+  terminalId: Schema.optional(TerminalId),
   deleteHistory: Schema.optional(Schema.Boolean),
 });
 export type TerminalCloseInput = typeof TerminalCloseInput.Type;
@@ -299,6 +302,18 @@ export class TerminalSessionLookupError extends Schema.TaggedErrorClass<Terminal
   }
 }
 
+export class TerminalSessionAlreadyExistsError extends Schema.TaggedErrorClass<TerminalSessionAlreadyExistsError>()(
+  "TerminalSessionAlreadyExistsError",
+  {
+    threadId: Schema.String,
+    terminalId: Schema.String,
+  },
+) {
+  override get message() {
+    return `Terminal already exists for thread: ${this.threadId}, terminal: ${this.terminalId}`;
+  }
+}
+
 export class TerminalNotRunningError extends Schema.TaggedErrorClass<TerminalNotRunningError>()(
   "TerminalNotRunningError",
   {
@@ -331,8 +346,8 @@ export class TerminalResizeError extends Schema.TaggedErrorClass<TerminalResizeE
     threadId: Schema.String,
     terminalId: Schema.String,
     terminalPid: Schema.Number,
-    cols: TerminalColsSchema,
-    rows: TerminalRowsSchema,
+    cols: TerminalCols,
+    rows: TerminalRows,
     cause: Schema.Defect(),
   },
 ) {
@@ -345,6 +360,7 @@ export const TerminalError = Schema.Union([
   TerminalCwdError,
   TerminalHistoryError,
   TerminalSessionLookupError,
+  TerminalSessionAlreadyExistsError,
   TerminalNotRunningError,
   TerminalWriteError,
   TerminalResizeError,

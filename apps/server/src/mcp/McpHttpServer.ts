@@ -25,8 +25,11 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import { TerminalToolkitHandlersLive } from "./toolkits/terminal/handlers.ts";
+import { TerminalToolkit } from "./toolkits/terminal/tools.ts";
 import { WorktreeToolkitHandlersLive } from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
+import * as TerminalMcpService from "./TerminalMcpService.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
@@ -231,6 +234,11 @@ export const WorktreeToolkitRegistrationLive = McpServer.toolkit(WorktreeToolkit
   Layer.provide(WorktreeMcpService.layer),
 );
 
+export const TerminalToolkitRegistrationLive = McpServer.toolkit(TerminalToolkit).pipe(
+  Layer.provide(TerminalToolkitHandlersLive),
+  Layer.provide(TerminalMcpService.layer),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -241,5 +249,6 @@ const McpTransportLive = McpServer.layerHttp({
 export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   OrchestratorToolkitRegistrationLive,
+  TerminalToolkitRegistrationLive,
   WorktreeToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));
