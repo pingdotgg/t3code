@@ -750,11 +750,7 @@ it.effect("orders mixed-offset project timestamps chronologically across pages",
           load: () => Effect.succeed(Option.none()),
         }),
       ),
-      Layer.provide(
-        Layer.mock(ServerSettingsService.ServerSettingsService)({
-          getSettings: Effect.succeed({ defaultThreadEnvMode: "local" } as ServerSettings),
-        }),
-      ),
+      Layer.provide(ServerSettingsService.layerTest({})),
       Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
       Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
       Layer.provide(NodeServices.layer),
