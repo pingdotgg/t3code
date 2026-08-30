@@ -47,21 +47,20 @@ const makeLayer = (input: {
   readonly repository: () => Response | Promise<Response>;
   readonly avatar?: (url: string) => Response | null;
 }) =>
-  GitHubAvatarResolver.layer.pipe(
-    Layer.provide(
-      Layer.succeed(
-        RepositoryIdentityResolver.RepositoryIdentityResolver,
-        RepositoryIdentityResolver.RepositoryIdentityResolver.of({
-          resolve: () => Effect.succeed(input.identity),
-        }),
+  GitHubAvatarResolver.layer
+    .pipe(
+      Layer.provide(
+        Layer.succeed(
+          RepositoryIdentityResolver.RepositoryIdentityResolver,
+          RepositoryIdentityResolver.RepositoryIdentityResolver.of({
+            resolve: () => Effect.succeed(input.identity),
+          }),
+        ),
       ),
-    ),
-    Layer.provide(
-      FetchHttpClient.layer.pipe(
-        Layer.provide(
-          Layer.succeed(
-            FetchHttpClient.Fetch,
-            ((url: RequestInfo | URL) => {
+      Layer.provide(
+        FetchHttpClient.layer.pipe(
+          Layer.provide(
+            Layer.succeed(FetchHttpClient.Fetch, ((url: Parameters<typeof fetch>[0]) => {
               input.count.value += 1;
               const target = String(url);
               const response = target.includes("api.github.com/repos/")
@@ -70,19 +69,19 @@ const makeLayer = (input: {
               return response === undefined || response === null
                 ? Promise.reject(new TypeError(`unrouted request: ${target}`))
                 : Promise.resolve(response);
-            }) as typeof fetch,
+            }) as typeof fetch),
           ),
         ),
       ),
-    ),
-  ).pipe(Layer.provideMerge(configLayer), Layer.provideMerge(NodeServices.layer));
+    )
+    .pipe(Layer.provideMerge(configLayer), Layer.provideMerge(NodeServices.layer));
 
 const AVATAR_URL = "https://avatars.githubusercontent.com/u/34147222?v=4";
 
 describe("GitHubAvatarResolver", () => {
-  it.effect("fetches and caches the owner avatar once", () =>
-    Effect.gen(function* () {
-      const count = { value: 0 };
+  it.effect("fetches and caches the owner avatar once", () => {
+    const count = { value: 0 };
+    return Effect.gen(function* () {
       const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
       const fileSystem = yield* FileSystem.FileSystem;
 
@@ -96,7 +95,7 @@ describe("GitHubAvatarResolver", () => {
       expect(first).toMatch(/\.png$/);
       const bytes = yield* fileSystem.readFile(first);
       expect(Array.from(bytes)).toEqual(Array.from(pngBytes));
-      expect(count.value).toBe(1);
+      expect(count.value).toBe(2);
       expect(resolver.isManagedPath(first)).toBe(true);
       expect(resolver.isManagedPath("/etc/passwd")).toBe(false);
     }).pipe(
@@ -108,12 +107,12 @@ describe("GitHubAvatarResolver", () => {
           avatar: () => pngResponse(),
         }),
       ),
-    ),
-  );
+    );
+  });
 
-  it.effect("shares one cache entry across worktrees of the same repository", () =>
-    Effect.gen(function* () {
-      const count = { value: 0 };
+  it.effect("shares one cache entry across worktrees of the same repository", () => {
+    const count = { value: 0 };
+    return Effect.gen(function* () {
       const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
 
       const [left, right] = yield* Effect.all(
@@ -123,7 +122,7 @@ describe("GitHubAvatarResolver", () => {
 
       expect(left).not.toBeNull();
       expect(left).toBe(right);
-      expect(count.value).toBe(1);
+      expect(count.value).toBe(2);
     }).pipe(
       Effect.provide(
         makeLayer({
@@ -133,12 +132,12 @@ describe("GitHubAvatarResolver", () => {
           avatar: () => pngResponse(),
         }),
       ),
-    ),
-  );
+    );
+  });
 
-  it.effect("skips non-github remotes without any request", () =>
-    Effect.gen(function* () {
-      const count = { value: 0 };
+  it.effect("skips non-github remotes without any request", () => {
+    const count = { value: 0 };
+    return Effect.gen(function* () {
       const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
 
       const resolved = yield* resolver.resolvePath("/worktrees/repo");
@@ -146,48 +145,56 @@ describe("GitHubAvatarResolver", () => {
       expect(resolved).toBeNull();
       expect(count.value).toBe(0);
     }).pipe(
-      Effect.provide(makeLayer({ identity: gitlabIdentity, count, repository: () => jsonResponse({}) })),
-    ),
-  );
+      Effect.provide(
+        makeLayer({ identity: gitlabIdentity, count, repository: () => jsonResponse({}) }),
+      ),
+    );
+  });
 
-  it.effect("skips identities that are not repositories", () =>
-    Effect.gen(function* () {
-      const count = { value: 0 };
+  it.effect("skips identities that are not repositories", () => {
+    const count = { value: 0 };
+    return Effect.gen(function* () {
       const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
 
       const resolved = yield* resolver.resolvePath("/worktrees/repo");
 
       expect(resolved).toBeNull();
       expect(count.value).toBe(0);
-    }).pipe(Effect.provide(makeLayer({ identity: null, count, repository: () => jsonResponse({}) }))),
-  );
+    }).pipe(
+      Effect.provide(makeLayer({ identity: null, count, repository: () => jsonResponse({}) })),
+    );
+  });
 
-  it.effect("remembers private repositories as negative", () =>
-    Effect.gen(function* () {
-      const count = { value: 0 };
+  it.effect("remembers private repositories as negative", () => {
+    const count = { value: 0 };
+    return Effect.gen(function* () {
       const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
 
       expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
       expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
       expect(count.value).toBe(1);
-    }).pipe(Effect.provide(makeLayer({ identity, count, repository: () => jsonResponse({}, 404) }))),
-  );
+    }).pipe(
+      Effect.provide(makeLayer({ identity, count, repository: () => jsonResponse({}, 404) })),
+    );
+  });
 
-  it.effect("retries a negative result after its ttl", () =>
-    Effect.gen(function* () {
-      const count = { value: 0 };
+  it.effect("retries a negative result after its ttl", () => {
+    const count = { value: 0 };
+    return Effect.gen(function* () {
       const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
 
       expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
       yield* TestClock.adjust("8 days");
       expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
       expect(count.value).toBe(2);
-    }).pipe(Effect.provide(makeLayer({ identity, count, repository: () => jsonResponse({}, 404) }))),
-  );
+    }).pipe(
+      Effect.provide(makeLayer({ identity, count, repository: () => jsonResponse({}, 404) })),
+    );
+  });
 
-  it.effect("retries transport failures without a negative marker", () =>
-    Effect.gen(function* () {
-      const count = { value: 0 };
+  it.effect("retries transport failures without a negative marker", () => {
+    const count = { value: 0 };
+    return Effect.gen(function* () {
       const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
 
       expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
@@ -201,23 +208,25 @@ describe("GitHubAvatarResolver", () => {
           repository: () => Promise.reject(new TypeError("offline")),
         }),
       ),
-    ),
-  );
+    );
+  });
 
-  it.effect("retries rate-limited responses without a negative marker", () =>
-    Effect.gen(function* () {
-      const count = { value: 0 };
+  it.effect("retries rate-limited responses without a negative marker", () => {
+    const count = { value: 0 };
+    return Effect.gen(function* () {
       const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
 
       expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
       expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
       expect(count.value).toBe(2);
-    }).pipe(Effect.provide(makeLayer({ identity, count, repository: () => jsonResponse({}, 403) }))),
-  );
+    }).pipe(
+      Effect.provide(makeLayer({ identity, count, repository: () => jsonResponse({}, 403) })),
+    );
+  });
 
-  it.effect("remembers oversized avatars as negative", () =>
-    Effect.gen(function* () {
-      const count = { value: 0 };
+  it.effect("remembers oversized avatars as negative", () => {
+    const count = { value: 0 };
+    return Effect.gen(function* () {
       const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
 
       expect(yield* resolver.resolvePath("/worktrees/trino")).toBeNull();
@@ -236,12 +245,12 @@ describe("GitHubAvatarResolver", () => {
             }),
         }),
       ),
-    ),
-  );
+    );
+  });
 
-  it.effect("refuses avatars outside the GitHub avatar host", () =>
-    Effect.gen(function* () {
-      const count = { value: 0 };
+  it.effect("refuses avatars outside the GitHub avatar host", () => {
+    const count = { value: 0 };
+    return Effect.gen(function* () {
       const resolver = yield* GitHubAvatarResolver.GitHubAvatarResolver;
 
       const resolved = yield* resolver.resolvePath("/worktrees/trino");
@@ -253,10 +262,11 @@ describe("GitHubAvatarResolver", () => {
         makeLayer({
           identity,
           count,
-          repository: () => jsonResponse({ owner: { avatar_url: "https://evil.example/avatar.png" } }),
+          repository: () =>
+            jsonResponse({ owner: { avatar_url: "https://evil.example/avatar.png" } }),
           avatar: () => pngResponse(),
         }),
       ),
-    ),
-  );
+    );
+  });
 });

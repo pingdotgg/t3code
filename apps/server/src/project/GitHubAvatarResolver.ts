@@ -8,7 +8,6 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Either from "effect/Either";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -39,10 +38,11 @@ const CacheEntry = Schema.Struct({
 });
 const CacheEntryJson = Schema.fromJsonString(CacheEntry);
 const encodeCacheEntry = Schema.encodeSync(CacheEntryJson);
+const decodeCacheEntryJson = Schema.decodeUnknownOption(CacheEntryJson);
 
 function decodeCacheEntry(raw: string): Schema.Schema.Type<typeof CacheEntry> | null {
   try {
-    return Option.getOrNull(Schema.decodeUnknownOption(CacheEntryJson)(raw));
+    return Option.getOrNull(decodeCacheEntryJson(raw));
   } catch {
     return null;
   }
@@ -57,6 +57,7 @@ const RepositorySchema = Schema.Struct({
     ),
   ),
 });
+const decodeRepository = Schema.decodeUnknownOption(RepositorySchema);
 
 export class GitHubAvatarResolver extends Context.Service<
   GitHubAvatarResolver,
@@ -93,11 +94,6 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.catchCause(() => Effect.void));
   });
 
-  type AvatarFetch =
-    | { readonly _tag: "avatar"; readonly bytes: Uint8Array; readonly extension: string }
-    | { readonly _tag: "negative" }
-    | { readonly _tag: "retry" };
-
   const downloadAvatar = Effect.fn("GitHubAvatarResolver.downloadAvatar")(function* (
     owner: string,
     name: string,
@@ -113,11 +109,9 @@ export const make = Effect.gen(function* () {
     if (repositoryResponse.status < 200 || repositoryResponse.status >= 300) {
       return { _tag: "retry" } as const;
     }
-    const decoded = yield* Schema.decodeUnknown(RepositorySchema)(yield* repositoryResponse.json).pipe(
-      Effect.option,
-    );
-    if (Option.isNone(decoded)) return { _tag: "retry" } as const;
-    const avatarUrl = decoded.value.owner?.avatar_url;
+    const decoded = Option.getOrNull(decodeRepository(yield* repositoryResponse.json));
+    if (decoded === null) return { _tag: "retry" } as const;
+    const avatarUrl = decoded.owner?.avatar_url;
     // A url from a response is data, not instruction: only the GitHub avatar CDN may be fetched.
     if (!avatarUrl || new URL(avatarUrl).host !== "avatars.githubusercontent.com") {
       return { _tag: "negative" } as const;
@@ -149,24 +143,24 @@ export const make = Effect.gen(function* () {
     name: string,
   ) {
     const now = yield* Clock.currentTimeMillis;
-    yield* fileSystem.makeDirectory(cacheDir, { recursive: true }).pipe(
-      Effect.catchCause(() => Effect.void),
-    );
+    yield* fileSystem
+      .makeDirectory(cacheDir, { recursive: true })
+      .pipe(Effect.catchCause(() => Effect.void));
     // Transport failures, timeouts and transient API states return null without
     // a marker, so one blip never hides an icon for the negative TTL.
     const outcome = yield* downloadAvatar(owner, name).pipe(
       Effect.timeout(FETCH_TIMEOUT_MS),
-      Effect.either,
+      Effect.catchCause(() => Effect.succeed({ _tag: "retry" } as const)),
     );
-    if (Either.isLeft(outcome)) return null;
-    if (outcome.right._tag === "retry") return null;
-    if (outcome.right._tag === "negative") {
-      yield* writeCacheEntry(cacheKey, { ok: false, fetchedAtMs: now });
+    if (outcome._tag !== "avatar") {
+      if (outcome._tag === "negative") {
+        yield* writeCacheEntry(cacheKey, { ok: false, fetchedAtMs: now });
+      }
       return null;
     }
-    const fileName = `${cacheKey}${outcome.right.extension}`;
+    const fileName = `${cacheKey}${outcome.extension}`;
     const written = yield* fileSystem
-      .writeFile(path.join(cacheDir, fileName), outcome.right.bytes)
+      .writeFile(path.join(cacheDir, fileName), outcome.bytes)
       .pipe(Effect.option);
     if (Option.isNone(written)) {
       yield* writeCacheEntry(cacheKey, { ok: false, fetchedAtMs: now });
@@ -178,18 +172,16 @@ export const make = Effect.gen(function* () {
     return path.join(cacheDir, fileName);
   });
 
-  type CachedAvatar =
-    | { readonly _tag: "hit"; readonly path: string }
-    | { readonly _tag: "negative" }
-    | { readonly _tag: "miss" };
-
   const cachedAvatar = Effect.fn("GitHubAvatarResolver.cachedAvatar")(function* (cacheKey: string) {
-    const raw = yield* fileSystem.readFileString(path.join(cacheDir, `${cacheKey}.json`)).pipe(
-      Effect.option,
-    );
+    const raw = yield* fileSystem
+      .readFileString(path.join(cacheDir, `${cacheKey}.json`))
+      .pipe(Effect.option);
     const entry = Option.isNone(raw) ? null : decodeCacheEntry(raw.value);
     // A cache hit must name a file of this cache; anything else is a miss.
-    if (entry === null || (entry.ok && entry.file !== undefined && path.basename(entry.file) !== entry.file)) {
+    if (
+      entry === null ||
+      (entry.ok && entry.file !== undefined && path.basename(entry.file) !== entry.file)
+    ) {
       return { _tag: "miss" } as const;
     }
     if (entry.ok && entry.file !== undefined) {
@@ -208,7 +200,9 @@ export const make = Effect.gen(function* () {
   const resolvePath = Effect.fn("GitHubAvatarResolver.resolvePath")(function* (cwd: string) {
     const identity = yield* repositoryIdentityResolver.resolve(cwd);
     const nameWithOwner =
-      identity === null ? null : parseGitHubRepositoryNameWithOwnerFromRemoteUrl(identity.locator.remoteUrl);
+      identity === null
+        ? null
+        : parseGitHubRepositoryNameWithOwnerFromRemoteUrl(identity.locator.remoteUrl);
     if (nameWithOwner === null) return null;
     const [owner, name] = nameWithOwner.split("/");
     if (!owner || !name) return null;

@@ -43,6 +43,14 @@ const testLayerWithGitHubAvatars = (
     ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
   ).pipe(Layer.provideMerge(NodeServices.layer));
 const testLayer = testLayerWithGitHubAvatars(disabledGitHubAvatars);
+const fakeGitHubAvatars = (state: { readonly avatarPath: string }) =>
+  Layer.succeed(
+    GitHubAvatarResolver.GitHubAvatarResolver,
+    GitHubAvatarResolver.GitHubAvatarResolver.of({
+      resolvePath: () => Effect.succeed(state.avatarPath),
+      isManagedPath: (filePath) => filePath === state.avatarPath,
+    }),
+  );
 
 describe("AssetAccess", () => {
   it.effect("issues workspace URLs that resolve the entry file and sibling assets", () =>
@@ -370,8 +378,9 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("serves a managed GitHub avatar through external claims", () =>
-    Effect.gen(function* () {
+  it.effect("serves a managed GitHub avatar through external claims", () => {
+    const state = { avatarPath: "" };
+    return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fileSystem.makeTempDirectoryScoped({
@@ -384,17 +393,11 @@ describe("AssetAccess", () => {
       const avatarBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
       yield* fileSystem.writeFile(avatarPath, avatarBytes);
       const canonicalAvatarPath = yield* fileSystem.realPath(avatarPath);
-      const githubAvatars = Layer.succeed(
-        GitHubAvatarResolver.GitHubAvatarResolver,
-        GitHubAvatarResolver.GitHubAvatarResolver.of({
-          resolvePath: () => Effect.succeed(avatarPath),
-          isManagedPath: (filePath) => filePath === avatarPath,
-        }),
-      );
+      state.avatarPath = avatarPath;
 
       const result = yield* issueAssetUrl({
         resource: { _tag: "project-favicon", cwd: root },
-      }).pipe(Effect.provide(testLayerWithGitHubAvatars(githubAvatars)));
+      });
       const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
       const separatorIndex = suffix.indexOf("/");
 
@@ -403,8 +406,8 @@ describe("AssetAccess", () => {
       expect(
         yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
       ).toEqual({ kind: "file", path: canonicalAvatarPath });
-    }),
-  );
+    }).pipe(Effect.provide(testLayerWithGitHubAvatars(fakeGitHubAvatars(state))));
+  });
 
   it.effect("ignores a client favicon path hint", () =>
     Effect.gen(function* () {
