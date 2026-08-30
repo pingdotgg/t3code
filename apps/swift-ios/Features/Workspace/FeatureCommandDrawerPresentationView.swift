@@ -66,7 +66,6 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
                         withAnimation(settleAnimation) {
                             state.cancelDrag(openHeight: openHeight)
                         }
-                        responderOwnership.cancel(returningToOpen: state.isOpen)
                     }
                 )
             }
@@ -78,10 +77,15 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
                 if !isVisible {
                     query = ""
                     hasRenewedSearchFocusAfterSettle = false
-                    responderOwnership.close(
-                        restoringPrior: restoresPriorResponderOnClose
-                    )
+                    let restoresPrior = restoresPriorResponderOnClose
                     restoresPriorResponderOnClose = true
+                    // Relinquish SwiftUI's drawer FocusState before asking the
+                    // exact UIKit responder captured at gesture-begin to resume.
+                    // Restoring in this same update is immediately undone when
+                    // SwiftUI applies `isQueryFocused = false` to the text field.
+                    FeatureCommandDrawerGestureView.afterCurrentViewUpdate {
+                        responderOwnership.close(restoringPrior: restoresPrior)
+                    }
                 }
             }
             // …but the request above is made while the field is still above the
@@ -209,8 +213,7 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
 
     private func settle(velocity: CGFloat, openHeight: CGFloat) {
         withAnimation(settleAnimation) {
-            let opens = state.endDrag(velocity: velocity, openHeight: openHeight)
-            responderOwnership.settle(open: opens)
+            state.endDrag(velocity: velocity, openHeight: openHeight)
         } completion: {
             // The last chance to focus, once the drawer has physically arrived:
             // a swipe can settle open before the search field was ever on
@@ -246,8 +249,7 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
     }
 
     private func close(restoringPrior: Bool = true) {
-        responderOwnership.close(restoringPrior: restoringPrior)
-        restoresPriorResponderOnClose = true
+        restoresPriorResponderOnClose = restoringPrior
         withAnimation(settleAnimation) {
             state.close()
         }
