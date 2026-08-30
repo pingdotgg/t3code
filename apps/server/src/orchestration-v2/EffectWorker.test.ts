@@ -23,7 +23,8 @@ import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
-  CheckpointRollbackExecutionError,
+  type CheckpointRollbackExecutionError,
+  CheckpointRollbackPartialError,
   CheckpointRollbackServiceV2,
 } from "./CheckpointRollbackService.ts";
 import { EffectOutboxError, EffectOutboxV2, type OrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -238,7 +239,7 @@ it.effect("classifies retry-unsafe rollback failures only for guarded MCP reques
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const events = yield* Ref.make<ReadonlyArray<string>>([]);
-    const rollbackError = new CheckpointRollbackExecutionError({
+    const rollbackError = new CheckpointRollbackPartialError({
       reason: "provider-rollback-failed-after-restore",
       threadId,
       providerThreadId,

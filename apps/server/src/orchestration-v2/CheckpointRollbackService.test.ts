@@ -169,6 +169,7 @@ it.effect("rejects a non-ready checkpoint before opening a session or restoring 
       .pipe(Effect.flip);
 
     assert.equal(error.reason, "rollback-target-invalid");
+    assert.equal(error._tag, "CheckpointRollbackRejectedError");
     assert.equal(
       error.message,
       `Rollback target ${checkpointId} for provider thread ${providerThreadId} on thread ${threadId} is incomplete or invalid.`,
@@ -426,6 +427,7 @@ it.effect("wraps underlying failures with an unexpected-failure reason and cause
       .pipe(Effect.flip);
 
     assert.equal(error.reason, "unexpected-failure");
+    assert.equal(error._tag, "CheckpointRollbackPreflightError");
     assert.equal(
       error.message,
       `Failed to execute rollback target ${checkpointId} on provider thread ${providerThreadId} for thread ${threadId}.`,
@@ -536,6 +538,7 @@ it.effect("reports an uncertain filesystem restore as partial before provider ro
       .pipe(Effect.flip);
 
     assert.equal(error.reason, "post-restore-finalization-failed");
+    assert.equal(error._tag, "CheckpointRollbackPartialError");
     assert.strictEqual(error.cause, restoreError);
     assert.equal(rollbackThread.mock.calls.length, 0);
   }).pipe(Effect.provide(testLayer));

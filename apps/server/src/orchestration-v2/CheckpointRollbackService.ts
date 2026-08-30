@@ -26,8 +26,15 @@ import type { ProviderAdapterV2RollbackTarget } from "./ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 
-export class CheckpointRollbackExecutionError extends Schema.TaggedErrorClass<CheckpointRollbackExecutionError>()(
-  "CheckpointRollbackExecutionError",
+const CheckpointRollbackErrorFields = {
+  threadId: ThreadId,
+  providerThreadId: ProviderThreadId,
+  checkpointId: CheckpointId,
+  cause: Schema.optional(Schema.Defect()),
+};
+
+export class CheckpointRollbackRejectedError extends Schema.TaggedErrorClass<CheckpointRollbackRejectedError>()(
+  "CheckpointRollbackRejectedError",
   {
     reason: Schema.Literals([
       "rollback-target-invalid",
@@ -36,14 +43,8 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedErrorClass<Ch
       "provider-turn-unavailable",
       "thread-not-idle",
       "restore-precondition-changed",
-      "provider-rollback-failed-after-restore",
-      "post-restore-finalization-failed",
-      "unexpected-failure",
     ]),
-    threadId: ThreadId,
-    providerThreadId: ProviderThreadId,
-    checkpointId: CheckpointId,
-    cause: Schema.optional(Schema.Defect()),
+    ...CheckpointRollbackErrorFields,
   },
 ) {
   override get message(): string {
@@ -60,17 +61,53 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedErrorClass<Ch
         return `Checkpoint rollback target ${this.checkpointId} requires an idle thread with no queued runs.`;
       case "restore-precondition-changed":
         return `Checkpoint rollback target ${this.checkpointId} changed before filesystem restoration began.`;
-      case "provider-rollback-failed-after-restore":
-        return `Provider conversation rollback failed after the filesystem checkpoint ${this.checkpointId} was restored; the result is partial.`;
-      case "post-restore-finalization-failed":
-        return `Checkpoint ${this.checkpointId} was restored, but rollback finalization failed; the result is partial.`;
-      case "unexpected-failure":
-        return `Failed to execute rollback target ${this.checkpointId} on provider thread ${this.providerThreadId} for thread ${this.threadId}.`;
     }
   }
 }
 
-const isCheckpointRollbackExecutionError = Schema.is(CheckpointRollbackExecutionError);
+export class CheckpointRollbackPartialError extends Schema.TaggedErrorClass<CheckpointRollbackPartialError>()(
+  "CheckpointRollbackPartialError",
+  {
+    reason: Schema.Literals([
+      "provider-rollback-failed-after-restore",
+      "post-restore-finalization-failed",
+    ]),
+    ...CheckpointRollbackErrorFields,
+  },
+) {
+  override get message(): string {
+    return this.reason === "provider-rollback-failed-after-restore"
+      ? `Provider conversation rollback failed after the filesystem checkpoint ${this.checkpointId} was restored; the result is partial.`
+      : `Checkpoint ${this.checkpointId} was restored, but rollback finalization failed; the result is partial.`;
+  }
+}
+
+export class CheckpointRollbackPreflightError extends Schema.TaggedErrorClass<CheckpointRollbackPreflightError>()(
+  "CheckpointRollbackPreflightError",
+  {
+    reason: Schema.Literal("unexpected-failure"),
+    ...CheckpointRollbackErrorFields,
+  },
+) {
+  override get message(): string {
+    return `Failed to execute rollback target ${this.checkpointId} on provider thread ${this.providerThreadId} for thread ${this.threadId}.`;
+  }
+}
+
+export type CheckpointRollbackExecutionError =
+  | CheckpointRollbackRejectedError
+  | CheckpointRollbackPartialError
+  | CheckpointRollbackPreflightError;
+
+const isCheckpointRollbackRejectedError = Schema.is(CheckpointRollbackRejectedError);
+const isCheckpointRollbackPartialError = Schema.is(CheckpointRollbackPartialError);
+const isCheckpointRollbackPreflightError = Schema.is(CheckpointRollbackPreflightError);
+const isCheckpointRollbackExecutionError = (
+  value: unknown,
+): value is CheckpointRollbackExecutionError =>
+  isCheckpointRollbackRejectedError(value) ||
+  isCheckpointRollbackPartialError(value) ||
+  isCheckpointRollbackPreflightError(value);
 const isCheckpointRestoreOutcomeUnknownError = Schema.is(CheckpointRestoreOutcomeUnknownError);
 const isCheckpointRestorePreflightError = Schema.is(CheckpointRestorePreflightError);
 const isCheckpointRestorePreconditionError = Schema.is(CheckpointRestorePreconditionError);
@@ -137,7 +174,7 @@ export const layer: Layer.Layer<
         checkpoint.scopeId !== scope.id ||
         checkpoint.status !== "ready"
       ) {
-        return yield* new CheckpointRollbackExecutionError({
+        return yield* new CheckpointRollbackRejectedError({
           reason: "rollback-target-invalid",
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
@@ -149,7 +186,7 @@ export const layer: Layer.Layer<
         providerThread.id !== projection.thread.activeProviderThreadId ||
         providerThread.providerInstanceId !== projection.thread.modelSelection.instanceId
       ) {
-        return yield* new CheckpointRollbackExecutionError({
+        return yield* new CheckpointRollbackRejectedError({
           reason: "active-provider-changed",
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
@@ -162,7 +199,7 @@ export const layer: Layer.Layer<
           ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
         )
       ) {
-        return yield* new CheckpointRollbackExecutionError({
+        return yield* new CheckpointRollbackRejectedError({
           reason: "thread-not-idle",
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
@@ -172,7 +209,7 @@ export const layer: Layer.Layer<
 
       const targetOrdinal = checkpointRollbackAppRunOrdinal(checkpoint, scope);
       if (targetOrdinal === null) {
-        return yield* new CheckpointRollbackExecutionError({
+        return yield* new CheckpointRollbackRejectedError({
           reason: "rollback-target-ambiguous",
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
@@ -215,7 +252,7 @@ export const layer: Layer.Layer<
         admittedCheckpoint.scopeId !== admittedScope.id ||
         admittedCheckpoint.status !== "ready"
       ) {
-        return yield* new CheckpointRollbackExecutionError({
+        return yield* new CheckpointRollbackRejectedError({
           reason: "rollback-target-invalid",
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
@@ -227,7 +264,7 @@ export const layer: Layer.Layer<
         admittedProviderThread.providerInstanceId !==
           admittedProjection.thread.modelSelection.instanceId
       ) {
-        return yield* new CheckpointRollbackExecutionError({
+        return yield* new CheckpointRollbackRejectedError({
           reason: "active-provider-changed",
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
@@ -240,7 +277,7 @@ export const layer: Layer.Layer<
           ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
         )
       ) {
-        return yield* new CheckpointRollbackExecutionError({
+        return yield* new CheckpointRollbackRejectedError({
           reason: "thread-not-idle",
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
@@ -248,7 +285,7 @@ export const layer: Layer.Layer<
         });
       }
       if (checkpointRollbackAppRunOrdinal(admittedCheckpoint, admittedScope) !== targetOrdinal) {
-        return yield* new CheckpointRollbackExecutionError({
+        return yield* new CheckpointRollbackRejectedError({
           reason: "rollback-target-invalid",
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
@@ -285,7 +322,7 @@ export const layer: Layer.Layer<
                 targetTurn === undefined ||
                 targetTurn.providerThreadId !== admittedProviderThread.id
               ) {
-                return yield* new CheckpointRollbackExecutionError({
+                return yield* new CheckpointRollbackRejectedError({
                   reason: "provider-turn-unavailable",
                   threadId: input.threadId,
                   providerThreadId: input.providerThreadId,
@@ -357,20 +394,30 @@ export const layer: Layer.Layer<
           ...(validateBeforeRestore === undefined ? {} : { validateBeforeRestore }),
         })
         .pipe(
-          Effect.mapError(
-            (cause) =>
-              new CheckpointRollbackExecutionError({
-                reason: isCheckpointRestoreOutcomeUnknownError(cause)
-                  ? "post-restore-finalization-failed"
-                  : isCheckpointRestorePreconditionError(cause)
-                    ? "restore-precondition-changed"
-                    : "unexpected-failure",
-                threadId: input.threadId,
-                providerThreadId: input.providerThreadId,
-                checkpointId: input.checkpointId,
-                cause,
-              }),
-          ),
+          Effect.mapError((cause): CheckpointRollbackExecutionError => {
+            const fields = {
+              threadId: input.threadId,
+              providerThreadId: input.providerThreadId,
+              checkpointId: input.checkpointId,
+              cause,
+            };
+            if (isCheckpointRestoreOutcomeUnknownError(cause)) {
+              return new CheckpointRollbackPartialError({
+                ...fields,
+                reason: "post-restore-finalization-failed",
+              });
+            }
+            if (isCheckpointRestorePreconditionError(cause)) {
+              return new CheckpointRollbackRejectedError({
+                ...fields,
+                reason: "restore-precondition-changed",
+              });
+            }
+            return new CheckpointRollbackPreflightError({
+              ...fields,
+              reason: "unexpected-failure",
+            });
+          }),
         );
       yield* Effect.gen(function* () {
         const snapshot =
@@ -385,7 +432,7 @@ export const layer: Layer.Layer<
                 .pipe(
                   Effect.mapError(
                     (cause) =>
-                      new CheckpointRollbackExecutionError({
+                      new CheckpointRollbackPartialError({
                         reason: "provider-rollback-failed-after-restore",
                         threadId: input.threadId,
                         providerThreadId: input.providerThreadId,
@@ -478,10 +525,10 @@ export const layer: Layer.Layer<
         yield* eventSink.write({ events });
       }).pipe(
         Effect.mapError((cause) =>
-          isCheckpointRollbackExecutionError(cause) &&
+          isCheckpointRollbackPartialError(cause) &&
           cause.reason === "provider-rollback-failed-after-restore"
             ? cause
-            : new CheckpointRollbackExecutionError({
+            : new CheckpointRollbackPartialError({
                 reason: "post-restore-finalization-failed",
                 threadId: input.threadId,
                 providerThreadId: input.providerThreadId,
@@ -498,7 +545,7 @@ export const layer: Layer.Layer<
           Effect.mapError((cause) =>
             isCheckpointRollbackExecutionError(cause)
               ? cause
-              : new CheckpointRollbackExecutionError({
+              : new CheckpointRollbackPreflightError({
                   reason: "unexpected-failure",
                   threadId: input.threadId,
                   providerThreadId: input.providerThreadId,

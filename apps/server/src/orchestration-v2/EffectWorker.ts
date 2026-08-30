@@ -57,28 +57,22 @@ function isGuardedCheckpointRestore(effect: OrchestrationEffectV2): boolean {
 }
 
 function guardedCheckpointRestoreFailureCode(
-  reason: CheckpointRollbackExecutionError["reason"],
+  error: CheckpointRollbackExecutionError,
 ): OrchestrationEffectFailureCodeV2 | undefined {
-  switch (reason) {
-    case "provider-rollback-failed-after-restore":
-    case "post-restore-finalization-failed":
+  switch (error._tag) {
+    case "CheckpointRollbackPartialError":
       return "checkpoint_restore_partial";
-    case "unexpected-failure":
+    case "CheckpointRollbackPreflightError":
       return undefined;
-    case "rollback-target-invalid":
-    case "rollback-target-ambiguous":
-    case "active-provider-changed":
-    case "provider-turn-unavailable":
-    case "thread-not-idle":
-    case "restore-precondition-changed":
+    case "CheckpointRollbackRejectedError":
       return "checkpoint_restore_rejected";
   }
 
-  return assertUnhandledCheckpointRollbackReason(reason);
+  return assertUnhandledCheckpointRollbackError(error);
 }
 
-function assertUnhandledCheckpointRollbackReason(reason: never): never {
-  throw new Error(`Unhandled checkpoint rollback failure reason: ${String(reason)}`);
+function assertUnhandledCheckpointRollbackError(error: never): never {
+  throw new Error(`Unhandled checkpoint rollback failure: ${String(error)}`);
 }
 
 /**
@@ -319,7 +313,7 @@ export const executorLayer: Layer.Layer<
               .pipe(
                 Effect.mapError((cause) => {
                   const failureCode: OrchestrationEffectFailureCodeV2 | undefined = guardedRestore
-                    ? guardedCheckpointRestoreFailureCode(cause.reason)
+                    ? guardedCheckpointRestoreFailureCode(cause)
                     : undefined;
                   return new OrchestrationEffectExecutionError({
                     effectId: effect.id,
