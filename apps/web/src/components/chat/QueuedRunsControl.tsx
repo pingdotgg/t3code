@@ -50,6 +50,7 @@ export function QueuedRunsControl(props: {
   /** Row currently loaded into the composer for editing; hidden from the list. */
   readonly editingRunId: RunId | null;
   readonly onEditQueuedRun: (request: EditQueuedRunRequest) => void;
+  readonly onCancelEdit: () => void;
 }) {
   const projection = useThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
@@ -152,7 +153,7 @@ export function QueuedRunsControl(props: {
     })),
   ].filter((item) => item.runId === null || item.runId !== props.editingRunId);
 
-  if (items.length === 0) return null;
+  if (items.length === 0 && props.editingRunId === null) return null;
 
   const move = async (runId: RunId, beforeRunId: RunId | null) => {
     setBusyRunId(runId);
@@ -206,29 +207,39 @@ export function QueuedRunsControl(props: {
     <ComposerBanner.Attachment>
       <ComposerBanner.Root
         role="region"
-        aria-label={`${items.length} queued message${items.length === 1 ? "" : "s"}`}
+        aria-label={
+          items.length > 0
+            ? `${items.length} queued message${items.length === 1 ? "" : "s"}`
+            : "Editing queued message"
+        }
         aria-live="polite"
         data-chat-composer-collapsed-controls="true"
         className="relative z-0"
       >
-        <ComposerBanner.Row
-          render={<button type="button" />}
-          aria-label={expanded ? "Collapse queued messages" : "Expand queued messages"}
-          aria-expanded={expanded}
-          aria-controls={queueListId}
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={() => setExpanded((value) => !value)}
+        {items.length > 0 ? (
+          <ComposerBanner.Row
+            render={<button type="button" />}
+            aria-label={expanded ? "Collapse queued messages" : "Expand queued messages"}
+            aria-expanded={expanded}
+            aria-controls={queueListId}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            <ComposerBanner.Icon>
+              <ListOrderedIcon />
+            </ComposerBanner.Icon>
+            <ComposerBanner.Content className="text-muted-foreground">
+              Queued
+            </ComposerBanner.Content>
+            <ComposerBanner.Actions>
+              <ComposerBanner.Count>{items.length}</ComposerBanner.Count>
+              <ComposerBanner.ToggleIcon expanded={expanded} />
+            </ComposerBanner.Actions>
+          </ComposerBanner.Row>
+        ) : null}
+        <ComposerBanner.Scroll
+          className={cn("max-h-32", (!expanded || items.length === 0) && "hidden")}
         >
-          <ComposerBanner.Icon>
-            <ListOrderedIcon />
-          </ComposerBanner.Icon>
-          <ComposerBanner.Content className="text-muted-foreground">Queued</ComposerBanner.Content>
-          <ComposerBanner.Actions>
-            <ComposerBanner.Count>{items.length}</ComposerBanner.Count>
-            <ComposerBanner.ToggleIcon expanded={expanded} />
-          </ComposerBanner.Actions>
-        </ComposerBanner.Row>
-        <ComposerBanner.Scroll className={cn("max-h-32", !expanded && "hidden")}>
           <ComposerBanner.Children render={<ol />} id={queueListId}>
             {items.map((item, index) => {
               const rowRunId = item.runId;
@@ -410,6 +421,25 @@ export function QueuedRunsControl(props: {
             })}
           </ComposerBanner.Children>
         </ComposerBanner.Scroll>
+        {props.editingRunId !== null ? (
+          <ComposerBanner.Row>
+            <ComposerBanner.Icon>
+              <PencilIcon />
+            </ComposerBanner.Icon>
+            <ComposerBanner.Content className="font-medium">
+              Editing queued message
+            </ComposerBanner.Content>
+            <ComposerBanner.Actions>
+              <Button size="xs" variant="ghost" onClick={props.onCancelEdit}>
+                Cancel
+              </Button>
+              <ComposerBanner.Dismiss
+                aria-label="Cancel editing queued message"
+                onClick={props.onCancelEdit}
+              />
+            </ComposerBanner.Actions>
+          </ComposerBanner.Row>
+        ) : null}
       </ComposerBanner.Root>
     </ComposerBanner.Attachment>
   );
