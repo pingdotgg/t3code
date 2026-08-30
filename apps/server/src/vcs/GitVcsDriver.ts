@@ -728,7 +728,41 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
     });
 
+  const readWorkspaceFingerprint = Effect.fn("GitVcsDriver.checkpoints.readWorkspaceFingerprint")(
+    function* (cwd: string, operation = "GitVcsDriver.checkpoints.readWorkspaceFingerprint") {
+      const gitCommonDir = yield* resolveGitCommonDir(cwd);
+      const tempIndexPath = path.join(
+        gitCommonDir,
+        `t3-checkpoint-index-${NodeCrypto.randomUUID()}`,
+      );
+      const indexEnv: NodeJS.ProcessEnv = { ...process.env, GIT_INDEX_FILE: tempIndexPath };
+      const cleanupTempIndex = fileSystem
+        .remove(tempIndexPath, { force: true })
+        .pipe(Effect.ignore);
+
+      return yield* Effect.gen(function* () {
+        if (yield* hasHeadCommit(cwd)) {
+          yield* execute({ operation, cwd, args: ["read-tree", "HEAD"], env: indexEnv });
+        }
+        yield* execute({ operation, cwd, args: ["add", "-A", "--", "."], env: indexEnv });
+        const result = yield* execute({ operation, cwd, args: ["write-tree"], env: indexEnv });
+        const treeOid = result.stdout.trim();
+        if (treeOid.length === 0) {
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git write-tree",
+            cwd,
+            exitCode: 0,
+            detail: "git write-tree returned an empty tree oid.",
+          });
+        }
+        return treeOid;
+      }).pipe(Effect.ensuring(cleanupTempIndex));
+    },
+  );
+
   const checkpoints: VcsDriver.VcsCheckpointOps = {
+    readWorkspaceFingerprint: (cwd) => readWorkspaceFingerprint(cwd),
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.captureCheckpoint";
       const gitCommonDir = yield* resolveGitCommonDir(input.cwd);

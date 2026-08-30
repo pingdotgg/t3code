@@ -20,3 +20,19 @@ path, or another project's thread.
 
 Inspection is read-only. A checkpoint that is stale, missing, or unavailable
 is reported honestly rather than substituted with a different snapshot.
+
+## Restore safety
+
+`t3_checkpoint_restore` restores one exact checkpoint selected from the list.
+It is destructive: current tracked and untracked changes covered by the
+restore are discarded, so the agent must explicitly acknowledge that outcome.
+The thread must be idle with no queued work, and the provider must support
+rolling its conversation back to the same point.
+
+T3 verifies that the workspace has not changed between the request and the
+locked restore. If files or thread state change concurrently, the restore
+fails and preserves the newer state. The result distinguishes a request that
+is still running, a fully applied restore, a failure, and a partial result
+where files were restored but the provider conversation could not be rolled
+back. Retrying with the same idempotency key reads the original result instead
+of starting another restore.

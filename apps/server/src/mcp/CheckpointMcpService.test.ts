@@ -3,16 +3,21 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  CommandId,
   EnvironmentId,
+  EventId,
+  MessageId,
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Checkpoint,
   type OrchestrationV2CheckpointScope,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  RunId,
   ThreadId,
   VcsDriverKind,
   VcsProcessOutputLimitError,
@@ -21,18 +26,20 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import {
   CLAUDE_PROVIDER,
   ClaudeProviderCapabilitiesV2,
 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import type { OrchestrationEffectV2 } from "../orchestration-v2/EffectOutbox.ts";
+import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import {
   ThreadManagementProjectionLoadError,
   ThreadManagementService,
   ThreadManagementThreadNotFoundError,
 } from "../orchestration-v2/ThreadManagementService.ts";
-import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import {
   ProjectionStoreReadError,
   ProjectionStoreThreadNotFoundError,
@@ -192,6 +199,9 @@ function makeHarness(
     readonly targetError?: ThreadManagementProjectionLoadError;
     readonly hasCheckpointRef?: CheckpointStore.CheckpointStore["Service"]["hasCheckpointRef"];
     readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
+    readonly readWorkspaceFingerprint?: CheckpointStore.CheckpointStore["Service"]["readWorkspaceFingerprint"];
+    readonly effectStatus?: OrchestrationEffectV2["status"];
+    readonly effectError?: string | null;
   } = {},
 ) {
   const projection = input.projection ?? makeProjection();
@@ -199,7 +209,38 @@ function makeHarness(
   const diffCheckpoints = vi.fn(
     input.diffCheckpoints ?? (() => Effect.succeed("diff --git a/file b/file")),
   );
-  const dispatch = vi.fn(() => Effect.die("Checkpoint MCP read tests do not dispatch commands."));
+  const readWorkspaceFingerprint = vi.fn(
+    input.readWorkspaceFingerprint ?? (() => Effect.succeed("tree:checkpoint-mcp")),
+  );
+  let acceptedCommandId: CommandId | undefined;
+  const dispatch = vi.fn(
+    (command: Parameters<ThreadManagementService["Service"]["dispatch"]>[0]) =>
+      command.type !== "checkpoint.rollback"
+        ? Effect.die("Checkpoint MCP test only dispatches checkpoint.rollback")
+        : Effect.sync(() => {
+            acceptedCommandId = command.commandId;
+            return {
+              sequence: 7,
+              storedEvents: [
+                {
+                  sequence: 7,
+                  commandId: command.commandId,
+                  event: {
+                    id: EventId.make(`event:${command.commandId}`),
+                    type: "checkpoint.rollback-requested" as const,
+                    threadId: command.threadId,
+                    occurredAt: now,
+                    payload: {
+                      scopeId: command.scopeId,
+                      checkpointId: command.checkpointId,
+                      requestedAt: now,
+                    },
+                  },
+                },
+              ],
+            };
+          }),
+  );
   const serviceLayer = layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -220,12 +261,55 @@ function makeHarness(
                     }),
                   ),
           dispatch,
+          getCommandReceipt: (commandId) =>
+            Effect.succeed(
+              acceptedCommandId === commandId
+                ? Option.some({
+                    commandId,
+                    threadId: projection.thread.id,
+                    commandType: "checkpoint.rollback",
+                    acceptedAt: now,
+                    resultSequence: 7,
+                    status: "accepted",
+                    error: null,
+                  })
+                : Option.none(),
+            ),
+          listCommandEffects: (commandId) =>
+            Effect.succeed([
+              {
+                id: `effect:${commandId}:rollback`,
+                commandId,
+                threadId: projection.thread.id,
+                request: {
+                  type: "provider-thread.rollback",
+                  providerThreadId,
+                  checkpointId: makeCheckpoint(0).id,
+                  scopeId,
+                  expectedIdle: true,
+                  expectedWorkspaceFingerprint: "tree:checkpoint-mcp",
+                },
+                status: input.effectStatus ?? "pending",
+                attemptCount: 0,
+                availableAt: "2026-08-29T12:00:00.000Z",
+                leaseOwner: null,
+                leaseExpiresAt: null,
+                createdAt: "2026-08-29T12:00:00.000Z",
+                updatedAt: "2026-08-29T12:00:00.000Z",
+                completedAt: null,
+                lastError: input.effectError ?? null,
+              },
+            ]),
         }),
-        Layer.mock(CheckpointStore.CheckpointStore)({ hasCheckpointRef, diffCheckpoints }),
+        Layer.mock(CheckpointStore.CheckpointStore)({
+          hasCheckpointRef,
+          diffCheckpoints,
+          readWorkspaceFingerprint,
+        }),
       ),
     ),
   );
-  return { serviceLayer, hasCheckpointRef, diffCheckpoints, dispatch };
+  return { serviceLayer, hasCheckpointRef, diffCheckpoints, readWorkspaceFingerprint, dispatch };
 }
 
 it.effect("pages before checking checkpoint refs and bounds file summaries", () => {
@@ -477,5 +561,140 @@ it.effect("distinguishes caller projection failures from missing target threads"
     const error = yield* service.list(invocation, {}).pipe(Effect.flip);
     assert.equal(error.code, "operation_failed");
     assert.include(error.message, "Unable to load calling thread");
+  }).pipe(Effect.provide(harness.serviceLayer));
+});
+
+it.effect("accepts an exact restore and reuses the same command identity", () => {
+  const harness = makeHarness();
+  const checkpointId = makeCheckpoint(0).id;
+  return Effect.gen(function* () {
+    const service = yield* CheckpointMcpService;
+    const input = {
+      scopeId,
+      checkpointId,
+      discardChanges: true as const,
+      clientRequestId: "restore-exact-target",
+    };
+    const first = yield* service.restore(invocation, input);
+    const retry = yield* service.restore(invocation, input);
+    const conflict = yield* service
+      .restore(invocation, {
+        ...input,
+        checkpointId: CheckpointId.make("checkpoint:checkpoint-mcp:different"),
+      })
+      .pipe(Effect.flip);
+
+    assert.equal(first.status, "REQUESTED");
+    assert.equal(first.effectStatus, "pending");
+    assert.equal(retry.commandId, first.commandId);
+    assert.equal(conflict.code, "idempotency_conflict");
+    assert.equal(harness.dispatch.mock.calls.length, 1);
+    assert.equal(harness.dispatch.mock.calls[0]?.[0].type, "checkpoint.rollback");
+    assert.deepInclude(harness.dispatch.mock.calls[0]?.[0], {
+      expectedIdle: true,
+      expectedWorkspaceFingerprint: "tree:checkpoint-mcp",
+    });
+  }).pipe(Effect.provide(harness.serviceLayer));
+});
+
+it.effect("rejects missing checkpoints and unsupported provider rollback", () => {
+  const missingHarness = makeHarness({
+    projection: makeProjection({
+      checkpoints: [makeCheckpoint(0, { status: "missing" })],
+    }),
+    hasCheckpointRef: () => Effect.succeed(false),
+  });
+  const supportedProjection = makeProjection();
+  const unsupportedHarness = makeHarness({
+    projection: {
+      ...supportedProjection,
+      providerSessions: supportedProjection.providerSessions.map((session) => ({
+        ...session,
+        capabilities: {
+          ...session.capabilities,
+          threads: { ...session.capabilities.threads, canRollbackThread: false },
+        },
+      })),
+    },
+  });
+  const restoreInput = {
+    scopeId,
+    checkpointId: makeCheckpoint(0).id,
+    discardChanges: true as const,
+    clientRequestId: "restore-unavailable",
+  };
+  return Effect.gen(function* () {
+    const missingService = yield* CheckpointMcpService;
+    const missing = yield* missingService.restore(invocation, restoreInput).pipe(Effect.flip);
+    assert.equal(missing.code, "checkpoint_unavailable");
+  }).pipe(
+    Effect.provide(missingHarness.serviceLayer),
+    Effect.andThen(
+      Effect.gen(function* () {
+        const unsupportedService = yield* CheckpointMcpService;
+        const unsupported = yield* unsupportedService
+          .restore(invocation, { ...restoreInput, clientRequestId: "restore-unsupported" })
+          .pipe(Effect.flip);
+        assert.equal(unsupported.code, "unsupported");
+      }).pipe(Effect.provide(unsupportedHarness.serviceLayer)),
+    ),
+  );
+});
+
+it.effect("rejects queued work before capturing or dispatching a restore", () => {
+  const queuedRun: OrchestrationV2Run = {
+    id: RunId.make("run:checkpoint-mcp:queued"),
+    threadId,
+    ordinal: 1,
+    providerInstanceId,
+    modelSelection: { instanceId: providerInstanceId, model: "claude-sonnet" },
+    providerThreadId,
+    userMessageId: MessageId.make("message:checkpoint-mcp:queued"),
+    rootNodeId: null,
+    activeAttemptId: null,
+    status: "queued",
+    queuePosition: 1,
+    requestedAt: now,
+    startedAt: null,
+    completedAt: null,
+    checkpointId: null,
+    contextHandoffId: null,
+  };
+  const harness = makeHarness({
+    projection: { ...makeProjection(), runs: [queuedRun] },
+  });
+  return Effect.gen(function* () {
+    const service = yield* CheckpointMcpService;
+    const error = yield* service
+      .restore(invocation, {
+        scopeId,
+        checkpointId: makeCheckpoint(0).id,
+        discardChanges: true,
+        clientRequestId: "restore-while-queued",
+      })
+      .pipe(Effect.flip);
+
+    assert.equal(error.code, "thread_active");
+    assert.equal(harness.readWorkspaceFingerprint.mock.calls.length, 0);
+    assert.equal(harness.dispatch.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.serviceLayer));
+});
+
+it.effect("reports provider failure after filesystem restore as partial", () => {
+  const harness = makeHarness({
+    effectStatus: "failed",
+    effectError:
+      "Provider conversation rollback failed after the filesystem checkpoint was restored; the result is partial.",
+  });
+  return Effect.gen(function* () {
+    const service = yield* CheckpointMcpService;
+    const result = yield* service.restore(invocation, {
+      scopeId,
+      checkpointId: makeCheckpoint(0).id,
+      discardChanges: true,
+      clientRequestId: "restore-partial",
+    });
+    assert.equal(result.status, "PARTIAL");
+    assert.equal(result.effectStatus, "failed");
   }).pipe(Effect.provide(harness.serviceLayer));
 });

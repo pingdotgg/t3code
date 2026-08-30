@@ -81,6 +81,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     providerThreadId: ProviderThreadId,
     checkpointId: CheckpointId,
     scopeId: CheckpointScopeId,
+    expectedIdle: Schema.optional(Schema.Literal(true)),
+    expectedWorkspaceFingerprint: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     type: Schema.Literal("checkpoint.capture"),

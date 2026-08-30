@@ -128,6 +128,27 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
     }),
   );
 
+  describe("readWorkspaceFingerprint", () => {
+    it.effect("tracks the exact tracked and untracked tree affected by restore", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        const initial = yield* checkpointStore.readWorkspaceFingerprint(tmp);
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# changed\n");
+        const trackedChange = yield* checkpointStore.readWorkspaceFingerprint(tmp);
+        yield* writeTextFile(NodePath.join(tmp, "new-file.txt"), "new\n");
+        const untrackedChange = yield* checkpointStore.readWorkspaceFingerprint(tmp);
+
+        expect(trackedChange).not.toBe(initial);
+        expect(untrackedChange).not.toBe(trackedChange);
+        expect(yield* git(tmp, ["status", "--short"])).toContain("README.md");
+        expect(yield* git(tmp, ["status", "--short"])).toContain("new-file.txt");
+      }),
+    );
+  });
+
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {

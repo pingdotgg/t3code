@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { CheckpointServiceV2 } from "./CheckpointService.ts";
+import { CheckpointRestoreError, CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
@@ -26,6 +26,8 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedErrorClass<Ch
       "rollback-target-invalid",
       "active-provider-changed",
       "provider-turn-unavailable",
+      "thread-not-idle",
+      "provider-rollback-failed-after-restore",
       "unexpected-failure",
     ]),
     threadId: ThreadId,
@@ -42,6 +44,10 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedErrorClass<Ch
         return `Active provider changed before rollback target ${this.checkpointId} could execute on thread ${this.threadId}.`;
       case "provider-turn-unavailable":
         return `Provider turn for rollback target ${this.checkpointId} is unavailable on provider thread ${this.providerThreadId}.`;
+      case "thread-not-idle":
+        return `Checkpoint rollback target ${this.checkpointId} requires an idle thread with no queued runs.`;
+      case "provider-rollback-failed-after-restore":
+        return `Provider conversation rollback failed after the filesystem checkpoint ${this.checkpointId} was restored; the result is partial.`;
       case "unexpected-failure":
         return `Failed to execute rollback target ${this.checkpointId} on provider thread ${this.providerThreadId} for thread ${this.threadId}.`;
     }
@@ -49,6 +55,7 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedErrorClass<Ch
 }
 
 const isCheckpointRollbackExecutionError = Schema.is(CheckpointRollbackExecutionError);
+const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
 
 export interface CheckpointRollbackServiceV2Shape {
   readonly execute: (input: {
@@ -56,6 +63,8 @@ export interface CheckpointRollbackServiceV2Shape {
     readonly providerThreadId: ProviderThreadId;
     readonly checkpointId: CheckpointId;
     readonly scopeId: CheckpointScopeId;
+    readonly expectedIdle?: true;
+    readonly expectedWorkspaceFingerprint?: string;
   }) => Effect.Effect<void, CheckpointRollbackExecutionError>;
 }
 
@@ -88,6 +97,8 @@ export const layer: Layer.Layer<
       readonly providerThreadId: ProviderThreadId;
       readonly checkpointId: CheckpointId;
       readonly scopeId: CheckpointScopeId;
+      readonly expectedIdle?: true;
+      readonly expectedWorkspaceFingerprint?: string;
     }) {
       const projection = yield* projections.getThreadProjection(input.threadId);
       const providerThread = projection.providerThreads.find(
@@ -118,6 +129,19 @@ export const layer: Layer.Layer<
       ) {
         return yield* new CheckpointRollbackExecutionError({
           reason: "active-provider-changed",
+          threadId: input.threadId,
+          providerThreadId: input.providerThreadId,
+          checkpointId: input.checkpointId,
+        });
+      }
+      if (
+        input.expectedIdle === true &&
+        projection.runs.some((run) =>
+          ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+        )
+      ) {
+        return yield* new CheckpointRollbackExecutionError({
+          reason: "thread-not-idle",
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
           checkpointId: input.checkpointId,
@@ -180,15 +204,72 @@ export const layer: Layer.Layer<
               };
             });
 
-      yield* checkpoints.restore({ scope, checkpoint });
+      const validateBeforeRestore =
+        input.expectedIdle === true
+          ? projections.getThreadProjection(input.threadId).pipe(
+              Effect.flatMap((latest) => {
+                const latestCheckpoint = latest.checkpoints.find(
+                  (candidate) => candidate.id === input.checkpointId,
+                );
+                const remainsIdle = !latest.runs.some((run) =>
+                  ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+                );
+                return remainsIdle &&
+                  latest.thread.archivedAt === null &&
+                  latest.thread.deletedAt === null &&
+                  latest.thread.activeProviderThreadId === input.providerThreadId &&
+                  latestCheckpoint?.scopeId === input.scopeId &&
+                  latestCheckpoint.status === "ready"
+                  ? Effect.void
+                  : Effect.fail(
+                      new CheckpointRestoreError({
+                        scopeId: input.scopeId,
+                        checkpointId: input.checkpointId,
+                        cause:
+                          "Thread or rollback target changed after admission; current workspace files were preserved.",
+                      }),
+                    );
+              }),
+              Effect.mapError((cause) =>
+                isCheckpointRestoreError(cause)
+                  ? cause
+                  : new CheckpointRestoreError({
+                      scopeId: input.scopeId,
+                      checkpointId: input.checkpointId,
+                      cause,
+                    }),
+              ),
+            )
+          : undefined;
+      yield* checkpoints.restore({
+        scope,
+        checkpoint,
+        ...(input.expectedWorkspaceFingerprint === undefined
+          ? {}
+          : { expectedWorkspaceFingerprint: input.expectedWorkspaceFingerprint }),
+        ...(validateBeforeRestore === undefined ? {} : { validateBeforeRestore }),
+      });
       const snapshot =
         runsToRollback.length === 0
           ? { providerThread }
-          : yield* session.rollbackThread({
-              providerThread,
-              target: rollbackTarget,
-              providerThreadTurns,
-            });
+          : yield* session
+              .rollbackThread({
+                providerThread,
+                target: rollbackTarget,
+                providerThreadTurns,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new CheckpointRollbackExecutionError({
+                      reason: "provider-rollback-failed-after-restore",
+                      threadId: input.threadId,
+                      providerThreadId: input.providerThreadId,
+                      checkpointId: input.checkpointId,
+                      cause,
+                    }),
+                ),
+              );
       const staleCheckpoints = projection.checkpoints.filter(
         (candidate) =>
           candidate.scopeId === scope.id &&

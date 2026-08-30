@@ -266,6 +266,14 @@ export const executorLayer: Layer.Layer<
                 providerThreadId: effect.request.providerThreadId,
                 checkpointId: effect.request.checkpointId,
                 scopeId: effect.request.scopeId,
+                ...(effect.request.expectedIdle === undefined
+                  ? {}
+                  : { expectedIdle: effect.request.expectedIdle }),
+                ...(effect.request.expectedWorkspaceFingerprint === undefined
+                  ? {}
+                  : {
+                      expectedWorkspaceFingerprint: effect.request.expectedWorkspaceFingerprint,
+                    }),
               })
               .pipe(
                 Effect.mapError(
@@ -545,6 +553,7 @@ export const layerWithOptions = (
 
           const error = Cause.pretty(exit.cause);
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
+          const terminalRollbackFailure = effect.request.type === "provider-thread.rollback";
           yield* Effect.logWarning("Orchestration effect execution failed", {
             effectId: effect.id,
             effectType: effect.request.type,
@@ -554,7 +563,11 @@ export const layerWithOptions = (
           });
           // Prefer succeed for terminal interrupt races so the outbox does not
           // keep a failed interrupt around; fail only when we must not retry.
-          const updated = nonRetryable
+          const updated = terminalRollbackFailure
+            ? yield* outbox
+                .fail({ effectId: effect.id, workerId, error })
+                .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
+            : nonRetryable
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))

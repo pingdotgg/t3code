@@ -146,6 +146,8 @@ export interface CheckpointServiceV2Shape {
   readonly restore: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly checkpoint: OrchestrationV2Checkpoint;
+    readonly expectedWorkspaceFingerprint?: string;
+    readonly validateBeforeRestore?: Effect.Effect<void, CheckpointRestoreError>;
   }) => Effect.Effect<void, CheckpointServiceV2Error>;
   readonly deleteStaleRefs: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
@@ -491,12 +493,28 @@ export const layer: Layer.Layer<
       withWorkspaceLock(
         input.scope.cwd,
         Effect.gen(function* () {
+          if (input.validateBeforeRestore !== undefined) {
+            yield* input.validateBeforeRestore;
+          }
           if (input.checkpoint.status !== "ready") {
             return yield* new CheckpointRestoreError({
               scopeId: input.scope.id,
               checkpointId: input.checkpoint.id,
               cause: `Checkpoint status is ${input.checkpoint.status}.`,
             });
+          }
+
+          if (input.expectedWorkspaceFingerprint !== undefined) {
+            const currentFingerprint = yield* checkpointStore.readWorkspaceFingerprint(
+              input.scope.cwd,
+            );
+            if (currentFingerprint !== input.expectedWorkspaceFingerprint) {
+              return yield* new CheckpointRestoreError({
+                scopeId: input.scope.id,
+                checkpointId: input.checkpoint.id,
+                cause: "Workspace changed after rollback admission; current files were preserved.",
+              });
+            }
           }
 
           const restored = yield* checkpointStore.restoreCheckpoint({

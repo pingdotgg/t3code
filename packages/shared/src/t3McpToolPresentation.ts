@@ -53,6 +53,7 @@ const T3_MCP_TOOLS: Record<
   t3_thread_interrupt: { displayName: "Interrupt a T3 thread", summaryAction: "thread-interrupt" },
   t3_checkpoint_list: { displayName: "List thread checkpoints" },
   t3_checkpoint_diff: { displayName: "Read a checkpoint diff" },
+  t3_checkpoint_restore: { displayName: "Restore a thread checkpoint" },
   t3_worktree_handoff: { displayName: "Hand off thread to a git worktree" },
   t3_worktree_status: { displayName: "Get thread worktree status" },
   preview_status: { displayName: "Get preview browser status" },

@@ -224,6 +224,23 @@ describe("orchestration V2 contracts", () => {
     expect(event.payload.id).toBe(RunId.make("run-1"));
   });
 
+  it("keeps checkpoint rollback commands from older clients decodable", () => {
+    const command = decodeOrchestrationV2Command({
+      type: "checkpoint.rollback",
+      commandId: "command-checkpoint-rollback-legacy",
+      threadId: "thread-1",
+      scopeId: "scope-1",
+      checkpointId: "checkpoint-1",
+    });
+
+    expect(command.type).toBe("checkpoint.rollback");
+    if (command.type !== "checkpoint.rollback") {
+      throw new Error("expected checkpoint.rollback");
+    }
+    expect(command.expectedIdle).toBeUndefined();
+    expect(command.expectedWorkspaceFingerprint).toBeUndefined();
+  });
+
   it("decodes app-owned delegated task commands", () => {
     const command = decodeOrchestrationV2Command({
       type: "delegated_task.request",

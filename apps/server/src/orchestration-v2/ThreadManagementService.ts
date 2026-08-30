@@ -299,6 +299,8 @@ export interface ThreadManagementServiceShape {
     input: ThreadManagementInterruptInput,
   ) => Effect.Effect<ThreadManagementInterruptResult, ThreadManagementFailure>;
   readonly getThreadEventSequence: OrchestratorV2["Service"]["getThreadEventSequence"];
+  readonly getCommandReceipt: OrchestratorV2["Service"]["getCommandReceipt"];
+  readonly listCommandEffects: OrchestratorV2["Service"]["listCommandEffects"];
   readonly streamStoredEvents: OrchestratorV2["Service"]["streamStoredEvents"];
   readonly streamStoredEventsFrom: OrchestratorV2["Service"]["streamStoredEventsFrom"];
   readonly streamDomainEvents: OrchestratorV2["Service"]["streamDomainEvents"];
@@ -671,6 +673,8 @@ const make = Effect.gen(function* () {
     waitForThread,
     interruptThread,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
+    getCommandReceipt: orchestrator.getCommandReceipt,
+    listCommandEffects: orchestrator.listCommandEffects,
     streamStoredEvents: orchestrator.streamStoredEvents,
     streamStoredEventsFrom: orchestrator.streamStoredEventsFrom,
     streamDomainEvents: orchestrator.streamDomainEvents,

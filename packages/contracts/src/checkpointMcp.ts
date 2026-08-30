@@ -1,8 +1,10 @@
 import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
 
 import {
   CheckpointId,
   CheckpointScopeId,
+  CommandId,
   IsoDateTime,
   NodeId,
   NonNegativeInt,
@@ -146,6 +148,64 @@ export const CheckpointMcpDiffResult = Schema.Struct({
 });
 export type CheckpointMcpDiffResult = typeof CheckpointMcpDiffResult.Type;
 
+export const CheckpointMcpClientRequestId = Schema.String.check(
+  Schema.makeFilter(
+    (value) =>
+      (value.length > 0 && value.length <= 256 && value.isWellFormed()) ||
+      new SchemaIssue.InvalidValue({
+        message: "clientRequestId must contain 1-256 well-formed UTF-16 code units",
+      }),
+    { identifier: "CheckpointMcpClientRequestId" },
+  ),
+).annotate({
+  description:
+    "Exact idempotency key to reuse when retrying this restore. It is not trimmed or Unicode-normalized.",
+});
+export type CheckpointMcpClientRequestId = typeof CheckpointMcpClientRequestId.Type;
+
+export const CheckpointMcpRestoreInput = Schema.Struct({
+  threadId: Schema.optional(ThreadId).annotate({
+    description:
+      "Thread to restore. Defaults to the calling thread and must belong to its project.",
+  }),
+  scopeId: CheckpointScopeId.annotate({
+    description: "Exact durable checkpoint scope returned by t3_checkpoint_list.",
+  }),
+  checkpointId: CheckpointId.annotate({
+    description: "Exact durable checkpoint returned by t3_checkpoint_list.",
+  }),
+  discardChanges: Schema.Literal(true).annotate({
+    description:
+      "Required acknowledgement that applying the checkpoint discards current tracked and untracked workspace changes covered by the checkpoint restore.",
+  }),
+  clientRequestId: CheckpointMcpClientRequestId,
+});
+export type CheckpointMcpRestoreInput = typeof CheckpointMcpRestoreInput.Type;
+
+export const CheckpointMcpRestoreStatus = Schema.Literals([
+  "REQUESTED",
+  "APPLIED",
+  "FAILED",
+  "PARTIAL",
+]);
+export type CheckpointMcpRestoreStatus = typeof CheckpointMcpRestoreStatus.Type;
+
+export const CheckpointMcpRestoreResult = Schema.Struct({
+  commandId: CommandId,
+  threadId: ThreadId,
+  scopeId: CheckpointScopeId,
+  checkpointId: CheckpointId,
+  status: CheckpointMcpRestoreStatus,
+  receipt: Schema.Struct({
+    status: Schema.Literal("accepted"),
+    acceptedAt: IsoDateTime,
+    sequence: NonNegativeInt,
+  }),
+  effectStatus: Schema.Literals(["pending", "running", "succeeded", "failed", "cancelled"]),
+  detail: Schema.NullOr(Schema.String),
+});
+export type CheckpointMcpRestoreResult = typeof CheckpointMcpRestoreResult.Type;
+
 export class CheckpointMcpFailure extends Schema.TaggedErrorClass<CheckpointMcpFailure>()(
   "CheckpointMcpFailure",
   {
@@ -155,6 +215,8 @@ export class CheckpointMcpFailure extends Schema.TaggedErrorClass<CheckpointMcpF
       "scope_mismatch",
       "checkpoint_not_found",
       "checkpoint_unavailable",
+      "thread_active",
+      "idempotency_conflict",
       "invalid_request",
       "unsupported",
       "operation_failed",

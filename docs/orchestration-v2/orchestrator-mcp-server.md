@@ -341,6 +341,37 @@ code-unit cursors and report total length, truncation, and the next cursor. A
 page can exceed its requested limit by one code unit to avoid splitting a
 surrogate pair. This makes pagination match MCP JSON string indexing.
 
+### `t3_checkpoint_restore`
+
+Requests the ordinary serialized V2 `checkpoint.rollback` command for one
+exact checkpoint/scope identity. The tool never runs Git restore directly.
+Because the restore discards current tracked and untracked workspace changes,
+the caller must pass `discardChanges: true` and a well-formed, exact
+`clientRequestId`.
+
+Admission requires an idle thread with no queued run, a ready checkpoint ref,
+the active provider thread/session, and provider conversation rollback with a
+returned snapshot. The command carries optional constraints understood by old
+servers as absent: `expectedIdle` is enforced inside the thread's serialized
+decision, while a workspace tree fingerprint is compared inside the existing
+per-workspace checkpoint lock. The worker re-reads idle, archive, provider,
+and checkpoint state from that locked boundary before touching files.
+
+The result includes the durable command receipt and current outbox status:
+
+- `REQUESTED`: accepted, but the rollback effect is still pending or running;
+- `APPLIED`: filesystem and required provider rollback completed;
+- `FAILED`: no complete restore was recorded; the detail explains the guard
+  or execution failure; and
+- `PARTIAL`: filesystem restore completed, but provider conversation rollback
+  failed.
+
+Reusing the exact key returns the original command/effect state. A key already
+accepted for another target is rejected. Rollback effect failures are
+terminalized after their first execution attempt so a normal MCP retry cannot
+repeat filesystem or provider side effects. Process-loss recovery remains the
+existing outbox responsibility.
+
 ## Delegated Task Lifecycle
 
 The MCP server is a command ingress into V2. It does not call provider adapters
@@ -387,6 +418,8 @@ falls back to a terminal-status message when no assistant text exists.
 - Checkpoint list and diff use the same current-project boundary. They never
   accept an environment, workspace path, or raw checkpoint ref from the
   caller.
+- Restore uses the same boundary and never expands privileges, substitutes a
+  different checkpoint, stashes files, or creates a backup workspace.
 - Provider instances must be enabled, installed, available, authenticated, and
   backed by a V2 adapter.
 - A requested model must be advertised by the selected provider when the

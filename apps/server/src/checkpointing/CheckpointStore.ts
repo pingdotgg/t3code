@@ -56,6 +56,9 @@ export class CheckpointStore extends Context.Service<
     /** Check whether cwd is inside a Git worktree. */
     readonly isGitRepository: (cwd: string) => Effect.Effect<boolean, CheckpointStoreError>;
 
+    /** Hash the tracked and untracked workspace state affected by restore. */
+    readonly readWorkspaceFingerprint: (cwd: string) => Effect.Effect<string, CheckpointStoreError>;
+
     /**
      * Capture a checkpoint commit and store it at the provided checkpoint ref.
      *
@@ -123,6 +126,15 @@ export const make = Effect.gen(function* () {
       .detect({ cwd, requestedKind: "git" })
       .pipe(Effect.map((repository) => repository !== null));
 
+  const readWorkspaceFingerprint: CheckpointStore["Service"]["readWorkspaceFingerprint"] =
+    Effect.fn("readWorkspaceFingerprint")(function* (cwd) {
+      const checkpoints = yield* resolveCheckpoints(
+        "CheckpointStore.readWorkspaceFingerprint",
+        cwd,
+      );
+      return yield* checkpoints.readWorkspaceFingerprint(cwd);
+    });
+
   const captureCheckpoint: CheckpointStore["Service"]["captureCheckpoint"] = Effect.fn(
     "captureCheckpoint",
   )(function* (input) {
@@ -163,6 +175,7 @@ export const make = Effect.gen(function* () {
 
   return CheckpointStore.of({
     isGitRepository,
+    readWorkspaceFingerprint,
     captureCheckpoint,
     hasCheckpointRef,
     restoreCheckpoint,

@@ -42,6 +42,8 @@ export interface VcsDeleteCheckpointRefsInput {
 }
 
 export interface VcsCheckpointOps {
+  /** Hash the workspace tree that checkpoint restore can overwrite. */
+  readonly readWorkspaceFingerprint: (cwd: string) => Effect.Effect<string, VcsError>;
   readonly captureCheckpoint: (input: VcsCaptureCheckpointInput) => Effect.Effect<void, VcsError>;
   readonly hasCheckpointRef: (
     input: Omit<VcsRestoreCheckpointInput, "fallbackToHead">,
