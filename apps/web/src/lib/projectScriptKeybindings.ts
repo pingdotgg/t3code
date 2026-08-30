@@ -12,6 +12,7 @@ import {
   shortcutToKeybindingInput,
   whenAstToExpression,
 } from "../components/settings/KeybindingsSettings.logic";
+import { projectScriptIdFromCommand } from "../projectScripts";
 
 export const PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE = "Invalid keybinding.";
 
@@ -48,9 +49,33 @@ export function keybindingValueForCommand(
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding || binding.command !== command) continue;
-    return shortcutToKeybindingInput(binding.shortcut);
+
+    const parts: string[] = [];
+    if (binding.shortcut.modKey) parts.push("mod");
+    if (binding.shortcut.ctrlKey) parts.push("ctrl");
+    if (binding.shortcut.metaKey) parts.push("meta");
+    if (binding.shortcut.altKey) parts.push("alt");
+    if (binding.shortcut.shiftKey) parts.push("shift");
+    const keyToken =
+      binding.shortcut.key === " "
+        ? "space"
+        : binding.shortcut.key === "escape"
+          ? "esc"
+          : binding.shortcut.key;
+    parts.push(keyToken);
+    return parts.join("+");
   }
   return null;
+}
+
+export function mergeProjectScriptKeybindings(
+  primary: ResolvedKeybindingsConfig,
+  environment: ResolvedKeybindingsConfig,
+): ResolvedKeybindingsConfig {
+  return [
+    ...primary.filter((binding) => projectScriptIdFromCommand(binding.command) === null),
+    ...environment.filter((binding) => projectScriptIdFromCommand(binding.command) !== null),
+  ];
 }
 
 type ProjectScriptKeybindingMutation =
@@ -66,7 +91,7 @@ export function deriveProjectScriptKeybindingMutations(input: {
   const targetsByKey = new Map<string, ServerRemoveKeybindingInput>();
   for (const binding of input.keybindings) {
     if (binding.command !== input.command) continue;
-    const when = whenAstToExpression(binding.whenAst);
+    const when = whenAstToExpression(binding.whenAst).replaceAll(" ", "");
     const target = {
       key: shortcutToKeybindingInput(binding.shortcut),
       command: binding.command,

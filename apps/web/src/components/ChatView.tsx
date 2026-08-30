@@ -190,7 +190,10 @@ import {
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { deriveProjectScriptKeybindingMutations } from "~/lib/projectScriptKeybindings";
+import {
+  deriveProjectScriptKeybindingMutations,
+  mergeProjectScriptKeybindings,
+} from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   buildProjectScript,
@@ -2834,12 +2837,7 @@ function ChatViewContent(props: ChatViewProps) {
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
     DEFAULT_RESOLVED_KEYBINDINGS;
   const chatKeybindings = useMemo(
-    () => [
-      ...keybindings.filter((binding) => projectScriptIdFromCommand(binding.command) === null),
-      ...environmentKeybindings.filter(
-        (binding) => projectScriptIdFromCommand(binding.command) !== null,
-      ),
-    ],
+    () => mergeProjectScriptKeybindings(keybindings, environmentKeybindings),
     [environmentKeybindings, keybindings],
   );
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);

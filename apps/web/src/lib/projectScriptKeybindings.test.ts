@@ -2,20 +2,18 @@ import { MAX_KEYBINDING_VALUE_LENGTH, type KeybindingCommand } from "@t3tools/co
 import { compileResolvedKeybindingRule } from "@t3tools/shared/keybindings";
 import { describe, expect, it } from "vite-plus/test";
 
+import { resolveShortcutCommand } from "../keybindings";
 import { commandForProjectScript } from "../projectScripts";
 import {
   decodeProjectScriptKeybindingRule,
   deriveProjectScriptKeybindingMutations,
   keybindingValueForCommand,
+  mergeProjectScriptKeybindings,
   PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE,
 } from "./projectScriptKeybindings";
 
-function resolvedBinding(command: KeybindingCommand, keybinding: string, when?: string) {
-  const binding = compileResolvedKeybindingRule({
-    key: keybinding,
-    command,
-    ...(when ? { when } : {}),
-  });
+function resolvedBinding(command: KeybindingCommand, key: string, when?: string) {
+  const binding = compileResolvedKeybindingRule({ key, command, ...(when ? { when } : {}) });
   if (!binding) throw new Error("Invalid test keybinding");
   return binding;
 }
@@ -93,76 +91,58 @@ describe("projectScriptKeybindings", () => {
     expect(value).toBe("mod+shift+k");
   });
 
-  it("replaces the previous keybinding when a script keybinding changes", () => {
+  it("removes every stale binding when changing or clearing a shortcut", () => {
     const command = commandForProjectScript("test");
+    const compactWhen = Array.from({ length: 38 }, (_, index) => `v${index}`).join("&&");
+    const keybindings = [
+      resolvedBinding(command, "mod+r"),
+      resolvedBinding(command, "mod+alt+r", compactWhen),
+    ];
+    const targets = [
+      { key: "mod+r", command },
+      { key: "mod+alt+r", command, when: compactWhen },
+    ];
 
     expect(
       deriveProjectScriptKeybindingMutations({
-        keybindings: [resolvedBinding(command, "mod+r")],
+        keybindings,
         keybinding: "mod+shift+r",
         command,
       }),
     ).toEqual([
+      { type: "remove", input: targets[0] },
       {
         type: "upsert",
         input: {
           key: "mod+shift+r",
           command,
-          replace: { key: "mod+r", command },
+          replace: targets[1],
         },
       },
     ]);
-  });
-
-  it("removes every stale keybinding and preserves the latest condition when replacing", () => {
-    const command = commandForProjectScript("test");
 
     expect(
       deriveProjectScriptKeybindingMutations({
-        keybindings: [
-          resolvedBinding(command, "mod+r"),
-          resolvedBinding(command, "mod+alt+r", "terminalFocus"),
-        ],
-        keybinding: "mod+shift+r",
-        command,
-      }),
-    ).toEqual([
-      {
-        type: "remove",
-        input: { key: "mod+r", command },
-      },
-      {
-        type: "upsert",
-        input: {
-          key: "mod+shift+r",
-          command,
-          replace: { key: "mod+alt+r", command, when: "terminalFocus" },
-        },
-      },
-    ]);
-  });
-
-  it("removes every stale keybinding when a script keybinding is cleared", () => {
-    const command = commandForProjectScript("test");
-
-    expect(
-      deriveProjectScriptKeybindingMutations({
-        keybindings: [
-          resolvedBinding(command, "mod+r"),
-          resolvedBinding(command, "mod+shift+r", "terminalFocus"),
-        ],
+        keybindings,
         keybinding: null,
         command,
       }),
-    ).toEqual([
-      {
-        type: "remove",
-        input: { key: "mod+r", command },
-      },
-      {
-        type: "remove",
-        input: { key: "mod+shift+r", command, when: "terminalFocus" },
-      },
-    ]);
+    ).toEqual(targets.map((input) => ({ type: "remove", input })));
+  });
+
+  it("lets routed script bindings override primary commands", () => {
+    const command = commandForProjectScript("test");
+    const keybindings = mergeProjectScriptKeybindings(
+      [resolvedBinding("sidebar.toggle", "mod+b"), resolvedBinding(command, "mod+r")],
+      [resolvedBinding(command, "mod+b")],
+    );
+
+    expect(
+      resolveShortcutCommand(
+        { key: "b", metaKey: false, ctrlKey: true, altKey: false, shiftKey: false },
+        keybindings,
+        { platform: "Linux" },
+      ),
+    ).toBe(command);
   });
 });
