@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import wasmDataUrl from "./vendor/ghostty-vt.wasm?inline";
 import writePtyWasmDataUrl from "./vendor/ghostty-write-pty.wasm?inline";
 import pinnedVersion from "../../../../../native/libghostty-vt/VERSION?raw";
+import { GhosttyTerminalCore } from "./core";
 import { ghosttyKeyForCode } from "./keyCodes";
 
 type WasmFunction = (...args: number[]) => number;
@@ -191,55 +192,47 @@ describe("vendored libghostty-vt WebAssembly", () => {
     call("ghostty_wasm_free_opaque", terminalSlot);
   });
 
-  it("retains approximately the configured 10,000 scrollback rows", async () => {
-    const result = await WebAssembly.instantiate(
-      decodeWasmDataUrl(wasmDataUrl).buffer as ArrayBuffer,
-      { env: { log: () => {} } },
-    );
-    const instance = result instanceof WebAssembly.Instance ? result : result.instance;
-    const memory = instance.exports.memory as WebAssembly.Memory;
-    const call = (name: string, ...args: number[]) =>
-      (instance.exports[name] as WasmFunction)(...args);
-    const alloc = (size: number) => call("ghostty_wasm_alloc_u8_array", size);
+  it("configures production terminals to retain approximately 10,000 scrollback rows", async () => {
+    const assetResponses = [decodeWasmDataUrl(wasmDataUrl), decodeWasmDataUrl(writePtyWasmDataUrl)];
+    const fetchAsset = vi.fn(async () => {
+      const bytes = assetResponses.shift();
+      if (!bytes) return new Response(null, { status: 404 });
+      const body = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(body).set(bytes);
+      return new Response(body, { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchAsset);
 
-    const { terminal, terminalSlot } = createTerminal(call, memory, 80, 10);
-    const limit = alloc(4);
-    const limitView = new DataView(memory.buffer, limit, 4);
-    limitView.setUint32(0, 32 * 1024 * 1024, true);
-    expect(call("ghostty_terminal_set", terminal, 27, limit)).toBe(0);
-    limitView.setUint32(0, 10_000, true);
-    expect(call("ghostty_terminal_set", terminal, 28, limit)).toBe(0);
-    const configuredLimit = alloc(4);
-    expect(call("ghostty_terminal_get", terminal, 34, configuredLimit)).toBe(0);
-    expect(new DataView(memory.buffer, configuredLimit, 4).getUint32(0, true)).toBe(
-      32 * 1024 * 1024,
-    );
-    expect(call("ghostty_terminal_get", terminal, 35, configuredLimit)).toBe(0);
-    expect(new DataView(memory.buffer, configuredLimit, 4).getUint32(0, true)).toBe(10_000);
-    const input = new TextEncoder().encode(
-      Array.from({ length: 12_000 }, (_, index) => `${index + 1}\r\n`).join(""),
-    );
-    const inputPointer = alloc(input.length);
-    new Uint8Array(memory.buffer, inputPointer, input.length).set(input);
-    call("ghostty_terminal_vt_write", terminal, inputPointer, input.length);
+    let terminal: GhosttyTerminalCore | undefined;
+    try {
+      terminal = await GhosttyTerminalCore.create(
+        80,
+        10,
+        8,
+        16,
+        {
+          foreground: { r: 255, g: 255, b: 255 },
+          background: { r: 0, g: 0, b: 0 },
+          cursor: { r: 255, g: 255, b: 255 },
+        },
+        () => {},
+      );
+      terminal.write(Array.from({ length: 11_000 }, (_, index) => `${index + 1}\r\n`).join(""));
+      const scrollbar = terminal.scrollbarState();
+      expect(scrollbar).not.toBeNull();
+      const scrollbackRows = scrollbar!.total - scrollbar!.len;
 
-    const scrollbar = alloc(24);
-    expect(call("ghostty_terminal_get", terminal, 9, scrollbar)).toBe(0);
-    const scrollbackRows =
-      Number(new DataView(memory.buffer, scrollbar, 24).getBigUint64(0, true)) - 10;
-
-    call("ghostty_wasm_free_u8_array", scrollbar, 24);
-    call("ghostty_wasm_free_u8_array", inputPointer, input.length);
-    call("ghostty_wasm_free_u8_array", configuredLimit, 4);
-    call("ghostty_wasm_free_u8_array", limit, 4);
-    call("ghostty_terminal_free", terminal);
-    call("ghostty_wasm_free_opaque", terminalSlot);
-
-    // Ghostty enforces limits by releasing complete pages. The standard page
-    // adjusts to 316 physical rows at 80 columns in this revision, so the
-    // retained count may land on either side of the requested value by at
-    // most one page.
-    expect(Math.abs(scrollbackRows - 10_000)).toBeLessThanOrEqual(316);
+      // The wasm32 build releases complete 674-row pages at 80 columns.
+      // Choosing 11,000 inputs exercises a material page-granularity
+      // undershoot and is more than one page past the requested limit. This
+      // also fails if the production constructor leaves Ghostty's 10,000-byte
+      // default active or omits the independent line limit.
+      expect(Math.abs(scrollbackRows - 10_000)).toBeLessThanOrEqual(674);
+    } finally {
+      terminal?.dispose();
+      vi.unstubAllGlobals();
+    }
+    expect(fetchAsset).toHaveBeenCalledTimes(2);
   });
 
   it("routes terminal-generated replies through the shared callback table", async () => {
