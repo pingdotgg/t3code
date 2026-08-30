@@ -2054,7 +2054,8 @@ html.electron-windows [data-app-sidebar] {
   --desktop-window-sidebar: var(--sidebar);
 }
 
-html.electron-windows[data-desktop-backdrop="on"] [data-app-sidebar] {
+html.electron-windows[data-desktop-backdrop="on"]
+  [data-app-sidebar]:not([data-slot="sheet-popup"]) {
   --desktop-window-sidebar: color-mix(in srgb, var(--sidebar) var(--glass-opacity), transparent);
 }
 
