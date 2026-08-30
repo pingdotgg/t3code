@@ -1,12 +1,22 @@
 import { MAX_KEYBINDING_VALUE_LENGTH, type KeybindingCommand } from "@t3tools/contracts";
+import { compileResolvedKeybindingRule } from "@t3tools/shared/keybindings";
 import { describe, expect, it } from "vite-plus/test";
 
+import { resolveShortcutCommand } from "../keybindings";
 import { commandForProjectScript } from "../projectScripts";
 import {
   decodeProjectScriptKeybindingRule,
+  deriveProjectScriptKeybindingMutations,
   keybindingValueForCommand,
+  mergeProjectScriptKeybindings,
   PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE,
 } from "./projectScriptKeybindings";
+
+function resolvedBinding(command: KeybindingCommand, key: string, when?: string) {
+  const binding = compileResolvedKeybindingRule({ key, command, ...(when ? { when } : {}) });
+  if (!binding) throw new Error("Invalid test keybinding");
+  return binding;
+}
 
 describe("projectScriptKeybindings", () => {
   it("decodes and trims valid keybinding rules", () => {
@@ -79,5 +89,45 @@ describe("projectScriptKeybindings", () => {
     );
 
     expect(value).toBe("mod+shift+k");
+  });
+
+  it("removes every stale binding when changing or clearing a shortcut", () => {
+    const command = commandForProjectScript("test");
+    const when = Array.from({ length: 38 }, (_, index) => `v${index}`).join("&&");
+    const keybindings = [
+      resolvedBinding(command, "mod+r"),
+      resolvedBinding(command, "mod+alt+r", when),
+    ];
+    const targets = [
+      { key: "mod+r", command },
+      { key: "mod+alt+r", command, when },
+    ];
+    const derive = (keybinding: string | null) =>
+      deriveProjectScriptKeybindingMutations({ keybindings, keybinding, command });
+    const next = { key: "mod+shift+r", command, replace: targets[1] };
+
+    expect(derive("mod+shift+r")).toEqual([
+      { type: "remove", input: targets[0] },
+      { type: "upsert", input: next },
+    ]);
+    expect(derive(null)).toEqual(targets.map((input) => ({ type: "remove", input })));
+  });
+
+  it("preserves primary precedence and lets routed scripts override it", () => {
+    const command = commandForProjectScript("test");
+    const action = resolvedBinding(command, "mod+b");
+    const primary = [action, resolvedBinding("sidebar.toggle", "mod+b")];
+    expect(mergeProjectScriptKeybindings(primary, primary)).toEqual(primary);
+    const keybindings = mergeProjectScriptKeybindings(primary, [
+      resolvedBinding(command, "mod+b", "terminalFocus"),
+    ]);
+
+    expect(
+      resolveShortcutCommand(
+        { key: "b", metaKey: false, ctrlKey: true, altKey: false, shiftKey: false },
+        keybindings,
+        { platform: "Linux", context: { terminalFocus: true } },
+      ),
+    ).toBe(command);
   });
 });

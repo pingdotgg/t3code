@@ -14,6 +14,10 @@ import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalSt
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import {
+  readChatSidebarShortcutKeybindings,
+  subscribeChatSidebarShortcut,
+} from "../sidebarShortcutBus";
 import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
 import LegacyThreadSidebar from "./LegacySidebar";
 import ThreadSidebar from "./Sidebar";
@@ -65,7 +69,13 @@ function readInitialThreadSidebarWidth(): number {
 }
 
 function SidebarControl() {
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const primaryKeybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const chatKeybindings = useSyncExternalStore(
+    subscribeChatSidebarShortcut,
+    readChatSidebarShortcutKeybindings,
+    () => null,
+  );
+  const keybindings = chatKeybindings ?? primaryKeybindings;
   const { toggleSidebar } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
@@ -76,14 +86,14 @@ function SidebarControl() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (readChatSidebarShortcutKeybindings() !== null || event.defaultPrevented) return;
       if (
         event.target instanceof HTMLElement &&
         event.target.closest("[data-keybinding-capture]")
       ) {
         return;
       }
-      if (resolveShortcutCommand(event, keybindings) !== "sidebar.toggle") return;
+      if (resolveShortcutCommand(event, primaryKeybindings) !== "sidebar.toggle") return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -93,7 +103,7 @@ function SidebarControl() {
     // Capture before focused editors consume commands such as Mod+B for rich-text formatting.
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [keybindings, toggleSidebar]);
+  }, [primaryKeybindings, toggleSidebar]);
 
   return (
     // The right-side layout controls carry mr-px (border compensation inside

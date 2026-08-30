@@ -53,6 +53,7 @@ import {
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import {
@@ -189,7 +190,12 @@ import {
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
+import { useSidebar } from "./ui/sidebar";
+import {
+  deriveProjectScriptKeybindingMutations,
+  mergeProjectScriptKeybindings,
+} from "~/lib/projectScriptKeybindings";
+import { claimChatSidebarShortcut } from "~/sidebarShortcutBus";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   buildProjectScript,
@@ -1285,6 +1291,7 @@ function ChatViewContent(props: ChatViewProps) {
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
   const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
+  const { toggleSidebar } = useSidebar();
   const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -1293,6 +1300,9 @@ function ChatViewContent(props: ChatViewProps) {
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
+    reportFailure: false,
+  });
+  const removeKeybinding = useAtomCommand(serverEnvironment.removeKeybinding, {
     reportFailure: false,
   });
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
@@ -2825,7 +2835,14 @@ function ChatViewContent(props: ChatViewProps) {
           input: { cwd: gitStatusCwd },
         }),
   );
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const primaryKeybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const environmentKeybindings =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
+    DEFAULT_RESOLVED_KEYBINDINGS;
+  const keybindings = useMemo(
+    () => mergeProjectScriptKeybindings(primaryKeybindings, environmentKeybindings),
+    [environmentKeybindings, primaryKeybindings],
+  );
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   // Prefer an instance-id match so a custom Codex instance (e.g.
   // `codex_personal`) surfaces its own status/message in the banner rather
@@ -3349,23 +3366,30 @@ function ChatViewContent(props: ChatViewProps) {
         return updateResult;
       }
 
-      const keybindingRule = decodeProjectScriptKeybindingRule({
+      const keybindingMutations = deriveProjectScriptKeybindingMutations({
+        keybindings: environmentKeybindings,
         keybinding: input.keybinding,
         command: input.keybindingCommand,
       });
 
-      if (isElectron && keybindingRule) {
-        return mapAtomCommandResult(
-          await upsertKeybinding({
+      if (!isElectron) {
+        return updateResult;
+      }
+      for (const mutation of keybindingMutations) {
+        const result = mapAtomCommandResult(
+          await (mutation.type === "upsert" ? upsertKeybinding : removeKeybinding)({
             environmentId,
-            input: keybindingRule,
+            input: mutation.input,
           }),
           () => undefined,
         );
+        if (result._tag === "Failure") {
+          return result;
+        }
       }
       return updateResult;
     },
-    [environmentId, updateProject, upsertKeybinding],
+    [environmentId, environmentKeybindings, removeKeybinding, updateProject, upsertKeybinding],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput): Promise<AtomCommandResult<void, unknown>> => {
@@ -5176,7 +5200,7 @@ function ChatViewContent(props: ChatViewProps) {
         event.stopPropagation();
         return;
       }
-      if (!activeThreadId || isCommandPaletteOpen()) {
+      if (!activeThreadId) {
         return;
       }
       const terminalFocusOwner = getTerminalFocusOwner();
@@ -5188,8 +5212,10 @@ function ChatViewContent(props: ChatViewProps) {
         terminalOpen: Boolean(terminalUiState.terminalOpen),
         modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
       };
+      const commandPaletteOpen = isCommandPaletteOpen();
 
       if (
+        !commandPaletteOpen &&
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
         shouldTypeToFocusComposer(event)
@@ -5205,6 +5231,14 @@ function ChatViewContent(props: ChatViewProps) {
         context: shortcutContext,
       });
       if (!command) return;
+
+      if (command === "sidebar.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleSidebar();
+        return;
+      }
+      if (commandPaletteOpen) return;
 
       if (command === "thread.settle") {
         event.preventDefault();
@@ -5347,8 +5381,12 @@ function ChatViewContent(props: ChatViewProps) {
       event.stopPropagation();
       void runProjectScript(script);
     };
+    const releaseSidebarShortcut = activeThreadId ? claimChatSidebarShortcut(keybindings) : null;
     window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+    return () => {
+      releaseSidebarShortcut?.();
+      window.removeEventListener("keydown", handler, true);
+    };
   }, [
     activeProject,
     activeRightPanelSurface,
@@ -5377,6 +5415,7 @@ function ChatViewContent(props: ChatViewProps) {
     confirmAndUnpinThread,
     toggleRightPanel,
     toggleRightPanelMaximized,
+    toggleSidebar,
     toggleTerminalVisibility,
     composerRef,
   ]);

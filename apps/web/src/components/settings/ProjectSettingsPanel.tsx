@@ -45,7 +45,7 @@ import {
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { shortcutLabelForCommand } from "../../keybindings";
-import { keybindingValueForCommand } from "../../lib/projectScriptKeybindings";
+import { deriveProjectScriptKeybindingMutations } from "../../lib/projectScriptKeybindings";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
 import { readLocalApi } from "../../localApi";
 import {
@@ -53,7 +53,6 @@ import {
   commandForProjectScript,
   nextProjectScriptId,
 } from "../../projectScripts";
-import { decodeProjectScriptKeybindingRule } from "../../lib/projectScriptKeybindings";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -518,9 +517,6 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       savingScriptsRef.current = true;
       setIsSavingScripts(true);
       try {
-        // Captured before the write so a cleared or deleted binding can be
-        // removed from the keybindings config afterwards.
-        const previousKeybinding = keybindingValueForCommand(keybindings, keybindingCommand);
         const updateResult = mapAtomCommandResult(
           await updateProject({
             environmentId: selectedCheckout.environmentId,
@@ -533,45 +529,28 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           return updateResult;
         }
 
-        const keybindingRule = decodeProjectScriptKeybindingRule({
+        const keybindingMutations = deriveProjectScriptKeybindingMutations({
+          keybindings,
           keybinding,
           command: keybindingCommand,
         });
         if (!isElectron) return updateResult;
-        const environmentIds = [selectedCheckout.environmentId];
-        const previousTarget = previousKeybinding
-          ? decodeProjectScriptKeybindingRule({
-              keybinding: previousKeybinding,
-              command: keybindingCommand,
-            })
-          : null;
-        if (keybindingRule) {
-          // `replace` swaps the command's previous rule instead of appending a
-          // second one that would keep the old shortcut alive.
-          const input =
-            previousTarget && previousTarget.key !== keybindingRule.key
-              ? { ...keybindingRule, replace: previousTarget }
-              : keybindingRule;
-          for (const environmentId of environmentIds) {
-            const result = mapAtomCommandResult(
-              await upsertKeybinding({ environmentId, input }),
-              () => undefined,
+        for (const mutation of keybindingMutations) {
+          const result = mapAtomCommandResult(
+            await (mutation.type === "upsert" ? upsertKeybinding : removeKeybinding)({
+              environmentId: selectedCheckout.environmentId,
+              input: mutation.input,
+            }),
+            () => undefined,
+          );
+          if (result._tag === "Failure") {
+            reportFailure(
+              mutation.type === "upsert"
+                ? "Failed to save keybinding"
+                : "Failed to remove keybinding",
+              result,
             );
-            if (result._tag === "Failure") {
-              reportFailure("Failed to save keybinding", result);
-              return result;
-            }
-          }
-        } else if (previousTarget) {
-          for (const environmentId of environmentIds) {
-            const result = mapAtomCommandResult(
-              await removeKeybinding({ environmentId, input: previousTarget }),
-              () => undefined,
-            );
-            if (result._tag === "Failure") {
-              reportFailure("Failed to remove keybinding", result);
-              return result;
-            }
+            return result;
           }
         }
         return updateResult;
