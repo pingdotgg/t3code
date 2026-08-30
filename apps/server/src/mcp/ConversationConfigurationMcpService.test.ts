@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  CommandId,
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -8,12 +9,16 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
-import { CommandReceiptStoreV2 } from "../orchestration-v2/CommandReceiptStore.ts";
+import {
+  type CommandReceiptV2,
+  CommandReceiptStoreV2,
+} from "../orchestration-v2/CommandReceiptStore.ts";
 import { OrchestratorCommandPreviouslyRejectedError } from "../orchestration-v2/Orchestrator.ts";
 import { ProviderSwitchServiceV2 } from "../orchestration-v2/ProviderSwitchService.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
@@ -86,6 +91,22 @@ const scope = (capabilities: ReadonlyArray<"orchestration"> = ["orchestration"])
     capabilities: new Set(capabilities),
     issuedAt: 1,
   }) satisfies McpInvocationScope;
+
+function rejectedReceipt(
+  commandId: CommandId,
+  commandType: "provider.switch" | "thread.runtime-mode.set" | "thread.interaction-mode.set",
+  resultSequence = 0,
+): CommandReceiptV2 {
+  return {
+    commandId,
+    threadId: targetThreadId,
+    commandType,
+    acceptedAt: DateTime.makeUnsafe("2026-08-30T00:00:00.000Z"),
+    resultSequence,
+    status: "rejected",
+    error: `${commandType} was rejected`,
+  };
+}
 
 function testLayer(input: {
   readonly parent: OrchestrationV2ThreadProjection;
@@ -197,14 +218,8 @@ describe("ConversationConfigurationMcpService", () => {
         parent,
         target,
         providers: [],
-        getReceipt: () =>
-          Effect.succeed(
-            Option.some({
-              status: "rejected",
-              threadId: targetThreadId,
-              commandType: "provider.switch",
-            } as never),
-          ),
+        getReceipt: (commandId) =>
+          Effect.succeed(Option.some(rejectedReceipt(commandId, "provider.switch"))),
         dispatch: (command) =>
           new OrchestratorCommandPreviouslyRejectedError({
             commandId: command.commandId,
@@ -228,6 +243,60 @@ describe("ConversationConfigurationMcpService", () => {
 
       assert.equal(error.code, "orchestration_error");
       assert.match(error.message, /previously rejected/);
+    }),
+  );
+
+  it.effect("replays a rejected leg before planning any unattempted later legs", () =>
+    Effect.gen(function* () {
+      const dispatched = yield* Ref.make<ReadonlyArray<string>>([]);
+      const parent = projection({
+        threadId: parentThreadId,
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+      });
+      const target = projection({
+        threadId: targetThreadId,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      const layer = testLayer({
+        parent,
+        target,
+        providers: [],
+        getReceipt: (commandId) =>
+          String(commandId).includes("thread-configure-selection")
+            ? Effect.succeed(Option.some(rejectedReceipt(commandId, "provider.switch", 41)))
+            : Effect.succeed(Option.none()),
+        dispatch: (command) =>
+          Ref.update(dispatched, (types) => [...types, command.type]).pipe(
+            Effect.andThen(
+              new OrchestratorCommandPreviouslyRejectedError({
+                commandId: command.commandId,
+                commandType: command.type,
+                detail: "provider switch was rejected",
+              }),
+            ),
+          ),
+      });
+
+      const error = yield* Effect.gen(function* () {
+        const service = yield* ConversationConfiguration.ConversationConfigurationMcpService;
+        return yield* service
+          .configure(scope(), {
+            threadId: targetThreadId,
+            providerInstanceId: ProviderInstanceId.make("provider-now-unavailable"),
+            model: "unavailable-model",
+            options: [],
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            clientRequestId: "rejected-selection-with-unattempted-legs",
+          })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(layer));
+
+      assert.equal(error.code, "orchestration_error");
+      assert.match(error.message, /previously rejected/);
+      assert.deepEqual(yield* Ref.get(dispatched), ["provider.switch"]);
     }),
   );
 

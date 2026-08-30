@@ -452,11 +452,21 @@ export const make = Effect.gen(function* () {
           interactionCommandId,
           new Set(["thread.interaction-mode.set"]),
         );
-        const hasFreshSelection = selectionRequested && Option.isNone(priorSelectionReceipt);
+        const hasRejectedReceipt = [
+          priorSelectionReceipt,
+          priorRuntimeReceipt,
+          priorInteractionReceipt,
+        ].some(Option.exists((existing) => existing.status === "rejected"));
+        const hasFreshSelection =
+          !hasRejectedReceipt && selectionRequested && Option.isNone(priorSelectionReceipt);
         const hasFreshRuntime =
-          input.runtimeMode !== undefined && Option.isNone(priorRuntimeReceipt);
+          !hasRejectedReceipt &&
+          input.runtimeMode !== undefined &&
+          Option.isNone(priorRuntimeReceipt);
         const hasFreshInteraction =
-          input.interactionMode !== undefined && Option.isNone(priorInteractionReceipt);
+          !hasRejectedReceipt &&
+          input.interactionMode !== undefined &&
+          Option.isNone(priorInteractionReceipt);
         if (hasFreshSelection || hasFreshRuntime || hasFreshInteraction) {
           const prospectiveRuntimeMode = hasFreshRuntime
             ? input.runtimeMode
@@ -485,15 +495,14 @@ export const make = Effect.gen(function* () {
           }
         }
         const providers = yield* providerRegistry.getProviders;
-        const targetSelection =
-          selectionRequested && Option.isNone(priorSelectionReceipt)
-            ? yield* resolveSelection(target.thread.modelSelection, input, providers)
-            : target.thread.modelSelection;
+        const targetSelection = hasFreshSelection
+          ? yield* resolveSelection(target.thread.modelSelection, input, providers)
+          : target.thread.modelSelection;
         const selectionChanged = !modelSelectionsEqual(
           target.thread.modelSelection,
           targetSelection,
         );
-        if (selectionChanged && Option.isNone(priorSelectionReceipt)) {
+        if (selectionChanged && hasFreshSelection) {
           yield* providerSwitch
             .plan({ projection: target, targetModelSelection: targetSelection })
             .pipe(
@@ -512,7 +521,7 @@ export const make = Effect.gen(function* () {
           readonly command: ConfigurationCommand;
         }> = [];
         const changes: Array<ConversationConfigurationChange> = [];
-        if (selectionRequested) {
+        if (selectionRequested && (!hasRejectedReceipt || Option.isSome(priorSelectionReceipt))) {
           if (selectionCommandId === undefined) {
             return yield* Effect.die(new Error("Selection command id was not initialized"));
           }
@@ -552,7 +561,10 @@ export const make = Effect.gen(function* () {
             });
           }
         }
-        if (input.runtimeMode !== undefined) {
+        if (
+          input.runtimeMode !== undefined &&
+          (!hasRejectedReceipt || Option.isSome(priorRuntimeReceipt))
+        ) {
           if (runtimeCommandId === undefined) {
             return yield* Effect.die(new Error("Runtime command id was not initialized"));
           }
@@ -580,7 +592,10 @@ export const make = Effect.gen(function* () {
             });
           }
         }
-        if (input.interactionMode !== undefined) {
+        if (
+          input.interactionMode !== undefined &&
+          (!hasRejectedReceipt || Option.isSome(priorInteractionReceipt))
+        ) {
           if (interactionCommandId === undefined) {
             return yield* Effect.die(new Error("Interaction command id was not initialized"));
           }
@@ -631,8 +646,27 @@ export const make = Effect.gen(function* () {
           }
           return 0;
         };
-        const dispatchOrder = [...pending].sort(
-          (left, right) => dispatchPriority(left) - dispatchPriority(right),
+        const priorReceiptForSetting = (setting: ConfigurationSetting) =>
+          setting === "selection"
+            ? priorSelectionReceipt
+            : setting === "runtime_mode"
+              ? priorRuntimeReceipt
+              : priorInteractionReceipt;
+        const dispatchOrder = [...pending].sort((left, right) =>
+          hasRejectedReceipt
+            ? Option.getOrElse(
+                Option.map(priorReceiptForSetting(left.setting), (receipt) =>
+                  Number(receipt.resultSequence),
+                ),
+                () => Number.MAX_SAFE_INTEGER,
+              ) -
+              Option.getOrElse(
+                Option.map(priorReceiptForSetting(right.setting), (receipt) =>
+                  Number(receipt.resultSequence),
+                ),
+                () => Number.MAX_SAFE_INTEGER,
+              )
+            : dispatchPriority(left) - dispatchPriority(right),
         );
         const errors: Array<{ setting: ConfigurationSetting; message: string }> = [];
         for (const change of dispatchOrder) {
