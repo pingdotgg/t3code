@@ -140,7 +140,7 @@ selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+The server exposes orchestration, thread, and delegated-request tools.
 
 ### `orchestrator_capabilities`
 
@@ -227,6 +227,32 @@ result.
 Interrupts the original delegated run through the normal V2 `run.interrupt`
 command. It is idempotent for terminal tasks and accepts an optional cancellation
 reason. Use `t3_thread_interrupt` to interrupt a later follow-up run.
+
+### `t3_pending_request_list`
+
+Lists pending structured user-input questions from direct app-owned delegated
+children of the calling thread. The bounded page follows the parent's durable
+sub-agent records and never scans unrelated or provider-native child threads.
+Approval and permission requests are excluded.
+
+### `t3_pending_request_read`
+
+Reads one structured user-input request by exact child-thread and request IDs.
+Unlike the list path, read can return resolved, expired, or cancelled requests
+so callers can distinguish a stale response attempt from a missing request.
+The read path is non-mutating.
+
+### `t3_pending_request_respond`
+
+Answers a pending, live `user_input` request on a direct app-owned delegated
+child. The input is an answers record keyed by every question ID returned from
+list/read. It dispatches the normal V2 `runtime-request.respond` command with
+answers only and returns its durable receipt sequence. It cannot accept or
+deny permission requests, approve a tool call, answer a provider-native child,
+or target an unrelated thread. `clientRequestId` makes an accepted response
+safe to replay without calling the provider twice. The child's runtime and
+interaction modes must remain within the caller's captured and current mode
+ceilings when the serialized response decision commits.
 
 ### `create_threads`
 
@@ -328,6 +354,7 @@ provider model
   -> parent/child execution nodes
   -> consumed subagent_spawn context transfer
   -> normal provider effect and runtime ingestion
+  -> optional user-input request projected for parent list/read/respond
   -> child run reaches a terminal state
   -> parent subagent/node/turn item finalized
   -> consumed subagent_result context transfer

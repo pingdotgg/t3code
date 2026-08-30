@@ -2267,6 +2267,14 @@ export const OrchestrationV2Command = Schema.Union([
     requestId: RuntimeRequestId,
     decision: Schema.optional(ProviderApprovalDecision),
     answers: Schema.optional(ProviderUserInputAnswers),
+    /** Optional MCP caller ceiling enforced against fresh caller and target projections. */
+    policyCeiling: Schema.optional(
+      Schema.Struct({
+        callerThreadId: ThreadId,
+        runtimeMode: RuntimeMode,
+        interactionMode: ProviderInteractionMode,
+      }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("checkpoint.rollback"),
