@@ -65,7 +65,11 @@ extension UIResponder: FeatureCommandDrawerRestorableResponder {
 /// involved.
 @MainActor
 final class FeatureCommandDrawerResponderOwnership {
-    private weak var priorResponder: (any FeatureCommandDrawerRestorableResponder)?
+    // SwiftUI can rebuild a focused text field while the workspace switches
+    // into its drawer-hidden accessibility shape. Keep that exact responder
+    // alive only for this short ownership lifecycle, then release it in
+    // `finish` regardless of whether restoration remains valid.
+    private var priorResponder: (any FeatureCommandDrawerRestorableResponder)?
     private(set) var ownsFocusTransfer = false
 
     func begin(from responder: (any FeatureCommandDrawerRestorableResponder)?) {

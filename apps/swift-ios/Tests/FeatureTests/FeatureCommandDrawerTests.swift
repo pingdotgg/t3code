@@ -426,14 +426,17 @@ struct FeatureCommandDrawerTests {
     }
 
     @Test @MainActor
-    func aDeallocatedPriorResponderIsNotRetainedOrRestored() {
+    func thePriorResponderIsRetainedOnlyUntilItsOwnershipLifecycleFinishes() {
         let ownership = FeatureCommandDrawerResponderOwnership()
         var composer: TestResponder? = TestResponder()
+        weak var retainedComposer = composer
 
         ownership.begin(from: composer)
         composer = nil
 
-        #expect(ownership.close() == false)
+        #expect(retainedComposer != nil)
+        #expect(ownership.close())
+        #expect(retainedComposer == nil)
         #expect(ownership.ownsFocusTransfer == false)
     }
 
