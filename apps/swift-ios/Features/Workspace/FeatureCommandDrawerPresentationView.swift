@@ -81,10 +81,13 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
                     restoresPriorResponderOnClose = true
                     // Relinquish SwiftUI's drawer FocusState before asking the
                     // exact UIKit responder captured at gesture-begin to resume.
-                    // Restoring in this same update is immediately undone when
-                    // SwiftUI applies `isQueryFocused = false` to the text field.
+                    // SwiftUI applies the binding and then its UIKit text-field
+                    // update on separate main-actor turns, so restoration crosses
+                    // both transaction boundaries without a timer.
                     FeatureCommandDrawerGestureView.afterCurrentViewUpdate {
-                        responderOwnership.close(restoringPrior: restoresPrior)
+                        FeatureCommandDrawerGestureView.afterCurrentViewUpdate {
+                            responderOwnership.close(restoringPrior: restoresPrior)
+                        }
                     }
                 }
             }
