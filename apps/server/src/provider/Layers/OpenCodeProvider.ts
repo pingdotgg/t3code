@@ -34,7 +34,7 @@ const OPENCODE_PRESENTATION = {
 const OPENCODE_VERSION_PROBE_TIMEOUT = "4 seconds";
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
-  readonly cause: unknown;
+  readonly cause?: unknown;
   readonly detail: string;
 }> {}
 
@@ -405,8 +405,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
             orElse: () =>
               Effect.fail(
                 new OpenCodeProbeError({
-                  cause: new Error("OpenCode CLI version probe timed out."),
-                  detail: "OpenCode CLI version probe timed out after 4 seconds.",
+                  detail: `OpenCode CLI version probe timed out after ${OPENCODE_VERSION_PROBE_TIMEOUT}.`,
                 }),
               ),
           }),
