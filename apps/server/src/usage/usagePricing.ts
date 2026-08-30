@@ -98,10 +98,24 @@ const UNPRICEABLE_MODELS = new Set([
   "fable",
 ]);
 
+/**
+ * Codex rollout model names whose LiteLLM price entries use a different alias.
+ * Keep this translation at the pricing boundary so provider model selection stays unchanged.
+ */
+const LITELLM_RATE_ALIASES: Readonly<Record<string, string>> = {
+  "gpt-daybreak-blue-latest": "daybreak-blue-latest",
+  "gpt-daybreak-red-latest": "daybreak-red-latest",
+};
+
 export function lookupRate(table: RateTable, model: string): ModelRate | null {
   const normalized = normalizeModelName(model);
   if (normalized.length === 0 || UNPRICEABLE_MODELS.has(normalized)) return null;
-  return table.get(normalized) ?? null;
+
+  const direct = table.get(normalized);
+  if (direct !== undefined) return direct;
+
+  const alias = LITELLM_RATE_ALIASES[normalized];
+  return alias === undefined ? null : (table.get(alias) ?? null);
 }
 
 export interface PricedUsage {
