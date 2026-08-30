@@ -7,6 +7,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -41,12 +42,22 @@ export const logCleanupCauseUnlessInterrupted = <R, E>({
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
+  const providerSessionDirectory = yield* ProviderSessionDirectory;
   const terminalManager = yield* TerminalManager.TerminalManager;
 
   const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
       effect: providerService.stopSession({ threadId }),
       message: "thread deletion cleanup skipped provider session stop",
+      threadId,
+    });
+
+  // Nothing else prunes the runtime table, so a deleted thread would keep its
+  // binding for the life of the install.
+  const forgetProviderBinding = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
+    logCleanupCauseUnlessInterrupted({
+      effect: providerSessionDirectory.remove(threadId),
+      message: "thread deletion cleanup skipped provider binding removal",
       threadId,
     });
 
@@ -62,6 +73,7 @@ const make = Effect.gen(function* () {
   ) {
     const { threadId } = event.payload;
     yield* stopProviderSession(threadId);
+    yield* forgetProviderBinding(threadId);
     yield* closeThreadTerminals(threadId);
   });
 

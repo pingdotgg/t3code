@@ -129,6 +129,7 @@ it.effect("reconciles multiple active and archived orphans but skips live sessio
       upsert: (binding) => Effect.sync(() => upserts.push(binding)),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
+      remove: () => Effect.void,
       listBindings: () => Effect.die("unused"),
     },
     dispatch: (command) =>
@@ -198,6 +199,7 @@ it.effect(
         upsert: () => Effect.fail(writeFailure),
         getProvider: () => Effect.die("unused"),
         listThreadIds: () => Effect.die("unused"),
+        remove: () => Effect.void,
         listBindings: () => Effect.die("unused"),
       },
       dispatch: (command) =>
@@ -235,6 +237,7 @@ it.effect("retries failed projections and continues after a persistent failure",
       upsert: () => Effect.void,
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
+      remove: () => Effect.void,
       listBindings: () => Effect.die("unused"),
     },
     dispatch: (command) => {
@@ -283,6 +286,7 @@ it.effect("does not fail startup when the live provider session inventory cannot
       upsert: () => Effect.die("unused"),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
+      remove: () => Effect.void,
       listBindings: () => Effect.die("unused"),
     }),
     Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {

@@ -53,6 +53,11 @@ export interface ProviderSessionDirectoryShape {
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<ProviderRuntimeBinding>, ProviderSessionDirectoryReadError>;
 
+  /** Forgets a thread's runtime binding, for example when the thread is deleted. */
+  readonly remove: (
+    threadId: ThreadId,
+  ) => Effect.Effect<void, ProviderSessionDirectoryPersistenceError>;
+
   readonly listThreadIds: () => Effect.Effect<
     ReadonlyArray<ThreadId>,
     ProviderSessionDirectoryPersistenceError
