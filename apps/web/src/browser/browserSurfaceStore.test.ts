@@ -2,13 +2,25 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   acquireBrowserSurface,
+  acquireBrowserSurfaceActivity,
   resolveBrowserSurfacePanelRect,
   useBrowserSurfaceStore,
 } from "./browserSurfaceStore";
 
 describe("browserSurfaceStore", () => {
   beforeEach(() => {
-    useBrowserSurfaceStore.setState({ byTabId: {} });
+    useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
+  });
+
+  it("keeps concurrent background work active until every lease is released", () => {
+    const first = acquireBrowserSurfaceActivity("background-browser");
+    const second = acquireBrowserSurfaceActivity("background-browser");
+
+    first();
+    expect(useBrowserSurfaceStore.getState().activityByTabId["background-browser"]).toBe(1);
+
+    second();
+    expect(useBrowserSurfaceStore.getState().activityByTabId["background-browser"]).toBeUndefined();
   });
 
   it("freezes the source content dimensions for a fitted presentation", () => {

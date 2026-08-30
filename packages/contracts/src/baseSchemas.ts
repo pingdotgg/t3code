@@ -18,6 +18,20 @@ export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 export const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
 
+/**
+ * Safe categories for a failed DPoP proof. These describe the class of failure
+ * without exposing proof contents or server-side authentication details.
+ */
+export const DpopFailureReason = Schema.Literals([
+  "time_window",
+  "key_mismatch",
+  "request_mismatch",
+  "token_mismatch",
+  "replay",
+  "invalid_proof",
+]);
+export type DpopFailureReason = typeof DpopFailureReason.Type;
+
 export const IsoDateTime = Schema.String;
 export type IsoDateTime = typeof IsoDateTime.Type;
 
