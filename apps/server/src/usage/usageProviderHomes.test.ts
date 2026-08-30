@@ -132,18 +132,74 @@ it.layer(NodeServices.layer)("usageProviderHomes", (it) => {
       }),
     );
 
-    it.effect("ignores the server's ambient CLAUDE_CONFIG_DIR", () =>
+    it.effect("inherits absolute provider homes from the server environment", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const settings = decodeSettings({});
+        const claudeHome = path.join(NodeOS.homedir(), ".claude-ambient");
+        const codexHome = path.join(NodeOS.homedir(), ".codex-ambient");
 
-        // What usage scans must be determined by settings alone, not by the
-        // environment this particular server process was launched with.
         const homes = yield* resolveUsageProviderHomes(settings, {
-          CLAUDE_CONFIG_DIR: "~/.claude-ambient",
+          CLAUDE_CONFIG_DIR: claudeHome,
+          CODEX_HOME: codexHome,
+        });
+
+        expect(homes.claudeHomePaths).toEqual([claudeHome]);
+        expect(homes.codexSessionDirs).toEqual([path.join(codexHome, "sessions")]);
+      }),
+    );
+
+    it.effect("lets instance environment homes override the server environment", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHome = path.join(NodeOS.homedir(), ".claude-instance");
+        const codexHome = path.join(NodeOS.homedir(), ".codex-instance");
+        const settings = decodeSettings({
+          providerInstances: {
+            claudeAgent: {
+              driver: "claudeAgent",
+              environment: [{ name: "CLAUDE_CONFIG_DIR", value: claudeHome }],
+            },
+            codex: {
+              driver: "codex",
+              environment: [{ name: "CODEX_HOME", value: codexHome }],
+            },
+          },
+        });
+
+        const homes = yield* resolveUsageProviderHomes(settings, {
+          CLAUDE_CONFIG_DIR: path.join(NodeOS.homedir(), ".claude-ambient"),
+          CODEX_HOME: path.join(NodeOS.homedir(), ".codex-ambient"),
+        });
+
+        expect(homes.claudeHomePaths).toEqual([claudeHome]);
+        expect(homes.codexSessionDirs).toEqual([path.join(codexHome, "sessions")]);
+      }),
+    );
+
+    it.effect("lets blank instance variables suppress inherited provider homes", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const settings = decodeSettings({
+          providerInstances: {
+            claudeAgent: {
+              driver: "claudeAgent",
+              environment: [{ name: "CLAUDE_CONFIG_DIR", value: "" }],
+            },
+            codex: {
+              driver: "codex",
+              environment: [{ name: "CODEX_HOME", value: "" }],
+            },
+          },
+        });
+
+        const homes = yield* resolveUsageProviderHomes(settings, {
+          CLAUDE_CONFIG_DIR: path.join(NodeOS.homedir(), ".claude-ambient"),
+          CODEX_HOME: path.join(NodeOS.homedir(), ".codex-ambient"),
         });
 
         expect(homes.claudeHomePaths).toEqual([path.resolve(NodeOS.homedir())]);
+        expect(homes.codexSessionDirs).toEqual([path.join(NodeOS.homedir(), ".codex", "sessions")]);
       }),
     );
 
@@ -157,7 +213,11 @@ it.layer(NodeServices.layer)("usageProviderHomes", (it) => {
           },
         });
 
-        const homes = yield* resolveUsageProviderHomes(settings, { GROK_HOME: "~/.grok-custom" });
+        const homes = yield* resolveUsageProviderHomes(settings, {
+          CLAUDE_CONFIG_DIR: path.join(NodeOS.homedir(), ".claude-ambient"),
+          CODEX_HOME: path.join(NodeOS.homedir(), ".codex-ambient"),
+          GROK_HOME: "~/.grok-custom",
+        });
 
         expect(homes.claudeHomePaths).toEqual([path.resolve(NodeOS.homedir(), ".claude-legacy")]);
         expect(homes.codexSessionDirs).toEqual([

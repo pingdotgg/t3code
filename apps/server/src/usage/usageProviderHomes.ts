@@ -7,11 +7,10 @@
  * settings, or secondary accounts silently report zero usage.
  *
  * Resolution mirrors what the spawned CLI actually uses: an explicit
- * `homePath` wins; without one, an absolute home configured on the instance
+ * `homePath` wins; without one, an absolute home from the instance's effective
  * environment (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`) wins, and otherwise the
- * default home. The server process's own ambient environment is deliberately
- * not consulted, so what usage scans is determined by settings alone rather
- * than by how this particular server happened to be launched.
+ * default home. The effective environment starts with the server process's
+ * environment and applies per-instance overrides on top.
  *
  * @module usageProviderHomes
  */
@@ -78,7 +77,7 @@ export const resolveUsageProviderHomes = Effect.fn("resolveUsageProviderHomes")(
         pushUnique(claudeHomePaths, yield* resolveClaudeHomePath(config));
         continue;
       }
-      const environment = mergeProviderInstanceEnvironment(envelope.environment, {});
+      const environment = mergeProviderInstanceEnvironment(envelope.environment, hostEnvironment);
       const configDir = environmentHomePath(environment["CLAUDE_CONFIG_DIR"]);
       pushUnique(claudeHomePaths, configDir ?? (yield* resolveClaudeHomePath(config)));
     } else if (envelope.driver === "codex") {
@@ -92,7 +91,7 @@ export const resolveUsageProviderHomes = Effect.fn("resolveUsageProviderHomes")(
       // sessions symlink back to the shared home). Only without one does an
       // instance-level CODEX_HOME reach the CLI and decide where sessions
       // land.
-      const environment = mergeProviderInstanceEnvironment(envelope.environment, {});
+      const environment = mergeProviderInstanceEnvironment(envelope.environment, hostEnvironment);
       const environmentHome =
         layout.effectiveHomePath === undefined
           ? environmentHomePath(environment["CODEX_HOME"])
