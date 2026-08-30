@@ -56,7 +56,7 @@ describe("createCachedFamilyProbe", () => {
     expect(probed).toEqual(['"Fira Code"']);
   });
 
-  it("keeps a pass only once the family resolves", () => {
+  it("keeps a verdict only once the family resolves", () => {
     let resolved = false;
     let monospace = true;
     let probes = 0;
@@ -79,18 +79,22 @@ describe("createCachedFamilyProbe", () => {
     expect(probes).toBe(3);
   });
 
-  it("keeps a failure without waiting for resolution", () => {
+  it("waits for every family in a list, not just a resolved fallback", () => {
     let probes = 0;
     const probe = createCachedFamilyProbe(
       () => {
         probes += 1;
         return false;
       },
-      () => false,
+      (family) => family === "Menlo",
     );
-    expect(probe("Comic Sans MS")).toBe(false);
-    expect(probe("Comic Sans MS")).toBe(false);
-    expect(probes).toBe(1);
+    // Menlo resolves, but the verdict came from it standing in for Late Mono.
+    expect(probe("Late Mono, Menlo")).toBe(false);
+    expect(probe("Late Mono, Menlo")).toBe(false);
+    expect(probes).toBe(2);
+    expect(probe("Menlo")).toBe(false);
+    expect(probe("Menlo")).toBe(false);
+    expect(probes).toBe(3);
   });
 
   it("accepts empty input without probing", () => {

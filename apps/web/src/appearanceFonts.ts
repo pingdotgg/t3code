@@ -206,15 +206,15 @@ export function areFontAdvancesMonospace(advances: readonly number[]): boolean {
 /**
  * Probing a family is up to 32 measureText calls, and setting the canvas font
  * to a new family string forces engine font matching on top, so verdicts are
- * kept keyed by the normalized family list. A failure always names a resolved
- * face and is final. A pass may be the generic fallback speaking for a face
- * that has not loaded yet, so it is only kept once the family resolves;
- * until then every call probes again, which is what lets the terminal
- * revalidate after a late face loads and still reject a proportional one.
+ * kept keyed by the normalized family list. Until every family in the list
+ * resolves, the verdict may be a fallback speaking for a face that has not
+ * loaded yet, so it is not kept and each call probes again. That is what lets
+ * the terminal revalidate after a late face loads and still reject a
+ * proportional one.
  */
 export function createCachedFamilyProbe(
   probe: (families: string) => boolean,
-  resolves: (families: string) => boolean,
+  resolves: (family: string) => boolean,
 ): (family: string) => boolean {
   const verdicts = new Map<string, boolean>();
   return (family) => {
@@ -223,7 +223,8 @@ export function createCachedFamilyProbe(
     const cached = verdicts.get(families);
     if (cached !== undefined) return cached;
     const verdict = probe(families);
-    if (!verdict || resolves(families)) verdicts.set(families, verdict);
+    // Names never contain a comma (the input was split on it), so this is exact.
+    if (families.split(", ").every(resolves)) verdicts.set(families, verdict);
     return verdict;
   };
 }
