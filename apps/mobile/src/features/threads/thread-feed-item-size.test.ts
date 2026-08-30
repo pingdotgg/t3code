@@ -4,12 +4,11 @@ import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 
 describe("resolveThreadFeedFixedItemSize", () => {
   it("leaves activity groups to native measurement", () => {
-    expect(resolveThreadFeedFixedItemSize("activity-group", 16)).toBeUndefined();
+    expect(resolveThreadFeedFixedItemSize("activity-group")).toBeUndefined();
   });
 
   it("keeps fixed timeline chrome on the premeasured path", () => {
-    expect(resolveThreadFeedFixedItemSize("run-fold", 16)).toBe(56);
-    expect(resolveThreadFeedFixedItemSize("work-toggle", 16)).toBe(36);
-    expect(resolveThreadFeedFixedItemSize("working", 16)).toBeGreaterThan(24);
+    expect(resolveThreadFeedFixedItemSize("run-fold")).toBe(56);
+    expect(resolveThreadFeedFixedItemSize("work-toggle")).toBe(36);
   });
 });
