@@ -235,10 +235,11 @@ describe("vendored libghostty-vt WebAssembly", () => {
     call("ghostty_terminal_free", terminal);
     call("ghostty_wasm_free_opaque", terminalSlot);
 
-    // Ghostty enforces limits by releasing complete pages. A standard page
-    // holds 215 rows at this revision, so the retained count may land on
-    // either side of the requested value depending on when the page turns.
-    expect(Math.abs(scrollbackRows - 10_000)).toBeLessThanOrEqual(215);
+    // Ghostty enforces limits by releasing complete pages. The standard page
+    // adjusts to 316 physical rows at 80 columns in this revision, so the
+    // retained count may land on either side of the requested value by at
+    // most one page.
+    expect(Math.abs(scrollbackRows - 10_000)).toBeLessThanOrEqual(316);
   });
 
   it("routes terminal-generated replies through the shared callback table", async () => {
