@@ -10,31 +10,47 @@ describe("normalizeVoiceInputDecibels", () => {
     },
   );
 
-  it.each([-160, -90, -55])("keeps a reading at or below the noise floor %s silent", (decibels) => {
+  it.each([-160, -90, -60])("keeps a reading at or below the noise floor %s silent", (decibels) => {
     expect(normalizeVoiceInputDecibels(decibels)).toBe(0);
   });
 
-  it("keeps quiet background levels small and gives speech a clear increase", () => {
+  it("keeps quiet background readings close to the baseline", () => {
     const quiet = normalizeVoiceInputDecibels(-50);
-    const speech = normalizeVoiceInputDecibels(-35);
-
-    expect(quiet).toBeLessThan(0.06);
-    expect(speech).toBeGreaterThan(0.6);
-    expect(speech - quiet).toBeGreaterThan(0.5);
-    expect(normalizeVoiceInputDecibels(-30)).toBeGreaterThan(0.8);
+    expect(quiet).toBeGreaterThan(0);
+    expect(quiet).toBeLessThan(0.05);
   });
 
-  it("preserves increasing loudness across the speech range", () => {
-    const levels = [-55, -50, -45, -40, -35, -30, -25, -20].map(normalizeVoiceInputDecibels);
+  it("keeps loud negative speech readings distinct below full height", () => {
+    const levels = [-20, -18, -12, -6, -3].map(normalizeVoiceInputDecibels);
+
+    for (const level of levels) {
+      expect(level).toBeGreaterThan(0);
+      expect(level).toBeLessThan(1);
+    }
     expect(levels.every((level, index) => index === 0 || level > levels[index - 1]!)).toBe(true);
   });
 
-  it("approaches silence and maximum height without a jump", () => {
-    expect(normalizeVoiceInputDecibels(-54.99)).toBeLessThan(0.000001);
-    expect(normalizeVoiceInputDecibels(-20.01)).toBeGreaterThan(0.999999);
+  it("makes near-speech changes visible without an early ceiling", () => {
+    expect(normalizeVoiceInputDecibels(-6) - normalizeVoiceInputDecibels(-12)).toBeGreaterThan(
+      0.18,
+    );
+    expect(normalizeVoiceInputDecibels(-3) - normalizeVoiceInputDecibels(-12)).toBeGreaterThan(0.3);
   });
 
-  it.each([-20, -10, 0, 6, 160])("caps loud readings %s at one", (decibels) => {
+  it("increases throughout the usable microphone range", () => {
+    const levels = [-60, -55, -50, -40, -30, -20, -12, -6, -3, -0.001, 0].map(
+      normalizeVoiceInputDecibels,
+    );
+    expect(levels.every((level, index) => index === 0 || level > levels[index - 1]!)).toBe(true);
+  });
+
+  it("approaches the noise floor and full scale without a jump", () => {
+    expect(normalizeVoiceInputDecibels(-59.999)).toBeLessThan(0.001);
+    expect(normalizeVoiceInputDecibels(-0.001)).toBeGreaterThan(0.999);
+    expect(normalizeVoiceInputDecibels(-0.001)).toBeLessThan(1);
+  });
+
+  it.each([0, 6, 160])("caps only full-scale or higher readings %s at one", (decibels) => {
     expect(normalizeVoiceInputDecibels(decibels)).toBe(1);
   });
 });

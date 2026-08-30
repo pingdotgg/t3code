@@ -41,11 +41,12 @@ send.
 ## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, tap the microphone in the composer to record a message.
-The composer becomes a compact recording strip with waves that respond to the sound picked up by
-your microphone. Tap the checkmark to finish and transcribe on your device. The waves fade into a
-transcription status, then the composer returns to your draft with the text inserted at the selection
-where recording started. If the keyboard is open when you start, it stays open during voice input.
-You can review and edit the text before you send it.
+An expanded composer keeps your draft visible and replaces its toolbar with waves that respond to
+your voice. A collapsed composer shows a compact recording strip instead. Tap the checkmark to
+finish and transcribe on your device. The waves fade into a transcription status, then the usual
+controls return with the text inserted at the selection where recording started. If the keyboard
+is open when you start, it stays open during voice input. You can review and edit the text before
+you send it.
 
 The first use can download Apple's speech model and needs a network connection. Later transcription
 works offline for that language. A recording can be up to five minutes long. Canceling voice input,

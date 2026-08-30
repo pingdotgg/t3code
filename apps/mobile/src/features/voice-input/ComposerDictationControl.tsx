@@ -49,7 +49,7 @@ const WAVEFORM_TIMING = {
   reduceMotion: ReduceMotion.System,
 } as const;
 
-/** Keeps the native editor mounted and focused while dictation replaces the draft area. */
+/** Keeps the native editor mounted when compact dictation replaces the draft area. */
 export function ComposerDictationDraftContent(props: {
   readonly children: ReactNode;
   readonly className?: string;
@@ -75,6 +75,26 @@ export function ComposerDictationDraftContent(props: {
     >
       {props.children}
     </Animated.View>
+  );
+}
+
+/** Crossfades controls within one toolbar row while the draft keeps its position. */
+export function ComposerDictationToolbar(props: {
+  readonly children: ReactNode;
+  readonly showsDictation: boolean;
+  readonly visible?: boolean;
+}) {
+  return (
+    <View className="relative h-11">
+      <Animated.View
+        key={props.showsDictation ? "dictation" : "draft"}
+        className="absolute inset-0"
+        entering={DICTATION_ENTERING}
+        exiting={props.visible === false ? undefined : DICTATION_EXITING}
+      >
+        {props.children}
+      </Animated.View>
+    </View>
   );
 }
 
@@ -231,11 +251,7 @@ export function ComposerDictationStatus(props: {
   const isError = props.presentation.statusKind === "error";
   const elapsedLabel = `${Math.floor(props.elapsedSeconds / 60)}:${String(props.elapsedSeconds % 60).padStart(2, "0")}`;
   return (
-    <Animated.View
-      className="relative h-11 min-w-0 flex-1 justify-center"
-      entering={DICTATION_ENTERING}
-      exiting={DICTATION_EXITING}
-    >
+    <View className="relative h-11 min-w-0 flex-1 justify-center">
       {isError ? (
         <View className="min-w-0 flex-row items-center gap-1.5 px-2">
           <Text className="min-w-0 flex-1 text-sm text-red-400" numberOfLines={2}>
@@ -283,7 +299,7 @@ export function ComposerDictationStatus(props: {
           </Animated.View>
         </View>
       )}
-    </Animated.View>
+    </View>
   );
 }
 
@@ -293,13 +309,11 @@ export function ComposerDictationCancelAction(props: {
 }) {
   if (props.presentation.leadingAction !== "cancel") return null;
   return (
-    <Animated.View entering={DICTATION_ENTERING} exiting={DICTATION_EXITING}>
-      <VoiceActionButton
-        accessibilityLabel="Cancel dictation"
-        icon="xmark"
-        onPress={props.onCancel}
-      />
-    </Animated.View>
+    <VoiceActionButton
+      accessibilityLabel="Cancel dictation"
+      icon="xmark"
+      onPress={props.onCancel}
+    />
   );
 }
 
