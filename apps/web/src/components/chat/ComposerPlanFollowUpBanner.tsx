@@ -1,5 +1,4 @@
 import { memo } from "react";
-import { ComposerBanner } from "./ComposerBanner";
 
 export const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBanner({
   planTitle,
@@ -7,14 +6,16 @@ export const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBann
   planTitle: string | null;
 }) {
   return (
-    <ComposerBanner.Row>
-      <ComposerBanner.Icon />
-      <ComposerBanner.Content>
-        <span className="shrink-0 font-medium text-muted-foreground">Plan ready</span>
+    <div className="px-3 py-2 sm:px-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-muted-foreground">Plan ready</span>
         {planTitle ? (
-          <span className="min-w-0 flex-1 truncate text-foreground/85">{planTitle}</span>
+          <span className="min-w-0 flex-1 truncate text-xs text-foreground/85">{planTitle}</span>
         ) : null}
-      </ComposerBanner.Content>
-    </ComposerBanner.Row>
+      </div>
+      {/* <div className="mt-2 text-xs text-muted-foreground">
+        Review the plan
+      </div> */}
+    </div>
   );
 });

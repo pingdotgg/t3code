@@ -19,6 +19,8 @@ describe("ComposerCommandMenu", () => {
     );
 
     expect(markup).toContain('data-composer-command-drawer="true"');
+    expect(markup).toContain("chat-composer-drawer-surface");
+    expect(markup).toContain("chat-composer-drawer-attached");
     expect(markup).not.toContain("dropdown-glass");
   });
 
