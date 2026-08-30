@@ -75,6 +75,8 @@ const OrchestrationV2CreationFields = {
 
 export const OrchestrationV2PolicyCeiling = Schema.Struct({
   callerThreadId: ThreadId,
+  callerRunId: Schema.optional(RunId),
+  callerProviderInstanceId: Schema.optional(ProviderInstanceId),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
 });

@@ -167,6 +167,7 @@ const isRuntimeModeCeilingError = Schema.is(Orchestrator.OrchestratorRuntimeMode
 const isInteractionModeCeilingError = Schema.is(
   Orchestrator.OrchestratorInteractionModeCeilingError,
 );
+const isCallerRunCeilingError = Schema.is(Orchestrator.OrchestratorCallerRunCeilingError);
 
 function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {
   return new OrchestratorMcpFailure({ code, message });
@@ -209,6 +210,12 @@ function threadLaunchPolicyFailure(
     return failure(
       "interaction_mode_escalation_denied",
       `Child interaction mode ${cause.targetMode} exceeds the caller ceiling (captured ${cause.capturedCallerMode}; current ${cause.currentCallerMode}).`,
+    );
+  }
+  if (isCallerRunCeilingError(cause)) {
+    return failure(
+      "parent_not_active",
+      "Thread creation requires an active run owned by this MCP provider session.",
     );
   }
   return null;
@@ -1707,6 +1714,8 @@ const make = Effect.gen(function* () {
                   interactionMode,
                   policyCeiling: {
                     callerThreadId: scope.threadId,
+                    callerRunId: parentRun.id,
+                    callerProviderInstanceId: scope.providerInstanceId,
                     runtimeMode: parent.thread.runtimeMode,
                     interactionMode: parent.thread.interactionMode,
                   },

@@ -116,6 +116,19 @@ export class OrchestratorInteractionModeCeilingError extends Schema.TaggedErrorC
   }
 }
 
+export class OrchestratorCallerRunCeilingError extends Schema.TaggedErrorClass<OrchestratorCallerRunCeilingError>()(
+  "OrchestratorCallerRunCeilingError",
+  {
+    callerThreadId: ThreadId,
+    callerRunId: RunId,
+    callerProviderInstanceId: ProviderInstanceId,
+  },
+) {
+  override get message(): string {
+    return `Caller run ${this.callerRunId} is no longer active for provider ${this.callerProviderInstanceId}.`;
+  }
+}
+
 export class OrchestratorProjectionError extends Schema.TaggedErrorClass<OrchestratorProjectionError>()(
   "OrchestratorProjectionError",
   {
@@ -730,6 +743,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: input.command.type,
         cause: `Caller thread ${ceiling.callerThreadId} is not active.`,
       });
+    }
+    if (ceiling.callerRunId !== undefined && ceiling.callerProviderInstanceId !== undefined) {
+      const callerRun = caller.runs.find((candidate) => candidate.id === ceiling.callerRunId);
+      if (
+        callerRun === undefined ||
+        !isBlockingRun(callerRun) ||
+        callerRun.rootNodeId === null ||
+        callerRun.providerInstanceId !== ceiling.callerProviderInstanceId
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: input.command.commandId,
+          commandType: input.command.type,
+          cause: new OrchestratorCallerRunCeilingError({
+            callerThreadId: ceiling.callerThreadId,
+            callerRunId: ceiling.callerRunId,
+            callerProviderInstanceId: ceiling.callerProviderInstanceId,
+          }),
+        });
+      }
     }
     if (
       runtimeModeRank(input.runtimeMode) > runtimeModeRank(ceiling.runtimeMode) ||

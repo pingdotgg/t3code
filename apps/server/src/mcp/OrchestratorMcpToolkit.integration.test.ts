@@ -98,6 +98,7 @@ const parentThreadId = ThreadId.make("thread:mcp-orchestrator-parent");
 const projectId = ProjectId.make("project:mcp-orchestrator");
 const deletionRaceProjectId = ProjectId.make("project:mcp-orchestrator-delete-race");
 const deletionRaceParentThreadId = ThreadId.make("thread:mcp-orchestrator-delete-race-parent");
+const ownershipRaceParentThreadId = ThreadId.make("thread:mcp-orchestrator-ownership-race-parent");
 const targetProjectId = ProjectId.make("project:mcp-orchestrator-target");
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
@@ -519,6 +520,7 @@ describe("orchestrator MCP toolkit", () => {
           const deletionLockAcquired = yield* Deferred.make<void>();
           const allowDeletion = yield* Deferred.make<void>();
           const deletionRaceProviderStarted = yield* Deferred.make<ProviderAdapterV2TurnInput>();
+          const ownershipRaceProviderStarted = yield* Deferred.make<ProviderAdapterV2TurnInput>();
           const deletionRaceCommandId = CommandId.make(
             "command:mcp:mcp-provider-session-delete-race:create-thread:delete-create-race:0",
           );
@@ -535,11 +537,14 @@ describe("orchestrator MCP toolkit", () => {
               shouldComplete: (turn) =>
                 turn.threadId !== parentThreadId &&
                 turn.threadId !== deletionRaceParentThreadId &&
+                turn.threadId !== ownershipRaceParentThreadId &&
                 turn.message.text !== cancellationPrompt,
               startedSignal: (turn) =>
                 turn.threadId === deletionRaceParentThreadId
                   ? deletionRaceProviderStarted
-                  : undefined,
+                  : turn.threadId === ownershipRaceParentThreadId
+                    ? ownershipRaceProviderStarted
+                    : undefined,
               terminalGate: (turn) =>
                 turn.message.text.startsWith("Delegated task") ||
                 turn.message.text.startsWith("Delegated tasks")
@@ -942,10 +947,10 @@ describe("orchestrator MCP toolkit", () => {
                   Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
                   Effect.provideService(McpSchema.McpServerClient, client),
                 );
-            const launchCommandId = (requestKey: string) =>
-              CommandId.make(
-                `command:mcp:mcp-provider-session-parent:create-thread:${requestKey}:0`,
-              );
+            const launchCommandId = (
+              requestKey: string,
+              providerSessionId = "mcp-provider-session-parent",
+            ) => CommandId.make(`command:mcp:${providerSessionId}:create-thread:${requestKey}:0`);
             const gateLaunchReceipt = Effect.fn("test.gateLaunchReceipt")(function* (
               commandId: CommandId,
             ) {
@@ -2726,22 +2731,72 @@ describe("orchestrator MCP toolkit", () => {
             }
             yield* Ref.set(continuationOffers, []);
 
-            const parentStop = yield* orchestrator.dispatch({
-              type: "run.interrupt",
-              commandId: CommandId.make("command:mcp-parent:interrupt-wake"),
-              threadId: parentThreadId,
-              runId: parentRun.id,
-              reason: "Settle the parent before the legacy child terminalizes.",
-            });
-            yield* waitForProjection(orchestrator, parentThreadId, (projection) =>
-              projection.runs.every(
-                (run) =>
-                  run.status !== "preparing" &&
-                  run.status !== "starting" &&
-                  run.status !== "running",
-              ),
+            const inactiveBeforeMessageKey = "create-before-parent-run-terminal";
+            const inactiveBeforeMessageThreadId = ThreadId.make(
+              `thread:mcp:mcp-provider-session-parent:${inactiveBeforeMessageKey}:0`,
             );
-            const stoppedParent = yield* orchestrator.getThreadProjection(parentThreadId);
+            const inactiveBeforeMessageGate = yield* gateLaunchReceipt(
+              CommandId.make(`${launchCommandId(inactiveBeforeMessageKey)}:initial-message`),
+            );
+            const { parentStop, stoppedParent } = yield* Effect.gen(function* () {
+              const creation = yield* Effect.forkChild(
+                invoke("create_threads", {
+                  clientRequestId: inactiveBeforeMessageKey,
+                  threads: [
+                    {
+                      title: "Created before its caller run terminalizes",
+                      prompt: "Do not start this child turn after its caller run terminalizes.",
+                    },
+                  ],
+                }),
+                { startImmediately: true },
+              );
+              yield* Deferred.await(inactiveBeforeMessageGate.entered);
+              expect(
+                (yield* orchestrator.getThreadProjection(inactiveBeforeMessageThreadId)).thread.id,
+              ).toBe(inactiveBeforeMessageThreadId);
+
+              const sequenceBeforeInterrupt =
+                yield* orchestrator.getThreadEventSequence(parentThreadId);
+              const parentStop = yield* orchestrator.dispatch({
+                type: "run.interrupt",
+                commandId: CommandId.make("command:mcp-parent:interrupt-wake"),
+                threadId: parentThreadId,
+                runId: parentRun.id,
+                reason: "Settle the parent before the legacy child terminalizes.",
+              });
+              const terminalEvent = yield* orchestrator
+                .streamStoredEventsFrom({
+                  threadId: parentThreadId,
+                  afterSequence: sequenceBeforeInterrupt,
+                })
+                .pipe(
+                  Stream.filter(
+                    (stored) =>
+                      stored.event.type === "run.updated" &&
+                      stored.event.payload.id === parentRun.id &&
+                      stored.event.payload.status === "interrupted",
+                  ),
+                  Stream.runHead,
+                );
+              expect(Option.isSome(terminalEvent)).toBe(true);
+              const stoppedParent = yield* orchestrator.getThreadProjection(parentThreadId);
+              yield* Deferred.succeed(inactiveBeforeMessageGate.release, undefined);
+              const creationCall = yield* Fiber.join(creation);
+              expect(creationCall.structuredContent).toMatchObject({
+                code: "parent_not_active",
+                message:
+                  "Thread creation requires an active run owned by this MCP provider session.",
+              });
+              const partialChild = yield* orchestrator.getThreadProjection(
+                inactiveBeforeMessageThreadId,
+              );
+              expect(partialChild.messages).toEqual([]);
+              expect(partialChild.runs).toEqual([]);
+              return { parentStop, stoppedParent };
+            }).pipe(
+              Effect.ensuring(Deferred.succeed(inactiveBeforeMessageGate.release, undefined)),
+            );
             expect(stoppedParent.runs.some((run) => run.id === parentRun.id)).toBe(true);
             expect(
               parentStop.storedEvents.some(
@@ -3243,6 +3298,122 @@ describe("orchestrator MCP toolkit", () => {
               removedDelivery.subagents.find((task) => task.id === removeTask.id),
             ).toMatchObject({ result: expect.any(String), status: "completed" });
             yield* expectOffersToStay(0);
+
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-ownership-race-parent:create"),
+              threadId: ownershipRaceParentThreadId,
+              projectId,
+              title: "MCP ownership race parent",
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-ownership-race-parent:start"),
+              threadId: ownershipRaceParentThreadId,
+              messageId: MessageId.make("message:mcp-ownership-race-parent:start"),
+              text: "Stay active until child launch admission is checked.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            const startedOwnershipRaceTurn = yield* Deferred.await(ownershipRaceProviderStarted);
+            expect(startedOwnershipRaceTurn.threadId).toBe(ownershipRaceParentThreadId);
+            const ownershipRaceInvocation: McpInvocationContext.McpInvocationScope = {
+              ...invocation,
+              threadId: ownershipRaceParentThreadId,
+              providerSessionId: "mcp-provider-session-ownership-race",
+            };
+            const invokeOwnershipRace = (name: string, args: Record<string, unknown>) =>
+              server
+                .callTool({ name, arguments: args })
+                .pipe(
+                  Effect.provideService(
+                    McpInvocationContext.McpInvocationContext,
+                    ownershipRaceInvocation,
+                  ),
+                  Effect.provideService(McpSchema.McpServerClient, client),
+                );
+            const ownershipRaceParent = yield* orchestrator.getThreadProjection(
+              ownershipRaceParentThreadId,
+            );
+            const ownershipRaceParentRun = ownershipRaceParent.runs.find(
+              (run) => run.status === "running",
+            );
+            if (ownershipRaceParentRun === undefined) {
+              return yield* Effect.die(new Error("Ownership-race parent run did not start."));
+            }
+            const inactiveParentKey = "create-after-parent-run-terminal";
+            const inactiveParentGate = yield* gateLaunchReceipt(
+              launchCommandId(inactiveParentKey, ownershipRaceInvocation.providerSessionId),
+            );
+            yield* Effect.gen(function* () {
+              const creation = yield* Effect.forkChild(
+                invokeOwnershipRace("create_threads", {
+                  clientRequestId: inactiveParentKey,
+                  threads: [
+                    {
+                      projectId: targetProjectId,
+                      title: "Must not outlive its caller run",
+                      prompt: "Do not launch after the caller run terminalizes.",
+                    },
+                  ],
+                }),
+                { startImmediately: true },
+              );
+              yield* Deferred.await(inactiveParentGate.entered);
+              const sequenceBeforeInterrupt = yield* orchestrator.getThreadEventSequence(
+                ownershipRaceParentThreadId,
+              );
+              yield* orchestrator.dispatch({
+                type: "run.interrupt",
+                commandId: CommandId.make(
+                  "command:mcp-ownership-race-parent:terminal-before-child-launch",
+                ),
+                threadId: ownershipRaceParentThreadId,
+                runId: ownershipRaceParentRun.id,
+                reason: "Prove child launch revalidates its caller run.",
+              });
+              const terminalEvent = yield* orchestrator
+                .streamStoredEventsFrom({
+                  threadId: ownershipRaceParentThreadId,
+                  afterSequence: sequenceBeforeInterrupt,
+                })
+                .pipe(
+                  Stream.filter(
+                    (stored) =>
+                      stored.event.type === "run.updated" &&
+                      stored.event.payload.id === ownershipRaceParentRun.id &&
+                      stored.event.payload.status === "interrupted",
+                  ),
+                  Stream.runHead,
+                );
+              expect(Option.isSome(terminalEvent)).toBe(true);
+
+              yield* Deferred.succeed(inactiveParentGate.release, undefined);
+              const creationCall = yield* Fiber.join(creation);
+              expect(creationCall.structuredContent).toMatchObject({
+                code: "parent_not_active",
+                message:
+                  "Thread creation requires an active run owned by this MCP provider session.",
+              });
+              const childThreadId = ThreadId.make(
+                `thread:mcp:${ownershipRaceInvocation.providerSessionId}:${inactiveParentKey}:0`,
+              );
+              expect(
+                Option.isNone(
+                  yield* Effect.option(orchestrator.getThreadProjection(childThreadId)),
+                ),
+              ).toBe(true);
+            }).pipe(Effect.ensuring(Deferred.succeed(inactiveParentGate.release, undefined)));
 
             yield* orchestrator.dispatch({
               type: "thread.create",
