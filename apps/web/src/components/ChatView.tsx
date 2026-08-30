@@ -53,6 +53,7 @@ import {
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import {
@@ -2829,6 +2830,9 @@ function ChatViewContent(props: ChatViewProps) {
         }),
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const environmentKeybindings =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
+    DEFAULT_RESOLVED_KEYBINDINGS;
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   // Prefer an instance-id match so a custom Codex instance (e.g.
   // `codex_personal`) surfaces its own status/message in the banner rather
@@ -3353,7 +3357,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       const keybindingMutation = deriveProjectScriptKeybindingMutation({
-        keybindings,
+        keybindings: environmentKeybindings,
         keybinding: input.keybinding,
         command: input.keybindingCommand,
       });
@@ -3378,7 +3382,7 @@ function ChatViewContent(props: ChatViewProps) {
         () => undefined,
       );
     },
-    [environmentId, keybindings, removeKeybinding, updateProject, upsertKeybinding],
+    [environmentId, environmentKeybindings, removeKeybinding, updateProject, upsertKeybinding],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput): Promise<AtomCommandResult<void, unknown>> => {
