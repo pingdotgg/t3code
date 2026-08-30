@@ -1,9 +1,33 @@
 import { CheckpointRef, EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { create, type ReactTestRenderer } from "react-test-renderer";
-import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
+
+const activityTestState = vi.hoisted(() => ({ expanded: false }));
+
+vi.mock("./MessagesTimeline.logic", async (importOriginal) => {
+  const logic = await importOriginal<typeof import("./MessagesTimeline.logic")>();
+  return {
+    ...logic,
+    deriveMessagesTimelineRows(input: Parameters<typeof logic.deriveMessagesTimelineRows>[0]) {
+      const rows = logic.deriveMessagesTimelineRows(input);
+      if (!activityTestState.expanded) return rows;
+      return logic.deriveMessagesTimelineRows({
+        ...input,
+        expandedWorkGroupIds: new Set(
+          rows.flatMap((row) =>
+            row.kind === "work-toggle" || row.kind === "work-live" ? [row.groupId] : [],
+          ),
+        ),
+      });
+    },
+  };
+});
+
+beforeEach(() => {
+  activityTestState.expanded = false;
+});
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -170,7 +194,6 @@ function buildProps() {
   return {
     isWorking: false,
     activeTurnInProgress: false,
-    activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
     latestRun: null,
     turnDiffSummaryByAssistantMessageId: new Map(),
@@ -760,7 +783,6 @@ describe("MessagesTimeline", () => {
         {...buildProps()}
         isWorking
         activeTurnInProgress
-        activeTurnStartedAt={MESSAGE_CREATED_AT}
         latestRun={{
           runId,
           status: "running",
@@ -1195,7 +1217,6 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Context compacted");
-    expect(markup).toContain("Work Log");
   });
 
   it("does not render the transient V2 interruption request", async () => {
@@ -1523,7 +1544,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("+2 previous log entries");
+    expect(markup).toContain("Ran 2 commands and received 1 update");
     expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
   });
 
@@ -1845,6 +1866,7 @@ describe("MessagesTimeline", () => {
   });
 
   it("renders V2 provider retries in the normal work log", () => {
+    activityTestState.expanded = true;
     const retryItem = {
       id: "provider-error",
       threadId: "thread-1",
@@ -1916,13 +1938,13 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain('data-v2-item-type="error"');
-    expect(markup).toContain("Work Log");
     expect(markup).toContain("Retrying provider (2/5)");
     expect(markup).toContain("The response stream disconnected.");
     expect(markup).not.toContain('data-v2-event-disclosure="true"');
   });
 
   it("keeps inherited V2 work provenance on the rendered row", async () => {
+    activityTestState.expanded = true;
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const item = {
       id: "command-inherited",
@@ -1992,10 +2014,11 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-v2-item-type="command_execution"');
     expect(markup).toContain('data-v2-item-visibility="inherited"');
     expect(markup).toContain("Inherited");
-    expect(markup).toContain("+1 previous log entry");
+    expect(markup).toContain("Received 1 update and ran 1 command");
   });
 
   it("renders T3 MCP dynamic tools with the product logo and pretty name", async () => {
+    activityTestState.expanded = true;
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const item = {
       id: "tool-t3-thread-read",
@@ -2070,6 +2093,7 @@ describe("MessagesTimeline", () => {
   });
 
   it("formats changed file paths from the workspace root", async () => {
+    activityTestState.expanded = true;
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -2263,23 +2287,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-expanded="false"');
   });
 
-  it("labels the working row with the active plan step", () => {
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        isWorking
-        activeTurnInProgress
-        activeTurnStartedAt="2026-03-17T19:12:28.000Z"
-        workingStepLabel="Resolve triage instances"
-        timelineEntries={[]}
-      />,
-    );
-
-    expect(markup).toContain("Working for");
-    expect(markup).toContain("· Resolve triage instances");
-  });
-
   it("renders a muted failure marker for failed tool lifecycle entries", () => {
+    activityTestState.expanded = true;
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
