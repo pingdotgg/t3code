@@ -137,7 +137,6 @@ import {
   pruneDisabledEnvironmentIds,
   reduceSidebarProjectScopeMenuState,
   resolveAdjacentThreadId,
-  resolveSidebarProjectMenuLabel,
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
@@ -1982,15 +1981,6 @@ export default function Sidebar() {
     [configuredDisabledEnvironmentIds, connectedEnvironmentIds],
   );
   const isEnvironmentFilterActive = disabledEnvironmentIds.size > 0;
-  const enabledEnvironmentIds = useMemo(
-    () =>
-      new Set(
-        environments
-          .filter((environment) => !disabledEnvironmentIds.has(environment.environmentId))
-          .map((environment) => environment.environmentId),
-      ),
-    [disabledEnvironmentIds, environments],
-  );
   // An environment that leaves the catalog must not keep filtering from
   // beyond the grave: prune it so its threads reappear if it reconnects.
   useEffect(() => {
@@ -2036,14 +2026,13 @@ export default function Sidebar() {
       { value: "all", label: "All projects" },
       ...menuProjectGroups.map((project) => ({
         value: project.projectKey,
-        label: resolveSidebarProjectMenuLabel({
-          displayName: project.displayName,
-          memberProjects: project.memberProjects,
-          enabledEnvironmentIds,
-        }),
+        // The logical label already represents every grouped clone and never
+        // needs a redundant environment suffix, even when only one
+        // environment is enabled.
+        label: project.displayName,
       })),
     ],
-    [enabledEnvironmentIds, menuProjectGroups],
+    [menuProjectGroups],
   );
   const projectGroupByScopeKey = useMemo(
     () => new Map(projectGroups.map((project) => [project.projectKey, project] as const)),
@@ -3820,7 +3809,9 @@ export default function Sidebar() {
                             }
                             className={cn(
                               "[&>span:last-child]:min-w-0",
-                              isEnabled ? "text-foreground" : "text-muted-foreground",
+                              isEnabled
+                                ? "text-foreground data-highlighted:text-foreground"
+                                : "text-muted-foreground data-highlighted:text-muted-foreground",
                               isLastEnabled &&
                                 "data-disabled:pointer-events-auto data-disabled:bg-accent/40 data-disabled:opacity-100",
                             )}

@@ -1051,19 +1051,3 @@ export function pruneDisabledEnvironmentIds(input: {
   if (!someEnabled) return new Set<EnvironmentId>();
   return next.size === disabledIds.size ? disabledIds : next;
 }
-
-export function resolveSidebarProjectMenuLabel(input: {
-  displayName: string;
-  memberProjects: ReadonlyArray<{
-    environmentId: EnvironmentId;
-    title: string;
-  }>;
-  enabledEnvironmentIds: ReadonlySet<EnvironmentId>;
-}): string {
-  if (input.enabledEnvironmentIds.size !== 1) return input.displayName;
-  const environmentId = input.enabledEnvironmentIds.values().next().value;
-  return (
-    input.memberProjects.find((project) => project.environmentId === environmentId)?.title ??
-    input.displayName
-  );
-}
