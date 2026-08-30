@@ -101,16 +101,26 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const path = yield* Path.Path;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env, cwd);
   const userSkillsDirectory = path.join(configDirPath, "skills");
-  const resolvedUserSkillsDirectory = path.resolve(userSkillsDirectory);
+  const canonicalizeDirectory = (directory: string) => {
+    const resolved = path.resolve(directory);
+    return fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved));
+  };
+  const canonicalUserSkillsDirectory = yield* canonicalizeDirectory(userSkillsDirectory);
+  const projectRoots: ReadonlyArray<{ directory: string; scope: ClaudeSkillScope }> = cwd
+    ? [
+        { directory: path.join(cwd, ".agents", "skills"), scope: "project" },
+        { directory: path.join(cwd, ".claude", "skills"), scope: "project" },
+      ]
+    : [];
+  const distinctProjectRoots = yield* Effect.filter(projectRoots, (root) =>
+    canonicalizeDirectory(root.directory).pipe(
+      Effect.map((directory) => directory !== canonicalUserSkillsDirectory),
+    ),
+  );
 
   const roots: ReadonlyArray<{ directory: string; scope: ClaudeSkillScope }> = [
     { directory: userSkillsDirectory, scope: "user" },
-    ...(cwd
-      ? [
-          { directory: path.join(cwd, ".agents", "skills"), scope: "project" as const },
-          { directory: path.join(cwd, ".claude", "skills"), scope: "project" as const },
-        ].filter((root) => path.resolve(root.directory) !== resolvedUserSkillsDirectory)
-      : []),
+    ...distinctProjectRoots,
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();

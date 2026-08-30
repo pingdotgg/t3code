@@ -66,19 +66,26 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
-  it.effect("keeps user scope when project and user skill roots match", () =>
+  it.effect("keeps user scope when project and user skill roots name the same directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
       const configDir = path.join(workspace, ".claude");
+      const configLink = path.join(workspace, "claude-home");
 
       yield* writeSkill(path.join(configDir, "skills"), "review", "---\nname: review\n---\n");
+      yield* fs.symlink(configDir, configLink);
 
-      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+      const [directSkills, linkedSkills] = yield* Effect.all([
+        discoverClaudeSkills({ homePath: configDir }, workspace),
+        discoverClaudeSkills({ homePath: configLink }, workspace),
+      ]);
 
-      assert.equal(skills.length, 1);
-      assert.equal(skills[0]?.scope, "user");
+      for (const skills of [directSkills, linkedSkills]) {
+        assert.equal(skills.length, 1);
+        assert.equal(skills[0]?.scope, "user");
+      }
     }),
   );
 
