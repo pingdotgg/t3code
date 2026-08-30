@@ -54,7 +54,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
 
   kill(): void {
     this.killCalls += 1;
-    for (const listener of this.exitListeners) listener({ exitCode: 0, signal: null });
+    this.emitExit({ exitCode: 0, signal: null });
   }
 
   onData(listener: (data: string) => void): () => void {
@@ -65,6 +65,10 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   onExit(listener: (event: PtyAdapter.PtyExitEvent) => void): () => void {
     this.exitListeners.add(listener);
     return () => this.exitListeners.delete(listener);
+  }
+
+  emitExit(event: PtyAdapter.PtyExitEvent): void {
+    for (const listener of this.exitListeners) listener(event);
   }
 }
 
@@ -627,6 +631,76 @@ describe("ProjectScriptMcpService", () => {
           scriptId: "test",
           terminalId: partial.terminalId,
         });
+
+        const queuedDrains: Array<Effect.Effect<void>> = [];
+        const queuedPtyAdapter = new FakePtyAdapter();
+        const queuedManager = yield* TerminalManager.makeWithOptions({
+          logsDir: path.join(baseDir, "queued-terminal-history"),
+          ptyAdapter: queuedPtyAdapter,
+          processKillGraceMs: 1,
+          processEventDrainRunner: (effect) => {
+            queuedDrains.push(effect);
+          },
+        });
+        const queuedTerminalService = yield* TerminalMcpService.make.pipe(
+          Effect.provideService(ThreadManagementService, threads),
+          Effect.provideService(ProjectService.ProjectService, projects),
+          Effect.provideService(TerminalManager.TerminalManager, queuedManager),
+          Effect.provideService(ThreadDispatchLockV2, threadDispatch),
+        );
+        const queuedScriptService = yield* ProjectScriptMcpService.make.pipe(
+          Effect.provideService(TerminalMcpService.TerminalMcpService, queuedTerminalService),
+          Effect.provideService(TerminalManager.TerminalManager, queuedManager),
+        );
+        const queuedExitRun = yield* queuedScriptService.run(scope, {
+          threadId: targetThreadId,
+          scriptId: "dev",
+          terminalId: "term-script-clear-queued-exit",
+        });
+        assert.equal(queuedExitRun.outcome, "input_accepted");
+        const queuedExitProcess = queuedPtyAdapter.processes[0];
+        expect(queuedExitProcess).toBeDefined();
+        if (!queuedExitProcess) return;
+        queuedExitProcess.emitExit({ exitCode: 23, signal: null });
+        expect(queuedDrains).toHaveLength(1);
+
+        yield* queuedManager.clear({
+          threadId: targetThreadId,
+          terminalId: queuedExitRun.terminalId,
+        });
+        yield* queuedDrains[0]!;
+        expect(
+          yield* queuedManager.inspectSession({
+            threadId: targetThreadId,
+            terminalId: queuedExitRun.terminalId,
+          }),
+        ).toMatchObject({ status: "exited", exitCode: 23 });
+        const clearedOwnership = yield* queuedScriptService
+          .stop(scope, {
+            threadId: targetThreadId,
+            scriptId: "dev",
+            terminalId: queuedExitRun.terminalId,
+          })
+          .pipe(Effect.flip);
+        assert.equal(clearedOwnership.code, "script_run_not_found");
+
+        yield* queuedManager.close({
+          threadId: targetThreadId,
+          terminalId: queuedExitRun.terminalId,
+        });
+        const replacementAfterExit = yield* queuedScriptService.run(scope, {
+          threadId: targetThreadId,
+          scriptId: "dev",
+          terminalId: queuedExitRun.terminalId,
+        });
+        assert.equal(replacementAfterExit.outcome, "input_accepted");
+        assert.isTrue(
+          (yield* queuedScriptService.stop(scope, {
+            threadId: targetThreadId,
+            scriptId: "dev",
+            terminalId: replacementAfterExit.terminalId,
+          })).stopped,
+        );
 
         savedScripts = [
           ...savedScripts,
