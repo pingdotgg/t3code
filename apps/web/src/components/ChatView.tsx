@@ -7089,7 +7089,7 @@ function ChatViewContent(props: ChatViewProps) {
             preferredScriptId={
               activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
             }
-            keybindings={environmentKeybindings}
+            keybindings={chatKeybindings}
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
