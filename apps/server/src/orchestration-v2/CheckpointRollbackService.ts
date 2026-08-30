@@ -93,20 +93,15 @@ export class CheckpointRollbackPreflightError extends Schema.TaggedErrorClass<Ch
   }
 }
 
-export type CheckpointRollbackExecutionError =
-  | CheckpointRollbackRejectedError
-  | CheckpointRollbackPartialError
-  | CheckpointRollbackPreflightError;
+export const CheckpointRollbackExecutionError = Schema.Union([
+  CheckpointRollbackRejectedError,
+  CheckpointRollbackPartialError,
+  CheckpointRollbackPreflightError,
+]);
+export type CheckpointRollbackExecutionError = typeof CheckpointRollbackExecutionError.Type;
 
-const isCheckpointRollbackRejectedError = Schema.is(CheckpointRollbackRejectedError);
 const isCheckpointRollbackPartialError = Schema.is(CheckpointRollbackPartialError);
-const isCheckpointRollbackPreflightError = Schema.is(CheckpointRollbackPreflightError);
-const isCheckpointRollbackExecutionError = (
-  value: unknown,
-): value is CheckpointRollbackExecutionError =>
-  isCheckpointRollbackRejectedError(value) ||
-  isCheckpointRollbackPartialError(value) ||
-  isCheckpointRollbackPreflightError(value);
+const isCheckpointRollbackExecutionError = Schema.is(CheckpointRollbackExecutionError);
 const isCheckpointRestoreOutcomeUnknownError = Schema.is(CheckpointRestoreOutcomeUnknownError);
 const isCheckpointRestorePreflightError = Schema.is(CheckpointRestorePreflightError);
 const isCheckpointRestorePreconditionError = Schema.is(CheckpointRestorePreconditionError);
