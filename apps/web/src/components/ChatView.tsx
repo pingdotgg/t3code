@@ -381,6 +381,7 @@ import {
   startAttachmentUpload,
 } from "../lib/attachmentUploadQueue";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
+import { buildSessionHandoffPrompt, parseSessionHandoff } from "../lib/sessionHandoff";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
@@ -6702,6 +6703,150 @@ function ChatViewContent(props: ChatViewProps) {
     composerRef,
   ]);
 
+  const onContinueInNewThread = useCallback(
+    async (handoffText: string) => {
+      const handoff = parseSessionHandoff(handoffText);
+      if (
+        handoff === null ||
+        !activeThread ||
+        !activeProject ||
+        !activeThreadRef ||
+        !isServerThread ||
+        isSendBusy ||
+        isConnecting ||
+        activeEnvironmentUnavailable ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+
+      const sendCtx = composerRef.current?.getSendContext();
+      if (!sendCtx?.providerAvailable) return;
+
+      const prompt = buildSessionHandoffPrompt({
+        handoff,
+        sourceEnvironmentId: activeThread.environmentId,
+        sourceThreadId: activeThread.id,
+      });
+      const outgoingPrompt = formatOutgoingPrompt({
+        provider: sendCtx.selectedProvider,
+        model: sendCtx.selectedModel,
+        models: sendCtx.selectedProviderModels,
+        effort: sendCtx.selectedPromptEffort,
+        text: prompt,
+      });
+      if (composerRef.current?.validateProviderInput(outgoingPrompt) === false) return;
+
+      const createdAt = new Date().toISOString();
+      const nextThreadId = newThreadId();
+      const nextThreadRef = scopeThreadRef(activeThread.environmentId, nextThreadId);
+      const modelSelection = sendCtx.selectedModelSelection;
+      const interactionMode = activeThread.interactionMode;
+
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      const finish = () => {
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+      };
+
+      const startResult = await startThreadTurn({
+        environmentId,
+        input: {
+          threadId: nextThreadId,
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: outgoingPrompt,
+            attachments: [],
+          },
+          modelSelection,
+          titleSeed: handoff.title,
+          runtimeMode,
+          interactionMode,
+          bootstrap: {
+            createThread: {
+              projectId: activeProject.id,
+              title: handoff.title,
+              modelSelection,
+              runtimeMode,
+              interactionMode,
+              branch: activeThreadBranch,
+              worktreePath: activeThread.worktreePath,
+              createdAt,
+            },
+          },
+          createdAt,
+        },
+      });
+      let failure: AtomCommandResult<unknown, unknown> | null =
+        startResult._tag === "Failure" ? startResult : null;
+
+      if (failure === null) {
+        const startedResult = await settlePromise(() => waitForStartedServerThread(nextThreadRef));
+        failure = startedResult._tag === "Failure" ? startedResult : null;
+      }
+
+      if (failure === null && supportsSettlement) {
+        const settledResult = await settleThread(activeThreadRef);
+        if (settledResult._tag === "Failure" && !isAtomCommandInterrupted(settledResult)) {
+          const error = squashAtomCommandFailure(settledResult);
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              title: "New thread started; previous thread was not settled",
+              description: chatActionErrorMessage(error),
+            }),
+          );
+        }
+      }
+
+      if (failure === null) {
+        const navigateResult = await settlePromise(() =>
+          navigate({
+            to: "/$environmentId/$threadId",
+            params: {
+              environmentId: activeThread.environmentId,
+              threadId: nextThreadId,
+            },
+          }),
+        );
+        failure = navigateResult._tag === "Failure" ? navigateResult : null;
+      }
+
+      if (failure !== null && !isAtomCommandInterrupted(failure)) {
+        const error = squashAtomCommandFailure(failure);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not continue in a new thread",
+            description: chatActionErrorMessage(error),
+          }),
+        );
+      }
+      finish();
+    },
+    [
+      activeEnvironmentUnavailable,
+      activeProject,
+      activeThread,
+      activeThreadBranch,
+      activeThreadRef,
+      beginLocalDispatch,
+      composerRef,
+      environmentId,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      navigate,
+      resetLocalDispatch,
+      runtimeMode,
+      settleThread,
+      startThreadTurn,
+      supportsSettlement,
+    ],
+  );
+
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
       if (!activeThread) {
@@ -7123,6 +7268,7 @@ function ChatViewContent(props: ChatViewProps) {
               <MessagesTimeline
                 agentPanelModel={agentPanelModel}
                 onOpenAgents={addAgentsSurface}
+                onContinueInNewThread={onContinueInNewThread}
                 key={activeThread.id}
                 isWorking={isWorking}
                 workingStepLabel={workingStepLabel}

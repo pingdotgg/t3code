@@ -237,6 +237,40 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("offers a new-thread action for a completed handoff packet", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        onContinueInNewThread={async () => {}}
+        timelineEntries={[
+          buildAssistantTimelineEntry(`<!-- t3-handoff:1 -->
+# Handoff
+
+## Outcome
+Done.
+
+## Next task
+Start the next task.
+<!-- /t3-handoff -->`),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Continue in new thread"');
+  });
+
+  it("keeps the new-thread action hidden on ordinary assistant responses", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        onContinueInNewThread={async () => {}}
+        timelineEntries={[buildAssistantTimelineEntry("Done.")]}
+      />,
+    );
+
+    expect(markup).not.toContain('aria-label="Continue in new thread"');
+  });
+
   it("renders a feedback command and its pending response as normal thread messages", () => {
     const submission = {
       id: MessageId.make("feedback-command"),

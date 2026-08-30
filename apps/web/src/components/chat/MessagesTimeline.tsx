@@ -61,6 +61,7 @@ import {
   DownloadIcon,
   EyeIcon,
   FileIcon,
+  ForwardIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
@@ -119,6 +120,7 @@ import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
+import { parseSessionHandoff } from "../../lib/sessionHandoff";
 
 import {
   buildInlineTerminalContextText,
@@ -158,6 +160,7 @@ interface TimelineRowSharedState {
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   agentPanelModel: AgentPanelModel;
   onOpenAgents: () => void;
+  onContinueInNewThread: ((handoffText: string) => Promise<void>) | null;
 }
 
 interface TimelineRowActivityState {
@@ -217,6 +220,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
 interface MessagesTimelineProps {
   agentPanelModel?: AgentPanelModel;
   onOpenAgents?: () => void;
+  onContinueInNewThread?: (handoffText: string) => Promise<void>;
   isWorking: boolean;
   workingStepLabel?: string | null;
   activeTurnStartedAt: string | null;
@@ -266,6 +270,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   activeTurnStartedAt,
   agentPanelModel = EMPTY_AGENT_PANEL_MODEL,
   onOpenAgents = NOOP_OPEN_AGENTS,
+  onContinueInNewThread = null,
   listRef,
   timelineEntries,
   latestTurn,
@@ -542,6 +547,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+      onContinueInNewThread,
     }),
     [
       timestampFormat,
@@ -559,6 +565,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+      onContinueInNewThread,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -1242,6 +1249,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
 }
 
 function AssistantCopyButton({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const [continuing, setContinuing] = useState(false);
   const assistantCopyState = resolveAssistantMessageCopyState({
     text: row.message.text ?? null,
     showCopyButton: row.showAssistantCopyButton,
@@ -1252,7 +1261,39 @@ function AssistantCopyButton({ row }: { row: Extract<TimelineRow, { kind: "messa
     return null;
   }
 
-  return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+  const text = assistantCopyState.text ?? "";
+  const canContinue = ctx.onContinueInNewThread !== null && parseSessionHandoff(text) !== null;
+
+  return (
+    <>
+      <MessageCopyButton text={text} variant="ghost" />
+      {canContinue ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label="Continue in new thread"
+                disabled={continuing}
+                onClick={() => {
+                  setContinuing(true);
+                  void ctx.onContinueInNewThread!(text).finally(() => setContinuing(false));
+                }}
+                type="button"
+                size="xs"
+                variant="ghost"
+                className="text-muted-foreground hover:text-foreground"
+              />
+            }
+          >
+            <ForwardIcon className="size-3" />
+          </TooltipTrigger>
+          <TooltipPopup>
+            <p>{continuing ? "Starting new thread…" : "Continue in new thread"}</p>
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
+    </>
+  );
 }
 
 function ProposedPlanTimelineRow({
