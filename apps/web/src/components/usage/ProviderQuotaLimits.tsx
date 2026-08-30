@@ -30,13 +30,14 @@ function usageBarColor(percent: number): string {
 export function formatUsageResetDate(
   resetsAt: string | undefined,
   timestampFormat: TimestampFormat = "locale",
+  options?: { readonly dateOnly?: boolean },
 ): string | null {
   if (!resetsAt) return null;
   const date = parseTimestampDate(resetsAt);
   if (!date) return null;
   // Cursor's panel is date-only ("Resets 16 Sept"). We store that as UTC
   // midnight; including a clock would invent a local time like 5:30 AM.
-  if (/T00:00:00(?:\.000)?Z$/.test(resetsAt)) {
+  if (options?.dateOnly ?? /T00:00:00(?:\.000)?Z$/.test(resetsAt)) {
     const formatted = formatUtcDateTimestamp(resetsAt);
     return formatted.length > 0 ? formatted : null;
   }
@@ -48,6 +49,8 @@ export function sharedUsageResetAt(
   windows: ServerProviderUsageLimits["windows"],
 ): string | undefined {
   if (windows.length === 0) return undefined;
+  const kinds = new Set(windows.map((window) => window.kind));
+  if (kinds.size > 1) return undefined;
   const first = windows[0]?.resetsAt;
   if (!first) return undefined;
   return windows.every((window) => window.resetsAt === first) ? first : undefined;
@@ -108,7 +111,10 @@ export function ProviderUsageBars(props: {
   if (usageLimits.windows.length === 0) return null;
 
   const sharedReset = sharedUsageResetAt(usageLimits.windows);
-  const sharedResetStr = formatUsageResetDate(sharedReset, timestampFormat);
+  const dateOnlyReset = usageLimits.source === "cursorStatusProbe";
+  const sharedResetStr = formatUsageResetDate(sharedReset, timestampFormat, {
+    dateOnly: dateOnlyReset,
+  });
 
   return (
     <div className={cn("grid gap-3", props.className)}>
@@ -123,7 +129,7 @@ export function ProviderUsageBars(props: {
         const windowKey = getUsageWindowKey(window);
         const resetDateStr = sharedReset
           ? null
-          : formatUsageResetDate(window.resetsAt, timestampFormat);
+          : formatUsageResetDate(window.resetsAt, timestampFormat, { dateOnly: dateOnlyReset });
 
         return (
           <div key={windowKey} className="grid gap-1.5">

@@ -64,6 +64,10 @@ describe("providerUsageLimits", () => {
     ).toBe("weekly");
   });
 
+  it("maps a 30-day window to monthly", () => {
+    expect(windowKindFromDuration({ windowDurationMins: 43_200 })).toBe("monthly");
+  });
+
   it("keeps intermediate windows as session instead of dropping them", () => {
     expect(
       makeUsageLimitsSnapshot({

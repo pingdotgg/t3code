@@ -11,6 +11,7 @@ describe("resolveCodexRateLimitSnapshotUsageLimits", () => {
     const usage = resolveCodexRateLimitSnapshotUsageLimits({
       checkedAt: CHECKED_AT,
       snapshot: {
+        planType: "plus",
         primary: {
           usedPercent: 25,
           resetsAt: PRIMARY_RESETS_AT_SECONDS,
@@ -45,6 +46,31 @@ describe("resolveCodexRateLimitSnapshotUsageLimits", () => {
         },
       ],
     });
+  });
+
+  it.each(["free", "go"] as const)("maps the %s plan to its monthly allowance", (planType) => {
+    const usage = resolveCodexRateLimitSnapshotUsageLimits({
+      checkedAt: CHECKED_AT,
+      snapshot: {
+        planType,
+        primary: {
+          usedPercent: 25,
+          resetsAt: PRIMARY_RESETS_AT_SECONDS,
+          windowDurationMins: 10080,
+        },
+        secondary: { usedPercent: 50, windowDurationMins: 300 },
+      },
+    });
+
+    expect(usage.windows).toEqual([
+      {
+        kind: "monthly",
+        label: "Monthly",
+        usedPercent: 25,
+        windowDurationMins: 43200,
+        resetsAt: PRIMARY_RESETS_AT_ISO,
+      },
+    ]);
   });
 
   it("uses provider window defaults when durations are omitted", () => {

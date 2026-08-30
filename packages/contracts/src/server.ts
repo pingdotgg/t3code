@@ -101,7 +101,7 @@ const ServerProviderUsagePercent = Schema.Number.check(Schema.isGreaterThanOrEqu
 );
 
 export const ServerProviderUsageWindow = Schema.Struct({
-  kind: Schema.Literals(["session", "weekly"]),
+  kind: Schema.Literals(["session", "weekly", "monthly"]),
   label: TrimmedNonEmptyString,
   usedPercent: ServerProviderUsagePercent,
   resetsAt: Schema.optional(IsoDateTime),

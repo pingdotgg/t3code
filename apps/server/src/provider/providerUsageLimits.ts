@@ -23,14 +23,25 @@ export function windowKindFromDuration(input: {
   if (typeof duration !== "number" || !Number.isFinite(duration)) {
     return undefined;
   }
+  if (duration >= 30 * 24 * 60) {
+    return "monthly";
+  }
   if (
-    duration >= 10080 ||
+    duration >= 7 * 24 * 60 ||
     (duration === input.longestWindowDurationMins &&
       input.longestWindowDurationMins !== input.shortestWindowDurationMins)
   ) {
     return "weekly";
   }
   return "session";
+}
+
+function compareUsageWindowKinds(
+  left: ServerProviderUsageWindow["kind"],
+  right: ServerProviderUsageWindow["kind"],
+): number {
+  const order = { session: 0, weekly: 1, monthly: 2 } as const;
+  return order[left] - order[right];
 }
 
 export function normalizeUsageWindows(
@@ -58,7 +69,8 @@ export function normalizeUsageWindows(
         return [];
       }
       const trimmedLabel = window.label.trim();
-      const defaultLabel = kind === "session" ? "Session" : "Weekly";
+      const defaultLabel =
+        kind === "session" ? "Session" : kind === "weekly" ? "Weekly" : "Monthly";
       return [
         {
           kind,
@@ -72,10 +84,7 @@ export function normalizeUsageWindows(
         } satisfies ServerProviderUsageWindow,
       ];
     })
-    .toSorted((left, right) => {
-      if (left.kind === right.kind) return 0;
-      return left.kind === "session" ? -1 : 1;
-    });
+    .toSorted((left, right) => compareUsageWindowKinds(left.kind, right.kind));
 }
 
 export function makeUnavailableUsageLimits(input: {
@@ -119,10 +128,9 @@ export function mergeUsageLimitWindows(
         : {}),
     });
   }
-  return [...merged.values()].toSorted((left, right) => {
-    if (left.kind === right.kind) return 0;
-    return left.kind === "session" ? -1 : 1;
-  });
+  return [...merged.values()].toSorted((left, right) =>
+    compareUsageWindowKinds(left.kind, right.kind),
+  );
 }
 
 /**

@@ -10,6 +10,7 @@ import {
 
 const CODEX_SESSION_WINDOW_DURATION_MINS = 300; // ~5 hours (short / session window)
 const CODEX_WEEKLY_WINDOW_DURATION_MINS = 10080; // 7 days (weekly window)
+const CODEX_MONTHLY_WINDOW_DURATION_MINS = 30 * 24 * 60;
 
 const UNAVAILABLE_REASON = "No Codex subscription quota windows reported.";
 
@@ -22,6 +23,7 @@ export interface CodexRateLimitWindow {
 
 /** Minimal structural view of a Codex rate-limit snapshot. */
 export interface CodexRateLimitSnapshot {
+  readonly planType?: string | null;
   readonly primary?: CodexRateLimitWindow | null;
   readonly secondary?: CodexRateLimitWindow | null;
 }
@@ -47,20 +49,20 @@ export function resolveCodexRateLimitSnapshotUsageLimits(input: {
     (window): window is CodexRateLimitWindow =>
       Boolean(window) && Number.isFinite(window?.usedPercent),
   );
+  const isMonthlyPlan = input.snapshot.planType === "free" || input.snapshot.planType === "go";
+  const planWindows = isMonthlyPlan ? reported.slice(0, 1) : reported;
 
-  // `primary`/`secondary` are positions, not durations. Codex dropped the
-  // 5-hour session limit and now reports the weekly limit alone, so assuming
-  // "primary means session" rendered that weekly window under a "Session"
-  // label with a fabricated 5-hour duration. Trust the reported
-  // `windowDurationMins`, fall back to the positional meaning only when both
-  // windows are present (the older two-limit accounts), and treat a lone
-  // duration-less window as the weekly limit. Labels are left empty so
-  // `normalizeUsageWindows` names each bar after the kind it resolves to.
-  const windows: RawUsageWindowInput[] = reported.map((window, index) => {
-    const durationMins =
-      typeof window.windowDurationMins === "number"
+  // `primary`/`secondary` are positions, not durations. Prefer the duration
+  // supplied by Codex, but use plan-aware fallbacks when older servers omit it:
+  // Free and Go expose one monthly allowance, while paid personal plans expose
+  // the 5-hour session and weekly allowances. A lone duration-less paid window
+  // remains weekly because Codex has shipped that response shape.
+  const windows: RawUsageWindowInput[] = planWindows.map((window, index) => {
+    const durationMins = isMonthlyPlan
+      ? CODEX_MONTHLY_WINDOW_DURATION_MINS
+      : typeof window.windowDurationMins === "number"
         ? window.windowDurationMins
-        : reported.length > 1 && index === 0
+        : planWindows.length > 1 && index === 0
           ? CODEX_SESSION_WINDOW_DURATION_MINS
           : CODEX_WEEKLY_WINDOW_DURATION_MINS;
     const resetsAt =

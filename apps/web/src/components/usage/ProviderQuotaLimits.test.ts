@@ -36,6 +36,26 @@ describe("provider usage presentation", () => {
     );
   });
 
+  it("keeps a real midnight reset as a date and time", () => {
+    const resetAt = "2026-09-16T00:00:00.000Z";
+    const time = new Intl.DateTimeFormat(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: false,
+    }).format(new Date(resetAt));
+    expect(formatUsageResetDate(resetAt, "24-hour", { dateOnly: false })).toContain(time);
+  });
+
+  it("keeps session and weekly resets separate even when they match", () => {
+    const resetsAt = "2026-09-16T00:00:00.000Z";
+    expect(
+      sharedUsageResetAt([
+        { kind: "session", label: "Session", usedPercent: 8, resetsAt },
+        { kind: "weekly", label: "Weekly", usedPercent: 0, resetsAt },
+      ]),
+    ).toBeUndefined();
+  });
+
   it("treats identical window resets as one shared instant", () => {
     const resetsAt = "2026-09-16T00:00:00.000Z";
     expect(

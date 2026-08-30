@@ -535,11 +535,14 @@ function providerQuotaNotice(provider: ServerProvider): string | null {
   return provider.usageLimits.reason ?? "Usage data unavailable";
 }
 
-function formatQuotaResetDate(resetsAt: string | undefined): string | null {
+function formatQuotaResetDate(
+  resetsAt: string | undefined,
+  options?: { readonly dateOnly?: boolean },
+): string | null {
   if (!resetsAt) return null;
   const date = new Date(resetsAt);
   if (Number.isNaN(date.getTime())) return null;
-  if (/T00:00:00(?:\.000)?Z$/.test(resetsAt)) {
+  if (options?.dateOnly ?? /T00:00:00(?:\.000)?Z$/.test(resetsAt)) {
     return new Intl.DateTimeFormat(undefined, {
       month: "numeric",
       day: "numeric",
@@ -560,6 +563,8 @@ function sharedUsageResetAt(
   windows: NonNullable<ServerProvider["usageLimits"]>["windows"],
 ): string | undefined {
   if (windows.length === 0) return undefined;
+  const kinds = new Set(windows.map((window) => window.kind));
+  if (kinds.size > 1) return undefined;
   const first = windows[0]?.resetsAt;
   if (!first) return undefined;
   return windows.every((window) => window.resetsAt === first) ? first : undefined;
@@ -586,7 +591,8 @@ function ProviderQuotaSection() {
           const sharedReset = usageLimits?.available
             ? sharedUsageResetAt(usageLimits.windows)
             : undefined;
-          const sharedResetStr = formatQuotaResetDate(sharedReset);
+          const dateOnlyReset = usageLimits?.source === "cursorStatusProbe";
+          const sharedResetStr = formatQuotaResetDate(sharedReset, { dateOnly: dateOnlyReset });
           return (
             <View
               key={`${group.environmentId}:${provider.instanceId}`}
@@ -606,7 +612,9 @@ function ProviderQuotaSection() {
                       Math.max(0, Math.min(100, window.usedPercent)),
                     );
                     const remainingPercent = 100 - roundedPercent;
-                    const resetDateStr = sharedReset ? null : formatQuotaResetDate(window.resetsAt);
+                    const resetDateStr = sharedReset
+                      ? null
+                      : formatQuotaResetDate(window.resetsAt, { dateOnly: dateOnlyReset });
                     return (
                       <View
                         key={`${window.kind}:${window.label}:${window.resetsAt ?? "none"}`}
