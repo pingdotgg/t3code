@@ -86,7 +86,9 @@ export function providerQuotaNotice(provider: ServerProvider): string | null {
     return GROK_FREE_TIER_USAGE_MESSAGE;
   }
   if (!provider.usageLimits) return "Usage data unavailable";
-  if (provider.usageLimits.available) return null;
+  if (provider.usageLimits.available) {
+    return provider.usageLimits.windows.length > 0 ? null : "Usage data unavailable";
+  }
   return provider.usageLimits.reason ?? "Usage data unavailable";
 }
 
