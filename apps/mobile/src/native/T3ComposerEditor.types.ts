@@ -16,6 +16,13 @@ export interface ComposerEditorHandle {
 export interface ComposerEditorProps {
   readonly ref?: Ref<ComposerEditorHandle>;
   readonly value: string;
+  /**
+   * Identity of the controlled document. Change it when `value` is replaced
+   * wholesale (a thread switch, a send clearing the draft) rather than edited,
+   * so the editor stamps the new document at the current native revision
+   * instead of matching it against snapshots of the previous document.
+   */
+  readonly documentKey?: string;
   readonly skills?: ReadonlyArray<
     Pick<ServerProviderSkill, "name" | "displayName" | "shortDescription" | "description">
   >;

@@ -192,3 +192,33 @@ describe("assumeComposerControlledState", () => {
     );
   });
 });
+
+describe("controlled document replacement", () => {
+  // The composer wedge: while renders lag behind native events (an agent
+  // streaming into a heavy thread saturates the JS thread), the snapshot
+  // history still holds the previous document's states when the parent
+  // replaces the document (a thread switch to an empty draft, or a send
+  // clearing it). The empty value matches an old empty snapshot, so it gets
+  // stamped behind the native revision — and the editor rejects everything
+  // stamped behind, so the old text stays on screen while the send button
+  // reads the new empty draft. Only the next native event recovers it.
+  const laggedSnapshots = [
+    { eventCount: 0, value: "", selection: { start: 0, end: 0 } },
+    { eventCount: 4, value: "hell", selection: { start: 4, end: 4 } },
+    { eventCount: 5, value: "hello", selection: { start: 5, end: 5 } },
+  ];
+
+  it("stamps a replacement that matches a stale snapshot behind the native revision", () => {
+    expect(resolveComposerControlledEventCount("", { start: 0, end: 0 }, 5, laggedSnapshots)).toBe(
+      0,
+    );
+  });
+
+  it("stamps the same replacement at the current revision once the history is dropped", () => {
+    // This is what a documentKey change does: with no snapshots to match, the
+    // replacement classifies as a parent-driven edit at the latest revision,
+    // which the editor's revision guard accepts.
+    expect(resolveComposerControlledEventCount("", { start: 0, end: 0 }, 5, [])).toBe(5);
+    expect(isComposerNativeEcho("", { start: 0, end: 0 }, 5, [])).toBe(false);
+  });
+});
