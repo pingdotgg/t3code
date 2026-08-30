@@ -79,15 +79,15 @@ it.effect("searches bounded durable thread content without changing the legacy s
         branch, worktree_path, latest_turn_id, created_at, updated_at, archived_at,
         settled_override, settled_at, deleted_at
       ) VALUES
-        (${activeThreadId}, ${projectId}, ${longTitle}, '{}', 'full-access', 'default',
+        (${activeThreadId}, ${projectId}, 'Legacy shadow title', '{}', 'full-access', 'default',
           'main', '/tmp/search-current', NULL, '2026-01-01T00:00:00.000Z',
           '2026-01-10T00:00:00.000Z', NULL, NULL, NULL, NULL),
         (${archivedThreadId}, ${projectId}, 'Archived history', '{}', 'full-access', 'default',
           'main', '/tmp/search-current', NULL, '2026-01-01T00:00:00.000Z',
-          '2026-01-09T00:00:00.000Z', '2026-01-09T00:00:00.000Z', NULL, NULL, NULL),
+          '2026-01-09T00:00:00.000Z', NULL, NULL, NULL, NULL),
         (${deletedThreadId}, ${projectId}, 'Deleted needle', '{}', 'full-access', 'default',
           'main', '/tmp/search-current', NULL, '2026-01-01T00:00:00.000Z',
-          '2026-01-08T00:00:00.000Z', NULL, NULL, NULL, '2026-01-08T00:00:00.000Z'),
+          '2026-01-08T00:00:00.000Z', NULL, NULL, NULL, NULL),
         (${otherThreadId}, ${otherProjectId}, 'Other needle', '{}', 'full-access', 'default',
           'main', '/tmp/search-other', NULL, '2026-01-01T00:00:00.000Z',
           '2026-01-07T00:00:00.000Z', NULL, NULL, NULL, NULL),
@@ -158,7 +158,13 @@ it.effect("searches bounded durable thread content without changing the legacy s
           ${encodeUnknownJsonString({ text: "rolled-back needle" })}),
         ('message:v2-cancelled', ${activeThreadId}, 'run:cancelled', NULL, 'user', 0,
           '2026-01-08T00:00:00.000Z', '2026-01-08T00:00:00.000Z',
-          ${encodeUnknownJsonString({ text: "cancelled needle" })})
+          ${encodeUnknownJsonString({ text: "cancelled needle" })}),
+        ('message:v2-queued-null-run', ${activeThreadId}, NULL, NULL, 'user', 0,
+          '2026-01-08T00:00:01.000Z', '2026-01-08T00:00:01.000Z',
+          ${encodeUnknownJsonString({ text: "queued-null-marker" })}),
+        ('message:v2-queued-missing-run', ${activeThreadId}, 'run:missing', NULL, 'user', 0,
+          '2026-01-08T00:00:02.000Z', '2026-01-08T00:00:02.000Z',
+          ${encodeUnknownJsonString({ text: "queued-missing-marker" })})
     `;
     yield* sql`
       INSERT INTO orchestration_v2_projection_turn_items (
@@ -170,7 +176,7 @@ it.effect("searches bounded durable thread content without changing the legacy s
           ${encodeUnknownJsonString({ messageId: "message:v2-visible", text: longText, streaming: false })}),
         ('item:v2-user', ${activeThreadId}, 'run:visible', NULL, NULL, NULL, NULL, 2,
           'user_message', 'completed', '2026-01-05T00:00:00.000Z',
-          ${encodeUnknownJsonString({ messageId: "message:v2-user", text: "visible user needle", inputIntent: "direct" })}),
+          ${encodeUnknownJsonString({ messageId: "message:v2-user", text: "visible user needle", inputIntent: "turn_start" })}),
         ('item:v2-streaming', ${activeThreadId}, 'run:visible', NULL, NULL, NULL, NULL, 3,
           'assistant_message', 'streaming', '2026-01-05T00:00:01.000Z',
           ${encodeUnknownJsonString({ messageId: "message:v2-streaming", text: "streaming needle", streaming: true })}),
@@ -179,7 +185,13 @@ it.effect("searches bounded durable thread content without changing the legacy s
           ${encodeUnknownJsonString({ messageId: "message:v2-rolled-back", text: "rolled-back needle", streaming: false })}),
         ('item:v2-cancelled', ${activeThreadId}, 'run:cancelled', NULL, NULL, NULL, NULL, 3,
           'user_message', 'completed', '2026-01-08T00:00:00.000Z',
-          ${encodeUnknownJsonString({ messageId: "message:v2-cancelled", text: "cancelled needle", inputIntent: "queued_turn" })})
+          ${encodeUnknownJsonString({ messageId: "message:v2-cancelled", text: "cancelled needle", inputIntent: "queued_turn" })}),
+        ('item:v2-queued-null-run', ${activeThreadId}, NULL, NULL, NULL, NULL, NULL, 4,
+          'user_message', 'completed', '2026-01-08T00:00:01.000Z',
+          ${encodeUnknownJsonString({ messageId: "message:v2-queued-null-run", text: "queued-null-marker", inputIntent: "queued_turn" })}),
+        ('item:v2-queued-missing-run', ${activeThreadId}, 'run:missing', NULL, NULL, NULL, NULL, 5,
+          'user_message', 'completed', '2026-01-08T00:00:02.000Z',
+          ${encodeUnknownJsonString({ messageId: "message:v2-queued-missing-run", text: "queued-missing-marker", inputIntent: "queued_turn" })})
     `;
 
     const firstPage = yield* query.searchThreadContent({
@@ -252,6 +264,22 @@ it.effect("searches bounded durable thread content without changing the legacy s
       snippetChars: 80,
     });
     assert.isTrue(activeOnly.hits.every((hit) => !hit.archived));
+
+    const queuedWithoutRun = yield* query.searchThreadContent({
+      projectId,
+      query: "queued-",
+      includeArchived: false,
+      offset: 0,
+      limit: 10,
+      snippetChars: 64,
+    });
+    assert.deepEqual(
+      queuedWithoutRun.hits.map((hit) => hit.messageId),
+      [
+        MessageId.make("message:v2-queued-missing-run"),
+        MessageId.make("message:v2-queued-null-run"),
+      ],
+    );
 
     const legacyOnly = yield* query.searchThreadContent({
       projectId,

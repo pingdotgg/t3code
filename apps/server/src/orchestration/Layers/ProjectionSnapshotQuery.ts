@@ -1132,7 +1132,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             AND NOT (
               items.type = 'user_message'
               AND json_extract(items.payload_json, '$.inputIntent') = 'queued_turn'
-              AND runs.status = 'cancelled'
+              AND EXISTS (
+                SELECT 1
+                FROM orchestration_v2_projection_runs AS cancelled_run
+                WHERE cancelled_run.run_id = items.run_id
+                  AND cancelled_run.status = 'cancelled'
+              )
             )
             AND json_extract(items.payload_json, '$.text') LIKE ${pattern} ESCAPE '!'
         ),
