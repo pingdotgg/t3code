@@ -422,13 +422,12 @@ export const make = Effect.gen(function* () {
                 requestKey,
                 operation: "thread-configure-interaction-mode",
               });
-        const acceptedReceipt = (commandId: CommandId | undefined, commandTypes: Set<string>) =>
+        const durableReceipt = (commandId: CommandId | undefined, commandTypes: Set<string>) =>
           commandId !== undefined && replayableRequest
             ? commandReceipts.getByCommandId(commandId).pipe(
                 Effect.map(
                   Option.filter(
                     (existing) =>
-                      existing.status === "accepted" &&
                       existing.threadId === target.thread.id &&
                       commandTypes.has(existing.commandType),
                   ),
@@ -441,15 +440,15 @@ export const make = Effect.gen(function* () {
                 ),
               )
             : Effect.succeed(Option.none());
-        const priorSelectionReceipt = yield* acceptedReceipt(
+        const priorSelectionReceipt = yield* durableReceipt(
           selectionCommandId,
           new Set(["thread.model-selection.set", "provider.switch"]),
         );
-        const priorRuntimeReceipt = yield* acceptedReceipt(
+        const priorRuntimeReceipt = yield* durableReceipt(
           runtimeCommandId,
           new Set(["thread.runtime-mode.set"]),
         );
-        const priorInteractionReceipt = yield* acceptedReceipt(
+        const priorInteractionReceipt = yield* durableReceipt(
           interactionCommandId,
           new Set(["thread.interaction-mode.set"]),
         );

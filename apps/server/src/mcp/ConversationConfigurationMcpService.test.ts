@@ -181,6 +181,56 @@ describe("ConversationConfigurationMcpService", () => {
     }),
   );
 
+  it.effect("replays a rejected selection before provider availability planning", () =>
+    Effect.gen(function* () {
+      const parent = projection({
+        threadId: parentThreadId,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      const target = projection({
+        threadId: targetThreadId,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      const layer = testLayer({
+        parent,
+        target,
+        providers: [],
+        getReceipt: () =>
+          Effect.succeed(
+            Option.some({
+              status: "rejected",
+              threadId: targetThreadId,
+              commandType: "provider.switch",
+            } as never),
+          ),
+        dispatch: (command) =>
+          new OrchestratorCommandPreviouslyRejectedError({
+            commandId: command.commandId,
+            commandType: command.type,
+            detail: "provider switch was rejected",
+          }),
+      });
+
+      const error = yield* Effect.gen(function* () {
+        const service = yield* ConversationConfiguration.ConversationConfigurationMcpService;
+        return yield* service
+          .configure(scope(), {
+            threadId: targetThreadId,
+            providerInstanceId: ProviderInstanceId.make("provider-now-unavailable"),
+            model: "unavailable-model",
+            options: [],
+            clientRequestId: "rejected-provider-switch",
+          })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(layer));
+
+      assert.equal(error.code, "orchestration_error");
+      assert.match(error.message, /previously rejected/);
+    }),
+  );
+
   it.effect("marks a failed refresh and does not infer replayed inputs as current", () =>
     Effect.gen(function* () {
       const parent = projection({

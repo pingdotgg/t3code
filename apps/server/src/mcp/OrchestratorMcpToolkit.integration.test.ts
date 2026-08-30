@@ -3092,12 +3092,13 @@ describe("orchestrator MCP toolkit", () => {
               (yield* orchestrator.getThreadProjection(delegated.childThreadId)).providerSessions,
             ).toEqual(claudeBeforeAcceptedRetry.providerSessions);
 
+            const callerCeilingRaceInput = {
+              threadId: delegated.childThreadId,
+              interactionMode: "default",
+              clientRequestId: "configuration-caller-ceiling-race",
+            } as const;
             const callerCeilingRaceFiber = yield* Effect.forkChild(
-              invoke("t3_thread_configure", {
-                threadId: delegated.childThreadId,
-                interactionMode: "default",
-                clientRequestId: "configuration-caller-ceiling-race",
-              }),
+              invoke("t3_thread_configure", callerCeilingRaceInput),
             );
             yield* Deferred.await(callerCeilingDispatchEntered);
             yield* orchestrator.dispatch({
@@ -3117,6 +3118,15 @@ describe("orchestrator MCP toolkit", () => {
             expect(callerCeilingRace.structuredContent).toMatchObject({
               _tag: "OrchestratorMcpFailure",
               code: "orchestration_error",
+            });
+            const rejectedCallerCeilingRetry = yield* invoke(
+              "t3_thread_configure",
+              callerCeilingRaceInput,
+            );
+            expect(rejectedCallerCeilingRetry.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "orchestration_error",
+              message: expect.stringContaining("previously rejected"),
             });
             expect(
               (yield* orchestrator.getThreadProjection(delegated.childThreadId)).thread,
