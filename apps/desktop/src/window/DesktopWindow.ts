@@ -37,6 +37,7 @@ const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
 const MAIN_WINDOW_BOUNDS_PERSIST_DEBOUNCE_MS = 500;
 const WINDOWS_TRANSPARENT_BACKGROUND_COLOR = "#00000000";
 const WINDOWS_ACRYLIC_MATERIAL = "acrylic" as const;
+const WINDOWS_ACRYLIC_MIN_BUILD = 22621; // Windows 11 22H2
 const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 // Renderer crash (usually V8 OOM on long sessions) recovery: reload after a
 // short delay, at most MAX_ATTEMPTS times per rolling WINDOW so a renderer
@@ -133,6 +134,18 @@ function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
   return shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
 }
 
+export function isWindowsAcrylicSupported(
+  platform: NodeJS.Platform,
+  systemVersion: string | undefined,
+): boolean {
+  if (platform !== "win32" || systemVersion === undefined) {
+    return false;
+  }
+
+  const build = Number.parseInt(systemVersion.split(".")[2] ?? "", 10);
+  return Number.isInteger(build) && build >= WINDOWS_ACRYLIC_MIN_BUILD;
+}
+
 type WindowBackdropState = {
   readonly windowsWithAcrylicBackdrop: WeakSet<Electron.BrowserWindow>;
   readonly windowsWithoutAcrylicBackdrop: WeakSet<Electron.BrowserWindow>;
@@ -179,6 +192,7 @@ export function getWindowBackdropOptions(
   platform: NodeJS.Platform,
   shouldUseDarkColors: boolean,
   desktopBackdropEnabled = true,
+  windowsAcrylicSupported = false,
 ): Pick<
   Electron.BrowserWindowConstructorOptions,
   | "backgroundColor"
@@ -192,11 +206,13 @@ export function getWindowBackdropOptions(
     return { backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors) };
   }
 
+  const useAcrylic = desktopBackdropEnabled && windowsAcrylicSupported;
+
   return {
-    backgroundColor: desktopBackdropEnabled
+    backgroundColor: useAcrylic
       ? WINDOWS_TRANSPARENT_BACKGROUND_COLOR
       : getInitialWindowBackgroundColor(shouldUseDarkColors),
-    backgroundMaterial: desktopBackdropEnabled ? WINDOWS_ACRYLIC_MATERIAL : "none",
+    backgroundMaterial: useAcrylic ? WINDOWS_ACRYLIC_MATERIAL : "none",
     frame: false,
     roundedCorners: true,
     thickFrame: true,
@@ -209,6 +225,7 @@ function applyWindowsBackdrop(
   platform: NodeJS.Platform,
   shouldUseDarkColors: boolean,
   desktopBackdropEnabled: boolean,
+  windowsAcrylicSupported: boolean,
   backdropState: WindowBackdropState,
 ): Effect.Effect<void> {
   if (platform !== "win32") {
@@ -218,8 +235,9 @@ function applyWindowsBackdrop(
   return Effect.try({
     try: () => {
       backdropState.windowsManagedForBackdrop.add(window);
-      window.setBackgroundMaterial(desktopBackdropEnabled ? WINDOWS_ACRYLIC_MATERIAL : "none");
-      if (desktopBackdropEnabled) {
+      const useAcrylic = desktopBackdropEnabled && windowsAcrylicSupported;
+      window.setBackgroundMaterial(useAcrylic ? WINDOWS_ACRYLIC_MATERIAL : "none");
+      if (useAcrylic) {
         backdropState.windowsWithAcrylicBackdrop.add(window);
         backdropState.windowsWithoutAcrylicBackdrop.delete(window);
         window.setBackgroundColor(WINDOWS_TRANSPARENT_BACKGROUND_COLOR);
@@ -358,6 +376,7 @@ function syncWindowAppearance(
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
   desktopBackdropEnabled: boolean,
+  windowsAcrylicSupported: boolean,
   backdropState: WindowBackdropState,
 ): Effect.Effect<void> {
   return Effect.gen(function* () {
@@ -367,12 +386,10 @@ function syncWindowAppearance(
 
     if (platform === "win32") {
       if (backdropState.windowsManagedForBackdrop.has(window)) {
-        if (desktopBackdropEnabled && backdropState.windowsWithAcrylicBackdrop.has(window)) {
+        const useAcrylic = desktopBackdropEnabled && windowsAcrylicSupported;
+        if (useAcrylic && backdropState.windowsWithAcrylicBackdrop.has(window)) {
           window.setBackgroundColor(WINDOWS_TRANSPARENT_BACKGROUND_COLOR);
-        } else if (
-          !desktopBackdropEnabled &&
-          backdropState.windowsWithoutAcrylicBackdrop.has(window)
-        ) {
+        } else if (!useAcrylic && backdropState.windowsWithoutAcrylicBackdrop.has(window)) {
           window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
         } else {
           yield* applyWindowsBackdrop(
@@ -380,6 +397,7 @@ function syncWindowAppearance(
             platform,
             shouldUseDarkColors,
             desktopBackdropEnabled,
+            windowsAcrylicSupported,
             backdropState,
           );
         }
@@ -423,6 +441,10 @@ export const make = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
+  const windowsAcrylicSupported = isWindowsAcrylicSupported(
+    environment.platform,
+    environment.systemVersion,
+  );
   // Window-side latch for the primary backend's readiness. Set by
   // handleBackendReady (driven by the pool's onReady callback), cleared
   // by handleBackendNotReady (driven by onShutdown). Only consumed by
@@ -523,6 +545,7 @@ export const make = Effect.gen(function* () {
         environment.platform,
         shouldUseDarkColors,
         desktopBackdropEnabled,
+        windowsAcrylicSupported,
       ),
       ...iconOption,
       title: environment.displayName,
@@ -546,6 +569,7 @@ export const make = Effect.gen(function* () {
       environment.platform,
       shouldUseDarkColors,
       desktopBackdropEnabled,
+      windowsAcrylicSupported,
       backdropState,
     );
 
@@ -988,6 +1012,7 @@ export const make = Effect.gen(function* () {
         environment.platform,
         shouldUseDarkColors,
         desktopBackdropEnabled,
+        windowsAcrylicSupported,
       ),
       title: environment.displayName,
       webPreferences: {
@@ -1010,6 +1035,7 @@ export const make = Effect.gen(function* () {
       environment.platform,
       shouldUseDarkColors,
       desktopBackdropEnabled,
+      windowsAcrylicSupported,
       backdropState,
     );
     void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors, environment.platform));
@@ -1107,6 +1133,7 @@ export const make = Effect.gen(function* () {
           shouldUseDarkColors,
           environment.platform,
           desktopBackdropEnabled,
+          windowsAcrylicSupported,
           backdropState,
         ),
       );
