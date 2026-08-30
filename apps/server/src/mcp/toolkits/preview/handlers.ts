@@ -15,6 +15,9 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
 
+const DEFAULT_PREVIEW_NAVIGATION_TIMEOUT_MS = 15_000;
+const PREVIEW_NAVIGATION_RESPONSE_GRACE_MS = 1_000;
+
 /**
  * Collapses the `show` alias onto `open` and defaults tab reuse.
  *
@@ -31,6 +34,18 @@ export function normalizePreviewOpenInput(
     ...input,
     ...(open === undefined ? {} : { open, show: open }),
     reuseExistingTab: input.reuseExistingTab ?? true,
+  };
+}
+
+/** Leaves time for the browser host to return its final status after its own navigation deadline. */
+export function normalizePreviewNavigateTimeout(timeoutMs?: number): {
+  readonly operationTimeoutMs: number;
+  readonly brokerTimeoutMs: number;
+} {
+  const operationTimeoutMs = timeoutMs ?? DEFAULT_PREVIEW_NAVIGATION_TIMEOUT_MS;
+  return {
+    operationTimeoutMs,
+    brokerTimeoutMs: operationTimeoutMs + PREVIEW_NAVIGATION_RESPONSE_GRACE_MS,
   };
 }
 
@@ -71,8 +86,14 @@ const handlers = {
   preview_status: (input) => invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
   preview_open: (input) =>
     invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
-  preview_navigate: (input) =>
-    invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
+  preview_navigate: (input) => {
+    const timeout = normalizePreviewNavigateTimeout(input.timeoutMs);
+    return invokeTargeted<PreviewAutomationStatus>(
+      "navigate",
+      { ...input, timeoutMs: timeout.operationTimeoutMs },
+      timeout.brokerTimeoutMs,
+    );
+  },
   preview_resize: (input) =>
     invokeTargeted<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
   preview_set_appearance: (input) =>
