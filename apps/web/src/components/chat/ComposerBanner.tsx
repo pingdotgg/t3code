@@ -105,9 +105,8 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
       data-slot="composer-banner-attachment"
       className={cn(
         "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2.75rem)] max-w-[calc(var(--chat-content-max-width)-2.75rem)]",
-        // Adjacent attachments share their outline, including notices outside the form.
+        // Adjacent attachments share their outline.
         "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0",
-        "[&+:has([data-chat-composer-form])_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:rounded-none [&+:has([data-chat-composer-form])_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:border-t-0",
         className,
       )}
       {...props}
@@ -115,12 +114,14 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-function Dock({ className, ...props }: ComponentProps<"div">) {
+/** Standalone tabs draw their own cards; joined tabs share their parent's outline. */
+function Dock({ className, children, ...props }: ComponentProps<"div">) {
   return (
-    <Attachment
-      className={cn("flex items-end gap-1 *:data-[composer-banner-width=fill]:flex-1", className)}
-      {...props}
-    />
+    <Attachment className={cn("group/composer-dock", className)} {...props}>
+      <Surface className="flex items-end gap-1 group-first/composer-dock:before:hidden *:data-[composer-banner-width=fill]:flex-1 group-not-first/composer-dock:*:data-[composer-shoulder-tab]:before:hidden">
+        {children}
+      </Surface>
+    </Attachment>
   );
 }
 

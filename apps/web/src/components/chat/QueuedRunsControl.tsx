@@ -209,6 +209,7 @@ export function QueuedRunsControl(props: {
         role="region"
         aria-label={`${items.length} queued message${items.length === 1 ? "" : "s"}`}
         aria-live="polite"
+        data-chat-composer-collapsed-controls="true"
         className="relative z-0"
       >
         <ComposerBanner.Row
