@@ -126,6 +126,9 @@ export function useThreadActionMenu(input: {
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
+          // The chat header has no project-scoped thread list behind the
+          // menu, so the "Filter by project" affordance is sidebar-only.
+          projectFilter: null,
           isPinned: thread.pinnedAt != null,
           isSettled:
             supports.settlement &&

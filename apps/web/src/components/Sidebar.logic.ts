@@ -58,6 +58,17 @@ type LogicalSidebarProject = SidebarProject & {
 
 export type ThreadTraversalDirection = "previous" | "next";
 
+/**
+ * The scope flip behind "Filter by project" on a thread row: picking the
+ * already-scoped project again is the way back to all projects.
+ */
+export function toggleProjectScope(
+  currentProjectScopeKey: string | null,
+  projectKey: string,
+): string | null {
+  return currentProjectScopeKey === projectKey ? null : projectKey;
+}
+
 export async function archiveSelectedThreadEntries<
   TEntry extends { readonly threadKey: string },
   TResult extends { readonly _tag: "Success" | "Failure" },

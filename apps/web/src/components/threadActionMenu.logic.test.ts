@@ -4,6 +4,7 @@ import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./thread
 
 const baseState: ThreadActionMenuState = {
   branch: null,
+  projectFilter: null,
   isPinned: false,
   isSettled: false,
   isSnoozed: false,
@@ -34,6 +35,23 @@ describe("buildThreadActionMenuItems", () => {
         supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
       }),
     ).toEqual(["rename", "mark-unread", "copy", "archive", "delete"]);
+  });
+
+  it("offers project filtering only for surfaces with a scoped thread list", () => {
+    expect(ids(baseState)).not.toContain("filter-by-project");
+    expect(
+      buildThreadActionMenuItems({ ...baseState, projectFilter: { isActive: false } }).find(
+        (item) => item.id === "filter-by-project",
+      ),
+    ).toMatchObject({ label: "Filter by project" });
+  });
+
+  it("offers the way back to all projects once the list is scoped", () => {
+    const item = buildThreadActionMenuItems({
+      ...baseState,
+      projectFilter: { isActive: true },
+    }).find((candidate) => candidate.id === "filter-by-project");
+    expect(item).toMatchObject({ label: "Show all projects" });
   });
 
   it("includes branch items only for threads with a branch", () => {
