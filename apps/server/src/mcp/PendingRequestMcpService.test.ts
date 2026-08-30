@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import type { CommandReceiptV2 } from "../orchestration-v2/CommandReceiptStore.ts";
+import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { layer, PendingRequestMcpService } from "./PendingRequestMcpService.ts";
@@ -152,6 +153,7 @@ function childProjection(
 function serviceLayer(input: {
   readonly getParent?: () => OrchestrationV2ThreadProjection;
   readonly getChild: () => OrchestrationV2ThreadProjection;
+  readonly getThreadProjection?: ThreadManagementService["Service"]["getThreadProjection"];
   readonly getReceipt?: ThreadManagementService["Service"]["getCommandReceipt"];
   readonly dispatch?: ThreadManagementService["Service"]["dispatch"];
 }) {
@@ -160,7 +162,9 @@ function serviceLayer(input: {
       Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService)({
-          getThreadProjection: () => Effect.succeed(input.getParent?.() ?? parentProjection()),
+          getThreadProjection:
+            input.getThreadProjection ??
+            (() => Effect.succeed(input.getParent?.() ?? parentProjection())),
           getProjectThread: ({ threadId }) =>
             threadId === childThreadId
               ? Effect.succeed(input.getChild())
@@ -195,6 +199,32 @@ describe("PendingRequestMcpService", () => {
         assert.equal(read.status, "pending");
         assert.isTrue(read.resumable);
       }).pipe(Effect.provide(serviceLayer({ getChild: () => childProjection() }))),
+  );
+
+  it.effect("keeps projection defects out of MCP failure messages", () =>
+    Effect.gen(function* () {
+      const service = yield* PendingRequestMcpService;
+      const failure = yield* service.list(scope, {}).pipe(Effect.flip);
+      assert.equal(failure.code, "orchestration_error");
+      assert.equal(
+        failure.message,
+        `Unable to load calling thread '${parentThreadId}': Failed to load orchestration projection for thread ${parentThreadId}.`,
+      );
+      assert.notInclude(failure.message, "database credentials leaked");
+    }).pipe(
+      Effect.provide(
+        serviceLayer({
+          getChild: () => childProjection(),
+          getThreadProjection: () =>
+            Effect.fail(
+              new OrchestratorProjectionError({
+                threadId: parentThreadId,
+                cause: new Error("database credentials leaked"),
+              }),
+            ),
+        }),
+      ),
+    ),
   );
 
   it.effect("rejects provider-native children and non-user-input request kinds", () =>
