@@ -12,7 +12,6 @@ android {
   defaultConfig {
     minSdkVersion rootProject.ext.minSdkVersion
     targetSdkVersion rootProject.ext.targetSdkVersion
-    testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
 
     externalNativeBuild {
       cmake {
@@ -31,6 +30,4 @@ android {
 
 dependencies {
   implementation project(':expo-modules-core')
-  androidTestImplementation 'androidx.test.ext:junit:1.2.1'
-  androidTestImplementation 'androidx.test:runner:1.6.2'
 }
