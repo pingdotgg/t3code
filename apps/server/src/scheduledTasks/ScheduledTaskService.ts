@@ -1,6 +1,11 @@
 import {
   CommandId,
   MessageId,
+  type OrchestrationV2PolicyCeiling,
+  type OrchestrationV2RunStatus,
+  type OrchestrationV2ThreadProjection,
+  ProjectId,
+  type RunId,
   ScheduledTask,
   ScheduledTaskError,
   ScheduledTaskId,
@@ -21,6 +26,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -29,6 +35,8 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import type { CommandReceiptV2 } from "../orchestration-v2/CommandReceiptStore.ts";
+import { makeKeyedSerialExecutor } from "../orchestration-v2/KeyedSerialExecutor.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 
@@ -66,6 +74,58 @@ interface ScheduledTaskRow {
   readonly run_count: number;
 }
 
+export interface ScheduledTaskManualRunInput {
+  readonly id: ScheduledTaskId;
+  readonly commandId: CommandId;
+  readonly messageId: MessageId;
+  readonly unboundThreadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly policyCeiling: OrchestrationV2PolicyCeiling;
+}
+
+export interface ScheduledTaskManualRunResult {
+  readonly task: ScheduledTask | null;
+  readonly threadId: ThreadId;
+  readonly messageId: MessageId;
+  readonly runId: RunId;
+  readonly status: OrchestrationV2RunStatus;
+  readonly replayed: boolean;
+  readonly receipt: CommandReceiptV2;
+}
+
+export class ScheduledTaskManualRunScopeError extends Schema.TaggedErrorClass<ScheduledTaskManualRunScopeError>()(
+  "ScheduledTaskManualRunScopeError",
+  { taskId: ScheduledTaskId, message: Schema.String },
+) {}
+
+export class ScheduledTaskManualRunRuntimeCeilingError extends Schema.TaggedErrorClass<ScheduledTaskManualRunRuntimeCeilingError>()(
+  "ScheduledTaskManualRunRuntimeCeilingError",
+  { taskId: ScheduledTaskId, message: Schema.String },
+) {}
+
+export class ScheduledTaskManualRunInteractionCeilingError extends Schema.TaggedErrorClass<ScheduledTaskManualRunInteractionCeilingError>()(
+  "ScheduledTaskManualRunInteractionCeilingError",
+  { taskId: ScheduledTaskId, message: Schema.String },
+) {}
+
+export class ScheduledTaskManualRunConflictError extends Schema.TaggedErrorClass<ScheduledTaskManualRunConflictError>()(
+  "ScheduledTaskManualRunConflictError",
+  { taskId: ScheduledTaskId, commandId: CommandId, message: Schema.String },
+) {}
+
+export class ScheduledTaskManualRunNotFoundError extends Schema.TaggedErrorClass<ScheduledTaskManualRunNotFoundError>()(
+  "ScheduledTaskManualRunNotFoundError",
+  { taskId: ScheduledTaskId, message: Schema.String },
+) {}
+
+export type ScheduledTaskManualRunError =
+  | ScheduledTaskError
+  | ScheduledTaskManualRunScopeError
+  | ScheduledTaskManualRunRuntimeCeilingError
+  | ScheduledTaskManualRunInteractionCeilingError
+  | ScheduledTaskManualRunConflictError
+  | ScheduledTaskManualRunNotFoundError;
+
 export class ScheduledTaskService extends Context.Service<
   ScheduledTaskService,
   {
@@ -85,6 +145,9 @@ export class ScheduledTaskService extends Context.Service<
     readonly runNow: (
       input: ScheduledTaskRunNowInput,
     ) => Effect.Effect<ScheduledTaskRunNowResult, ScheduledTaskError>;
+    readonly runNowIdempotent: (
+      input: ScheduledTaskManualRunInput,
+    ) => Effect.Effect<ScheduledTaskManualRunResult, ScheduledTaskManualRunError>;
   }
 >()("t3/scheduledTasks/ScheduledTaskService") {}
 
@@ -119,6 +182,23 @@ function errorMessage(error: unknown): string {
   if (Cause.isCause(error)) return Cause.pretty(error);
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function runtimeModeRank(mode: ScheduledTask["runtimeMode"]): number {
+  switch (mode) {
+    case "approval-required":
+      return 0;
+    case "auto-accept-edits":
+      return 1;
+    case "auto":
+      return 2;
+    case "full-access":
+      return 3;
+  }
+}
+
+function interactionModeRank(mode: ScheduledTask["interactionMode"]): number {
+  return mode === "plan" ? 0 : 1;
 }
 
 const decodeRow = (row: ScheduledTaskRow) =>
@@ -166,6 +246,7 @@ export const layer = Layer.effect(
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const activeRuns = yield* Ref.make<ReadonlySet<ScheduledTaskId>>(new Set());
+    const taskMutations = yield* makeKeyedSerialExecutor<ScheduledTaskId>();
     // Sliding(1) coalesces the dirty-signal: every notification triggers a
     // full list() re-emit anyway, so a slow subscriber only ever needs the
     // latest signal — an unbounded backlog would just grow memory.
@@ -268,6 +349,191 @@ export const layer = Layer.effect(
       }
       return task;
     });
+
+    const readCommandReceipt = (taskId: ScheduledTaskId, commandId: CommandId) =>
+      threadManagement
+        .getCommandReceipt(commandId)
+        .pipe(
+          Effect.mapError((cause) =>
+            taskError("Could not read the scheduled task run receipt.", { taskId, cause }),
+          ),
+        );
+
+    const authorizeFreshManualRun = Effect.fn("ScheduledTaskService.authorizeFreshManualRun")(
+      function* (task: ScheduledTask, input: ScheduledTaskManualRunInput) {
+        const loadScopedThread = (threadId: ThreadId, role: "caller" | "target") =>
+          threadManagement.getProjectThread({ projectId: input.projectId, threadId }).pipe(
+            Effect.mapError((cause) =>
+              cause._tag === "ThreadManagementThreadNotFoundError"
+                ? new ScheduledTaskManualRunScopeError({
+                    taskId: input.id,
+                    message: `The scheduled task run ${role} is not active in the calling project.`,
+                  })
+                : taskError(`Could not authorize the scheduled task run ${role}.`, {
+                    taskId: input.id,
+                    cause,
+                  }),
+            ),
+          );
+        const caller = yield* loadScopedThread(input.policyCeiling.callerThreadId, "caller");
+        if (caller.thread.archivedAt !== null) {
+          return yield* new ScheduledTaskManualRunScopeError({
+            taskId: input.id,
+            message: "The scheduled task run caller is archived.",
+          });
+        }
+        const target =
+          task.threadId === null
+            ? null
+            : yield* loadScopedThread(ThreadId.make(task.threadId), "target");
+        if (target !== null && target.thread.archivedAt !== null) {
+          return yield* new ScheduledTaskManualRunScopeError({
+            taskId: input.id,
+            message: "The scheduled task target is archived.",
+          });
+        }
+        const runtimeMode = target?.thread.runtimeMode ?? task.runtimeMode;
+        const interactionMode = target?.thread.interactionMode ?? task.interactionMode;
+        if (
+          runtimeModeRank(runtimeMode) > runtimeModeRank(input.policyCeiling.runtimeMode) ||
+          runtimeModeRank(runtimeMode) > runtimeModeRank(caller.thread.runtimeMode)
+        ) {
+          return yield* new ScheduledTaskManualRunRuntimeCeilingError({
+            taskId: input.id,
+            message: `Target runtime mode ${runtimeMode} exceeds the caller ceiling.`,
+          });
+        }
+        if (
+          interactionModeRank(interactionMode) >
+            interactionModeRank(input.policyCeiling.interactionMode) ||
+          interactionModeRank(interactionMode) > interactionModeRank(caller.thread.interactionMode)
+        ) {
+          return yield* new ScheduledTaskManualRunInteractionCeilingError({
+            taskId: input.id,
+            message: `Target interaction mode ${interactionMode} exceeds the caller ceiling.`,
+          });
+        }
+      },
+    );
+
+    const findAcceptedManualRun = Effect.fn("ScheduledTaskService.findAcceptedManualRun")(
+      function* (input: ScheduledTaskManualRunInput) {
+        const initialMessageCommandId = CommandId.make(`${input.commandId}:initial-message`);
+        const initialMessageReceipt = yield* readCommandReceipt(input.id, initialMessageCommandId);
+        let receipt = Option.getOrUndefined(initialMessageReceipt);
+        if (receipt === undefined) {
+          const primaryReceipt = yield* readCommandReceipt(input.id, input.commandId);
+          if (Option.isNone(primaryReceipt)) {
+            return Option.none<ScheduledTaskManualRunResult>();
+          }
+          if (primaryReceipt.value.status === "rejected") {
+            return yield* taskError("This manual run request was previously rejected.", {
+              taskId: input.id,
+            });
+          }
+          if (primaryReceipt.value.commandType === "thread.create") {
+            if (primaryReceipt.value.threadId !== input.unboundThreadId) {
+              return yield* new ScheduledTaskManualRunConflictError({
+                taskId: input.id,
+                commandId: input.commandId,
+                message: "The idempotency key belongs to a different scheduled task run.",
+              });
+            }
+            // Thread creation committed, but the scheduled prompt did not. Let
+            // ThreadLaunchService replay the create receipt and finish the same
+            // task-specific initial message.
+            return Option.none<ScheduledTaskManualRunResult>();
+          }
+          receipt = primaryReceipt.value;
+        }
+        if (receipt.status === "rejected") {
+          return yield* taskError("This manual run request was previously rejected.", {
+            taskId: input.id,
+          });
+        }
+        if (receipt.commandType !== "message.dispatch") {
+          return yield* new ScheduledTaskManualRunConflictError({
+            taskId: input.id,
+            commandId: input.commandId,
+            message: "The idempotency key belongs to a different command.",
+          });
+        }
+
+        const caller = yield* threadManagement
+          .getThreadProjection(input.policyCeiling.callerThreadId)
+          .pipe(
+            Effect.mapError((cause) =>
+              taskError("Could not authorize the scheduled task run caller.", {
+                taskId: input.id,
+                cause,
+              }),
+            ),
+          );
+        const target = yield* threadManagement.getThreadProjection(receipt.threadId).pipe(
+          Effect.mapError((cause) =>
+            taskError("Could not load the accepted scheduled task run.", {
+              taskId: input.id,
+              cause,
+            }),
+          ),
+        );
+        if (
+          caller.thread.deletedAt !== null ||
+          caller.thread.archivedAt !== null ||
+          caller.thread.projectId !== input.projectId ||
+          target.thread.deletedAt !== null ||
+          target.thread.projectId !== input.projectId
+        ) {
+          return yield* new ScheduledTaskManualRunScopeError({
+            taskId: input.id,
+            message: "The accepted run is no longer authorized in the calling project.",
+          });
+        }
+        if (
+          runtimeModeRank(target.thread.runtimeMode) >
+            runtimeModeRank(input.policyCeiling.runtimeMode) ||
+          runtimeModeRank(target.thread.runtimeMode) > runtimeModeRank(caller.thread.runtimeMode)
+        ) {
+          return yield* new ScheduledTaskManualRunRuntimeCeilingError({
+            taskId: input.id,
+            message: `Target runtime mode ${target.thread.runtimeMode} exceeds the caller ceiling.`,
+          });
+        }
+        if (
+          interactionModeRank(target.thread.interactionMode) >
+            interactionModeRank(input.policyCeiling.interactionMode) ||
+          interactionModeRank(target.thread.interactionMode) >
+            interactionModeRank(caller.thread.interactionMode)
+        ) {
+          return yield* new ScheduledTaskManualRunInteractionCeilingError({
+            taskId: input.id,
+            message: `Target interaction mode ${target.thread.interactionMode} exceeds the caller ceiling.`,
+          });
+        }
+
+        const message = target.messages.find((candidate) => candidate.id === input.messageId);
+        const run =
+          message?.runId === null || message?.runId === undefined
+            ? undefined
+            : target.runs.find((candidate) => candidate.id === message.runId);
+        if (message === undefined || run === undefined) {
+          return yield* new ScheduledTaskManualRunConflictError({
+            taskId: input.id,
+            commandId: input.commandId,
+            message: "The idempotency key was already accepted for a different scheduled task run.",
+          });
+        }
+        return Option.some({
+          task: null,
+          threadId: target.thread.id,
+          messageId: message.id,
+          runId: run.id,
+          status: run.status,
+          replayed: true,
+          receipt,
+        } satisfies ScheduledTaskManualRunResult);
+      },
+    );
 
     // Run-state columns (last_run_*, run_count) are intentionally absent from
     // the conflict clause: they are owned by the run transitions below, and a
@@ -420,9 +686,45 @@ export const layer = Layer.effect(
         ),
       );
 
+    const acceptedManualRun = Effect.fn("ScheduledTaskService.acceptedManualRun")(function* (
+      input: ScheduledTaskManualRunInput,
+      projection: OrchestrationV2ThreadProjection,
+      receiptCommandId: CommandId,
+    ) {
+      const receiptOption = yield* readCommandReceipt(input.id, receiptCommandId);
+      if (Option.isNone(receiptOption) || receiptOption.value.status !== "accepted") {
+        return yield* taskError(
+          "The scheduled task dispatch did not produce an accepted receipt.",
+          {
+            taskId: input.id,
+          },
+        );
+      }
+      const message = projection.messages.find((candidate) => candidate.id === input.messageId);
+      const run =
+        message?.runId === null || message?.runId === undefined
+          ? undefined
+          : projection.runs.find((candidate) => candidate.id === message.runId);
+      if (message === undefined || run === undefined) {
+        return yield* taskError("The scheduled task dispatch is missing its durable run.", {
+          taskId: input.id,
+        });
+      }
+      return {
+        task: null,
+        threadId: projection.thread.id,
+        messageId: message.id,
+        runId: run.id,
+        status: run.status,
+        replayed: false,
+        receipt: receiptOption.value,
+      } satisfies ScheduledTaskManualRunResult;
+    });
+
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
       trigger: "scheduled" | "manual",
+      manualRun?: ScheduledTaskManualRunInput,
     ) {
       const reserved = yield* Ref.modify(activeRuns, (active) => {
         if (active.has(task.id)) return [false, active] as const;
@@ -432,127 +734,174 @@ export const layer = Layer.effect(
       });
       if (!reserved) {
         if (trigger === "manual") {
+          if (manualRun !== undefined) {
+            return yield* new ScheduledTaskManualRunConflictError({
+              taskId: task.id,
+              commandId: manualRun.commandId,
+              message: "Schedule task is already running.",
+            });
+          }
           return yield* taskError("Schedule task is already running.", { taskId: task.id });
         }
-        return task;
+        return { task, manualRun: null, dispatchError: null };
       }
 
-      return yield* Effect.gen(function* () {
-        const startedAt = yield* localNow;
-        const startedAtIso = iso(startedAt);
+      return yield* taskMutations
+        .withLock(
+          task.id,
+          Effect.gen(function* () {
+            const startedAt = yield* localNow;
+            const startedAtIso = iso(startedAt);
 
-        // The in-memory snapshot may be stale: re-read before touching run
-        // state. The task may have been deleted, paused, or postponed since
-        // the poll loaded it — none of those may fire.
-        const active = yield* findTask(task.id);
-        if (active === null) {
-          // A manual run on a just-deleted task must fail loudly, not report
-          // a successful run that never dispatched.
-          if (trigger === "manual") {
-            return yield* taskError("Schedule task not found.", { taskId: task.id });
-          }
-          return task;
-        }
-        if (
-          trigger === "scheduled" &&
-          (!active.enabled ||
-            active.nextRunAt === null ||
-            DateTime.toEpochMillis(DateTime.makeUnsafe(active.nextRunAt)) >
-              DateTime.toEpochMillis(startedAt))
-        ) {
-          return active;
-        }
+            // The in-memory snapshot may be stale: re-read after admission and
+            // before touching run state. CRUD uses this same task lock.
+            const active = yield* findTask(task.id);
+            if (active === null) {
+              if (trigger === "manual") {
+                if (manualRun !== undefined) {
+                  return yield* new ScheduledTaskManualRunNotFoundError({
+                    taskId: task.id,
+                    message: "Schedule task not found.",
+                  });
+                }
+                return yield* taskError("Schedule task not found.", { taskId: task.id });
+              }
+              return { task, manualRun: null, dispatchError: null };
+            }
+            if (manualRun !== undefined && active.projectId !== manualRun.projectId) {
+              return yield* new ScheduledTaskManualRunScopeError({
+                taskId: active.id,
+                message: "The scheduled task does not belong to the calling project.",
+              });
+            }
+            if (manualRun !== undefined) {
+              yield* authorizeFreshManualRun(active, manualRun);
+            }
+            if (
+              trigger === "scheduled" &&
+              (!active.enabled ||
+                active.nextRunAt === null ||
+                DateTime.toEpochMillis(DateTime.makeUnsafe(active.nextRunAt)) >
+                  DateTime.toEpochMillis(startedAt))
+            ) {
+              return { task: active, manualRun: null, dispatchError: null };
+            }
 
-        yield* markRunning(active.id, startedAtIso);
-        yield* notifyChanged;
+            yield* markRunning(active.id, startedAtIso);
+            yield* notifyChanged;
 
-        const fireKey = `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`;
-        const commandId = CommandId.make(`scheduled-task:${fireKey}`);
-        const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
-        // Dispatch from the fresh row so prompt/model/binding edits made
-        // after the poll read are honoured.
-        const prompt = automationPrompt(active);
+            const fireKey = `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`;
+            const commandId = manualRun?.commandId ?? CommandId.make(`scheduled-task:${fireKey}`);
+            const messageId =
+              manualRun?.messageId ?? MessageId.make(`scheduled-task-message:${fireKey}`);
+            const prompt = automationPrompt(active);
 
-        // Effect.exit (not Effect.result) so defects and interruptions in the
-        // dispatch are also captured and recorded as a failed run instead of
-        // aborting before markCompleted.
-        const result =
-          active.threadId === null
-            ? yield* Effect.exit(
-                threadLaunch.launch({
-                  commandId,
-                  projectId: active.projectId,
-                  title: active.title,
-                  modelSelection: active.modelSelection,
-                  runtimeMode: active.runtimeMode,
-                  interactionMode: active.interactionMode,
-                  workspaceStrategy: active.workspaceStrategy,
-                  initialMessage: {
-                    messageId,
-                    text: prompt,
-                    attachments: [],
-                  },
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                }),
-              )
-            : yield* Effect.exit(
-                threadManagement.sendToThread({
-                  projectId: active.projectId,
-                  commandId,
-                  threadId: ThreadId.make(active.threadId),
-                  messageId,
-                  text: prompt,
-                  attachments: [],
-                  modelSelection: active.modelSelection,
-                  mode: "auto",
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                }),
-              );
+            // Effect.exit captures defects and interruption so bookkeeping is
+            // terminal even when dispatch is rejected before a turn starts.
+            const result =
+              active.threadId === null
+                ? yield* Effect.exit(
+                    threadLaunch
+                      .launch({
+                        commandId,
+                        ...(manualRun === undefined ? {} : { threadId: manualRun.unboundThreadId }),
+                        projectId: active.projectId,
+                        title: active.title,
+                        modelSelection: active.modelSelection,
+                        runtimeMode: active.runtimeMode,
+                        interactionMode: active.interactionMode,
+                        ...(manualRun === undefined
+                          ? {}
+                          : { policyCeiling: manualRun.policyCeiling }),
+                        workspaceStrategy: active.workspaceStrategy,
+                        initialMessage: {
+                          messageId,
+                          text: prompt,
+                          attachments: [],
+                        },
+                        createdBy: active.createdBy,
+                        creationSource: active.creationSource,
+                      })
+                      .pipe(
+                        Effect.flatMap((launched) =>
+                          manualRun === undefined
+                            ? Effect.succeed(null)
+                            : acceptedManualRun(
+                                manualRun,
+                                launched.projection,
+                                CommandId.make(`${commandId}:initial-message`),
+                              ),
+                        ),
+                      ),
+                  )
+                : yield* Effect.exit(
+                    threadManagement
+                      .sendToThread({
+                        projectId: active.projectId,
+                        commandId,
+                        threadId: ThreadId.make(active.threadId),
+                        messageId,
+                        text: prompt,
+                        attachments: [],
+                        modelSelection: active.modelSelection,
+                        ...(manualRun === undefined
+                          ? {}
+                          : { policyCeiling: manualRun.policyCeiling }),
+                        mode: "auto",
+                        createdBy: active.createdBy,
+                        creationSource: active.creationSource,
+                      })
+                      .pipe(
+                        Effect.flatMap((sent) =>
+                          manualRun === undefined
+                            ? Effect.succeed(null)
+                            : acceptedManualRun(manualRun, sent.projection, commandId),
+                        ),
+                      ),
+                  );
 
-        const completedAt = yield* localNow;
-        const runSucceeded = result._tag === "Success";
-        const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
-        const lastRunError = runSucceeded ? null : errorMessage(result.cause);
-        // Re-read the task so the next run is computed from the schedule as it
-        // is *now* (the user may have edited or deleted it while we ran).
-        const current = yield* findTask(task.id);
-        const scheduleSource = current ?? task;
-        const completed: ScheduledTask = {
-          ...scheduleSource,
-          updatedAt: iso(completedAt),
-          lastRunAt: startedAtIso,
-          nextRunAt: nextRunAt(scheduleSource, completedAt),
-          lastRunStatus,
-          lastRunError,
-          runCount: scheduleSource.runCount + 1,
-        };
-        if (current !== null) {
-          // startedAtIso in the guard ensures this writes only to the row this
-          // run marked as running — a task deleted mid-run and recreated with
-          // the same id (idempotent commandId replay) must not be stamped.
-          yield* markCompleted({
-            id: task.id,
-            completedAtIso: completed.updatedAt,
-            nextRunAtIso: completed.nextRunAt,
-            status: lastRunStatus,
-            error: lastRunError,
-            startedAtIso,
-          });
-          yield* notifyChanged;
-        }
-        return completed;
-      }).pipe(
-        Effect.onError((cause) => releaseStuckRun(task, errorMessage(cause))),
-        Effect.ensuring(
-          Ref.update(activeRuns, (active) => {
-            const next = new Set(active);
-            next.delete(task.id);
-            return next;
-          }),
-        ),
-      );
+            const completedAt = yield* localNow;
+            const runSucceeded = result._tag === "Success";
+            const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
+            const lastRunError = runSucceeded ? null : errorMessage(result.cause);
+            const current = yield* findTask(task.id);
+            const scheduleSource = current ?? task;
+            const completed: ScheduledTask = {
+              ...scheduleSource,
+              updatedAt: iso(completedAt),
+              lastRunAt: startedAtIso,
+              nextRunAt: nextRunAt(scheduleSource, completedAt),
+              lastRunStatus,
+              lastRunError,
+              runCount: scheduleSource.runCount + 1,
+            };
+            if (current !== null) {
+              yield* markCompleted({
+                id: task.id,
+                completedAtIso: completed.updatedAt,
+                nextRunAtIso: completed.nextRunAt,
+                status: lastRunStatus,
+                error: lastRunError,
+                startedAtIso,
+              });
+              yield* notifyChanged;
+            }
+            return {
+              task: completed,
+              manualRun: runSucceeded ? result.value : null,
+              dispatchError: runSucceeded ? null : result.cause,
+            };
+          }).pipe(Effect.onError((cause) => releaseStuckRun(task, errorMessage(cause)))),
+        )
+        .pipe(
+          Effect.ensuring(
+            Ref.update(activeRuns, (active) => {
+              const next = new Set(active);
+              next.delete(task.id);
+              return next;
+            }),
+          ),
+        );
     });
 
     // A due fixed-time run that is long past its slot (server was off or
@@ -600,7 +949,8 @@ export const layer = Layer.effect(
             ? rescheduleMissedRun(task, now)
             : runTask(task, "scheduled")
           ).pipe(
-            Effect.catch((cause) =>
+            Effect.asVoid,
+            Effect.catchCause((cause) =>
               Effect.logWarning("Scheduled task run failed", { taskId: task.id, cause }),
             ),
           ),
@@ -690,7 +1040,6 @@ export const layer = Layer.effect(
 
     const upsert: ScheduledTaskService["Service"]["upsert"] = (input) =>
       Effect.gen(function* () {
-        const now = yield* localNow;
         const uuid =
           input.commandId === undefined
             ? yield* crypto.randomUUIDv4.pipe(
@@ -704,77 +1053,87 @@ export const layer = Layer.effect(
           ScheduledTaskId.make(
             input.commandId ? `scheduled-task:${input.commandId}` : `scheduled-task:${uuid}`,
           );
-        // Look up by the *resolved* id so idempotent creates (commandId replays)
-        // keep their run history, and so real load failures propagate instead
-        // of silently resetting an existing row.
-        const existingTask = yield* findTask(id);
-        // Keep the existing next_run_at when the schedule itself is untouched:
-        // editing a title or prompt must not postpone (or resurrect) a due
-        // run — only schedule/enabled changes restart the clock.
-        const scheduleUnchanged =
-          existingTask !== null &&
-          existingTask.enabled === input.enabled &&
-          isSameSchedule(existingTask.schedule, input.schedule);
-        const task: ScheduledTask = {
+        return yield* taskMutations.withLock(
           id,
-          title: input.title,
-          prompt: input.prompt,
-          enabled: input.enabled,
-          schedule: input.schedule,
-          projectId: input.projectId,
-          threadId: input.threadId ?? null,
-          workspaceStrategy: input.workspaceStrategy,
-          modelSelection: input.modelSelection,
-          runtimeMode: input.runtimeMode,
-          interactionMode: input.interactionMode,
-          createdBy: existingTask?.createdBy ?? input.createdBy ?? "user",
-          creationSource: input.creationSource ?? "web",
-          createdAt: existingTask?.createdAt ?? iso(now),
-          updatedAt: iso(now),
-          nextRunAt: scheduleUnchanged
-            ? existingTask.nextRunAt
-            : nextRunAt({ enabled: input.enabled, schedule: input.schedule }, now),
-          lastRunAt: existingTask?.lastRunAt ?? null,
-          lastRunStatus: existingTask?.lastRunStatus ?? "never",
-          lastRunError: existingTask?.lastRunError ?? null,
-          runCount: existingTask?.runCount ?? 0,
-        };
-        yield* saveTask(task);
-        yield* notifyChanged;
-        return { task };
+          Effect.gen(function* () {
+            const now = yield* localNow;
+            // Look up by the *resolved* id so idempotent creates (commandId replays)
+            // keep their run history, and so real load failures propagate instead
+            // of silently resetting an existing row.
+            const existingTask = yield* findTask(id);
+            // Keep the existing next_run_at when the schedule itself is untouched:
+            // editing a title or prompt must not postpone (or resurrect) a due
+            // run — only schedule/enabled changes restart the clock.
+            const scheduleUnchanged =
+              existingTask !== null &&
+              existingTask.enabled === input.enabled &&
+              isSameSchedule(existingTask.schedule, input.schedule);
+            const task: ScheduledTask = {
+              id,
+              title: input.title,
+              prompt: input.prompt,
+              enabled: input.enabled,
+              schedule: input.schedule,
+              projectId: input.projectId,
+              threadId: input.threadId ?? null,
+              workspaceStrategy: input.workspaceStrategy,
+              modelSelection: input.modelSelection,
+              runtimeMode: input.runtimeMode,
+              interactionMode: input.interactionMode,
+              createdBy: existingTask?.createdBy ?? input.createdBy ?? "user",
+              creationSource: input.creationSource ?? "web",
+              createdAt: existingTask?.createdAt ?? iso(now),
+              updatedAt: iso(now),
+              nextRunAt: scheduleUnchanged
+                ? existingTask.nextRunAt
+                : nextRunAt({ enabled: input.enabled, schedule: input.schedule }, now),
+              lastRunAt: existingTask?.lastRunAt ?? null,
+              lastRunStatus: existingTask?.lastRunStatus ?? "never",
+              lastRunError: existingTask?.lastRunError ?? null,
+              runCount: existingTask?.runCount ?? 0,
+            };
+            yield* saveTask(task);
+            yield* notifyChanged;
+            return { task };
+          }),
+        );
       });
 
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = (input) =>
-      Effect.gen(function* () {
-        const existing = yield* loadTask(input.id);
-        if (existing.enabled === input.enabled) return { task: existing };
-        const now = yield* localNow;
-        const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
-        // RETURNING so a task deleted between the load and this UPDATE is a
-        // visible not-found error, not a false success.
-        const updated = yield* sql<{ task_id: string }>`
-          UPDATE scheduled_tasks
-          SET enabled = ${input.enabled ? 1 : 0},
-              next_run_at = ${next},
-              updated_at = ${iso(now)}
-          WHERE task_id = ${input.id}
-          RETURNING task_id
-        `.pipe(
-          Effect.mapError((cause) =>
-            taskError("Could not update schedule task.", { taskId: input.id, cause }),
-          ),
-        );
-        if (updated.length === 0) {
-          return yield* taskError("Schedule task not found.", { taskId: input.id });
-        }
-        yield* notifyChanged;
-        return {
-          task: { ...existing, enabled: input.enabled, nextRunAt: next, updatedAt: iso(now) },
-        };
-      });
+      taskMutations.withLock(
+        input.id,
+        Effect.gen(function* () {
+          const existing = yield* loadTask(input.id);
+          if (existing.enabled === input.enabled) return { task: existing };
+          const now = yield* localNow;
+          const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
+          const updated = yield* sql<{ task_id: string }>`
+            UPDATE scheduled_tasks
+            SET enabled = ${input.enabled ? 1 : 0},
+                next_run_at = ${next},
+                updated_at = ${iso(now)}
+            WHERE task_id = ${input.id}
+            RETURNING task_id
+          `.pipe(
+            Effect.mapError((cause) =>
+              taskError("Could not update schedule task.", { taskId: input.id, cause }),
+            ),
+          );
+          if (updated.length === 0) {
+            return yield* taskError("Schedule task not found.", { taskId: input.id });
+          }
+          yield* notifyChanged;
+          return {
+            task: { ...existing, enabled: input.enabled, nextRunAt: next, updatedAt: iso(now) },
+          };
+        }),
+      );
 
     const deleteTask: ScheduledTaskService["Service"]["delete"] = (input) =>
-      deleteRow(input.id).pipe(Effect.andThen(notifyChanged), Effect.as({ id: input.id }));
+      taskMutations.withLock(
+        input.id,
+        deleteRow(input.id).pipe(Effect.andThen(notifyChanged), Effect.as({ id: input.id })),
+      );
 
     const runNow: ScheduledTaskService["Service"]["runNow"] = (input: ScheduledTaskRunNowInput) =>
       Effect.gen(function* () {
@@ -784,7 +1143,33 @@ export const layer = Layer.effect(
             taskError("Could not run schedule task.", { taskId: input.id, cause }),
           ),
         );
-        return { task: next };
+        return { task: next.task };
+      });
+
+    const runNowIdempotent: ScheduledTaskService["Service"]["runNowIdempotent"] = (input) =>
+      Effect.gen(function* () {
+        const replay = yield* findAcceptedManualRun(input);
+        if (Option.isSome(replay)) return replay.value;
+        const task = yield* findTask(input.id);
+        if (task === null) {
+          return yield* new ScheduledTaskManualRunNotFoundError({
+            taskId: input.id,
+            message: "Schedule task not found.",
+          });
+        }
+        const outcome = yield* runTask(task, "manual", input);
+        if (outcome.dispatchError !== null) {
+          return yield* taskError("Could not dispatch schedule task run.", {
+            taskId: input.id,
+            cause: outcome.dispatchError,
+          });
+        }
+        if (outcome.manualRun === null) {
+          return yield* taskError("The schedule task run was not dispatched.", {
+            taskId: input.id,
+          });
+        }
+        return { ...outcome.manualRun, task: outcome.task };
       });
 
     return ScheduledTaskService.of({
@@ -794,6 +1179,7 @@ export const layer = Layer.effect(
       setEnabled,
       delete: deleteTask,
       runNow,
+      runNowIdempotent,
     });
   }),
 );

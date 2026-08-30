@@ -11,6 +11,8 @@ import {
   OrchestratorMcpListScheduledTasksResult,
   OrchestratorMcpScheduleTaskInput,
   OrchestratorMcpScheduleTaskResult,
+  OrchestratorMcpRunScheduledTaskNowInput,
+  OrchestratorMcpRunScheduledTaskNowResult,
   OrchestratorMcpTaskCancelInput,
   OrchestratorMcpTaskCancelResult,
   OrchestratorMcpUpdateScheduledTaskInput,
@@ -136,6 +138,20 @@ export const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
   .annotate(Tool.Title, "Delete a scheduled task")
   .annotate(Tool.Destructive, true);
 
+export const RunScheduledTaskNowTool = Tool.make("run_scheduled_task_now", {
+  description:
+    "Run one scheduled task immediately through the app scheduler. scheduledTaskId comes from list_scheduled_tasks. clientRequestId is required: reuse the same value only to retry this exact manual run. Success means the scheduled prompt was durably accepted for dispatch, not that the agent turn finished. This does not change the schedule definition or enabled state, but it records a run and advances nextRunAt using the current schedule.",
+  parameters: OrchestratorMcpRunScheduledTaskNowInput,
+  success: OrchestratorMcpRunScheduledTaskNowResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Run a scheduled task now")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true);
+
 export const CreateThreadsTool = Tool.make("create_threads", {
   description:
     "Create one or more ORDINARY TOP-LEVEL T3 conversations. This is not delegation and does not create child agents/subagents. If the user asks for agents, subagents, workers, delegation, or parallel help, call delegate_task once per child instead—even when selecting different providers. Use create_threads only when the user explicitly asks for separate/new/top-level threads or conversations. Each entry may override provider, model, options, runtime mode, and interaction mode; omitted settings inherit.",
@@ -238,6 +254,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ListScheduledTasksTool,
   UpdateScheduledTaskTool,
   DeleteScheduledTaskTool,
+  RunScheduledTaskNowTool,
   CreateThreadsTool,
   ThreadStartTool,
   ThreadListTool,

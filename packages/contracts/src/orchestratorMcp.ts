@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
+  CommandId,
   ContextTransferId,
   IsoDateTime,
   MessageId,
@@ -560,6 +561,34 @@ export const OrchestratorMcpDeleteScheduledTaskResult = Schema.Struct({
 });
 export type OrchestratorMcpDeleteScheduledTaskResult =
   typeof OrchestratorMcpDeleteScheduledTaskResult.Type;
+
+export const OrchestratorMcpRunScheduledTaskNowInput = Schema.Struct({
+  scheduledTaskId: ScheduledTaskId,
+  clientRequestId: OrchestratorMcpClientRequestId.annotate({
+    description:
+      "Required stable idempotency key. Reuse it only when retrying this exact manual run.",
+  }),
+});
+export type OrchestratorMcpRunScheduledTaskNowInput =
+  typeof OrchestratorMcpRunScheduledTaskNowInput.Type;
+
+export const OrchestratorMcpRunScheduledTaskNowResult = Schema.Struct({
+  scheduledTaskId: ScheduledTaskId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  runId: RunId,
+  status: OrchestrationV2RunStatus,
+  replayed: Schema.Boolean,
+  receipt: Schema.Struct({
+    commandId: CommandId,
+    acceptedAt: IsoDateTime,
+    resultSequence: NonNegativeInt,
+  }),
+  nextRunAt: Schema.NullOr(IsoDateTime),
+  runCount: Schema.NullOr(NonNegativeInt),
+});
+export type OrchestratorMcpRunScheduledTaskNowResult =
+  typeof OrchestratorMcpRunScheduledTaskNowResult.Type;
 
 export class OrchestratorMcpFailure extends Schema.TaggedErrorClass<OrchestratorMcpFailure>()(
   "OrchestratorMcpFailure",

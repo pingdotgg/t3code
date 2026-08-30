@@ -25,6 +25,7 @@ import {
   type ProviderOptionDescriptor,
   ProviderThreadId,
   ProviderTurnId,
+  RunId,
   type ScheduledTask,
   ScheduledTaskId,
   type ScheduledTaskUpsertInput,
@@ -70,7 +71,10 @@ import {
   materializeReplayTranscriptWorkspace,
 } from "../orchestration-v2/testkit/ReplayTranscriptNdjson.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
-import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
+import {
+  type ScheduledTaskManualRunResult,
+  ScheduledTaskService,
+} from "../scheduledTasks/ScheduledTaskService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
@@ -588,6 +592,9 @@ describe("orchestrator MCP toolkit", () => {
           // In-memory ScheduledTaskService stub so the schedule/list/update/
           // delete tools can be exercised without SQL/launch wiring.
           const scheduledStore = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
+          const scheduledManualRuns = yield* Ref.make<ReadonlyArray<ScheduledTaskManualRunResult>>(
+            [],
+          );
           const scheduledTaskStubLayer = Layer.succeed(
             ScheduledTaskService,
             ScheduledTaskService.of({
@@ -609,6 +616,41 @@ describe("orchestrator MCP toolkit", () => {
                   all.filter((candidate) => candidate.id !== input.id),
                 ).pipe(Effect.as({ id: input.id })),
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
+              runNowIdempotent: (input) =>
+                Effect.gen(function* () {
+                  const replay = (yield* Ref.get(scheduledManualRuns)).find(
+                    (candidate) => candidate.receipt.commandId === input.commandId,
+                  );
+                  if (replay !== undefined) {
+                    return { ...replay, task: null, replayed: true };
+                  }
+                  const task = (yield* Ref.get(scheduledStore)).find(
+                    (candidate) => candidate.id === input.id,
+                  );
+                  if (task === undefined) {
+                    return yield* Effect.die("Scheduled task is missing from the toolkit stub");
+                  }
+                  const threadId = task.threadId ?? input.unboundThreadId;
+                  const result = {
+                    task: { ...task, runCount: task.runCount + 1 },
+                    threadId,
+                    messageId: input.messageId,
+                    runId: RunId.make(`run:${input.messageId}`),
+                    status: "queued" as const,
+                    replayed: false,
+                    receipt: {
+                      commandId: input.commandId,
+                      threadId,
+                      commandType: "message.dispatch",
+                      acceptedAt: DateTime.makeUnsafe("2026-07-01T09:00:00.000Z"),
+                      resultSequence: 23,
+                      status: "accepted" as const,
+                      error: null,
+                    },
+                  } satisfies ScheduledTaskManualRunResult;
+                  yield* Ref.update(scheduledManualRuns, (runs) => [...runs, result]);
+                  return result;
+                }),
             }),
           );
           const testLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
@@ -1232,6 +1274,22 @@ describe("orchestrator MCP toolkit", () => {
 
             const scheduleTool = server.tools.find(({ tool }) => tool.name === "schedule_task");
             expect(scheduleTool?.tool.annotations?.destructiveHint).toBe(true);
+            const runScheduledTaskNowTool = server.tools.find(
+              ({ tool }) => tool.name === "run_scheduled_task_now",
+            );
+            expect(runScheduledTaskNowTool?.tool.inputSchema).toMatchObject({
+              type: "object",
+              properties: {
+                scheduledTaskId: expect.any(Object),
+                clientRequestId: expect.any(Object),
+              },
+              required: expect.arrayContaining(["scheduledTaskId", "clientRequestId"]),
+            });
+            expect(runScheduledTaskNowTool?.tool.annotations).toMatchObject({
+              destructiveHint: true,
+              idempotentHint: true,
+              openWorldHint: true,
+            });
             const scheduleCall = yield* invoke("schedule_task", {
               prompt: "wake up in this thread and say hello",
               schedule: { type: "interval", everyMs: 60_000 },
@@ -1278,6 +1336,25 @@ describe("orchestrator MCP toolkit", () => {
               enabled: false,
             });
 
+            const scheduledRunNowCall = yield* invoke("run_scheduled_task_now", {
+              scheduledTaskId,
+              clientRequestId: "run-scheduled-hello-1",
+            });
+            expect(scheduledRunNowCall.isError).toBe(false);
+            expect(scheduledRunNowCall.structuredContent).toMatchObject({
+              scheduledTaskId,
+              threadId: parentThreadId,
+              messageId: expect.stringContaining("run-scheduled-hello-1"),
+              runId: expect.any(String),
+              status: "queued",
+              replayed: false,
+              receipt: {
+                commandId: expect.stringContaining("run-scheduled-hello-1"),
+                resultSequence: 23,
+              },
+              runCount: 1,
+            });
+
             // delete_scheduled_task removes it entirely.
             const scheduledDeleteCall = yield* invoke("delete_scheduled_task", { scheduledTaskId });
             expect(scheduledDeleteCall.isError).toBe(false);
@@ -1286,6 +1363,22 @@ describe("orchestrator MCP toolkit", () => {
               deleted: true,
             });
             expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
+
+            const scheduledRunNowReplay = yield* invoke("run_scheduled_task_now", {
+              scheduledTaskId,
+              clientRequestId: "run-scheduled-hello-1",
+            });
+            expect(scheduledRunNowReplay.isError).toBe(false);
+            expect(scheduledRunNowReplay.structuredContent).toMatchObject({
+              scheduledTaskId,
+              threadId: parentThreadId,
+              messageId: scheduledRunNowCall.structuredContent?.messageId,
+              runId: scheduledRunNowCall.structuredContent?.runId,
+              replayed: true,
+              receipt: scheduledRunNowCall.structuredContent?.receipt,
+              nextRunAt: null,
+              runCount: null,
+            });
 
             // OpenCode 1.15 has emitted this exact nested-object-as-JSON-string
             // shape. Decode it at the MCP boundary rather than failing a task

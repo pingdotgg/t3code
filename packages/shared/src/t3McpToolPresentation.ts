@@ -44,6 +44,7 @@ const T3_MCP_TOOLS: Record<
     displayName: "Delete a scheduled task",
     summaryAction: "schedule-delete",
   },
+  run_scheduled_task_now: { displayName: "Run a scheduled task now" },
   create_threads: { displayName: "Create T3 threads", summaryAction: "thread-create" },
   t3_thread_start: { displayName: "Start a T3 thread", summaryAction: "thread-create" },
   t3_thread_list: { displayName: "List T3 threads", summaryAction: "thread-list" },

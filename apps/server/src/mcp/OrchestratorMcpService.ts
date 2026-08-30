@@ -21,6 +21,8 @@ import {
   type OrchestratorMcpDeleteScheduledTaskResult,
   type OrchestratorMcpListScheduledTasksResult,
   type OrchestratorMcpRuntimeMode,
+  type OrchestratorMcpRunScheduledTaskNowInput,
+  type OrchestratorMcpRunScheduledTaskNowResult,
   type OrchestratorMcpScheduledTask,
   type OrchestratorMcpScheduleTaskInput,
   type OrchestratorMcpScheduleTaskResult,
@@ -71,7 +73,10 @@ import {
   ThreadManagementService,
 } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
-import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
+import {
+  type ScheduledTaskManualRunError,
+  ScheduledTaskService,
+} from "../scheduledTasks/ScheduledTaskService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -126,6 +131,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDeleteScheduledTaskInput,
   ) => Effect.Effect<OrchestratorMcpDeleteScheduledTaskResult, OrchestratorMcpFailure>;
+  readonly runScheduledTaskNow: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpRunScheduledTaskNowInput,
+  ) => Effect.Effect<OrchestratorMcpRunScheduledTaskNowResult, OrchestratorMcpFailure>;
   readonly listThreads: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadListInput,
@@ -179,6 +188,22 @@ function threadManagementFailure(error: ThreadManagementError): OrchestratorMcpF
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function scheduledTaskManualRunFailure(error: ScheduledTaskManualRunError): OrchestratorMcpFailure {
+  switch (error._tag) {
+    case "ScheduledTaskManualRunNotFoundError":
+    case "ScheduledTaskManualRunScopeError":
+      return failure("task_not_found", error.message);
+    case "ScheduledTaskManualRunRuntimeCeilingError":
+      return failure("runtime_mode_escalation_denied", error.message);
+    case "ScheduledTaskManualRunInteractionCeilingError":
+      return failure("interaction_mode_escalation_denied", error.message);
+    case "ScheduledTaskManualRunConflictError":
+      return failure("invalid_request", error.message);
+    case "ScheduledTaskError":
+      return failure("orchestration_error", error.message);
+  }
 }
 
 /**
@@ -1124,6 +1149,54 @@ const make = Effect.gen(function* () {
             ),
           );
         return { scheduledTaskId: existing.id, deleted: true };
+      }),
+    runScheduledTaskNow: (scope, input) =>
+      Effect.gen(function* () {
+        yield* requireCapability(scope);
+        const parent = yield* loadProjection(scope.threadId);
+        const commandId = stableCommandId({
+          scope,
+          requestKey: input.clientRequestId,
+          operation: "run-scheduled-task-now",
+        });
+        const operation = `run-scheduled-task-now:${input.scheduledTaskId}`;
+        const result = yield* scheduledTasks
+          .runNowIdempotent({
+            id: input.scheduledTaskId,
+            commandId,
+            messageId: stableOperationMessageId({
+              scope,
+              requestKey: input.clientRequestId,
+              operation,
+            }),
+            unboundThreadId: stableThreadId({
+              scope,
+              requestKey: `${input.clientRequestId}:${input.scheduledTaskId}`,
+              index: 0,
+            }),
+            projectId: parent.thread.projectId,
+            policyCeiling: {
+              callerThreadId: scope.threadId,
+              runtimeMode: parent.thread.runtimeMode,
+              interactionMode: parent.thread.interactionMode,
+            },
+          })
+          .pipe(Effect.mapError(scheduledTaskManualRunFailure));
+        return {
+          scheduledTaskId: input.scheduledTaskId,
+          threadId: result.threadId,
+          messageId: result.messageId,
+          runId: result.runId,
+          status: result.status,
+          replayed: result.replayed,
+          receipt: {
+            commandId: result.receipt.commandId,
+            acceptedAt: DateTime.formatIso(result.receipt.acceptedAt),
+            resultSequence: result.receipt.resultSequence,
+          },
+          nextRunAt: result.task?.nextRunAt ?? null,
+          runCount: result.task?.runCount ?? null,
+        } satisfies OrchestratorMcpRunScheduledTaskNowResult;
       }),
     capabilities: (scope) =>
       Effect.gen(function* () {
