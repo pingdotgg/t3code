@@ -101,6 +101,9 @@ const deletionRaceProjectId = ProjectId.make("project:mcp-orchestrator-delete-ra
 const deletionRaceParentThreadId = ThreadId.make("thread:mcp-orchestrator-delete-race-parent");
 const ownershipRaceParentThreadId = ThreadId.make("thread:mcp-orchestrator-ownership-race-parent");
 const lifecycleRaceParentThreadId = ThreadId.make("thread:mcp-orchestrator-lifecycle-race-parent");
+const missingRootReplayThreadId = ThreadId.make(
+  "thread:mcp:mcp-provider-session-parent:create-root-replay-after-removal:0",
+);
 const targetProjectId = ProjectId.make("project:mcp-orchestrator-target");
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
@@ -533,6 +536,8 @@ describe("orchestrator MCP toolkit", () => {
           );
           const missingWorkspaceSetupEntered = yield* Deferred.make<void>();
           const allowMissingWorkspaceSetup = yield* Deferred.make<void>();
+          const missingRootSetupEntered = yield* Deferred.make<void>();
+          const allowMissingRootSetup = yield* Deferred.make<void>();
           const targetWorkspace = yield* checkpointWorkspace("orchestrator-mcp-target");
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
@@ -882,7 +887,12 @@ describe("orchestrator MCP toolkit", () => {
                           Effect.andThen(Deferred.await(allowMissingWorkspaceSetup)),
                           Effect.as({ status: "no-script" } as const),
                         )
-                      : Effect.succeed({ status: "no-script" }),
+                      : input.threadId === missingRootReplayThreadId
+                        ? Deferred.succeed(missingRootSetupEntered, undefined).pipe(
+                            Effect.andThen(Deferred.await(allowMissingRootSetup)),
+                            Effect.as({ status: "no-script" } as const),
+                          )
+                        : Effect.succeed({ status: "no-script" }),
                 }),
                 Layer.mock(TextGeneration.TextGeneration)({}),
                 ServerSettings.layerTest({}),
@@ -2442,6 +2452,53 @@ describe("orchestrator MCP toolkit", () => {
               );
               return original;
             }).pipe(Effect.ensuring(Deferred.succeed(allowMissingWorkspaceSetup, undefined)));
+
+            const missingRootReplayKey = "create-root-replay-after-removal";
+            const missingRootInput = {
+              clientRequestId: missingRootReplayKey,
+              threads: [
+                {
+                  projectId: targetProjectId,
+                  title: "Root replay",
+                  prompt: "Replay this accepted root launch after its workspace disappears.",
+                  workspaceStrategy: { type: "root" },
+                },
+              ],
+            } as const;
+            yield* Effect.gen(function* () {
+              const createCall = yield* invoke("create_threads", missingRootInput);
+              expect(createCall.isError).toBe(false);
+              const createdRootResult = yield* decodeCreateThreadsResult(
+                createCall.structuredContent,
+              ).pipe(Effect.orDie);
+              const createdRoot = createdRootResult.threads[0]!;
+              expect(createdRoot.threadId).toBe(missingRootReplayThreadId);
+              const acceptedRootProjection = yield* orchestrator.getThreadProjection(
+                createdRoot.threadId,
+              );
+              const acceptedRootBranch = acceptedRootProjection.thread.branch;
+              expect(acceptedRootBranch).not.toBeNull();
+              yield* Deferred.await(missingRootSetupEntered);
+              const movedTargetWorkspace = `${targetWorkspace}-root-temporarily-missing`;
+              yield* Effect.gen(function* () {
+                yield* fileSystem.rename(targetWorkspace, movedTargetWorkspace);
+                const replayCall = yield* invoke("create_threads", missingRootInput);
+                expect(replayCall.isError).toBe(false);
+                const replayedRootResult = yield* decodeCreateThreadsResult(
+                  replayCall.structuredContent,
+                ).pipe(Effect.orDie);
+                const replayedRoot = replayedRootResult.threads[0]!;
+                expect(replayedRoot).toEqual(createdRoot);
+                const projection = yield* orchestrator.getThreadProjection(createdRoot.threadId);
+                expect(projection.messages).toHaveLength(1);
+                expect(projection.thread.worktreePath).toBeNull();
+                expect(projection.thread.branch).toBe(acceptedRootBranch);
+              }).pipe(
+                Effect.ensuring(
+                  fileSystem.rename(movedTargetWorkspace, targetWorkspace).pipe(Effect.orDie),
+                ),
+              );
+            }).pipe(Effect.ensuring(Deferred.succeed(allowMissingRootSetup, undefined)));
 
             const conflictingReplayCall = yield* invoke("create_threads", {
               clientRequestId: missingWorkspaceReplayKey,

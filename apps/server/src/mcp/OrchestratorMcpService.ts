@@ -1732,53 +1732,6 @@ const make = Effect.gen(function* () {
                   `clientRequestId was already accepted for a different project at thread ${index + 1}.`,
                 );
               }
-              const mayReplayDurableRoot = yield* Effect.gen(function* () {
-                if (
-                  Option.isNone(acceptedProjection) ||
-                  acceptedProjection.value.thread.worktreePath !== null ||
-                  request.workspaceStrategy?.type === "new_worktree"
-                ) {
-                  return false;
-                }
-                if (request.prompt === undefined) return true;
-                const messageCommandId = CommandId.make(`${commandId}:initial-message`);
-                const messageReceipt = yield* threadManagement
-                  .withProjectCreationAdmission(
-                    { projectId, commandId: messageCommandId },
-                    (receipt) => Effect.succeed(receipt),
-                  )
-                  .pipe(
-                    Effect.mapError(() =>
-                      failure(
-                        "orchestration_error",
-                        `Unable to read the accepted initial message for thread ${index + 1}.`,
-                      ),
-                    ),
-                  );
-                if (
-                  Option.isSome(messageReceipt) &&
-                  (messageReceipt.value.commandType !== "message.dispatch" ||
-                    messageReceipt.value.threadId !== threadId)
-                ) {
-                  return yield* failure(
-                    "invalid_request",
-                    `clientRequestId conflicts with an existing initial message for thread ${index + 1}.`,
-                  );
-                }
-                if (Option.isNone(messageReceipt) || messageReceipt.value.status !== "accepted") {
-                  return false;
-                }
-                const initialMessage = acceptedProjection.value.messages.find(
-                  (message) => message.id === initialMessageId,
-                );
-                if (initialMessage?.runId === null || initialMessage?.runId === undefined) {
-                  return false;
-                }
-                const initialRun = acceptedProjection.value.runs.find(
-                  (run) => run.id === initialMessage.runId,
-                );
-                return initialRun !== undefined && initialRun.status !== "preparing";
-              });
               const target = Option.isSome(acceptedProjection)
                 ? { modelSelection: acceptedProjection.value.thread.modelSelection }
                 : Option.isSome(launchReceipt)
@@ -1829,18 +1782,12 @@ const make = Effect.gen(function* () {
                           ? {}
                           : { startFromOrigin: request.workspaceStrategy.startFromOrigin }),
                       }
-                    : mayReplayDurableRoot
-                      ? {
-                          type: "root",
-                          ...(acceptedProjection.value.thread.branch === null
-                            ? {}
-                            : { branch: acceptedProjection.value.thread.branch }),
-                        }
-                      : yield* resolveLaunchWorkspace(
-                          parent,
-                          yield* loadLaunchProject(projectId),
-                          request.workspaceStrategy,
-                        )
+                    : {
+                        type: "root",
+                        ...(acceptedProjection.value.thread.branch === null
+                          ? {}
+                          : { branch: acceptedProjection.value.thread.branch }),
+                      }
                 : Option.isSome(launchReceipt)
                   ? { type: "root" }
                   : yield* resolveLaunchWorkspace(
