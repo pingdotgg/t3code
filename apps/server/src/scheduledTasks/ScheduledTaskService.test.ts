@@ -74,6 +74,9 @@ interface HarnessOptions {
   readonly mapThreadManagement?: (
     service: ThreadManagement.ThreadManagementService["Service"],
   ) => ThreadManagement.ThreadManagementService["Service"];
+  readonly mapThreadLaunch?: (
+    service: ThreadLaunch.ThreadLaunchService["Service"],
+  ) => ThreadLaunch.ThreadLaunchService["Service"];
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -135,10 +138,20 @@ function makeHarness(options: HarnessOptions = {}) {
   const launches = ThreadLaunch.layer.pipe(
     Layer.provide(Layer.mergeAll(externalServices, threads, receipts, IdAllocator.layer)),
   );
+  const schedulerLaunches =
+    options.mapThreadLaunch === undefined
+      ? launches
+      : Layer.effect(
+          ThreadLaunch.ThreadLaunchService,
+          Effect.gen(function* () {
+            const service = yield* ThreadLaunch.ThreadLaunchService;
+            return ThreadLaunch.ThreadLaunchService.of(options.mapThreadLaunch!(service));
+          }),
+        ).pipe(Layer.provide(launches));
   const scheduler = ScheduledTasks.layer.pipe(
-    Layer.provide(Layer.mergeAll(database, launches, schedulerThreads)),
+    Layer.provide(Layer.mergeAll(database, schedulerLaunches, schedulerThreads)),
   );
-  return Layer.mergeAll(database, orchestrator, threads, launches, scheduler).pipe(
+  return Layer.mergeAll(database, orchestrator, threads, schedulerLaunches, scheduler).pipe(
     Layer.provideMerge(NodeServices.layer),
   );
 }
@@ -516,6 +529,69 @@ describe("ScheduledTaskService.runNowIdempotent", () => {
         }),
       );
     },
+  );
+
+  it.effect("resumes an accepted unbound create without counting another schedule run", () =>
+    Effect.gen(function* () {
+      let failAfterCreate = true;
+      const harness = makeHarness({
+        mapThreadLaunch: (service) =>
+          ThreadLaunch.ThreadLaunchService.of({
+            launch: (input) =>
+              failAfterCreate
+                ? Effect.gen(function* () {
+                    failAfterCreate = false;
+                    const { initialMessage: _initialMessage, ...createOnly } = input;
+                    yield* service.launch(createOnly);
+                    return yield* new ThreadLaunch.ThreadLaunchError({
+                      operation: "dispatch-message",
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+                      cause: "Simulated failure after durable thread creation.",
+                    });
+                  })
+                : service.launch(input),
+          }),
+      });
+
+      yield* Effect.gen(function* () {
+        const scheduler = yield* ScheduledTasks.ScheduledTaskService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        yield* createThread({
+          commandId: "command:caller:partial-create-resume",
+          threadId: callerThreadId,
+        });
+        const taskId = ScheduledTaskId.make("scheduled-task:partial-create-resume");
+        const targetThreadId = ThreadId.make("thread:scheduled-run-now:partial-create-resume");
+        const input = manualRunInput({
+          taskId,
+          key: "partial-create-resume",
+          unboundThreadId: targetThreadId,
+        });
+        yield* scheduler.upsert(taskInput({ id: taskId, threadId: null }));
+
+        const firstFailure = yield* scheduler.runNowIdempotent(input).pipe(Effect.flip);
+        expect(firstFailure._tag).toBe("ScheduledTaskError");
+        const afterFailure = (yield* scheduler.list()).tasks.find((task) => task.id === taskId);
+        expect(afterFailure).toMatchObject({ runCount: 1, lastRunStatus: "failed" });
+        expect((yield* threads.getThreadProjection(targetThreadId)).messages).toHaveLength(0);
+
+        const resumed = yield* scheduler.runNowIdempotent(input);
+        expect(resumed).toMatchObject({
+          threadId: targetThreadId,
+          messageId: input.messageId,
+          replayed: false,
+          receipt: { commandType: "message.dispatch", status: "accepted" },
+        });
+        expect(resumed.task).toMatchObject({
+          runCount: 1,
+          lastRunStatus: "failed",
+          nextRunAt: afterFailure?.nextRunAt,
+        });
+        expect((yield* threads.getThreadProjection(targetThreadId)).messages).toHaveLength(1);
+      }).pipe(Effect.provide(harness), Effect.scoped);
+    }),
   );
 
   it.effect("serializes active admission and rejects a caller downgrade before V2 acceptance", () =>

@@ -95,6 +95,11 @@ export interface ScheduledTaskManualRunResult {
   readonly receipt: CommandReceiptV2;
 }
 
+type ScheduledTaskManualRunReceiptLookup =
+  | { readonly type: "none" }
+  | { readonly type: "accepted"; readonly result: ScheduledTaskManualRunResult }
+  | { readonly type: "accepted_unbound_create" };
+
 export class ScheduledTaskManualRunCallerScopeError extends Schema.TaggedErrorClass<ScheduledTaskManualRunCallerScopeError>()(
   "ScheduledTaskManualRunCallerScopeError",
   { taskId: ScheduledTaskId, callerThreadId: ThreadId, projectId: ProjectId },
@@ -548,7 +553,7 @@ export const layer = Layer.effect(
         if (receipt === undefined) {
           const primaryReceipt = yield* readCommandReceipt(input.id, input.commandId);
           if (Option.isNone(primaryReceipt)) {
-            return Option.none<ScheduledTaskManualRunResult>();
+            return { type: "none" } satisfies ScheduledTaskManualRunReceiptLookup;
           }
           if (primaryReceipt.value.status === "rejected") {
             return yield* taskError("This manual run request was previously rejected.", {
@@ -565,8 +570,11 @@ export const layer = Layer.effect(
             }
             // Thread creation committed, but the scheduled prompt did not. Let
             // ThreadLaunchService replay the create receipt and finish the same
-            // task-specific initial message.
-            return Option.none<ScheduledTaskManualRunResult>();
+            // task-specific initial message without recording another schedule
+            // attempt.
+            return {
+              type: "accepted_unbound_create",
+            } satisfies ScheduledTaskManualRunReceiptLookup;
           }
           receipt = primaryReceipt.value;
         }
@@ -627,15 +635,18 @@ export const layer = Layer.effect(
             messageId: input.messageId,
           });
         }
-        return Option.some({
-          task: null,
-          threadId: target.thread.id,
-          messageId: message.id,
-          runId: run.id,
-          status: run.status,
-          replayed: true,
-          receipt,
-        } satisfies ScheduledTaskManualRunResult);
+        return {
+          type: "accepted",
+          result: {
+            task: null,
+            threadId: target.thread.id,
+            messageId: message.id,
+            runId: run.id,
+            status: run.status,
+            replayed: true,
+            receipt,
+          },
+        } satisfies ScheduledTaskManualRunReceiptLookup;
       },
     );
 
@@ -829,6 +840,7 @@ export const layer = Layer.effect(
       task: ScheduledTask,
       trigger: "scheduled" | "manual",
       manualRun?: ScheduledTaskManualRunInput,
+      resumeAcceptedManualCreate = false,
     ) {
       const reserved = yield* Ref.modify(activeRuns, (active) => {
         if (active.has(task.id)) return [false, active] as const;
@@ -889,8 +901,10 @@ export const layer = Layer.effect(
               return { task: active, manualRun: null, dispatchError: null };
             }
 
-            yield* markRunning(active.id, startedAtIso);
-            yield* notifyChanged;
+            if (!resumeAcceptedManualCreate) {
+              yield* markRunning(active.id, startedAtIso);
+              yield* notifyChanged;
+            }
 
             const fireKey = `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`;
             const commandId = manualRun?.commandId ?? CommandId.make(`scheduled-task:${fireKey}`);
@@ -968,16 +982,18 @@ export const layer = Layer.effect(
             const lastRunError = runSucceeded ? null : errorMessage(result.cause);
             const current = yield* findTask(task.id);
             const scheduleSource = current ?? task;
-            const completed: ScheduledTask = {
-              ...scheduleSource,
-              updatedAt: iso(completedAt),
-              lastRunAt: startedAtIso,
-              nextRunAt: nextRunAt(scheduleSource, completedAt),
-              lastRunStatus,
-              lastRunError,
-              runCount: scheduleSource.runCount + 1,
-            };
-            if (current !== null) {
+            const completed: ScheduledTask = resumeAcceptedManualCreate
+              ? scheduleSource
+              : {
+                  ...scheduleSource,
+                  updatedAt: iso(completedAt),
+                  lastRunAt: startedAtIso,
+                  nextRunAt: nextRunAt(scheduleSource, completedAt),
+                  lastRunStatus,
+                  lastRunError,
+                  runCount: scheduleSource.runCount + 1,
+                };
+            if (current !== null && !resumeAcceptedManualCreate) {
               yield* markCompleted({
                 id: task.id,
                 completedAtIso: completed.updatedAt,
@@ -993,7 +1009,11 @@ export const layer = Layer.effect(
               manualRun: runSucceeded ? result.value : null,
               dispatchError: runSucceeded ? null : result.cause,
             };
-          }).pipe(Effect.onError((cause) => releaseStuckRun(task, errorMessage(cause)))),
+          }).pipe(
+            Effect.onError((cause) =>
+              resumeAcceptedManualCreate ? Effect.void : releaseStuckRun(task, errorMessage(cause)),
+            ),
+          ),
         )
         .pipe(
           Effect.ensuring(
@@ -1279,14 +1299,19 @@ export const layer = Layer.effect(
         input.commandId,
         Effect.gen(function* () {
           const replay = yield* findAcceptedManualRun(input);
-          if (Option.isSome(replay)) return replay.value;
+          if (replay.type === "accepted") return replay.result;
           const task = yield* findTask(input.id);
           if (task === null) {
             return yield* new ScheduledTaskManualRunNotFoundError({
               taskId: input.id,
             });
           }
-          const outcome = yield* runTask(task, "manual", input);
+          const outcome = yield* runTask(
+            task,
+            "manual",
+            input,
+            replay.type === "accepted_unbound_create",
+          );
           if (outcome.dispatchError !== null) {
             return yield* taskError("Could not dispatch schedule task run.", {
               taskId: input.id,
