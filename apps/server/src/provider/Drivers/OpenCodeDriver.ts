@@ -30,6 +30,7 @@ import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
 import {
   checkOpenCodeProviderStatus,
   makePendingOpenCodeProvider,
+  openCodeSkillsToServerProviderSkills,
 } from "../Layers/OpenCodeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -163,6 +164,41 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
         Effect.provideService(OpenCodeRuntime, openCodeRuntime),
       );
+      const loadSkillsForCwd = (cwd: string) =>
+        effectiveConfig.serverUrl.trim().length > 0
+          ? Effect.scoped(
+              Effect.gen(function* () {
+                const server = yield* openCodeRuntime.connectToOpenCodeServer({
+                  binaryPath: effectiveConfig.binaryPath,
+                  directory: cwd,
+                  serverUrl: effectiveConfig.serverUrl,
+                  environment: processEnv,
+                });
+                const client = openCodeRuntime.createOpenCodeSdkClient({
+                  baseUrl: server.url,
+                  directory: cwd,
+                  ...(effectiveConfig.serverPassword
+                    ? { serverPassword: effectiveConfig.serverPassword }
+                    : {}),
+                });
+                return openCodeRuntime.loadOpenCodeSkills
+                  ? yield* openCodeRuntime.loadOpenCodeSkills(client)
+                  : (yield* openCodeRuntime.loadOpenCodeInventory(client)).skills;
+              }),
+            )
+          : openCodeRuntime.loadSkillsFromCli
+            ? openCodeRuntime.loadSkillsFromCli({
+                binaryPath: effectiveConfig.binaryPath,
+                cwd,
+                environment: processEnv,
+              })
+            : openCodeRuntime
+                .loadInventoryFromCli({
+                  binaryPath: effectiveConfig.binaryPath,
+                  cwd,
+                  environment: processEnv,
+                })
+                .pipe(Effect.map((inventory) => inventory.skills));
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>(
@@ -204,6 +240,25 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         accentColor,
         enabled,
         snapshot,
+        snapshotForCwd: (cwd) =>
+          Effect.all([
+            snapshot.getSnapshot,
+            loadSkillsForCwd(cwd).pipe(Effect.timeout("20 seconds")),
+          ]).pipe(
+            Effect.map(([machineSnapshot, skills]) => ({
+              ...machineSnapshot,
+              skills: openCodeSkillsToServerProviderSkills(skills),
+            })),
+            Effect.mapError(
+              (cause) =>
+                new ProviderDriverError({
+                  driver: DRIVER_KIND,
+                  instanceId,
+                  detail: `Failed to probe OpenCode skills for '${cwd}'`,
+                  cause,
+                }),
+            ),
+          ),
         adapter,
         textGeneration,
       } satisfies ProviderInstance;

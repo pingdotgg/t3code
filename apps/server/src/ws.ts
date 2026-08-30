@@ -1631,7 +1631,22 @@ const makeWsRpcLayer = (
             (input.instanceId !== undefined
               ? providerRegistry.refreshInstance(input.instanceId)
               : providerRegistry.refresh()
-            ).pipe(Effect.map((providers) => ({ providers }))),
+            ).pipe(
+              Effect.flatMap((providers) =>
+                input.cwd !== undefined && providerRegistry.refreshWorkspaceSnapshot
+                  ? Effect.forEach(
+                      providers,
+                      (provider) =>
+                        providerRegistry.refreshWorkspaceSnapshot!({
+                          instanceId: provider.instanceId,
+                          cwd: input.cwd!,
+                        }),
+                      { concurrency: "unbounded" },
+                    ).pipe(Effect.map((providerLists) => providerLists.at(-1) ?? providers))
+                  : Effect.succeed(providers),
+              ),
+              Effect.map((providers) => ({ providers })),
+            ),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.providerUploadFeedback]: (input) =>

@@ -974,6 +974,14 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   });
 });
 
+export const probeClaudeWorkspaceSkills = Effect.fn("probeClaudeWorkspaceSkills")(function* (
+  claudeSettings: ClaudeSettings,
+  environment: NodeJS.ProcessEnv | undefined,
+  cwd: string,
+) {
+  return yield* discoverClaudeSkills(claudeSettings, cwd, environment ?? process.env);
+});
+
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 export const makePendingClaudeProvider = (

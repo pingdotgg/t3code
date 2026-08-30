@@ -185,6 +185,7 @@ import {
   ServerSignalProcessResult,
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
+  TrimmedNonEmptyString,
 } from "./server.ts";
 import {
   ResourceTelemetryHistory,
@@ -366,6 +367,7 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
      * refreshes.
      */
     instanceId: Schema.optional(ProviderInstanceId),
+    cwd: Schema.optional(TrimmedNonEmptyString),
   }),
   success: ServerProviderUpdatedPayload,
   error: EnvironmentAuthorizationError,
