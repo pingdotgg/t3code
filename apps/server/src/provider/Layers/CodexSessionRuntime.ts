@@ -1788,6 +1788,23 @@ export const makeCodexSessionRuntime = (
         // become synthetic collabAgent events (review finding). The
         // suppressor still covers UNREGISTERED children.
         if (yield* interceptCollabChildNotification(notification)) {
+          // A root-side subAgentActivity completion is meaningful parent-turn
+          // progress, but interception consumes it before the general guard
+          // reset below. Reset here so waits completed before a child activity
+          // cannot contribute to the next empty-wait sequence. Keep foreign
+          // child activity isolated from the root watchdog.
+          const interceptedSession = yield* Ref.get(sessionRef);
+          const interceptedProviderThreadId = currentProviderThreadId(interceptedSession);
+          const interceptedRootConversation =
+            notificationProviderThreadId === undefined ||
+            notificationProviderThreadId === interceptedProviderThreadId;
+          if (interceptedRootConversation && isMeaningfulItemCompletion(notification)) {
+            yield* Ref.set(emptyCollabWaitGuardRef, {
+              turnId: route.turnId ?? interceptedSession.activeTurnId ?? null,
+              completedWaits: 0,
+              interruptRequested: false,
+            });
+          }
           yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
           return;
         }

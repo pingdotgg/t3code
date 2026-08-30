@@ -874,6 +874,52 @@ describe("CodexSessionRuntime collab integration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live("restarts empty-wait counting after root child activity", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        notifications: [
+          collabWaitCompletion({ id: "empty-wait-before-child-activity-1" }),
+          collabWaitCompletion({ id: "empty-wait-before-child-activity-2" }),
+          capturedStartedActivity(),
+          collabWaitCompletion({ id: "empty-wait-after-child-activity-1" }),
+          collabWaitCompletion({ id: "empty-wait-after-child-activity-2" }),
+        ],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const interruptsPath = `${scriptPath}.interrupts`;
+      NodeFS.rmSync(interruptsPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(interruptsPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-empty-wait-reset-by-child-activity"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const completedFiber = yield* runtime.events.pipe(
+        Stream.filter((event) => event.method === "turn/completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "reset empty waits after child activity" });
+      yield* Fiber.join(completedFiber).pipe(Effect.timeout("2 seconds"));
+      assert.isFalse(NodeFS.existsSync(interruptsPath));
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("does not interrupt empty waits while a registered child turn is live", () =>
     Effect.gen(function* () {
       const captured = wireFixture.notifications;
