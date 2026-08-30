@@ -73,6 +73,7 @@ interface HarnessOptions {
   readonly getProjectById?: ProjectService.ProjectService["Service"]["getById"];
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
+  readonly currentBranch?: GitWorkflow.GitWorkflowService["Service"]["currentBranch"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
   readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
@@ -112,6 +113,7 @@ function makeHarness(options: HarnessOptions = {}) {
   const renameBranch = vi.fn(
     options.renameBranch ?? ((input) => Effect.succeed({ branch: input.newBranch })),
   );
+  const currentBranch = vi.fn(options.currentBranch ?? (() => Effect.succeed("main")));
   const runSetup = vi.fn(
     options.runSetup ?? (() => Effect.succeed({ status: "no-script" as const })),
   );
@@ -136,6 +138,7 @@ function makeHarness(options: HarnessOptions = {}) {
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
+      currentBranch,
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       remoteExists: () => Effect.succeed(true),
@@ -182,12 +185,75 @@ function makeHarness(options: HarnessOptions = {}) {
   return {
     layer: Layer.mergeAll(launch, threadManagement, titleRegeneration, outbox, database),
     createWorktree,
+    currentBranch,
     renameBranch,
     generateBranchName,
     generateThreadTitle,
     runSetup,
   };
 }
+
+it.effect("rechecks an expected branch immediately before launch acceptance", () =>
+  Effect.gen(function* () {
+    const branch = yield* Ref.make<string | null>("main");
+    const branchReadEntered = yield* Deferred.make<void>();
+    const allowBranchRead = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      currentBranch: () =>
+        Deferred.succeed(branchReadEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(allowBranchRead)),
+          Effect.andThen(Ref.get(branch)),
+        ),
+    });
+
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+        command: "command:launch:expected-branch-race",
+        thread: "thread:launch:expected-branch-race",
+        workspace: { type: "root", branch: "main", expectedBranch: "main" },
+      });
+      const launchFiber = yield* Effect.forkChild(launches.launch(input));
+
+      yield* Deferred.await(branchReadEntered);
+      yield* Ref.set(branch, "feature");
+      yield* Deferred.succeed(allowBranchRead, undefined);
+
+      const error = yield* Fiber.join(launchFiber).pipe(Effect.flip);
+      assert.equal(error.operation, "validate-workspace");
+      assert.match(String(error.cause), /branch 'feature'.*requested branch 'main'/u);
+      assert.isTrue(
+        Exit.isFailure(yield* threads.getThreadProjection(input.threadId).pipe(Effect.exit)),
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("replays an accepted launch before rechecking mutable branch state", () =>
+  Effect.gen(function* () {
+    const branch = yield* Ref.make<string | null>("main");
+    const harness = makeHarness({ currentBranch: () => Ref.get(branch) });
+
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const input = launchInput({
+        command: "command:launch:expected-branch-replay",
+        thread: "thread:launch:expected-branch-replay",
+        workspace: { type: "root", branch: "main", expectedBranch: "main" },
+      });
+
+      const first = yield* launches.launch(input);
+      yield* Ref.set(branch, "feature");
+      const replay = yield* launches.launch(input);
+
+      assert.isFalse(first.resumed);
+      assert.isTrue(replay.resumed);
+      assert.equal(replay.threadId, first.threadId);
+      assert.equal(harness.currentBranch.mock.calls.length, 1);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
 
 function launchInput(input: {
   readonly command: string;

@@ -37,11 +37,16 @@ import { randomUuidV4 } from "./RandomUuid.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
-  | { readonly type: "root"; readonly branch?: string | undefined }
+  | {
+      readonly type: "root";
+      readonly branch?: string | undefined;
+      readonly expectedBranch?: string | undefined;
+    }
   | {
       readonly type: "existing_worktree";
       readonly worktreePath: string;
       readonly branch?: string | undefined;
+      readonly expectedBranch?: string | undefined;
     }
   | {
       readonly type: "worktree";
@@ -90,6 +95,7 @@ export class ThreadLaunchError extends Schema.TaggedErrorClass<ThreadLaunchError
       "generate-metadata",
       "provision-worktree",
       "run-setup-script",
+      "validate-workspace",
       "create-thread",
       "update-thread",
       "dispatch-message",
@@ -460,24 +466,48 @@ export const make = Effect.gen(function* () {
                       .thread({ projectId: input.projectId })
                       .pipe(Effect.mapError(mapError(input, "create-thread"))));
 
+              let initialBranch = input.workspaceStrategy.branch ?? null;
               if (Option.isNone(launchReceipt)) {
-                yield* projects.getById(input.projectId).pipe(
+                const project = yield* projects.getById(input.projectId).pipe(
                   Effect.mapError(mapError(input, "resolve-project")),
                   Effect.flatMap(
                     Option.match({
                       onNone: () =>
                         Effect.fail(mapError(input, "resolve-project")("Project not found.")),
-                      onSome: () => Effect.void,
+                      onSome: Effect.succeed,
                     }),
                   ),
                 );
+                if (
+                  input.workspaceStrategy.type !== "worktree" &&
+                  input.workspaceStrategy.expectedBranch !== undefined
+                ) {
+                  const cwd =
+                    input.workspaceStrategy.type === "existing_worktree"
+                      ? input.workspaceStrategy.worktreePath
+                      : project.workspaceRoot;
+                  const currentBranch = yield* git
+                    .currentBranch(cwd)
+                    .pipe(
+                      Effect.mapError(mapError(input, "validate-workspace", candidateThreadId)),
+                    );
+                  if (currentBranch !== input.workspaceStrategy.expectedBranch) {
+                    return yield* mapError(
+                      input,
+                      "validate-workspace",
+                      candidateThreadId,
+                    )(
+                      `Workspace '${cwd}' is on ${currentBranch === null ? "a detached HEAD" : `branch '${currentBranch}'`}, not requested branch '${input.workspaceStrategy.expectedBranch}'.`,
+                    );
+                  }
+                  initialBranch = currentBranch;
+                }
               }
 
               if (input.reuseExistingThread === true && Option.isNone(launchReceipt)) {
                 yield* validateReusableThread(input, candidateThreadId);
               }
 
-              const initialBranch = input.workspaceStrategy.branch ?? null;
               const initialWorktreePath =
                 input.workspaceStrategy.type === "existing_worktree"
                   ? input.workspaceStrategy.worktreePath

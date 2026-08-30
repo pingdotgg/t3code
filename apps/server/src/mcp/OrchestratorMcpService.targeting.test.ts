@@ -503,13 +503,15 @@ describe("OrchestratorMcpService project targeting", () => {
               type: "existing_worktree",
               worktreePath: canonicalSiblingWorktree,
               branch: "feature",
+              expectedBranch: "feature",
             },
             {
               type: "existing_worktree",
               worktreePath: canonicalSiblingWorktree,
               branch: "feature",
+              expectedBranch: "feature",
             },
-            { type: "root", branch: "main" },
+            { type: "root", branch: "main", expectedBranch: "main" },
             { type: "root", branch: "main" },
           ],
         );

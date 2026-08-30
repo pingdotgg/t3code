@@ -976,6 +976,9 @@ const make = Effect.gen(function* () {
           type: "existing_worktree",
           worktreePath: workspace.canonicalWorktreeRoot!,
           ...(workspace.branch === null ? {} : { branch: workspace.branch }),
+          ...(explicitExisting?.branch === undefined
+            ? {}
+            : { expectedBranch: explicitExisting.branch }),
         };
       }
       const workspace = yield* inspectLaunchWorkspace(project, project.workspaceRoot, false);
@@ -984,6 +987,7 @@ const make = Effect.gen(function* () {
       return {
         type: "root",
         ...(workspace.branch === null ? {} : { branch: workspace.branch }),
+        ...(expectedBranch === undefined ? {} : { expectedBranch }),
       };
     },
   );
