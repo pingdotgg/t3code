@@ -1091,6 +1091,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       workspaceRefreshKeyRef.current = key;
       return;
     }
+    workspaceRefreshKeyRef.current = key;
     void refreshProviders({
       environmentId,
       input: { instanceId: selectedProviderEntry.instanceId, cwd: gitCwd },
