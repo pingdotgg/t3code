@@ -5,12 +5,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
-import {
-  layer as threadMetadataMcpServiceLayer,
-  ThreadMetadataMcpService,
-} from "./ThreadMetadataMcpService.ts";
+import * as ThreadMetadataMcp from "./ThreadMetadataMcpService.ts";
 
 const threadId = ThreadId.make("thread:metadata-caller");
 const scope: McpInvocationContext.McpInvocationScope = {
@@ -22,14 +19,16 @@ const scope: McpInvocationContext.McpInvocationScope = {
   issuedAt: 1,
 };
 
-function serviceLayer(getThreadShell: ThreadManagementService["Service"]["getThreadShell"]) {
-  return threadMetadataMcpServiceLayer.pipe(
+function serviceLayer(
+  getThreadShell: ThreadManagement.ThreadManagementService["Service"]["getThreadShell"],
+) {
+  return ThreadMetadataMcp.layer.pipe(
     Layer.provide(
       Layer.merge(
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell,
           getThreadProjection: () => Effect.die("projection must not load after shell failure"),
-        } satisfies Partial<ThreadManagementService["Service"]>),
+        } satisfies Partial<ThreadManagement.ThreadManagementService["Service"]>),
         NodeCrypto.layer,
       ),
     ),
@@ -37,7 +36,7 @@ function serviceLayer(getThreadShell: ThreadManagementService["Service"]["getThr
 }
 
 const updateCallingThread = Effect.gen(function* () {
-  const service = yield* ThreadMetadataMcpService;
+  const service = yield* ThreadMetadataMcp.ThreadMetadataMcpService;
   return yield* service.update(scope, {
     action: "rename",
     title: "Renamed thread",
