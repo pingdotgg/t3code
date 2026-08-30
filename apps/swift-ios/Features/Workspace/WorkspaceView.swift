@@ -17,6 +17,22 @@ struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
     }
 }
 
+struct WorkspaceThreadSelection: Equatable {
+    private(set) var selectedID: String?
+    private(set) var lastOpenedID: String?
+
+    var highlightedID: String? { selectedID ?? lastOpenedID }
+
+    mutating func open(_ id: String) {
+        selectedID = id
+        lastOpenedID = id
+    }
+
+    mutating func close() {
+        selectedID = nil
+    }
+}
+
 public struct WorkspaceView: View {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -26,19 +42,21 @@ public struct WorkspaceView: View {
     private let submitNewTask: (NewTaskRequest) async -> FeatureThread?
     private let submitMessage: (FeatureMessageSubmission) async -> Bool
 
-    @State private var selectedThreadID: String?
+    @State private var threadSelection = WorkspaceThreadSelection()
     @State private var selectedProjectID: String?
     @State private var searchText = ""
     @State private var isSearching = false
-    @State private var isSnoozedExpanded = false
-    @State private var isSettledExpanded = true
-    @State private var isArchiveExpanded = false
-    @State private var settledLimit = 12
+    @AppStorage("t3.swiftui.home.snoozedExpanded") private var isSnoozedExpanded = false
+    @AppStorage("t3.swiftui.home.settledExpanded") private var isSettledExpanded = true
+    @AppStorage("t3.swiftui.home.archiveExpanded") private var isArchiveExpanded = false
+    @State private var settledLimit = 10
     @State private var showingNewTask = false
     @State private var newTaskInitialProjectID: String?
     @State private var showingAddProject = false
+    @State private var showingEnvironments = false
     @State private var showingSettings = false
     @State private var renamingThread: FeatureThread?
+    @State private var deletingThread: FeatureThread?
     @State private var renameTitle = ""
     @State private var sidebarBoundaryNow = Date.now
     @State private var preferredCompactColumn = NavigationSplitViewColumn.sidebar
@@ -139,6 +157,19 @@ public struct WorkspaceView: View {
         .sheet(isPresented: $showingAddProject) {
             AddProjectView(model: model)
         }
+        .sheet(isPresented: $showingEnvironments) {
+            NavigationStack {
+                ConnectionsView(model: model)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showingEnvironments = false }
+                        }
+                    }
+            }
+            .presentationDragIndicator(.visible)
+            .onAppear { model.setConnectionManagementPresented(true) }
+            .onDisappear { model.setConnectionManagementPresented(false) }
+        }
         .sheet(isPresented: $showingSettings) {
             SettingsView(model: model)
         }
@@ -158,6 +189,22 @@ public struct WorkspaceView: View {
                 Task { await model.renameThread(thread.id, title: title) }
             }
             .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .alert(
+            "Delete thread?",
+            isPresented: Binding(
+                get: { deletingThread != nil },
+                set: { if !$0 { deletingThread = nil } }
+            ),
+            presenting: deletingThread
+        ) { thread in
+            Button("Delete", role: .destructive) {
+                deletingThread = nil
+                Task { await model.deleteThread(thread.id) }
+            }
+            Button("Cancel", role: .cancel) { deletingThread = nil }
+        } message: { thread in
+            Text("\"\(thread.title)\" and its terminal history will be permanently deleted.")
         }
         .onChange(of: selectedThreadIsAvailable) { _, isAvailable in
             if !isAvailable { closeSelectedThread() }
@@ -206,7 +253,7 @@ public struct WorkspaceView: View {
         .background(T3Colors.background)
         .toolbar(.hidden, for: .navigationBar)
         .onChange(of: selectedProjectID) {
-            settledLimit = 12
+            settledLimit = 10
         }
     }
 
@@ -216,7 +263,8 @@ public struct WorkspaceView: View {
             revision: model.homePresentationRevision,
             query: searchText,
             projectID: selectedProjectID,
-            now: sidebarBoundaryNow
+            now: sidebarBoundaryNow,
+            pullRequestsByThreadID: model.pullRequestsByThreadID
         )
 
         return VStack(spacing: 0) {
@@ -225,8 +273,11 @@ public struct WorkspaceView: View {
                 presentation: presentation,
                 projectFaviconClient: model.client,
                 query: searchText,
-                selectedThreadID: selectedThreadID,
+                selectedThreadID: threadSelection.highlightedID,
                 forceRichRows: dynamicTypeSize.isAccessibilitySize,
+                hapticsEnabled: model.snapshot.settings.hapticsEnabled,
+                settings: model.snapshot.settings,
+                pullRequestsByThreadID: model.pullRequestsByThreadID,
                 isSnoozedExpanded: isSnoozedExpanded,
                 isSettledExpanded: isSettledExpanded,
                 isArchiveExpanded: isArchiveExpanded,
@@ -246,8 +297,8 @@ public struct WorkspaceView: View {
                 onArchive: { thread, archived in
                     Task { await model.setArchived(thread.id, archived: archived) }
                 },
-                onSettle: { thread, settled in
-                    Task { await model.setSettled(thread.id, settled: settled) }
+                onSettle: { thread, settled, completion in
+                    Task { completion(await model.setSettled(thread.id, settled: settled)) }
                 },
                 onSnooze: { thread, until in
                     Task { await model.setSnoozed(thread.id, until: until) }
@@ -256,7 +307,14 @@ public struct WorkspaceView: View {
                     Task { await model.setPinned(thread.id, pinned: pinned) }
                 },
                 onDelete: { thread in
-                    Task { await model.deleteThread(thread.id) }
+                    deletingThread = thread
+                },
+                onPullRequestChange: { threadID, observationIdentity, pullRequest in
+                    model.updatePullRequest(
+                        pullRequest,
+                        threadID: threadID,
+                        observationIdentity: observationIdentity
+                    )
                 }
             )
         }
@@ -341,27 +399,25 @@ public struct WorkspaceView: View {
     @ViewBuilder
     private var connectionBrand: some View {
         if !unreachableEnvironments.isEmpty {
-            HStack(spacing: 7) {
-                Image(systemName: "network.slash")
-                    .font(.system(size: 13, weight: .semibold))
-                Text(unreachableBrandLabel)
-                    .lineLimit(2)
-                    .font(.system(size: 13, weight: .semibold))
-                Button("Reconnect") {
-                    Task { await model.reload() }
+            Button { showingEnvironments = true } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "network.slash")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(unreachableBrandLabel)
+                        .lineLimit(1)
+                        .font(.system(size: 13, weight: .semibold))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
                 }
-                .font(.caption.weight(.bold))
-                .buttonStyle(.plain)
-                .padding(.horizontal, 9)
-                .frame(height: 26)
-                .overlay {
-                    Capsule().stroke(T3Colors.danger.opacity(0.42), lineWidth: 1)
-                }
+                .frame(minHeight: T3Metrics.minimumTapTarget)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             .foregroundStyle(T3Colors.danger)
-            .accessibilityElement(children: .contain)
+            .accessibilityLabel("\(unreachableBrandLabel). Manage environments")
+            .accessibilityIdentifier("sidebar-environments-button")
         } else if let reconnecting = reconnectingEnvironments.first {
-            Button { showingSettings = true } label: {
+            Button { showingEnvironments = true } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "wifi.exclamationmark")
                         .font(.system(size: 13, weight: .semibold))
@@ -373,21 +429,33 @@ public struct WorkspaceView: View {
                 }
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(T3Colors.warning)
+                .frame(minHeight: T3Metrics.minimumTapTarget)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(reconnecting.name) reconnecting")
+            .accessibilityLabel("\(reconnecting.name) reconnecting. Manage environments")
+            .accessibilityIdentifier("sidebar-environments-button")
         } else {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text("T3")
-                    .fontWeight(.bold)
-                    .foregroundStyle(T3Colors.textPrimary)
-                Text("Code")
-                    .fontWeight(.medium)
-                    .foregroundStyle(T3Colors.textSecondary)
+            Button { showingEnvironments = true } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text("T3")
+                        .fontWeight(.bold)
+                        .foregroundStyle(T3Colors.textPrimary)
+                    Text("Code")
+                        .fontWeight(.medium)
+                        .foregroundStyle(T3Colors.textSecondary)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(T3Colors.textTertiary)
+                        .padding(.leading, 2)
+                }
+                .font(.system(size: 16))
+                .frame(minHeight: T3Metrics.minimumTapTarget)
+                .contentShape(Rectangle())
             }
-            .font(.system(size: 16))
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("T3 Code")
+            .buttonStyle(.plain)
+            .accessibilityLabel("T3 Code. Manage environments")
+            .accessibilityIdentifier("sidebar-environments-button")
         }
     }
 
@@ -528,15 +596,17 @@ public struct WorkspaceView: View {
 
     private var unreachableBrandLabel: String {
         if unreachableEnvironments.count == 1 {
-            return "\(unreachableEnvironments[0].name) unreachable"
+            return "\(unreachableEnvironments[0].name) offline"
         }
-        return "\(unreachableEnvironments.count) devices unreachable"
+        return "\(unreachableEnvironments.count) environments offline"
     }
 
     private var nextSidebarBoundary: Date? {
         DailyUXSidebarRefresh.nextBoundary(
             for: model.snapshot.threads,
-            after: sidebarBoundaryNow
+            after: max(sidebarBoundaryNow, .now),
+            settings: model.snapshot.settings,
+            pullRequestsByThreadID: model.pullRequestsByThreadID
         )
     }
 
@@ -545,18 +615,20 @@ public struct WorkspaceView: View {
         return model.snapshot.threads.contains { $0.id == selectedThreadID }
     }
 
+    private var selectedThreadID: String? { threadSelection.selectedID }
+
     private var selectedProjectIsAvailable: Bool {
         guard let selectedProjectID else { return true }
         return model.snapshot.projects.contains { $0.id == selectedProjectID }
     }
 
     private func openThread(_ id: String) {
-        selectedThreadID = id
+        threadSelection.open(id)
         preferredCompactColumn = .detail
     }
 
     private func closeSelectedThread() {
-        selectedThreadID = nil
+        threadSelection.close()
         preferredCompactColumn = .sidebar
     }
 
@@ -608,6 +680,7 @@ public struct WorkspaceView: View {
     private func dismissTransientPresentations() {
         showingNewTask = false
         showingAddProject = false
+        showingEnvironments = false
         showingSettings = false
         renamingThread = nil
     }
@@ -638,12 +711,19 @@ struct HomePresentation {
     let searchResults: [FeatureThread]
     let rowContexts: [String: HomeThreadRowContext]
 
-    init(snapshot: FeatureSnapshot, query: String, projectID: String?, now: Date) {
+    init(
+        snapshot: FeatureSnapshot,
+        query: String,
+        projectID: String?,
+        now: Date,
+        pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation] = [:]
+    ) {
         let index = DailyUXSidebarIndex(
             snapshot: snapshot,
             query: "",
             projectID: projectID,
-            now: now
+            now: now,
+            pullRequestsByThreadID: pullRequestsByThreadID
         )
         let archived = snapshot.threads
             .filter { thread in
@@ -688,7 +768,8 @@ private final class HomePresentationCache {
         revision: UInt64,
         query: String,
         projectID: String?,
-        now: Date
+        now: Date,
+        pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation]
     ) -> HomePresentation {
         let key = Key(
             revision: revision,
@@ -704,7 +785,8 @@ private final class HomePresentationCache {
             snapshot: snapshot,
             query: query,
             projectID: projectID,
-            now: now
+            now: max(now, .now),
+            pullRequestsByThreadID: pullRequestsByThreadID
         )
         cachedKey = key
         cachedPresentation = presentation
@@ -819,6 +901,87 @@ struct HomeThreadRowContext: Equatable {
     }
 }
 
+struct HomeThreadPullRequestPresentation: Equatable {
+    enum State: String {
+        case open
+        case merged
+        case closed
+    }
+
+    let number: Int
+    let state: State
+    let updatedAt: Date?
+
+    var label: String { "#\(number)" }
+
+    var accessibilityLabel: String {
+        "Pull request #\(number), \(state.rawValue)"
+    }
+
+    static func resolve(
+        thread: FeatureThread,
+        status: FeatureSourceControlStatus
+    ) -> Self? {
+        guard let branch = thread.branch?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !branch.isEmpty,
+              status.branch == branch,
+              let pullRequest = status.pullRequest,
+              let state = State(rawValue: pullRequest.state.lowercased()) else {
+            return nil
+        }
+        return Self(
+            number: pullRequest.number,
+            state: state,
+            updatedAt: parseDate(pullRequest.updatedAt)
+        )
+    }
+
+    static func resolve(
+        linkedPullRequest: ThreadLinkedPullRequest,
+        detail: PullRequestDetail
+    ) -> Self? {
+        guard detail.number == linkedPullRequest.number,
+              detail.repository.caseInsensitiveCompare(linkedPullRequest.repository) == .orderedSame,
+              let state = State(rawValue: detail.state.rawValue) else {
+            return nil
+        }
+        return Self(
+            number: detail.number,
+            state: state,
+            updatedAt: parseDate(detail.updatedAt)
+        )
+    }
+
+    private static func parseDate(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+}
+
+extension FeatureThread {
+    var pullRequestObservationIdentity: String? {
+        let environment = environmentID ?? ""
+        if let linkedPullRequest {
+            return [
+                id,
+                environment,
+                projectID,
+                linkedPullRequest.projectId,
+                linkedPullRequest.repository.lowercased(),
+                String(linkedPullRequest.number),
+            ].joined(separator: "\u{0}")
+        }
+        guard let branch = branch?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !branch.isEmpty else {
+            return nil
+        }
+        return [id, environment, projectID, worktreePath ?? "", branch]
+            .joined(separator: "\u{0}")
+    }
+}
+
 struct FeatureThreadRow: View {
     enum Style: Equatable {
         case rich
@@ -828,15 +991,18 @@ struct FeatureThreadRow: View {
     let thread: FeatureThread
     private let context: HomeThreadRowContext
     private let projectFaviconClient: (any FeatureClient)?
+    private let onPullRequestChange: (HomeThreadPullRequestPresentation?) -> Void
     let isSelected: Bool
     let style: Style
     let now: Date
     let allowsMultilineTitle: Bool
+    @State private var pullRequest: HomeThreadPullRequestPresentation?
 
     init(
         thread: FeatureThread,
         context: HomeThreadRowContext,
         projectFaviconClient: (any FeatureClient)? = nil,
+        onPullRequestChange: @escaping (HomeThreadPullRequestPresentation?) -> Void = { _ in },
         isSelected: Bool = false,
         style: Style = .rich,
         now: Date = .now,
@@ -845,6 +1011,7 @@ struct FeatureThreadRow: View {
         self.thread = thread
         self.context = context
         self.projectFaviconClient = projectFaviconClient
+        self.onPullRequestChange = onPullRequestChange
         self.isSelected = isSelected
         self.style = style
         self.now = now
@@ -859,6 +1026,9 @@ struct FeatureThreadRow: View {
             .accessibilityHint("Opens task")
             .accessibilityIdentifier("thread-\(thread.id)")
             .accessibilityAddTraits(isSelected ? .isSelected : [])
+            .task(id: pullRequestObservationID) {
+                await observePullRequest()
+            }
     }
 
     @ViewBuilder
@@ -912,6 +1082,9 @@ struct FeatureThreadRow: View {
                     }
                     .foregroundStyle(environmentColor)
                 }
+                if let pullRequest {
+                    pullRequestIndicator(pullRequest)
+                }
                 if thread.pinnedAt != nil {
                     Image(systemName: "pin.fill")
                         .font(.system(size: 9, weight: .semibold))
@@ -944,6 +1117,9 @@ struct FeatureThreadRow: View {
                 .foregroundStyle(T3Colors.textSecondary)
                 .lineLimit(allowsMultilineTitle ? 2 : 1)
             Spacer(minLength: 8)
+            if let pullRequest {
+                pullRequestIndicator(pullRequest)
+            }
             if thread.pinnedAt != nil {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 9, weight: .semibold))
@@ -1044,6 +1220,83 @@ struct FeatureThreadRow: View {
         context.environmentLabel
     }
 
+    private var pullRequestObservationID: String? {
+        guard projectFaviconClient != nil else { return nil }
+        return thread.pullRequestObservationIdentity
+    }
+
+    @MainActor
+    private func observePullRequest() async {
+        guard pullRequestObservationID != nil,
+              let projectFaviconClient else {
+            pullRequest = nil
+            onPullRequestChange(nil)
+            return
+        }
+
+        if let linked = thread.linkedPullRequest,
+           let environmentID = thread.environmentID {
+            let target = FeaturePullRequestTarget(
+                environmentID: environmentID,
+                environmentName: thread.environmentName ?? environmentID,
+                reference: PullRequestRef(
+                    projectId: linked.projectId,
+                    repository: linked.repository,
+                    number: linked.number
+                )
+            )
+            while !Task.isCancelled {
+                if let detail = try? await projectFaviconClient.pullRequestDetail(target),
+                   let next = HomeThreadPullRequestPresentation.resolve(
+                       linkedPullRequest: linked,
+                       detail: detail
+                   ),
+                   next != pullRequest {
+                    pullRequest = next
+                    onPullRequestChange(next)
+                }
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                } catch {
+                    return
+                }
+            }
+            return
+        }
+
+        for await status in projectFaviconClient.sourceControlStatusEvents(threadID: thread.id) {
+            guard !Task.isCancelled else { return }
+            let next = HomeThreadPullRequestPresentation.resolve(
+                thread: thread,
+                status: status
+            )
+            guard next != pullRequest else { continue }
+            pullRequest = next
+            onPullRequestChange(next)
+        }
+    }
+
+    private func pullRequestIndicator(_ pullRequest: HomeThreadPullRequestPresentation) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.triangle.pull")
+                .font(.system(size: 10, weight: .semibold))
+            Text(pullRequest.label)
+                .font(T3Typography.homeMetadata.monospacedDigit().weight(.medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(pullRequestColor(pullRequest.state))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(pullRequest.accessibilityLabel)
+    }
+
+    private func pullRequestColor(_ state: HomeThreadPullRequestPresentation.State) -> Color {
+        switch state {
+        case .open: T3Colors.success
+        case .merged: T3Colors.syntaxKeyword
+        case .closed: T3Colors.danger
+        }
+    }
+
     private var projectBadge: some View {
         ProjectBadge(
             name: context.projectName,
@@ -1069,6 +1322,9 @@ struct FeatureThreadRow: View {
             values.append("for \(duration)")
         }
         values.append("Branch \(branchLabel)")
+        if let pullRequest {
+            values.append(pullRequest.accessibilityLabel)
+        }
         if let environmentLabel {
             values.append("on \(environmentLabel)")
         }

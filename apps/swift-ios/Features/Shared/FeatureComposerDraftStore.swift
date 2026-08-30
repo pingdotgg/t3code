@@ -235,10 +235,16 @@ public actor FeatureComposerDraftStore {
         loadedDrafts = drafts
     }
 
-    public func removeDrafts(environmentID: String) throws {
+    public func removeDrafts(
+        environmentID: String,
+        logicalProjectIDs: Set<String> = []
+    ) throws {
         var drafts = try loadIfNeeded()
         let environmentPrefix = "environment:\(environmentID):"
-        drafts = drafts.filter { !$0.key.hasPrefix(environmentPrefix) }
+        let logicalKeys = Set(logicalProjectIDs.map(Self.newTaskKey(logicalProjectID:)))
+        drafts = drafts.filter {
+            !$0.key.hasPrefix(environmentPrefix) && !logicalKeys.contains($0.key)
+        }
         try persist(drafts)
         loadedDrafts = drafts
     }
@@ -252,6 +258,18 @@ public actor FeatureComposerDraftStore {
     public static func newTaskKey(project: FeatureProject) -> String {
         let projectID = project.wireID ?? project.id
         return "environment:\(project.environmentID):new-task:\(projectID)"
+    }
+
+    static func newTaskKey(project: FeatureProject, in snapshot: FeatureSnapshot) -> String {
+        guard project.repositoryIdentity != nil else {
+            return newTaskKey(project: project)
+        }
+        return newTaskKey(
+            logicalProjectID: DailyUXCreationContext.logicalProjectID(
+                for: project,
+                in: snapshot
+            )
+        )
     }
 
     public static func newTaskKey(logicalProjectID: String) -> String {

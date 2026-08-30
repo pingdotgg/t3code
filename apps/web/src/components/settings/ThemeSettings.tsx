@@ -1,8 +1,8 @@
 import {
   CheckIcon,
   CopyIcon,
-  DownloadIcon,
   MoonIcon,
+  PaintbrushIcon,
   PenLineIcon,
   PlusIcon,
   SunIcon,
@@ -768,7 +768,7 @@ export function ThemeLibrary({
     <TooltipProvider>
       <div
         className="mx-auto grid w-full max-w-[56rem] gap-2 px-3 sm:px-4"
-        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 17rem), 1fr))" }}
+        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 16rem), 1fr))" }}
       >
         {STANDARD_THEME_CARDS.map((standardTheme) => (
           <ThemeLibraryCard
@@ -870,12 +870,12 @@ export function ThemeLibrary({
               })
             }
           >
-            <PlusIcon />
+            <PaintbrushIcon />
             Create theme
           </Button>
           <Button size="xs" variant="outline" onClick={() => onImportOpenChange(true)}>
-            <DownloadIcon />
-            Import theme
+            <PlusIcon />
+            Add theme
           </Button>
         </div>
       </div>

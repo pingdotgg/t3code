@@ -104,6 +104,7 @@ final class PlatformCloudDeliveryCoordinator {
     private var activityTokenTasks: [String: Task<Void, Never>] = [:]
     private var pendingActivityTokens: Set<String> = []
     private var retryTask: Task<Void, Never>?
+    private var observedAccountID: String?
 
     private let deviceFingerprintKey = "swift-ios.cloud-delivery-device.v1"
     private let deviceRegisteredAtKey = "swift-ios.cloud-delivery-device-date.v1"
@@ -132,9 +133,11 @@ final class PlatformCloudDeliveryCoordinator {
     func install(controller: T3ConnectController) {
         self.controller = controller
         guard observerTasks.isEmpty else {
+            handleAccountChange(to: controller.account?.id)
             requestRegistration()
             return
         }
+        observedAccountID = controller.account?.id
 
         for name in [Notification.Name.platformDeviceTokenChanged, .platformLiveActivityChanged] {
             observerTasks.append(Task { @MainActor [weak self] in
@@ -146,14 +149,14 @@ final class PlatformCloudDeliveryCoordinator {
             })
         }
         observerTasks.append(Task { @MainActor [weak self] in
-            for await _ in NotificationCenter.default.notifications(named: .t3ConnectSessionChanged) {
+            for await notification in NotificationCenter.default.notifications(
+                named: .t3ConnectSessionChanged
+            ) {
                 guard !Task.isCancelled, let self else { return }
-                if controller.account == nil {
-                    clearSuccessfulRegistrationCache()
-                    pendingActivityTokens.removeAll()
-                    PlatformAgentAwarenessCoordinator.shared
-                        .resetAndResynchronizeLiveActivity()
-                }
+                guard let controller = self.controller,
+                      let notificationController = notification.object as? T3ConnectController,
+                      notificationController === controller else { continue }
+                handleAccountChange(to: controller.account?.id)
                 refreshActivityTokenObservers()
                 requestRegistration()
             }
@@ -323,6 +326,14 @@ final class PlatformCloudDeliveryCoordinator {
         defaults.removeObject(forKey: deviceFingerprintKey)
         defaults.removeObject(forKey: deviceRegisteredAtKey)
         defaults.removeObject(forKey: activityFingerprintKey)
+    }
+
+    private func handleAccountChange(to accountID: String?) {
+        guard observedAccountID != accountID else { return }
+        clearSuccessfulRegistrationCache()
+        pendingActivityTokens.removeAll()
+        PlatformAgentAwarenessCoordinator.shared.resetAndResynchronizeLiveActivity()
+        observedAccountID = accountID
     }
 
     private func currentRegistration(settings: FeatureSettings) -> T3ConnectDeviceRegistration {

@@ -60,6 +60,14 @@ public struct FeatureSourceControlView: View {
             }
             .disabled(commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+        .alert("Source control failed", isPresented: Binding(
+            get: { status != nil && errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "The source control action could not be completed.")
+        }
         .task { await load() }
     }
 

@@ -225,6 +225,41 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(fallback, first.id)
     }
 
+    func testKeychainCredentialUpdatesAreAtomicAcrossStoreInstances() async throws {
+        let service = "codes.t3.swift-ios.credential-tests.\(UUID().uuidString)"
+        let environmentID = "shared-environment"
+        let backend = InMemoryKeychainCredentialBackend()
+        let first = KeychainCredentialStore(service: service, backend: backend)
+        let second = KeychainCredentialStore(service: service, backend: backend)
+
+        do {
+            for index in 0..<12 {
+                let original = EnvironmentCredential(accessToken: "original-\(index)")
+                let replacement = EnvironmentCredential(accessToken: "replacement-\(index)")
+                try await first.setCredential(original, for: environmentID)
+
+                async let replaced = first.replaceCredential(
+                    replacement,
+                    ifMatching: original,
+                    for: environmentID
+                )
+                async let removed = second.removeCredential(
+                    ifMatching: original,
+                    for: environmentID
+                )
+                let (didReplace, didRemove) = try await (replaced, removed)
+
+                XCTAssertNotEqual(didReplace, didRemove)
+                let stored = try await first.credential(for: environmentID)
+                XCTAssertEqual(stored, didReplace ? replacement : nil)
+            }
+            try await first.removeCredential(for: environmentID)
+        } catch {
+            try? await first.removeCredential(for: environmentID)
+            throw error
+        }
+    }
+
     func testRuntimeReplacesCachedClientWhenSavedEndpointChanges() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-swift-runtime-\(UUID().uuidString)", isDirectory: true)
@@ -298,6 +333,24 @@ final class CoreContractTests: XCTestCase {
     }
 }
 
+private final class InMemoryKeychainCredentialBackend: @unchecked Sendable,
+    KeychainCredentialBackend
+{
+    private var credentials: [String: EnvironmentCredential] = [:]
+
+    func credential(for environmentID: String) -> EnvironmentCredential? {
+        credentials[environmentID]
+    }
+
+    func setCredential(_ credential: EnvironmentCredential, for environmentID: String) {
+        credentials[environmentID] = credential
+    }
+
+    func removeCredential(for environmentID: String) {
+        credentials.removeValue(forKey: environmentID)
+    }
+}
+
 private actor RemovalOrderCredentialStore: CredentialStore {
     let environmentStore: EnvironmentStore
     let environmentID: String
@@ -326,10 +379,44 @@ private actor RemovalOrderCredentialStore: CredentialStore {
         storedCredential = credential
     }
 
+    func swapCredential(
+        _ credential: EnvironmentCredential,
+        for environmentID: String
+    ) -> EnvironmentCredential? {
+        guard environmentID == self.environmentID else { return nil }
+        let previousCredential = storedCredential
+        storedCredential = credential
+        return previousCredential
+    }
+
+    func replaceCredential(
+        _ credential: EnvironmentCredential,
+        ifMatching expected: EnvironmentCredential,
+        for environmentID: String
+    ) -> Bool {
+        guard environmentID == self.environmentID,
+              storedCredential == expected else { return false }
+        storedCredential = credential
+        return true
+    }
+
     func removeCredential(for environmentID: String) async throws {
         guard environmentID == self.environmentID else { return }
         catalogContainedEnvironmentOnRemoval = try await environmentStore.load()
             .contains(where: { $0.id == environmentID })
         storedCredential = nil
+    }
+
+    func removeCredential(
+        ifMatching expected: EnvironmentCredential,
+        for environmentID: String
+    ) async throws -> Bool {
+        guard environmentID == self.environmentID,
+              storedCredential == expected else { return false }
+        catalogContainedEnvironmentOnRemoval = try await environmentStore.load()
+            .contains(where: { $0.id == environmentID })
+        guard storedCredential == expected else { return false }
+        storedCredential = nil
+        return true
     }
 }

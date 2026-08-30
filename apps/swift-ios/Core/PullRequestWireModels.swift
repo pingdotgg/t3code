@@ -326,6 +326,27 @@ public struct PullRequestListResult: Codable, Equatable, Sendable {
     public let errors: [PullRequestListProjectError]
     public let truncated: Bool
     public let nextCursors: [String: String]
+
+    func appending(_ page: Self) -> Self {
+        var entryIDs = Set(entries.map(\.id))
+        var providerHosts = Set(providers.map(\.host))
+        var errorProjectIDs = Set(errors.map(\.projectId))
+
+        return Self(
+            viewers: viewers.merging(page.viewers) { _, latest in latest },
+            providers: providers + page.providers.filter {
+                providerHosts.insert($0.host).inserted
+            },
+            entries: entries + page.entries.filter {
+                entryIDs.insert($0.id).inserted
+            },
+            errors: errors + page.errors.filter {
+                errorProjectIDs.insert($0.projectId).inserted
+            },
+            truncated: page.truncated,
+            nextCursors: page.nextCursors
+        )
+    }
 }
 
 public struct PullRequestRef: Codable, Equatable, Hashable, Sendable {

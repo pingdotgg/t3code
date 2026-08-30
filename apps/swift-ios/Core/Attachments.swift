@@ -20,11 +20,8 @@ public enum ImageAttachmentError: LocalizedError, Equatable, Sendable {
     }
 }
 
-/// Inline upload shape accepted by `thread.turn.start`.
-///
-/// There is intentionally no standalone attachment-upload endpoint in the T3
-/// contract. New image bytes travel as a base64 data URL on the turn command;
-/// the server normalizes them into a persisted `ChatAttachment`.
+/// Validated image bytes for a turn. Older servers receive the inline data URL;
+/// newer servers upload the bytes first and receive a persisted attachment ID.
 public struct UploadChatImageAttachment: Codable, Equatable, Sendable {
     public static let maximumBytes = 10 * 1024 * 1024
 
@@ -66,6 +63,27 @@ public struct UploadChatImageAttachment: Codable, Equatable, Sendable {
             "dataUrl": .string(dataUrl),
         ])
     }
+
+    func uploadedJSONValue(id: String) -> JSONValue {
+        .object([
+            "type": .string(type),
+            "id": .string(id),
+            "name": .string(name),
+            "mimeType": .string(mimeType),
+            "sizeBytes": .number(Double(sizeBytes)),
+        ])
+    }
+
+    var imageData: Data? {
+        guard let separator = dataUrl.firstIndex(of: ",") else { return nil }
+        return Data(base64Encoded: String(dataUrl[dataUrl.index(after: separator)...]))
+    }
+}
+
+public struct AttachmentCreateUploadURLResult: Codable, Equatable, Sendable {
+    public let attachmentId: String
+    public let relativeUrl: String
+    public let expiresAt: Double
 }
 
 public enum AssetResource: Equatable, Sendable {

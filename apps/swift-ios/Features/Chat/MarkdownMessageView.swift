@@ -1,6 +1,18 @@
 import SwiftUI
 import UIKit
 
+struct MarkdownImageContext: Equatable, @unchecked Sendable {
+    let threadID: String
+    let workspaceRoot: String
+    let resolver: any FeatureWorkspaceAssetResolving
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.threadID == rhs.threadID
+            && lhs.workspaceRoot == rhs.workspaceRoot
+            && ObjectIdentifier(lhs.resolver) == ObjectIdentifier(rhs.resolver)
+    }
+}
+
 /// Native chat Markdown with block-aware layout and Foundation inline parsing.
 struct MarkdownMessageView: View {
     private struct RenderRequest: Hashable {
@@ -12,6 +24,7 @@ struct MarkdownMessageView: View {
     private let revision: MarkdownContentRevision
     private let isStreaming: Bool
     private let copyActionTitle: String
+    private let imageContext: MarkdownImageContext?
     @State private var selectionSource: MarkdownSelectionSource
     @State private var renderedDocument: MarkdownRenderedDocument?
     @State private var streamingRenderer = StreamingMarkdownRenderer()
@@ -19,11 +32,13 @@ struct MarkdownMessageView: View {
     init(
         _ source: String,
         isStreaming: Bool = false,
-        copyActionTitle: String = "Copy message"
+        copyActionTitle: String = "Copy message",
+        imageContext: MarkdownImageContext? = nil
     ) {
         self.source = source
         self.isStreaming = isStreaming
         self.copyActionTitle = copyActionTitle
+        self.imageContext = imageContext
         _selectionSource = State(initialValue: MarkdownSelectionSource(source))
         let revision = MarkdownContentRevision(source)
         self.revision = revision
@@ -43,7 +58,8 @@ struct MarkdownMessageView: View {
             if let displayDocument {
                 MarkdownBlocksView(
                     blocks: displayDocument.blocks,
-                    selectionContext: selectionContext
+                    selectionContext: selectionContext,
+                    imageContext: imageContext
                 )
             } else {
                 // Parsing waits briefly so token-by-token streaming cancels stale revisions
@@ -213,6 +229,7 @@ private enum MarkdownTextColor: Equatable, Sendable {
 private struct MarkdownBlocksView: View {
     let blocks: [MarkdownRenderedBlock]
     let selectionContext: MarkdownSelectionContext
+    let imageContext: MarkdownImageContext?
     var spacing: CGFloat = 12
     var textColor: MarkdownTextColor = .primary
 
@@ -225,6 +242,7 @@ private struct MarkdownBlocksView: View {
                 MarkdownBlockView(
                     block: blocks[index],
                     selectionContext: selectionContext,
+                    imageContext: imageContext,
                     textColor: textColor
                 )
                     .equatable()
@@ -236,6 +254,7 @@ private struct MarkdownBlocksView: View {
 private struct MarkdownBlockView: View, Equatable {
     let block: MarkdownRenderedBlock
     let selectionContext: MarkdownSelectionContext
+    let imageContext: MarkdownImageContext?
     let textColor: MarkdownTextColor
 
     @ViewBuilder
@@ -248,6 +267,9 @@ private struct MarkdownBlockView: View, Equatable {
                 lineSpacing: 4,
                 textColor: textColor
             )
+
+        case let .image(image):
+            MarkdownImageView(image: image, context: imageContext)
 
         case let .heading(level, inline):
             MarkdownInlineText(
@@ -262,6 +284,7 @@ private struct MarkdownBlockView: View, Equatable {
                 items: items,
                 start: nil,
                 selectionContext: selectionContext,
+                imageContext: imageContext,
                 textColor: textColor
             )
 
@@ -270,6 +293,7 @@ private struct MarkdownBlockView: View, Equatable {
                 items: items,
                 start: start,
                 selectionContext: selectionContext,
+                imageContext: imageContext,
                 textColor: textColor
             )
 
@@ -277,6 +301,7 @@ private struct MarkdownBlockView: View, Equatable {
             MarkdownBlocksView(
                 blocks: blocks,
                 selectionContext: selectionContext,
+                imageContext: imageContext,
                 spacing: 9,
                 textColor: .secondary
             )
@@ -399,6 +424,7 @@ private struct MarkdownListView: View {
     let items: [MarkdownRenderedListItem]
     let start: Int?
     let selectionContext: MarkdownSelectionContext
+    let imageContext: MarkdownImageContext?
     let textColor: MarkdownTextColor
 
     var body: some View {
@@ -411,6 +437,7 @@ private struct MarkdownListView: View {
                     MarkdownBlocksView(
                         blocks: item.blocks,
                         selectionContext: selectionContext,
+                        imageContext: imageContext,
                         spacing: 7,
                         textColor: textColor
                     )
@@ -441,6 +468,121 @@ private struct MarkdownListView: View {
                 .accessibilityHidden(true)
         }
     }
+}
+
+private struct MarkdownImageView: View {
+    let image: MarkdownImage
+    let context: MarkdownImageContext?
+
+    @State private var loadedImage: UIImage?
+    @State private var failed = false
+
+    private var classifiedSource: MarkdownImageSource {
+        MarkdownImageSource.classify(image.source, workspaceRoot: context?.workspaceRoot)
+    }
+
+    var body: some View {
+        if classifiedSource != .blocked {
+            Group {
+                if let loadedImage {
+                    Image(uiImage: loadedImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: 480)
+                } else {
+                    Image(systemName: failed ? "exclamationmark.triangle" : "photo")
+                        .font(.title2)
+                        .foregroundStyle(T3Colors.textSecondary)
+                        .frame(maxWidth: .infinity, minHeight: 140)
+                        .background(T3Colors.surfaceRaised)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .accessibilityLabel(image.alternativeText.isEmpty ? "Image" : image.alternativeText)
+            .task(id: "\(image.source):\(context?.threadID ?? ""):\(context?.workspaceRoot ?? "")") {
+                await loadImage()
+            }
+        }
+    }
+
+    @MainActor
+    private func loadImage() async {
+        do {
+            let url: URL
+            switch classifiedSource {
+            case let .direct(directURL):
+                url = directURL
+            case let .workspaceFile(path):
+                guard let context else { return }
+                url = try await context.resolver.workspaceAssetURL(
+                    threadID: context.threadID,
+                    path: path
+                )
+            case .blocked:
+                return
+            }
+            loadedImage = try await MarkdownImageLoader.load(url)
+        } catch is CancellationError {
+            return
+        } catch {
+            failed = true
+        }
+    }
+}
+
+@MainActor
+private enum MarkdownImageLoader {
+    private static let cache: NSCache<NSURL, UIImage> = {
+        let cache = NSCache<NSURL, UIImage>()
+        cache.countLimit = 64
+        cache.totalCostLimit = 32 * 1_024 * 1_024
+        return cache
+    }()
+
+    private static let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieStorage = nil
+        configuration.urlCredentialStorage = nil
+        return URLSession(configuration: configuration)
+    }()
+
+    static func load(_ url: URL) async throws -> UIImage {
+        if let cached = cache.object(forKey: url as NSURL) {
+            return cached
+        }
+
+        let data: Data
+        if url.scheme?.lowercased() == "data" {
+            guard let comma = url.absoluteString.firstIndex(of: ","),
+                  url.absoluteString[..<comma].lowercased().contains(";base64"),
+                  let decoded = Data(base64Encoded: String(url.absoluteString[url.absoluteString.index(after: comma)...])) else {
+                throw MarkdownImageLoadingError.invalidImage
+            }
+            data = decoded
+        } else {
+            let response: URLResponse
+            (data, response) = try await session.data(from: url)
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200...299).contains(httpResponse.statusCode) {
+                throw MarkdownImageLoadingError.invalidResponse
+            }
+        }
+        try Task.checkCancellation()
+        let decoded = await Task.detached(priority: .utility) {
+            UIImage(data: data)
+        }.value
+        try Task.checkCancellation()
+        guard let decoded else { throw MarkdownImageLoadingError.invalidImage }
+        let cost = decoded.cgImage.map { $0.bytesPerRow * $0.height } ?? data.count
+        cache.setObject(decoded, forKey: url as NSURL, cost: cost)
+        return decoded
+    }
+}
+
+private enum MarkdownImageLoadingError: Error {
+    case invalidImage
+    case invalidResponse
 }
 
 private struct MarkdownCodeBlockView: View {

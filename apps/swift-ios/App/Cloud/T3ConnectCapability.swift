@@ -62,7 +62,18 @@ public final class T3ConnectController: T3ConnectDeviceManaging {
     public private(set) var account: T3ConnectAccount? {
         didSet {
             guard oldValue != account else { return }
-            NotificationCenter.default.post(name: .t3ConnectSessionChanged, object: self)
+            var accountIDs: [String: String] = [:]
+            if let previousAccountID = oldValue?.id {
+                accountIDs["previousAccountID"] = previousAccountID
+            }
+            if let accountID = account?.id {
+                accountIDs["accountID"] = accountID
+            }
+            NotificationCenter.default.post(
+                name: .t3ConnectSessionChanged,
+                object: self,
+                userInfo: accountIDs
+            )
         }
     }
     public private(set) var environments: [T3ConnectCloudEnvironment] = []

@@ -19,6 +19,11 @@ public protocol FeatureWorkspaceAssetResolving: AnyObject {
     func workspaceAssetURL(threadID: String, path: String) async throws -> URL
 }
 
+@MainActor
+public protocol FeatureFeedbackSubmitting: AnyObject {
+    func submitCodexFeedback(threadID: String, reason: String?) async throws -> String
+}
+
 public enum FeatureFileKind: String, Sendable, Codable {
     case file
     case directory
@@ -818,12 +823,20 @@ public struct FeaturePullRequest: Sendable, Equatable, Hashable, Codable {
     public var title: String
     public var state: String
     public var url: URL?
+    public var updatedAt: String?
 
-    public init(number: Int, title: String, state: String, url: URL? = nil) {
+    public init(
+        number: Int,
+        title: String,
+        state: String,
+        url: URL? = nil,
+        updatedAt: String? = nil
+    ) {
         self.number = number
         self.title = title
         self.state = state
         self.url = url
+        self.updatedAt = updatedAt
     }
 }
 

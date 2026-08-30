@@ -45,4 +45,40 @@ struct PlatformCloudDeliveryTests {
         #expect(registration.preferences.liveActivitiesEnabled)
     }
 
+    @Test
+    @MainActor
+    func installingNewControllerReleasesPreviousController() throws {
+        let suiteName = "cloud-delivery-controller-\(UUID())"
+        let suite = try #require(UserDefaults(suiteName: suiteName))
+        defer { suite.removePersistentDomain(forName: suiteName) }
+        suite.set("existing-registration", forKey: "swift-ios.cloud-delivery-device.v1")
+
+        let coordinator = PlatformCloudDeliveryCoordinator(
+            defaults: suite,
+            deviceID: "test-device"
+        )
+        let currentController = T3ConnectController(
+            resolution: .unavailable(reason: "Authentication is not needed for this test.")
+        )
+        weak var previousController: T3ConnectController?
+
+        do {
+            let controller = T3ConnectController(
+                resolution: .unavailable(reason: "Authentication is not needed for this test.")
+            )
+            previousController = controller
+            coordinator.install(controller: controller)
+            #expect(
+                suite.string(forKey: "swift-ios.cloud-delivery-device.v1")
+                    == "existing-registration"
+            )
+            coordinator.install(controller: currentController)
+        }
+
+        #expect(previousController == nil)
+        #expect(
+            suite.string(forKey: "swift-ios.cloud-delivery-device.v1")
+                == "existing-registration"
+        )
+    }
 }

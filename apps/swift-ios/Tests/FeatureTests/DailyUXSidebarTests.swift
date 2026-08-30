@@ -59,6 +59,18 @@ struct DailyUXSidebarTests {
     }
 
     @Test
+    func reopenedThreadsReturnToTheTopWithoutReorderingOnOrdinaryActivity() {
+        var reopened = thread(id: "old", created: -1_000, updated: -5)
+        reopened.unsettledAt = now.addingTimeInterval(-10)
+        let newer = thread(id: "new", created: -100, updated: 0, state: .working)
+
+        #expect(makeIndex([newer, reopened]).active.map(\.id) == ["old", "new"])
+
+        reopened.unsettledAt = now.addingTimeInterval(-2_000)
+        #expect(makeIndex([newer, reopened]).active.map(\.id) == ["new", "old"])
+    }
+
+    @Test
     func settledUsesExplicitStateOrThreeDayRestingAge() {
         let explicitlySettled = thread(
             id: "explicit",
@@ -122,7 +134,163 @@ struct DailyUXSidebarTests {
     }
 
     @Test
-    func pinPromotesSettledThreadsButSnoozeStillWins() {
+    func settlementUsesServerActivityFactsInsteadOfDisplayState() {
+        var staleRunningTurn = thread(
+            id: "stale-running",
+            created: -400_000,
+            updated: -300_000,
+            state: .working
+        )
+        staleRunningTurn.settlementFacts = facts(
+            latestTurn: .init(
+                requestedAt: now.addingTimeInterval(-300_100),
+                startedAt: now.addingTimeInterval(-300_000)
+            )
+        )
+
+        var monitor = staleRunningTurn
+        monitor = FeatureThread(
+            id: "monitor",
+            projectID: monitor.projectID,
+            title: monitor.title,
+            createdAt: monitor.createdAt,
+            updatedAt: monitor.updatedAt,
+            state: .monitoring,
+            lastActivityAt: monitor.lastActivityAt,
+            supportsSettlement: true,
+            settlementFacts: facts(latestUserMessageAt: now.addingTimeInterval(-300_000))
+        )
+
+        var live = staleRunningTurn
+        live = FeatureThread(
+            id: "live",
+            projectID: live.projectID,
+            title: live.title,
+            createdAt: live.createdAt,
+            updatedAt: live.updatedAt,
+            state: .idle,
+            lastActivityAt: live.lastActivityAt,
+            supportsSettlement: true,
+            settlementFacts: facts(sessionStatus: "running")
+        )
+
+        let index = makeIndex([staleRunningTurn, monitor, live])
+        #expect(Set(index.settled.map(\.id)) == ["stale-running", "monitor"])
+        #expect(index.active.map(\.id) == ["live"])
+    }
+
+    @Test
+    func explicitSettlementHonorsQueuedServerAdjudication() {
+        let messageAt = now.addingTimeInterval(-30)
+        var queued = thread(id: "queued", created: -100, updated: -30, state: .queued)
+        queued.settlementFacts = facts(
+            override: .settled,
+            latestUserMessageAt: messageAt,
+            latestTurn: .init(requestedAt: now.addingTimeInterval(-90))
+        )
+        queued.isSettled = true
+        queued.settledAt = messageAt.addingTimeInterval(1)
+
+        #expect(queued.hasQueuedTurnStart(at: now))
+        #expect(queued.isEffectivelySettled(at: now))
+        #expect(HomeThreadSwipeAction.trailingActions(
+            for: queued,
+            isArchived: false,
+            at: now
+        ).first == .reopen)
+
+        queued.settledAt = messageAt.addingTimeInterval(-1)
+        #expect(!queued.isEffectivelySettled(at: now))
+        #expect(queued.queuedSettlementBoundary(after: now) == now.addingTimeInterval(90.001))
+
+        queued.settlementFacts?.hasPendingApprovals = true
+        queued.settledAt = messageAt.addingTimeInterval(1)
+        #expect(!queued.isEffectivelySettled(at: now))
+        #expect(!queued.canSettleNow(at: now))
+    }
+
+    @Test
+    func pullRequestSettlementMatchesTerminalStateAndUserActivity() {
+        var thread = thread(id: "pr", created: -400_000, updated: -300_000)
+        thread.settlementFacts = facts(
+            latestUserMessageAt: now.addingTimeInterval(-300_000),
+            latestTurn: .init(requestedAt: now.addingTimeInterval(-300_000))
+        )
+        let merged = HomeThreadPullRequestPresentation(
+            number: 42,
+            state: .merged,
+            updatedAt: now.addingTimeInterval(-400)
+        )
+        let closed = HomeThreadPullRequestPresentation(
+            number: 42,
+            state: .closed,
+            updatedAt: now.addingTimeInterval(-400)
+        )
+        let open = HomeThreadPullRequestPresentation(
+            number: 42,
+            state: .open,
+            updatedAt: now.addingTimeInterval(-400)
+        )
+        let disabled = FeatureSettings(autoSettleOnMerge: false, autoSettleAfterDays: nil)
+
+        #expect(thread.isEffectivelySettled(at: now, pullRequest: merged))
+        #expect(!thread.isEffectivelySettled(at: now, settings: disabled, pullRequest: merged))
+        #expect(thread.isEffectivelySettled(at: now, settings: disabled, pullRequest: closed))
+        #expect(!thread.isEffectivelySettled(at: now, pullRequest: open))
+
+        let inheritedMerge = HomeThreadPullRequestPresentation(
+            number: 42,
+            state: .merged,
+            updatedAt: thread.createdAt.addingTimeInterval(-1)
+        )
+        #expect(!thread.isEffectivelySettled(
+            at: now,
+            settings: FeatureSettings(autoSettleAfterDays: nil),
+            pullRequest: inheritedMerge
+        ))
+        #expect(thread.isEffectivelySettled(
+            at: now,
+            pullRequest: HomeThreadPullRequestPresentation(
+                number: 42,
+                state: .merged,
+                updatedAt: nil
+            )
+        ))
+
+        thread.settlementFacts?.latestUserMessageAt = now.addingTimeInterval(-300)
+        #expect(!thread.isEffectivelySettled(at: now, pullRequest: merged))
+
+        thread.settlementFacts?.latestUserMessageAt = now.addingTimeInterval(-300_000)
+        thread.settlementFacts?.sessionStatus = "running"
+        #expect(!thread.isEffectivelySettled(at: now, pullRequest: merged))
+        thread.settlementFacts?.sessionStatus = "idle"
+        #expect(thread.isEffectivelySettled(at: now, pullRequest: merged))
+    }
+
+    @Test
+    func inactivityUsesCustomStrictBoundaryAndCanBeDisabled() {
+        var thread = thread(id: "inactive", created: -200_000, updated: -86_400)
+        thread.settlementFacts = facts(latestUserMessageAt: now.addingTimeInterval(-86_400))
+        let oneDay = FeatureSettings(autoSettleAfterDays: 1)
+
+        #expect(!thread.isEffectivelySettled(at: now, settings: oneDay))
+        #expect(thread.isEffectivelySettled(at: now.addingTimeInterval(0.001), settings: oneDay))
+        #expect(!thread.isEffectivelySettled(
+            at: now.addingTimeInterval(0.001),
+            settings: FeatureSettings(autoSettleAfterDays: nil)
+        ))
+
+        thread.pinnedAt = now.addingTimeInterval(-10)
+        let boundary = DailyUXSidebarRefresh.nextBoundary(
+            for: [thread],
+            after: now.addingTimeInterval(-1),
+            settings: oneDay
+        )
+        #expect(boundary == now.addingTimeInterval(0.001))
+    }
+
+    @Test
+    func settledAndSnoozedThreadsStayInTheirShelvesWhenPinned() {
         var pinnedSettled = thread(
             id: "pinned-settled",
             created: -100,
@@ -142,18 +310,18 @@ struct DailyUXSidebarTests {
 
         let index = makeIndex([pinnedSettled, pinnedSnoozed])
 
-        #expect(index.pinned.map(\.id) == ["pinned-settled"])
+        #expect(index.pinned.isEmpty)
         #expect(index.snoozed.map(\.id) == ["pinned-snoozed"])
         #expect(index.active.isEmpty)
-        #expect(index.settled.isEmpty)
+        #expect(index.settled.map(\.id) == ["pinned-settled"])
         #expect(DailyUXSidebarRefresh.nextBoundary(for: [pinnedSettled], after: now) == nil)
     }
 
     @Test
-    func pinActionsTolerateMissingCapabilitiesAndKeepPinsReversible() {
+    func pinActionsRequireCapabilitiesAndKeepPinsReversible() {
         var legacyDescriptor = thread(id: "legacy", created: -20, updated: -10)
         legacyDescriptor.supportsPinning = nil
-        #expect(legacyDescriptor.canTogglePin)
+        #expect(!legacyDescriptor.canTogglePin)
 
         var explicitlyUnsupported = thread(id: "unsupported", created: -20, updated: -10)
         explicitlyUnsupported.supportsPinning = false
@@ -179,8 +347,8 @@ struct DailyUXSidebarTests {
         var legacy = thread(id: "legacy-capabilities", created: -20, updated: -10)
         legacy.supportsSettlement = nil
         legacy.supportsSnooze = nil
-        #expect(legacy.canToggleSettlement)
-        #expect(legacy.canToggleSnooze)
+        #expect(!legacy.canToggleSettlement)
+        #expect(!legacy.canToggleSnooze)
     }
 
     @Test
@@ -249,7 +417,7 @@ struct DailyUXSidebarTests {
 
         #expect(
             DailyUXSidebarRefresh.nextBoundary(for: [resting], after: now)
-                == now.addingTimeInterval(45)
+                == now.addingTimeInterval(45.001)
         )
 
         resting.keepsActive = true
@@ -502,7 +670,28 @@ struct DailyUXSidebarTests {
             updatedAt: now.addingTimeInterval(updated),
             state: state,
             isSettled: isSettled,
-            lastActivityAt: now.addingTimeInterval(updated)
+            lastActivityAt: now.addingTimeInterval(updated),
+            supportsSettlement: true,
+            supportsSnooze: true,
+            supportsPinning: true
+        )
+    }
+
+    private func facts(
+        override: FeatureThreadSettlementOverride? = nil,
+        sessionStatus: String? = nil,
+        hasPendingApprovals: Bool = false,
+        hasPendingUserInput: Bool = false,
+        latestUserMessageAt: Date? = nil,
+        latestTurn: FeatureThreadSettlementFacts.LatestTurn? = nil
+    ) -> FeatureThreadSettlementFacts {
+        FeatureThreadSettlementFacts(
+            settlementOverride: override,
+            sessionStatus: sessionStatus,
+            hasPendingApprovals: hasPendingApprovals,
+            hasPendingUserInput: hasPendingUserInput,
+            latestUserMessageAt: latestUserMessageAt,
+            latestTurn: latestTurn
         )
     }
 }

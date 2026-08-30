@@ -175,6 +175,13 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
       }),
     ),
     Layer.succeed(
+      ClientCapabilities.ClientPresentation,
+      ClientCapabilities.ClientPresentation.of({
+        metadata: { label: "Test Client", deviceType: "desktop", surface: "web" },
+        scopes: [],
+      }),
+    ),
+    Layer.succeed(
       ClientCapabilities.RelayDeviceIdentity,
       ClientCapabilities.RelayDeviceIdentity.of({
         deviceId: Effect.succeed(Option.some("device-1")),
@@ -216,7 +223,7 @@ describe("ConnectionResolver", () => {
         environmentId: ENVIRONMENT_ID,
         label: "Primary",
         httpBaseUrl: "http://127.0.0.1:3777",
-        socketUrl: "ws://127.0.0.1:3777/ws",
+        socketUrl: "ws://127.0.0.1:3777/ws?clientSurface=web",
         httpAuthorization: null,
         target,
       });

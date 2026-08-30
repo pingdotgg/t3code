@@ -8,6 +8,7 @@ struct T3LoadedSharePayload: Sendable {
 }
 
 enum T3SharePayloadLoader {
+    @MainActor
     static func load(from inputItems: [Any]) async -> T3LoadedSharePayload {
         var textFragments: [String] = []
         var images: [T3PendingShareImage] = []
@@ -51,22 +52,22 @@ enum T3SharePayloadLoader {
                 }
 
                 if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier),
-                   let value = try? await loadItem(
+                   let urlText = try? await loadItemString(
                        from: provider,
-                       typeIdentifier: UTType.url.identifier
-                   ),
-                   let urlText = urlString(from: value)
+                       typeIdentifier: UTType.url.identifier,
+                       expectingURL: true
+                   )
                 {
                     textFragments.append(urlText)
                     continue
                 }
 
                 if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier),
-                   let value = try? await loadItem(
+                   let text = try? await loadItemString(
                        from: provider,
-                       typeIdentifier: UTType.plainText.identifier
-                   ),
-                   let text = textString(from: value)
+                       typeIdentifier: UTType.plainText.identifier,
+                       expectingURL: false
+                   )
                 {
                     textFragments.append(text)
                 }
@@ -89,6 +90,7 @@ enum T3SharePayloadLoader {
         )
     }
 
+    @MainActor
     private static func loadStagedImage(
         from provider: NSItemProvider,
         typeIdentifier: String
@@ -153,14 +155,17 @@ enum T3SharePayloadLoader {
         }
     }
 
-    private static func loadItem(
+    @MainActor
+    private static func loadItemString(
         from provider: NSItemProvider,
-        typeIdentifier: String
-    ) async throws -> NSSecureCoding {
+        typeIdentifier: String,
+        expectingURL: Bool
+    ) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             provider.loadItem(forTypeIdentifier: typeIdentifier) { value, error in
-                if let value {
-                    continuation.resume(returning: value)
+                if let value,
+                   let text = expectingURL ? urlString(from: value) : textString(from: value) {
+                    continuation.resume(returning: text)
                 } else {
                     continuation.resume(throwing: error ?? CocoaError(.fileReadUnknown))
                 }

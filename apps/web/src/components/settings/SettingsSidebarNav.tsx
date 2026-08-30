@@ -9,7 +9,6 @@ import {
 } from "react";
 import {
   ArchiveIcon,
-  ArrowLeftIcon,
   BlocksIcon,
   BotIcon,
   GitBranchIcon,
@@ -20,7 +19,7 @@ import {
   Settings2Icon,
   XIcon,
 } from "lucide-react";
-import { useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -35,6 +34,7 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
+import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
@@ -74,7 +74,6 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
-  const canGoBack = useCanGoBack();
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -178,17 +177,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     },
     [activeResultIndex, clearSearch, handleSearchResultClick, isSearching, results],
   );
-  const handleBackClick = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-    if (canGoBack) {
-      window.history.back();
-      return;
-    }
-    void navigate({ to: "/" });
-  }, [canGoBack, isMobile, navigate, setOpenMobile]);
-
   return (
     <>
       <SidebarContent className="overflow-x-hidden">
@@ -298,14 +286,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       <SidebarFooter className="p-[var(--sidebar-content-inset)]">
         <T3ConnectSidebarSignIn />
         <div className="flex items-center gap-1">
-          <SidebarMenu className="min-w-0 flex-1">
-            <SidebarMenuItem>
-              <SidebarMenuButton onClick={handleBackClick}>
-                <ArrowLeftIcon />
-                <span>Back</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
+          <div className="min-w-0 flex-1">
+            <SidebarUtilityMenu />
+          </div>
           <T3ConnectSidebarAvatar />
         </div>
       </SidebarFooter>

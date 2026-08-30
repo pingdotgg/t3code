@@ -121,8 +121,8 @@ public enum FeatureOutboxDeliveryDecision: Equatable {
 public enum FeatureOutboxPolicy {
     /// Delivery waits for the owning environment. Existing threads accept
     /// follow-up messages while a turn is running, matching the web queue.
-    /// A creation whose thread already exists was committed before a cleanup
-    /// interruption, so it is removed instead of sent twice.
+    /// A created thread does not prove that its first message was accepted.
+    /// Retry its stable command identity until the message itself is confirmed.
     public static func decision(
         for submission: FeatureQueuedSubmission,
         snapshot: FeatureSnapshot,
@@ -134,7 +134,7 @@ public enum FeatureOutboxPolicy {
         let thread = snapshot.threads.first { $0.id == submission.threadID }
 
         if submission.creation != nil {
-            if thread != nil { return .discard }
+            if thread != nil { return isConnected ? .send : .wait }
             let projectExists = snapshot.projects.contains {
                 $0.id == submission.creation?.projectID
                     && $0.environmentID == submission.environmentID

@@ -21,6 +21,45 @@ struct ProjectCreationModelsTests {
     }
 
     @Test
+    func githubRepositoryShorthandUsesHttpsWithoutChangingExplicitRemotes() {
+        #expect(
+            ProjectCreationPath.normalizedCloneURL(" pingdotgg/t3code ")
+                == "https://github.com/pingdotgg/t3code.git"
+        )
+        #expect(
+            ProjectCreationPath.normalizedCloneURL("pingdotgg/t3code.git")
+                == "https://github.com/pingdotgg/t3code.git"
+        )
+        #expect(
+            ProjectCreationPath.normalizedCloneURL("git@github.com:pingdotgg/t3code.git")
+                == "git@github.com:pingdotgg/t3code.git"
+        )
+        #expect(
+            ProjectCreationPath.normalizedCloneURL("https://gitlab.com/team/project.git")
+                == "https://gitlab.com/team/project.git"
+        )
+    }
+
+    @Test
+    func discoveredGitHubRepositoriesDefaultToTheirHttpsCloneURL() {
+        let github = SourceControlRepositoryInfo(
+            provider: .github,
+            nameWithOwner: "pingdotgg/t3code",
+            url: "https://github.com/pingdotgg/t3code",
+            sshUrl: "git@github.com:pingdotgg/t3code.git"
+        )
+        let gitlab = SourceControlRepositoryInfo(
+            provider: .gitlab,
+            nameWithOwner: "team/project",
+            url: "https://gitlab.com/team/project",
+            sshUrl: "git@gitlab.com:team/project.git"
+        )
+
+        #expect(ProjectCreationPath.defaultCloneURL(for: github) == github.url)
+        #expect(ProjectCreationPath.defaultCloneURL(for: gitlab) == gitlab.sshUrl)
+    }
+
+    @Test
     func pathsRequireServerAbsoluteOrHomeRelativeInput() throws {
         #expect(try ProjectCreationPath.validated(" ~/work/t3code ").get() == "~/work/t3code")
         #expect(try ProjectCreationPath.validated("/srv/t3code").get() == "/srv/t3code")

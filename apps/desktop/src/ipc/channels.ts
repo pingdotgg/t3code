@@ -1,4 +1,5 @@
 export const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
+export const PICK_PROJECT_FAVICON_CHANNEL = "desktop:pick-project-favicon";
 export const PICK_THEME_FILES_CHANNEL = "desktop:pick-theme-files";
 export const SET_THEME_CHANNEL = "desktop:set-theme";
 export const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
@@ -54,6 +55,7 @@ export const PREVIEW_ZOOM_OUT_CHANNEL = "desktop:preview-zoom-out";
 export const PREVIEW_RESET_ZOOM_CHANNEL = "desktop:preview-reset-zoom";
 export const PREVIEW_HARD_RELOAD_CHANNEL = "desktop:preview-hard-reload";
 export const PREVIEW_SET_COLOR_SCHEME_CHANNEL = "desktop:preview-set-color-scheme";
+export const PREVIEW_SET_AUDIO_MUTED_CHANNEL = "desktop:preview-set-audio-muted";
 export const PREVIEW_OPEN_DEVTOOLS_CHANNEL = "desktop:preview-open-devtools";
 export const PREVIEW_CLEAR_COOKIES_CHANNEL = "desktop:preview-clear-cookies";
 export const PREVIEW_CLEAR_CACHE_CHANNEL = "desktop:preview-clear-cache";

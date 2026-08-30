@@ -1,5 +1,26 @@
 import Foundation
 
+enum MobileClientMetadata {
+    static var osMajorVersion: Int {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+    }
+
+    static var deviceModel: String {
+        if let simulatedModel = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"],
+           !simulatedModel.isEmpty {
+            return simulatedModel
+        }
+        var system = utsname()
+        uname(&system)
+        let machineSize = MemoryLayout.size(ofValue: system.machine)
+        return withUnsafePointer(to: &system.machine) { pointer in
+            pointer.withMemoryRebound(to: CChar.self, capacity: machineSize) {
+                String(cString: $0)
+            }
+        }
+    }
+}
+
 public actor T3Client {
     public let environment: Environment
     private let api: EnvironmentAPI
@@ -33,8 +54,29 @@ public actor T3Client {
                 components.path = "/ws"
             }
             var query = components.queryItems ?? []
-            query.removeAll { $0.name == "wsTicket" }
+            query.removeAll {
+                $0.name == "wsTicket"
+                    || $0.name == "clientSurface"
+                    || $0.name == "clientAppVersion"
+                    || $0.name == "clientOs"
+                    || $0.name == "clientOsMajorVersion"
+                    || $0.name == "clientDeviceModel"
+            }
             query.append(URLQueryItem(name: "wsTicket", value: ticket.ticket))
+            query.append(URLQueryItem(name: "clientSurface", value: "mobile"))
+            query.append(URLQueryItem(name: "clientOs", value: "iOS"))
+            query.append(URLQueryItem(
+                name: "clientOsMajorVersion",
+                value: String(MobileClientMetadata.osMajorVersion)
+            ))
+            let deviceModel = MobileClientMetadata.deviceModel
+            if !deviceModel.isEmpty {
+                query.append(URLQueryItem(name: "clientDeviceModel", value: deviceModel))
+            }
+            if let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+               !appVersion.isEmpty {
+                query.append(URLQueryItem(name: "clientAppVersion", value: appVersion))
+            }
             components.queryItems = query
             guard let url = components.url else { throw PairingURLError.invalidURL }
             return url
@@ -389,7 +431,8 @@ public actor T3Client {
         messageID: String = UUID().uuidString,
         createdAt: String = OrchestrationCommands.now()
     ) async throws -> DispatchResult {
-        try await dispatch(
+        let uploadedAttachments = try await prepareTurnAttachments(attachments)
+        return try await dispatch(
             try OrchestrationCommands.sendTurn(
                 threadID: threadID,
                 text: text,
@@ -397,6 +440,7 @@ public actor T3Client {
                 interactionMode: interactionMode,
                 model: model,
                 attachments: attachments,
+                uploadedAttachments: uploadedAttachments,
                 commandID: commandID,
                 messageID: messageID,
                 createdAt: createdAt
@@ -448,7 +492,8 @@ public actor T3Client {
         messageID: String = UUID().uuidString,
         createdAt: String = OrchestrationCommands.now()
     ) async throws -> DispatchResult {
-        try await dispatchOverWebSocket(
+        let uploadedAttachments = try await prepareTurnAttachments(attachments)
+        return try await dispatchOverWebSocket(
             try OrchestrationCommands.createThreadAndSend(
                 threadID: threadID,
                 projectID: projectID,
@@ -461,6 +506,7 @@ public actor T3Client {
                 worktreePath: worktreePath,
                 worktreePreparation: worktreePreparation,
                 attachments: attachments,
+                uploadedAttachments: uploadedAttachments,
                 commandID: commandID,
                 messageID: messageID,
                 createdAt: createdAt
@@ -666,6 +712,81 @@ public actor T3Client {
             payload: .object(["resource": resource.jsonValue]),
             as: AssetCreateURLResult.self
         )
+    }
+
+    public func createAttachmentUploadURL(
+        name: String,
+        mimeType: String,
+        sizeBytes: Int
+    ) async throws -> AttachmentCreateUploadURLResult {
+        try await rpc.request(
+            RPCMethod.attachmentsCreateUploadURL.rawValue,
+            payload: .object([
+                "name": .string(name),
+                "mimeType": .string(mimeType),
+                "sizeBytes": .number(Double(sizeBytes)),
+            ]),
+            as: AttachmentCreateUploadURLResult.self
+        )
+    }
+
+    public func deleteAttachment(id: String) async throws {
+        try await rpc.request(
+            RPCMethod.attachmentsDelete.rawValue,
+            payload: .object(["attachmentId": .string(id)])
+        )
+    }
+
+    public func uploadFeedback(
+        threadID: String,
+        reason: String? = nil
+    ) async throws -> ProviderUploadFeedbackResult {
+        var payload: [String: JSONValue] = ["threadId": .string(threadID)]
+        if let reason {
+            payload["reason"] = .string(reason)
+        }
+        return try await rpc.request(
+            RPCMethod.providerUploadFeedback.rawValue,
+            payload: .object(payload),
+            as: ProviderUploadFeedbackResult.self
+        )
+    }
+
+    private func prepareTurnAttachments(
+        _ attachments: [UploadChatImageAttachment]
+    ) async throws -> [JSONValue]? {
+        guard !attachments.isEmpty,
+              environment.descriptor?.capabilities.attachmentUploads == true else {
+            return nil
+        }
+
+        var prepared: [JSONValue] = []
+        var pendingIDs: [String] = []
+        do {
+            for attachment in attachments {
+                let upload = try await createAttachmentUploadURL(
+                    name: attachment.name,
+                    mimeType: attachment.mimeType,
+                    sizeBytes: attachment.sizeBytes
+                )
+                pendingIDs.append(upload.attachmentId)
+                guard let url = URL(
+                    string: upload.relativeUrl,
+                    relativeTo: environment.httpBaseURL
+                )?.absoluteURL,
+                      let data = attachment.imageData else {
+                    throw RPCError.protocolViolation("The image upload URL or image data is invalid.")
+                }
+                try await api.uploadAttachment(data, mimeType: attachment.mimeType, to: url)
+                prepared.append(attachment.uploadedJSONValue(id: upload.attachmentId))
+            }
+        } catch {
+            for attachmentID in pendingIDs {
+                try? await deleteAttachment(id: attachmentID)
+            }
+            throw error
+        }
+        return prepared
     }
 
     public func resolvedAssetURL(resource: AssetResource) async throws -> URL {
@@ -1273,8 +1394,10 @@ public actor EnvironmentRuntime {
         let previousEnvironment = try await environmentStore.load()
             .first(where: { $0.id == environment.id })
         let previousActiveID = try await environmentStore.activeEnvironmentID()
-        let previousCredential = try await credentialStore.credential(for: environment.id)
-        try await credentialStore.setCredential(credential, for: environment.id)
+        let previousCredential = try await credentialStore.swapCredential(
+            credential,
+            for: environment.id
+        )
         do {
             try await environmentStore.upsert(environment)
             try await environmentStore.setActiveEnvironment(id: environment.id)
@@ -1283,12 +1406,16 @@ public actor EnvironmentRuntime {
             var rollbackErrors: [String] = []
             do {
                 if let previousCredential {
-                    try await credentialStore.setCredential(
+                    _ = try await credentialStore.replaceCredential(
                         previousCredential,
+                        ifMatching: credential,
                         for: environment.id
                     )
                 } else {
-                    try await credentialStore.removeCredential(for: environment.id)
+                    _ = try await credentialStore.removeCredential(
+                        ifMatching: credential,
+                        for: environment.id
+                    )
                 }
             } catch {
                 rollbackErrors.append("credential: \(error.localizedDescription)")
@@ -1448,6 +1575,9 @@ public enum RPCMethod: String, Sendable {
     case projectsWriteFile = "projects.writeFile"
     case filesystemBrowse = "filesystem.browse"
     case assetsCreateURL = "assets.createUrl"
+    case attachmentsCreateUploadURL = "attachments.createUploadUrl"
+    case attachmentsDelete = "attachments.delete"
+    case providerUploadFeedback = "provider.uploadFeedback"
     case subscribeServerConfig
     case serverDiscoverSourceControl = "server.discoverSourceControl"
     case subscribeVCSStatus = "subscribeVcsStatus"
@@ -1537,6 +1667,7 @@ public enum OrchestrationCommands {
         interactionMode: InteractionMode = .default,
         model: ModelSelection? = nil,
         attachments: [UploadChatImageAttachment] = [],
+        uploadedAttachments: [JSONValue]? = nil,
         commandID: String = UUID().uuidString,
         messageID: String = UUID().uuidString,
         createdAt: String = now()
@@ -1549,7 +1680,7 @@ public enum OrchestrationCommands {
                 "messageId": .string(messageID),
                 "role": .string("user"),
                 "text": .string(text),
-                "attachments": .array(attachments.map(\.jsonValue)),
+                "attachments": .array(uploadedAttachments ?? attachments.map(\.jsonValue)),
             ]),
             "runtimeMode": .string(runtimeMode.rawValue),
             "interactionMode": .string(interactionMode.rawValue),
@@ -1573,6 +1704,7 @@ public enum OrchestrationCommands {
         worktreePath: String? = nil,
         worktreePreparation: ThreadWorktreePreparation? = nil,
         attachments: [UploadChatImageAttachment] = [],
+        uploadedAttachments: [JSONValue]? = nil,
         commandID: String = UUID().uuidString,
         messageID: String = UUID().uuidString,
         createdAt: String = now()
@@ -1609,7 +1741,7 @@ public enum OrchestrationCommands {
                 "messageId": .string(messageID),
                 "role": .string("user"),
                 "text": .string(text),
-                "attachments": .array(attachments.map(\.jsonValue)),
+                "attachments": .array(uploadedAttachments ?? attachments.map(\.jsonValue)),
             ]),
             "modelSelection": try .encode(model),
             "titleSeed": .string(title),
@@ -1741,7 +1873,7 @@ public enum OrchestrationCommands {
                 "type": .string("thread.snooze"),
                 "commandId": .string(commandID),
                 "threadId": .string(threadID),
-                "snoozedUntil": .string(iso8601.string(from: until)),
+                "snoozedUntil": .string(iso8601.format(until)),
             ])
         }
         return .object([
@@ -1803,10 +1935,9 @@ public enum OrchestrationCommands {
     }
 
     public static func now() -> String {
-        iso8601.string(from: Date())
+        iso8601.format(Date())
     }
 
-    /// ISO8601DateFormatter is expensive to construct and thread-safe to use;
-    /// `now()` runs as the default argument of nearly every outbound command.
-    static let iso8601 = ISO8601DateFormatter()
+    /// Commands are built on several actors, so their shared formatter must be Sendable.
+    private static let iso8601 = Date.ISO8601FormatStyle()
 }

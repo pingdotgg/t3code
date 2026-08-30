@@ -100,6 +100,80 @@ final class NativeContractExpansionTests: XCTestCase {
         }
     }
 
+    func testUploadedImageAttachmentUsesPersistedReferenceInsteadOfInlineBytes() throws {
+        let image = try UploadChatImageAttachment(
+            data: Data([0x89, 0x50, 0x4e, 0x47]),
+            name: "screenshot.png",
+            mimeType: "image/png"
+        )
+        let command = try OrchestrationCommands.sendTurn(
+            threadID: "thread-1",
+            text: "Review the screenshot",
+            runtimeMode: .fullAccess,
+            attachments: [image],
+            uploadedAttachments: [image.uploadedJSONValue(id: "attachment-1")]
+        )
+
+        guard case let .array(attachments)? = command["message"]?["attachments"],
+              let attachment = attachments.first else {
+            return XCTFail("Expected an uploaded attachment reference")
+        }
+        XCTAssertEqual(attachment["id"]?.stringValue, "attachment-1")
+        XCTAssertEqual(attachment["mimeType"]?.stringValue, "image/png")
+        XCTAssertNil(attachment["dataUrl"])
+    }
+
+    func testSignedAttachmentUploadPostsImageBytesWithoutCredentials() async throws {
+        let transport = AccessHTTPTransport()
+        let api = EnvironmentAPI(transport: transport, credentials: InMemoryCredentialStore())
+        let data = Data([0x89, 0x50, 0x4e, 0x47])
+
+        try await api.uploadAttachment(
+            data,
+            mimeType: "image/png",
+            to: URL(string: "https://studio.example/api/attachments/upload/signed-token")!
+        )
+
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.httpBody, data)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "image/png")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Length"), "4")
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testEnvironmentDescriptorDecodesAttachmentUploadCapability() throws {
+        let descriptor = try JSONDecoder.t3.decode(
+            EnvironmentDescriptor.self,
+            from: Data(
+                """
+                {
+                  "environmentId": "environment-1",
+                  "label": "Studio",
+                  "platform": {"os": "darwin", "arch": "arm64"},
+                  "serverVersion": "1.0.0",
+                  "capabilities": {"repositoryIdentity": true, "attachmentUploads": true}
+                }
+                """.utf8
+            )
+        )
+
+        XCTAssertEqual(descriptor.capabilities.attachmentUploads, true)
+        XCTAssertEqual(RPCMethod.attachmentsCreateUploadURL.rawValue, "attachments.createUploadUrl")
+        XCTAssertEqual(RPCMethod.attachmentsDelete.rawValue, "attachments.delete")
+    }
+
+    func testCodexFeedbackContractMatchesTheServerRPC() throws {
+        let result = try JSONDecoder.t3.decode(
+            ProviderUploadFeedbackResult.self,
+            from: Data(#"{"feedbackId":"codex-thread-1"}"#.utf8)
+        )
+
+        XCTAssertEqual(result.feedbackId, "codex-thread-1")
+        XCTAssertEqual(RPCMethod.providerUploadFeedback.rawValue, "provider.uploadFeedback")
+    }
+
     func testAssetContractUsesExactTagsAndResultFields() throws {
         XCTAssertEqual(RPCMethod.assetsCreateURL.rawValue, "assets.createUrl")
         XCTAssertEqual(

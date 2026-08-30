@@ -192,9 +192,11 @@ public actor T3ConnectManagedEnvironmentAuthorizer {
             let httpBaseURL = authorization.endpoint.httpBaseURL,
             let webSocketBaseURL = authorization.endpoint.webSocketBaseURL,
             httpBaseURL.scheme?.lowercased() == "https",
-            httpBaseURL.host?.isEmpty == false,
+            let httpHost = httpBaseURL.host,
             webSocketBaseURL.scheme?.lowercased() == "wss",
-            webSocketBaseURL.host?.isEmpty == false
+            let webSocketHost = webSocketBaseURL.host,
+            httpHost.caseInsensitiveCompare(webSocketHost) == .orderedSame,
+            (httpBaseURL.port ?? 443) == (webSocketBaseURL.port ?? 443)
         else {
             throw T3ConnectRelayError.invalidConfiguration(
                 "The managed environment endpoint is invalid."

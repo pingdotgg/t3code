@@ -99,6 +99,31 @@ struct ComposerDraftStoreTests {
         )
     }
 
+    @Test func environmentRemovalClearsItsGroupedProjectDrafts() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let removedKey = FeatureComposerDraftStore.newTaskKey(
+            logicalProjectID: "github.com/t3/removed"
+        )
+        let preservedKey = FeatureComposerDraftStore.newTaskKey(
+            logicalProjectID: "github.com/t3/preserved"
+        )
+        try await store.setDraft(FeatureComposerDraft(text: "remove"), for: removedKey)
+        try await store.setDraft(FeatureComposerDraft(text: "keep"), for: preservedKey)
+
+        try await store.removeDrafts(
+            environmentID: "first",
+            logicalProjectIDs: ["github.com/t3/removed"]
+        )
+
+        #expect(try await store.draft(for: removedKey) == nil)
+        #expect(try await store.draft(for: preservedKey)?.text == "keep")
+    }
+
     @Test func migratesResolvedVersionOneNewTaskDefaultsBackToImplicit() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

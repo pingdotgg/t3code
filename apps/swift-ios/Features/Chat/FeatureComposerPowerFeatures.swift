@@ -23,7 +23,7 @@ struct FeatureComposerPowerFeatures {
         self.searchPaths = searchPaths
     }
 
-    static let disabled = FeatureComposerPowerFeatures()
+    static var disabled: FeatureComposerPowerFeatures { FeatureComposerPowerFeatures() }
 }
 
 public struct FeatureProviderSlashCommand: Identifiable, Sendable, Equatable, Hashable, Codable {
@@ -70,6 +70,40 @@ public struct FeatureProviderSkill: Identifiable, Sendable, Equatable, Hashable,
         self.scope = scope
         self.isEnabled = isEnabled
     }
+
+    var source: FeatureProviderSkillSource {
+        let normalizedPath = path.replacingOccurrences(of: "\\", with: "/")
+        if normalizedPath.contains("/.codex/plugins/")
+            || normalizedPath.contains("/.agents/plugins/") {
+            return .app
+        }
+        switch scope?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "repo", "repository": return .repository
+        case "project", "workspace", "local": return .project
+        case "user", "personal": return .personal
+        case "system": return .system
+        default: return .other
+        }
+    }
+}
+
+enum FeatureProviderSkillSource: String, Sendable, Equatable {
+    case app
+    case repository
+    case project
+    case personal
+    case system
+    case other
+
+    var systemImage: String {
+        switch self {
+        case .app: "square.grid.2x2"
+        case .repository, .project: "folder"
+        case .personal: "person.crop.circle"
+        case .system: "gearshape"
+        case .other: "shippingbox"
+        }
+    }
 }
 
 struct FeatureComposerPathEntry: Identifiable, Sendable, Equatable, Hashable {
@@ -112,6 +146,33 @@ struct FeatureComposerTrigger: Sendable, Equatable {
     let kind: FeatureComposerTriggerKind
     let query: String
     let range: Range<Int>
+}
+
+struct FeatureCodexFeedbackCommand: Sendable, Equatable {
+    private static let expression = try? NSRegularExpression(
+        pattern: #"^/feedback(?:\s+([\s\S]*))?$"#,
+        options: [.caseInsensitive]
+    )
+
+    let reason: String?
+
+    static func parse(_ text: String) -> Self? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.lowercased().hasPrefix("/feedback"),
+              let expression,
+              let match = expression.firstMatch(
+                  in: trimmed,
+                  range: NSRange(trimmed.startIndex..., in: trimmed)
+              ) else {
+            return nil
+        }
+        guard match.range(at: 1).location != NSNotFound,
+              let reasonRange = Range(match.range(at: 1), in: trimmed) else {
+            return Self(reason: nil)
+        }
+        let reason = trimmed[reasonRange].trimmingCharacters(in: .whitespacesAndNewlines)
+        return Self(reason: reason.isEmpty ? nil : reason)
+    }
 }
 
 /// Mirrors the shared web/mobile trigger grammar while keeping this target
@@ -262,16 +323,34 @@ enum FeatureComposerMenuBuilder {
         switch trigger.kind {
         case .slashCommand:
             let query = trigger.query.lowercased()
+            let normalizedSkillQuery = query.hasPrefix("skill:")
+                ? String(query.dropFirst("skill:".count))
+                : query
             var items: [FeatureComposerMenuItem] = []
             if query.isEmpty || "model".contains(query) {
                 items.append(.modelCommand)
             }
+            let skills = powerFeatures.skills
+                .filter(\.isEnabled)
+                .filter { skill in
+                    guard !normalizedSkillQuery.isEmpty else { return true }
+                    return [skill.name, skill.displayName, skill.shortDescription, skill.description]
+                        .compactMap { $0 }
+                        .contains { $0.localizedCaseInsensitiveContains(normalizedSkillQuery) }
+                }
+                .sorted {
+                    ($0.displayName ?? $0.name).localizedStandardCompare($1.displayName ?? $1.name)
+                        == .orderedAscending
+                }
+            let visibleSkillNames = Set(skills.map { $0.name.lowercased() })
             let commands = powerFeatures.slashCommands
                 .filter { !["model", "plan", "default"].contains($0.name.lowercased()) }
+                .filter { !visibleSkillNames.contains($0.name.lowercased()) }
                 .filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
                 .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-            items.append(contentsOf: commands.prefix(19).map(FeatureComposerMenuItem.providerCommand))
-            return items
+            items.append(contentsOf: commands.map(FeatureComposerMenuItem.providerCommand))
+            items.append(contentsOf: skills.map(FeatureComposerMenuItem.skill))
+            return Array(items.prefix(20))
 
         case .model:
             let query = trigger.query.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -321,6 +321,8 @@ describe("previewStateStore (single-tab)", () => {
       zoomFactor: 1,
       pictureInPicture: false,
       colorScheme: "system",
+      audioMuted: false,
+      audible: false,
       controller: "none",
       favicon: null,
     });
@@ -342,6 +344,8 @@ describe("previewStateStore (single-tab)", () => {
       zoomFactor: 1,
       pictureInPicture: false,
       colorScheme: "system",
+      audioMuted: false,
+      audible: false,
       controller: "none",
       favicon: null,
     });
@@ -391,6 +395,8 @@ describe("previewStateStore (single-tab)", () => {
       zoomFactor: 1,
       pictureInPicture: false,
       colorScheme: "system",
+      audioMuted: false,
+      audible: false,
       controller: "none",
       favicon: null,
     });
@@ -506,6 +512,8 @@ describe("previewStateStore (single-tab)", () => {
       zoomFactor: 1,
       pictureInPicture: false,
       colorScheme: "system",
+      audioMuted: false,
+      audible: false,
       controller: "none",
       favicon: null,
     });

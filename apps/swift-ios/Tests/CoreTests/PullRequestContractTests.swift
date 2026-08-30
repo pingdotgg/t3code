@@ -2,6 +2,19 @@ import XCTest
 @testable import T3Code
 
 final class PullRequestContractTests: XCTestCase {
+    func testThreadLinkedPullRequestDecodesCurrentWireShape() throws {
+        let linked = try JSONDecoder.t3.decode(
+            ThreadLinkedPullRequest.self,
+            from: Data(
+                #"{"projectId":"project-1","repository":"pingdotgg/t3code","number":5178,"url":"https://github.com/pingdotgg/t3code/pull/5178"}"#.utf8
+            )
+        )
+
+        XCTAssertEqual(linked.projectId, "project-1")
+        XCTAssertEqual(linked.repository, "pingdotgg/t3code")
+        XCTAssertEqual(linked.number, 5178)
+    }
+
     func testListResultDecodesCurrentWireShape() throws {
         let data = Data(
             #"""
@@ -49,5 +62,31 @@ final class PullRequestContractTests: XCTestCase {
                 "number": .number(5178),
             ])
         )
+    }
+
+    func testListPagesPreserveRowsAndAdvanceCursors() {
+        let first = PullRequestListResult(
+            viewers: ["github.com": "theo"],
+            providers: [],
+            entries: [],
+            errors: [],
+            truncated: true,
+            nextCursors: ["github.com t3/repo": "first"]
+        )
+        let second = PullRequestListResult(
+            viewers: ["gitlab.com": "maintainer"],
+            providers: [],
+            entries: [],
+            errors: [],
+            truncated: false,
+            nextCursors: [:]
+        )
+
+        let combined = first.appending(second)
+
+        XCTAssertEqual(combined.viewers["github.com"], "theo")
+        XCTAssertEqual(combined.viewers["gitlab.com"], "maintainer")
+        XCTAssertFalse(combined.truncated)
+        XCTAssertTrue(combined.nextCursors.isEmpty)
     }
 }

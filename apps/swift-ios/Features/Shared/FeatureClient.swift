@@ -90,6 +90,10 @@ public protocol FeatureClient: AnyObject {
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage]
     func pullRequestLists(_ input: PullRequestListInput) async throws
         -> [FeaturePullRequestEnvironmentList]
+    func pullRequestLists(
+        _ input: PullRequestListInput,
+        environmentID: String
+    ) async throws -> [FeaturePullRequestEnvironmentList]
     func pullRequestDetail(_ target: FeaturePullRequestTarget) async throws -> PullRequestDetail
     func pullRequestActivity(_ target: FeaturePullRequestTarget) async throws
         -> PullRequestActivity
@@ -166,6 +170,7 @@ public protocol FeatureClient: AnyObject {
     ) async throws -> FeatureReviewFileContents?
 
     func sourceControlStatus(threadID: String) async throws -> FeatureSourceControlStatus
+    func sourceControlStatusEvents(threadID: String) -> AsyncStream<FeatureSourceControlStatus>
     func performSourceControlAction(
         threadID: String,
         action: FeatureSourceControlAction,
@@ -217,6 +222,12 @@ public extension FeatureClient {
         -> [FeaturePullRequestEnvironmentList]
     {
         []
+    }
+    func pullRequestLists(
+        _ input: PullRequestListInput,
+        environmentID: String
+    ) async throws -> [FeaturePullRequestEnvironmentList] {
+        throw FeatureCapabilityUnavailable("Environment-specific pull request pagination")
     }
     func pullRequestDetail(_ target: FeaturePullRequestTarget) async throws -> PullRequestDetail {
         throw FeatureCapabilityUnavailable("Pull requests")
@@ -447,6 +458,10 @@ public extension FeatureClient {
 
     func sourceControlStatus(threadID: String) async throws -> FeatureSourceControlStatus {
         throw FeatureCapabilityUnavailable("Source control")
+    }
+
+    func sourceControlStatusEvents(threadID: String) -> AsyncStream<FeatureSourceControlStatus> {
+        AsyncStream { $0.finish() }
     }
 
     func performSourceControlAction(

@@ -50,6 +50,24 @@ describe("resolveMarkdownLinkPresentation", () => {
     });
   });
 
+  it.each(["md", "html", "xml"])("recognizes a bare spaced .%s filename", (extension) => {
+    expect(
+      resolveMarkdownLinkPresentation(`Updated%20cutover%20checklist.${extension}`),
+    ).toMatchObject({
+      kind: "file",
+      path: `Updated cutover checklist.${extension}`,
+      label: `Updated cutover checklist.${extension}`,
+    });
+  });
+
+  it("recognizes spaced relative paths", () => {
+    expect(resolveMarkdownLinkPresentation("docs/My%20Folder/checklist.xml")).toMatchObject({
+      kind: "file",
+      path: "docs/My Folder/checklist.xml",
+      label: "checklist.xml",
+    });
+  });
+
   it("extracts line fragments from relative file links", () => {
     expect(resolveMarkdownLinkPresentation("src/main.ts#L18C2")).toMatchObject({
       kind: "file",

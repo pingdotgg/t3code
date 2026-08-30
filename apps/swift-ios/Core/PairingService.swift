@@ -78,15 +78,30 @@ public actor PairingService {
             scopes: access.scope.split(separator: " ").map(String.init)
         )
         // Store the secret first. A catalog record must never point at a
-        // credential that failed to persist.
-        try await credentialStore.setCredential(credential, for: environment.id)
+        // credential that failed to persist. Capture the previous credential in
+        // the same actor operation so a concurrent refresh cannot be lost.
+        let previousCredential = try await credentialStore.swapCredential(
+            credential,
+            for: environment.id
+        )
         do {
             try await environmentStore.upsert(environment)
             if try await environmentStore.activeEnvironmentID() == nil {
                 try await environmentStore.setActiveEnvironment(id: environment.id)
             }
         } catch {
-            try? await credentialStore.removeCredential(for: environment.id)
+            if let previousCredential {
+                _ = try? await credentialStore.replaceCredential(
+                    previousCredential,
+                    ifMatching: credential,
+                    for: environment.id
+                )
+            } else {
+                _ = try? await credentialStore.removeCredential(
+                    ifMatching: credential,
+                    for: environment.id
+                )
+            }
             throw error
         }
         return environment
@@ -112,7 +127,12 @@ public actor PairingService {
             ),
             URLQueryItem(name: "client_device_type", value: "mobile"),
             URLQueryItem(name: "client_os", value: "iOS"),
+            URLQueryItem(name: "client_surface", value: "mobile"),
         ]
+        if let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+           !appVersion.isEmpty {
+            fields.append(URLQueryItem(name: "client_app_version", value: appVersion))
+        }
         if let clientLabel, !clientLabel.isEmpty {
             fields.append(URLQueryItem(name: "client_label", value: clientLabel))
         }

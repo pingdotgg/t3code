@@ -114,12 +114,13 @@ struct PlatformIncomingSharePipeline: Sendable {
 
     func importEnvelope(
         _ envelope: T3IncomingShareEnvelope,
-        into project: FeatureProject
+        into project: FeatureProject,
+        draftKey: String? = nil
     ) async throws -> FeatureComposerDraft {
         guard UUID(uuidString: envelope.id) != nil else {
             throw PlatformIncomingShareError.invalidEnvelope
         }
-        let key = FeatureComposerDraftStore.newTaskKey(project: project)
+        let key = draftKey ?? FeatureComposerDraftStore.newTaskKey(project: project)
         var prepared: [FeatureDraftAttachment] = []
         prepared.reserveCapacity(envelope.images.count)
         for (offset, image) in envelope.images.enumerated() {
@@ -194,11 +195,15 @@ final class PlatformIncomingShareCoordinator {
         pendingEnvelope = nil
     }
 
-    func importPending(into project: FeatureProject) async throws {
+    func importPending(into project: FeatureProject, draftKey: String? = nil) async throws {
         guard let pendingEnvelope, !isImporting else { return }
         isImporting = true
         do {
-            _ = try await pipeline.importEnvelope(pendingEnvelope, into: project)
+            _ = try await pipeline.importEnvelope(
+                pendingEnvelope,
+                into: project,
+                draftKey: draftKey
+            )
             self.pendingEnvelope = nil
             lastNoProjectNoticeID = nil
             isImporting = false

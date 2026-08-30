@@ -25,6 +25,10 @@ struct GhosttyTerminalSurface: UIViewRepresentable {
         configure(view)
     }
 
+    static func dismantleUIView(_ view: GhosttyTerminalView, coordinator _: ()) {
+        view.tearDown()
+    }
+
     private func configure(_ view: GhosttyTerminalView) {
         view.isDarkMode = colorScheme == .dark
         view.onInput = onInput
@@ -78,7 +82,7 @@ enum TerminalText {
 
 private enum GhosttyRuntime {
     private static let lock = NSLock()
-    private static var initialized = false
+    nonisolated(unsafe) private static var initialized = false
 
     static func ensureInitialized() -> Bool {
         lock.lock()
@@ -90,6 +94,7 @@ private enum GhosttyRuntime {
     }
 }
 
+@MainActor
 private enum TerminalHardwareKeyEncoder {
     private static let controlInputs = "abcdefghijklmnopqrstuvwxyz@[\\]^_-? "
 
@@ -515,6 +520,11 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         didSet {
             guard oldValue != buffer else { return }
             applyRemoteBuffer(buffer)
+            if UIAccessibility.isVoiceOverRunning {
+                terminalViewport.accessibilityValue = TerminalText.plainText(
+                    from: String(buffer.suffix(8_192))
+                )
+            }
         }
     }
 
@@ -580,6 +590,9 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         terminalViewport.contentScaleFactor = contentScaleFactor
         terminalViewport.translatesAutoresizingMaskIntoConstraints = false
         terminalViewport.isUserInteractionEnabled = true
+        terminalViewport.isAccessibilityElement = true
+        terminalViewport.accessibilityLabel = "Terminal output"
+        terminalViewport.accessibilityTraits = .staticText
 
         inputField.delegate = self
         inputField.inputAccessoryView = accessoryView
@@ -649,8 +662,6 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { nil }
-
-    deinit { destroySurface() }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -814,6 +825,14 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     private func refreshSurface() {
         resetSurface()
         createSurfaceIfPossible()
+    }
+
+    func tearDown() {
+        onInput = nil
+        onResize = nil
+        onClear = nil
+        onFontSizeStep = nil
+        destroySurface()
     }
 
     private func destroySurface() {

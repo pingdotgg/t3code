@@ -1379,4 +1379,55 @@ describe("OrchestrationEngine", () => {
 
     await system.dispose();
   });
+
+  it("stamps the dispatching client's origin onto persisted event metadata", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+
+    await system.run(
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-origin-project-create"),
+          projectId: asProjectId("project-origin"),
+          title: "Origin Project",
+          workspaceRoot: "/tmp/project-origin",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
+        },
+        { origin: { surface: "mobile", appVersion: "1.2.3" } },
+      ),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-no-origin-project-create"),
+        projectId: asProjectId("project-no-origin"),
+        title: "No Origin Project",
+        workspaceRoot: "/tmp/project-no-origin",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(Effect.map((chunk) => Array.from(chunk))),
+    );
+    const withOrigin = events.find((event) => event.commandId === "cmd-origin-project-create");
+    const withoutOrigin = events.find(
+      (event) => event.commandId === "cmd-no-origin-project-create",
+    );
+
+    expect(withOrigin?.metadata.origin).toEqual({ surface: "mobile", appVersion: "1.2.3" });
+    expect(withoutOrigin?.metadata.origin).toBeUndefined();
+
+    await system.dispose();
+  });
 });
