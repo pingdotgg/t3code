@@ -141,7 +141,7 @@ selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes thirteen orchestration and checkpoint-inspection tools.
+The server exposes the following orchestration and checkpoint tools.
 
 ### `orchestrator_capabilities`
 
