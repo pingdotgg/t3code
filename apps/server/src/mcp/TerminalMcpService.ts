@@ -147,14 +147,6 @@ function failure(code: TerminalMcpFailure["code"], message: string): TerminalMcp
   return new TerminalMcpFailure({ code, message });
 }
 
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error !== null && "message" in error) {
-    return String((error as { message: unknown }).message);
-  }
-  return String(error);
-}
-
 function terminalFailure(error: unknown): TerminalMcpFailure {
   if (isTerminalSessionLookupError(error)) {
     return failure("terminal_not_found", error.message);
@@ -165,7 +157,7 @@ function terminalFailure(error: unknown): TerminalMcpFailure {
   if (isTerminalSessionAlreadyExistsError(error)) {
     return failure("terminal_already_exists", error.message);
   }
-  return failure("operation_failed", errorMessage(error));
+  return failure("operation_failed", "The terminal operation failed.");
 }
 
 function isThreadNotFound(error: unknown): boolean {
@@ -239,7 +231,7 @@ export const make = Effect.gen(function* () {
         error._tag === "OrchestratorProjectionError" &&
         isProjectionStoreThreadNotFoundError(error.cause)
           ? failure("thread_not_found", `Thread '${scope.threadId}' was not found.`)
-          : failure("operation_failed", errorMessage(error)),
+          : failure("operation_failed", "The calling thread could not be read."),
       ),
       Effect.filterOrFail(
         (projection) => projection.thread.deletedAt === null,
@@ -262,12 +254,14 @@ export const make = Effect.gen(function* () {
               Effect.mapError((error) =>
                 isThreadNotFound(error)
                   ? failure("thread_not_found", error.message)
-                  : failure("operation_failed", errorMessage(error)),
+                  : failure("operation_failed", "The target thread could not be read."),
               ),
             );
     const projectOption = yield* projects
       .getById(target.thread.projectId)
-      .pipe(Effect.mapError((error) => failure("operation_failed", errorMessage(error))));
+      .pipe(
+        Effect.mapError(() => failure("operation_failed", "The target project could not be read.")),
+      );
     const project = yield* Option.match(projectOption, {
       onNone: () =>
         Effect.fail(

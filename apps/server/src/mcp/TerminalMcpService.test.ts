@@ -264,6 +264,8 @@ describe("TerminalMcpService", () => {
           .list({ ...scope, threadId: ThreadId.make("thread:terminal-storage-failure") }, {})
           .pipe(Effect.flip);
         assert.equal(callerLoadFailure.code, "operation_failed");
+        assert.equal(callerLoadFailure.message, "The calling thread could not be read.");
+        assert.notInclude(callerLoadFailure.message, "projection storage failed");
         const missingCaller = yield* service
           .list({ ...scope, threadId: typedMissingCallerId }, {})
           .pipe(Effect.flip);
@@ -478,6 +480,11 @@ describe("TerminalMcpService", () => {
           .open(scope, { threadId: targetThreadId, terminalId: "term-spawn-failure" })
           .pipe(Effect.flip);
         assert.equal(spawnFailure.code, "operation_failed");
+        assert.equal(
+          spawnFailure.message,
+          "Terminal 'term-spawn-failure' failed to start and is in 'error' state.",
+        );
+        assert.notInclude(spawnFailure.message, "spawn failed");
         assert.equal(
           (yield* manager.inspectSession({
             threadId: targetThreadId,
