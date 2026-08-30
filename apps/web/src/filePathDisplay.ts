@@ -35,6 +35,13 @@ function hasDotPathSegment(path: string): boolean {
 
 function homeDirectoryFromWorkspace(workspaceRoot: string): string | undefined {
   if (workspaceRoot === "/root" || workspaceRoot.startsWith("/root/")) return "/root";
+  const wslShare = workspaceRoot.match(/^\/\/(?:wsl\.localhost|wsl\$)\/[^/]+/i)?.[0];
+  if (wslShare) {
+    const linuxPath = workspaceRoot.slice(wslShare.length);
+    const linuxHome =
+      linuxPath.match(/^\/home\/[^/]+(?=\/|$)/)?.[0] ?? linuxPath.match(/^\/root(?=\/|$)/)?.[0];
+    if (linuxHome) return `${wslShare}${linuxHome}`;
+  }
   return (
     workspaceRoot.match(/^\/Users\/[^/]+/)?.[0] ??
     workspaceRoot.match(/^\/home\/[^/]+/)?.[0] ??

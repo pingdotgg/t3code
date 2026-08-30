@@ -1,15 +1,12 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import { flushSync } from "react-dom";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-
-const clientSettingsMocks = vi.hoisted(() => ({ showFileLinkPaths: false }));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { installReactTestDom } from "~/test/reactDomHarness";
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
-vi.mock("../hooks/useSettings", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../hooks/useSettings")>()),
-  useShowFileLinkPaths: () => clientSettingsMocks.showFileLinkPaths,
-}));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../state/session", async (importOriginal) => ({
@@ -40,9 +37,18 @@ import ChatMarkdown, {
   orderedListGutterStyle,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
+import {
+  __resetClientSettingsPersistenceForTests,
+  __setClientSettingsForTests,
+} from "../hooks/useSettings";
 
 beforeEach(() => {
-  clientSettingsMocks.showFileLinkPaths = false;
+  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+});
+
+afterEach(() => {
+  __resetClientSettingsPersistenceForTests();
+  vi.unstubAllGlobals();
 });
 
 describe("canUseMarkdownFileShellActions", () => {
@@ -112,14 +118,29 @@ describe("ChatMarkdown file option chips", () => {
     expect(html).not.toContain("./src/main.ts");
   });
 
-  it("shows the compact path when the preference is enabled", () => {
-    clientSettingsMocks.showFileLinkPaths = true;
+  it("updates an already-mounted chip when the real preference changes", async () => {
+    const document = installReactTestDom(vi.stubGlobal);
+    const { createRoot } = await import("react-dom/client");
+    const container = document.createElement("div");
+    const root = createRoot(container as unknown as Element);
 
-    const html = renderToStaticMarkup(
-      <ChatMarkdown cwd="/tmp/project" text="[Source](/tmp/project/src/main.ts)" />,
-    );
+    try {
+      flushSync(() =>
+        root.render(<ChatMarkdown cwd="/tmp/project" text="[Source](/tmp/project/src/main.ts)" />),
+      );
+      expect(container.textContent).toContain("main.ts");
+      expect(container.textContent).not.toContain("./src/main.ts");
 
-    expect(html).toContain("./src/main.ts");
+      flushSync(() =>
+        __setClientSettingsForTests({
+          ...DEFAULT_CLIENT_SETTINGS,
+          showFileLinkPaths: true,
+        }),
+      );
+      expect(container.textContent).toContain("./src/main.ts");
+    } finally {
+      flushSync(() => root.unmount());
+    }
   });
 
   it("keeps the fallback button text selectable", () => {

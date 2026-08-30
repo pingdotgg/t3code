@@ -7,6 +7,7 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { createElement } from "react";
 import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { installReactTestDom } from "~/test/reactDomHarness";
 
 const persistenceMocks = vi.hoisted(() => ({
   persistedSettings: null as typeof DEFAULT_CLIENT_SETTINGS | null,
@@ -31,67 +32,6 @@ import {
   useShowFileLinkPaths,
 } from "./useSettings";
 
-class TestNode {
-  parentNode: TestNode | null = null;
-  childNodes: TestNode[] = [];
-  readonly nodeName: string;
-  readonly tagName: string;
-  readonly namespaceURI = "http://www.w3.org/1999/xhtml";
-  readonly style = {};
-
-  constructor(
-    name: string,
-    readonly ownerDocument: TestNode | null = null,
-    readonly nodeType = 1,
-  ) {
-    this.nodeName = name.toUpperCase();
-    this.tagName = this.nodeName;
-  }
-
-  set textContent(_value: string) {
-    this.childNodes = [];
-  }
-
-  appendChild(child: TestNode) {
-    child.parentNode = this;
-    this.childNodes.push(child);
-    return child;
-  }
-
-  removeChild(child: TestNode) {
-    this.childNodes.splice(this.childNodes.indexOf(child), 1);
-    child.parentNode = null;
-    return child;
-  }
-
-  createElement(name: string) {
-    return new TestNode(name, this);
-  }
-
-  addEventListener() {}
-  removeEventListener() {}
-  setAttribute() {}
-}
-
-function installTestDom() {
-  const document = new TestNode("#document", null, 9);
-  const window = {
-    document,
-    HTMLIFrameElement: TestNode,
-    setInterval: globalThis.setInterval,
-    clearInterval: globalThis.clearInterval,
-    setTimeout: globalThis.setTimeout,
-    clearTimeout: globalThis.clearTimeout,
-    addEventListener() {},
-    removeEventListener() {},
-  };
-  vi.stubGlobal("document", document);
-  vi.stubGlobal("window", window);
-  vi.stubGlobal("HTMLIFrameElement", window.HTMLIFrameElement);
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  return document;
-}
-
 afterEach(() => {
   persistenceMocks.persistedSettings = null;
   __resetClientSettingsPersistenceForTests();
@@ -104,7 +44,7 @@ describe("useShowFileLinkPaths", () => {
       ...DEFAULT_CLIENT_SETTINGS,
       showFileLinkPaths: true,
     };
-    const document = installTestDom();
+    const document = installReactTestDom(vi.stubGlobal);
     const { createRoot } = await import("react-dom/client");
     const root = createRoot(document.createElement("div") as unknown as Element);
     const observed: boolean[] = [];
@@ -127,7 +67,7 @@ describe("useShowFileLinkPaths", () => {
   });
 
   it("ignores unrelated setting writes but rerenders for a real toggle", async () => {
-    const document = installTestDom();
+    const document = installReactTestDom(vi.stubGlobal);
     const { createRoot } = await import("react-dom/client");
     const root = createRoot(document.createElement("div") as unknown as Element);
     const renderCount = vi.fn();

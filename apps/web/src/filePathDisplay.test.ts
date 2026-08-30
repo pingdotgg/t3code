@@ -86,9 +86,30 @@ describe("formatCompactFilePath", () => {
     [
       "//wsl.localhost/Ubuntu/home/alice/project/src/main.ts:12:3",
       "//wsl.localhost/Ubuntu/home/alice/Project",
-      "//wsl.localhost/Ubuntu/home/alice/project/src/main.ts:12:3",
+      "~/project/src/main.ts:12:3",
     ],
   ])("uses safe case rules for %s from %s", (path, workspaceRoot, expected) => {
+    expect(formatCompactFilePath(path, workspaceRoot)).toBe(expected);
+  });
+
+  it.each([
+    [
+      String.raw`\\wsl.localhost\Ubuntu\home\alice\notes\todo.md:12:3`,
+      String.raw`\\wsl.localhost\Ubuntu\home\alice\project`,
+      "~/notes/todo.md:12:3",
+    ],
+    ["//wsl$/Ubuntu/root/notes/todo.md", "//wsl$/Ubuntu/root/project", "~/notes/todo.md"],
+    [
+      "//wsl.localhost/Ubuntu/home/Alice/notes/todo.md",
+      "//wsl.localhost/Ubuntu/home/alice/project",
+      "//wsl.localhost/Ubuntu/home/Alice/notes/todo.md",
+    ],
+    [
+      "//server/share/home/alice/notes/todo.md",
+      "//server/share/home/alice/project",
+      "//server/share/home/alice/notes/todo.md",
+    ],
+  ])("infers WSL home paths safely for %s", (path, workspaceRoot, expected) => {
     expect(formatCompactFilePath(path, workspaceRoot)).toBe(expected);
   });
 
