@@ -309,6 +309,9 @@ const NewTaskSheetStack = createNativeStackNavigator({
     AddProjectDestination: createNativeStackScreen({
       screen: AddProjectDestinationRoute,
       linking: "add-project/destination",
+      options: {
+        title: "Add Project Destination",
+      },
     }),
     AddProjectLocal: createNativeStackScreen({
       screen: AddProjectLocalRoute,
