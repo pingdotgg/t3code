@@ -58,6 +58,21 @@ it.effect("retries one typed deferred repair failure without swallowing interrup
     );
     assert.equal(yield* Ref.get(attempts), 2);
 
+    const mappedAttempts = yield* Ref.make(0);
+    yield* Orchestrator.runDeferredOrganizationRepair(
+      ThreadId.make("thread:deferred-organization-transient-projection"),
+      Effect.gen(function* () {
+        const attempt = yield* Ref.updateAndGet(mappedAttempts, (current) => current + 1);
+        if (attempt === 1) {
+          return yield* new Orchestrator.OrchestratorProjectionError({
+            threadId: ThreadId.make("thread:deferred-organization-transient-projection"),
+            cause: "transient mapped projection failure",
+          });
+        }
+      }),
+    );
+    assert.equal(yield* Ref.get(mappedAttempts), 2);
+
     const interruption = yield* Orchestrator.runDeferredOrganizationRepair(
       ThreadId.make("thread:deferred-organization-interruption"),
       Effect.interrupt,

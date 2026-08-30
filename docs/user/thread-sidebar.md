@@ -35,8 +35,9 @@ or a user request is still pending.
 
 An agent can also ask T3 Code to settle or archive its own thread after the current
 run finishes. The server applies the saved request only when that run succeeds and
-no newer, queued, or approval-blocked work remains. A new message or unresolved
-request keeps the thread visible and discards the stale organization request.
+no newer, queued, or approval-blocked work remains. A new message that creates a
+newer run, or an unresolved request, keeps the thread visible and discards the stale
+organization request.
 
 ## Settle finished work
 

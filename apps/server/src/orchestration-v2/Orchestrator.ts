@@ -101,6 +101,7 @@ export class OrchestratorProjectionError extends Schema.TaggedErrorClass<Orchest
 
 const isProjectionStoreReadError = Schema.is(ProjectionStoreReadError);
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
+const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
 
 export const runDeferredOrganizationRepair = <A, E, R>(
   threadId: ThreadId,
@@ -109,7 +110,10 @@ export const runDeferredOrganizationRepair = <A, E, R>(
   repair.pipe(
     Effect.retry({
       times: 1,
-      while: (error) => isProjectionStoreReadError(error) || isOrchestratorDispatchError(error),
+      while: (error) =>
+        isProjectionStoreReadError(error) ||
+        isOrchestratorDispatchError(error) ||
+        isOrchestratorProjectionError(error),
     }),
     Effect.asVoid,
     Effect.catchCause((cause) =>
