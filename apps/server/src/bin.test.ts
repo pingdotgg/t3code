@@ -18,6 +18,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
@@ -48,6 +49,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
+import { ConnectTokenUnavailableError } from "./cli/connect.ts";
 
 import packageJson from "../package.json" with { type: "json" };
 
@@ -71,6 +73,7 @@ class ProjectCliHttpApi extends HttpApi.make("environment").add(EnvironmentOrche
 
 const connectCli = makeCli({ cloudEnabled: true });
 const noConnectCli = makeCli({ cloudEnabled: false });
+const isConnectTokenUnavailableError = Schema.is(ConnectTokenUnavailableError);
 const runCli = (args: ReadonlyArray<string>, command = cli) =>
   Command.runWith(command, { version: "0.0.0" })(args);
 const runConnectCli = (args: ReadonlyArray<string>) => runCli(args, connectCli);
@@ -322,6 +325,52 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       assert.isFalse(decoded.desired);
       assert.isTrue(decoded.authenticated);
     }),
+  );
+
+  it.effect("prints only the stored T3 Connect OAuth access token", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-cloud-token-test-"),
+      );
+      const { secretsDir } = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+      NodeFS.mkdirSync(secretsDir, { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(secretsDir, "cloud-cli-oauth-token.bin"),
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Test fixture matches the persisted CLI token representation.
+        JSON.stringify({
+          accessToken: "access-token",
+          refreshToken: "refresh-token",
+          expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+          identity: "person@example.test",
+        }),
+      );
+
+      const before = (yield* TestConsole.logLines).length;
+      yield* runConnectCli(["connect", "token", "--base-dir", baseDir]);
+      const output = (yield* TestConsole.logLines).slice(before);
+
+      assert.deepEqual(output, ["access-token"]);
+      assert.notInclude(output.join("\n"), "refresh-token");
+      assert.notInclude(output.join("\n"), "person@example.test");
+    }).pipe(Effect.provide(Layer.mergeAll(CliRuntimeLayer, TestConsole.layer))),
+  );
+
+  it.effect("requires an existing T3 Connect authorization before printing a token", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-cloud-token-missing-test-"),
+      );
+      const before = (yield* TestConsole.logLines).length;
+      const error = yield* runConnectCli(["connect", "token", "--base-dir", baseDir]).pipe(
+        Effect.flip,
+      );
+
+      if (!isConnectTokenUnavailableError(error)) {
+        assert.fail(`Expected ConnectTokenUnavailableError, got ${String(error)}`);
+      }
+      assert.include(error.message, "Run `t3 connect login` first");
+      assert.deepEqual((yield* TestConsole.logLines).slice(before), []);
+    }).pipe(Effect.provide(Layer.mergeAll(CliRuntimeLayer, TestConsole.layer))),
   );
 
   it.effect("disables headless connect without a running server", () =>

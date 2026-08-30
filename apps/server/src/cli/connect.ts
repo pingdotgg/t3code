@@ -63,6 +63,15 @@ const jsonFlag = Flag.boolean("json").pipe(
 
 const isCloudCliTokenManagerError = Schema.is(CliTokenManager.CloudCliTokenManagerError);
 
+export class ConnectTokenUnavailableError extends Schema.TaggedErrorClass<ConnectTokenUnavailableError>()(
+  "ConnectTokenUnavailableError",
+  {},
+) {
+  override get message(): string {
+    return "No usable T3 Connect authorization is stored. Run `t3 connect login` first.";
+  }
+}
+
 const headlessFlag = Flag.boolean("headless").pipe(
   Flag.withDescription("Authorize without a local browser using out-of-band OAuth."),
   Flag.withDefault(false),
@@ -513,6 +522,28 @@ const connectLoginCommand = Command.make("login", {
   ),
 );
 
+const connectTokenCommand = Command.make("token", {
+  ...projectLocationFlags,
+}).pipe(
+  Command.withDescription("Print a refreshed T3 Connect OAuth access token for scripting."),
+  Command.withHandler((flags) =>
+    runCloudCommand(
+      flags,
+      Effect.gen(function* () {
+        const tokens = yield* CliTokenManager.CloudCliTokenManager;
+        const existing = yield* tokens.getExisting.pipe(
+          Effect.mapError(() => new ConnectTokenUnavailableError()),
+        );
+        if (Option.isNone(existing)) {
+          return yield* new ConnectTokenUnavailableError();
+        }
+        yield* Console.log(existing.value.accessToken);
+      }),
+      { quietLogs: true },
+    ),
+  ),
+);
+
 const connectLinkCommand = Command.make("link", {
   ...projectLocationFlags,
   headless: headlessFlag,
@@ -715,6 +746,7 @@ export const connectCommand = Command.make("connect", {
   ),
   Command.withSubcommands([
     connectLoginCommand,
+    connectTokenCommand,
     connectLinkCommand,
     connectPublishCommand,
     connectStatusCommand,
