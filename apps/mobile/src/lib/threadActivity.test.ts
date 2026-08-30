@@ -1,8 +1,13 @@
 import {
   MessageId,
+  NodeId,
+  ProviderInstanceId,
+  ProviderThreadId,
   RunId,
+  RunAttemptId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2RunAttempt,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -244,6 +249,17 @@ describe("buildThreadFeed", () => {
         0,
       ),
     ]);
+    const failedFeed = buildThreadFeed([
+      projected(
+        {
+          ...retryBase,
+          status: "failed",
+          title: "Provider retry failed",
+        },
+        0,
+      ),
+      projected(command("2026-06-20T00:00:03.000Z"), 1),
+    ]);
     const runningActivity = runningFeed.find((entry) => entry.type === "activity-group")
       ?.activities[0];
     const recoveredActivity = recoveredFeed.find((entry) => entry.type === "activity-group")
@@ -263,6 +279,20 @@ describe("buildThreadFeed", () => {
       status: "success",
       toolLike: false,
     });
+    const failedPresentation = deriveThreadFeedPresentation(
+      failedFeed,
+      { runId, status: "running", startedAt: null, completedAt: null },
+      new Set(),
+    );
+    expect(failedPresentation.map((entry) => entry.type)).toEqual([
+      "activity-group",
+      "work-toggle",
+    ]);
+    expect(
+      failedPresentation[0]?.type === "activity-group"
+        ? failedPresentation[0].activities[0]?.summary
+        : null,
+    ).toBe("Provider retry failed");
   });
 
   it("hides synthetic workspace preparation activity", () => {
@@ -292,6 +322,22 @@ describe("buildThreadFeed", () => {
       threadFeedRunIsUnsettled({
         runId,
         status: "running",
+        startedAt: "2026-06-20T00:00:01.000Z",
+        completedAt: null,
+      }),
+    ).toBe(true);
+    expect(
+      threadFeedRunIsUnsettled({
+        runId,
+        status: "completed",
+        startedAt: "2026-06-20T00:00:01.000Z",
+        completedAt: null,
+      }),
+    ).toBe(true);
+    expect(
+      threadFeedRunIsUnsettled({
+        runId,
+        status: "waiting",
         startedAt: "2026-06-20T00:00:01.000Z",
         completedAt: null,
       }),
@@ -346,6 +392,18 @@ describe("buildThreadFeed", () => {
     expect(activities).toHaveLength(1);
     expect(activities[0]?.summary).toBe("Run interrupted");
     expect(activities[0]?.detail).toBe("Run interrupted before provider start");
+    expect(
+      deriveThreadFeedPresentation(
+        buildThreadFeed([request, result]),
+        {
+          runId,
+          status: "interrupted",
+          startedAt: "2026-06-20T00:00:01.000Z",
+          completedAt: "2026-06-20T00:00:03.000Z",
+        },
+        new Set(),
+      ).some((entry) => entry.type === "run-fold"),
+    ).toBe(false);
   });
 
   it("preserves authoritative V2 order instead of sorting reconstructed collections", () => {
@@ -365,6 +423,57 @@ describe("buildThreadFeed", () => {
     const activity = feed.find((entry) => entry.type === "activity-group")?.activities[0];
     expect(activity?.projectedItem).toBe(rows[1]);
     expect(activity?.getFullDetail()).toContain('"input": "vp check"');
+  });
+
+  it("keeps adjacent work from different V2 attempts in separate groups", () => {
+    const firstRootNodeId = NodeId.make("node-attempt-1");
+    const secondRootNodeId = NodeId.make("node-attempt-2");
+    const firstCommand = { ...command(), nodeId: firstRootNodeId };
+    const secondCommand = {
+      ...command("2026-06-20T00:00:03.000Z"),
+      id: TurnItemId.make("item-command-retry"),
+      ordinal: 2,
+      nodeId: secondRootNodeId,
+    };
+    const attempts = [
+      {
+        id: RunAttemptId.make("attempt-1"),
+        runId,
+        attemptOrdinal: 1,
+        rootNodeId: firstRootNodeId,
+        providerInstanceId: ProviderInstanceId.make("provider-instance-1"),
+        providerThreadId: ProviderThreadId.make("provider-thread-1"),
+        providerTurnId: null,
+        reason: "initial",
+        status: "completed",
+        startedAt: DateTime.makeUnsafe("2026-06-20T00:00:01.000Z"),
+        completedAt: DateTime.makeUnsafe("2026-06-20T00:00:02.000Z"),
+      },
+      {
+        id: RunAttemptId.make("attempt-2"),
+        runId,
+        attemptOrdinal: 2,
+        rootNodeId: secondRootNodeId,
+        providerInstanceId: ProviderInstanceId.make("provider-instance-1"),
+        providerThreadId: ProviderThreadId.make("provider-thread-1"),
+        providerTurnId: null,
+        reason: "retry",
+        status: "completed",
+        startedAt: DateTime.makeUnsafe("2026-06-20T00:00:02.000Z"),
+        completedAt: DateTime.makeUnsafe("2026-06-20T00:00:03.000Z"),
+      },
+    ] satisfies ReadonlyArray<OrchestrationV2RunAttempt>;
+
+    const feed = buildThreadFeed([projected(firstCommand, 0), projected(secondCommand, 1)], {
+      attempts,
+    });
+
+    expect(feed).toHaveLength(2);
+    expect(
+      feed.map((entry) =>
+        entry.type === "activity-group" ? entry.activities[0]?.attemptId : null,
+      ),
+    ).toEqual(["attempt-1", "attempt-2"]);
   });
 
   it("retains inherited and synthetic rows with their original projected identity", () => {
@@ -467,16 +576,15 @@ describe("buildThreadFeed", () => {
     expect(expanded.map((entry) => entry.type)).toEqual([
       "message",
       "run-fold",
-      "activity-group",
+      "work-toggle",
       "message",
     ]);
   });
 
-  it("keeps an active run expanded and marks failed tools as failures", () => {
+  it("keeps an active run expanded and detects failures from completed command output", () => {
     const failedCommand: OrchestrationV2TurnItem = {
       ...command(),
-      status: "failed",
-      completedAt: DateTime.makeUnsafe("2026-06-20T00:00:02.000Z"),
+      output: "sh: missing-command: command not found",
     };
     const feed = buildThreadFeed([projected(userMessage(), 0), projected(failedCommand, 1)]);
     const presented = deriveThreadFeedPresentation(
@@ -491,23 +599,19 @@ describe("buildThreadFeed", () => {
     );
 
     expect(presented.some((entry) => entry.type === "run-fold")).toBe(false);
-    expect(presented.find((entry) => entry.type === "activity-group")?.activities[0]?.status).toBe(
-      "failure",
-    );
+    expect(presented.find((entry) => entry.type === "work-toggle")).toMatchObject({
+      summary: "1 failed · Ran 1 command",
+      hiddenCount: 1,
+      hasFailure: true,
+      live: false,
+    });
   });
 
-  it("appends active work as a normal timeline row", () => {
+  it("does not append synthetic timeline work without a projected item", () => {
     const startedAt = "2026-04-01T00:00:01.000Z";
     const presented = deriveThreadFeedPresentation([], null, new Set(), new Set(), startedAt);
 
-    expect(presented).toEqual([
-      {
-        type: "working",
-        id: "working-indicator-row",
-        createdAt: startedAt,
-      },
-    ]);
-    expect(deriveThreadFeedPresentation(presented, null, new Set())).toEqual([]);
+    expect(presented).toEqual([]);
   });
 
   it("keeps expanded work in one group with stable row identities", () => {
@@ -519,6 +623,7 @@ describe("buildThreadFeed", () => {
       id,
       createdAt,
       runId: null,
+      attemptId: null,
       summary: `Tool ${id}`,
       detail: null,
       canExpand: false,
@@ -529,6 +634,16 @@ describe("buildThreadFeed", () => {
       toolLike: true,
       prominent: false,
       status,
+      lifecycleStatus: status === "neutral" ? "inProgress" : "completed",
+      workEntry: {
+        id,
+        createdAt,
+        label: `Tool ${id}`,
+        tone: "tool",
+        command: "vp check",
+        itemType: "command_execution",
+        toolLifecycleStatus: status === "neutral" ? "inProgress" : "completed",
+      },
       projectedItem: projected(command(createdAt), 0),
     });
     const feed: ThreadFeedEntry[] = [
@@ -538,8 +653,8 @@ describe("buildThreadFeed", () => {
         createdAt: "2026-04-01T00:00:01.000Z",
         runId: null,
         activities: [
-          activity("activity-1", "2026-04-01T00:00:01.000Z"),
-          activity("activity-neutral", "2026-04-01T00:00:02.000Z", "neutral"),
+          activity("activity-neutral", "2026-04-01T00:00:01.000Z", "neutral"),
+          activity("activity-1", "2026-04-01T00:00:02.000Z"),
           activity("activity-2", "2026-04-01T00:00:03.000Z"),
           activity("activity-3", "2026-04-01T00:00:04.000Z"),
         ],
@@ -547,22 +662,28 @@ describe("buildThreadFeed", () => {
     ];
 
     const collapsed = deriveThreadFeedPresentation(feed, null, new Set());
-    expect(collapsed.map((entry) => entry.id)).toEqual(["activity-3", "work-toggle:work-group-1"]);
-    expect(collapsed[1]).toMatchObject({
+    expect(collapsed.map((entry) => entry.id)).toEqual(["work-toggle:work-group:activity-neutral"]);
+    expect(collapsed[0]).toMatchObject({
       type: "work-toggle",
-      groupId: "work-group-1",
-      hiddenCount: 2,
+      groupId: "work-group:activity-neutral",
+      hiddenCount: 3,
       expanded: false,
+      summary: "Ran 3 commands",
     });
 
-    const expanded = deriveThreadFeedPresentation(feed, null, new Set(), new Set(["work-group-1"]));
+    const expanded = deriveThreadFeedPresentation(
+      feed,
+      null,
+      new Set(),
+      new Set(["work-group:activity-neutral"]),
+    );
     expect(expanded.map((entry) => entry.id)).toEqual([
+      "work-toggle:work-group:activity-neutral",
       "activity-1",
       "activity-2",
       "activity-3",
-      "work-toggle:work-group-1",
     ]);
-    expect(expanded.at(-1)).toMatchObject({
+    expect(expanded[0]).toMatchObject({
       type: "work-toggle",
       expanded: true,
     });
@@ -600,6 +721,48 @@ describe("buildThreadFeed", () => {
     expect(activity?.summary).toBe("Read a T3 thread");
     expect(activity?.logo).toBe("t3-code");
     expect(activity?.getCopyText().split("\n")[0]).toBe("Read a T3 thread");
+  });
+
+  it("uses canonical T3 orchestration summaries in compact work groups", () => {
+    const rows = [
+      projected(command("2026-06-20T00:00:01.000Z"), 0),
+      ...["mcp__t3-code__t3_thread_send", "t3_code.t3_thread_send", "t3_thread_send"].map(
+        (toolName, index) =>
+          projected(
+            {
+              ...base(`item-send-${index}`, `2026-06-20T00:00:0${index + 2}.000Z`, index + 2),
+              type: "dynamic_tool" as const,
+              toolName,
+              input: { threadId: `thread-${index}`, message: "Continue" },
+              output: { threadId: `thread-${index}`, messageId: `message-${index}` },
+            },
+            index + 1,
+          ),
+      ),
+      projected(
+        {
+          ...command("2026-06-20T00:00:06.000Z"),
+          id: TurnItemId.make("item-command-2"),
+          ordinal: 6,
+        },
+        4,
+      ),
+    ];
+
+    const presented = deriveThreadFeedPresentation(
+      buildThreadFeed(rows),
+      { runId, status: "running", startedAt: null, completedAt: null },
+      new Set(),
+    );
+
+    expect(presented).toMatchObject([
+      {
+        type: "work-toggle",
+        summary: "Ran 2 commands and sent messages to 3 threads",
+        hiddenCount: 5,
+        hasFailure: false,
+      },
+    ]);
   });
 });
 
