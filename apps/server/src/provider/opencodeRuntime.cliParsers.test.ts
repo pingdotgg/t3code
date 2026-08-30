@@ -7,6 +7,7 @@ import {
   parseModelsCliOutput,
   parseSkillsCliOutput,
   toOpenCodeFileParts,
+  toOpenCodePromptParts,
 } from "./opencodeRuntime.ts";
 
 describe("parseModelsCliOutput", () => {
@@ -317,5 +318,37 @@ describe("toOpenCodeFileParts", () => {
       parts.map((part) => part.mime),
       ["application/pdf", "text/markdown", "image/png"],
     );
+  });
+
+  it("keeps non-native and oversized files available through resolved paths", () => {
+    const paths = new Map([
+      ["oversized.pdf", "/tmp/oversized.pdf"],
+      ["archive.zip", "/tmp/archive.zip"],
+      ["vector.svg", "/tmp/vector.svg"],
+      ["native.png", "/tmp/native.png"],
+    ]);
+    const parts = toOpenCodePromptParts({
+      text: "Inspect every attachment.",
+      attachments: [
+        { ...attachment("application/pdf", 25 * 1024 * 1024), name: "oversized.pdf" },
+        { ...attachment("application/zip"), name: "archive.zip" },
+        { ...attachment("image/svg+xml"), name: "vector.svg" },
+        { ...attachment("image/png"), name: "native.png" },
+      ],
+      resolveAttachmentPath: (candidate) => paths.get(candidate.name) ?? null,
+    });
+
+    NodeAssert.deepEqual(parts.slice(1), [
+      {
+        type: "file",
+        mime: "image/png",
+        filename: "native.png",
+        url: "file:///tmp/native.png",
+      },
+    ]);
+    NodeAssert.match(parts[0]?.type === "text" ? parts[0].text : "", /oversized\.pdf/);
+    NodeAssert.match(parts[0]?.type === "text" ? parts[0].text : "", /archive\.zip/);
+    NodeAssert.match(parts[0]?.type === "text" ? parts[0].text : "", /vector\.svg/);
+    NodeAssert.doesNotMatch(parts[0]?.type === "text" ? parts[0].text : "", /native\.png/);
   });
 });

@@ -71,7 +71,7 @@ import {
   openCodeRuntimeErrorDetail,
   parseOpenCodeModelSlug,
   runOpenCodeSdk,
-  toOpenCodeFileParts,
+  toOpenCodePromptParts,
   toOpenCodePermissionReply,
   toOpenCodeQuestionAnswers,
   type OpenCodeRuntimeShape,
@@ -79,7 +79,6 @@ import {
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
-import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import {
   ProviderAdapterEnsureThreadError,
   ProviderAdapterForkThreadError,
@@ -2629,20 +2628,16 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
         };
 
         const resolvePromptParts = (turnInput: ProviderAdapterV2TurnInput) => {
-          const text = providerMessageTextWithAttachmentPaths({
+          const parts = toOpenCodePromptParts({
             text: turnInput.message.text,
-            attachments: turnInput.message.attachments,
-            attachmentsDir: serverConfig.attachmentsDir,
-          }).trim();
-          const files = toOpenCodeFileParts({
             attachments: turnInput.message.attachments,
             resolveAttachmentPath: (attachment) =>
               resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
           });
-          if (text.length === 0 && files.length === 0) {
+          if (parts.length === 0) {
             throw protocolError("OpenCode turns require text or at least one valid attachment");
           }
-          return [...(text.length === 0 ? [] : [{ type: "text" as const, text }]), ...files];
+          return parts;
         };
 
         const readSnapshot = Effect.fnUntraced(function* (
@@ -2997,12 +2992,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   `OpenCode model '${turn.modelSelection.model}' must use provider/model format`,
                 );
               }
-              const text = providerMessageTextWithAttachmentPaths({
+              const parts = toOpenCodePromptParts({
                 text: steerInput.message.text,
-                attachments: steerInput.message.attachments,
-                attachmentsDir: serverConfig.attachmentsDir,
-              }).trim();
-              const files = toOpenCodeFileParts({
                 attachments: steerInput.message.attachments,
                 resolveAttachmentPath: (attachment) =>
                   resolveAttachmentPath({
@@ -3010,13 +3001,9 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                     attachment,
                   }),
               });
-              if (text.length === 0 && files.length === 0) {
+              if (parts.length === 0) {
                 return yield* protocolError("OpenCode steering requires text or an attachment");
               }
-              const parts = [
-                ...(text.length === 0 ? [] : [{ type: "text" as const, text }]),
-                ...files,
-              ];
               turn.admissionGeneration = state.nextAdmissionGeneration++;
               turn.admissionMessageId = yield* makeOpenCodeMessageId();
               turn.admissionPending = true;

@@ -481,6 +481,23 @@ export function toOpenCodeFileParts(input: {
   return parts;
 }
 
+export function toOpenCodePromptParts(input: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment> | undefined;
+  readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
+}) {
+  const nativeFiles = toOpenCodeFileParts(input);
+  const fallbackPaths = (input.attachments ?? []).flatMap((attachment) => {
+    if (isOpenCodeNativeFilePart(attachment)) return [];
+    const attachmentPath = input.resolveAttachmentPath(attachment);
+    return attachmentPath === null
+      ? []
+      : [`[Attached ${attachment.type} "${attachment.name}" is saved at: ${attachmentPath}]`];
+  });
+  const text = [input.text.trim(), fallbackPaths.join("\n")].filter(Boolean).join("\n\n");
+  return [...(text.length === 0 ? [] : [{ type: "text" as const, text }]), ...nativeFiles];
+}
+
 export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): PermissionRuleset {
   if (runtimeMode === "full-access") {
     return [
