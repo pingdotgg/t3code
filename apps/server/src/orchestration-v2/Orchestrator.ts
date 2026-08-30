@@ -257,6 +257,23 @@ function isNativeMaintenanceCommand(message: {
   );
 }
 
+function runtimeModeRank(mode: OrchestrationV2AppThread["runtimeMode"]): number {
+  switch (mode) {
+    case "approval-required":
+      return 0;
+    case "auto-accept-edits":
+      return 1;
+    case "auto":
+      return 2;
+    case "full-access":
+      return 3;
+  }
+}
+
+function interactionModeRank(mode: OrchestrationV2AppThread["interactionMode"]): number {
+  return mode === "plan" ? 0 : 1;
+}
+
 function commandThreadId(command: OrchestrationV2Command): ThreadId {
   switch (command.type) {
     case "thread.create":
@@ -654,6 +671,58 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* Ref.update(events, (existing) => [...existing, withId]);
         return withId;
       });
+
+  const enforcePolicyCeiling = Effect.fn("orchestrationV2.enforcePolicyCeiling")(function* (input: {
+    readonly command: Extract<
+      OrchestrationV2Command,
+      { readonly type: "thread.create" | "message.dispatch" }
+    >;
+    readonly runtimeMode: OrchestrationV2AppThread["runtimeMode"];
+    readonly interactionMode: OrchestrationV2AppThread["interactionMode"];
+  }) {
+    // Project selection is authorized by the caller-facing service before it
+    // constructs this command. This shared boundary owns only lifecycle and
+    // permission ceilings so an authorized cross-project launch remains valid.
+    const ceiling = input.command.policyCeiling;
+    if (ceiling === undefined) return;
+    const caller = yield* projectionStore.getThreadProjection(ceiling.callerThreadId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new OrchestratorProjectionError({
+            threadId: ceiling.callerThreadId,
+            cause,
+          }),
+      ),
+    );
+    if (caller.thread.deletedAt !== null || caller.thread.archivedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: input.command.commandId,
+        commandType: input.command.type,
+        cause: `Caller thread ${ceiling.callerThreadId} is not active.`,
+      });
+    }
+    if (
+      runtimeModeRank(input.runtimeMode) > runtimeModeRank(ceiling.runtimeMode) ||
+      runtimeModeRank(input.runtimeMode) > runtimeModeRank(caller.thread.runtimeMode)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: input.command.commandId,
+        commandType: input.command.type,
+        cause: `Target runtime mode ${input.runtimeMode} exceeds the caller ceiling.`,
+      });
+    }
+    if (
+      interactionModeRank(input.interactionMode) > interactionModeRank(ceiling.interactionMode) ||
+      interactionModeRank(input.interactionMode) >
+        interactionModeRank(caller.thread.interactionMode)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: input.command.commandId,
+        commandType: input.command.type,
+        cause: `Target interaction mode ${input.interactionMode} exceeds the caller ceiling.`,
+      });
+    }
+  });
 
   const getProjectionWithPendingEvents = (
     threadId: ThreadId,
@@ -1363,6 +1432,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.command_type": command.type,
       "orchestration_v2.thread_id": command.threadId,
       "orchestration_v2.driver": command.modelSelection.instanceId,
+    });
+
+    yield* enforcePolicyCeiling({
+      command,
+      runtimeMode: command.runtimeMode,
+      interactionMode: command.interactionMode,
     });
 
     const now = yield* DateTime.now;
@@ -2908,6 +2983,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
 
+      if (projection.thread.deletedAt !== null || projection.thread.archivedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is ${projection.thread.deletedAt !== null ? "deleted" : "archived"}.`,
+        });
+      }
+      yield* enforcePolicyCeiling({
+        command,
+        runtimeMode: projection.thread.runtimeMode,
+        interactionMode: projection.thread.interactionMode,
+      });
       if (projection.thread.settledOverride !== null) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
@@ -7231,8 +7318,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   });
 
+  const dispatchLockKeys = (command: OrchestrationV2Command): ReadonlyArray<ThreadId> => {
+    const targetThreadId = commandThreadId(command);
+    const keys =
+      (command.type === "thread.create" || command.type === "message.dispatch") &&
+      command.policyCeiling !== undefined
+        ? [targetThreadId, command.policyCeiling.callerThreadId]
+        : [targetThreadId];
+    return [...new Set(keys)].toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  };
+
+  const withDispatchLocks = <A, E, R>(
+    keys: ReadonlyArray<ThreadId>,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> => {
+    const [key, ...remaining] = keys;
+    return key === undefined
+      ? effect
+      : threadDispatch.withLock(key, withDispatchLocks(remaining, effect));
+  };
+
   const dispatchWithReceipt = (command: OrchestrationV2Command) =>
-    threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
+    withDispatchLocks(dispatchLockKeys(command), dispatchWithReceiptEffect(command));
 
   const recordServerCreatedThread = (input: OrchestratorV2ServerCreatedThreadRecordInput) =>
     threadDispatch.withLock(

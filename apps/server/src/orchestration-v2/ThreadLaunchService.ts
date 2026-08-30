@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2PolicyCeiling,
   type OrchestrationV2ThreadProjection,
   type ProviderInteractionMode,
   ProjectId,
@@ -65,6 +66,7 @@ export interface ThreadLaunchInput {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly policyCeiling?: OrchestrationV2PolicyCeiling;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
   readonly initialMessage?: ThreadLaunchInitialMessage;
   readonly createdBy: OrchestrationV2Actor;
@@ -494,6 +496,9 @@ export const make = Effect.gen(function* () {
                       modelSelection: input.modelSelection,
                       runtimeMode: input.runtimeMode,
                       interactionMode: input.interactionMode,
+                      ...(input.policyCeiling === undefined
+                        ? {}
+                        : { policyCeiling: input.policyCeiling }),
                       branch: initialBranch,
                       worktreePath: initialWorktreePath,
                       createdBy: input.createdBy,
@@ -543,6 +548,7 @@ export const make = Effect.gen(function* () {
               attachments: input.initialMessage.attachments,
               ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
               modelSelection: input.modelSelection,
+              ...(input.policyCeiling === undefined ? {} : { policyCeiling: input.policyCeiling }),
               dispatchMode: { type: "defer_start" },
               createdBy: input.createdBy,
               creationSource: input.creationSource,

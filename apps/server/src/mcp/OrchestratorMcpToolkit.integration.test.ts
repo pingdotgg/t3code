@@ -574,6 +574,13 @@ describe("orchestrator MCP toolkit", () => {
               Ref.update(continuationOffers, (existing) => [...existing, request]),
             take: Effect.never,
           });
+          const launchReceiptReadGates = new Map<
+            CommandId,
+            {
+              readonly entered: Deferred.Deferred<void>;
+              readonly release: Deferred.Deferred<void>;
+            }
+          >();
           // Offers land after the finalize projection writes, so poll briefly
           // instead of asserting counts immediately.
           const waitForContinuationOffers = (count: number) =>
@@ -806,6 +813,24 @@ describe("orchestrator MCP toolkit", () => {
             Layer.provide(Layer.merge(threadCommandExecutorLayer, gatedThreadManagementLayer)),
           );
           const receiptLayer = CommandReceiptStore.layer.pipe(Layer.provide(databaseLayer));
+          const launchReceiptLayer = Layer.effect(
+            CommandReceiptStore.CommandReceiptStoreV2,
+            Effect.map(CommandReceiptStore.CommandReceiptStoreV2, (receipts) =>
+              CommandReceiptStore.CommandReceiptStoreV2.of({
+                ...receipts,
+                getByCommandId: (commandId) =>
+                  Effect.gen(function* () {
+                    const gate = launchReceiptReadGates.get(commandId);
+                    if (gate !== undefined) {
+                      yield* Deferred.succeed(gate.entered, undefined);
+                      yield* Deferred.await(gate.release);
+                      launchReceiptReadGates.delete(commandId);
+                    }
+                    return yield* receipts.getByCommandId(commandId);
+                  }),
+              }),
+            ),
+          ).pipe(Layer.provide(receiptLayer));
           const threadLaunchLayer = ThreadLaunch.layer.pipe(
             Layer.provide(
               Layer.mergeAll(
@@ -818,7 +843,7 @@ describe("orchestrator MCP toolkit", () => {
                 ServerSettings.layerTest({}),
                 providerRegistryLayer,
                 orchestrationLayer,
-                receiptLayer,
+                launchReceiptLayer,
                 IdAllocator.layer,
               ),
             ),
@@ -901,6 +926,18 @@ describe("orchestrator MCP toolkit", () => {
                   Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
                   Effect.provideService(McpSchema.McpServerClient, client),
                 );
+            const launchCommandId = (requestKey: string) =>
+              CommandId.make(
+                `command:mcp:mcp-provider-session-parent:create-thread:${requestKey}:0`,
+              );
+            const gateLaunchReceipt = Effect.fn("test.gateLaunchReceipt")(function* (
+              commandId: CommandId,
+            ) {
+              const entered = yield* Deferred.make<void>();
+              const release = yield* Deferred.make<void>();
+              launchReceiptReadGates.set(commandId, { entered, release });
+              return { entered, release } as const;
+            });
 
             if (parentRun === undefined || parentRun.rootNodeId === null) {
               return yield* Effect.die(new Error("Parent run missing."));
@@ -1999,10 +2036,19 @@ describe("orchestrator MCP toolkit", () => {
               },
             ]);
 
-            const crossProjectCall = yield* invoke("create_threads", {
+            const crossProjectInput = {
               clientRequestId: "create-cross-project-thread-1",
-              threads: [{ projectId: targetProjectId, title: "Cross-project ordinary thread" }],
-            });
+              threads: [
+                {
+                  projectId: targetProjectId,
+                  title: "Cross-project ordinary thread",
+                  prompt: "Run in the explicitly selected project.",
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                },
+              ],
+            } as const;
+            const crossProjectCall = yield* invoke("create_threads", crossProjectInput);
             expect(crossProjectCall.isError).toBe(false);
             const crossProjectCreated = yield* decodeCreateThreadsResult(
               crossProjectCall.structuredContent,
@@ -2013,6 +2059,12 @@ describe("orchestrator MCP toolkit", () => {
               (yield* orchestrator.getThreadProjection(crossProjectThread.threadId)).thread
                 .projectId,
             ).toBe(targetProjectId);
+            const crossProjectProjection = yield* orchestrator.getThreadProjection(
+              crossProjectThread.threadId,
+            );
+            expect(crossProjectProjection.messages.map((message) => message.text)).toEqual([
+              "Run in the explicitly selected project.",
+            ]);
             const crossProjectItem = (yield* orchestrator.getThreadProjection(
               parentThreadId,
             )).visibleTurnItems
@@ -2026,7 +2078,7 @@ describe("orchestrator MCP toolkit", () => {
               type: "thread_created",
               targetThreadId: crossProjectThread.threadId,
               targetProjectId,
-              targetRunId: null,
+              targetRunId: crossProjectThread.runId,
             });
             const untrustedCrossProjectRecord = yield* orchestrator
               .dispatch({
@@ -2040,6 +2092,136 @@ describe("orchestrator MCP toolkit", () => {
               })
               .pipe(Effect.flip);
             expect(untrustedCrossProjectRecord._tag).toBe("OrchestratorDispatchError");
+
+            const preCreateKey = "cross-project-policy-before-create";
+            const preCreateGate = yield* gateLaunchReceipt(launchCommandId(preCreateKey));
+            const preCreateFiber = yield* Effect.forkChild(
+              invoke("create_threads", {
+                clientRequestId: preCreateKey,
+                threads: [
+                  {
+                    projectId: targetProjectId,
+                    prompt: "Do not accept after the caller narrows to plan mode.",
+                    interactionMode: "default",
+                  },
+                ],
+              }),
+              { startImmediately: true },
+            );
+            yield* Deferred.await(preCreateGate.entered);
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-parent:interaction-plan-before-create"),
+              threadId: parentThreadId,
+              interactionMode: "plan",
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).thread.interactionMode,
+            ).toBe("plan");
+            yield* Deferred.succeed(preCreateGate.release, undefined);
+            const preCreateCall = yield* Fiber.join(preCreateFiber);
+            expect(preCreateCall.structuredContent).toMatchObject({
+              code: "orchestration_error",
+            });
+            const preCreateThreadId = ThreadId.make(
+              `thread:mcp:mcp-provider-session-parent:${preCreateKey}:0`,
+            );
+            expect(
+              Option.isNone(
+                yield* Effect.option(orchestrator.getThreadProjection(preCreateThreadId)),
+              ),
+            ).toBe(true);
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-parent:interaction-default-after-create-race"),
+              threadId: parentThreadId,
+              interactionMode: "default",
+            });
+
+            const betweenCreateAndMessageKey = "cross-project-policy-before-message";
+            const messageReceiptId = CommandId.make(
+              `${launchCommandId(betweenCreateAndMessageKey)}:initial-message`,
+            );
+            const messageGate = yield* gateLaunchReceipt(messageReceiptId);
+            const betweenCreateAndMessageFiber = yield* Effect.forkChild(
+              invoke("create_threads", {
+                clientRequestId: betweenCreateAndMessageKey,
+                threads: [
+                  {
+                    projectId: targetProjectId,
+                    prompt: "Do not accept this message after the caller runtime narrows.",
+                    runtimeMode: "full-access",
+                  },
+                ],
+              }),
+              { startImmediately: true },
+            );
+            yield* Deferred.await(messageGate.entered);
+            const betweenCreateAndMessageThreadId = ThreadId.make(
+              `thread:mcp:mcp-provider-session-parent:${betweenCreateAndMessageKey}:0`,
+            );
+            expect(
+              (yield* orchestrator.getThreadProjection(betweenCreateAndMessageThreadId)).thread
+                .projectId,
+            ).toBe(targetProjectId);
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-parent:runtime-narrow-before-message"),
+              threadId: parentThreadId,
+              runtimeMode: "approval-required",
+            });
+            yield* Deferred.succeed(messageGate.release, undefined);
+            const betweenCreateAndMessageCall = yield* Fiber.join(betweenCreateAndMessageFiber);
+            expect(betweenCreateAndMessageCall.structuredContent).toMatchObject({
+              code: "orchestration_error",
+            });
+            const partialProjection = yield* orchestrator.getThreadProjection(
+              betweenCreateAndMessageThreadId,
+            );
+            expect(partialProjection.messages).toEqual([]);
+            expect(partialProjection.runs).toEqual([]);
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-parent:runtime-restore-after-message-race"),
+              threadId: parentThreadId,
+              runtimeMode: "full-access",
+            });
+
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-parent:runtime-narrow-before-replay"),
+              threadId: parentThreadId,
+              runtimeMode: "approval-required",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-parent:interaction-plan-before-replay"),
+              threadId: parentThreadId,
+              interactionMode: "plan",
+            });
+            const replayedCrossProjectCall = yield* invoke("create_threads", crossProjectInput);
+            expect(replayedCrossProjectCall.isError).toBe(false);
+            const replayedCrossProject = yield* decodeCreateThreadsResult(
+              replayedCrossProjectCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(replayedCrossProject.threads[0]?.threadId).toBe(crossProjectThread.threadId);
+            const replayedCrossProjectProjection = yield* orchestrator.getThreadProjection(
+              crossProjectThread.threadId,
+            );
+            expect(replayedCrossProjectProjection.messages).toHaveLength(1);
+            expect(replayedCrossProjectProjection.runs).toHaveLength(1);
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-parent:runtime-restore-after-replay"),
+              threadId: parentThreadId,
+              runtimeMode: "full-access",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-parent:interaction-default-after-replay"),
+              threadId: parentThreadId,
+              interactionMode: "default",
+            });
 
             const repeatedCreateCall = yield* invoke("create_threads", createInput);
             const repeatedCreated = yield* decodeCreateThreadsResult(

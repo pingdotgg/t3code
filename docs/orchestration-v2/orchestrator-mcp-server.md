@@ -412,6 +412,10 @@ falls back to a terminal-status message when no assistant text exists.
   mode. It may not escalate privileges.
 - A child interaction mode may stay equal to or narrow from `default` to
   `plan`. It may not escalate from `plan` to `default`.
+- Ordinary thread launches capture those ceilings and recheck the calling
+  thread inside serialized thread creation and initial-message acceptance, so
+  a concurrent permission downgrade wins before new work is accepted. An
+  already accepted stable command remains replayable.
 - General thread management is limited to the calling thread's project. Send
   additionally enforces the same runtime and interaction privilege ceiling as
   child creation.
