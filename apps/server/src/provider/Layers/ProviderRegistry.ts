@@ -795,29 +795,31 @@ export const ProviderRegistryLive = Layer.effect(
       });
       if (!claimed) return yield* Ref.get(providersRef);
       return yield* instance.snapshotForCwd(input.cwd).pipe(
-        Effect.flatMap((scopedSnapshot) => {
-          if (scopedSnapshot.status === "error") {
-            return Ref.get(providersRef);
-          }
-          const currentInstance = yield * instanceRegistry.getInstance(input.instanceId);
-          if (currentInstance !== instance) return Ref.get(providersRef);
-          return Ref.modify(providersRef, (currentProviders) => {
-            const nextProviders = currentProviders.map((candidate) =>
-              candidate.instanceId === input.instanceId &&
-              !candidate.workspaceSnapshots?.some((s) => s.cwd === input.cwd)
-                ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
-                : candidate,
-            );
-            return [[currentProviders, nextProviders] as const, nextProviders];
-          }).pipe(
-            Effect.tap(([previousProviders, nextProviders]) =>
-              haveProvidersChanged(previousProviders, nextProviders)
-                ? PubSub.publish(changesPubSub, nextProviders)
-                : Effect.void,
-            ),
-            Effect.map(([, nextProviders]) => nextProviders),
-          );
-        }),
+        Effect.flatMap((scopedSnapshot) =>
+          scopedSnapshot.status === "error"
+            ? Ref.get(providersRef)
+            : instanceRegistry.getInstance(input.instanceId).pipe(
+                Effect.flatMap((currentInstance) => {
+                  if (currentInstance !== instance) return Ref.get(providersRef);
+                  return Ref.modify(providersRef, (currentProviders) => {
+                    const nextProviders = currentProviders.map((candidate) =>
+                      candidate.instanceId === input.instanceId &&
+                      !candidate.workspaceSnapshots?.some((s) => s.cwd === input.cwd)
+                        ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
+                        : candidate,
+                    );
+                    return [[currentProviders, nextProviders] as const, nextProviders];
+                  }).pipe(
+                    Effect.tap(([previousProviders, nextProviders]) =>
+                      haveProvidersChanged(previousProviders, nextProviders)
+                        ? PubSub.publish(changesPubSub, nextProviders)
+                        : Effect.void,
+                    ),
+                    Effect.map(([, nextProviders]) => nextProviders),
+                  );
+                }),
+              ),
+        ),
         Effect.ensuring(
           Ref.update(workspaceRefreshesRef, (refreshes) => {
             const next = new Map(refreshes);
