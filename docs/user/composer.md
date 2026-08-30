@@ -73,9 +73,10 @@ Messages sent while the agent is working queue above the composer. Rows show a t
 attached image alongside the text, and each row can be dragged by its handle to reorder (the
 handle also responds to the arrow keys), promoted to a steer, or removed.
 
-The pencil on a queued row opens that message in the composer for editing. The message's
+The pencil on a queued row opens that message in the composer for editing. The original message
+stays in the queue until you save, and its row is highlighted while you edit. The message's
 attachments appear above the text with a remove control, and new images can be added the usual way.
-Sending saves the queued message in place; **Cancel** in the banner leaves it unchanged. Whatever
+The checkmark saves the queued message in place; **Cancel** on its row leaves it unchanged. Whatever
 you had typed in the composer before starting the edit is restored afterwards. If the queued
 message starts or is removed while you are editing, the edit ends: changed content moves into the
 composer when it is empty, and is discarded otherwise.

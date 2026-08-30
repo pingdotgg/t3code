@@ -518,7 +518,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   showSendWhileRunning?: boolean;
-  sendLabel?: string;
+  isEditingQueuedMessage: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -554,7 +554,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         hasSendableContent={props.hasSendableContent}
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         showSendWhileRunning={props.showSendWhileRunning ?? false}
-        {...(props.sendLabel === undefined ? {} : { sendLabel: props.sendLabel })}
+        isEditingQueuedMessage={props.isEditingQueuedMessage}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
@@ -4239,7 +4239,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   data-chat-composer-primary-actions-compact={
                     isComposerPrimaryActionsCompact ? "true" : "false"
                   }
-                  className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
+                  className="flex min-h-9 shrink-0 flex-nowrap items-center justify-end gap-2 sm:min-h-8"
                 >
                   {fileStagingLimit !== null && pendingUserInputs.length === 0 ? (
                     <>
@@ -4297,7 +4297,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     hasSendableContent={composerSendState.hasSendableContent}
                     preserveComposerFocusOnPointerDown={isMobileViewport}
                     showSendWhileRunning={isMobileViewport}
-                    {...(isEditingQueuedMessage ? { sendLabel: "Save queued message" } : {})}
+                    isEditingQueuedMessage={isEditingQueuedMessage}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
