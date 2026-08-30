@@ -110,10 +110,7 @@ export const runDeferredOrganizationRepair = <A, E, R>(
   repair.pipe(
     Effect.retry({
       times: 1,
-      while: (error) =>
-        isProjectionStoreReadError(error) ||
-        isOrchestratorDispatchError(error) ||
-        isOrchestratorProjectionError(error),
+      while: (error) => isProjectionStoreReadError(error) || isOrchestratorDispatchError(error),
     }),
     Effect.asVoid,
     Effect.catchCause((cause) =>
@@ -7305,7 +7302,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } satisfies OrchestratorV2DispatchResult;
     }
 
-    const plan = yield* dispatchOnce(command).pipe(
+    const planAttempt = dispatchOnce(command);
+    const plan = yield* (
+      command.type === "thread.organization.defer.apply"
+        ? planAttempt.pipe(
+            Effect.retry({
+              times: 1,
+              while: isOrchestratorProjectionError,
+            }),
+          )
+        : planAttempt
+    ).pipe(
       Effect.flatMap((planned) =>
         planned.events.length > 0
           ? Effect.succeed(planned)

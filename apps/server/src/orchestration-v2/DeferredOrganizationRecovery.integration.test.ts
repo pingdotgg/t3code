@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -21,6 +22,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
 import { runV2RecoveryPhase } from "../serverRuntimeStartup.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { ProviderRuntimeRecoveryService } from "./ProviderRuntimeRecoveryService.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
@@ -58,21 +60,6 @@ it.effect("retries one typed deferred repair failure without swallowing interrup
     );
     assert.equal(yield* Ref.get(attempts), 2);
 
-    const mappedAttempts = yield* Ref.make(0);
-    yield* Orchestrator.runDeferredOrganizationRepair(
-      ThreadId.make("thread:deferred-organization-transient-projection"),
-      Effect.gen(function* () {
-        const attempt = yield* Ref.updateAndGet(mappedAttempts, (current) => current + 1);
-        if (attempt === 1) {
-          return yield* new Orchestrator.OrchestratorProjectionError({
-            threadId: ThreadId.make("thread:deferred-organization-transient-projection"),
-            cause: "transient mapped projection failure",
-          });
-        }
-      }),
-    );
-    assert.equal(yield* Ref.get(mappedAttempts), 2);
-
     const interruption = yield* Orchestrator.runDeferredOrganizationRepair(
       ThreadId.make("thread:deferred-organization-interruption"),
       Effect.interrupt,
@@ -82,6 +69,146 @@ it.effect("retries one typed deferred repair failure without swallowing interrup
       assert.isTrue(Cause.hasInterruptsOnly(interruption.cause));
     }
   }),
+);
+
+it.effect("retries a transient deferred apply read before recording its receipt", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* Effect.acquireRelease(
+        fs.makeTempDirectory({ prefix: "t3-deferred-organization-receipt-" }),
+        (directory) => fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
+      );
+      const databaseLayer = makeSqlitePersistenceLive(path.join(tempDir, "state.sqlite")).pipe(
+        Layer.provide(NodeServices.layer),
+      );
+      const registryLayer = makeProviderAdapterRegistryLayer([adapter]);
+      const threadId = ThreadId.make("thread:deferred-organization-receipt");
+
+      const runId = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:deferred-organization-receipt:create"),
+            threadId,
+            projectId: ProjectId.make("project:deferred-organization-receipt"),
+            title: "Deferred organization receipt",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: tempDir,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:deferred-organization-receipt:active"),
+            threadId,
+            messageId: MessageId.make("message:deferred-organization-receipt:active"),
+            text: "Keep this run active.",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          const activeRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0];
+          assert.isDefined(activeRun);
+          yield* orchestrator.dispatch({
+            type: "thread.organization.defer",
+            commandId: CommandId.make("command:deferred-organization-receipt:schedule"),
+            threadId,
+            runId: activeRun.id,
+            action: "settle",
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:deferred-organization-receipt:queued"),
+            threadId,
+            messageId: MessageId.make("message:deferred-organization-receipt:queued"),
+            text: "Make the deferred intent stale.",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "queue_after_active" },
+          });
+          return activeRun.id;
+        }).pipe(
+          Effect.provide(
+            makeOrchestratorV2ReplayLayerWithRegistry(
+              {
+                name: "deferred-organization-receipt:first-runtime",
+                runtimePolicyOverride: { cwd: tempDir },
+              },
+              registryLayer,
+              { databaseLayer, runEffectWorker: false },
+            ),
+          ),
+        ),
+      );
+      const commandId = CommandId.make(
+        `command:system:thread-organization-defer:${threadId}:${runId}`,
+      );
+
+      const armed = yield* Ref.make(false);
+      const projectionReads = yield* Ref.make(0);
+      const decorateProjectionStore = (store: ProjectionStore.ProjectionStoreV2["Service"]) =>
+        ProjectionStore.ProjectionStoreV2.of({
+          ...store,
+          getThreadProjection: (requestedThreadId) =>
+            Ref.get(armed).pipe(
+              Effect.flatMap((isArmed) =>
+                isArmed
+                  ? Ref.updateAndGet(projectionReads, (count) => count + 1).pipe(
+                      Effect.flatMap((count) =>
+                        count === 3
+                          ? Effect.fail(
+                              new ProjectionStore.ProjectionStoreReadError({
+                                threadId: requestedThreadId,
+                                cause: "simulated transient deferred apply read failure",
+                              }),
+                            )
+                          : store.getThreadProjection(requestedThreadId),
+                      ),
+                    )
+                  : store.getThreadProjection(requestedThreadId),
+              ),
+            ),
+        });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const receipts = yield* CommandReceiptStoreV2;
+          yield* Ref.set(armed, true);
+          yield* orchestrator.recoverDeferredOrganization;
+
+          const receipt = yield* receipts.getByCommandId(commandId);
+          assert.isTrue(Option.isSome(receipt));
+          if (Option.isSome(receipt)) assert.equal(receipt.value.status, "accepted");
+          assert.equal(yield* Ref.get(projectionReads), 4);
+          assert.isNull(
+            (yield* orchestrator.getThreadProjection(threadId)).thread.deferredOrganization,
+          );
+        }).pipe(
+          Effect.provide(
+            makeOrchestratorV2ReplayLayerWithRegistry(
+              {
+                name: "deferred-organization-receipt:second-runtime",
+                runtimePolicyOverride: { cwd: tempDir },
+              },
+              registryLayer,
+              { databaseLayer, runEffectWorker: false, decorateProjectionStore },
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  ),
 );
 
 it.effect("discards a stale deferred organization intent after runtime restart", () =>
