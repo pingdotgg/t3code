@@ -137,6 +137,82 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testNewerDetailSettlementBeatsOlderShellForNonActiveEnvironment() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        await fixture.transport.setShell(
+            multiEnvironmentShell(
+                projectID: "project-two",
+                threadID: "thread-two",
+                title: "Remote work",
+                snapshotSequence: 90,
+                settledOverride: "settled",
+                settledAt: "2026-07-31T12:01:00.000Z"
+            ),
+            host: "two.example"
+        )
+        await fixture.transport.setDetail(
+            multiEnvironmentDetail(
+                projectID: "project-two",
+                threadID: "thread-two",
+                snapshotSequence: 100
+            ),
+            host: "two.example"
+        )
+
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
+        let detail = try await fixture.client.loadThread(id: thread.id)
+
+        XCTAssertFalse(detail.thread.isSettled)
+        XCTAssertNil(detail.thread.settlementFacts?.settlementOverride)
+        await fixture.client.disconnect()
+    }
+
+    func testNewerShellSettlementBeatsStaleDetailForNonActiveEnvironment() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        await fixture.transport.setShell(
+            multiEnvironmentShell(
+                projectID: "project-two",
+                threadID: "thread-two",
+                title: "Remote work",
+                snapshotSequence: 100,
+                settledOverride: "settled",
+                settledAt: "2026-07-31T12:01:00.000Z"
+            ),
+            host: "two.example"
+        )
+        await fixture.transport.setDetail(
+            multiEnvironmentDetail(
+                projectID: "project-two",
+                threadID: "thread-two",
+                snapshotSequence: 90
+            ),
+            host: "two.example"
+        )
+
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
+        let detail = try await fixture.client.loadThread(id: thread.id)
+
+        XCTAssertTrue(detail.thread.isSettled)
+        XCTAssertEqual(detail.thread.settlementFacts?.settlementOverride, .settled)
+
+        await fixture.transport.setDetail(
+            multiEnvironmentDetail(
+                projectID: "project-two",
+                threadID: "thread-two",
+                snapshotSequence: 95
+            ),
+            host: "two.example"
+        )
+        let refreshed = try await fixture.client.loadThread(id: thread.id)
+        XCTAssertTrue(refreshed.thread.isSettled)
+        XCTAssertEqual(refreshed.thread.settlementFacts?.settlementOverride, .settled)
+        await fixture.client.disconnect()
+    }
+
     func testSnapshotKeepsRepositoryIdentityForCrossComputerProjectGrouping() async throws {
         let identity = RepositoryIdentity(
             canonicalKey: "github.com/t3/example",
@@ -831,6 +907,7 @@ private struct MultiEnvironmentFixture {
 private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private let shells: [String: OrchestrationShellSnapshot]
     private var shellData: [String: Data]
+    private var detailData: [String: [String: Data]] = [:]
     private var reachableHosts: Set<String>
     private var shellReadsEnabledHosts: Set<String>
     private var dispatched: [MultiEnvironmentDispatchRecord] = []
@@ -863,6 +940,13 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         shellData[host] = try! JSONEncoder.t3.encode(shell)
     }
 
+    func setDetail(
+        _ detail: OrchestrationThreadDetailSnapshot,
+        host: String
+    ) {
+        detailData[host, default: [:]][detail.thread.id] = try! JSONEncoder.t3.encode(detail)
+    }
+
     func dispatchHosts() -> [String] {
         dispatched.map(\.host)
     }
@@ -888,6 +972,9 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         }
         if path.hasPrefix("/api/orchestration/threads/") {
             let threadID = request.url?.lastPathComponent.removingPercentEncoding ?? "thread"
+            if let data = detailData[host]?[threadID] {
+                return (data, multiEnvironmentResponse(request))
+            }
             let projectID = shells[host]?.threads
                 .first(where: { $0.id == threadID })?
                 .projectId ?? shells[host]?.projects.first?.id ?? "project"
@@ -1063,12 +1150,15 @@ private func multiEnvironmentShell(
     providerID: String = "codex",
     modelID: String = "gpt-5.6-sol",
     repositoryIdentity: RepositoryIdentity? = nil,
-    backgroundLiveness: OrchestrationBackgroundLiveness? = nil
+    backgroundLiveness: OrchestrationBackgroundLiveness? = nil,
+    snapshotSequence: Int = 1,
+    settledOverride: String? = nil,
+    settledAt: String? = nil
 ) -> OrchestrationShellSnapshot {
     let timestamp = "2026-07-31T12:00:00.000Z"
     let model = ModelSelection(instanceId: providerID, model: modelID)
     return OrchestrationShellSnapshot(
-        snapshotSequence: 1,
+        snapshotSequence: snapshotSequence,
         projects: [
             OrchestrationProject(
                 id: projectID,
@@ -1096,8 +1186,8 @@ private func multiEnvironmentShell(
                 createdAt: timestamp,
                 updatedAt: timestamp,
                 archivedAt: nil,
-                settledOverride: nil,
-                settledAt: nil,
+                settledOverride: settledOverride,
+                settledAt: settledAt,
                 snoozedUntil: nil,
                 snoozedAt: nil,
                 pinnedAt: nil,
@@ -1115,11 +1205,14 @@ private func multiEnvironmentShell(
 
 private func multiEnvironmentDetail(
     projectID: String,
-    threadID: String
+    threadID: String,
+    snapshotSequence: Int = 2,
+    settledOverride: String? = nil,
+    settledAt: String? = nil
 ) -> OrchestrationThreadDetailSnapshot {
     let timestamp = "2026-07-31T12:00:00.000Z"
     return OrchestrationThreadDetailSnapshot(
-        snapshotSequence: 2,
+        snapshotSequence: snapshotSequence,
         thread: OrchestrationThread(
             id: threadID,
             projectId: projectID,
@@ -1133,8 +1226,8 @@ private func multiEnvironmentDetail(
             createdAt: timestamp,
             updatedAt: timestamp,
             archivedAt: nil,
-            settledOverride: nil,
-            settledAt: nil,
+            settledOverride: settledOverride,
+            settledAt: settledAt,
             snoozedUntil: nil,
             snoozedAt: nil,
             pinnedAt: nil,

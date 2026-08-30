@@ -10,6 +10,21 @@ struct HomeThreadSwipeActionTests {
     private let now = Date(timeIntervalSince1970: 20_000)
 
     @Test
+    func backKeepsTheMostRecentlyOpenedThreadHighlighted() {
+        var selection = WorkspaceThreadSelection()
+        selection.open("first")
+        selection.close()
+        #expect(selection.selectedID == nil)
+        #expect(selection.highlightedID == "first")
+
+        selection.open("second")
+        #expect(selection.selectedID == "second")
+        #expect(selection.highlightedID == "second")
+        selection.close()
+        #expect(selection.highlightedID == "second")
+    }
+
+    @Test
     func settlementOwnsTheEdgeSlotSoAFullSwipeSettles() {
         let active = thread(id: "active")
         let actions = HomeThreadSwipeAction.trailingActions(
@@ -491,6 +506,41 @@ struct HomeThreadSwipeActionTests {
     }
 
     @Test
+    func reopeningImmediatelyMovesTheThreadToTheTopAndRestoresItsOrderOnFailure() async throws {
+        let client = SwipeSettlementClientStub()
+        var older = thread(id: "older")
+        older.createdAt = now.addingTimeInterval(-1_000)
+        older.isSettled = true
+        older.settledAt = now.addingTimeInterval(-20)
+        let newer = thread(id: "newer")
+        client.snapshot = snapshot(threads: [older, newer])
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        let started = AsyncStream<Void>.makeStream()
+        var response: CheckedContinuation<Void, any Error>?
+        client.beforeSettlementResponse = { _ in
+            try await withCheckedThrowingContinuation { continuation in
+                response = continuation
+                started.continuation.yield()
+            }
+        }
+
+        let reopening = Task { await model.setSettled(older.id, settled: false) }
+        var requests = started.stream.makeAsyncIterator()
+        await requests.next()
+
+        #expect(presentation(for: model).active.map(\.id) == ["older", "newer"])
+        #expect(model.snapshot.threads.first(where: { $0.id == older.id })?.unsettledAt != nil)
+        response?.resume(throwing: SwipeSettlementFailure.offline)
+        #expect(!(await reopening.value))
+        #expect(presentation(for: model).active.map(\.id) == ["newer"])
+        let restored = try #require(model.snapshot.threads.first(where: { $0.id == older.id }))
+        #expect(restored.unsettledAt == older.unsettledAt)
+        #expect(restored.settledAt == older.settledAt)
+    }
+
+    @Test
     func anOlderFailedSettlementCannotUndoANewerReopen() async {
         let client = SwipeSettlementClientStub()
         let active = thread(id: "active")
@@ -515,12 +565,15 @@ struct HomeThreadSwipeActionTests {
 
         await model.setSettled(active.id, settled: false)
         #expect(model.snapshot.threads.first?.isSettled == false)
+        let reopenedAt = model.snapshot.threads.first?.unsettledAt
+        #expect(reopenedAt != nil)
 
         delayedResponse?.resume(throwing: SwipeSettlementFailure.offline)
         #expect(!(await settlement.value))
 
         #expect(model.snapshot.threads.first?.isSettled == false)
         #expect(model.snapshot.threads.first?.keepsActive == true)
+        #expect(model.snapshot.threads.first?.unsettledAt == reopenedAt)
         #expect(client.settlementRequests == [
             SettlementRequest(id: active.id, settled: true),
             SettlementRequest(id: active.id, settled: false),
@@ -694,6 +747,39 @@ struct HomeThreadSwipeActionTests {
         #expect(cell.contentView.clipsToBounds)
     }
 
+    @Test
+    func selectionUpdatesWhenOtherRowsArriveInTheSameSnapshot() throws {
+        let client = SwipeSettlementClientStub()
+        let first = thread(id: "first")
+        let second = thread(id: "second")
+        let initial = threadList(
+            client: client, snapshot: snapshot(threads: [first, second]), selectedThreadID: first.id
+        )
+        let coordinator = initial.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        collectionView.layoutIfNeeded()
+        defer {
+            coordinator.invalidateTimer()
+            coordinator.cancelPendingSwipeActions()
+        }
+        let firstCell = try #require(collectionView.visibleCells.first {
+            $0.accessibilityLabel == first.title
+        })
+        #expect(firstCell.accessibilityTraits.contains(.selected))
+
+        let updated = threadList(
+            client: client,
+            snapshot: snapshot(threads: [first, second, thread(id: "arrived")]),
+            selectedThreadID: second.id
+        )
+        coordinator.update(parent: updated, collectionView: collectionView)
+        collectionView.layoutIfNeeded()
+        let selected = collectionView.visibleCells.filter { $0.accessibilityTraits.contains(.selected) }
+        #expect(selected.count == 1)
+        #expect(selected.first?.accessibilityLabel == second.title)
+    }
+
     private func presentation(for model: FeatureRootModel) -> HomePresentation {
         HomePresentation(
             snapshot: model.snapshot,
@@ -721,6 +807,7 @@ struct HomeThreadSwipeActionTests {
         client: SwipeSettlementClientStub,
         snapshot: FeatureSnapshot,
         query: String = "",
+        selectedThreadID: String? = nil,
         settlementResult: Bool = true,
         onSettle: @escaping (FeatureThread, Bool) -> Void = { _, _ in }
     ) -> HomeThreadCollectionView {
@@ -733,9 +820,11 @@ struct HomeThreadSwipeActionTests {
             ),
             projectFaviconClient: client,
             query: query,
-            selectedThreadID: nil,
+            selectedThreadID: selectedThreadID,
             forceRichRows: false,
             hapticsEnabled: false,
+            settings: snapshot.settings,
+            pullRequestsByThreadID: [:],
             isSnoozedExpanded: false,
             isSettledExpanded: false,
             isArchiveExpanded: false,
@@ -754,7 +843,8 @@ struct HomeThreadSwipeActionTests {
             },
             onSnooze: { _, _ in },
             onPin: { _, _ in },
-            onDelete: { _ in }
+            onDelete: { _ in },
+            onPullRequestChange: { _, _, _ in }
         )
     }
 

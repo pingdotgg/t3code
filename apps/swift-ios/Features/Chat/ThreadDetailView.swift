@@ -78,10 +78,10 @@ public struct ThreadDetailView: View {
         .task(id: thread.id) {
             let restoreBaseline = composerDraft
             let restoreKey = draftKey
-            isLoading = detail == nil
+            isLoading = true
             _ = await model.detail(for: thread.id, force: true)
-            await restoreDraft(from: restoreBaseline, key: restoreKey)
             isLoading = false
+            await restoreDraft(from: restoreBaseline, key: restoreKey)
         }
         .task(id: pullRequestObservationID) {
             await observeThreadPullRequest()
@@ -89,6 +89,13 @@ public struct ThreadDetailView: View {
         .onChange(of: draft) { scheduleDraftSave() }
         .onChange(of: attachments) { scheduleDraftSave() }
         .onChange(of: selection) { scheduleDraftSave() }
+        .onChange(of: threadConnectionState) { _, state in
+            if state == .connected,
+               case .failed = model.detailLoadStates[thread.id],
+               !isLoading {
+                reloadThread()
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 persistDraftBeforeLeaving()
@@ -110,8 +117,6 @@ public struct ThreadDetailView: View {
                         FeatureReviewView(client: model.client, threadID: thread.id)
                     case .sourceControl:
                         FeatureSourceControlView(client: model.client, threadID: thread.id)
-                    case let .pullRequest(target):
-                        PullRequestDetailView(rootModel: model, target: target)
                     case .terminal:
                         FeatureTerminalView(client: model.client, threadID: thread.id)
                     }
@@ -245,6 +250,10 @@ public struct ThreadDetailView: View {
         .accessibilityAddTraits(
             currentThread.hasLiveWorkingDuration ? .updatesFrequently : []
         )
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
     }
 
     @ViewBuilder
@@ -281,11 +290,7 @@ public struct ThreadDetailView: View {
             Section("Thread") {
                 if let pullRequest = currentPullRequest {
                     Button {
-                        if let target = pullRequest.target {
-                            toolSurface = .pullRequest(target)
-                        } else if let url = pullRequest.url {
-                            parentOpenURL(url)
-                        }
+                        parentOpenURL(pullRequest.url)
                     } label: {
                         Label("Open pull request #\(pullRequest.number)", systemImage: "arrow.triangle.pull")
                     }
@@ -312,8 +317,8 @@ public struct ThreadDetailView: View {
                         )
                     }
                 }
-                if currentThread.canSettleNow, !currentThread.isArchived {
-                    let isSettled = currentThread.isEffectivelySettled(at: .now)
+                let isSettled = model.isEffectivelySettled(currentThread)
+                if (isSettled || currentThread.canSettleNow()), !currentThread.isArchived {
                     Button {
                         Task { await model.setSettled(thread.id, settled: !isSettled) }
                     } label: {
@@ -368,43 +373,112 @@ public struct ThreadDetailView: View {
     }
 
     private var currentPullRequest: ThreadPullRequestDestination? {
-        let project = model.snapshot.projects.first { $0.id == currentThread.projectID }
         return ThreadPullRequestDestination.resolve(
             thread: currentThread,
-            project: project,
             branchPullRequest: branchPullRequest
         )
     }
 
     private var pullRequestObservationID: String? {
-        guard currentThread.linkedPullRequest == nil,
-              let branch = currentThread.branch,
-              !branch.isEmpty else {
-            return nil
-        }
-        return "\(currentThread.id):\(branch)"
+        currentThread.pullRequestObservationIdentity
     }
 
     @MainActor
     private func observeThreadPullRequest() async {
-        guard pullRequestObservationID != nil else {
+        guard let observationIdentity = pullRequestObservationID else {
             branchPullRequest = nil
             return
         }
+
+        if let linked = currentThread.linkedPullRequest,
+           let environmentID = currentThread.environmentID {
+            let target = FeaturePullRequestTarget(
+                environmentID: environmentID,
+                environmentName: currentThread.environmentName ?? environmentID,
+                reference: PullRequestRef(
+                    projectId: linked.projectId,
+                    repository: linked.repository,
+                    number: linked.number
+                )
+            )
+            while !Task.isCancelled {
+                if let detail = try? await model.client.pullRequestDetail(target),
+                   let presentation = HomeThreadPullRequestPresentation.resolve(
+                       linkedPullRequest: linked,
+                       detail: detail
+                   ) {
+                    model.updatePullRequest(
+                        presentation,
+                        threadID: currentThread.id,
+                        observationIdentity: observationIdentity
+                    )
+                }
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                } catch {
+                    return
+                }
+            }
+            return
+        }
+
         for await status in model.client.sourceControlStatusEvents(threadID: thread.id) {
             guard !Task.isCancelled else { return }
             let next = status.branch == currentThread.branch ? status.pullRequest : nil
             if next != branchPullRequest {
                 branchPullRequest = next
             }
+            model.updatePullRequest(
+                HomeThreadPullRequestPresentation.resolve(thread: currentThread, status: status),
+                threadID: currentThread.id,
+                observationIdentity: observationIdentity
+            )
         }
     }
 
     private func reloadThread() {
-        isLoading = detail == nil
+        isLoading = true
         Task {
             _ = await model.detail(for: thread.id, force: true)
             isLoading = false
+        }
+    }
+
+    private var threadConnectionState: FeatureConnection.State? {
+        guard let environmentID = currentThread.environmentID else { return nil }
+        return model.snapshot.environments.first { $0.id == environmentID }?.connectionState
+    }
+
+    private var refreshPresentation: ThreadRefreshPresentation? {
+        ThreadRefreshPresentation.resolve(
+            loadState: model.detailLoadStates[thread.id],
+            connectionState: threadConnectionState,
+            isOpening: isLoading
+        )
+    }
+
+    @ViewBuilder
+    private var refreshStatus: some View {
+        if let refreshPresentation {
+            HStack(spacing: 8) {
+                Label(refreshPresentation.title, systemImage: refreshPresentation.systemImage)
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                Spacer(minLength: 4)
+                if refreshPresentation.canRetry {
+                    Button(action: reloadThread) {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                            .font(T3Typography.control)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(T3Colors.accent)
+                    .frame(minHeight: T3Metrics.minimumTapTarget)
+                    .accessibilityIdentifier("thread-refresh-retry")
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 8)
+            .accessibilityIdentifier("thread-refresh-status")
         }
     }
 
@@ -465,32 +539,36 @@ public struct ThreadDetailView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            FeatureComposerView(
-                text: $draft,
-                selection: $selection,
-                attachments: $attachments,
-                providers: threadProviders,
-                threadSelection: currentSelection,
-                materializesDefaultSelection: false,
-                isSending: isSending,
-                isWorking: detail.thread.state == .working || detail.thread.state == .queued,
-                focused: $composerFocused,
-                onSend: send,
-                onStop: {
-                    Task { await model.cancelTurn(threadID: thread.id) }
-                },
-                pendingApprovals: detail.approvals,
-                pendingUserInputs: detail.userInputs,
-                isResolvingRequest: model.isPerformingAction,
-                powerFeatures: composerPowerFeatures,
-                onDismissKeyboard: dismissKeyboard,
-                onApprovalDecision: { id, decision in
-                    Task { await model.resolveApproval(id, decision: decision) }
-                },
-                onUserInputSubmit: { id, answers in
-                    Task { await model.resolveUserInput(id, answers: answers) }
-                }
-            )
+            VStack(spacing: 0) {
+                refreshStatus
+                FeatureComposerView(
+                    text: $draft,
+                    selection: $selection,
+                    attachments: $attachments,
+                    providers: threadProviders,
+                    threadSelection: currentSelection,
+                    materializesDefaultSelection: false,
+                    isSending: isSending,
+                    isWorking: detail.thread.state == .working || detail.thread.state == .queued,
+                    focused: $composerFocused,
+                    onSend: send,
+                    onStop: {
+                        Task { await model.cancelTurn(threadID: thread.id) }
+                    },
+                    pendingApprovals: detail.approvals,
+                    pendingUserInputs: detail.userInputs,
+                    isResolvingRequest: model.isPerformingAction,
+                    powerFeatures: composerPowerFeatures,
+                    onDismissKeyboard: dismissKeyboard,
+                    onApprovalDecision: { id, decision in
+                        Task { await model.resolveApproval(id, decision: decision) }
+                    },
+                    onUserInputSubmit: { id, answers in
+                        Task { await model.resolveUserInput(id, answers: answers) }
+                    }
+                )
+            }
+            .background(T3Colors.background)
         }
     }
 
@@ -764,6 +842,46 @@ public struct ThreadDetailView: View {
 
 }
 
+enum ThreadRefreshPresentation: Equatable {
+    case loading
+    case reconnecting
+    case offline
+    case failed
+
+    var title: String {
+        switch self {
+        case .loading: "Updating thread..."
+        case .reconnecting: "Reconnecting..."
+        case .offline: "Computer offline"
+        case .failed: "Could not update thread"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .loading: "hourglass"
+        case .reconnecting: "wifi"
+        case .offline, .failed: "wifi.exclamationmark"
+        }
+    }
+
+    var canRetry: Bool { self == .offline || self == .failed }
+
+    static func resolve(
+        loadState: FeatureThreadLoadState?,
+        connectionState: FeatureConnection.State?,
+        isOpening: Bool
+    ) -> Self? {
+        if isOpening || loadState == .loading { return .loading }
+        if case .failed = loadState { return .failed }
+        switch connectionState {
+        case .connecting, .reconnecting: return .reconnecting
+        case .disconnected: return .offline
+        case .connected, nil: return nil
+        }
+    }
+}
+
 private struct FeatureThreadOpeningView: View {
     var body: some View {
         VStack(spacing: 12) {
@@ -785,7 +903,6 @@ private enum FeatureThreadToolSurface: Identifiable {
     case file(String)
     case review
     case sourceControl
-    case pullRequest(FeaturePullRequestTarget)
     case terminal
 
     var id: String {
@@ -794,8 +911,6 @@ private enum FeatureThreadToolSurface: Identifiable {
         case let .file(path): "file:\(path)"
         case .review: "review"
         case .sourceControl: "sourceControl"
-        case let .pullRequest(target):
-            "pullRequest:\(target.environmentID):\(target.reference.repository):\(target.reference.number)"
         case .terminal: "terminal"
         }
     }
@@ -803,66 +918,20 @@ private enum FeatureThreadToolSurface: Identifiable {
 
 struct ThreadPullRequestDestination: Equatable {
     let number: Int
-    let target: FeaturePullRequestTarget?
-    let url: URL?
+    let url: URL
 
     static func resolve(
         thread: FeatureThread,
-        project: FeatureProject?,
         branchPullRequest: FeaturePullRequest?
     ) -> Self? {
-        if let linked = thread.linkedPullRequest {
-            let environmentID = thread.environmentID ?? project?.environmentID
-            let target = environmentID.map {
-                FeaturePullRequestTarget(
-                    environmentID: $0,
-                    environmentName: thread.environmentName ?? $0,
-                    reference: PullRequestRef(
-                        projectId: linked.projectId,
-                        repository: linked.repository,
-                        number: linked.number
-                    )
-                )
-            }
-            return Self(number: linked.number, target: target, url: URL(string: linked.url))
+        if let linked = thread.linkedPullRequest,
+           let url = URL(string: linked.url) {
+            return Self(number: linked.number, url: url)
         }
 
-        guard let pullRequest = branchPullRequest else { return nil }
-        let environmentID = thread.environmentID ?? project?.environmentID
-        let repository = pullRequest.url.flatMap(repositoryFromPullRequestURL)
-            ?? project?.repositoryIdentity?.canonicalKey.split(separator: "/", maxSplits: 1)
-                .dropFirst().first.map(String.init)
-        let target: FeaturePullRequestTarget?
-        if let environmentID, let project, let repository {
-            target = FeaturePullRequestTarget(
-                environmentID: environmentID,
-                environmentName: thread.environmentName ?? environmentID,
-                reference: PullRequestRef(
-                    projectId: project.wireID ?? project.id,
-                    repository: repository,
-                    number: pullRequest.number
-                )
-            )
-        } else {
-            target = nil
-        }
-        guard target != nil || pullRequest.url != nil else { return nil }
-        return Self(number: pullRequest.number, target: target, url: pullRequest.url)
-    }
-
-    private static func repositoryFromPullRequestURL(_ url: URL) -> String? {
-        let parts = url.path.split(separator: "/")
-        guard let marker = parts.firstIndex(where: {
-            ["pull", "pulls", "pull-requests", "merge_requests"].contains(String($0))
-        }), marker > 0 else {
-            return nil
-        }
-        var repository = Array(parts[..<marker])
-        if repository.last == "-" {
-            repository.removeLast()
-        }
-        guard repository.count >= 2 else { return nil }
-        return repository.joined(separator: "/")
+        guard let pullRequest = branchPullRequest,
+              let url = pullRequest.url else { return nil }
+        return Self(number: pullRequest.number, url: url)
     }
 }
 
@@ -2092,21 +2161,8 @@ struct FeatureMessageView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("message-\(message.id)")
         case .tool:
-            DisclosureGroup {
-                Text(message.text)
-                    .font(T3Typography.tool)
-                    .foregroundStyle(T3Colors.textSecondary)
-                    .lineSpacing(3)
-                    .textSelection(.enabled)
-                    .padding(.top, 8)
-            } label: {
-                Label(message.toolName ?? "Tool output", systemImage: "terminal")
-                    .font(T3Typography.tool.weight(.medium))
-                    .foregroundStyle(T3Colors.textSecondary)
-            }
-            .padding(.vertical, 6)
-            .frame(minHeight: T3Metrics.minimumTapTarget)
-            .accessibilityIdentifier("message-\(message.id)")
+            FeatureWorkLogView(message: message)
+                .id(message.id)
         case .system:
             Text(message.text)
                 .font(T3Typography.supporting)
@@ -2124,6 +2180,51 @@ struct FeatureMessageView: View {
         return [message.text, attachmentSummary]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
+    }
+}
+
+private struct FeatureWorkLogView: View {
+    let message: FeatureMessage
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Label(message.toolName ?? "Tool output", systemImage: "terminal")
+                    Spacer(minLength: 8)
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                }
+                .font(T3Typography.tool.weight(.medium))
+                .foregroundStyle(T3Colors.textSecondary)
+                .frame(minHeight: T3Metrics.minimumTapTarget)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("work-log-toggle-\(message.id)")
+
+            if isExpanded {
+                Text(message.text)
+                    .font(T3Typography.tool)
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .padding(.top, 8)
+                    .transition(.identity)
+            }
+        }
+        .padding(.vertical, 6)
+        .accessibilityIdentifier("message-\(message.id)")
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
     }
 }
 

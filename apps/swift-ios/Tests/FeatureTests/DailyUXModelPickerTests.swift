@@ -524,6 +524,32 @@ struct DailyUXModelPickerTests {
     }
 
     @Test
+    func legacyFavoritesStayPromotedAndReturnToLegacyWhenUnfavorited() {
+        let provider = FeatureProvider(
+            id: "claude",
+            name: "Claude",
+            models: [
+                .init(id: "current", name: "Current"),
+                .init(id: "older", name: "Older", isLegacy: true),
+            ]
+        )
+        let favoriteID = DailyUXModelOption.key(providerID: provider.id, modelID: "older")
+        for query in ["", "Older"] {
+            let sections = ProviderModelDisplaySections(catalog: DailyUXModelCatalog(
+                providers: [provider], query: query, favoriteIDs: [favoriteID], recentIDs: [favoriteID]
+            ))
+            #expect(sections.favorites.map(\.model.id) == ["older"])
+            #expect(sections.recents.isEmpty)
+            #expect(sections.legacy.isEmpty)
+        }
+        let unfavorited = ProviderModelDisplaySections(catalog: DailyUXModelCatalog(
+            providers: [provider], query: "", favoriteIDs: [], recentIDs: [favoriteID]
+        ))
+        #expect(unfavorited.favorites.isEmpty)
+        #expect(unfavorited.legacy.map(\.model.id) == ["older"])
+    }
+
+    @Test
     func serverLegacyMetadataIsAuthoritative() {
         let codex = FeatureProvider(id: "work-openai", name: "Codex", driver: "codex")
         let claude = FeatureProvider(

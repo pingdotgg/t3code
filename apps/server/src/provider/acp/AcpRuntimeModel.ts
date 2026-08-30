@@ -316,6 +316,32 @@ function toolCallContentText(entry: EffectAcpSchema.ToolCallContent): string | u
   return entry.content.text;
 }
 
+// Trim is used for display `text`, so whitespace-only (or whitespace-padded) entries never
+// contribute to `chunks` and used to take the early returns with the original array. Bound
+// each text entry independently so those paths cannot persist an unbounded terminal buffer
+// on `toolCall.data.content` / `rawPayload`.
+function boundToolCallContentEntries(
+  content: ReadonlyArray<EffectAcpSchema.ToolCallContent>,
+): ReadonlyArray<EffectAcpSchema.ToolCallContent> {
+  let changed = false;
+  const bounded = content.map((entry) => {
+    const text = toolCallContentText(entry);
+    if (text === undefined || text.length <= TOOL_CALL_CONTENT_MAX_CHARS) {
+      return entry;
+    }
+    changed = true;
+    const trimmed = text.trim();
+    return {
+      type: "content",
+      content: {
+        type: "text",
+        text: boundToolCallOutputText(trimmed.length > 0 ? trimmed : text),
+      },
+    } as const;
+  });
+  return changed ? bounded : content;
+}
+
 function extractTextContentFromToolCallContent(
   content: ReadonlyArray<EffectAcpSchema.ToolCallContent> | null | undefined,
 ): ExtractedToolCallContent {
@@ -330,31 +356,74 @@ function extractTextContentFromToolCallContent(
     }
   }
   if (chunks.length === 0) {
-    return { text: undefined, content };
+    return { text: undefined, content: boundToolCallContentEntries(content) };
   }
   const joined = chunks.join("\n");
   if (joined.length <= TOOL_CALL_CONTENT_MAX_CHARS) {
-    return { text: joined, content };
+    return { text: joined, content: boundToolCallContentEntries(content) };
   }
   const bounded = boundToolCallOutputText(joined);
-  // Collapse the text entries into a single bounded one at the final contributing text entry,
-  // and leave every other entry kind (diffs, images, resource links) in its original relative
-  // order. The retained tail came from that text entry, so placing it there also preserves its
-  // ordering relative to interleaved non-text content and ignores later blank text entries.
-  const lastContributingTextIndex = content.reduce(
-    (lastIndex, entry, index) => (toolCallContentText(entry)?.trim() ? index : lastIndex),
-    -1,
-  );
-  const boundedContent = content.flatMap((entry, index) => {
+  const tail = joined.slice(joined.length - TOOL_CALL_CONTENT_MAX_CHARS);
+  return {
+    text: bounded,
+    content: distributeRetainedTailAcrossContent(content, tail),
+  };
+}
+
+// Walk the original text entries from the joined tail window so a retained slice that
+// spans entries around an image/diff stays on those entries. Non-text kinds keep their
+// relative order; blank text entries are dropped; the truncation marker is prepended to
+// the first remaining text entry.
+function distributeRetainedTailAcrossContent(
+  content: ReadonlyArray<EffectAcpSchema.ToolCallContent>,
+  tail: string,
+): ReadonlyArray<EffectAcpSchema.ToolCallContent> {
+  const textRanges: Array<
+    | {
+        readonly start: number;
+        readonly end: number;
+        readonly text: string;
+      }
+    | undefined
+  > = Array.from({ length: content.length });
+  let offset = 0;
+  let seenText = false;
+  for (const [index, entry] of content.entries()) {
+    const text = toolCallContentText(entry)?.trim();
+    if (!text) {
+      continue;
+    }
+    if (seenText) {
+      offset += 1;
+    }
+    seenText = true;
+    const start = offset;
+    const end = offset + text.length;
+    textRanges[index] = { start, end, text };
+    offset = end;
+  }
+  const tailStart = Math.max(0, offset - tail.length);
+  let markerPending = true;
+  return content.flatMap((entry, index) => {
     if (toolCallContentText(entry) === undefined) {
       return [entry];
     }
-    if (index !== lastContributingTextIndex) {
+    const range = textRanges[index];
+    if (range === undefined) {
       return [];
     }
-    return [{ type: "content", content: { type: "text", text: bounded } } as const];
+    const overlapStart = Math.max(range.start, tailStart);
+    const overlapEnd = Math.min(range.end, offset);
+    if (overlapEnd <= overlapStart) {
+      return [];
+    }
+    let piece = range.text.slice(overlapStart - range.start, overlapEnd - range.start);
+    if (markerPending) {
+      piece = `${TOOL_CALL_CONTENT_TRUNCATION_MARKER}${piece}`;
+      markerPending = false;
+    }
+    return [{ type: "content", content: { type: "text", text: piece } } as const];
   });
-  return { text: bounded, content: boundedContent };
 }
 
 function normalizeToolKind(kind: unknown): string | undefined {
@@ -518,6 +587,42 @@ export interface AcpToolCallEmitDecision {
   readonly skippedSinceEmit: number;
 }
 
+function toolCallOutputUnchanged(previous: AcpToolCallState, next: AcpToolCallState): boolean {
+  return (
+    previous.data.content === next.data.content && previous.data.rawOutput === next.data.rawOutput
+  );
+}
+
+// Command tools keep `detail` equal to the command, so live stdout lives on
+// `data.content` / `data.rawOutput`. Measure that too, otherwise coalescing never
+// sees growth and in-progress output is held until completed/failed.
+export function toolCallProgressLength(state: AcpToolCallState): number {
+  let contentChars = 0;
+  const content = state.data.content;
+  if (Array.isArray(content)) {
+    for (const entry of content) {
+      if (!isRecord(entry)) {
+        continue;
+      }
+      const text = toolCallContentText(entry as EffectAcpSchema.ToolCallContent);
+      if (text) {
+        contentChars += text.length;
+      }
+    }
+  }
+  let rawOutputChars = 0;
+  const rawOutput = state.data.rawOutput;
+  if (isRecord(rawOutput)) {
+    for (const field of RAW_OUTPUT_TEXT_FIELDS) {
+      const value = rawOutput[field];
+      if (typeof value === "string") {
+        rawOutputChars += value.length;
+      }
+    }
+  }
+  return Math.max(state.detail?.length ?? 0, contentChars, rawOutputChars);
+}
+
 export function decideToolCallUpdateEmission(
   input: AcpToolCallEmitDecisionInput,
 ): AcpToolCallEmitDecision {
@@ -525,19 +630,16 @@ export function decideToolCallUpdateEmission(
   if (next.status === "completed" || next.status === "failed") {
     return { emit: true, skippedSinceEmit: 0 };
   }
-  if (!next.detail) {
-    return { emit: false, skippedSinceEmit };
-  }
-  if (previous === undefined || previous.title !== next.title) {
+  if (previous === undefined || previous.title !== next.title || previous.status !== next.status) {
     return { emit: true, skippedSinceEmit: 0 };
   }
-  if (previous.detail === next.detail) {
+  if (previous.detail === next.detail && toolCallOutputUnchanged(previous, next)) {
     return { emit: false, skippedSinceEmit };
   }
+  const progressLength = toolCallProgressLength(next);
   const grewMeaningfully =
     lastEmittedDetailLength === undefined ||
-    Math.abs(next.detail.length - lastEmittedDetailLength) >=
-      TOOL_CALL_UPDATE_MIN_DETAIL_GROWTH_CHARS;
+    Math.abs(progressLength - lastEmittedDetailLength) >= TOOL_CALL_UPDATE_MIN_DETAIL_GROWTH_CHARS;
   if (grewMeaningfully || skippedSinceEmit + 1 >= TOOL_CALL_UPDATE_COALESCE_LIMIT) {
     return { emit: true, skippedSinceEmit: 0 };
   }

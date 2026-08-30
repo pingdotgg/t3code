@@ -1,9 +1,9 @@
 import Foundation
 
-public let usageContractVersion = 4
+public let usageContractVersion = 5
 public let minimumCompatibleUsageContractVersion = 3
 
-/// Versions 3 and 4 contain every field this client needs. Keep both working
+/// Versions 3 through 5 contain every field this client needs. Keep them working
 /// while servers update independently across a user's environments.
 public func isCompatibleUsageContractVersion(_ version: Int) -> Bool {
     (minimumCompatibleUsageContractVersion ... usageContractVersion).contains(version)
@@ -12,11 +12,13 @@ public func isCompatibleUsageContractVersion(_ version: Int) -> Bool {
 public enum UsageProviderKind: String, Codable, CaseIterable, Sendable {
     case codex
     case claude
+    case grok
 
     public var displayName: String {
         switch self {
         case .codex: "Codex"
         case .claude: "Claude Code"
+        case .grok: "Grok Build"
         }
     }
 }

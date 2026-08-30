@@ -18,6 +18,11 @@ struct FeatureDetailRenderUpdate: Equatable {
     let change: FeatureDetailRenderChange
 }
 
+enum FeatureThreadLoadState: Equatable {
+    case loading
+    case failed(String)
+}
+
 @MainActor
 @Observable
 public final class FeatureRootModel {
@@ -27,11 +32,14 @@ public final class FeatureRootModel {
         let id: UUID
         let settled: Bool
         let settledAt: Date?
+        let unsettledAt: Date?
 
         func apply(to thread: inout FeatureThread) {
             thread.isSettled = settled
             thread.keepsActive = !settled
+            thread.settlementFacts?.settlementOverride = settled ? .settled : .active
             thread.settledAt = settledAt
+            thread.unsettledAt = unsettledAt
             if settled {
                 thread.pinnedAt = nil
             }
@@ -39,7 +47,10 @@ public final class FeatureRootModel {
     }
 
     public private(set) var snapshot = FeatureSnapshot()
+    private(set) var pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation] = [:]
+    private var pullRequestObservationIdentities: [String: String] = [:]
     public private(set) var details: [String: FeatureThreadDetail] = [:]
+    private(set) var detailLoadStates: [String: FeatureThreadLoadState] = [:]
     /// Advances whenever a Home presentation input changes.
     public private(set) var homePresentationRevision: UInt64 = 0
     /// Advances when a Home-visible thread is inserted, removed, or changed.
@@ -67,6 +78,7 @@ public final class FeatureRootModel {
     private var detailLoadGeneration: UInt64 = 0
     private var detailLoadRevisions: [String: UInt64] = [:]
     private var detailLoadRequestRevision: UInt64 = 0
+    private var activeDetailLoadRequests: [String: UInt64] = [:]
     private var storedDetailLoadRequestRevisions: [String: UInt64] = [:]
     private var detailMetadataRevisions: [String: UInt64] = [:]
     private var outboxDrainTask: Task<Void, Never>?
@@ -431,16 +443,18 @@ public final class FeatureRootModel {
         guard let previous = snapshot.threads.first(where: { $0.id == id }) else {
             return false
         }
-        if settled, !previous.canSettleNow {
+        if settled, !previous.canSettleNow() {
             errorMessage = "This thread still needs attention. Resolve or stop it first."
             return false
         }
 
         let environment = currentEnvironmentIdentity
+        let now = Date.now
         let mutation = PendingSettlementMutation(
             id: UUID(),
             settled: settled,
-            settledAt: settled ? Date.now : nil
+            settledAt: settled ? now : nil,
+            unsettledAt: settled ? nil : now
         )
         pendingSettlementMutations[id] = mutation
         mutateThread(id: id) { mutation.apply(to: &$0) }
@@ -458,7 +472,9 @@ public final class FeatureRootModel {
             guard $0.isSettled == settled, $0.settledAt == mutation.settledAt else { return }
             $0.isSettled = previous.isSettled
             $0.keepsActive = previous.keepsActive
+            $0.settlementFacts?.settlementOverride = previous.settlementFacts?.settlementOverride
             $0.settledAt = previous.settledAt
+            $0.unsettledAt = previous.unsettledAt
             $0.pinnedAt = previous.pinnedAt
         }
         return false
@@ -490,6 +506,38 @@ public final class FeatureRootModel {
                 }
             }
         }
+    }
+
+    func updatePullRequest(
+        _ pullRequest: HomeThreadPullRequestPresentation?,
+        threadID: String,
+        observationIdentity: String
+    ) {
+        guard snapshot.threads.first(where: { $0.id == threadID })?
+            .pullRequestObservationIdentity == observationIdentity else {
+            return
+        }
+        if pullRequest == nil, pullRequestsByThreadID[threadID] == nil { return }
+        if pullRequestsByThreadID[threadID] == pullRequest,
+           pullRequestObservationIdentities[threadID] == observationIdentity {
+            return
+        }
+        if let pullRequest {
+            pullRequestsByThreadID[threadID] = pullRequest
+            pullRequestObservationIdentities[threadID] = observationIdentity
+        } else {
+            pullRequestsByThreadID.removeValue(forKey: threadID)
+            pullRequestObservationIdentities.removeValue(forKey: threadID)
+        }
+        homePresentationRevision &+= 1
+    }
+
+    func isEffectivelySettled(_ thread: FeatureThread, at now: Date = .now) -> Bool {
+        thread.isEffectivelySettled(
+            at: now,
+            settings: snapshot.settings,
+            pullRequest: pullRequestsByThreadID[thread.id]
+        )
     }
 
     public func setRuntimeMode(_ id: String, mode: FeatureRuntimeMode) async {
@@ -533,6 +581,16 @@ public final class FeatureRootModel {
         let threadBeforeLoad = snapshot.threads.first { $0.id == id }
         detailLoadRequestRevision &+= 1
         let loadRequestRevision = detailLoadRequestRevision
+        activeDetailLoadRequests[id] = loadRequestRevision
+        detailLoadStates[id] = .loading
+        defer {
+            if activeDetailLoadRequests[id] == loadRequestRevision {
+                activeDetailLoadRequests[id] = nil
+                if detailLoadStates[id] == .loading {
+                    detailLoadStates[id] = nil
+                }
+            }
+        }
         do {
             var detail = try await client.loadThread(id: id)
             guard currentEnvironmentIdentity == environment else {
@@ -559,8 +617,15 @@ public final class FeatureRootModel {
             upsert(detail.thread)
             return detail
         } catch {
-            if !Self.isBenignCancellation(error) {
-                errorMessage = error.localizedDescription
+            if !Self.isBenignCancellation(error),
+               activeDetailLoadRequests[id] == loadRequestRevision,
+               detailLoadGeneration == loadGenerationBeforeLoad,
+               detailLoadRevisions[id] == loadRevisionBeforeLoad,
+               currentEnvironmentIdentity == environment {
+                detailLoadStates[id] = .failed(error.localizedDescription)
+                if details[id] == nil {
+                    errorMessage = error.localizedDescription
+                }
             }
             return details[id]
         }
@@ -751,7 +816,13 @@ public final class FeatureRootModel {
     public func saveSettings(_ settings: FeatureSettings) async -> Bool {
         await perform {
             try await client.saveSettings(settings)
+            let settlementChanged = snapshot.settings.autoSettleOnMerge
+                != settings.autoSettleOnMerge
+                || snapshot.settings.autoSettleAfterDays != settings.autoSettleAfterDays
             snapshot.settings = settings
+            if settlementChanged {
+                homePresentationRevision &+= 1
+            }
         }
     }
 
@@ -846,6 +917,7 @@ public final class FeatureRootModel {
 
     private func upsert(_ thread: FeatureThread) {
         let thread = retainingPendingSettlement(in: thread)
+        discardStalePullRequest(for: thread)
         var metadataChanged = false
         if let index = snapshot.threads.firstIndex(where: { $0.id == thread.id }) {
             let previous = snapshot.threads[index]
@@ -882,6 +954,8 @@ public final class FeatureRootModel {
         guard let index = snapshot.threads.firstIndex(where: { $0.id == id }) else { return }
         let projectID = snapshot.threads[index].projectID
         snapshot.threads.remove(at: index)
+        pullRequestsByThreadID.removeValue(forKey: id)
+        pullRequestObservationIdentities.removeValue(forKey: id)
         adjustProjectCount(id: projectID, by: -1)
         threadCollectionRevision &+= 1
         homePresentationRevision &+= 1
@@ -914,6 +988,13 @@ public final class FeatureRootModel {
         let nextThreads = value.threads.reduce(into: [String: FeatureThread]()) {
             $0[$1.id] = $1
         }
+        for thread in value.threads {
+            discardStalePullRequest(for: thread)
+        }
+        for id in Array(pullRequestsByThreadID.keys) where nextThreads[id] == nil {
+            pullRequestsByThreadID.removeValue(forKey: id)
+            pullRequestObservationIdentities.removeValue(forKey: id)
+        }
         for id in previousThreads.keys where nextThreads[id] == nil {
             removeDetail(id: id)
         }
@@ -934,6 +1015,8 @@ public final class FeatureRootModel {
             || snapshot.providers != value.providers
             || snapshot.providersByEnvironment != value.providersByEnvironment
             || snapshot.preferencesByEnvironment != value.preferencesByEnvironment
+            || snapshot.settings.autoSettleOnMerge != value.settings.autoSettleOnMerge
+            || snapshot.settings.autoSettleAfterDays != value.settings.autoSettleAfterDays
             || snapshot.threads != value.threads {
             homePresentationRevision &+= 1
         }
@@ -945,6 +1028,15 @@ public final class FeatureRootModel {
             || value.environments.contains(where: { $0.connectionState == .connected }) {
             scheduleOutboxDrain()
         }
+    }
+
+    private func discardStalePullRequest(for thread: FeatureThread) {
+        guard let cachedIdentity = pullRequestObservationIdentities[thread.id],
+              cachedIdentity != thread.pullRequestObservationIdentity else {
+            return
+        }
+        pullRequestsByThreadID.removeValue(forKey: thread.id)
+        pullRequestObservationIdentities.removeValue(forKey: thread.id)
     }
 
     private func mutateThread(
@@ -1051,6 +1143,8 @@ public final class FeatureRootModel {
             detailRecency.removeAll { $0 == id }
         }
         storedDetailLoadRequestRevisions.removeValue(forKey: id)
+        activeDetailLoadRequests.removeValue(forKey: id)
+        detailLoadStates.removeValue(forKey: id)
         bumpDetailLoadRevision(id: id)
         bumpDetailRevision(id: id, change: .full)
     }
@@ -1059,6 +1153,8 @@ public final class FeatureRootModel {
         detailLoadGeneration &+= 1
         detailLoadRevisions.removeAll()
         storedDetailLoadRequestRevisions.removeAll()
+        activeDetailLoadRequests.removeAll()
+        detailLoadStates.removeAll()
         detailMetadataRevisions.removeAll()
         let hadDetails = !details.isEmpty
         details.removeAll()

@@ -8,8 +8,11 @@ On servers that support direct uploads, images upload as soon as you add them. T
 becomes available after every upload finishes. Failed uploads can be retried or removed.
 
 On SwiftUI mobile, paste an image from the message field's edit menu or drag an image onto the
-composer to attach it. You can attach up to eight images to one message. The composer grows to
-12 lines, then scrolls within the message field.
+composer to attach it. You can attach up to eight images to one message. The composer grows up to
+12 lines when space permits, then scrolls within the message field.
+
+In the SwiftUI model picker, starred models appear in **Favorites**, including legacy models.
+Removing a star from a legacy model returns it to **Legacy models**.
 
 On web and desktop, HEIC and HEIF photos are automatically converted to JPEG when you drag them into
 the composer or paste them into a message.

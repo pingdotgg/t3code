@@ -606,6 +606,7 @@ private extension UsageProviderKind {
         switch self {
         case .codex: T3Colors.textPrimary
         case .claude: Color(red: 0.851, green: 0.467, blue: 0.341)
+        case .grok: T3Colors.textSecondary
         }
     }
 }

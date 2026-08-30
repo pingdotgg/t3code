@@ -330,7 +330,7 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
-  it.effect("suppresses generic placeholder tool updates until completion", () =>
+  it.effect("emits status-only tool updates through completion", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       yield* runtime.start();
@@ -340,13 +340,22 @@ describe("AcpSessionRuntime", () => {
       });
       expect(promptResult).toMatchObject({ stopReason: "end_turn" });
 
-      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 1)));
-      expect(notes.map((note) => note._tag)).toEqual(["ToolCallUpdated"]);
-      const toolCall = notes[0];
-      expect(toolCall?._tag).toBe("ToolCallUpdated");
-      if (toolCall?._tag === "ToolCallUpdated") {
-        expect(toolCall.toolCall.status).toBe("completed");
-        expect(toolCall.toolCall.title).toBe("Read file");
+      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 3)));
+      expect(notes.map((note) => note._tag)).toEqual([
+        "ToolCallUpdated",
+        "ToolCallUpdated",
+        "ToolCallUpdated",
+      ]);
+      const toolCalls = notes.flatMap((note) =>
+        note._tag === "ToolCallUpdated" ? [note.toolCall] : [],
+      );
+      expect(toolCalls.map((toolCall) => toolCall.status)).toEqual([
+        "pending",
+        "inProgress",
+        "completed",
+      ]);
+      for (const toolCall of toolCalls) {
+        expect(toolCall.title).toBe("Read file");
       }
     }).pipe(
       Effect.provide(

@@ -747,7 +747,7 @@ struct ProviderModelDisplaySections {
                 provider: option.provider
             ) ? option.id : nil
         })
-        favorites = catalog.favorites.filter { currentIDs.contains($0.id) }
+        favorites = catalog.favorites
         var seenRecentIDs = Set<String>()
         recents = catalog.recents.filter {
             currentIDs.contains($0.id) && seenRecentIDs.insert($0.id).inserted
@@ -759,7 +759,7 @@ struct ProviderModelDisplaySections {
             }
             return models.isEmpty ? nil : (group.provider, models)
         }
-        legacy = catalog.all.filter { !currentIDs.contains($0.id) }
+        legacy = catalog.all.filter { !currentIDs.contains($0.id) && !promoted.contains($0.id) }
 
         let matchingLabels = Dictionary(grouping: catalog.all) { option in
             ModelPresentationKey(
