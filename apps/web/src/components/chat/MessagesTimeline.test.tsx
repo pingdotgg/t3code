@@ -343,7 +343,7 @@ describe("MessagesTimeline", () => {
 
     expect(compactMarkup).toContain('class="h-3 sm:h-4"');
     expect(compactMarkup).not.toContain("topbar-scroll-fade");
-    expect(fadedMarkup).toContain('class="h-10 sm:h-12"');
+    expect(fadedMarkup).toContain('class="h-[var(--workspace-titlebar-scroll-fade-height)]"');
     expect(fadedMarkup).toContain("topbar-scroll-fade");
   });
 
