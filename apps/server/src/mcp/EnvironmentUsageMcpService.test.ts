@@ -141,11 +141,9 @@ it.effect(
   "returns a deterministic bounded page without source fingerprints or raw diagnostics",
   () =>
     Effect.gen(function* () {
-      const observed = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const service = yield* EnvironmentUsageMcpService;
       const result = yield* service.read(scope, input);
       yield* encodeEnvironmentUsageResult(result);
-      yield* Ref.update(observed, (values) => [...values, result]);
 
       expect(result.bucketTotal).toBe(2);
       expect(result.bucketNextCursor).toBe(1);
@@ -195,6 +193,16 @@ it.effect(
       expect(result.costMeaning).toBe("api_equivalent_estimate");
       expect(result.paginationConsistency).toBe("live_summary");
       expect(result.cacheBehavior).toBe("may_refresh_existing_usage_caches");
+
+      const nextCursor = result.bucketNextCursor ?? assert.fail("expected a second bucket page");
+      const secondPage = yield* service.read(scope, { ...input, bucketCursor: nextCursor });
+      yield* encodeEnvironmentUsageResult(secondPage);
+      expect(secondPage).toMatchObject({
+        bucketCursor: 1,
+        bucketNextCursor: null,
+        bucketTotal: 2,
+        buckets: [{ day: "2026-08-02", provider: "codex", model: { text: "z-model" } }],
+      });
     }).pipe(Effect.provide(serviceLayer(() => Effect.succeed(summary)))),
 );
 
