@@ -18,6 +18,7 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  canSettle,
   canSnooze,
   changeRequestAutoSettles,
   effectiveSettled,
@@ -1090,10 +1091,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // While the snooze popover is open the pointer leaves the row, which
   // would fade the hover actions out from under the open menu; pin them.
   const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);
+  const actionNow = new Date().toISOString();
+  // The server rejects settling active work. Hide the affordance in the same
+  // states so a Working label never turns into an action that cannot succeed.
+  const showSettleButton = props.settlementSupported && canSettle(thread, { now: actionNow });
   // Snooze is offered only where it can succeed: capability-gated and never
   // on blocked-on-you work or queued turns (the server rejects both).
-  const showSnoozeButton =
-    props.snoozeSupported && canSnooze(thread, { now: new Date().toISOString() });
+  const showSnoozeButton = props.snoozeSupported && canSnooze(thread, { now: actionNow });
   // If the thread becomes blocked while the popover is open, the button
   // unmounts without firing onOpenChange(false). Deriving the flag keeps a
   // stale true from permanently hiding the status label / pinning the
@@ -1451,14 +1455,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   the hidden state out of flow lets the project label reclaim
                   space without either state overlapping it. */}
               <span className="group/sidebar-status-slot relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-xs">
-                {/* Read-only status labels yield to the hover actions. Woke is
-                    itself an action, so it stays pointer-enabled and visible
-                    while the other controls appear beside it. */}
+                {/* Read-only status labels yield to Settle when that action can
+                    succeed. A blocked status such as Working stays visible
+                    while any available secondary action appears beside it.
+                    Woke is itself an action, so it stays pointer-enabled. */}
                 <span
                   className={cn(
                     isWokeStatus
                       ? "pointer-events-auto"
-                      : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-hover/sidebar-row:absolute group-hover/sidebar-row:right-0 group-hover/sidebar-row:opacity-0",
+                      : cn(
+                          "pointer-events-none",
+                          showSettleButton &&
+                            "group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-hover/sidebar-row:absolute group-hover/sidebar-row:right-0 group-hover/sidebar-row:opacity-0",
+                        ),
                     "flex items-center self-center justify-self-end tabular-nums text-secondary-label transition-opacity",
                     snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                   )}
@@ -1511,7 +1520,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     threadTimeLabel(thread)
                   )}
                 </span>
-                {props.settlementSupported || showSnoozeButton ? (
+                {showSettleButton || showSnoozeButton ? (
                   <span
                     className={cn(
                       // focus-visible, not focus-within: a mouse click leaves
@@ -1531,7 +1540,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         timestampFormat={props.timestampFormat}
                       />
                     ) : null}
-                    {props.settlementSupported ? (
+                    {showSettleButton ? (
                       <Tooltip>
                         <TooltipTrigger
                           render={
