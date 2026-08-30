@@ -100,14 +100,16 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env, cwd);
+  const userSkillsDirectory = path.join(configDirPath, "skills");
+  const resolvedUserSkillsDirectory = path.resolve(userSkillsDirectory);
 
   const roots: ReadonlyArray<{ directory: string; scope: ClaudeSkillScope }> = [
-    { directory: path.join(configDirPath, "skills"), scope: "user" },
+    { directory: userSkillsDirectory, scope: "user" },
     ...(cwd
       ? [
           { directory: path.join(cwd, ".agents", "skills"), scope: "project" as const },
           { directory: path.join(cwd, ".claude", "skills"), scope: "project" as const },
-        ]
+        ].filter((root) => path.resolve(root.directory) !== resolvedUserSkillsDirectory)
       : []),
   ];
 

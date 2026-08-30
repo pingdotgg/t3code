@@ -66,6 +66,22 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("keeps user scope when project and user skill roots match", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(workspace, ".claude");
+
+      yield* writeSkill(path.join(configDir, "skills"), "review", "---\nname: review\n---\n");
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+
+      assert.equal(skills.length, 1);
+      assert.equal(skills[0]?.scope, "user");
+    }),
+  );
+
   it.effect("discovers project skills from the workspace .agents directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
