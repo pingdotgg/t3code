@@ -247,6 +247,12 @@ next occurrence from the current schedule. On an accepted replay after the task 
 deleted, bookkeeping fields are returned as `null` because only the original dispatch
 receipt remains authoritative.
 
+For an unbound task, thread creation and initial-message dispatch are separate
+durable commands. If a fresh policy check or provider admission rejects the
+message after creation, the empty thread is retained because concurrent work
+may already own it. The failed key remains a rejected replay and does not
+repeat schedule bookkeeping; use a new key after correcting the rejection.
+
 ### `create_threads`
 
 Creates between one and twenty ordinary top-level T3 threads:
