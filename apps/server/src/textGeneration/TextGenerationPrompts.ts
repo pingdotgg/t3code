@@ -16,7 +16,7 @@ const EARLIER_CONTENT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
 
 function policyInstruction(instruction: string | undefined): ReadonlyArray<string> {
   const trimmed = instruction?.trim();
-  return trimmed ? ["", "Additional instructions:", limitSection(trimmed, 4_000)] : [];
+  return trimmed ? ["", "Additional instructions:", limitSection(trimmed, 20_000)] : [];
 }
 
 // ---------------------------------------------------------------------------
