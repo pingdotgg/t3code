@@ -121,14 +121,14 @@ const make = Effect.gen(function* () {
         if (!scope.capabilities.has("orchestration")) {
           return yield* new EnvironmentMcpFailure({ code: "capability_denied" });
         }
-        const [descriptor, providers, settings] = yield* Effect.all([
-          unavailable(environment.getDescriptor, "environment_unavailable"),
-          unavailable(providerRegistry.getProviders, "provider_registry_unavailable"),
-          unavailable(settingsService.getSettings, "settings_unavailable"),
-        ]);
+        const descriptor = yield* unavailable(environment.getDescriptor, "environment_unavailable");
         if (descriptor.environmentId !== scope.environmentId) {
           return yield* new EnvironmentMcpFailure({ code: "environment_mismatch" });
         }
+        const [providers, settings] = yield* Effect.all([
+          unavailable(providerRegistry.getProviders, "provider_registry_unavailable"),
+          unavailable(settingsService.getSettings, "settings_unavailable"),
+        ]);
 
         const ordered = [...providers].sort((left, right) =>
           left.instanceId < right.instanceId ? -1 : left.instanceId > right.instanceId ? 1 : 0,

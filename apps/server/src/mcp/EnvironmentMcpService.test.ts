@@ -242,14 +242,38 @@ describe("EnvironmentMcpService", () => {
     );
   });
 
-  it.effect("distinguishes a credential environment mismatch from service unavailability", () =>
-    Effect.gen(function* () {
+  it.effect("rejects an environment mismatch before reading scoped dependencies", () => {
+    let providerReads = 0;
+    let settingsReads = 0;
+    const providerLayer = Layer.succeed(ProviderRegistry, {
+      getProviders: Effect.sync(() => {
+        providerReads += 1;
+        return [];
+      }),
+    } as never);
+    const settingsLayer = Layer.succeed(ServerSettings.ServerSettingsService, {
+      getSettings: Effect.sync(() => {
+        settingsReads += 1;
+        return DEFAULT_SERVER_SETTINGS;
+      }),
+    } as never);
+    return Effect.gen(function* () {
       const service = yield* EnvironmentMcpService;
       const error = yield* Effect.flip(
         service.read({ ...scope, environmentId: EnvironmentId.make("environment-other") }, {}),
       );
       expect(error.code).toBe("environment_mismatch");
       expect(error.message).toBe("The MCP credential does not belong to the running environment.");
-    }).pipe(Effect.provide(serviceLayer({}))),
-  );
+      expect(providerReads).toBe(0);
+      expect(settingsReads).toBe(0);
+    }).pipe(
+      Effect.provide(
+        layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(environmentLayer("Test", "1.0.0"), providerLayer, settingsLayer),
+          ),
+        ),
+      ),
+    );
+  });
 });
