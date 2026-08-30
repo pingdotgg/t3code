@@ -19,6 +19,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
@@ -82,6 +83,53 @@ it.effect("atomically registers a connected host and correlates its response", (
       expect(result).toEqual({ available: true });
     }),
   ),
+);
+
+it.effect("starts a fresh response deadline when the host begins navigation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const started = yield* Deferred.make<void>();
+      const releaseResponse = yield* Deferred.make<void>();
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) =>
+        Effect.gen(function* () {
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            phase: "started",
+            ok: true,
+          });
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(releaseResponse);
+          yield* broker.respond({
+            clientId: "client-1",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { loading: false },
+          });
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const invocation = yield* broker
+        .invoke<{ loading: boolean }>({
+          scope,
+          operation: "navigate",
+          input: { url: "https://example.com", timeoutMs: 100 },
+          timeoutMs: 100,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("100 millis");
+
+      expect(invocation.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(releaseResponse, undefined);
+      expect(yield* Fiber.join(invocation)).toEqual({ loading: false });
+    }),
+  ).pipe(Effect.provide(TestClock.layer())),
 );
 
 it.effect("targets multiple tabs explicitly while retaining a default tab", () =>

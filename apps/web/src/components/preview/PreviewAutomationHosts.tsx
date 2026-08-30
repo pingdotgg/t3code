@@ -313,7 +313,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
   const automationConnectionId = useAtomValue(automationConnectionAtom);
 
   const handleRequest = useCallback(
-    async (request: PreviewAutomationRequest): Promise<unknown> => {
+    async (
+      request: PreviewAutomationRequest,
+      controls: { readonly notifyStarted: () => Promise<void> },
+    ): Promise<unknown> => {
       const threadRef: ScopedThreadRef = {
         environmentId,
         threadId: request.threadId,
@@ -488,6 +491,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 url: input.url!,
               },
             );
+            await controls.notifyStarted();
             await ready.bridge.navigate(ready.runtimeTabId, resolution.resolvedUrl);
             await waitForNavigationReadiness(
               threadRef,

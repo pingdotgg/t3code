@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { normalizePreviewNavigateTimeout, normalizePreviewOpenInput } from "./handlers.ts";
+import { normalizePreviewNavigateInput, normalizePreviewOpenInput } from "./handlers.ts";
 
 describe("normalizePreviewOpenInput", () => {
   it("leaves an unstated visibility for the client preference to decide", () => {
@@ -31,15 +31,17 @@ describe("normalizePreviewOpenInput", () => {
   });
 });
 
-describe("normalizePreviewNavigateTimeout", () => {
-  it("keeps the navigation deadline inside the broker response deadline", () => {
-    expect(normalizePreviewNavigateTimeout()).toEqual({
-      operationTimeoutMs: 15_000,
-      brokerTimeoutMs: 16_000,
+describe("normalizePreviewNavigateInput", () => {
+  it("makes the default navigation budget explicit for the browser host", () => {
+    expect(normalizePreviewNavigateInput({ url: "https://example.com" })).toEqual({
+      url: "https://example.com",
+      timeoutMs: 15_000,
     });
-    expect(normalizePreviewNavigateTimeout(2_500)).toEqual({
-      operationTimeoutMs: 2_500,
-      brokerTimeoutMs: 3_500,
-    });
+    expect(normalizePreviewNavigateInput({ url: "https://example.com", timeoutMs: 2_500 })).toEqual(
+      {
+        url: "https://example.com",
+        timeoutMs: 2_500,
+      },
+    );
   });
 });

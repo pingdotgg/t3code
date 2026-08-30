@@ -619,6 +619,7 @@ export const PreviewAutomationResponse = Schema.Struct({
   clientId: PreviewAutomationClientId,
   connectionId: PreviewAutomationConnectionId,
   requestId: TrimmedNonEmptyString,
+  phase: Schema.optional(Schema.Literal("started")),
   ok: Schema.Boolean,
   result: Schema.optional(Schema.Unknown),
   error: Schema.optional(
