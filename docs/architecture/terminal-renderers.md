@@ -14,28 +14,35 @@ boundaries, keyboard encoding, selection, and scrollback:
 - Both artifacts are built from the revision in
   `native/libghostty-vt/VERSION`.
 
-The platform adapters deliberately own only platform behavior. Android owns its Kotlin Canvas and
-touch integration. Web owns browser font shaping, the hidden IME textarea, clipboard and DOM input,
-and its Canvas renderer. The web adapter also delegates application mouse encoding, word and line
-selection, and OSC 8 hyperlink metadata to the official ABI. Browser conventions remain available:
-holding Shift bypasses application mouse capture, and the platform link modifier opens hyperlinks.
-React does not participate in terminal frames.
+The platform adapters deliberately own only platform behavior. React does not participate in
+terminal frames.
+
+### Web and desktop
+
+Web owns browser font shaping, the hidden IME textarea, clipboard and DOM input, and its Canvas
+renderer. The web adapter also delegates application mouse encoding, word and line selection, and
+OSC 8 hyperlink metadata to the official ABI. Browser conventions remain available: holding Shift
+bypasses application mouse capture, and the platform link modifier opens hyperlinks.
 
 The web runtime is singleton-scoped per browser tab so split terminals share one compiled module
 and memory. Each visible terminal owns and frees its own terminal, render state, row iterator, cell
 iterator, key and mouse encoder, and input event handles. Restoring captured scrollback temporarily
 detaches the PTY callback so historical device queries cannot emit replies into the current shell.
 
-Both C ABI adapters request 10,000 physical scrollback lines and independently cap Ghostty's page
-storage at 32 MiB per terminal. Ghostty prunes complete pages, so the retained row count is an
-approximation, and whichever limit is reached first wins. The explicit byte setting is required:
-libghostty-vt's low-level default is only 10,000 bytes.
+Each web terminal requests 10,000 physical scrollback lines and independently caps Ghostty's page
+storage at 32 MiB. Ghostty prunes complete pages, so the retained row count is approximate and
+whichever limit is reached first wins. The explicit byte setting replaces libghostty-vt's low-level
+10,000-byte default. WebAssembly cannot use Ghostty's page compression, so the cap is sized for
+uncompressed pages and was verified at representative widths up to 320 columns.
 
-The 32 MiB cap is deliberate for the embedded builds. WebAssembly cannot use Ghostty's page
-compression. Compression is supported by the 64-bit Android libraries but not the 32-bit libraries,
-and T3 does not schedule compression through the C ABI on any Android architecture. The cap is
-therefore sized for uncompressed storage: measurements with the pinned build reached the line limit
-through representative widths up to 320 columns while leaving a fixed per-surface safety bound.
+### Android
+
+Android owns its Kotlin Canvas and touch integration. Each Android terminal separately requests
+10,000 physical scrollback lines and caps Ghostty's page storage at 32 MiB, with the same
+page-granularity and first-reached behavior. Compression is supported by the 64-bit Android
+libraries but not the 32-bit libraries, and T3 does not schedule it through the C ABI on any Android
+architecture. Android therefore uses the deliberate uncompressed cap across all four ABIs instead
+of inheriting libghostty-vt's 10,000-byte default.
 
 ## Updating Ghostty
 
