@@ -26,7 +26,12 @@ import {
   CLAUDE_PROVIDER,
   ClaudeProviderCapabilitiesV2,
 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import {
+  ThreadManagementService,
+  ThreadManagementThreadNotFoundError,
+} from "../orchestration-v2/ThreadManagementService.ts";
+import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
+import { ProjectionStoreReadError } from "../orchestration-v2/ProjectionStore.ts";
 import { CheckpointMcpService, layer } from "./CheckpointMcpService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
@@ -83,9 +88,9 @@ function makeScope(id = scopeId): OrchestrationV2CheckpointScope {
     nodeId,
     parentScopeId: null,
     providerThreadId,
-    kind: "manual",
+    kind: "root_run",
     ordinalWithinParent: 0,
-    advancesAppRunCount: false,
+    advancesAppRunCount: true,
     cwd: "/repo",
     createdAt: now,
   };
@@ -101,7 +106,7 @@ function makeCheckpoint(index: number, overrides: Partial<OrchestrationV2Checkpo
     parentCheckpointId:
       index === 0 ? null : CheckpointId.make(`checkpoint:checkpoint-mcp:${index - 1}`),
     ordinalWithinScope: index,
-    appRunOrdinal: null,
+    appRunOrdinal: index === 0 ? null : index,
     ref: CheckpointRef.make(`refs/t3/checkpoint-mcp/${index}`),
     status: "ready" as const,
     files: [
@@ -178,6 +183,7 @@ function makeProjection(
 function makeHarness(
   input: {
     readonly projection?: OrchestrationV2ThreadProjection;
+    readonly callerError?: OrchestratorProjectionError;
     readonly hasCheckpointRef?: CheckpointStore.CheckpointStore["Service"]["hasCheckpointRef"];
     readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
   } = {},
@@ -191,11 +197,19 @@ function makeHarness(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getThreadProjection: () =>
+            input.callerError === undefined
+              ? Effect.succeed(projection)
+              : Effect.fail(input.callerError),
           getProjectThread: ({ threadId: requested }) =>
             requested === projection.thread.id
               ? Effect.succeed(projection)
-              : Effect.fail({ _tag: "ThreadManagementThreadNotFoundError" } as never),
+              : Effect.fail(
+                  new ThreadManagementThreadNotFoundError({
+                    projectId,
+                    threadId: requested,
+                  }),
+                ),
         }),
         Layer.mock(CheckpointStore.CheckpointStore)({ hasCheckpointRef, diffCheckpoints }),
       ),
@@ -217,7 +231,7 @@ it.effect("pages before checking checkpoint refs and bounds file summaries", () 
     assert.equal(harness.hasCheckpointRef.mock.calls.length, 3);
     assert.equal(result.checkpoints[0]?.fileCount, 2);
     assert.isTrue(result.checkpoints[0]?.filesTruncated);
-    assert.deepEqual(result.checkpoints[0]?.restoreSupport, { supported: true, blockers: [] });
+    assert.include(result.checkpoints[0]?.restoreSupport.blockers ?? [], "provider_turn_missing");
   }).pipe(Effect.provide(harness.serviceLayer));
 });
 
@@ -302,5 +316,55 @@ it.effect("keeps optional thread reads inside the caller's project", () => {
     const service = yield* CheckpointMcpService;
     const error = yield* service.list(invocation, { threadId: otherThreadId }).pipe(Effect.flip);
     expect(error.code).toBe("thread_not_found");
+  }).pipe(Effect.provide(harness.serviceLayer));
+});
+
+it.effect("marks null provider targets ambiguous outside the root baseline", () => {
+  const nonzeroBaseline = makeCheckpoint(1, { appRunOrdinal: null });
+  const manualScope = { ...makeScope(), kind: "manual" as const, advancesAppRunCount: false };
+  const harness = makeHarness({
+    projection: makeProjection({
+      checkpoints: [makeCheckpoint(0), nonzeroBaseline],
+      scopes: [makeScope()],
+    }),
+  });
+  const manualHarness = makeHarness({
+    projection: makeProjection({ checkpoints: [makeCheckpoint(0)], scopes: [manualScope] }),
+  });
+
+  return Effect.gen(function* () {
+    const service = yield* CheckpointMcpService;
+    const result = yield* service.list(invocation, {});
+    assert.deepEqual(result.checkpoints[0]?.restoreSupport, {
+      supported: false,
+      blockers: ["rollback_target_ambiguous"],
+    });
+
+    const manualResult = yield* Effect.gen(function* () {
+      const manualService = yield* CheckpointMcpService;
+      return yield* manualService.list(invocation, {});
+    }).pipe(Effect.provide(manualHarness.serviceLayer));
+    assert.include(
+      manualResult.checkpoints[0]?.restoreSupport.blockers ?? [],
+      "rollback_target_ambiguous",
+    );
+  }).pipe(Effect.provide(harness.serviceLayer));
+});
+
+it.effect("distinguishes caller projection failures from missing target threads", () => {
+  const harness = makeHarness({
+    callerError: new OrchestratorProjectionError({
+      threadId,
+      cause: new ProjectionStoreReadError({
+        threadId,
+        cause: new Error("projection store unavailable"),
+      }),
+    }),
+  });
+  return Effect.gen(function* () {
+    const service = yield* CheckpointMcpService;
+    const error = yield* service.list(invocation, {}).pipe(Effect.flip);
+    assert.equal(error.code, "operation_failed");
+    assert.include(error.message, "Unable to load calling thread");
   }).pipe(Effect.provide(harness.serviceLayer));
 });

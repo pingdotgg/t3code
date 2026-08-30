@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  checkpointRollbackAppRunOrdinal,
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
@@ -75,7 +76,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
         const staleRun: OrchestrationV2Run = {
           id: runId,
           threadId,
-          ordinal: 1,
+          ordinal: 3,
           providerInstanceId,
           modelSelection,
           providerThreadId,
@@ -153,18 +154,25 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
           capturedAt: now,
         };
         const captured = {
-          id: CheckpointId.make("checkpoint:captured-1"),
+          id: CheckpointId.make("checkpoint:captured-3"),
           threadId,
           scopeId,
           runId,
           nodeId: rootNodeId,
           parentCheckpointId: readyBaseline.id,
-          ordinalWithinScope: 1,
-          appRunOrdinal: 1,
-          ref: CheckpointRef.make("checkpoint-ref:captured-1"),
+          ordinalWithinScope: 3,
+          appRunOrdinal: 3,
+          ref: CheckpointRef.make("checkpoint-ref:captured-3"),
           status: "ready" as const,
           files: [],
           capturedAt: now,
+        };
+        const materializedBaseline = {
+          ...readyBaseline,
+          id: CheckpointId.make("checkpoint:baseline-2"),
+          parentCheckpointId: readyBaseline.id,
+          ordinalWithinScope: 2,
+          ref: CheckpointRef.make("checkpoint-ref:baseline-2"),
         };
 
         yield* projectionStore.apply({
@@ -256,8 +264,12 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
             Layer.mergeAll(
               IdAllocator.layer,
               Layer.mock(CheckpointServiceV2)({
-                materializeBaselineCheckpoint: () =>
-                  Effect.die("baseline materialization must be skipped when ordinal 0 is ready"),
+                materializeBaselineCheckpoint: ({ ordinalWithinScope }) =>
+                  ordinalWithinScope === 2
+                    ? Effect.succeed(materializedBaseline)
+                    : Effect.die(
+                        `unexpected baseline materialization at ordinal ${ordinalWithinScope}`,
+                      ),
                 capture: () => Effect.succeed(captured),
               }),
               Layer.mock(EventSinkV2)({
@@ -282,6 +294,15 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
           yield* service.execute({ threadId, runId, scopeId });
 
           const events = yield* Ref.get(committed);
+          const baselineEvent = events.find(
+            (event) =>
+              event.type === "checkpoint.captured" && event.payload.id === materializedBaseline.id,
+          );
+          assert.isDefined(baselineEvent);
+          assert.isNull(
+            checkpointRollbackAppRunOrdinal(materializedBaseline, scope),
+            "a nonzero materialized root baseline must not imply thread start",
+          );
           const runUpdated = events.find((event) => event.type === "run.updated");
           assert.isDefined(runUpdated);
           if (runUpdated?.type !== "run.updated") {

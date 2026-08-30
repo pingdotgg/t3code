@@ -54,6 +54,7 @@ export const CheckpointMcpRestoreBlocker = Schema.Literals([
   "provider_rollback_unsupported",
   "provider_snapshot_unsupported",
   "provider_turn_missing",
+  "rollback_target_ambiguous",
 ]);
 export type CheckpointMcpRestoreBlocker = typeof CheckpointMcpRestoreBlocker.Type;
 
@@ -123,7 +124,8 @@ export const CheckpointMcpDiffInput = Schema.Struct({
     description: "UTF-16 code-unit cursor into the computed patch. Defaults to 0.",
   }),
   limit: Schema.optional(CheckpointMcpDiffLimit).annotate({
-    description: "Maximum UTF-16 code units to return. Defaults to 20000; maximum 100000.",
+    description:
+      "Requested UTF-16 code-unit limit. A page can exceed it by one code unit to avoid splitting a surrogate pair. Defaults to 20000; maximum 100000.",
   }),
   ignoreWhitespace: Schema.optional(Schema.Boolean).annotate({
     description: "Ignore whitespace-only changes. Defaults to true.",

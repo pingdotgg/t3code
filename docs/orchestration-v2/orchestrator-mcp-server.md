@@ -322,10 +322,10 @@ checked only for the returned page. Each entry includes the checkpoint and
 scope IDs required by the diff and restore paths, its run/node/ordinal source,
 its parent checkpoint, and current provider rollback blockers.
 
-The tool reads checkpoint metadata from the V2 projection and checks refs
-through `CheckpointStore`; it does not enumerate Git refs or hydrate thread
-transcripts. A missing or unreadable ref is reported on that checkpoint entry
-without hiding the rest of the page.
+The tool reads the thread's complete durable V2 projection, bounds the returned
+checkpoint slice, then checks refs through `CheckpointStore` only for that
+page. It does not enumerate unrelated Git refs. A missing or unreadable ref is
+reported on that checkpoint entry without hiding the rest of the page.
 
 ### `t3_checkpoint_diff`
 
@@ -337,9 +337,9 @@ target itself when no parent exists.
 
 Thread, scope, checkpoint metadata, and both filesystem refs are validated
 before an empty diff can be returned. Large patches use explicit UTF-16
-code-unit cursors and report total length, truncation, and the next cursor.
-This makes pagination match MCP JSON string indexing without splitting a
-surrogate pair.
+code-unit cursors and report total length, truncation, and the next cursor. A
+page can exceed its requested limit by one code unit to avoid splitting a
+surrogate pair. This makes pagination match MCP JSON string indexing.
 
 ## Delegated Task Lifecycle
 

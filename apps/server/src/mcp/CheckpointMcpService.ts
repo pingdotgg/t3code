@@ -1,5 +1,6 @@
 import {
   CheckpointMcpFailure,
+  checkpointRollbackAppRunOrdinal,
   type CheckpointMcpDiffInput,
   type CheckpointMcpDiffResult,
   type CheckpointMcpListInput,
@@ -14,9 +15,16 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
+import { ProjectionStoreThreadNotFoundError } from "../orchestration-v2/ProjectionStore.ts";
+import {
+  ThreadManagementProjectionLoadError,
+  ThreadManagementService,
+  ThreadManagementThreadNotFoundError,
+} from "../orchestration-v2/ThreadManagementService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 const DEFAULT_LIST_LIMIT = 25;
@@ -48,6 +56,10 @@ function errorMessage(error: unknown): string {
   }
   return String(error);
 }
+
+const isCheckpointMcpFailure = Schema.is(CheckpointMcpFailure);
+const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
+const isProjectionStoreThreadNotFoundError = Schema.is(ProjectionStoreThreadNotFoundError);
 
 function providerTurnForRun(projection: OrchestrationV2ThreadProjection, runOrdinal: number) {
   const run = projection.runs.find((candidate) => candidate.ordinal === runOrdinal);
@@ -109,7 +121,12 @@ function restoreBlockers(input: {
     blockers.add("provider_snapshot_unsupported");
   }
 
-  const runOrdinal = checkpoint.appRunOrdinal ?? 0;
+  const runOrdinal =
+    scope === undefined ? null : checkpointRollbackAppRunOrdinal(checkpoint, scope);
+  if (runOrdinal === null) {
+    blockers.add("rollback_target_ambiguous");
+    return [...blockers];
+  }
   if (runOrdinal > 0) {
     const providerTurn = providerTurnForRun(projection, runOrdinal);
     if (providerTurn === undefined) {
@@ -147,8 +164,13 @@ export const make = Effect.gen(function* () {
     requestedThreadId: CheckpointMcpListInput["threadId"],
   ) {
     const caller = yield* threadManagement.getThreadProjection(scope.threadId).pipe(
-      Effect.mapError(() =>
-        failure("thread_not_found", `Calling thread '${scope.threadId}' was not found.`),
+      Effect.mapError((error) =>
+        isOrchestratorProjectionError(error) && isProjectionStoreThreadNotFoundError(error.cause)
+          ? failure("thread_not_found", `Calling thread '${scope.threadId}' was not found.`)
+          : failure(
+              "operation_failed",
+              `Unable to load calling thread '${scope.threadId}': ${errorMessage(error)}`,
+            ),
       ),
       Effect.filterOrFail(
         (projection) => projection.thread.deletedAt === null,
@@ -160,11 +182,25 @@ export const make = Effect.gen(function* () {
     return yield* threadManagement
       .getProjectThread({ projectId: caller.thread.projectId, threadId })
       .pipe(
-        Effect.mapError(() =>
-          failure(
-            "thread_not_found",
-            `Thread '${threadId}' was not found in the calling thread's project.`,
-          ),
+        Effect.catchTags({
+          ThreadManagementThreadNotFoundError: (_error: ThreadManagementThreadNotFoundError) =>
+            failure(
+              "thread_not_found",
+              `Thread '${threadId}' was not found in the calling thread's project.`,
+            ),
+          ThreadManagementProjectionLoadError: (error: ThreadManagementProjectionLoadError) =>
+            failure(
+              "operation_failed",
+              `Unable to load thread '${threadId}': ${errorMessage(error)}`,
+            ),
+        }),
+        Effect.mapError((error) =>
+          isCheckpointMcpFailure(error)
+            ? error
+            : failure(
+                "operation_failed",
+                `Unable to load thread '${threadId}': ${errorMessage(error)}`,
+              ),
         ),
       );
   });

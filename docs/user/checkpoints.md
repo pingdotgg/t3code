@@ -7,11 +7,14 @@ changing files.
 `t3_checkpoint_list` shows recent checkpoints for the current thread. It can
 also inspect another thread in the same project. Each result identifies where
 the checkpoint came from, summarizes a bounded number of changed files, and
-reports whether the saved filesystem state is still available. Results are
-paginated so a long-running thread does not load every checkpoint at once.
+reports whether the saved filesystem state is still available. Results bound
+the returned checkpoints and only perform filesystem-ref checks for that page;
+the server still reads the thread's durable V2 projection to select them.
 
 `t3_checkpoint_diff` reads a bounded patch between two checkpoints selected
-from that list. Large patches include a cursor for the next page. The tool only
+from that list. Large patches include a UTF-16 code-unit cursor for the next
+page. A page can exceed its requested limit by one code unit rather than split
+a surrogate pair. The tool only
 accepts durable checkpoint identities: it cannot read an arbitrary Git ref,
 path, or another project's thread.
 
