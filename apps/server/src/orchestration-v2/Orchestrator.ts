@@ -7403,7 +7403,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 });
 
-export const layer: Layer.Layer<
+export const layerFromThreadCommandExecutor: Layer.Layer<
   OrchestratorV2,
   never,
   | CheckpointServiceV2
@@ -7412,13 +7412,16 @@ export const layer: Layer.Layer<
   | ContextHandoffServiceV2
   | EventSinkV2
   | IdAllocatorV2
+  | ThreadCommandExecutor
   | ProviderAdapterRegistryV2
   | ProviderSessionManagerV2
   | ProviderSwitchServiceV2
   | ProjectionStoreV2
   | RuntimePolicyV2
   | ThreadForkServiceV2
-> = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
+> = Layer.effect(OrchestratorV2, makeOrchestrator());
+
+export const layer = layerFromThreadCommandExecutor.pipe(
   Layer.provide(threadCommandExecutorLayer),
 );
 

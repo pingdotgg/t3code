@@ -1,5 +1,7 @@
 import {
   EnvironmentMcpFailure,
+  EnvironmentMcpPreferencesUpdateInput,
+  EnvironmentMcpPreferencesUpdateResult,
   EnvironmentMcpReadInput,
   EnvironmentMcpReadResult,
 } from "@t3tools/contracts";
@@ -25,4 +27,22 @@ export const EnvironmentReadTool = Tool.make("t3_environment_read", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const EnvironmentToolkit = Toolkit.make(EnvironmentReadTool);
+export const EnvironmentPreferencesUpdateTool = Tool.make("t3_environment_preferences_update", {
+  description:
+    "Update only the explicit server-owned preference fields in this input, then return the actual normalized preference allowlist after persistence. Omitted fields are unchanged; an explicit empty source-control customInstructions string clears it. This environment-wide mutation requires the calling thread to remain in full-access runtime mode and default interaction mode through persistence. It cannot change provider configuration, credentials, paths, observability, browser access, themes, pairing, tunnels, admin controls, client-local settings, or arbitrary server settings.",
+  parameters: EnvironmentMcpPreferencesUpdateInput,
+  success: EnvironmentMcpPreferencesUpdateResult,
+  failure: EnvironmentMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Update T3 environment preferences")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+export const EnvironmentToolkit = Toolkit.make(
+  EnvironmentReadTool,
+  EnvironmentPreferencesUpdateTool,
+);

@@ -4,17 +4,25 @@ import {
   ENVIRONMENT_MCP_MAX_WRITING_INSTRUCTIONS,
   EnvironmentMcpFailure,
   type EnvironmentMcpPreferences,
+  type EnvironmentMcpPreferencesUpdateInput,
+  type EnvironmentMcpPreferencesUpdateResult,
   type EnvironmentMcpReadInput,
   type EnvironmentMcpReadResult,
   type ServerProvider,
   type ServerSettings,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { ThreadCommandExecutor } from "../orchestration-v2/ThreadCommandExecutor.ts";
+import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
+import { ProjectionStoreThreadNotFoundError } from "../orchestration-v2/ProjectionStore.ts";
+import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
@@ -26,8 +34,15 @@ export class EnvironmentMcpService extends Context.Service<
       scope: McpInvocationScope,
       input: EnvironmentMcpReadInput,
     ) => Effect.Effect<EnvironmentMcpReadResult, EnvironmentMcpFailure>;
+    readonly updatePreferences: (
+      scope: McpInvocationScope,
+      input: EnvironmentMcpPreferencesUpdateInput,
+    ) => Effect.Effect<EnvironmentMcpPreferencesUpdateResult, EnvironmentMcpFailure>;
   }
 >()("t3/mcp/EnvironmentMcpService") {}
+
+const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
+const isProjectionStoreThreadNotFoundError = Schema.is(ProjectionStoreThreadNotFoundError);
 
 const unavailable = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -109,17 +124,76 @@ const providerHealth = (providers: ReadonlyArray<ServerProvider>) => {
   } as const;
 };
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const providerRegistry = yield* ProviderRegistry;
   const settingsService = yield* ServerSettingsModule.ServerSettingsService;
+  const threads = yield* ThreadManagementService;
+  const threadDispatch = yield* ThreadCommandExecutor;
+
+  const requireCapability = (scope: McpInvocationScope) =>
+    scope.capabilities.has("orchestration")
+      ? Effect.void
+      : Effect.fail(new EnvironmentMcpFailure({ code: "capability_denied" }));
+
+  const requireCurrentEnvironment = (scope: McpInvocationScope) =>
+    unavailable(environment.getEnvironmentId, "environment_unavailable").pipe(
+      Effect.filterOrFail(
+        (currentEnvironmentId) => currentEnvironmentId === scope.environmentId,
+        () => new EnvironmentMcpFailure({ code: "environment_mismatch" }),
+      ),
+    );
+
+  const loadCurrentCaller = (scope: McpInvocationScope) =>
+    threads.getThreadProjection(scope.threadId).pipe(
+      Effect.mapError((error) =>
+        isOrchestratorProjectionError(error) && isProjectionStoreThreadNotFoundError(error.cause)
+          ? new EnvironmentMcpFailure({ code: "thread_not_found" })
+          : new EnvironmentMcpFailure({ code: "operation_failed" }),
+      ),
+      Effect.filterOrFail(
+        (projection) => projection.thread.deletedAt === null,
+        () => new EnvironmentMcpFailure({ code: "thread_not_found" }),
+      ),
+    );
+
+  const preferencePatch = (input: EnvironmentMcpPreferencesUpdateInput): ServerSettingsPatch => ({
+    ...(input.defaultThreadEnvMode === undefined
+      ? {}
+      : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
+    ...(input.newWorktreesStartFromOrigin === undefined
+      ? {}
+      : { newWorktreesStartFromOrigin: input.newWorktreesStartFromOrigin }),
+    ...(input.enableProviderUpdateChecks === undefined
+      ? {}
+      : { enableProviderUpdateChecks: input.enableProviderUpdateChecks }),
+    ...(input.backgroundActivity === undefined
+      ? {}
+      : { backgroundActivity: { profile: input.backgroundActivity.profile } }),
+    ...(input.sourceControlWritingStyle === undefined
+      ? {}
+      : {
+          sourceControlWritingStyle: {
+            ...(input.sourceControlWritingStyle.mode === undefined
+              ? {}
+              : { mode: input.sourceControlWritingStyle.mode }),
+            ...(input.sourceControlWritingStyle.customInstructions === undefined
+              ? {}
+              : { customInstructions: input.sourceControlWritingStyle.customInstructions }),
+            ...(input.sourceControlWritingStyle.followChangeRequestTemplates === undefined
+              ? {}
+              : {
+                  followChangeRequestTemplates:
+                    input.sourceControlWritingStyle.followChangeRequestTemplates,
+                }),
+          },
+        }),
+  });
 
   return EnvironmentMcpService.of({
     read: (scope, input) =>
       Effect.gen(function* () {
-        if (!scope.capabilities.has("orchestration")) {
-          return yield* new EnvironmentMcpFailure({ code: "capability_denied" });
-        }
+        yield* requireCapability(scope);
         const descriptor = yield* unavailable(environment.getDescriptor, "environment_unavailable");
         if (descriptor.environmentId !== scope.environmentId) {
           return yield* new EnvironmentMcpFailure({ code: "environment_mismatch" });
@@ -189,6 +263,29 @@ const make = Effect.gen(function* () {
           preferenceScope: "server_owned",
         };
       }),
+    updatePreferences: (scope, input) =>
+      requireCapability(scope).pipe(
+        Effect.andThen(requireCurrentEnvironment(scope)),
+        Effect.andThen(
+          threadDispatch.withLock(
+            scope.threadId,
+            Effect.gen(function* () {
+              const caller = yield* loadCurrentCaller(scope);
+              if (
+                caller.thread.runtimeMode !== "full-access" ||
+                caller.thread.interactionMode !== "default"
+              ) {
+                return yield* new EnvironmentMcpFailure({ code: "permission_denied" });
+              }
+              const settings = yield* unavailable(
+                settingsService.updateSettings(preferencePatch(input)),
+                "settings_unavailable",
+              );
+              return { preferences: presentEnvironmentPreferences(settings) };
+            }),
+          ),
+        ),
+      ),
   });
 });
 

@@ -9,6 +9,7 @@ import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
+import { layer as threadCommandExecutorLayer } from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
@@ -23,6 +24,7 @@ import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 const environmentId = EnvironmentId.make("environment-scratch");
 const StubServicesLive = Layer.mergeAll(
   Layer.mock(ThreadManagementService)({}),
+  threadCommandExecutorLayer,
   Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
   Layer.mock(ScheduledTaskService)({}),
   Layer.mock(ProjectService.ProjectService)({}),
@@ -131,6 +133,23 @@ it.effect("production MCP lists the bounded current-environment read tool", () =
       expect(environmentRead?.annotations).toMatchObject({
         readOnlyHint: true,
         destructiveHint: false,
+        openWorldHint: false,
+      });
+      const preferencesUpdate = payload.result.tools.find(
+        (tool) => tool.name === "t3_environment_preferences_update",
+      );
+      expect(preferencesUpdate).toBeDefined();
+      expect(preferencesUpdate?.inputSchema.type).toBe("object");
+      expect(Object.keys(preferencesUpdate?.inputSchema.properties ?? {}).sort()).toEqual([
+        "backgroundActivity",
+        "defaultThreadEnvMode",
+        "enableProviderUpdateChecks",
+        "newWorktreesStartFromOrigin",
+        "sourceControlWritingStyle",
+      ]);
+      expect(preferencesUpdate?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: true,
         openWorldHint: false,
       });
     }),
