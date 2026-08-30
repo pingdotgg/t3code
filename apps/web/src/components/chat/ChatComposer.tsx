@@ -1097,9 +1097,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       input: { instanceId: selectedProviderEntry.instanceId, cwd: gitCwd },
     }).then(
       (result) => {
-        if (result._tag === "Success") {
-          workspaceRefreshKeyRef.current = key;
-        } else if (workspaceRefreshKeyRef.current === key) {
+        if (result._tag !== "Success" && workspaceRefreshKeyRef.current === key) {
           workspaceRefreshKeyRef.current = null;
         }
       },
