@@ -46,6 +46,11 @@ describe("checkpoint MCP contracts", () => {
       discardChanges: true,
     } as const;
     expect(() => decodeRestoreInput({ ...base, clientRequestId: "bad\ud800key" })).toThrow();
+    expect(() => decodeRestoreInput({ ...base, clientRequestId: "bad\ud800" })).toThrow();
+    expect(() => decodeRestoreInput({ ...base, clientRequestId: "bad\udc00key" })).toThrow();
+    expect(
+      decodeRestoreInput({ ...base, clientRequestId: "valid \ud83d\ude80" }).clientRequestId,
+    ).toBe("valid \ud83d\ude80");
     expect(decodeRestoreInput({ ...base, clientRequestId: " e\u0301 " }).clientRequestId).toBe(
       " e\u0301 ",
     );

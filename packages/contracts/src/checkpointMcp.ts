@@ -148,10 +148,24 @@ export const CheckpointMcpDiffResult = Schema.Struct({
 });
 export type CheckpointMcpDiffResult = typeof CheckpointMcpDiffResult.Type;
 
+const isWellFormedUtf16 = (value: string) => {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const nextCodeUnit = value.charCodeAt(index + 1);
+      if (!(nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff)) return false;
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+};
+
 export const CheckpointMcpClientRequestId = Schema.String.check(
   Schema.makeFilter(
     (value) =>
-      (value.length > 0 && value.length <= 256 && value.isWellFormed()) ||
+      (value.length > 0 && value.length <= 256 && isWellFormedUtf16(value)) ||
       new SchemaIssue.InvalidValue({
         message: "clientRequestId must contain 1-256 well-formed UTF-16 code units",
       }),
