@@ -24,9 +24,15 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { queuedRunsInDeliveryOrder } from "../orchestration-v2/QueuedRunOrder.ts";
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import {
+  ThreadManagementService,
+  ThreadManagementThreadNotFoundError,
+} from "../orchestration-v2/ThreadManagementService.ts";
+import { interactionModeWithinMcpCeiling, runtimeModeWithinMcpCeiling } from "./McpModeCeilings.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 const DEFAULT_LIST_LIMIT = 50;
@@ -87,6 +93,27 @@ function dispatchFailure(error: unknown): QueueMcpFailure {
   return tag === "OrchestratorDispatchError" || tag === "OrchestratorCommandPreviouslyRejectedError"
     ? failure("operation_rejected", errorMessage(error))
     : failure("orchestration_error", errorMessage(error));
+}
+
+const isThreadManagementThreadNotFound = Schema.is(ThreadManagementThreadNotFoundError);
+
+function projectionFailure(input: {
+  readonly error: unknown;
+  readonly threadId: ThreadId;
+  readonly projectId?: string;
+}): QueueMcpFailure {
+  if (isThreadManagementThreadNotFound(input.error)) {
+    return failure(
+      "thread_not_found",
+      input.projectId === undefined
+        ? `Thread '${input.threadId}' was not found.`
+        : `Thread '${input.threadId}' was not found in project '${input.projectId}'.`,
+    );
+  }
+  return failure(
+    "orchestration_error",
+    `Unable to load thread '${input.threadId}': ${errorMessage(input.error)}`,
+  );
 }
 
 function truncate(text: string, maxChars: number) {
@@ -210,7 +237,7 @@ const make = Effect.gen(function* () {
 
   const loadProjection = (threadId: ThreadId) =>
     threadManagement.getThreadProjection(threadId).pipe(
-      Effect.mapError(() => failure("thread_not_found", `Thread '${threadId}' was not found.`)),
+      Effect.mapError((error) => projectionFailure({ error, threadId })),
       Effect.filterOrFail(
         (projection) => projection.thread.deletedAt === null,
         () => failure("thread_not_found", `Thread '${threadId}' was not found.`),
@@ -222,18 +249,41 @@ const make = Effect.gen(function* () {
       yield* requireCapability(scope);
       const parent = yield* loadProjection(scope.threadId);
       const threadId = requestedThreadId ?? scope.threadId;
-      if (threadId === scope.threadId) return parent;
-      return yield* threadManagement
+      if (threadId === scope.threadId) return { caller: parent, target: parent } as const;
+      const target = yield* threadManagement
         .getProjectThread({ projectId: parent.thread.projectId, threadId })
         .pipe(
-          Effect.mapError(() =>
-            failure(
-              "thread_not_found",
-              `Thread '${threadId}' was not found in project '${parent.thread.projectId}'.`,
-            ),
+          Effect.mapError((error) =>
+            projectionFailure({ error, threadId, projectId: parent.thread.projectId }),
           ),
         );
+      return { caller: parent, target } as const;
     });
+
+  const requirePromptMutationCeiling = (
+    caller: OrchestrationV2ThreadProjection,
+    target: OrchestrationV2ThreadProjection,
+  ) => {
+    if (!runtimeModeWithinMcpCeiling(caller.thread.runtimeMode, target.thread.runtimeMode)) {
+      return Effect.fail(
+        failure(
+          "runtime_mode_escalation_denied",
+          `Target runtime mode ${target.thread.runtimeMode} is broader than caller mode ${caller.thread.runtimeMode}.`,
+        ),
+      );
+    }
+    return interactionModeWithinMcpCeiling(
+      caller.thread.interactionMode,
+      target.thread.interactionMode,
+    )
+      ? Effect.void
+      : Effect.fail(
+          failure(
+            "interaction_mode_escalation_denied",
+            `Target interaction mode ${target.thread.interactionMode} is broader than caller mode ${caller.thread.interactionMode}.`,
+          ),
+        );
+  };
 
   const commandId = (input: {
     readonly scope: McpInvocationScope;
@@ -259,7 +309,7 @@ const make = Effect.gen(function* () {
   return QueueMcpService.of({
     list: (scope, input) =>
       Effect.gen(function* () {
-        const projection = yield* loadScopedThread(scope, input.threadId);
+        const { target: projection } = yield* loadScopedThread(scope, input.threadId);
         const ordered = queuedRunsInDeliveryOrder(projection);
         const cursor = input.cursor ?? 0;
         const limit = input.limit ?? DEFAULT_LIST_LIMIT;
@@ -295,7 +345,7 @@ const make = Effect.gen(function* () {
       }),
     read: (scope, input) =>
       Effect.gen(function* () {
-        const projection = yield* loadScopedThread(scope, input.threadId);
+        const { target: projection } = yield* loadScopedThread(scope, input.threadId);
         const queued = yield* findQueuedRun(projection, input.queuedRunId);
         return queuedRunSummary({
           projection,
@@ -305,11 +355,34 @@ const make = Effect.gen(function* () {
       }),
     edit: (scope, input) =>
       Effect.gen(function* () {
-        const projection = yield* loadScopedThread(scope, input.threadId);
+        const { caller, target: projection } = yield* loadScopedThread(scope, input.threadId);
+        yield* requirePromptMutationCeiling(caller, projection);
         const queued = yield* findRunMessage(projection, input.queuedRunId);
+        const id = yield* commandId({
+          scope,
+          clientRequestId: input.clientRequestId,
+          operation: "edit",
+          threadId: projection.thread.id,
+          queuedRunId: input.queuedRunId,
+        });
+        const existingReceipt = yield* threadManagement
+          .getCommandReceipt(id)
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to inspect retry receipt '${id}': ${errorMessage(error)}`,
+              ),
+            ),
+          );
+        const replayingAccepted = Option.isSome(existingReceipt)
+          ? existingReceipt.value.status === "accepted" &&
+            existingReceipt.value.threadId === projection.thread.id &&
+            existingReceipt.value.commandType === "queued-run.edit"
+          : false;
         const requestedAttachmentIds = input.attachmentIds;
         const attachments =
-          requestedAttachmentIds === undefined
+          replayingAccepted || requestedAttachmentIds === undefined
             ? undefined
             : yield* Effect.gen(function* () {
                 const uniqueIds = new Set(requestedAttachmentIds);
@@ -336,13 +409,6 @@ const make = Effect.gen(function* () {
                     : Effect.succeed(attachment);
                 });
               });
-        const id = yield* commandId({
-          scope,
-          clientRequestId: input.clientRequestId,
-          operation: "edit",
-          threadId: projection.thread.id,
-          queuedRunId: input.queuedRunId,
-        });
         const receipt = yield* threadManagement
           .dispatch({
             type: "queued-run.edit",
@@ -358,6 +424,12 @@ const make = Effect.gen(function* () {
             stored.event.type === "message.updated" &&
             stored.event.payload.id === queued.message.id,
         );
+        if (replayingAccepted && editedMessage?.event.type !== "message.updated") {
+          return yield* failure(
+            "orchestration_error",
+            `Accepted edit receipt '${id}' no longer exposes its durable message result.`,
+          );
+        }
         const resultMessage =
           editedMessage?.event.type === "message.updated"
             ? editedMessage.event.payload
@@ -374,7 +446,7 @@ const make = Effect.gen(function* () {
       }),
     reorder: (scope, input) =>
       Effect.gen(function* () {
-        const projection = yield* loadScopedThread(scope, input.threadId);
+        const { target: projection } = yield* loadScopedThread(scope, input.threadId);
         const id = yield* commandId({
           scope,
           clientRequestId: input.clientRequestId,
@@ -401,7 +473,7 @@ const make = Effect.gen(function* () {
       }),
     cancel: (scope, input) =>
       Effect.gen(function* () {
-        const projection = yield* loadScopedThread(scope, input.threadId);
+        const { target: projection } = yield* loadScopedThread(scope, input.threadId);
         const id = yield* commandId({
           scope,
           clientRequestId: input.clientRequestId,
@@ -427,7 +499,8 @@ const make = Effect.gen(function* () {
       }),
     promote: (scope, input) =>
       Effect.gen(function* () {
-        const projection = yield* loadScopedThread(scope, input.threadId);
+        const { caller, target: projection } = yield* loadScopedThread(scope, input.threadId);
+        yield* requirePromptMutationCeiling(caller, projection);
         const id = yield* commandId({
           scope,
           clientRequestId: input.clientRequestId,

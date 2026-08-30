@@ -1077,7 +1077,7 @@ describe("orchestrator MCP toolkit", () => {
             const secondQueuedMessageId = MessageId.make(
               "message:mcp-parent:queue-race:user-second",
             );
-            yield* orchestrator.dispatch({
+            const secondQueueReceipt = yield* orchestrator.dispatch({
               type: "message.dispatch",
               createdBy: "user",
               creationSource: "web",
@@ -1089,17 +1089,16 @@ describe("orchestrator MCP toolkit", () => {
               modelSelection: codexSelection,
               dispatchMode: { type: "queue_after_active" },
             });
-            const twoUserRunsQueued = yield* waitForProjection(
-              orchestrator,
-              parentThreadId,
-              (projection) =>
-                projection.runs.filter(
-                  (run) =>
-                    run.status === "queued" &&
-                    (run.userMessageId === queuedUserMessageId ||
-                      run.userMessageId === secondQueuedMessageId),
-                ).length === 2,
-            );
+            expect(secondQueueReceipt.storedEvents.length).toBeGreaterThan(0);
+            const twoUserRunsQueued = yield* orchestrator.getThreadProjection(parentThreadId);
+            expect(
+              twoUserRunsQueued.runs.filter(
+                (run) =>
+                  run.status === "queued" &&
+                  (run.userMessageId === queuedUserMessageId ||
+                    run.userMessageId === secondQueuedMessageId),
+              ),
+            ).toHaveLength(2);
             const secondQueuedUserRun = twoUserRunsQueued.runs.find(
               (run) => run.userMessageId === secondQueuedMessageId,
             );
@@ -1167,7 +1166,8 @@ describe("orchestrator MCP toolkit", () => {
 
             const queueEditInput = {
               queuedRunId: queuedUserRun.id,
-              text: "Edited queued user follow-up.",
+              text: "Edited queued user follow-up.\n",
+              attachmentIds: ["attachment-queue-race"],
               clientRequestId: "queue-edit-race-user",
             };
             const queueEditCall = yield* invoke("t3_queue_edit", queueEditInput);
@@ -1177,21 +1177,39 @@ describe("orchestrator MCP toolkit", () => {
             expect(queueEdit.attachments.map((attachment) => attachment.id)).toEqual([
               "attachment-queue-race",
             ]);
-            const repeatedQueueEdit = yield* decodeQueueEditResult(
-              (yield* invoke("t3_queue_edit", queueEditInput)).structuredContent,
-            ).pipe(Effect.orDie);
-            expect(repeatedQueueEdit.commandId).toBe(queueEdit.commandId);
-            expect(repeatedQueueEdit.receiptSequence).toBe(queueEdit.receiptSequence);
+            expect(queueEdit.text).toBe("Edited queued user follow-up.\n");
+
+            const blankQueueEdit = yield* invoke("t3_queue_edit", {
+              queuedRunId: queuedUserRun.id,
+              text: " \n\t ",
+              clientRequestId: "queue-edit-race-user-blank",
+            }).pipe(Effect.flip);
+            expect(String(blankQueueEdit)).toContain("Queued text must not be blank");
 
             const clearQueueAttachments = yield* decodeQueueEditResult(
               (yield* invoke("t3_queue_edit", {
                 queuedRunId: queuedUserRun.id,
-                text: "Edited queued user follow-up.",
+                text: "Cleared queued user attachments.",
                 attachmentIds: [],
                 clientRequestId: "queue-edit-race-user-clear",
               })).structuredContent,
             ).pipe(Effect.orDie);
             expect(clearQueueAttachments.attachments).toEqual([]);
+
+            const repeatedQueueEdit = yield* decodeQueueEditResult(
+              (yield* invoke("t3_queue_edit", queueEditInput)).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(repeatedQueueEdit.commandId).toBe(queueEdit.commandId);
+            expect(repeatedQueueEdit.receiptSequence).toBe(queueEdit.receiptSequence);
+            expect(repeatedQueueEdit.text).toBe("Edited queued user follow-up.\n");
+            expect(repeatedQueueEdit.attachments.map((attachment) => attachment.id)).toEqual([
+              "attachment-queue-race",
+            ]);
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).messages.find(
+                (message) => message.id === queuedUserMessageId,
+              )?.attachments,
+            ).toEqual([]);
 
             const reorderCall = yield* invoke("t3_queue_reorder", {
               queuedRunId: secondQueuedUserRun.id,

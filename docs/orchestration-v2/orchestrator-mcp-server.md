@@ -318,7 +318,8 @@ returned unchanged, and a thread with no active provider turn returns
 `t3_queue_list` and `t3_queue_read` expose queued runs in their durable delivery
 order. Both default to the calling thread; an explicit thread ID is accepted
 only within the same project. List results are paginated before message detail
-is shaped, and both tools bound returned message text. Attachment results are
+is shaped; list previews are capped at 8,000 characters per message, while the
+single-run read path supports the larger detail bound. Attachment results are
 metadata references, never file contents.
 
 `t3_queue_edit` replaces a queued message's text. Omitting `attachmentIds`
@@ -333,6 +334,8 @@ an active-turn interrupt. `t3_queue_promote_to_steer` consumes a queued user
 message through the existing provider steering policy. The target must still
 be an active, steerable run, and the provider's actual serialized steering path
 must accept the operation. Failed validation leaves the queued run intact.
+Editing or promoting a different thread also applies the caller thread's
+runtime and interaction-mode ceilings, matching `t3_thread_send`.
 
 Every mutation accepts `clientRequestId`. Its command ID includes the provider
 session, operation, thread, and queued run, so retries replay the same durable

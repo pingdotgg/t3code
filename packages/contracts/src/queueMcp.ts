@@ -23,6 +23,7 @@ const QueueMcpClientRequestId = TrimmedNonEmptyString.check(Schema.isMaxLength(2
 const QueueMcpCursor = NonNegativeInt;
 const QueueMcpLimit = PositiveInt.check(Schema.isLessThanOrEqualTo(100));
 const QueueMcpMaxChars = PositiveInt.check(Schema.isLessThanOrEqualTo(120_000));
+const QueueMcpListMaxChars = PositiveInt.check(Schema.isLessThanOrEqualTo(8_000));
 
 const QueueMcpThreadTarget = {
   threadId: Schema.optional(
@@ -36,7 +37,7 @@ export const QueueMcpListInput = Schema.Struct({
   ...QueueMcpThreadTarget,
   cursor: Schema.optional(QueueMcpCursor),
   limit: Schema.optional(QueueMcpLimit),
-  maxCharsPerMessage: Schema.optional(QueueMcpMaxChars),
+  maxCharsPerMessage: Schema.optional(QueueMcpListMaxChars),
 });
 export type QueueMcpListInput = typeof QueueMcpListInput.Type;
 
@@ -51,8 +52,7 @@ export const QueueMcpEditInput = Schema.Struct({
   ...QueueMcpThreadTarget,
   queuedRunId: RunId,
   text: Schema.String.check(
-    Schema.isTrimmed(),
-    Schema.isNonEmpty(),
+    Schema.makeFilter((text) => text.trim().length > 0 || "Queued text must not be blank."),
     Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
   ),
   attachmentIds: Schema.optional(
@@ -166,6 +166,8 @@ export class QueueMcpFailure extends Schema.TaggedErrorClass<QueueMcpFailure>()(
     "queued_run_not_found",
     "attachment_not_found",
     "invalid_request",
+    "runtime_mode_escalation_denied",
+    "interaction_mode_escalation_denied",
     "operation_rejected",
     "orchestration_error",
   ]),

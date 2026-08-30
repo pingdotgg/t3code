@@ -271,6 +271,7 @@ export interface ThreadManagementServiceShape {
   readonly dispatch: (
     command: OrchestrationV2Command,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
+  readonly getCommandReceipt: OrchestratorV2["Service"]["getCommandReceipt"];
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
@@ -659,6 +660,7 @@ const make = Effect.gen(function* () {
   return ThreadManagementService.of({
     ensureLegacyTranscript,
     dispatch,
+    getCommandReceipt: orchestrator.getCommandReceipt,
     getThreadProjection,
     getCheckpointContext,
     getThreadSnapshot,
