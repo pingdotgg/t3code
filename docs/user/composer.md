@@ -103,8 +103,9 @@ composer when it is empty, and is discarded otherwise.
 
 Agents connected through T3 Code's built-in orchestration tools can inspect the same queue, edit
 user-authored queued prompts and attachments, reorder or cancel queued work, and promote a queued
-message into steering. These controls use the same project scope and permission ceiling as ordinary
-thread messages. They cannot rewrite T3 Code's automatic completion deliveries or cancel an active
+message into steering. Editing or promoting a prompt uses the same permission ceiling as an ordinary
+thread message; reorder and cancel remain same-project queue controls. These actions cannot rewrite
+T3 Code's automatic completion deliveries or cancel an active
 turn through a queue-only action.
 
 ## Commands and skills

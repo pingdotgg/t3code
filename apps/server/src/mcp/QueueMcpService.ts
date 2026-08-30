@@ -356,8 +356,6 @@ const make = Effect.gen(function* () {
     edit: (scope, input) =>
       Effect.gen(function* () {
         const { caller, target: projection } = yield* loadScopedThread(scope, input.threadId);
-        yield* requirePromptMutationCeiling(caller, projection);
-        const queued = yield* findRunMessage(projection, input.queuedRunId);
         const id = yield* commandId({
           scope,
           clientRequestId: input.clientRequestId,
@@ -380,6 +378,12 @@ const make = Effect.gen(function* () {
             existingReceipt.value.threadId === projection.thread.id &&
             existingReceipt.value.commandType === "queued-run.edit"
           : false;
+        const queued = replayingAccepted
+          ? undefined
+          : yield* findRunMessage(projection, input.queuedRunId);
+        if (!replayingAccepted) {
+          yield* requirePromptMutationCeiling(caller, projection);
+        }
         const requestedAttachmentIds = input.attachmentIds;
         const attachments =
           replayingAccepted || requestedAttachmentIds === undefined
@@ -416,30 +420,34 @@ const make = Effect.gen(function* () {
             threadId: projection.thread.id,
             runId: input.queuedRunId,
             text: input.text,
+            policyCeiling: {
+              callerThreadId: caller.thread.id,
+              runtimeMode: caller.thread.runtimeMode,
+              interactionMode: caller.thread.interactionMode,
+            },
             ...(attachments === undefined ? {} : { attachments }),
           })
           .pipe(Effect.mapError(dispatchFailure));
         const editedMessage = receipt.storedEvents.find(
           (stored) =>
-            stored.event.type === "message.updated" &&
-            stored.event.payload.id === queued.message.id,
+            stored.event.type === "message.updated" && stored.event.runId === input.queuedRunId,
         );
-        if (replayingAccepted && editedMessage?.event.type !== "message.updated") {
+        const resultMessage =
+          editedMessage?.event.type === "message.updated"
+            ? editedMessage.event.payload
+            : queued?.message;
+        if (resultMessage === undefined) {
           return yield* failure(
             "orchestration_error",
             `Accepted edit receipt '${id}' no longer exposes its durable message result.`,
           );
         }
-        const resultMessage =
-          editedMessage?.event.type === "message.updated"
-            ? editedMessage.event.payload
-            : queued.message;
         return {
           commandId: id,
           receiptSequence: receipt.sequence,
           threadId: projection.thread.id,
           queuedRunId: input.queuedRunId,
-          messageId: queued.message.id,
+          messageId: resultMessage.id,
           text: resultMessage.text,
           attachments: resultMessage.attachments,
         } satisfies QueueMcpEditResult;
@@ -469,6 +477,7 @@ const make = Effect.gen(function* () {
           threadId: projection.thread.id,
           queuedRunId: input.queuedRunId,
           beforeRunId: input.beforeRunId,
+          outcome: receipt.replayed === true ? "receipt_replayed" : "applied",
         } satisfies QueueMcpReorderResult;
       }),
     cancel: (scope, input) =>
@@ -500,7 +509,6 @@ const make = Effect.gen(function* () {
     promote: (scope, input) =>
       Effect.gen(function* () {
         const { caller, target: projection } = yield* loadScopedThread(scope, input.threadId);
-        yield* requirePromptMutationCeiling(caller, projection);
         const id = yield* commandId({
           scope,
           clientRequestId: input.clientRequestId,
@@ -508,6 +516,24 @@ const make = Effect.gen(function* () {
           threadId: projection.thread.id,
           queuedRunId: input.queuedRunId,
         });
+        const existingReceipt = yield* threadManagement
+          .getCommandReceipt(id)
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to inspect retry receipt '${id}': ${errorMessage(error)}`,
+              ),
+            ),
+          );
+        const replayingAccepted = Option.isSome(existingReceipt)
+          ? existingReceipt.value.status === "accepted" &&
+            existingReceipt.value.threadId === projection.thread.id &&
+            existingReceipt.value.commandType === "queued-message.promote-to-steer"
+          : false;
+        if (!replayingAccepted) {
+          yield* requirePromptMutationCeiling(caller, projection);
+        }
         const receipt = yield* threadManagement
           .dispatch({
             type: "queued-message.promote-to-steer",
@@ -515,6 +541,11 @@ const make = Effect.gen(function* () {
             threadId: projection.thread.id,
             queuedRunId: input.queuedRunId,
             targetRunId: input.targetRunId,
+            policyCeiling: {
+              callerThreadId: caller.thread.id,
+              runtimeMode: caller.thread.runtimeMode,
+              interactionMode: caller.thread.interactionMode,
+            },
           })
           .pipe(Effect.mapError(dispatchFailure));
         return {

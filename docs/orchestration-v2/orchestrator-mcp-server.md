@@ -340,8 +340,10 @@ runtime and interaction-mode ceilings, matching `t3_thread_send`.
 Every mutation accepts `clientRequestId`. Its command ID includes the provider
 session, operation, thread, and queued run, so retries replay the same durable
 receipt without colliding across queue targets. Mutations return the command ID
-and receipt sequence. Use `t3_queue_list` after reorder when the caller needs a
-fresh complete order.
+and receipt sequence. Reorder also returns `outcome`: `receipt_replayed` means
+the request reused an accepted command and did not apply the newly requested
+destination. Use `t3_queue_list` after reorder when the caller needs the current
+complete order.
 
 ## Delegated Task Lifecycle
 

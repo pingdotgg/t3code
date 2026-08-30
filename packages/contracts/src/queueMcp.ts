@@ -138,7 +138,11 @@ export const QueueMcpReorderResult = Schema.Struct({
   ...QueueMcpReceipt,
   threadId: ThreadId,
   queuedRunId: RunId,
-  beforeRunId: Schema.NullOr(RunId),
+  beforeRunId: Schema.NullOr(RunId).annotate({
+    description:
+      "Destination requested by this call; inspect outcome before treating it as applied.",
+  }),
+  outcome: Schema.Literals(["applied", "receipt_replayed"]),
 });
 export type QueueMcpReorderResult = typeof QueueMcpReorderResult.Type;
 

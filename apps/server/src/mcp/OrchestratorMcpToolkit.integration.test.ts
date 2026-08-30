@@ -42,6 +42,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -55,7 +56,10 @@ import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/Claud
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import { OrchestratorV2, type OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
-import { layer as threadManagementServiceLayer } from "../orchestration-v2/ThreadManagementService.ts";
+import {
+  layer as threadManagementServiceLayer,
+  ThreadManagementService,
+} from "../orchestration-v2/ThreadManagementService.ts";
 import {
   type ProviderAdapterV2Event,
   ProviderAdapterProtocolError,
@@ -83,6 +87,7 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
 
 const parentThreadId = ThreadId.make("thread:mcp-orchestrator-parent");
+const policyRaceThreadId = ThreadId.make("thread:mcp-queue-policy-race");
 const projectId = ProjectId.make("project:mcp-orchestrator");
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
@@ -486,6 +491,9 @@ describe("orchestrator MCP toolkit", () => {
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
+          const queueReceiptGateEnabled = yield* Ref.make(false);
+          const queueReceiptGateReached = yield* Deferred.make<void>();
+          const releaseQueueReceiptGate = yield* Deferred.make<void>();
           const registryLayer = makeProviderAdapterRegistryLayer([
             makeDeterministicAdapter({
               instanceId: codexInstanceId,
@@ -565,10 +573,26 @@ describe("orchestrator MCP toolkit", () => {
             },
             registryLayer,
           ).pipe(Layer.provide(continuationProbeLayer));
-          const orchestrationLayer = Layer.merge(
-            orchestratorLayer,
-            threadManagementServiceLayer.pipe(Layer.provide(orchestratorLayer)),
+          const baseThreadManagementLayer = threadManagementServiceLayer.pipe(
+            Layer.provide(orchestratorLayer),
           );
+          const gatedThreadManagementLayer = Layer.effect(
+            ThreadManagementService,
+            Effect.map(ThreadManagementService, (service) =>
+              ThreadManagementService.of({
+                ...service,
+                getCommandReceipt: (commandId) =>
+                  Effect.gen(function* () {
+                    if (yield* Ref.get(queueReceiptGateEnabled)) {
+                      yield* Deferred.succeed(queueReceiptGateReached, undefined);
+                      yield* Deferred.await(releaseQueueReceiptGate);
+                    }
+                    return yield* service.getCommandReceipt(commandId);
+                  }),
+              }),
+            ),
+          ).pipe(Layer.provide(baseThreadManagementLayer));
+          const orchestrationLayer = Layer.merge(orchestratorLayer, gatedThreadManagementLayer);
           const providerRegistryLayer = makeProviderRegistryLayer([
             makeProviderSnapshot({
               instanceId: codexInstanceId,
@@ -1216,7 +1240,23 @@ describe("orchestrator MCP toolkit", () => {
               beforeRunId: queuedUserRun.id,
               clientRequestId: "queue-reorder-race-users",
             });
-            yield* decodeQueueReorderResult(reorderCall.structuredContent).pipe(Effect.orDie);
+            const reorderResult = yield* decodeQueueReorderResult(
+              reorderCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(reorderResult.outcome).toBe("applied");
+            const incompatibleReorderReplay = yield* decodeQueueReorderResult(
+              (yield* invoke("t3_queue_reorder", {
+                queuedRunId: secondQueuedUserRun.id,
+                beforeRunId: null,
+                clientRequestId: "queue-reorder-race-users",
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(incompatibleReorderReplay).toMatchObject({
+              commandId: reorderResult.commandId,
+              receiptSequence: reorderResult.receiptSequence,
+              beforeRunId: null,
+              outcome: "receipt_replayed",
+            });
             const reorderedQueue = yield* decodeQueueListResult(
               (yield* invoke("t3_queue_list", {})).structuredContent,
             ).pipe(Effect.orDie);
@@ -2007,6 +2047,135 @@ describe("orchestrator MCP toolkit", () => {
                 },
               ),
             ).toHaveLength(2);
+
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-queue-policy-race:create"),
+              threadId: policyRaceThreadId,
+              projectId,
+              title: "Queue policy race",
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            const policyRaceTerminalGate = yield* Deferred.make<void>();
+            parentTerminalGates.set(policyRaceThreadId, policyRaceTerminalGate);
+            const policyRaceStartReceipt = yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-queue-policy-race:start"),
+              threadId: policyRaceThreadId,
+              messageId: MessageId.make("message:mcp-queue-policy-race:start"),
+              text: "Keep the queue policy target active.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator
+              .streamStoredEventsFrom({
+                threadId: policyRaceThreadId,
+                afterSequence: policyRaceStartReceipt.sequence,
+              })
+              .pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.event.type === "run.updated" &&
+                    stored.event.payload.status === "running",
+                ),
+                Stream.take(1),
+                Stream.runDrain,
+              );
+            const policyRaceQueuedMessageId = MessageId.make(
+              "message:mcp-queue-policy-race:queued",
+            );
+            const policyRaceQueuedReceipt = yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-queue-policy-race:queue"),
+              threadId: policyRaceThreadId,
+              messageId: policyRaceQueuedMessageId,
+              text: "Keep this queued text unchanged.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "queue_after_active" },
+            });
+            expect(policyRaceQueuedReceipt.storedEvents.length).toBeGreaterThan(0);
+            const policyRaceQueuedRun = (yield* orchestrator.getThreadProjection(
+              policyRaceThreadId,
+            )).runs.find(
+              (run) => run.userMessageId === policyRaceQueuedMessageId && run.status === "queued",
+            );
+            if (policyRaceQueuedRun === undefined) {
+              return yield* Effect.die(new Error("Queue policy race did not create a queued run."));
+            }
+
+            yield* Ref.set(queueReceiptGateEnabled, true);
+            const racedEdit = yield* invoke("t3_queue_edit", {
+              threadId: policyRaceThreadId,
+              queuedRunId: policyRaceQueuedRun.id,
+              text: "A stale caller ceiling must not apply this edit.",
+              clientRequestId: "queue-edit-policy-race",
+            }).pipe(Effect.forkChild);
+            yield* Deferred.await(queueReceiptGateReached);
+            yield* Ref.set(queueReceiptGateEnabled, false);
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-parent:policy-race-downgrade"),
+              threadId: parentThreadId,
+              runtimeMode: "approval-required",
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).thread.runtimeMode,
+            ).toBe("approval-required");
+            expect(
+              (yield* orchestrator.getThreadProjection(policyRaceThreadId)).thread.runtimeMode,
+            ).toBe("full-access");
+            yield* Deferred.succeed(releaseQueueReceiptGate, undefined);
+            const racedEditResult = yield* Fiber.join(racedEdit);
+            expect(racedEditResult.structuredContent).toMatchObject({
+              _tag: "QueueMcpFailure",
+              code: "operation_rejected",
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(policyRaceThreadId)).messages.find(
+                (message) => message.id === policyRaceQueuedMessageId,
+              )?.text,
+            ).toBe("Keep this queued text unchanged.");
+            yield* orchestrator.dispatch({
+              type: "queued-run.cancel",
+              commandId: CommandId.make("command:mcp-queue-policy-race:cleanup"),
+              threadId: policyRaceThreadId,
+              runId: policyRaceQueuedRun.id,
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-parent:policy-race-restore"),
+              threadId: parentThreadId,
+              runtimeMode: "full-access",
+            });
+            const policyRaceTerminalAfter =
+              yield* orchestrator.getThreadEventSequence(policyRaceThreadId);
+            yield* Deferred.succeed(policyRaceTerminalGate, undefined);
+            yield* orchestrator
+              .streamStoredEventsFrom({
+                threadId: policyRaceThreadId,
+                afterSequence: policyRaceTerminalAfter,
+              })
+              .pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.event.type === "run.updated" &&
+                    stored.event.payload.status === "completed",
+                ),
+                Stream.take(1),
+                Stream.runDrain,
+              );
 
             const promptedReadCall = yield* invoke("t3_thread_read", {
               threadId: promptedThread.threadId,

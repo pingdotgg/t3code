@@ -62,7 +62,7 @@ export const QueueEditTool = Tool.make("t3_queue_edit", {
 
 export const QueueReorderTool = Tool.make("t3_queue_reorder", {
   description:
-    "Move a queued user message before another queued run, or pass beforeRunId=null to move it to the end. Automatic completion deliveries keep priority and cannot be moved.",
+    "Move a queued user message before another queued run, or pass beforeRunId=null to move it to the end. Automatic completion deliveries keep priority and cannot be moved. Check outcome: receipt_replayed means this retry did not apply the requested destination; list the queue for current order.",
   parameters: QueueMcpReorderInput,
   success: QueueMcpReorderResult,
   failure: QueueMcpFailure,
