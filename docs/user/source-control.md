@@ -86,11 +86,12 @@ the thread's saved branch and worktree path. It refuses to switch a dirty checko
 silently stash or discard files. It also refuses to take over a worktree owned by another thread or
 switch a shared root while another thread is bound there.
 
-Moving between workspace paths restarts the agent session in the selected checkout. The agent can
-queue a continuation before that restart, so longer work resumes without needing the browser to
-stay open. These controls apply only to the calling thread and its current project. They do not
-remove, prune, or revive existing worktrees. If creating a new worktree fails before its durable
-thread binding commits, T3 Code attempts to remove only that newly created checkout as rollback.
+Moving between workspace paths ends the current agent turn in the selected checkout. The agent can
+queue a continuation as part of that move so a replacement turn starts there without needing the
+browser to stay open. Without a continuation, the thread remains idle until its next message. These
+controls apply only to the calling thread and its current project. They do not remove, prune, or
+revive existing worktrees. If creating a new worktree fails before its durable thread binding
+commits, T3 Code attempts to remove only that newly created checkout as rollback.
 
 ## Review and merge
 

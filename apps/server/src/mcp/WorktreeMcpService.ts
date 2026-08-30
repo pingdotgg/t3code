@@ -476,6 +476,10 @@ const make = Effect.gen(function* () {
       worktreeBaseRef = resolvedRemoteBase.commitSha;
     }
 
+    const expectedCreationCommit = yield* gitWorkflow
+      .resolveCommit({ cwd: projectCwd, revision: worktreeBaseRef })
+      .pipe(asOperationFailed(`Unable to resolve worktree base '${worktreeBaseRef}'`));
+
     const ids = yield* transitionIds(scope, "worktree-handoff");
     let acquiredPhysicalWorkspaceGuard: string | null = null;
 
@@ -604,14 +608,15 @@ const make = Effect.gen(function* () {
                 threadManagement.getThreadProjection(scope.threadId),
                 loadWorktrees(worktreePath),
                 readWorkspaceStatus(worktreePath),
+                gitWorkflow.resolveCommit({ cwd: worktreePath, revision: "HEAD" }),
               ],
-              { concurrency: 4 },
+              { concurrency: 5 },
             ),
           );
           if (Exit.isFailure(verificationExit)) {
             return "not_possible" as const;
           }
-          const [bindings, callerProjection, worktreeInventory, worktreeStatus] =
+          const [bindings, callerProjection, worktreeInventory, worktreeStatus, currentCommit] =
             verificationExit.value;
           const competingBinding = bindings.some(
             ([thread, workspacePath]) =>
@@ -625,7 +630,8 @@ const make = Effect.gen(function* () {
             worktreeInventory.currentWorktreeRoot === worktreePath &&
             worktreeStatus.isRepo &&
             !worktreeStatus.hasWorkingTreeChanges &&
-            worktreeStatus.refName === worktree.worktree.refName;
+            worktreeStatus.refName === worktree.worktree.refName &&
+            currentCommit.commitSha === expectedCreationCommit.commitSha;
           if (competingBinding || !callerStillUnbound || !checkoutStillCreatedByThisCall) {
             return "not_possible" as const;
           }

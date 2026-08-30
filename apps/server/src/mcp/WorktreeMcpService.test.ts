@@ -1247,6 +1247,24 @@ describe("t3_worktree_handoff", () => {
     });
   });
 
+  it.effect("retains a created worktree whose HEAD changed before failed-binding cleanup", () => {
+    const harness = makeHarness({
+      dispatchFails: true,
+      resolvedCommits: ["creation-commit", "concurrent-clean-commit"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        runHandoff(harness, { branch: "feature/concurrent-clean-commit" }),
+      );
+      expectTypedFailure(exit, {
+        _tag: "WorktreeMcpFailure",
+        code: "partial_failure",
+        partial: { rollback: "not_possible" },
+      });
+      expect(harness.removeWorktree).not.toHaveBeenCalled();
+    });
+  });
+
   it.effect("retains the created worktree when the caller binding changes during creation", () => {
     const harness = makeHarness({ threadAttachedOnRecheck: true });
     return Effect.gen(function* () {
@@ -3164,7 +3182,8 @@ describe("t3_thread_checkout", () => {
           startImmediately: true,
         });
         yield* Deferred.await(entered);
-        yield* Fiber.interrupt(first);
+        first.interruptUnsafe();
+        yield* Deferred.succeed(release, undefined);
         const interrupted = yield* Fiber.await(first);
         expect(Exit.isFailure(interrupted)).toBe(true);
         expect(harness.createRef).not.toHaveBeenCalled();
