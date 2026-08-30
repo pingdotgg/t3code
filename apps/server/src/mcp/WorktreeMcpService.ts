@@ -641,24 +641,24 @@ const make = Effect.gen(function* () {
     const candidateResults = yield* Effect.forEach(
       recordedPathsToResolve,
       (recordedPath) =>
-        Effect.exit(loadWorktrees(recordedPath)).pipe(
-          Effect.map((candidateExit) => ({ recordedPath, candidateExit })),
+        Effect.option(loadWorktrees(recordedPath)).pipe(
+          Effect.map((candidateInventory) => ({ recordedPath, candidateInventory })),
         ),
       { concurrency: 8 },
     );
     let failedCandidateCount = 0;
-    for (const { recordedPath, candidateExit } of candidateResults) {
-      if (Exit.isFailure(candidateExit)) {
+    for (const { recordedPath, candidateInventory } of candidateResults) {
+      if (Option.isNone(candidateInventory)) {
         failedCandidateCount += 1;
         continue;
       }
-      const candidateInventory = candidateExit.value;
+      const candidate = candidateInventory.value;
       if (
-        candidateInventory.repositoryCommonDir === inventory.repositoryCommonDir &&
-        candidateInventory.currentWorktreeRoot !== null &&
-        branchByWorkspacePath.has(candidateInventory.currentWorktreeRoot)
+        candidate.repositoryCommonDir === inventory.repositoryCommonDir &&
+        candidate.currentWorktreeRoot !== null &&
+        branchByWorkspacePath.has(candidate.currentWorktreeRoot)
       ) {
-        physicalRootByRecordedPath.set(recordedPath, candidateInventory.currentWorktreeRoot);
+        physicalRootByRecordedPath.set(recordedPath, candidate.currentWorktreeRoot);
       }
     }
     const threadWorkspaces = recordedThreadWorkspaces.map(
