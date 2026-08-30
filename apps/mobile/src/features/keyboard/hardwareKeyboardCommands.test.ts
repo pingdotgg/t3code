@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseActiveThreadPath } from "./hardwareKeyboardCommands";
+import { hasHardwareBackTarget, parseActiveThreadPath } from "./hardwareKeyboardCommands";
 
 describe("parseActiveThreadPath", () => {
   it("extracts the active thread from thread subroutes", () => {
@@ -24,5 +24,13 @@ describe("parseActiveThreadPath", () => {
 
   it("ignores malformed encoded route components", () => {
     expect(parseActiveThreadPath("/threads/%E0%A4%A/thread-1")).toBeNull();
+  });
+});
+
+describe("hasHardwareBackTarget", () => {
+  it("keeps hardware Back available for a cold-start thread", () => {
+    expect(hasHardwareBackTarget("/threads/environment-1/thread-1", false)).toBe(true);
+    expect(hasHardwareBackTarget("/settings", false)).toBe(false);
+    expect(hasHardwareBackTarget("/settings", true)).toBe(true);
   });
 });

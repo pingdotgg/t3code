@@ -77,3 +77,7 @@ export function parseActiveThreadPath(pathname: string): {
     return null;
   }
 }
+
+export function hasHardwareBackTarget(pathname: string, canGoBack: boolean): boolean {
+  return canGoBack || parseActiveThreadPath(pathname) !== null;
+}

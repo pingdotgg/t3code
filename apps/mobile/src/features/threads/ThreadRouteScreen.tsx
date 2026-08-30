@@ -855,6 +855,9 @@ function ThreadRouteContent(
             : undefined,
           title: selectedThread.title,
           headerBackVisible: false,
+          // These screens supply native toolbar items below; suppress the
+          // shared React headerLeft so the history pair is rendered once.
+          headerLeft: () => null,
           // Compact uses the app history pair so Back and Forward share one
           // cursor. Deep links also get an explicit Home escape. Split view
           // keeps its workspace-specific left items because the sidebar owns
