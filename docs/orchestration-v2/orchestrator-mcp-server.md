@@ -46,8 +46,9 @@ Before `ProviderSessionManager` opens a new V2 provider session, it asks
 
 The credential grants `orchestration` and `worktree` capabilities. It grants `preview` only when
 the provider session reports `browserToolsAvailable`; disabling agent browser access removes that
-capability. Credentials expire after a maximum lifetime, expire when idle, and are revoked when
-the provider session is released. The raw token is not persisted in orchestration state.
+capability. Credentials expire after the liveness window without MCP traffic or provider-turn
+activity, and provider-session release revokes them eagerly. The raw token is not persisted in
+orchestration state.
 
 The MCP HTTP server resolves the bearer token and supplies the resulting
 `McpInvocationScope` to tool handlers. Orchestration handlers additionally
