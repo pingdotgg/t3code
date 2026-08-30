@@ -245,18 +245,18 @@ describe("EnvironmentMcpService", () => {
   it.effect("rejects an environment mismatch before reading scoped dependencies", () => {
     let providerReads = 0;
     let settingsReads = 0;
-    const providerLayer = Layer.succeed(ProviderRegistry, {
+    const providerLayer = Layer.mock(ProviderRegistry)({
       getProviders: Effect.sync(() => {
         providerReads += 1;
         return [];
       }),
-    } as never);
-    const settingsLayer = Layer.succeed(ServerSettings.ServerSettingsService, {
+    });
+    const settingsLayer = Layer.mock(ServerSettings.ServerSettingsService)({
       getSettings: Effect.sync(() => {
         settingsReads += 1;
         return DEFAULT_SERVER_SETTINGS;
       }),
-    } as never);
+    });
     return Effect.gen(function* () {
       const service = yield* EnvironmentMcpService;
       const error = yield* Effect.flip(
