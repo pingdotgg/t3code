@@ -2365,6 +2365,28 @@ describe("t3_thread_checkout", () => {
     });
   });
 
+  it.effect("fails closed when the recorded checkout inventory succeeds but status fails", () => {
+    const harness = makeHarness({
+      thread: { branch: "dev", worktreePath: null },
+      refs: rootRefs,
+      worktrees: [{ path: workspaceRoot, refName: "dev" }],
+      workspaceStatuses: { [workspaceRoot]: { branch: "dev" } },
+      localStatusFailsOnCall: 1,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        runCheckout(harness, {
+          target: { type: "branch", branch: "feature/checkout" },
+        }),
+      );
+
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "operation_failed" });
+      expect(harness.switchRef).not.toHaveBeenCalled();
+      expect(harness.createRef).not.toHaveBeenCalled();
+      expect(harness.dispatch).not.toHaveBeenCalled();
+    });
+  });
+
   it.effect("applies branch existence checks to project-root targets", () => {
     const harness = makeHarness({
       thread: { branch: "dev", worktreePath: null },

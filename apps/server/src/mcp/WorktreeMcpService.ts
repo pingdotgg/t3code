@@ -1080,13 +1080,13 @@ const make = Effect.gen(function* () {
       [
         loadRefs(projectWorkspaceRoot),
         loadProjectThreads(projection.thread.projectId),
-        readWorkspaceStatus(recordedWorkspacePath).pipe(
-          Effect.orElseSucceed(() => ({
-            isRepo: false,
-            refName: null,
-            hasWorkingTreeChanges: false,
-          })),
-        ),
+        Option.isNone(currentInventory)
+          ? Effect.succeed({
+              isRepo: false,
+              refName: null,
+              hasWorkingTreeChanges: false,
+            })
+          : readWorkspaceStatus(recordedWorkspacePath),
       ],
       { concurrency: 3 },
     );
