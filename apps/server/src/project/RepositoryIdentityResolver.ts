@@ -13,13 +13,17 @@ import * as Layer from "effect/Layer";
 import * as ProcessRunner from "../processRunner.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
-const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
+const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(10);
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
+const DEFAULT_REPOSITORY_ROOT_CACHE_TTL = Duration.minutes(10);
+const DEFAULT_REPOSITORY_ROOT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
   readonly positiveCacheTtl?: Duration.Input;
   readonly negativeCacheTtl?: Duration.Input;
+  readonly repositoryRootCacheTtl?: Duration.Input;
+  readonly repositoryRootNegativeCacheTtl?: Duration.Input;
 }
 
 export class RepositoryIdentityResolver extends Context.Service<
@@ -87,10 +91,9 @@ function buildRepositoryIdentity(input: {
   };
 }
 
-const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
+const resolveRepositoryRoot = Effect.fn("RepositoryIdentityResolver.resolveRepositoryRoot")(
   function* (cwd: string) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
-    let cacheKey = cwd;
 
     // git is a real executable on every platform — no cmd.exe shell mode, which
     // would split paths containing spaces during cmd's re-tokenization.
@@ -102,15 +105,11 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       })
       .pipe(Effect.option);
     if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
-      return cacheKey;
+      return null;
     }
 
     const candidate = topLevelResult.value.stdout.trim();
-    if (candidate.length > 0) {
-      cacheKey = candidate;
-    }
-
-    return cacheKey;
+    return candidate.length > 0 ? candidate : null;
   },
 );
 
@@ -140,6 +139,28 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
 ) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
 
+  // Every workspace root maps to the same git top level for the life of the
+  // checkout, but resolving it costs one `git rev-parse` process. Snapshot
+  // reads resolve every project on each call, so an uncached lookup spawns one
+  // process per project per read and dominates snapshot latency on a busy
+  // machine. Cache the mapping alongside the identity it keys.
+  const repositoryRootCache = yield* Cache.makeWith<string, string | null>(
+    (cwd) =>
+      resolveRepositoryRoot(cwd).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+      ),
+    {
+      capacity: options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY,
+      timeToLive: Exit.match({
+        onSuccess: (value) =>
+          value === null
+            ? (options.repositoryRootNegativeCacheTtl ?? DEFAULT_REPOSITORY_ROOT_NEGATIVE_CACHE_TTL)
+            : (options.repositoryRootCacheTtl ?? DEFAULT_REPOSITORY_ROOT_CACHE_TTL),
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
+
   const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
     (cacheKey) =>
       resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
@@ -160,10 +181,8 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fn(
     "RepositoryIdentityResolver.resolve",
   )(function* (cwd) {
-    const cacheKey = yield* resolveRepositoryIdentityCacheKey(cwd).pipe(
-      Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-    );
-    return yield* Cache.get(repositoryIdentityCache, cacheKey);
+    const repositoryRoot = yield* Cache.get(repositoryRootCache, cwd);
+    return yield* Cache.get(repositoryIdentityCache, repositoryRoot ?? cwd);
   });
 
   return RepositoryIdentityResolver.of({ resolve });

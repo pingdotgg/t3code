@@ -25,6 +25,8 @@ const git = (cwd: string, args: ReadonlyArray<string>) =>
 const makeRepositoryIdentityResolverTestLayer = (options: {
   readonly positiveCacheTtl?: Duration.Input;
   readonly negativeCacheTtl?: Duration.Input;
+  readonly repositoryRootCacheTtl?: Duration.Input;
+  readonly repositoryRootNegativeCacheTtl?: Duration.Input;
 }) =>
   Layer.effect(
     RepositoryIdentityResolver.RepositoryIdentityResolver,
@@ -227,6 +229,58 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
           makeRepositoryIdentityResolverTestLayer({
             negativeCacheTtl: Duration.millis(50),
             positiveCacheTtl: Duration.millis(100),
+          }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("reuses the cached git top level instead of re-running rev-parse per resolve", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repoRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-root-cache-test-",
+      });
+      const nestedWorkspace = path.join(repoRoot, "packages", "web");
+
+      yield* fileSystem.makeDirectory(nestedWorkspace, { recursive: true });
+      yield* git(repoRoot, ["init"]);
+      yield* git(repoRoot, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const initialIdentity = yield* resolver.resolve(nestedWorkspace);
+      expect(initialIdentity?.canonicalKey).toBe("github.com/t3tools/t3code");
+
+      // Turning the nested workspace into its own repository changes what
+      // `git rev-parse --show-toplevel` reports. While the root stays cached the
+      // resolver must keep answering from the outer repository, which proves it
+      // did not spawn git again.
+      yield* git(nestedWorkspace, ["init"]);
+      yield* git(nestedWorkspace, [
+        "remote",
+        "add",
+        "origin",
+        "git@github.com:T3Tools/t3code-nested.git",
+      ]);
+
+      for (const _attempt of [1, 2, 3]) {
+        const cachedIdentity = yield* resolver.resolve(nestedWorkspace);
+        expect(cachedIdentity?.canonicalKey).toBe("github.com/t3tools/t3code");
+      }
+
+      yield* TestClock.adjust(Duration.millis(120));
+
+      const refreshedIdentity = yield* resolver.resolve(nestedWorkspace);
+      expect(refreshedIdentity?.canonicalKey).toBe("github.com/t3tools/t3code-nested");
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          TestClock.layer(),
+          makeRepositoryIdentityResolverTestLayer({
+            negativeCacheTtl: Duration.millis(50),
+            positiveCacheTtl: Duration.seconds(30),
+            repositoryRootCacheTtl: Duration.millis(50),
           }),
         ),
       ),
