@@ -125,8 +125,8 @@ it.layer(NodeServices.layer)("DpopReplayStore.layer", (it) => {
         replayStore.claim({ thumbprint: "thumbprint", jti: "boundary-jti" }),
       );
 
-      assert.equal(error._tag, "DpopReplayStoreClaimError");
-      assert.isTrue(DpopReplayStore.isDpopReplayAlreadyExistsError(error));
+      assert.equal(error._tag, "DpopReplayAlreadyClaimedError");
+      assert.isTrue(DpopReplayStore.isDpopReplayAlreadyClaimedError(error));
     }).pipe(Effect.provide(makeDpopReplayStoreTestClockLayer())),
   );
 
@@ -139,13 +139,13 @@ it.layer(NodeServices.layer)("DpopReplayStore.layer", (it) => {
         replayStore.claim({ thumbprint: "thumbprint", jti: "partial-claim-jti" }),
       );
       assert.equal(partialClaim._tag, "DpopReplayStoreClaimError");
-      assert.isFalse(DpopReplayStore.isDpopReplayAlreadyExistsError(partialClaim));
+      assert.isFalse(DpopReplayStore.isDpopReplayAlreadyClaimedError(partialClaim));
 
       yield* TestClock.adjust(Duration.seconds(2));
       const replay = yield* Effect.flip(
         replayStore.claim({ thumbprint: "thumbprint", jti: "partial-claim-jti" }),
       );
-      assert.isTrue(DpopReplayStore.isDpopReplayAlreadyExistsError(replay));
+      assert.isTrue(DpopReplayStore.isDpopReplayAlreadyClaimedError(replay));
     }).pipe(Effect.provide(makeSecondMarkerOpenFailureStoreLayer())),
   );
 
@@ -165,7 +165,7 @@ it.layer(NodeServices.layer)("DpopReplayStore.layer", (it) => {
       yield* fileSystem.writeFile(legacyMarker, new Uint8Array());
 
       const protectedReplay = yield* Effect.flip(replayStore.claim({ thumbprint, jti }));
-      assert.isTrue(DpopReplayStore.isDpopReplayAlreadyExistsError(protectedReplay));
+      assert.isTrue(DpopReplayStore.isDpopReplayAlreadyClaimedError(protectedReplay));
 
       yield* TestClock.adjust(Duration.minutes(6));
       yield* replayStore.prune();

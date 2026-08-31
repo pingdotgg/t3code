@@ -37,7 +37,7 @@ export const mapDpopFailureReason = (code: DpopVerificationFailureCodeType): Dpo
 export const mapDpopReplayStoreError = (
   error: DpopReplayStore.DpopReplayStoreError,
 ): ServerAuthInvalidCredentialError | ServerAuthInternalError =>
-  DpopReplayStore.isDpopReplayAlreadyExistsError(error)
+  DpopReplayStore.isDpopReplayAlreadyClaimedError(error)
     ? new ServerAuthInvalidCredentialError({
         diagnostic: "DPoP proof replayed.",
         dpopFailureReason: "replay",
@@ -87,7 +87,7 @@ export const claimDpopProofReplay = (input: {
 }) =>
   DpopReplayStore.DpopReplayStore.pipe(
     Effect.flatMap((replayStore) => replayStore.claim(input)),
-    Effect.catchIf(DpopReplayStore.isDpopReplayStoreError, (error) =>
+    Effect.catch((error) =>
       Effect.gen(function* () {
         const mapped = mapDpopReplayStoreError(error);
         if (mapped._tag === "ServerAuthInvalidCredentialError") {
