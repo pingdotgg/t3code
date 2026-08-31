@@ -93,54 +93,109 @@ function packageRoot(path: string, packageName: string): string | null {
   return index < 0 ? null : normalized.slice(0, index + needle.length - 1);
 }
 
+function wrapperTargetPath(
+  context: InstallationContext,
+  wrapperPath: string,
+  expression: string,
+): string | null {
+  const path = pathApi(context);
+  const normalized = expression.replace(/^@/, "").replaceAll("\\", "/");
+  const lower = normalized.toLowerCase();
+  for (const marker of ["%~dp0", "%dp0%", "$basedir", "${basedir}"] as const) {
+    if (lower.startsWith(marker.toLowerCase())) {
+      return path.resolve(
+        path.dirname(wrapperPath),
+        normalized.slice(marker.length).replace(/^\/+/, ""),
+      );
+    }
+  }
+  if (normalized.includes("$") || normalized.includes("%")) return null;
+  return path.isAbsolute(normalized)
+    ? normalized
+    : path.resolve(path.dirname(wrapperPath), normalized);
+}
+
+function wrapperInvocationTargets(
+  context: InstallationContext,
+  wrapper: string | null,
+  wrapperPath: string | null,
+): ReadonlyArray<string> | null {
+  if (!wrapper || !wrapperPath) return null;
+  const isNodeLauncher = (token: string | undefined) => {
+    const normalized = token?.replace(/^@/, "").replaceAll("\\", "/").toLowerCase();
+    const executable = normalized?.split("/").at(-1);
+    return normalized === "%_prog%" || executable === "node" || executable === "node.exe";
+  };
+  const invocationLines = wrapper.split(/\r?\n/).flatMap((line) => {
+    const trimmed = line.trim();
+    if (
+      !trimmed ||
+      trimmed.startsWith("#") ||
+      trimmed.startsWith("::") ||
+      /^rem(?:\s|$)/i.test(trimmed)
+    ) {
+      return [];
+    }
+    const tokens = [...trimmed.matchAll(/"([^"]*)"|'([^']*)'|([^\s()"']+)/g)].map(
+      (match) => match[1] ?? match[2] ?? match[3] ?? "",
+    );
+    const forwardedArgsIndex = tokens.findIndex((token) => token === "$@" || token === "%*");
+    if (forwardedArgsIndex < 0) return [];
+    const targetIndex = forwardedArgsIndex - 1;
+    const target = tokens[targetIndex];
+    const launcher = tokens[targetIndex - 1];
+    const directLaunch =
+      context.platform === "win32"
+        ? targetIndex === 0 || launcher === "@"
+        : launcher?.replace(/^@/, "").toLowerCase() === "exec";
+    const nodeLaunch =
+      isNodeLauncher(launcher) &&
+      (context.platform === "win32" ||
+        tokens[targetIndex - 2]?.replace(/^@/, "").toLowerCase() === "exec");
+    return target && (directLaunch || nodeLaunch) ? [target] : [""];
+  });
+  if (invocationLines.length === 0) return null;
+  const targets = invocationLines.map((expression) =>
+    wrapperTargetPath(context, wrapperPath, expression),
+  );
+  return targets.every((target): target is string => target !== null) ? targets : null;
+}
+
 function packageRootFromWrapper(
   context: InstallationContext,
   wrapper: string | null,
   wrapperPath: string | null,
   packageName: string,
-): string | null {
-  if (!wrapper || !wrapperPath) return null;
-  const path = pathApi(context);
-  const embedded = packageRoot(wrapper, packageName);
-  if (embedded && path.isAbsolute(embedded)) return embedded;
-  const normalized = wrapper.replaceAll("\\", "/");
-  const packageSuffix = `/node_modules/${packageName}/`;
-  const suffixIndex = normalized.toLowerCase().lastIndexOf(packageSuffix.toLowerCase());
-  if (suffixIndex < 0) {
-    return null;
-  }
-  const prefix = normalized.slice(0, suffixIndex);
-  const lowerPrefix = prefix.toLowerCase();
-  const windowsMarkers = ["%~dp0", "%dp0%"] as const;
-  const windowsMarker = windowsMarkers
-    .map((marker) => ({ marker, index: lowerPrefix.lastIndexOf(marker) }))
-    .sort((left, right) => right.index - left.index)[0];
-  const windowsBaseIndex = windowsMarker?.index ?? -1;
-  if (windowsBaseIndex >= 0) {
-    return path.resolve(
-      path.dirname(wrapperPath),
-      prefix.slice(windowsBaseIndex + (windowsMarker?.marker.length ?? 0)).replace(/^\/+/, ""),
-      "node_modules",
-      ...packageName.split("/"),
+) {
+  return Effect.gen(function* () {
+    const targets = wrapperInvocationTargets(context, wrapper, wrapperPath);
+    if (!targets) return null;
+    const roots = yield* Effect.forEach(targets, (target) =>
+      Effect.gen(function* () {
+        const realTarget = yield* context.realPath(target);
+        const lexicalRoot = packageRoot(target, packageName);
+        const realTargetRoot = packageRoot(realTarget, packageName);
+        const root = realTargetRoot ?? lexicalRoot;
+        if (!root) return null;
+        const realRoot = yield* context.realPath(root);
+        return within(context, realTarget, realRoot) ? realRoot : null;
+      }),
     );
-  }
-  const shellBaseIndex = prefix.lastIndexOf("$basedir");
-  if (shellBaseIndex >= 0) {
-    return path.resolve(
-      path.dirname(wrapperPath),
-      prefix.slice(shellBaseIndex + "$basedir".length).replace(/^\/+/, ""),
-      "node_modules",
-      ...packageName.split("/"),
-    );
-  }
-  return path.join(path.dirname(wrapperPath), "node_modules", ...packageName.split("/"));
+    const verifiedRoots = roots.filter((root): root is string => root !== null);
+    const first = verifiedRoots[0];
+    return first &&
+      verifiedRoots.length === roots.length &&
+      verifiedRoots.every((root) => normalize(context, root) === normalize(context, first))
+      ? first
+      : null;
+  });
 }
 
-function wrapperHasAmbiguousPackagePrefix(wrapper: string | null, packageName: string): boolean {
+function wrapperMentionsPackage(wrapper: string | null, packageName: string): boolean {
   if (!wrapper) return false;
   const normalized = wrapper.replaceAll("\\", "/").toLowerCase();
   const prefix = `/node_modules/${packageName.toLowerCase()}`;
-  return normalized.includes(prefix) && !normalized.includes(`${prefix}/`);
+  return normalized.includes(prefix);
 }
 
 const npmGlobalUpdateArgs = (packageName: string) => [
@@ -198,7 +253,6 @@ const nodeManagers = [
 ] as const;
 
 type NodeManager = (typeof nodeManagers)[number];
-const NODE_WRAPPER_MAX_BYTES = 64 * 1_024;
 interface NodeEvidence {
   readonly executable: string;
   readonly updateRoot: string;
@@ -211,14 +265,15 @@ function detectNodePackage(input: ProviderMaintenanceDefinitionInput, manager: N
       context,
       context.realCommandPath ?? context.resolvedCommandPath ?? context.binaryPath,
     );
-    const wrapper = yield* context.readTextFile(
-      context.resolvedCommandPath ?? "",
-      NODE_WRAPPER_MAX_BYTES,
+    const wrapper = yield* context.readTextFile(context.resolvedCommandPath ?? "");
+    const wrapperRoot = yield* packageRootFromWrapper(
+      context,
+      wrapper,
+      context.resolvedCommandPath,
+      input.packageName,
     );
-    let root =
-      packageRoot(observed, input.packageName) ??
-      packageRootFromWrapper(context, wrapper, context.resolvedCommandPath, input.packageName);
-    if (!root && wrapperHasAmbiguousPackagePrefix(wrapper, input.packageName)) {
+    let root = packageRoot(observed, input.packageName) ?? wrapperRoot;
+    if (!root && wrapperMentionsPackage(wrapper, input.packageName)) {
       return undetermined;
     }
     if (!root && manager.id !== "bun") return notMatched;
@@ -247,7 +302,7 @@ function detectNodePackage(input: ProviderMaintenanceDefinitionInput, manager: N
     if (!root) return notMatched;
     root = yield* context.realPath(root);
     const manifest = json(yield* context.readTextFile(pathApi(context).join(root, "package.json")));
-    if (text(manifest?.name) !== input.packageName) return notMatched;
+    if (text(manifest?.name) !== input.packageName) return undetermined;
     let updateRoot = resolvedManagerRoot;
     if (manager.id === "npm") {
       const prefix = npmGlobalPrefix(context, root, input.packageName);
@@ -410,6 +465,12 @@ function homebrewPackageFromPath(path: string): string | null {
   return path.slice(start).split("/")[0] || null;
 }
 
+function normalizeHomebrewCaskVersion(value: string | null): string | null {
+  // Homebrew appends cask build/revision data after a comma; provider
+  // version precedence is determined by the version before it.
+  return normalizeMaintenanceVersion(value?.split(",", 1)[0]);
+}
+
 function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
   if (!input.homebrewFormula) return null;
   const configuredFormula = input.homebrewFormula;
@@ -431,9 +492,12 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
       const executable = yield* context.resolveCommand("brew");
       if (!executable) return undetermined;
       const pathPackage = homebrewPackageFromPath(observed);
+      const configuredBaseName = configuredFormula.split("/").at(-1);
+      const configuredMatchesPath =
+        pathPackage !== null && configuredBaseName?.toLowerCase() === pathPackage.toLowerCase();
       const candidates = [
         ...new Set(
-          [pathPackage, configuredFormula].filter(
+          [configuredMatchesPath ? configuredFormula : null, pathPackage, configuredFormula].filter(
             (candidate): candidate is string => candidate !== null,
           ),
         ),
@@ -500,18 +564,21 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
         ? text(caskInfo.installed[0])
         : text(caskInfo?.installed);
       const currentVersion = normalizeMaintenanceVersion(
-        packageType === "formula" ? text(installedFormula?.version) : installedCask,
+        packageType === "formula" ? text(installedFormula?.version) : null,
       );
-      if (!currentVersion) return undetermined;
+      const normalizedCurrentVersion =
+        packageType === "formula" ? currentVersion : normalizeHomebrewCaskVersion(installedCask);
+      if (!normalizedCurrentVersion) return undetermined;
       return matched({
         executable,
         formula,
         packageType,
         prefix,
-        currentVersion,
-        latestVersion: normalizeMaintenanceVersion(
-          packageType === "formula" ? stable : text(caskInfo?.version),
-        ),
+        currentVersion: normalizedCurrentVersion,
+        latestVersion:
+          packageType === "formula"
+            ? normalizeMaintenanceVersion(stable)
+            : normalizeHomebrewCaskVersion(text(caskInfo?.version)),
       });
     }),
     resolve: (evidence, context) => {

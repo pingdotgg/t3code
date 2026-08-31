@@ -23,7 +23,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import { makeProviderInstallationCatalog } from "./maintenance/catalogs.ts";
-import type { InstallationContext, ResolvedInstallation } from "./maintenance/definition.ts";
+import {
+  INSTALLER_METADATA_MAX_BYTES,
+  type InstallationContext,
+  type ResolvedInstallation,
+} from "./maintenance/definition.ts";
 import { resolveInstallation } from "./maintenance/resolver.ts";
 import { compareMaintenanceVersions } from "./maintenance/version.ts";
 
@@ -98,6 +102,20 @@ export const runMaintenanceProbe = Effect.fn("runMaintenanceProbe")(function* (i
   );
   return Option.getOrNull(result);
 });
+
+export const readProviderMaintenanceMetadata = Effect.fn("readProviderMaintenanceMetadata")(
+  function* (path: string) {
+    if (!path) return null;
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* collectUint8StreamText({
+      stream: fileSystem.stream(path, { bytesToRead: INSTALLER_METADATA_MAX_BYTES + 1 }),
+      maxBytes: INSTALLER_METADATA_MAX_BYTES,
+    }).pipe(
+      Effect.map((result) => (result.truncated || result.invalidUtf8 ? null : result.text)),
+      Effect.orElseSucceed(() => null),
+    );
+  },
+);
 
 export interface ProviderMaintenanceCapabilities {
   readonly provider: ProviderDriverKind;
@@ -409,22 +427,10 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     }),
     latestVersion: null,
   };
-  const readTextFile = Effect.fn("readProviderMaintenanceTextFile")(function* (
-    path: string,
-    maxBytes?: number,
-  ) {
-    if (!path) return null;
-    return yield* (
-      maxBytes === undefined
-        ? fileSystem.readFileString(path).pipe(Effect.map((text) => text as string | null))
-        : collectUint8StreamText({
-            stream: fileSystem.stream(path, { bytesToRead: maxBytes + 1 }),
-            maxBytes,
-          }).pipe(
-            Effect.map((result) => (result.truncated || result.invalidUtf8 ? null : result.text)),
-          )
-    ).pipe(Effect.orElseSucceed(() => null));
-  });
+  const readTextFile = (path: string) =>
+    readProviderMaintenanceMetadata(path).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+    );
   const context: InstallationContext = {
     provider: legacy.provider,
     packageName: legacy.packageName ?? "",

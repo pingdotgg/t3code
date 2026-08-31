@@ -17,7 +17,10 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { GrokMaintenanceResolver } from "./Drivers/GrokDriver.ts";
-import type { InstallationContext } from "./maintenance/definition.ts";
+import {
+  INSTALLER_METADATA_MAX_BYTES,
+  type InstallationContext,
+} from "./maintenance/definition.ts";
 import {
   createProviderVersionAdvisory,
   enrichProviderSnapshotWithVersionAdvisory,
@@ -27,6 +30,7 @@ import {
   makeStaticProviderMaintenanceResolver,
   normalizeCommandPath,
   ProviderVersionCache,
+  readProviderMaintenanceMetadata,
   resolveLatestProviderVersion,
   resolveProviderMaintenanceCapabilitiesEffect,
   runMaintenanceProbe,
@@ -277,6 +281,16 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       expect(before.lockKey).toBe(after.lockKey);
       expect(before.ownershipVerified).toBe(true);
       expect(after.ownershipVerified).toBe(true);
+      expect(before.update).toMatchObject({
+        executable:
+          "/home/test/.codex/packages/standalone/releases/1.0.0-x86_64-unknown-linux-musl/bin/codex",
+        args: ["update"],
+      });
+      expect(after.update).toMatchObject({
+        executable:
+          "/home/test/.codex/packages/standalone/releases/1.1.0-x86_64-unknown-linux-musl/bin/codex",
+        args: ["update"],
+      });
     }),
   );
 
@@ -290,6 +304,20 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         expect(result).toBeNull();
       }),
     ),
+  );
+
+  it.effect("rejects oversized and invalid UTF-8 installer metadata", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-provider-maintenance-metadata");
+      NodeFS.mkdirSync(tempDir, { recursive: true });
+      const oversized = NodePath.join(tempDir, "oversized.json");
+      const invalidUtf8 = NodePath.join(tempDir, "invalid-utf8.json");
+      NodeFS.writeFileSync(oversized, Buffer.alloc(INSTALLER_METADATA_MAX_BYTES + 1, 0x61));
+      NodeFS.writeFileSync(invalidUtf8, Buffer.from([0x7b, 0xc3, 0x28, 0x7d]));
+
+      expect(yield* readProviderMaintenanceMetadata(oversized)).toBeNull();
+      expect(yield* readProviderMaintenanceMetadata(invalidUtf8)).toBeNull();
+    }),
   );
 
   it.effect("does not swallow interruption after a maintenance process starts", () =>

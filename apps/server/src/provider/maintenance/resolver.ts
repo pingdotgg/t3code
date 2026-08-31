@@ -29,11 +29,10 @@ export const resolveInstallation = Effect.fn("resolveInstallation")(function* (
   const textFiles = new Map<string, string | null>();
   const cachedContext: InstallationContext = {
     ...context,
-    readTextFile: Effect.fn("readCachedInstallationTextFile")(function* (path, maxBytes) {
-      const cacheKey = `${path}\0${maxBytes ?? "unbounded"}`;
-      if (textFiles.has(cacheKey)) return textFiles.get(cacheKey) ?? null;
-      const value = yield* context.readTextFile(path, maxBytes);
-      textFiles.set(cacheKey, value);
+    readTextFile: Effect.fn("readCachedInstallationTextFile")(function* (path) {
+      if (textFiles.has(path)) return textFiles.get(path) ?? null;
+      const value = yield* context.readTextFile(path);
+      textFiles.set(path, value);
       return value;
     }),
   };

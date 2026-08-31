@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 
 import {
   canonicalPath,
+  INSTALLER_METADATA_MAX_BYTES,
   type InstallationContext,
   type MaintenanceProbeResult,
   type ResolvedInstallation,
@@ -40,7 +41,7 @@ interface TestContextInput {
   readonly commands?: Readonly<Record<string, string>>;
   readonly probes?: Readonly<Record<string, MaintenanceProbeResult>>;
   readonly realPaths?: Readonly<Record<string, string>>;
-  readonly textFileReads?: Array<{ readonly path: string; readonly maxBytes?: number }>;
+  readonly textFileReads?: Array<{ readonly path: string }>;
 }
 
 function context(input: TestContextInput): InstallationContext {
@@ -58,13 +59,11 @@ function context(input: TestContextInput): InstallationContext {
     realCommandPath: input.realCommandPath ?? input.resolvedCommandPath,
     environment: input.environment ?? { PATH: "test-path" },
     platform: input.platform ?? "linux",
-    readTextFile: (path, maxBytes) => {
-      input.textFileReads?.push({ path, ...(maxBytes === undefined ? {} : { maxBytes }) });
+    readTextFile: (path) => {
+      input.textFileReads?.push({ path });
       const value = files.get(path.replaceAll("\\", "/").toLowerCase()) ?? null;
       return Effect.succeed(
-        value !== null && maxBytes !== undefined && Buffer.byteLength(value) > maxBytes
-          ? null
-          : value,
+        value !== null && Buffer.byteLength(value) > INSTALLER_METADATA_MAX_BYTES ? null : value,
       );
     },
     realPath: (path) =>
@@ -245,9 +244,15 @@ it.effect("keeps an unknown bare command manual-only", () => {
     binaryPath: "codex",
     resolvedCommandPath: "/custom/bin/codex",
     commands: { npm: "/usr/local/bin/npm" },
+    probes: {
+      "/usr/local/bin/npm root -g": probe("/usr/local/lib/node_modules"),
+      "/usr/local/bin/npm view @openai/codex@latest version --json": probe('"9.9.9"'),
+    },
   }).pipe(
     Effect.map((installation) => {
       expectManualInstallation(installation);
+      expect(installation.ownershipVerified).toBe(false);
+      expect(installation.update).toBeNull();
     }),
   );
 });
@@ -361,7 +366,7 @@ it.effect("proves npm ownership through a Windows global command wrapper", () =>
     commands: { npm },
     files: {
       [`${prefix}/codex.cmd`]:
-        '@IF EXIST "%~dp0\\node.exe" ("%~dp0\\node.exe" "%~dp0\\node_modules\\@openai\\codex\\bin\\codex.js")',
+        '@IF EXIST "%~dp0\\node.exe" ("%~dp0\\node.exe" "%~dp0\\node_modules\\@openai\\codex\\bin\\codex.js" %*)',
       [`${prefix}/node_modules/@openai/codex/package.json`]: packageManifest("1.0.0"),
     },
     probes: {
@@ -396,7 +401,7 @@ it.effect("reads a POSIX package wrapper once across Node manager probes", () =>
   const wrapper = `${prefix}/bin/codex`;
   const packageRoot = `${prefix}/share/pnpm/global/v5/node_modules/@openai/codex`;
   const pnpm = `${prefix}/bin/pnpm`;
-  const textFileReads: Array<{ readonly path: string; readonly maxBytes?: number }> = [];
+  const textFileReads: Array<{ readonly path: string }> = [];
   return resolveCatalog({
     binaryPath: "codex",
     resolvedCommandPath: wrapper,
@@ -418,16 +423,14 @@ it.effect("reads a POSIX package wrapper once across Node manager probes", () =>
         currentVersion: "1.0.0",
         latestVersion: "1.1.0",
       });
-      expect(textFileReads.filter((read) => read.path === wrapper)).toEqual([
-        { path: wrapper, maxBytes: 64 * 1_024 },
-      ]);
+      expect(textFileReads.filter((read) => read.path === wrapper)).toEqual([{ path: wrapper }]);
     }),
   );
 });
 
 it.effect("skips oversized command wrappers without weakening ownership", () => {
   const wrapper = "/home/test/.local/bin/codex";
-  const textFileReads: Array<{ readonly path: string; readonly maxBytes?: number }> = [];
+  const textFileReads: Array<{ readonly path: string }> = [];
   return resolveCatalog({
     binaryPath: "codex",
     resolvedCommandPath: wrapper,
@@ -438,7 +441,7 @@ it.effect("skips oversized command wrappers without weakening ownership", () => 
   }).pipe(
     Effect.map((installation) => {
       expectManualInstallation(installation);
-      expect(textFileReads).toEqual([{ path: wrapper, maxBytes: 64 * 1_024 }]);
+      expect(textFileReads).toEqual([{ path: wrapper }]);
     }),
   );
 });
@@ -464,6 +467,94 @@ it.effect("does not match a wrapper for a package with a shared name prefix", ()
     Effect.map((installation) => {
       expect(installation.update).toBeNull();
       expect(installation.ownershipVerified).toBe(false);
+    }),
+  );
+});
+
+it.effect("rejects package text that is not the wrapper execution target", () => {
+  const prefix = "/opt/node";
+  const wrapper = `${prefix}/bin/codex`;
+  return resolveCatalog({
+    binaryPath: "codex",
+    resolvedCommandPath: wrapper,
+    commands: { npm: `${prefix}/bin/npm` },
+    files: {
+      [wrapper]:
+        'echo "/opt/node/lib/node_modules/@openai/codex/bin/codex.js" "$@"\nexec "/tmp/unrelated-codex"',
+      [`${prefix}/lib/node_modules/@openai/codex/package.json`]: packageManifest("1.0.0"),
+    },
+    probes: {
+      [`${prefix}/bin/npm root -g`]: probe(`${prefix}/lib/node_modules`),
+    },
+  }).pipe(
+    Effect.map((installation) => {
+      expectManualInstallation(installation, true);
+    }),
+  );
+});
+
+it.effect("rejects wrappers with an unowned alternate execution target", () => {
+  const prefix = "/opt/node";
+  const wrapper = `${prefix}/bin/codex`;
+  return resolveCatalog({
+    binaryPath: "codex",
+    resolvedCommandPath: wrapper,
+    commands: { npm: `${prefix}/bin/npm` },
+    files: {
+      [wrapper]: [
+        `exec "$basedir/../lib/node_modules/@openai/codex/bin/codex.js" "$@"`,
+        `exec "/tmp/unrelated-codex" "$@"`,
+      ].join("\n"),
+      [`${prefix}/lib/node_modules/@openai/codex/package.json`]: packageManifest("1.0.0"),
+    },
+    probes: {
+      [`${prefix}/bin/npm root -g`]: probe(`${prefix}/lib/node_modules`),
+    },
+  }).pipe(
+    Effect.map((installation) => {
+      expectManualInstallation(installation, true);
+    }),
+  );
+});
+
+it.effect("fails closed for malformed package metadata", () => {
+  const prefix = "/opt/node";
+  const wrapper = `${prefix}/bin/codex`;
+  return resolveCatalog({
+    binaryPath: "codex",
+    resolvedCommandPath: wrapper,
+    commands: { npm: `${prefix}/bin/npm` },
+    files: {
+      [wrapper]: `exec "$basedir/../lib/node_modules/@openai/codex/bin/codex.js" "$@"`,
+      [`${prefix}/lib/node_modules/@openai/codex/package.json`]: "{not-json",
+    },
+    probes: {
+      [`${prefix}/bin/npm root -g`]: probe(`${prefix}/lib/node_modules`),
+    },
+  }).pipe(
+    Effect.map((installation) => {
+      expectManualInstallation(installation, true);
+    }),
+  );
+});
+
+it.effect("fails closed for oversized package metadata", () => {
+  const prefix = "/opt/node";
+  const wrapper = `${prefix}/bin/codex`;
+  return resolveCatalog({
+    binaryPath: "codex",
+    resolvedCommandPath: wrapper,
+    commands: { npm: `${prefix}/bin/npm` },
+    files: {
+      [wrapper]: `exec "$basedir/../lib/node_modules/@openai/codex/bin/codex.js" "$@"`,
+      [`${prefix}/lib/node_modules/@openai/codex/package.json`]: `${packageManifest("1.0.0")}${" ".repeat(INSTALLER_METADATA_MAX_BYTES)}`,
+    },
+    probes: {
+      [`${prefix}/bin/npm root -g`]: probe(`${prefix}/lib/node_modules`),
+    },
+  }).pipe(
+    Effect.map((installation) => {
+      expectManualInstallation(installation, true);
     }),
   );
 });
@@ -502,6 +593,8 @@ it.effect("proves npm ownership across a Scoop Node persistent-bin junction", ()
   const currentBin = "C:/Users/test/scoop/apps/nodejs-lts/current/bin";
   const persistentBin = "C:/Users/test/scoop/persist/nodejs-lts/bin";
   const packageRoot = `${persistentBin}/node_modules/@openai/codex`;
+  const currentTarget = `${currentBin}/node_modules/@openai/codex/bin/codex.exe`;
+  const persistentTarget = `${persistentBin}/node_modules/@openai/codex/bin/codex.exe`;
   const npm = "C:/Users/test/scoop/apps/nodejs-lts/current/npm.cmd";
   return resolveCatalog({
     binaryPath: "codex",
@@ -510,6 +603,7 @@ it.effect("proves npm ownership across a Scoop Node persistent-bin junction", ()
     commands: { npm },
     realPaths: {
       [`${currentBin}/node_modules/@openai/codex`.toLowerCase()]: packageRoot,
+      [currentTarget.toLowerCase()]: persistentTarget,
     },
     files: {
       [`${currentBin}/codex.cmd`]:
@@ -611,6 +705,72 @@ it.effect("proves Homebrew ownership and fails closed for unresolved shims", () 
   });
 });
 
+it.effect("does not classify a Linux /usr/local/bin executable as Homebrew", () =>
+  resolveCatalog({
+    binaryPath: "codex",
+    resolvedCommandPath: "/usr/local/bin/codex",
+    realCommandPath: "/usr/local/bin/codex",
+    commands: {
+      brew: "/home/linuxbrew/.linuxbrew/bin/brew",
+      npm: "/usr/local/bin/npm",
+    },
+    probes: {
+      "/usr/local/bin/npm root -g": probe("/usr/local/lib/node_modules"),
+    },
+  }).pipe(
+    Effect.map((installation) => {
+      expectManualInstallation(installation, true);
+    }),
+  ),
+);
+
+it.effect("preserves a matching tap-qualified Homebrew formula", () => {
+  const brew = "/opt/homebrew/bin/brew";
+  const formula = "example/tap/scoped-package-tool";
+  const formulaPrefix = "/opt/homebrew/opt/scoped-package-tool";
+  const realFormulaPrefix = "/opt/homebrew/Cellar/scoped-package-tool/1.2.3";
+  const tapCatalog = makeProviderInstallationCatalog({
+    provider,
+    packageName: "@example/scoped-package-tool",
+    executableName: "scoped-package-tool",
+    homebrewFormula: formula,
+    native: null,
+    instructionsUrl: "https://example.com/scoped-package-tool",
+  });
+  return resolveInstallation(
+    context({
+      binaryPath: "scoped-package-tool",
+      resolvedCommandPath: "/opt/homebrew/bin/scoped-package-tool",
+      realCommandPath: `${realFormulaPrefix}/bin/scoped-package-tool`,
+      commands: { brew },
+      realPaths: { [formulaPrefix]: realFormulaPrefix },
+      probes: {
+        [`${brew} --prefix --installed ${formula}`]: probe(formulaPrefix),
+        [`${brew} --caskroom ${formula}`]: probe("", 1),
+        [`${brew} info --json=v2 ${formula}`]: probe(
+          JSON.stringify({
+            formulae: [
+              {
+                installed: [{ version: "1.2.3" }],
+                versions: { stable: "1.2.4" },
+              },
+            ],
+          }),
+        ),
+      },
+    }),
+    tapCatalog,
+  ).pipe(
+    Effect.map((installation) => {
+      expect(installation).toMatchObject({
+        label: "Managed by Homebrew",
+        ownershipVerified: true,
+        update: { executable: brew, args: ["upgrade", formula] },
+      });
+    }),
+  );
+});
+
 it.effect("accepts Homebrew cask metadata with a scalar installed version", () => {
   const brew = "/opt/homebrew/bin/brew";
   const caskPrefix = "/opt/homebrew/Caskroom/codex";
@@ -634,6 +794,35 @@ it.effect("accepts Homebrew cask metadata with a scalar installed version", () =
         label: "Managed by Homebrew",
         currentVersion: "0.149.1",
         latestVersion: "0.150.0",
+        update: { executable: brew, args: ["upgrade", "--cask", "codex"] },
+      });
+    }),
+  );
+});
+
+it.effect("normalizes Homebrew cask build suffixes as channel metadata", () => {
+  const brew = "/opt/homebrew/bin/brew";
+  const caskPrefix = "/opt/homebrew/Caskroom/codex";
+  return resolveCatalog({
+    binaryPath: "codex",
+    resolvedCommandPath: "/opt/homebrew/bin/codex",
+    realCommandPath: `${caskPrefix}/1.2.3,4566/codex-aarch64-apple-darwin`,
+    commands: { brew },
+    probes: {
+      [`${brew} --prefix --installed codex`]: probe("", 1),
+      [`${brew} --caskroom codex`]: probe(caskPrefix),
+      [`${brew} info --json=v2 codex`]: probe(
+        JSON.stringify({
+          casks: [{ installed: "1.2.3,4566", version: "1.2.3,4567" }],
+        }),
+      ),
+    },
+  }).pipe(
+    Effect.map((installation) => {
+      expect(installation).toMatchObject({
+        label: "Managed by Homebrew",
+        currentVersion: "1.2.3",
+        latestVersion: "1.2.3",
         update: { executable: brew, args: ["upgrade", "--cask", "codex"] },
       });
     }),
