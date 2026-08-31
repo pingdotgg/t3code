@@ -20,6 +20,13 @@ export type NetworkInterfaces = Readonly<
   Record<string, readonly DesktopNetworkInterfaceInfo[] | undefined>
 >;
 
+// Some Node builds report the address family as the number 4/6 instead of
+// "IPv4"/"IPv6" (see DesktopBackendConfiguration.isLocalHostIpv4).
+export const isIpv4Family = (family: string | number): boolean => {
+  const normalized = String(family);
+  return normalized === "IPv4" || normalized === "4";
+};
+
 export class DesktopNetworkInterfacesReadError extends Schema.TaggedErrorClass<DesktopNetworkInterfacesReadError>()(
   "DesktopNetworkInterfacesReadError",
   {

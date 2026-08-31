@@ -9,7 +9,7 @@ import {
   type DesktopServerExposureMode,
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
-import { readTailscaleStatus } from "@t3tools/tailscale";
+import { isTailscaleIpv4Address, readTailscaleStatus } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -42,6 +42,7 @@ interface ResolvedDesktopServerExposure {
 interface DesktopAdvertisedEndpointInput {
   readonly port: number;
   readonly exposure: ResolvedDesktopServerExposure;
+  readonly advertisedLanHosts: readonly LanAdvertisedHost[];
   readonly customHttpsEndpointUrls?: readonly string[];
 }
 
@@ -67,6 +68,11 @@ const normalizeOptionalHost = (value: string | undefined): string | undefined =>
 const isUsableLanIpv4Address = (address: string): boolean =>
   !address.startsWith("127.") && !address.startsWith("169.254.");
 
+interface LanAdvertisedHost {
+  readonly address: string;
+  readonly interfaceName: string | null;
+}
+
 const isHttpsEndpointUrl = (value: string): boolean => {
   try {
     return new URL(value).protocol === "https:";
@@ -75,27 +81,39 @@ const isHttpsEndpointUrl = (value: string): boolean => {
   }
 };
 
-const resolveLanAdvertisedHost = (
+const resolveLanAdvertisedHosts = (
   networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
   explicitHost: string | undefined,
-): string | null => {
+): readonly LanAdvertisedHost[] => {
   const normalizedExplicitHost = normalizeOptionalHost(explicitHost);
   if (normalizedExplicitHost) {
-    return normalizedExplicitHost;
+    return [{ address: normalizedExplicitHost, interfaceName: null }];
   }
 
-  for (const interfaceAddresses of Object.values(networkInterfaces)) {
+  const seenAddresses = new Set<string>();
+  const lanHosts: LanAdvertisedHost[] = [];
+  const tailnetHosts: LanAdvertisedHost[] = [];
+
+  for (const [interfaceName, interfaceAddresses] of Object.entries(networkInterfaces)) {
     if (!interfaceAddresses) continue;
 
     for (const address of interfaceAddresses) {
       if (address.internal) continue;
-      if (address.family !== "IPv4") continue;
+      if (!DesktopNetworkInterfaces.isIpv4Family(address.family)) continue;
       if (!isUsableLanIpv4Address(address.address)) continue;
-      return address.address;
+      if (seenAddresses.has(address.address)) continue;
+      seenAddresses.add(address.address);
+
+      const host: LanAdvertisedHost = { address: address.address, interfaceName };
+      if (isTailscaleIpv4Address(address.address)) {
+        tailnetHosts.push(host);
+      } else {
+        lanHosts.push(host);
+      }
     }
   }
 
-  return null;
+  return [...lanHosts, ...tailnetHosts];
 };
 
 const resolveDesktopServerExposure = (input: {
@@ -118,10 +136,11 @@ const resolveDesktopServerExposure = (input: {
     };
   }
 
-  const advertisedHost = resolveLanAdvertisedHost(
+  const advertisedLanHosts = resolveLanAdvertisedHosts(
     input.networkInterfaces,
     input.advertisedHostOverride,
   );
+  const advertisedHost = advertisedLanHosts[0]?.address ?? null;
 
   return {
     mode: input.mode,
@@ -165,19 +184,30 @@ const resolveDesktopCoreAdvertisedEndpoints = (
     }),
   ];
 
-  if (input.exposure.endpointUrl) {
+  const advertisedLanHosts = input.advertisedLanHosts;
+  // Tailnet addresses are replaced by the Tailscale provider's own entries
+  // below, so only the remaining hosts count toward needing disambiguation.
+  const namedLanHostCount = advertisedLanHosts.filter(
+    (host) => !isTailscaleIpv4Address(host.address),
+  ).length;
+  advertisedLanHosts.forEach((host, index) => {
+    const httpBaseUrl = `http://${host.address}:${input.port}`;
+    const label =
+      namedLanHostCount >= 2 && host.interfaceName !== null
+        ? `Local network (${host.interfaceName})`
+        : "Local network";
     endpoints.push(
       createDesktopEndpoint({
-        id: `desktop-lan:${input.exposure.endpointUrl}`,
-        label: "Local network",
-        httpBaseUrl: input.exposure.endpointUrl,
+        id: `desktop-lan:${httpBaseUrl}`,
+        label,
+        httpBaseUrl,
         reachability: "lan",
         status: "available",
-        isDefault: true,
+        ...(index === 0 ? { isDefault: true } : {}),
         description: "Reachable from devices on the same network.",
       }),
     );
-  }
+  });
 
   for (const customEndpointUrl of input.customHttpsEndpointUrls ?? []) {
     try {
@@ -524,9 +554,21 @@ export const make = Effect.gen(function* () {
   const getAdvertisedEndpoints = Effect.gen(function* () {
     const state = yield* Ref.get(stateRef);
     const currentNetworkInterfaces = yield* readNetworkInterfaces;
+    // Re-resolve LAN hosts on every read so interfaces that appear or vanish
+    // after startup (VPNs connecting/disconnecting, hot-plugged NICs) stay
+    // accurate. The backend binds 0.0.0.0 in network-accessible mode, so any
+    // currently-present address is reachable.
+    const advertisedLanHosts =
+      state.mode === "network-accessible"
+        ? resolveLanAdvertisedHosts(
+            currentNetworkInterfaces,
+            Option.getOrUndefined(config.desktopLanHostOverride),
+          )
+        : [];
     const coreEndpoints = resolveDesktopCoreAdvertisedEndpoints({
       port: state.port,
       exposure: toResolvedExposure(state),
+      advertisedLanHosts,
       customHttpsEndpointUrls: config.desktopHttpsEndpointUrls,
     });
 
@@ -547,7 +589,23 @@ export const make = Effect.gen(function* () {
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
-    return [...coreEndpoints, ...tailscaleEndpoints];
+    // A tailnet address surfaces through the Tailscale provider's richer
+    // entry; drop the plain LAN duplicate but keep the default marker on
+    // whichever entry survives.
+    const tailscaleUrls = new Set(tailscaleEndpoints.map((endpoint) => endpoint.httpBaseUrl));
+    const isDuplicateLanEndpoint = (endpoint: AdvertisedEndpoint): boolean =>
+      endpoint.id.startsWith("desktop-lan:") && tailscaleUrls.has(endpoint.httpBaseUrl);
+    const droppedDefault = coreEndpoints.find(
+      (endpoint) => isDuplicateLanEndpoint(endpoint) && endpoint.isDefault === true,
+    );
+    return [
+      ...coreEndpoints.filter((endpoint) => !isDuplicateLanEndpoint(endpoint)),
+      ...tailscaleEndpoints.map((endpoint) =>
+        endpoint.httpBaseUrl === droppedDefault?.httpBaseUrl
+          ? { ...endpoint, isDefault: true }
+          : endpoint,
+      ),
+    ];
   }).pipe(Effect.withSpan("desktop.serverExposure.getAdvertisedEndpoints"));
 
   return DesktopServerExposure.of({
