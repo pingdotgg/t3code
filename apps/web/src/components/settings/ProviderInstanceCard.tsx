@@ -660,8 +660,16 @@ export function ProviderInstanceCard({
               ) : null}
               {versionCodeNode}
               {versionAdvisory ? (
-                <span role="img" aria-label="Update available" className="inline-flex shrink-0">
-                  <ArrowUpCircleIcon className="size-3.5 text-update-foreground" />
+                <span
+                  role="img"
+                  aria-label={versionAdvisory.title}
+                  className="inline-flex shrink-0"
+                >
+                  {versionAdvisory.icon === "refresh" ? (
+                    <RefreshCwIcon className="size-3.5 text-muted-foreground" />
+                  ) : (
+                    <ArrowUpCircleIcon className="size-3.5 text-update-foreground" />
+                  )}
                 </span>
               ) : null}
             </span>

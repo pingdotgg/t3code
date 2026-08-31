@@ -119,4 +119,52 @@ describe("deriveProviderModelsForDisplay", () => {
       expect(markup).toContain("is not a symlink");
     }
   });
+
+  it("shows unknown update advisories as a muted refresh action in the list row", () => {
+    const instanceId = ProviderInstanceId.make("codex");
+    const driver = ProviderDriverKind.make("codex");
+    const liveProvider: ServerProvider = {
+      instanceId,
+      driver,
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-08-29T12:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+      versionAdvisory: {
+        status: "unknown",
+        currentVersion: "1.0.0",
+        latestVersion: null,
+        updateCommand: "codex update",
+        canUpdate: true,
+        checkedAt: "2026-08-29T12:00:00.000Z",
+        message: null,
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      createElement(ProviderInstanceCard, {
+        instanceId,
+        instance: { driver },
+        driverOption: undefined,
+        liveProvider,
+        mode: "list",
+        onUpdate: () => undefined,
+        hiddenModels: [],
+        favoriteModels: [],
+        modelOrder: [],
+        onHiddenModelsChange: () => undefined,
+        onFavoriteModelsChange: () => undefined,
+        onModelOrderChange: () => undefined,
+      }),
+    );
+
+    expect(markup).toContain('aria-label="Check for updates"');
+    expect(markup).toContain('class="lucide lucide-refresh-cw size-3.5 text-muted-foreground"');
+    expect(markup).not.toContain("lucide-arrow-up-circle");
+  });
 });

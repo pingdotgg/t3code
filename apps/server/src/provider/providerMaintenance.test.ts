@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -14,6 +15,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { GrokMaintenanceResolver } from "./Drivers/GrokDriver.ts";
 import type { InstallationContext } from "./maintenance/definition.ts";
 import {
@@ -288,6 +290,30 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         expect(result).toBeNull();
       }),
     ),
+  );
+
+  it.effect("does not swallow interruption after a maintenance process starts", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const processStarted = yield* Deferred.make<void>();
+      const coordinatingSpawner = ChildProcessSpawner.make((command) =>
+        delegate.spawn(command).pipe(Effect.tap(() => Deferred.succeed(processStarted, undefined))),
+      );
+      const fiber = yield* runMaintenanceProbe({
+        executable: NodeProcess.execPath,
+        args: ["-e", "setInterval(() => {}, 1_000)"],
+        environment: NodeProcess.env,
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, coordinatingSpawner),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(processStarted);
+      yield* Fiber.interrupt(fiber);
+      const exit = yield* Fiber.await(fiber);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(Exit.isFailure(exit) && exit.cause.reasons.some(Cause.isInterruptReason)).toBe(true);
+    }),
   );
 
   it.effect("reads cached versions through the injectable cache reference", () =>

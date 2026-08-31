@@ -6,6 +6,7 @@ import {
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Clock from "effect/Clock";
+import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -88,7 +89,12 @@ export const runMaintenanceProbe = Effect.fn("runMaintenanceProbe")(function* (i
   }).pipe(
     Effect.scoped,
     Effect.timeoutOption(Duration.millis(MAINTENANCE_PROBE_TIMEOUT_MS)),
-    Effect.catchCause(() => Effect.succeed(Option.none())),
+    Effect.catchCause((cause) => {
+      const interruptionReasons = cause.reasons.filter(Cause.isInterruptReason);
+      return interruptionReasons.length > 0
+        ? Effect.failCause(Cause.fromReasons<never>(interruptionReasons))
+        : Effect.succeed(Option.none());
+    }),
   );
   return Option.getOrNull(result);
 });
