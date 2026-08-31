@@ -734,6 +734,19 @@ export const DesktopPreviewRecordingFrameSchema: Schema.Codec<DesktopPreviewReco
     receivedAt: Schema.String,
   });
 
+export interface DesktopPreviewRecordingSource {
+  sourceId: string;
+  width: number;
+  height: number;
+}
+
+export const DesktopPreviewRecordingSourceSchema: Schema.Codec<DesktopPreviewRecordingSource> =
+  Schema.Struct({
+    sourceId: Schema.String,
+    width: Schema.Int.check(Schema.isGreaterThan(0)),
+    height: Schema.Int.check(Schema.isGreaterThan(0)),
+  });
+
 export interface DesktopPreviewRecordingArtifact {
   id: string;
   tabId: string;
@@ -1215,7 +1228,7 @@ export interface DesktopPreviewBridge {
     close: (tabId: string) => Promise<void>;
   };
   recording: {
-    startScreencast: (tabId: string) => Promise<void>;
+    startScreencast: (tabId: string) => Promise<DesktopPreviewRecordingSource>;
     stopScreencast: (tabId: string) => Promise<void>;
     save: (
       tabId: string,
