@@ -5,11 +5,13 @@ import {
   DesktopPreviewAutomationEvaluateInputSchema,
   DesktopPreviewAutomationPressInputSchema,
   DesktopPreviewAutomationScrollInputSchema,
+  DesktopPreviewAutomationStatusSchema,
   DesktopPreviewAutomationTypeInputSchema,
   DesktopPreviewAutomationWaitForInputSchema,
   DesktopPreviewConfigInputSchema,
   DesktopPreviewNavigateInputSchema,
   DesktopPreviewRecordingArtifactSchema,
+  DesktopPreviewRecordingSourceSchema,
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
@@ -20,7 +22,6 @@ import {
   DesktopPreviewWebviewConfigSchema,
   PreviewAnnotationSubmissionResultSchema,
   PreviewAutomationSnapshot,
-  PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -173,11 +174,15 @@ export const cancelPickElement = tabMethod(
   "desktop.ipc.preview.cancelPickElement",
   (manager, tabId) => manager.cancelPickElement(tabId),
 );
-export const startRecording = tabMethod(
-  IpcChannels.PREVIEW_RECORDING_START_CHANNEL,
-  "desktop.ipc.preview.startRecording",
-  (manager, tabId) => manager.startRecording(tabId),
-);
+export const startRecording = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_RECORDING_START_CHANNEL,
+  payload: DesktopPreviewTabInputSchema,
+  result: DesktopPreviewRecordingSourceSchema,
+  handler: Effect.fn("desktop.ipc.preview.startRecording")(function* ({ tabId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.startRecording(tabId);
+  }),
+});
 export const stopRecording = tabMethod(
   IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL,
   "desktop.ipc.preview.stopRecording",
@@ -282,7 +287,7 @@ export const copyArtifactToClipboard = DesktopIpc.makeIpcMethod({
 export const automationStatus = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_AUTOMATION_STATUS_CHANNEL,
   payload: DesktopPreviewTabInputSchema,
-  result: PreviewAutomationStatus,
+  result: DesktopPreviewAutomationStatusSchema,
   handler: Effect.fn("desktop.ipc.preview.automationStatus")(function* ({ tabId }) {
     const manager = yield* PreviewManager.PreviewManager;
     return yield* manager.automationStatus(tabId);

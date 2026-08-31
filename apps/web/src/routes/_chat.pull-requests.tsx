@@ -1628,11 +1628,13 @@ function CompactFilterMenu<Value extends string>({
   value,
   options,
   onChange,
+  className,
 }: {
   label: string;
   value: Value;
   options: ReadonlyArray<PullRequestFilterOption<Value>>;
   onChange: (value: Value) => void;
+  className?: string;
 }) {
   const current = options.find((option) => option.value === value) ?? options[0];
   if (!current) return null;
@@ -1640,10 +1642,13 @@ function CompactFilterMenu<Value extends string>({
     <Menu>
       <MenuTrigger
         aria-label={label}
-        className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+        className={cn(
+          "inline-flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground",
+          className,
+        )}
       >
-        {current.label}
-        <ChevronDownIcon aria-hidden className="size-3 text-muted-foreground/70" />
+        <span className="truncate">{current.label}</span>
+        <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-muted-foreground/70" />
       </MenuTrigger>
       <MenuPopup align="start" side="bottom" className="min-w-40">
         <MenuRadioGroup value={value} onValueChange={(next) => onChange(next as Value)}>
@@ -1721,7 +1726,7 @@ function ExpandableSearch({
     return (
       <div
         ref={containerRef}
-        className="w-56 shrink-0"
+        className="w-56 min-w-24 shrink"
         onFocus={() => onFocusWithin?.(true)}
         onBlur={() => {
           onFocusWithin?.(false);
@@ -1808,6 +1813,7 @@ function PullRequestsColumn({
   const inFlowSearchRef = useRef<HTMLDivElement | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchFocusToken, setSearchFocusToken] = useState(0);
+  const searchExpanded = searchOpen || searchValue.length > 0;
   // Mod+F belongs to this page's own search: the desktop shell binds no find-in-page, so the
   // shortcut would otherwise do nothing. Condensed, it unfolds the topbar search; at the top,
   // it focuses the in-flow bar and selects the query the way a find field would.
@@ -1860,20 +1866,20 @@ function PullRequestsColumn({
       >
         {titlebarControls}
         {condensed ? (
-          <WorkspaceBreadcrumb ariaLabel="Pull request scope">
-            {/* The page name remains the foreground anchor in both states; the live filters are
-                its compact scope, grouped as the second crumb rather than pretending each menu
-                is a separate page in the hierarchy. */}
-            <WorkspaceBreadcrumbItem current>
+          <WorkspaceBreadcrumb ariaLabel="Pull request scope" className="overflow-hidden">
+            {/* An expanded search owns the scarce horizontal space. The page title stays
+                available to readers while the live filters remain available in both states. */}
+            <WorkspaceBreadcrumbItem current className={cn(searchExpanded && "sr-only")}>
               <h1 className="truncate">Pull Requests</h1>
             </WorkspaceBreadcrumbItem>
-            <WorkspaceBreadcrumbSeparator />
-            <WorkspaceBreadcrumbItem className="gap-1.5 overflow-hidden">
+            {searchExpanded ? null : <WorkspaceBreadcrumbSeparator />}
+            <WorkspaceBreadcrumbItem className="shrink gap-1.5">
               <CompactFilterMenu
                 label="Filter by state"
                 value={state}
                 options={STATE_TABS}
                 onChange={onState}
+                className="shrink-0"
               />
               <CompactFilterMenu
                 label="Filter by involvement"
@@ -1900,7 +1906,7 @@ function PullRequestsColumn({
         )}
         <div className="min-w-0 flex-1" />
         {condensed ? (
-          <div className="flex shrink-0 items-center gap-1.5">
+          <div className="flex shrink items-center gap-1.5">
             <ExpandableSearch
               searchInput={searchInput}
               searchValue={searchValue}
@@ -1919,9 +1925,9 @@ function PullRequestsColumn({
 
       <div
         ref={scrollRef}
-        className="topbar-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto [--topbar-scroll-fade-height:1.5rem] sm:[--topbar-scroll-fade-height:1.5rem]"
+        className="topbar-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto"
       >
-        {/* The top padding is the fade band's own height (1.5rem here), the same pairing the
+        {/* The top padding is the shared fade band's height, the same pairing the
             settings page makes: at rest the controls sit fully below the mask, and only
             content actually passing under the chrome fades. */}
         <WorkspacePageContainer className="gap-4">

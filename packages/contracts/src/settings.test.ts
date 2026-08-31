@@ -66,6 +66,26 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings browser recording frame rate", () => {
+  it("defaults to 30 fps", () => {
+    expect(decodeClientSettings({}).browserRecordingFrameRate).toBe(30);
+  });
+
+  it.each([30, 60])("accepts a supported frame rate: %s", (frameRate) => {
+    expect(
+      decodeClientSettings({ browserRecordingFrameRate: frameRate }).browserRecordingFrameRate,
+    ).toBe(frameRate);
+    expect(
+      decodeClientSettingsPatch({ browserRecordingFrameRate: frameRate }).browserRecordingFrameRate,
+    ).toBe(frameRate);
+  });
+
+  it.each([24, 59, 120])("rejects an unsupported frame rate: %s", (frameRate) => {
+    expect(() => decodeClientSettings({ browserRecordingFrameRate: frameRate })).toThrow();
+    expect(() => decodeClientSettingsPatch({ browserRecordingFrameRate: frameRate })).toThrow();
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);
@@ -139,6 +159,12 @@ describe("ClientSettings sidebar", () => {
     expect(decodeClientSettingsPatch({ legacySidebarEnabled: true }).legacySidebarEnabled).toBe(
       true,
     );
+  });
+
+  it("keeps unpin confirmation opt-in and patchable", () => {
+    expect(decodeClientSettings({}).confirmThreadUnpin).toBe(false);
+    expect(decodeClientSettingsPatch({ confirmThreadUnpin: true }).confirmThreadUnpin).toBe(true);
+    expect(() => decodeClientSettingsPatch({ confirmThreadUnpin: "yes" })).toThrow();
   });
 
   it("allows auto-settle by inactivity to be disabled", () => {

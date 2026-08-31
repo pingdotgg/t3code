@@ -124,7 +124,7 @@ export function decodeScanCache(document: unknown): ScanCache {
 
   // The intern tables must be all strings: a numeric entry would pass the
   // undefined guard below, land in a record's model, and crash the aggregate
-  // at normalizeModelName. A corrupt table rejects the whole cache.
+  // at lookupRate. A corrupt table rejects the whole cache.
   if (!root.models.every((value) => typeof value === "string")) return cache;
   if (!root.sessions.every((value) => typeof value === "string")) return cache;
   const models = root.models as readonly string[];
@@ -134,7 +134,7 @@ export function decodeScanCache(document: unknown): ScanCache {
     if (typeof raw !== "object" || raw === null) continue;
     const entry = raw as Partial<SerializedFile>;
     if (typeof entry.s !== "number" || typeof entry.m !== "number") continue;
-    if (entry.p !== "claude" && entry.p !== "codex") continue;
+    if (entry.p !== "claude" && entry.p !== "codex" && entry.p !== "grok") continue;
     if (!isRecordArray(entry.r)) continue;
 
     const provider: UsageProviderKind = entry.p;

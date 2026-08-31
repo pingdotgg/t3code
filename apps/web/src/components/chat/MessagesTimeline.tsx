@@ -1,4 +1,5 @@
 import {
+  type ChatFileAttachment,
   type EnvironmentId,
   type MessageId,
   type ScopedThreadRef,
@@ -6,6 +7,8 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
+import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
 import type { AgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   emptyAgentPanelModel,
@@ -14,6 +17,8 @@ import {
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
+const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
+const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
@@ -35,9 +40,16 @@ import { FileDiff } from "@pierre/diffs/react";
 import {
   deriveTimelineEntries,
   workEntryDisplayIndicatesToolFailure,
+  workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,
 } from "../../session-logic";
-import { type TurnDiffSummary } from "../../types";
+import {
+  type ChatImageAttachment,
+  isFileAttachment,
+  isImageAttachment,
+  isVideoAttachment,
+  type TurnDiffSummary,
+} from "../../types";
 import {
   getRenderablePatch,
   resolveDiffThemeName,
@@ -50,12 +62,15 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   CircleAlertIcon,
+  DownloadIcon,
   EyeIcon,
+  FileIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
+  PlayIcon,
   SearchIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -69,7 +84,10 @@ import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImage
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
-import { keepTimelineEndVisibleAfterOverlayGrowth } from "./timelineScrollAnchoring";
+import {
+  CHAT_TIMELINE_ANCHOR_OFFSET,
+  keepTimelineEndVisibleAfterOverlayGrowth,
+} from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
@@ -141,7 +159,10 @@ interface TimelineRowSharedState {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
+  onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
+  onFileOpen: (attachment: ChatFileAttachment) => void;
+  openingVideoAttachmentId: string | null;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
@@ -151,16 +172,17 @@ interface TimelineRowSharedState {
 
 interface TimelineRowActivityState {
   isWorking: boolean;
+  isPreparingWorktree: boolean;
   isRevertingCheckpoint: boolean;
   latestTurnId: TurnId | null;
-  /** Current plan step label for the working row, when the turn has a plan. */
-  workingStepLabel: string | null;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
-const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
+const TIMELINE_LIST_FADE_HEADER = (
+  <div className="h-[var(--workspace-titlebar-scroll-fade-height)]" />
+);
 
 // Header row shown when older turns exist beyond the loaded window. Plain
 // button, no spinner animation; the label change is the loading indicator.
@@ -174,7 +196,7 @@ function TimelineLoadEarlierHeader({
   fade: boolean;
 }) {
   return (
-    <div className={fade ? "pt-10 sm:pt-12" : "pt-3 sm:pt-4"}>
+    <div className={fade ? "pt-[var(--workspace-titlebar-scroll-fade-height)]" : "pt-3 sm:pt-4"}>
       <div className="mx-auto w-full max-w-3xl pb-2">
         <button
           type="button"
@@ -207,7 +229,7 @@ interface MessagesTimelineProps {
   agentPanelModel?: AgentPanelModel;
   onOpenAgents?: () => void;
   isWorking: boolean;
-  workingStepLabel?: string | null;
+  isPreparingWorktree?: boolean;
   activeTurnStartedAt: string | null;
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
@@ -218,8 +240,11 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
+  onFileOpen?: (attachment: ChatFileAttachment) => void;
+  openingVideoAttachmentId: string | null;
   activeThreadEnvironmentId: EnvironmentId;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
@@ -250,7 +275,7 @@ interface MessagesTimelineProps {
 
 export const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
-  workingStepLabel = null,
+  isPreparingWorktree = false,
   activeTurnStartedAt,
   agentPanelModel = EMPTY_AGENT_PANEL_MODEL,
   onOpenAgents = NOOP_OPEN_AGENTS,
@@ -263,8 +288,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   isRevertingCheckpoint,
   onImageExpand,
+  onFileOpen = NOOP_OPEN_ATTACHMENT,
+  openingVideoAttachmentId,
   activeThreadEnvironmentId,
   markdownCwd,
   resolvedTheme,
@@ -445,8 +473,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [anchorMessageId, onAnchorReady],
   );
   const anchoredEndSpace = useMemo(() => {
-    const config = resolveChatListAnchoredEndSpace(rows, anchorMessageId, (row) =>
-      row.kind === "message" && row.message.role === "user" ? row.message.id : null,
+    const config = resolveChatListAnchoredEndSpace(
+      rows,
+      anchorMessageId,
+      (row) => (row.kind === "message" && row.message.role === "user" ? row.message.id : null),
+      { anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET },
     );
     return config ? { ...config, onReady: handleAnchorReady } : undefined;
   }, [anchorMessageId, handleAnchorReady, rows]);
@@ -522,7 +553,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      onUseArtifactTemplate,
       onImageExpand,
+      onFileOpen,
+      openingVideoAttachmentId,
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
@@ -538,7 +572,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       activeThreadEnvironmentId,
       onRevertUserMessage,
+      onUseArtifactTemplate,
       onImageExpand,
+      onFileOpen,
+      openingVideoAttachmentId,
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
@@ -549,11 +586,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const activityState = useMemo<TimelineRowActivityState>(
     () => ({
       isWorking,
+      isPreparingWorktree,
       isRevertingCheckpoint,
       latestTurnId: latestTurn?.turnId ?? null,
-      workingStepLabel,
     }),
-    [isRevertingCheckpoint, isWorking, latestTurn?.turnId, workingStepLabel],
+    [isRevertingCheckpoint, isWorking, isPreparingWorktree, latestTurn?.turnId],
   );
 
   // Stable renderItem — no closure deps. Row components read shared state
@@ -924,8 +961,6 @@ function TimelineMinimap({
 // TimelineRowContent — the actual row component
 // ---------------------------------------------------------------------------
 
-type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
-type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
 
@@ -933,8 +968,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   const isExpandedToolGroupEntry = row.kind === "work" && row.isExpandedToolGroupEntry;
   const isLastExpandedToolGroupEntry = row.kind === "work" && row.isLastExpandedToolGroupEntry;
   const isExpandedToolGroupHeader =
-    (row.kind === "work-toggle" && row.summary !== null && row.onlyToolEntries && row.expanded) ||
-    (row.kind === "work-live" && row.expanded);
+    (row.kind === "work-toggle" && row.expanded) || (row.kind === "work-live" && row.expanded);
 
   return (
     <div
@@ -954,8 +988,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                     !row.showAssistantMeta) ||
                   row.kind === "work" ||
                   row.kind === "work-live" ||
-                  row.kind === "work-toggle" ||
-                  row.kind === "turn-plan"
+                  row.kind === "work-toggle"
                 ? "pb-2"
                 : "pb-4",
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
@@ -979,7 +1012,6 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         <AssistantTimelineRow row={row} />
       ) : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
-      {row.kind === "turn-plan" ? <TurnPlanTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
     </div>
   );
@@ -987,7 +1019,15 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const userImages = row.message.attachments ?? [];
+  // The attachment union has an open member, so guards (not literal type
+  // comparisons) split it. Unknown types render as inert rows below the files.
+  const userImages = (row.message.attachments ?? []).filter(isImageAttachment);
+  const userFiles = (row.message.attachments ?? []).filter(isFileAttachment);
+  const userVideos = userFiles.filter(isVideoAttachment);
+  const otherUserFiles = userFiles.filter((file) => !isVideoAttachment(file));
+  const unknownAttachments = (row.message.attachments ?? []).filter(
+    (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
+  );
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
   const previewAnnotations: ParsedPreviewAnnotation[] = [];
@@ -1010,9 +1050,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   return (
     <div className="group flex flex-col items-end gap-1">
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
-        {regularImages.length > 0 && (
+        {(regularImages.length > 0 || userVideos.length > 0) && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-            {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+            {regularImages.map((image) => (
               <div
                 key={image.id}
                 className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
@@ -1041,6 +1081,35 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 )}
               </div>
             ))}
+            {userVideos.map((file) => {
+              const isOpening = ctx.openingVideoAttachmentId === file.id;
+              return (
+                <div
+                  key={file.id}
+                  className="overflow-hidden rounded-lg border border-border/80 bg-black"
+                >
+                  <button
+                    type="button"
+                    disabled={file.downloadable === false}
+                    className="flex min-h-[72px] w-full cursor-zoom-in flex-col items-center justify-center gap-1 px-2 py-2 text-white disabled:cursor-default disabled:opacity-50 aria-disabled:cursor-default aria-disabled:opacity-50"
+                    aria-busy={isOpening || undefined}
+                    aria-disabled={isOpening || undefined}
+                    aria-label={`${isOpening ? "Loading" : "Play"} ${file.name}`}
+                    onClick={() => {
+                      if (isOpening) return;
+                      ctx.onFileOpen(file);
+                    }}
+                  >
+                    {isOpening ? (
+                      <span className="text-[11px]">Loading…</span>
+                    ) : (
+                      <PlayIcon className="size-8 fill-current" />
+                    )}
+                    <span className="max-w-full truncate text-[11px]">{file.name}</span>
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
         {previewAnnotations.map((annotation, index) => (
@@ -1050,6 +1119,51 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             image={previewImages[index] ?? null}
           />
         ))}
+        {otherUserFiles.length > 0 || unknownAttachments.length > 0 ? (
+          <div className="mb-2 flex flex-col gap-1">
+            {otherUserFiles.map((file) => {
+              const content = (
+                <>
+                  <FileIcon className="size-4 shrink-0 text-secondary-label" />
+                  <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                  {file.downloadable === false ? null : (
+                    <DownloadIcon className="size-4 shrink-0" />
+                  )}
+                </>
+              );
+              return file.previewUrl ? (
+                <a
+                  key={file.id}
+                  href={file.previewUrl}
+                  download={file.name}
+                  className="flex min-w-0 items-center gap-2 rounded-md py-1 text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+                >
+                  {content}
+                </a>
+              ) : file.downloadable === false ? (
+                <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+                  {content}
+                </div>
+              ) : (
+                <button
+                  key={file.id}
+                  type="button"
+                  aria-label={`Download ${file.name}`}
+                  onClick={() => ctx.onFileOpen(file)}
+                  className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+                >
+                  {content}
+                </button>
+              );
+            })}
+            {unknownAttachments.map((attachment) => (
+              <div key={attachment.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+                <FileIcon className="size-4 shrink-0 text-secondary-label" />
+                <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {elementContexts.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {elementContexts.map((context) => (
@@ -1148,6 +1262,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           isStreaming={Boolean(row.message.streaming)}
           lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
           skills={ctx.skills}
+          onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+          onImageExpand={ctx.onImageExpand}
         />
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
@@ -1211,127 +1327,35 @@ function ProposedPlanTimelineRow({
   );
 }
 
-/**
- * Inline folded plan chip: one row per turn that produced plan/todo steps.
- * Collapsed by default — a segment bar plus the in-progress step label —
- * and expands in place to the full step list. Replaces the old plan sidebar.
- */
-const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
-  row,
-}: {
-  row: Extract<TimelineRow, { kind: "turn-plan" }>;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const { steps } = row.turnPlan.plan;
-  const completedCount = steps.filter((step) => step.status === "completed").length;
-  const allDone = completedCount === steps.length;
-  // Label priority: the in-progress step, else the next pending step (plan
-  // just created), else the last step (plan finished, rendered muted).
-  const label =
-    steps.find((step) => step.status === "inProgress")?.step ??
-    steps.find((step) => step.status === "pending")?.step ??
-    steps.at(-1)?.step ??
-    "Plan";
-  const Chevron = expanded ? ChevronDownIcon : ChevronRightIcon;
-
-  return (
-    <div className="min-w-0 px-1 py-0.5">
-      <button
-        type="button"
-        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-0.5 py-0.5 text-left text-[12px] leading-5 transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
-      >
-        <Chevron className="size-3.5 shrink-0 text-muted-foreground/65" />
-        {steps.length > 1 ? (
-          <span aria-hidden className="flex shrink-0 items-center gap-0.5">
-            {steps.map((step) => (
-              <span
-                key={step.step}
-                className={cn(
-                  "h-[3px] w-2.5 rounded-full",
-                  step.status === "completed"
-                    ? "bg-success"
-                    : step.status === "inProgress"
-                      ? "bg-primary"
-                      : "bg-muted-foreground/25",
-                )}
-              />
-            ))}
-          </span>
-        ) : null}
-        <span
-          className={cn(
-            "min-w-0 truncate",
-            allDone ? "text-muted-foreground/65" : "font-medium text-foreground/85",
-          )}
-        >
-          {label}
-        </span>
-        {steps.length > 1 ? (
-          <span className="shrink-0 text-muted-foreground/50 tabular-nums">
-            {completedCount}/{steps.length}
-          </span>
-        ) : null}
-      </button>
-      {expanded ? (
-        <div className="mt-0.5 space-y-px pl-6">
-          {steps.map((step) => (
-            <div key={step.step} className="flex items-baseline gap-2 text-[12px] leading-5">
-              <span
-                className={cn(
-                  "w-3 shrink-0 text-center font-mono text-[10px]",
-                  step.status === "completed"
-                    ? "text-success"
-                    : step.status === "inProgress"
-                      ? "text-primary"
-                      : "text-muted-foreground/40",
-                )}
-                aria-hidden
-              >
-                {step.status === "completed" ? "✓" : step.status === "inProgress" ? "●" : "○"}
-              </span>
-              <span
-                className={cn(
-                  "min-w-0",
-                  step.status === "completed"
-                    ? "text-muted-foreground/55"
-                    : step.status === "inProgress"
-                      ? "text-foreground/90"
-                      : "text-muted-foreground/70",
-                )}
-              >
-                {step.step}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-});
-
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { workingStepLabel } = use(TimelineRowActivityCtx);
+  const { isPreparingWorktree } = use(TimelineRowActivityCtx);
   return (
     <div>
       <div className="border-b border-border/60 pb-2 pt-1">
-        <div className="px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
-          {row.createdAt ? (
-            <>
-              Working for <WorkingTimer createdAt={row.createdAt} />
-            </>
-          ) : (
-            "Working..."
-          )}
-          {workingStepLabel ? (
-            <span className="ml-2 text-muted-foreground/55">· {workingStepLabel}</span>
-          ) : null}
+        <div className="flex h-6 min-w-0 items-baseline px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
+          <span
+            key={isPreparingWorktree ? "setup" : "working"}
+            className="relative shrink-0 overflow-hidden whitespace-nowrap transition-opacity duration-150 starting:opacity-0 motion-reduce:transition-none"
+          >
+            {isPreparingWorktree ? (
+              <>
+                Setting up worktree…
+                <ActivityShimmerOverlay>Setting up worktree…</ActivityShimmerOverlay>
+              </>
+            ) : row.createdAt ? (
+              <>
+                Working for <WorkingTimer createdAt={row.createdAt} />
+              </>
+            ) : (
+              "Working..."
+            )}
+          </span>
         </div>
       </div>
       {row.showThinking ? (
-        <div className="mt-1">
-          <ThinkingActivityRow />
+        // Reserve the activity row during setup so the handoff keeps the same height.
+        <div className="mt-1 min-h-7">
+          {isPreparingWorktree ? null : <LiveActivityRow label="Thinking" />}
         </div>
       ) : null}
     </div>
@@ -1385,12 +1409,6 @@ const WorkGroupSection = memo(function WorkGroupSection({
       groupedEntries.filter((entry) => workEntryIsVisibleInGroup(entry, isExpandedToolGroupEntry)),
     [groupedEntries, isExpandedToolGroupEntry],
   );
-  const onlyToolEntries = nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));
-  const groupLabel = onlyToolEntries
-    ? nonEmptyEntries.length === 1
-      ? "1 tool call"
-      : `${nonEmptyEntries.length} tool calls`
-    : "Work Log";
   const GroupContainer = isExpandedToolGroupEntry ? "div" : "section";
 
   if (nonEmptyEntries.length === 0) return null;
@@ -1398,11 +1416,8 @@ const WorkGroupSection = memo(function WorkGroupSection({
   return (
     <GroupContainer
       className={cn("-mx-1 px-1", isExpandedToolGroupEntry ? "py-0" : "space-y-0.5 py-0.5")}
-      aria-label={isExpandedToolGroupEntry ? undefined : groupLabel}
+      aria-label={isExpandedToolGroupEntry ? undefined : "Activity"}
     >
-      {!onlyToolEntries && (
-        <p className="px-0.5 pb-0.5 font-medium text-secondary-label text-[11px]">{groupLabel}</p>
-      )}
       <div className="space-y-px">
         {nonEmptyEntries.map((workEntry) => (
           <SimpleWorkEntryRow
@@ -1416,6 +1431,19 @@ const WorkGroupSection = memo(function WorkGroupSection({
     </GroupContainer>
   );
 });
+
+function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
+  return (
+    <span
+      aria-hidden
+      className="live-activity-focus pointer-events-none absolute inset-y-0 select-none"
+    >
+      <span className="live-activity-focus-counter block">
+        <span className="live-activity-focus-aligned block text-foreground">{children}</span>
+      </span>
+    </span>
+  );
+}
 
 function LiveActivityRow({
   label,
@@ -1434,22 +1462,11 @@ function LiveActivityRow({
         failed={failed}
         announceFailure={failed}
       />
-      <div
-        aria-hidden
-        className="live-activity-focus pointer-events-none absolute inset-y-0 select-none"
-      >
-        <div className="live-activity-focus-counter">
-          <div className="live-activity-focus-aligned">
-            <LiveActivityContent label={label} iconName={iconName} failed={failed} highlighted />
-          </div>
-        </div>
-      </div>
+      <ActivityShimmerOverlay>
+        <LiveActivityContent label={label} iconName={iconName} failed={failed} highlighted />
+      </ActivityShimmerOverlay>
     </div>
   );
-}
-
-function ThinkingActivityRow() {
-  return <LiveActivityRow label="Thinking" />;
 }
 
 function LiveActivityContent({
@@ -1465,10 +1482,10 @@ function LiveActivityContent({
   announceFailure?: boolean;
   highlighted?: boolean;
 }) {
-  const resolvedIconName = failed ? "x" : iconName;
+  const resolvedIconName = failed ? "circle-alert" : iconName;
 
   return (
-    <div
+    <span
       className={cn(
         "flex min-h-6 min-w-0 items-center gap-1.5 py-0.5",
         resolvedIconName ? "px-0.5" : "px-1",
@@ -1479,7 +1496,7 @@ function LiveActivityContent({
         <span
           className={cn(
             "flex size-6 shrink-0 items-center justify-center",
-            failed ? "text-destructive" : highlighted ? "text-foreground" : "text-icon-muted",
+            highlighted ? "text-foreground" : "text-icon-muted",
           )}
           role={announceFailure ? "img" : undefined}
           aria-label={announceFailure ? "Tool call failed" : undefined}
@@ -1491,7 +1508,7 @@ function LiveActivityContent({
         </span>
       ) : null}
       <span className="min-w-0 flex-1 truncate">{label}</span>
-    </div>
+    </span>
   );
 }
 
@@ -1535,8 +1552,8 @@ function toolGroupSummaryIconName(
       return "bot";
     case "tone-tool":
       return "zap";
+    case "update":
     case "mixed":
-    case null:
       return "hammer";
   }
 }
@@ -1547,76 +1564,21 @@ function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
-  if (row.onlyToolEntries && row.summary) {
-    return (
-      <button
-        type="button"
-        className="group/tool-group flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-        aria-label={row.hasFailure ? `${row.summary}, tool call failed` : undefined}
-        aria-expanded={row.expanded}
-        onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
-      >
-        <span
-          className={cn(
-            "flex size-6 shrink-0 items-center justify-center",
-            row.hasFailure ? "text-destructive" : "text-icon-muted",
-          )}
-          role={row.hasFailure ? "img" : undefined}
-          aria-label={row.hasFailure ? "Tool call failed" : undefined}
-        >
-          <WorkEntryIconSvg
-            name={row.hasFailure ? "x" : toolGroupSummaryIconName(row.summaryKind)}
-            className="size-4 shrink-0 stroke-[1.8] opacity-70"
-          />
-        </span>
-        <span className="min-w-0 flex-1 truncate text-secondary-label">{row.summary}</span>
-      </button>
-    );
-  }
-  const labelNoun = row.onlyToolEntries
-    ? row.hiddenCount === 1
-      ? "tool call"
-      : "tool calls"
-    : row.hiddenCount === 1
-      ? "log entry"
-      : "log entries";
-  const showHiddenFailure = row.hasFailure && !row.expanded;
-
   return (
     <button
       type="button"
-      className="flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      className="group/tool-group flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      aria-label={row.hasFailure ? `${row.summary}, tool call failed` : undefined}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     >
-      <span
-        className={cn(
-          "flex size-6 shrink-0 items-center justify-center",
-          showHiddenFailure ? "text-destructive" : "text-icon-muted",
-        )}
-        role={showHiddenFailure ? "img" : undefined}
-        aria-label={showHiddenFailure ? "Hidden work includes a failure" : undefined}
-      >
-        {showHiddenFailure ? (
-          <WorkEntryIconSvg name="x" className="size-4 shrink-0 stroke-[1.8] opacity-70" />
-        ) : (
-          <ChevronDownIcon
-            className={cn(
-              "size-4 shrink-0 opacity-70 transition-transform duration-200",
-              row.expanded && "rotate-180",
-            )}
-          />
-        )}
+      <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
+        <WorkEntryIconSvg
+          name={toolGroupSummaryIconName(row.summaryKind)}
+          className="size-4 shrink-0 stroke-[1.8] opacity-70"
+        />
       </span>
-      {row.expanded ? (
-        <span className="font-medium text-foreground">
-          Show fewer {row.onlyToolEntries ? "tool calls" : "log entries"}
-        </span>
-      ) : (
-        <span className="font-medium text-foreground">
-          +{row.hiddenCount} previous {labelNoun}
-        </span>
-      )}
+      <span className="min-w-0 flex-1 truncate text-secondary-label">{row.summary}</span>
     </button>
   );
 }
@@ -1733,7 +1695,7 @@ const UserMessageElementContextChip = memo(function UserMessageElementContextChi
 
 function UserMessagePreviewAnnotationCard(props: {
   annotation: ParsedPreviewAnnotation;
-  image: NonNullable<TimelineMessage["attachments"]>[number] | null;
+  image: ChatImageAttachment | null;
 }) {
   const ctx = use(TimelineRowCtx);
   return (
@@ -2240,176 +2202,6 @@ function workEntryRawCommand(
   return rawCommand === workEntry.command.trim() ? null : rawCommand;
 }
 
-type CommandWrapper = "env" | "sudo";
-
-const COMMAND_WRAPPER_OPTIONS_WITH_VALUE: Record<CommandWrapper, ReadonlySet<string>> = {
-  env: new Set(["-C", "--chdir", "-S", "--split-string", "-u", "--unset"]),
-  sudo: new Set(["-C", "--close-from", "-D", "--chdir", "-g", "--group", "-u", "--user"]),
-};
-
-const COMMAND_WRAPPER_FLAGS: Record<CommandWrapper, ReadonlySet<string>> = {
-  env: new Set(["-0", "--null", "-i", "--ignore-environment", "--debug", "-v"]),
-  sudo: new Set(["-A", "--askpass", "-b", "--background", "-E", "-H", "-i", "-n", "-S"]),
-};
-
-function tokenizeShellCommand(command: string): string[] | null {
-  const input = command.trim();
-  const tokens: string[] = [];
-  let current = "";
-  let quote: '"' | "'" | null = null;
-  let escaping = false;
-  let substitutionDepth = 0;
-  let tokenStarted = false;
-
-  for (let index = 0; index < input.length; index += 1) {
-    const character = input[index]!;
-    if (escaping) {
-      current += character;
-      escaping = false;
-      tokenStarted = true;
-      continue;
-    }
-    if (character === "\\" && quote !== "'") {
-      const nextCharacter = input[index + 1];
-      const isWindowsDrivePath = quote === null && /^[A-Za-z]:/.test(current);
-      if (
-        (quote === '"' || isWindowsDrivePath) &&
-        nextCharacter !== undefined &&
-        nextCharacter !== '"' &&
-        nextCharacter !== "\\" &&
-        nextCharacter !== "$" &&
-        nextCharacter !== "`" &&
-        nextCharacter !== "\n"
-      ) {
-        current += character;
-        tokenStarted = true;
-        continue;
-      }
-      escaping = true;
-      tokenStarted = true;
-      continue;
-    }
-    if (quote !== null) {
-      if (character === quote) {
-        quote = null;
-      } else {
-        current += character;
-      }
-      tokenStarted = true;
-      continue;
-    }
-    if (character === "$" && input[index + 1] === "(") {
-      current += "$(";
-      substitutionDepth += 1;
-      tokenStarted = true;
-      index += 1;
-      continue;
-    }
-    if (character === ")" && substitutionDepth > 0) {
-      current += character;
-      substitutionDepth -= 1;
-      tokenStarted = true;
-      continue;
-    }
-    if (character === '"' || character === "'") {
-      quote = character;
-      tokenStarted = true;
-      continue;
-    }
-    if (/\s/u.test(character)) {
-      if (substitutionDepth > 0) {
-        current += character;
-        tokenStarted = true;
-        continue;
-      }
-      if (tokenStarted) {
-        tokens.push(current);
-        current = "";
-        tokenStarted = false;
-      }
-      continue;
-    }
-    current += character;
-    tokenStarted = true;
-  }
-
-  if (quote !== null || escaping || substitutionDepth > 0) return null;
-  if (tokenStarted) tokens.push(current);
-  return tokens;
-}
-
-function commandProgramName(command: string, depth = 0): string | null {
-  if (depth >= 8) return null;
-  const tokens = tokenizeShellCommand(command);
-  if (tokens === null) return null;
-  let index = 0;
-  let wrapper: CommandWrapper | null = null;
-
-  while (index < tokens.length) {
-    const token = tokens[index];
-    if (!token) return null;
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
-      index += 1;
-      continue;
-    }
-    const tokenProgram = token.split(/[\\/]/).at(-1);
-    if (tokenProgram === "env" || tokenProgram === "sudo") {
-      wrapper = tokenProgram;
-      index += 1;
-      continue;
-    }
-    if (wrapper !== null && token === "--") {
-      wrapper = null;
-      index += 1;
-      continue;
-    }
-    if (wrapper !== null && token.startsWith("-")) {
-      if (wrapper === "env" && (token === "-S" || token === "--split-string")) {
-        const splitCommand = tokens[index + 1];
-        return splitCommand ? commandProgramName(splitCommand, depth + 1) : null;
-      }
-      if (wrapper === "env" && token.startsWith("--split-string=")) {
-        return commandProgramName(token.slice("--split-string=".length), depth + 1);
-      }
-      if (COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(token)) {
-        if (tokens[index + 1] === undefined) return null;
-        index += 2;
-        continue;
-      }
-      if (COMMAND_WRAPPER_FLAGS[wrapper].has(token)) {
-        index += 1;
-        continue;
-      }
-      const equalsIndex = token.indexOf("=");
-      if (token.startsWith("--") && equalsIndex > 2) {
-        if (!COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(token.slice(0, equalsIndex))) {
-          return null;
-        }
-        index += 1;
-        continue;
-      }
-      if (/^-[A-Za-z].+/.test(token) && !token.startsWith("--")) {
-        let consumesNextToken = false;
-        for (const [optionIndex, option] of token.slice(1).split("").entries()) {
-          const shortOption = `-${option}`;
-          if (COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(shortOption)) {
-            consumesNextToken = optionIndex === token.length - 2;
-            break;
-          }
-          if (!COMMAND_WRAPPER_FLAGS[wrapper].has(shortOption)) return null;
-        }
-        if (consumesNextToken && tokens[index + 1] === undefined) return null;
-        index += consumesNextToken ? 2 : 1;
-        continue;
-      }
-      return null;
-    }
-    return token.split(/[\\/]/).at(-1) || null;
-  }
-
-  return null;
-}
-
 function liveWorkEntryLabel(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,
@@ -2625,17 +2417,19 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const showFailedIndicator = workEntryDisplayIndicatesToolFailure(workEntry);
   const entryIconName =
-    showWarningIndicator || showFailedIndicator ? "x" : workEntryIconName(workEntry);
+    showWarningIndicator || showFailedIndicator ? "circle-alert" : workEntryIconName(workEntry);
   const displayText = workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
   const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
   const canExpand = expandedBody !== null;
   const showDestructiveRowStyle =
     showFailedIndicator &&
-    (workEntry.sourceActivityKind === "runtime.error" || !workLogEntryIsToolLike(workEntry));
+    (workEntrySignalsSevereFailure(workEntry) || !workLogEntryIsToolLike(workEntry));
+  // Ordinary tool failures stay muted; only runtime errors and warnings get
+  // color. The red treatment is reserved for severe failures.
   const iconWrapperClass = cn(
     "flex size-6 shrink-0 items-center justify-center",
-    showWarningIndicator || showFailedIndicator
-      ? "text-destructive"
+    showWarningIndicator
+      ? "text-warning"
       : showDestructiveRowStyle
         ? "text-destructive"
         : workEntry.tone === "tool" || showFailedIndicator

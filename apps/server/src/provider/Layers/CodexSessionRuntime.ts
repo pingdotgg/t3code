@@ -137,6 +137,12 @@ const CodexTurnStartParamsWithCollaborationMode = EffectCodexSchema.V2TurnStartP
 const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
   CodexTurnStartParamsWithCollaborationMode,
 );
+const CodexChildResumeMetadata = Schema.Struct({
+  thread: Schema.Struct({ id: Schema.String }),
+  model: Schema.String,
+  reasoningEffort: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
+const decodeCodexChildResumeMetadata = Schema.decodeUnknownEffect(CodexChildResumeMetadata);
 
 export type CodexTurnStartParamsWithCollaborationMode =
   typeof CodexTurnStartParamsWithCollaborationMode.Type;
@@ -731,7 +737,9 @@ function readNotificationThreadId(notification: CodexServerNotification): string
     case "thread/unarchived":
     case "thread/closed":
     case "thread/name/updated":
+    case "thread/settings/updated":
     case "thread/tokenUsage/updated":
+    case "model/rerouted":
     case "turn/started":
     case "hook/started":
     case "turn/completed":
@@ -904,6 +912,35 @@ interface CollabChildAgentState {
   readonly spawnTurnId: TurnId | undefined;
 }
 
+interface CollabChildMetadataState {
+  readonly model: string | undefined;
+  readonly effort: string | undefined;
+  readonly lookupStarted: boolean;
+  readonly closed: boolean;
+}
+
+function collabChildIdentity(
+  child: CollabChildAgentState,
+  metadata: CollabChildMetadataState | undefined,
+) {
+  return {
+    agentThreadId: child.agentThreadId,
+    ...(child.nickname ? { nickname: child.nickname } : {}),
+    ...(child.role ? { role: child.role } : {}),
+    ...(child.agentPath ? { agentPath: child.agentPath } : {}),
+    ...(metadata?.model ? { model: metadata.model } : {}),
+    ...(metadata?.effort ? { effort: metadata.effort } : {}),
+  };
+}
+
+function nonEmptyMetadataValue(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function readThreadSpawnSource(thread: { readonly source: unknown }):
   | {
       nickname: string | undefined;
@@ -969,7 +1006,9 @@ function shouldSuppressChildConversationNotification(
     method === "thread/closed" ||
     method === "thread/compacted" ||
     method === "thread/name/updated" ||
+    method === "thread/settings/updated" ||
     method === "thread/tokenUsage/updated" ||
+    method === "model/rerouted" ||
     method === "turn/started" ||
     method === "turn/completed" ||
     method === "turn/plan/updated" ||
@@ -1000,6 +1039,8 @@ const CHILD_AGENT_EVENT_METHODS: ReadonlySet<string> = new Set([
   "turn/completed",
   "thread/status/changed",
   "thread/tokenUsage/updated",
+  "thread/settings/updated",
+  "model/rerouted",
   "item/started",
   "item/completed",
   "thread/closed",
@@ -1018,7 +1059,6 @@ const CHILD_CHATTER_METHODS: ReadonlySet<string> = new Set([
   "turn/plan/updated",
   "turn/diff/updated",
   "thread/name/updated",
-  "thread/settings/updated",
   "rawResponseItem/completed",
   // Child-owned thread lifecycle: the parent adapter maps these onto the
   // PARENT thread (archived/compacted state), so a child compacting would
@@ -1126,6 +1166,7 @@ export const makeCodexSessionRuntime = (
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
     const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
     const collabChildAgentsRef = yield* Ref.make(new Map<string, CollabChildAgentState>());
+    const collabChildMetadataRef = yield* Ref.make(new Map<string, CollabChildMetadataState>());
     /** Child provider-thread id → its currently running provider turn id. */
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
     const suppressMemoryConsolidationNotification = makeMemoryConsolidationNotificationFilter();
@@ -1221,6 +1262,133 @@ export const makeCodexSessionRuntime = (
         message,
       });
 
+    const updateCollabChildMetadata = (
+      agentThreadId: string,
+      update: { readonly model?: string; readonly effort?: string },
+      overwriteKnown: boolean,
+    ) =>
+      Ref.modify(collabChildMetadataRef, (current) => {
+        const previous = current.get(agentThreadId) ?? {
+          model: undefined,
+          effort: undefined,
+          lookupStarted: false,
+          closed: false,
+        };
+        const model =
+          update.model && (overwriteKnown || !previous.model) ? update.model : previous.model;
+        const effort =
+          update.effort && (overwriteKnown || !previous.effort) ? update.effort : previous.effort;
+        const changed = model !== previous.model || effort !== previous.effort;
+        if (!changed) {
+          return [false, current] as const;
+        }
+        const next = new Map(current);
+        next.set(agentThreadId, { ...previous, model, effort });
+        return [true, next] as const;
+      });
+
+    const markCollabChildClosed = (agentThreadId: string) =>
+      Ref.update(collabChildMetadataRef, (current) => {
+        const previous = current.get(agentThreadId) ?? {
+          model: undefined,
+          effort: undefined,
+          lookupStarted: false,
+          closed: false,
+        };
+        if (previous.closed) {
+          return current;
+        }
+        const next = new Map(current);
+        next.set(agentThreadId, { ...previous, closed: true });
+        return next;
+      });
+
+    const markCollabChildOpen = (agentThreadId: string) =>
+      Ref.update(collabChildMetadataRef, (current) => {
+        const previous = current.get(agentThreadId);
+        if (!previous?.closed) {
+          return current;
+        }
+        const next = new Map(current);
+        next.set(agentThreadId, { ...previous, closed: false });
+        return next;
+      });
+
+    const emitCollabChildMetadataUpdated = Effect.fn(
+      "CodexSessionRuntime.emitCollabChildMetadataUpdated",
+    )(function* (agentThreadId: string) {
+      const child = (yield* Ref.get(collabChildAgentsRef)).get(agentThreadId);
+      const metadata = (yield* Ref.get(collabChildMetadataRef)).get(agentThreadId);
+      if (!child || metadata?.closed) {
+        return;
+      }
+      yield* emitEvent({
+        kind: "notification",
+        threadId: options.threadId,
+        ...(child.spawnTurnId ? { turnId: child.spawnTurnId } : {}),
+        method: "collabAgent/metadataUpdated",
+        payload: collabChildIdentity(child, metadata),
+      });
+    });
+
+    const startCollabChildMetadataLookup = Effect.fn(
+      "CodexSessionRuntime.startCollabChildMetadataLookup",
+    )(function* (agentThreadId: string) {
+      const shouldStart = yield* Ref.modify(collabChildMetadataRef, (current) => {
+        const previous = current.get(agentThreadId) ?? {
+          model: undefined,
+          effort: undefined,
+          lookupStarted: false,
+          closed: false,
+        };
+        if (previous.lookupStarted || previous.closed) {
+          return [false, current] as const;
+        }
+        const next = new Map(current);
+        next.set(agentThreadId, { ...previous, lookupStarted: true });
+        return [true, next] as const;
+      });
+      if (!shouldStart) {
+        return;
+      }
+
+      // The child is already loaded. This rejoins it without starting a turn,
+      // and excludeTurns avoids loading or replaying its history.
+      yield* client.raw
+        .request("thread/resume", { threadId: agentThreadId, excludeTurns: true })
+        .pipe(
+          Effect.flatMap(decodeCodexChildResumeMetadata),
+          Effect.timeout("5 seconds"),
+          Effect.flatMap((response) =>
+            Effect.gen(function* () {
+              if (response.thread.id !== agentThreadId) {
+                return;
+              }
+              const child = (yield* Ref.get(collabChildAgentsRef)).get(agentThreadId);
+              const metadata = (yield* Ref.get(collabChildMetadataRef)).get(agentThreadId);
+              if (!child || metadata?.closed) {
+                return;
+              }
+              const model = nonEmptyMetadataValue(response.model);
+              const effort = nonEmptyMetadataValue(response.reasoningEffort);
+              const changed = yield* updateCollabChildMetadata(
+                agentThreadId,
+                {
+                  ...(model ? { model } : {}),
+                  ...(effort ? { effort } : {}),
+                },
+                false,
+              );
+              if (changed) {
+                yield* emitCollabChildMetadataUpdated(agentThreadId);
+              }
+            }),
+          ),
+          Effect.catch(() => Effect.void),
+          Effect.forkIn(runtimeScope),
+        );
+    });
+
     const settlePendingApprovals = (decision: ProviderApprovalDecision) =>
       Ref.get(pendingApprovalsRef).pipe(
         Effect.flatMap((pendingApprovals) =>
@@ -1261,6 +1429,10 @@ export const makeCodexSessionRuntime = (
           if (!spawn) {
             return false;
           }
+          const rootProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
+          if (thread.id === rootProviderThreadId) {
+            return false;
+          }
           // Merge with any subAgentActivity registration that got here
           // first. spawnTurnId is REGISTRATION-time-only on both paths: for
           // an already-known child we keep its value (set or unset) — a
@@ -1287,20 +1459,19 @@ export const makeCodexSessionRuntime = (
             next.set(thread.id, state);
             return next;
           });
+          const metadata = (yield* Ref.get(collabChildMetadataRef)).get(thread.id);
           yield* emitEvent({
             kind: "notification",
             threadId: options.threadId,
             method: "collabAgent/started",
             ...(state.spawnTurnId ? { turnId: state.spawnTurnId } : {}),
             payload: {
-              agentThreadId: state.agentThreadId,
-              ...(state.nickname ? { nickname: state.nickname } : {}),
-              ...(state.role ? { role: state.role } : {}),
-              ...(state.agentPath ? { agentPath: state.agentPath } : {}),
+              ...collabChildIdentity(state, metadata),
               ...(state.depth !== undefined ? { depth: state.depth } : {}),
               ...(state.parentThreadId ? { parentThreadId: state.parentThreadId } : {}),
             },
           });
+          yield* startCollabChildMetadataLookup(thread.id);
           return true;
         }
 
@@ -1350,17 +1521,22 @@ export const makeCodexSessionRuntime = (
             return next;
           });
           const registeredChild = (yield* Ref.get(collabChildAgentsRef)).get(item.agentThreadId);
+          const metadata = (yield* Ref.get(collabChildMetadataRef)).get(item.agentThreadId);
           yield* emitEvent({
             kind: "notification",
             threadId: options.threadId,
             method: "collabAgent/activity",
             ...(registeredChild?.spawnTurnId ? { turnId: registeredChild.spawnTurnId } : {}),
             payload: {
-              agentThreadId: item.agentThreadId,
-              agentPath: item.agentPath,
+              ...(registeredChild
+                ? collabChildIdentity(registeredChild, metadata)
+                : { agentThreadId: item.agentThreadId, agentPath: item.agentPath }),
               activityKind: item.kind,
             },
           });
+          if (item.kind === "started") {
+            yield* startCollabChildMetadataLookup(item.agentThreadId);
+          }
           return true;
         }
 
@@ -1376,19 +1552,45 @@ export const makeCodexSessionRuntime = (
         if (providerConversationId === interceptRootId) {
           return false;
         }
+
+        if (
+          interceptRootId !== undefined &&
+          (notification.method === "thread/settings/updated" ||
+            notification.method === "model/rerouted")
+        ) {
+          const model = nonEmptyMetadataValue(
+            notification.method === "thread/settings/updated"
+              ? notification.params.threadSettings.model
+              : notification.params.toModel,
+          );
+          const effort =
+            notification.method === "thread/settings/updated"
+              ? nonEmptyMetadataValue(notification.params.threadSettings.effort)
+              : undefined;
+          const changed = yield* updateCollabChildMetadata(
+            providerConversationId,
+            {
+              ...(model ? { model } : {}),
+              ...(effort ? { effort } : {}),
+            },
+            true,
+          );
+          if (changed && (yield* Ref.get(collabChildAgentsRef)).has(providerConversationId)) {
+            yield* emitCollabChildMetadataUpdated(providerConversationId);
+          }
+          return true;
+        }
+
         const children = yield* Ref.get(collabChildAgentsRef);
         const child = children.get(providerConversationId);
         if (!child) {
           return false;
         }
-        const childIdentity = {
-          agentThreadId: child.agentThreadId,
-          ...(child.nickname ? { nickname: child.nickname } : {}),
-          ...(child.role ? { role: child.role } : {}),
-          ...(child.agentPath ? { agentPath: child.agentPath } : {}),
-        };
+        const metadata = (yield* Ref.get(collabChildMetadataRef)).get(child.agentThreadId);
+        const childIdentity = collabChildIdentity(child, metadata);
         switch (notification.method) {
           case "turn/started": {
+            yield* markCollabChildOpen(child.agentThreadId);
             const childTurnId =
               typeof (notification.params as { turn?: { id?: unknown } }).turn?.id === "string"
                 ? ((notification.params as { turn: { id: string } }).turn.id as string)
@@ -1472,6 +1674,7 @@ export const makeCodexSessionRuntime = (
               next.delete(child.agentThreadId);
               return next;
             });
+            yield* markCollabChildClosed(child.agentThreadId);
             yield* emitEvent({
               kind: "notification",
               threadId: options.threadId,

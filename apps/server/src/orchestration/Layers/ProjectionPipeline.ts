@@ -361,14 +361,14 @@ function collectThreadAttachmentRelativePaths(
   const relativePaths = new Set<string>();
   for (const message of messages) {
     for (const attachment of message.attachments ?? []) {
-      if (attachment.type !== "image") {
-        continue;
-      }
       const attachmentThreadSegment = parseThreadSegmentFromAttachmentId(attachment.id);
       if (!attachmentThreadSegment || attachmentThreadSegment !== threadSegment) {
         continue;
       }
-      relativePaths.add(attachmentRelativePath(attachment));
+      const relativePath = attachmentRelativePath(attachment);
+      if (relativePath) {
+        relativePaths.add(relativePath);
+      }
     }
   }
   return relativePaths;
@@ -641,6 +641,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             archivedAt: null,
             settledOverride: null,
             settledAt: null,
+            unsettledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
             pinnedAt: null,
@@ -698,6 +699,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             settledOverride: "settled",
             settledAt: event.payload.settledAt,
+            unsettledAt: null,
             updatedAt: event.payload.updatedAt,
           });
           return;
@@ -714,6 +716,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             settledOverride: event.payload.reason === "user" ? "active" : null,
             settledAt: null,
+            // Re-entry stamp for active-list ordering. A thread already pinned
+            // active keeps its stamp: the activity reset that clears the pin
+            // is not a re-entry and must not reorder the list.
+            unsettledAt:
+              existingRow.value.settledOverride === "active"
+                ? existingRow.value.unsettledAt
+                : event.payload.updatedAt,
             updatedAt: event.payload.updatedAt,
           });
           return;
@@ -862,7 +871,18 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.deleted": {
-          attachmentSideEffects.deletedThreadIds.add(event.payload.threadId);
+          // A draft retry can re-create this id later in the log. During
+          // replay the attachment files on disk already belong to that later
+          // incarnation, so only an unsuperseded deletion removes them.
+          const recreatedLater = yield* eventStore.hasEventAfter({
+            aggregateKind: "thread",
+            aggregateId: event.payload.threadId,
+            type: "thread.created",
+            sequenceExclusive: event.sequence,
+          });
+          if (!recreatedLater) {
+            attachmentSideEffects.deletedThreadIds.add(event.payload.threadId);
+          }
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,
           });
@@ -978,6 +998,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadMessagesProjection",
     )(function* (event, attachmentSideEffects) {
       switch (event.type) {
+        // A draft retry re-creates a soft-deleted thread id. Every projector
+        // drops its own rows for the old incarnation here so replay from any
+        // per-projector cursor rebuilds the new thread without stale history.
+        case "thread.created":
+          yield* projectionThreadMessageRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+
         case "thread.message-sent": {
           const existingMessage = yield* projectionThreadMessageRepository.getByMessageId({
             messageId: event.payload.messageId,
@@ -1057,6 +1086,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadProposedPlansProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.created":
+          yield* projectionThreadProposedPlanRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+
         case "thread.proposed-plan-upserted":
           yield* projectionThreadProposedPlanRepository.upsert({
             planId: event.payload.proposedPlan.id,
@@ -1108,6 +1143,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadActivitiesProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.created":
+          yield* projectionThreadActivityRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+
         case "thread.activity-appended":
           yield* projectionThreadActivityRepository.upsert({
             activityId: event.payload.activity.id,
@@ -1159,6 +1200,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const applyThreadSessionsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadSessionsProjection",
     )(function* (event, _attachmentSideEffects) {
+      if (event.type === "thread.created") {
+        yield* projectionThreadSessionRepository.deleteByThreadId({
+          threadId: event.payload.threadId,
+        });
+        return;
+      }
       if (event.type !== "thread.session-set") {
         return;
       }
@@ -1178,6 +1225,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadTurnsProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.created":
+          yield* projectionTurnRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+
         case "thread.turn-start-requested": {
           yield* projectionTurnRepository.replacePendingTurnStart({
             threadId: event.payload.threadId,
@@ -1515,6 +1568,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyPendingApprovalsProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.created":
+          yield* projectionPendingApprovalRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+
         case "thread.activity-appended": {
           const requestId =
             extractActivityRequestId(event.payload.activity.payload) ??
@@ -1718,6 +1777,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             Stream.runForEach(
               eventStore.readFromSequence(
                 Option.isSome(stateRow) ? stateRow.value.lastAppliedSequence : 0,
+                Number.MAX_SAFE_INTEGER,
               ),
               (event) => runProjectorForEvent(projector, event),
             ),
