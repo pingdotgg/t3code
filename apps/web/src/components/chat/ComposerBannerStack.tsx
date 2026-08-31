@@ -165,7 +165,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
               }
             }}
             onKeyDown={(event) => {
-              if (event.key !== "Escape") return;
+              if (event.key !== "Escape" || !stackExpanded) return;
               event.preventDefault();
               event.stopPropagation();
               pendingFocusRef.current = "peek";

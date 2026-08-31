@@ -1,0 +1,901 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta name="color-scheme" content="light dark" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>Composer follow-ups: before and after</title
+  ><style>
+    :root {
+      --page: #f6f7f9;
+      --text: #20242b;
+      --surface: #fff;
+      --border: #dce2ec;
+      --control-border: #ccd3df;
+      --control-text: #273a5d;
+      --link: #164dcc;
+      --muted: #626875;
+      --caption: #f0f3f8;
+      --label: #37445c;
+      --media: #fafafa;
+      --note-border: #8da6d8;
+      --code: #edf0f5;
+      --focus: #487dec;
+      --selected: #173da6;
+      --selected-text: #fff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #101216;
+        --text: #e8ecf2;
+        --surface: #191d24;
+        --border: #343d4b;
+        --control-border: #47556a;
+        --control-text: #d0dcf0;
+        --link: #9cbdff;
+        --muted: #aab5c6;
+        --caption: #202732;
+        --label: #c1ccdf;
+        --media: #14181e;
+        --note-border: #637caa;
+        --code: #272f3c;
+        --focus: #9cbdff;
+        --selected: #b5cbff;
+        --selected-text: #112247;
+      }
+    }
+    * {
+      box-sizing: border-box;
+    }
+    html {
+      scroll-behavior: smooth;
+      color-scheme: light dark;
+    }
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--text);
+      font:
+        16px/1.6 system-ui,
+        sans-serif;
+    }
+    main {
+      max-width: 1480px;
+      margin: auto;
+      padding: 32px 24px 80px;
+    }
+    header {
+      max-width: 920px;
+      margin: 10px 0 28px;
+    }
+    h1 {
+      font-size: 36px;
+      line-height: 1.15;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      font-size: 24px;
+      line-height: 1.3;
+      margin: 0 0 10px;
+    }
+    p {
+      max-width: 920px;
+      margin: 12px 0;
+    }
+    a {
+      color: var(--link);
+      text-underline-offset: 3px;
+    }
+    .meta,
+    .caption {
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .summary {
+      padding: 16px 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    .nav {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 24px 0;
+    }
+    .nav a,
+    button {
+      border: 1px solid var(--control-border);
+      border-radius: 8px;
+      padding: 7px 12px;
+      background: var(--surface);
+      font: inherit;
+      color: var(--control-text);
+      text-decoration: none;
+    }
+    button {
+      cursor: pointer;
+    }
+    button[aria-pressed="true"] {
+      background: var(--selected);
+      color: var(--selected-text);
+    }
+    .fix {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      margin: 24px 0;
+      scroll-margin-top: 20px;
+    }
+    .fix > p {
+      margin-bottom: 20px;
+    }
+    .pairs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 18px 0 26px;
+      align-items: start;
+    }
+    figure {
+      margin: 0;
+      min-width: 0;
+    }
+    figcaption {
+      padding: 10px 12px;
+      background: var(--caption);
+      border: 1px solid var(--border);
+      border-bottom: 0;
+      border-radius: 9px 9px 0 0;
+      min-height: 76px;
+    }
+    .label {
+      display: block;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--label);
+    }
+    img,
+    video {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: var(--media);
+      border: 1px solid var(--border);
+      border-radius: 0 0 9px 9px;
+    }
+    img {
+      cursor: zoom-in;
+    }
+    .small-links {
+      display: flex;
+      gap: 20px;
+      font-size: 14px;
+    }
+    .note {
+      border-left: 3px solid var(--note-border);
+      padding-left: 14px;
+      color: var(--muted);
+    }
+    details {
+      margin: 16px 0;
+    }
+    summary {
+      cursor: pointer;
+      color: var(--link);
+    }
+    code,
+    kbd {
+      background: var(--code);
+      border-radius: 4px;
+      padding: 2px 5px;
+      font-size: 0.87em;
+    }
+    footer {
+      padding-top: 10px;
+    }
+    .large .pairs {
+      grid-template-columns: 1fr;
+    }
+    .large figure {
+      max-width: 1100px;
+    }
+    a:focus-visible,
+    button:focus-visible,
+    summary:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 3px;
+    }
+    @media (max-width: 760px) {
+      main {
+        padding: 20px 12px;
+      }
+      h1 {
+        font-size: 28px;
+      }
+      .fix {
+        padding: 16px;
+      }
+      .pairs {
+        grid-template-columns: 1fr;
+      }
+      figcaption {
+        min-height: 0;
+      }
+    }
+  </style>
+  <main>
+    <header>
+      <div class="meta">Follow-ups to merged PR #8734 · August 30, 2026</div>
+      <h1>Composer follow-ups, before and after</h1>
+      <p>
+        Seven fixes retained; changes 4 and 6 have been reverted. The original numbering is
+        preserved below. All after images and recordings have been refreshed from the current
+        branch. Click any image for the full-size version. Keyboard and pointer recordings are
+        included where a still image is not enough.
+      </p>
+      <p class="meta">
+        Before: merged main <code>30175a8af04</code>. After: <code>558f3584a8</code> on
+        <code>fix/composer-banner-review-followups</code>. Screenshots use scripted data, with no
+        live requests or updates.
+      </p>
+    </header>
+    <div class="summary">
+      The working timer stays in the timeline. Tasks stay in the composer. Loading still hides
+      tasks. Stash remains a separate tab and never moves into the footer.
+    </div>
+    <nav class="nav" aria-label="Fixes">
+      <a href="#fix-1">1. Loading stays visible</a
+      ><a href="#fix-2">2. Keyboard focus stays visible</a
+      ><a href="#fix-3">3. Question options keep their focus ring</a
+      ><a href="#fix-4">4. Reverted: notice actions beside the title</a
+      ><a href="#fix-5">5. Task and stash lists keep list semantics</a
+      ><a href="#fix-6">6. Reverted: compact notice peek on touch</a
+      ><a href="#fix-7">7. The decorative chevron has no extra hit area</a
+      ><a href="#fix-8">8. Update icons show the update state</a
+      ><a href="#fix-9">9. Composer attachments share one inset</a>
+    </nav>
+    <button id="size" aria-pressed="false">Show larger images</button>
+    <section class="fix" id="fix-1">
+      <h2>1. Loading stays visible</h2>
+      <p>
+        Loading and Monitoring were both classed as activity. Monitoring came first, so it could
+        hide the loading status. The composer’s loading or syncing status now stays attached, with
+        Monitoring behind it. Tasks still stay hidden while loading.
+      </p>
+      <div class="small-links">
+        <a href="https://github.com/pingdotgg/t3code/pull/8734#discussion_r3888389305"
+          >Original review comment</a
+        ><a
+          href="https://juliuss-macbook-pro.tail131df4.ts.net:8653/27e21146-c467-45cf-8b06-5496615f33d5/banner-playground-timeline-evidence-tasks?reviewCase=loading-monitoring"
+          target="_blank"
+          rel="noopener"
+          >Try current fixture</a
+        >
+      </div>
+      <div class="pairs">
+        <figure>
+          <figcaption>
+            <span class="label">before</span>Monitoring hid the loading status.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/c5d0327063b249ee/before-01-loading.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/c5d0327063b249ee/before-01-loading.png"
+              alt="Monitoring hid the loading status."
+          /></a>
+        </figure>
+        <figure>
+          <figcaption>
+            <span class="label">after</span>Loading remains attached; Monitoring peeks behind.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/2d3346a18ef1a355/after-01-loading.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/2d3346a18ef1a355/after-01-loading.png"
+              alt="Loading remains attached; Monitoring peeks behind."
+          /></a>
+        </figure>
+      </div>
+    </section>
+    <section class="fix" id="fix-2">
+      <h2>2. Keyboard focus stays visible</h2>
+      <p>
+        Previously, tabbing to the peek immediately expanded the stack and made the focused button
+        invisible. Now Tab focuses the visible peek. Enter or Space opens the stack and moves focus
+        to its first control. Escape closes it and returns focus to the peek.
+      </p>
+      <div class="small-links">
+        <a href="https://github.com/pingdotgg/t3code/pull/8734#discussion_r3891049030"
+          >Original review comment</a
+        ><a
+          href="https://juliuss-macbook-pro.tail131df4.ts.net:8653/27e21146-c467-45cf-8b06-5496615f33d5/banner-playground-timeline-evidence-tasks?reviewCase=stack-idle"
+          target="_blank"
+          rel="noopener"
+          >Try current fixture</a
+        >
+      </div>
+      <div class="pairs">
+        <figure>
+          <figcaption>
+            <span class="label">before</span>After Tab: the stack opened, but focus was invisible.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/a7f1487174701f35/before-02-keyboard.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/a7f1487174701f35/before-02-keyboard.png"
+              alt="After Tab: the stack opened, but focus was invisible."
+          /></a>
+        </figure>
+        <figure>
+          <figcaption>
+            <span class="label">after</span>After the same Tab: a visible focus ring on the peek.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/e3cfbce8061d7612/after-02-keyboard.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/e3cfbce8061d7612/after-02-keyboard.png"
+              alt="After the same Tab: a visible focus ring on the peek."
+          /></a>
+        </figure>
+      </div>
+      <details open>
+        <summary>Watch the interaction</summary>
+        <p class="caption">
+          Start at the update notice’s dismiss button, then Tab → Enter → Tab → Escape. Watch where
+          the focus ring goes.
+        </p>
+        <div class="pairs">
+          <figure>
+            <figcaption><span class="label">before</span>Interaction recording</figcaption>
+            <video
+              controls
+              preload="metadata"
+              playsinline
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/467c74c0e290b4b5/before-keyboard.mp4"
+            ></video>
+          </figure>
+          <figure>
+            <figcaption><span class="label">after</span>Interaction recording</figcaption>
+            <video
+              controls
+              preload="metadata"
+              playsinline
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/cbabb85b7e344f80/after-keyboard.mp4"
+            ></video>
+          </figure>
+        </div>
+      </details>
+    </section>
+    <section class="fix" id="fix-3">
+      <h2>3. Question options keep their focus ring</h2>
+      <p>
+        The last option touched the right and bottom edges of a clipped panel, cutting off its focus
+        ring. A 4px inset now leaves room for the whole ring. These images show the last option
+        focused with the keyboard.
+      </p>
+      <div class="small-links">
+        <a href="https://github.com/pingdotgg/t3code/pull/8734#discussion_r3888395067"
+          >Original review comment</a
+        ><a
+          href="https://juliuss-macbook-pro.tail131df4.ts.net:8653/27e21146-c467-45cf-8b06-5496615f33d5/banner-playground-timeline-evidence-tasks?reviewCase=question"
+          target="_blank"
+          rel="noopener"
+          >Try current fixture</a
+        >
+      </div>
+      <div class="pairs">
+        <figure>
+          <figcaption>
+            <span class="label">before</span>The right and bottom of the focus ring were clipped.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/a391ed5d1b40b8fa/before-03-focus-ring.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/a391ed5d1b40b8fa/before-03-focus-ring.png"
+              alt="The right and bottom of the focus ring were clipped."
+          /></a>
+        </figure>
+        <figure>
+          <figcaption>
+            <span class="label">after</span>The ring is visible on all four sides.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/417211e5da957479/after-03-focus-ring.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/417211e5da957479/after-03-focus-ring.png"
+              alt="The ring is visible on all four sides."
+          /></a>
+        </figure>
+      </div>
+    </section>
+    <section class="fix" id="fix-4">
+      <h2>4. Reverted: notice actions beside the title</h2>
+      <p>
+        The alignment change has been reverted. The description is back on its own row, and actions
+        sit beside the title. Both images now show the original layout; the after image is a fresh
+        capture of the current branch.
+      </p>
+      <div class="small-links">
+        <a href="https://github.com/pingdotgg/t3code/pull/8734#discussion_r3891063780"
+          >Original review comment</a
+        ><a
+          href="https://juliuss-macbook-pro.tail131df4.ts.net:8653/27e21146-c467-45cf-8b06-5496615f33d5/banner-playground-timeline-evidence-tasks?reviewCase=connection-error"
+          target="_blank"
+          rel="noopener"
+          >Try current fixture</a
+        >
+      </div>
+      <div class="pairs">
+        <figure>
+          <figcaption>
+            <span class="label">before</span>Original layout: Reconnect beside the title.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/3e6483b3f590bcd8/before-04-alignment.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/3e6483b3f590bcd8/before-04-alignment.png"
+              alt="Original layout: Reconnect beside the title."
+          /></a>
+        </figure>
+        <figure>
+          <figcaption>
+            <span class="label">after</span>Reverted: Reconnect beside the title again.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/88cd738857f99d02/after-04-alignment.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/88cd738857f99d02/after-04-alignment.png"
+              alt="Reverted: Reconnect beside the title again."
+          /></a>
+        </figure>
+      </div>
+    </section>
+    <section class="fix" id="fix-5">
+      <h2>5. Task and stash lists keep list semantics</h2>
+      <p>
+        No visual change is intended here. Removing list markers can cause Safari to omit list
+        semantics. Both lists now declare role=&quot;list&quot; explicitly, so their list structure
+        does not depend on visible bullets. These screenshots show the unchanged layout; they do not
+        demonstrate VoiceOver behavior.
+      </p>
+      <div class="small-links">
+        <a href="https://github.com/pingdotgg/t3code/pull/8734#discussion_r3891135893"
+          >Original review comment</a
+        ><a
+          href="https://juliuss-macbook-pro.tail131df4.ts.net:8653/27e21146-c467-45cf-8b06-5496615f33d5/banner-playground-timeline-evidence-tasks?reviewCase=tasks-stash"
+          target="_blank"
+          rel="noopener"
+          >Try current fixture</a
+        >
+      </div>
+      <div class="pairs">
+        <figure>
+          <figcaption>
+            <span class="label">before</span>Tasks before: implicit list semantics.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/91adc40c94d29228/before-05-task-list.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/91adc40c94d29228/before-05-task-list.png"
+              alt="Tasks before: implicit list semantics."
+          /></a>
+        </figure>
+        <figure>
+          <figcaption>
+            <span class="label">after</span>Tasks after: explicit list semantics, same layout.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/2653b948015599ac/after-05-task-list.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/2653b948015599ac/after-05-task-list.png"
+              alt="Tasks after: explicit list semantics, same layout."
+          /></a>
+        </figure>
+      </div>
+      <div class="pairs">
+        <figure>
+          <figcaption>
+            <span class="label">before</span>Stash before: implicit list semantics.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/06f0aa509878dda5/before-05-stash-list.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/06f0aa509878dda5/before-05-stash-list.png"
+              alt="Stash before: implicit list semantics."
+          /></a>
+        </figure>
+        <figure>
+          <figcaption>
+            <span class="label">after</span>Stash after: explicit list semantics, same layout.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/bd36060cf9145b2f/after-05-stash-list.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/bd36060cf9145b2f/after-05-stash-list.png"
+              alt="Stash after: explicit list semantics, same layout."
+          /></a>
+        </figure>
+      </div>
+      <p class="note">
+        Explicit list roles are verified in the DOM. VoiceOver was not run, and the screenshots do
+        not claim otherwise.
+      </p>
+    </section>
+    <section class="fix" id="fix-6">
+      <h2>6. Reverted: compact notice peek on touch</h2>
+      <p>
+        The larger touch disclosure has been reverted. Touch layouts use the original 12px peek
+        again, without the extra label or reserved vertical space. A different mobile notice UI is
+        deferred. The keyboard focus fix in item 2 remains.
+      </p>
+      <div class="small-links">
+        <a href="https://github.com/pingdotgg/t3code/pull/8734#discussion_r3891291486"
+          >Original review comment</a
+        ><a
+          href="https://juliuss-macbook-pro.tail131df4.ts.net:8653/27e21146-c467-45cf-8b06-5496615f33d5/banner-playground-timeline-evidence-tasks?reviewCase=stack-idle"
+          target="_blank"
+          rel="noopener"
+          >Try current fixture</a
+        >
+      </div>
+      <div class="pairs">
+        <figure>
+          <figcaption>
+            <span class="label">before</span>Original touch layout: a 12px peek with no label.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/ef1f8e86ee4e3c7d/before-06-touch-peek-mobile.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/ef1f8e86ee4e3c7d/before-06-touch-peek-mobile.png"
+              alt="Original touch layout: a 12px peek with no label."
+          /></a>
+        </figure>
+        <figure>
+          <figcaption>
+            <span class="label">after</span>Reverted: the original compact peek is restored.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/5d576ad240c2eea0/after-06-touch-peek-mobile.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/5d576ad240c2eea0/after-06-touch-peek-mobile.png"
+              alt="Reverted: the original compact peek is restored."
+          /></a>
+        </figure>
+      </div>
+      <div class="pairs">
+        <figure>
+          <figcaption>
+            <span class="label">before</span>Original touch sizing at a wide viewport.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/46c09dbc49307b33/before-06-touch-peek.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/46c09dbc49307b33/before-06-touch-peek.png"
+              alt="Original touch sizing at a wide viewport."
+          /></a>
+        </figure>
+        <figure>
+          <figcaption>
+            <span class="label">after</span>Reverted: the same compact peek at a wide viewport.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/a1648dbaa4a2caa6/after-06-touch-peek.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/a1648dbaa4a2caa6/after-06-touch-peek.png"
+              alt="Reverted: the same compact peek at a wide viewport."
+          /></a>
+        </figure>
+      </div>
+    </section>
+    <section class="fix" id="fix-7">
+      <h2>7. The decorative chevron has no extra hit area</h2>
+      <p>
+        The chevron borrowed button styling, including a 44px touch hit area extending below its
+        header. That decorative element now ignores pointer events. These screenshots use a precise
+        click 4px below the header with touch sizing enabled. The red ring in the recording marks
+        the click.
+      </p>
+      <div class="small-links">
+        <a href="https://github.com/pingdotgg/t3code/pull/8734#discussion_r3888395071"
+          >Original review comment</a
+        ><a
+          href="https://juliuss-macbook-pro.tail131df4.ts.net:8653/27e21146-c467-45cf-8b06-5496615f33d5/banner-playground-timeline-evidence-tasks?reviewCase=question"
+          target="_blank"
+          rel="noopener"
+          >Try current fixture</a
+        >
+      </div>
+      <div class="pairs">
+        <figure>
+          <figcaption>
+            <span class="label">before</span>Clicking below the header closed the question.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/01a98b0b82bd3faf/before-07-touch-question.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/01a98b0b82bd3faf/before-07-touch-question.png"
+              alt="Clicking below the header closed the question."
+          /></a>
+        </figure>
+        <figure>
+          <figcaption>
+            <span class="label">after</span>The same click leaves the question open.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/731712f5a7177ca9/after-07-touch-question.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/731712f5a7177ca9/after-07-touch-question.png"
+              alt="The same click leaves the question open."
+          /></a>
+        </figure>
+      </div>
+      <details open>
+        <summary>Watch the interaction</summary>
+        <p class="caption">
+          A precise click below the chevron with touch sizing enabled. The ring marks the actual
+          click coordinate. Browser finger-tap snapping is separate from this CSS hit area.
+        </p>
+        <div class="pairs">
+          <figure>
+            <figcaption><span class="label">before</span>Interaction recording</figcaption>
+            <video
+              controls
+              preload="metadata"
+              playsinline
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/83c7061a8753c19b/before-touch.mp4"
+            ></video>
+          </figure>
+          <figure>
+            <figcaption><span class="label">after</span>Interaction recording</figcaption>
+            <video
+              controls
+              preload="metadata"
+              playsinline
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/050ff10b19447831/after-touch.mp4"
+            ></video>
+          </figure>
+        </div>
+      </details>
+      <p class="note">
+        Native touch was also tested for opening the notice stack. For this overlap test, precise
+        clicks isolate the CSS hit area; Chromium may still snap an imprecise finger tap to a nearby
+        control.
+      </p>
+    </section>
+    <section class="fix" id="fix-8">
+      <h2>8. Update icons show the update state</h2>
+      <p>
+        Every update state used the same information icon. An update in progress now has a spinner,
+        and a failed update has an error icon. Reduced motion disables the spinner animation. The
+        text, retry action, and task precedence are unchanged.
+      </p>
+      <div class="small-links">
+        <a href="https://github.com/pingdotgg/t3code/pull/8734#discussion_r3891248917"
+          >Original review comment</a
+        ><a
+          href="https://juliuss-macbook-pro.tail131df4.ts.net:8653/27e21146-c467-45cf-8b06-5496615f33d5/banner-playground-timeline-evidence-tasks?reviewCase=updating"
+          target="_blank"
+          rel="noopener"
+          >Try current fixture</a
+        >
+      </div>
+      <div class="pairs">
+        <figure>
+          <figcaption>
+            <span class="label">before</span>Updating used the idle information icon.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/c1232cc00a275920/before-08-updating.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/c1232cc00a275920/before-08-updating.png"
+              alt="Updating used the idle information icon."
+          /></a>
+        </figure>
+        <figure>
+          <figcaption><span class="label">after</span>Updating has a progress spinner.</figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/ea9dbc65ac6ebda5/after-08-updating.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/ea9dbc65ac6ebda5/after-08-updating.png"
+              alt="Updating has a progress spinner."
+          /></a>
+        </figure>
+      </div>
+      <div class="pairs">
+        <figure>
+          <figcaption>
+            <span class="label">before</span>Failure also used the information icon.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/1a456b799d1bd98a/before-08-failed.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/1a456b799d1bd98a/before-08-failed.png"
+              alt="Failure also used the information icon."
+          /></a>
+        </figure>
+        <figure>
+          <figcaption>
+            <span class="label">after</span>Failure has a distinct error icon.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/c78eac6b4d4f2498/after-08-failed.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/c78eac6b4d4f2498/after-08-failed.png"
+              alt="Failure has a distinct error icon."
+          /></a>
+        </figure>
+      </div>
+    </section>
+    <section class="fix" id="fix-9">
+      <h2>9. Composer attachments share one inset</h2>
+      <p>
+        This is a maintenance fix, not a normal-layout bug. The command menu read an inset setting,
+        but the banners and bottom strip hard-coded the matching value. The normal inset remains
+        22px. In the stress test below, the same setting is changed to 40px on both versions:
+        before, only the command menu moved; after, all attachments stay aligned.
+      </p>
+      <div class="small-links">
+        <a href="https://github.com/pingdotgg/t3code/pull/8734#discussion_r3891063790"
+          >Original review comment</a
+        ><a
+          href="https://juliuss-macbook-pro.tail131df4.ts.net:8653/27e21146-c467-45cf-8b06-5496615f33d5/banner-playground-timeline-evidence-tasks?reviewCase=idle"
+          target="_blank"
+          rel="noopener"
+          >Try current fixture</a
+        >
+      </div>
+      <div class="pairs">
+        <figure>
+          <figcaption>
+            <span class="label">before</span>Stress test: menu inset 40px, bottom strip still 22px.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/c41a7d55ef31b980/before-09-inset-stress.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/c41a7d55ef31b980/before-09-inset-stress.png"
+              alt="Stress test: menu inset 40px, bottom strip still 22px."
+          /></a>
+        </figure>
+        <figure>
+          <figcaption>
+            <span class="label">after</span>Same stress test: menu and bottom strip both 40px.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/8b4e231c26ce74c5/after-09-inset-stress.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/8b4e231c26ce74c5/after-09-inset-stress.png"
+              alt="Same stress test: menu and bottom strip both 40px."
+          /></a>
+        </figure>
+      </div>
+      <div class="pairs">
+        <figure>
+          <figcaption><span class="label">before</span>Default spacing before: 22px.</figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/eea7b9b30c2a1c83/before-09-command-menu.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/eea7b9b30c2a1c83/before-09-command-menu.png"
+              alt="Default spacing before: 22px."
+          /></a>
+        </figure>
+        <figure>
+          <figcaption>
+            <span class="label">after</span>Default spacing after: still 22px.
+          </figcaption>
+          <a
+            href="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/c31cfe86414e25e5/after-09-command-menu.png"
+            target="_blank"
+            rel="noopener"
+            ><img
+              loading="lazy"
+              src="https://gh-file-drop-api-prod-mi5fy3sowv63ufte.pinglabs.workers.dev/f/c31cfe86414e25e5/after-09-command-menu.png"
+              alt="Default spacing after: still 22px."
+          /></a>
+        </figure>
+      </div>
+    </section>
+    <footer>
+      <h2>Verification</h2>
+      <p>
+        110 focused unit tests, web typecheck, and targeted lint pass. 36 browser checks cover
+        keyboard focus, Escape, hover, native touch expansion, pointer hit testing, task precedence,
+        list layout, 390/768/1440px widths, reduced motion, and root font-size changes.
+      </p>
+      <p class="meta">
+        These changes affect web and the shared desktop UI. The native mobile app is unchanged.
+        Touch checks use Chromium emulation; Safari and VoiceOver were not exercised. React Doctor
+        reported existing diagnostics in unchanged portions of these components; those broader
+        refactors were left out of these follow-ups.
+      </p>
+      <p class="meta">
+        The fixes are committed locally. No new PR has been opened. This report and its fixtures are
+        not committed.
+      </p>
+    </footer>
+  </main>
+  <script>
+    document.querySelector("#size").onclick = function () {
+      const larger = document.body.classList.toggle("large");
+      this.setAttribute("aria-pressed", String(larger));
+      this.textContent = larger ? "Show side by side" : "Show larger images";
+    };
+  </script>
+</html>
