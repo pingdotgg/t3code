@@ -16,6 +16,7 @@ import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   type ConnectionCatalogEntry,
   type ConnectionRegistration,
+  P2pConnectionProfile,
   type PlatformConnectionRegistration,
   type PrimaryConnectionRegistration,
   SshConnectionProfile,
@@ -36,6 +37,7 @@ import * as ConnectionDriver from "./driver.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
 const isSshConnectionProfile = Schema.is(SshConnectionProfile);
+const isP2pConnectionProfile = Schema.is(P2pConnectionProfile);
 
 export class EnvironmentNotRegisteredError extends Schema.TaggedErrorClass<EnvironmentNotRegisteredError>()(
   "EnvironmentNotRegisteredError",
@@ -137,13 +139,16 @@ export const make = Effect.gen(function* () {
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
+  const p2p = yield* ClientCapabilities.P2pEnvironmentGateway;
   const persistedTargets = yield* storage.list;
   const initialEntries = new Map(
     yield* Effect.forEach(
       persistedTargets,
       Effect.fn("EnvironmentRegistry.loadCatalogEntry")(function* (target) {
         const profile =
-          target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
+          target._tag === "BearerConnectionTarget" ||
+          target._tag === "SshConnectionTarget" ||
+          target._tag === "P2pConnectionTarget"
             ? yield* profiles.get(target.connectionId)
             : Option.none();
         return [
@@ -553,7 +558,9 @@ export const make = Effect.gen(function* () {
         }
         const target = (yield* getEntry(environmentId)).target;
         const profile =
-          target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
+          target._tag === "BearerConnectionTarget" ||
+          target._tag === "SshConnectionTarget" ||
+          target._tag === "P2pConnectionTarget"
             ? yield* profiles.get(target.connectionId)
             : Option.none();
 
@@ -592,6 +599,22 @@ export const make = Effect.gen(function* () {
           yield* ssh.disconnect(profile.value.target).pipe(
             Effect.tapError((error) =>
               Effect.logWarning("Could not disconnect the managed SSH environment.", {
+                environmentId,
+                error,
+              }),
+            ),
+            Effect.ignore,
+          );
+        }
+
+        if (
+          target._tag === "P2pConnectionTarget" &&
+          Option.isSome(profile) &&
+          isP2pConnectionProfile(profile.value)
+        ) {
+          yield* p2p.disconnect(profile.value.publicKeyZ32).pipe(
+            Effect.tapError((error) =>
+              Effect.logWarning("Could not disconnect the P2P environment tunnel.", {
                 environmentId,
                 error,
               }),

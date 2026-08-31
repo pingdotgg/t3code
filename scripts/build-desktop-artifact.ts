@@ -2439,11 +2439,21 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
 ) {
+  const path = yield* Path.Path;
+  const repoRoot = yield* RepoRoot;
+  const fs = yield* FileSystem.FileSystem;
+  // Prefer the workspace Electron unpack over electron-builder's GitHub
+  // download. Local installs already have this binary, and re-fetching it is a
+  // common TLS flake on flaky networks.
+  const workspaceElectronDist = path.join(repoRoot, "apps/desktop/node_modules/electron/dist");
+  const hasWorkspaceElectronDist = yield* fs.exists(workspaceElectronDist);
+
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
     artifactName: "T3-Pear-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
+    ...(hasWorkspaceElectronDist ? { electronDist: workspaceElectronDist } : {}),
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
       ...(platform === "mac" ? resolveMacFileExclusions(arch) : []),
@@ -2477,8 +2487,6 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "mac") {
-    const path = yield* Path.Path;
-    const repoRoot = yield* RepoRoot;
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",

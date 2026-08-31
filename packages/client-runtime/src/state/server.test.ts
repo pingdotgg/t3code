@@ -422,6 +422,73 @@ describe("server state projection", () => {
     expect(result.latestEvent.type).toBe("settingsUpdated");
   });
 
+  it("refreshes peer-to-peer remoteAccess from settingsUpdated without reconnecting", () => {
+    const snapshot = applyServerConfigProjection(Option.none(), {
+      version: 1,
+      type: "snapshot",
+      config: {
+        ...CONFIG,
+        remoteAccess: { p2p: { enabled: false } },
+        settings: {
+          ...CONFIG.settings,
+          remoteAccess: { p2pEnabled: false, p2pBootstrap: [] },
+        },
+      } as ServerConfig,
+    });
+
+    const enabledWithoutKey = applyServerConfigProjection(snapshot, {
+      version: 1,
+      type: "settingsUpdated",
+      payload: {
+        settings: {
+          ...CONFIG.settings,
+          remoteAccess: { p2pEnabled: true, p2pBootstrap: [] },
+        } as ServerConfig["settings"],
+        remoteAccess: { p2p: { enabled: true } },
+      },
+    });
+    expect(Option.getOrThrow(enabledWithoutKey).config.remoteAccess).toEqual({
+      p2p: { enabled: true },
+    });
+
+    const announced = applyServerConfigProjection(enabledWithoutKey, {
+      version: 1,
+      type: "settingsUpdated",
+      payload: {
+        settings: {
+          ...CONFIG.settings,
+          remoteAccess: { p2pEnabled: true, p2pBootstrap: [] },
+        } as ServerConfig["settings"],
+        remoteAccess: {
+          p2p: {
+            enabled: true,
+            publicKeyZ32: "dr6mxgt31fnr5p41ubzn9rpiyxjjrgcunrjtt85enaubfgb1inqo",
+          },
+        },
+      },
+    });
+    expect(Option.getOrThrow(announced).config.remoteAccess).toEqual({
+      p2p: {
+        enabled: true,
+        publicKeyZ32: "dr6mxgt31fnr5p41ubzn9rpiyxjjrgcunrjtt85enaubfgb1inqo",
+      },
+    });
+
+    const disabled = applyServerConfigProjection(announced, {
+      version: 1,
+      type: "settingsUpdated",
+      payload: {
+        settings: {
+          ...CONFIG.settings,
+          remoteAccess: { p2pEnabled: false, p2pBootstrap: [] },
+        } as ServerConfig["settings"],
+      },
+    });
+    expect(Option.getOrThrow(disabled).config.remoteAccess).toEqual({
+      p2p: { enabled: false },
+    });
+  });
+
   it("carries published environment themes in and out of the projected snapshot", () => {
     const snapshot = applyServerConfigProjection(Option.none(), {
       version: 1,

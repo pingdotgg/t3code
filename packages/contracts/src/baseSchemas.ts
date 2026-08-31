@@ -151,7 +151,7 @@ export type ClientDeviceType = typeof ClientDeviceType.Type;
 export const ClientWebDeployment = Schema.Literals(["hosted", "server"]);
 export type ClientWebDeployment = typeof ClientWebDeployment.Type;
 
-export const ClientConnectionMethod = Schema.Literals(["direct", "ssh", "relay", "unknown"]);
+export const ClientConnectionMethod = Schema.Literals(["direct", "ssh", "relay", "p2p", "unknown"]);
 export type ClientConnectionMethod = typeof ClientConnectionMethod.Type;
 
 export const ProviderItemId = makeEntityId("ProviderItemId");

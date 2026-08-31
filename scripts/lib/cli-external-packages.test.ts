@@ -50,6 +50,10 @@ describe("shouldBundleCliDependency", () => {
       "@clerk/electron-passkeys",
       "msgpackr-extract",
       "@msgpackr-extract/msgpackr-extract-win32-x64",
+      "hyperdht",
+      "udx-native",
+      "sodium-native",
+      "require-addon",
     ]) {
       assert.strictEqual(shouldBundleCliDependency(id), false, id);
     }
@@ -87,7 +91,7 @@ describe("selectCliRuntimeExternalDependencies", () => {
   it("selects every external root declared by the server", () => {
     assert.deepStrictEqual(
       Object.keys(selectCliRuntimeExternalDependencies(serverPackageJson.dependencies)).sort(),
-      ["@ff-labs/fff-node", "msgpackr-extract", "node-pty"],
+      ["@ff-labs/fff-node", "hyperdht", "msgpackr-extract", "node-pty", "z32"],
     );
   });
 });

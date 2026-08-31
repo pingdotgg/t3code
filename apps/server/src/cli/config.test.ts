@@ -86,6 +86,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          p2pEnabled: Option.none(),
+          p2pBootstrap: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -132,8 +134,61 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        p2pEnabled: false,
+        p2pBootstrap: [],
       });
       assert.equal(resolved.stateDir, join(baseDir, "userdata"));
+    }),
+  );
+
+  it.effect("resolves p2p flags over environment and parses the bootstrap list", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-p2p-base");
+      const envLayer = (env: Record<string, string>) =>
+        Layer.mergeAll(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: { T3CODE_HOME: baseDir, T3CODE_PORT: "4001", ...env },
+            }),
+          ),
+          NetService.layer,
+        );
+      const noneFlags = {
+        mode: Option.none(),
+        port: Option.none(),
+        host: Option.none(),
+        baseDir: Option.none(),
+        cwd: Option.none(),
+        devUrl: Option.none(),
+        noBrowser: Option.none(),
+        bootstrapFd: Option.none(),
+        autoBootstrapProjectFromCwd: Option.none(),
+        logWebSocketEvents: Option.none(),
+        tailscaleServeEnabled: Option.none(),
+        tailscaleServePort: Option.none(),
+        p2pEnabled: Option.none(),
+        p2pBootstrap: Option.none(),
+      };
+
+      const flagged = yield* resolveServerConfig(
+        {
+          ...noneFlags,
+          p2pEnabled: Option.some(true),
+          p2pBootstrap: Option.some(" 10.0.0.1:49737, 10.0.0.2:49737,"),
+        },
+        Option.none(),
+      ).pipe(Effect.provide(envLayer({ T3CODE_P2P: "false", T3CODE_P2P_BOOTSTRAP: "ignored:1" })));
+      assert.equal(flagged.p2pEnabled, true);
+      assert.deepEqual(flagged.p2pBootstrap, ["10.0.0.1:49737", "10.0.0.2:49737"]);
+
+      const fromEnv = yield* resolveServerConfig(noneFlags, Option.none()).pipe(
+        Effect.provide(
+          envLayer({ T3CODE_P2P: "true", T3CODE_P2P_BOOTSTRAP: "dht.example.com:49737" }),
+        ),
+      );
+      assert.equal(fromEnv.p2pEnabled, true);
+      assert.deepEqual(fromEnv.p2pBootstrap, ["dht.example.com:49737"]);
     }),
   );
 
@@ -159,6 +214,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.some(true),
           tailscaleServeEnabled: Option.some(true),
           tailscaleServePort: Option.some(8443),
+          p2pEnabled: Option.none(),
+          p2pBootstrap: Option.none(),
         },
         Option.some("Debug"),
       ).pipe(
@@ -202,6 +259,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: true,
         tailscaleServePort: 8443,
+        p2pEnabled: false,
+        p2pBootstrap: [],
       });
       assert.equal(resolved.dbPath, join(baseDir, "userdata", "state.sqlite"));
     }),
@@ -237,6 +296,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.some(false),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          p2pEnabled: Option.none(),
+          p2pBootstrap: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -275,6 +336,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        p2pEnabled: false,
+        p2pBootstrap: [],
       });
     }),
   );
@@ -314,6 +377,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          p2pEnabled: Option.none(),
+          p2pBootstrap: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -354,6 +419,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        p2pEnabled: false,
+        p2pBootstrap: [],
       });
       assert.equal(join(baseDir, "userdata"), resolved.stateDir);
       assert.equal(resolved.desktopTelemetryFd, 4);
@@ -382,6 +449,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          p2pEnabled: Option.none(),
+          p2pBootstrap: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -444,6 +513,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          p2pEnabled: Option.none(),
+          p2pBootstrap: Option.none(),
         },
         Option.some("Debug"),
       ).pipe(
@@ -484,6 +555,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        p2pEnabled: false,
+        p2pBootstrap: [],
       });
     }),
   );
@@ -520,6 +593,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          p2pEnabled: Option.none(),
+          p2pBootstrap: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -553,6 +628,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        p2pEnabled: false,
+        p2pBootstrap: [],
       });
     }),
   );
@@ -577,6 +654,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          p2pEnabled: Option.none(),
+          p2pBootstrap: Option.none(),
         },
         Option.none(),
         {
@@ -616,6 +695,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        p2pEnabled: false,
+        p2pBootstrap: [],
       });
     }),
   );

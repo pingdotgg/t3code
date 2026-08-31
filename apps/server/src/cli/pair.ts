@@ -15,6 +15,8 @@ import {
   PortSchema,
 } from "@t3tools/contracts";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
+import { buildP2pPairingUrl } from "@t3tools/shared/remote";
+import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import {
   buildTailscaleHttpsBaseUrl,
   DEFAULT_TAILSCALE_SERVE_PORT,
@@ -23,12 +25,14 @@ import {
 } from "@t3tools/tailscale";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
+import * as FileSystem from "effect/FileSystem";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag } from "effect/unstable/cli";
 import {
@@ -39,7 +43,9 @@ import {
 } from "effect/unstable/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
+import { P2P_ENDPOINT_SEED_SECRET } from "../remoteAccess/P2pEndpointRuntime.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import {
   type PersistedServerRuntimeState,
@@ -341,6 +347,8 @@ const makePairServerConfig = Effect.fn(function* (input: {
     logWebSocketEvents: false,
     tailscaleServeEnabled: false,
     tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
+    p2pEnabled: false,
+    p2pBootstrap: [],
   });
 });
 
@@ -421,6 +429,66 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
     return { baseUrl, notes };
   },
 );
+
+// Only the fields pair needs; extra keys in the settings file are ignored so
+// files written by other versions never break pairing.
+const PersistedRemoteAccessSettings = Schema.Struct({
+  remoteAccess: Schema.optionalKey(
+    Schema.Struct({
+      p2pEnabled: Schema.optionalKey(Schema.Boolean),
+      p2pBootstrap: Schema.optionalKey(Schema.Array(Schema.String)),
+    }),
+  ),
+});
+
+/**
+ * The P2P pairing URL for this environment, or null when the environment has
+ * not opted in. Reads the persisted setting leniently — pair must not fail on
+ * settings written by other versions — and derives the address from the same
+ * seed the server announces with, creating it atomically when the server has
+ * not announced yet.
+ */
+const resolveP2pPairingUrl = Effect.fn("pair.resolveP2pPairingUrl")(function* (input: {
+  readonly config: ServerConfig.ServerConfig["Service"];
+  readonly credential: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const raw = yield* fs
+    .readFileString(input.config.settingsPath)
+    .pipe(Effect.orElseSucceed(() => ""));
+  const decoded = decodeJsonResult(PersistedRemoteAccessSettings)(raw);
+  const remoteAccess = Result.isSuccess(decoded) ? decoded.success.remoteAccess : undefined;
+  if (remoteAccess?.p2pEnabled !== true) {
+    return null;
+  }
+  const bootstrap = remoteAccess.p2pBootstrap ?? [];
+
+  return yield* Effect.gen(function* () {
+    const announcer = yield* Effect.tryPromise(() => import("@t3tools/p2p/announcer"));
+    const secrets = yield* ServerSecretStore.ServerSecretStore;
+    const seed = yield* secrets.getOrCreateRandom(P2P_ENDPOINT_SEED_SECRET, 32);
+    return buildP2pPairingUrl({
+      publicKeyZ32: announcer.deriveP2pPublicKeyZ32(seed),
+      credential: input.credential,
+      bootstrap,
+    });
+  }).pipe(
+    Effect.provide(ServerSecretStore.layer.pipe(Layer.provide(ServerConfig.layer(input.config)))),
+    // The P2P runtime is optional (native addons); pairing still works
+    // through every other channel when it cannot load.
+    Effect.orElseSucceed(() => null),
+  );
+});
+
+const formatP2pPairOutput = (p2pPairingUrl: string): string =>
+  [
+    "Peer-to-peer pairing (dials this environment by key over the DHT, end-to-end encrypted):",
+    "",
+    renderTerminalQrCode(p2pPairingUrl),
+    "",
+    `P2P pairing URL: ${p2pPairingUrl}`,
+    "",
+  ].join("\n");
 
 const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
   readonly config: ServerConfig.ServerConfig["Service"];
@@ -527,6 +595,14 @@ export const pairCommand = Command.make("pair", {
           notes,
         }),
       );
+
+      const p2pPairingUrl = yield* resolveP2pPairingUrl({
+        config,
+        credential: issued.credential,
+      });
+      if (p2pPairingUrl !== null) {
+        yield* Console.log(formatP2pPairOutput(p2pPairingUrl));
+      }
     }).pipe(Effect.provide(FetchHttpClient.layer)),
   ),
 );

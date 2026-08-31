@@ -76,7 +76,40 @@ on the **Tailscale HTTPS** row in **Settings** → **Connections**. The desktop 
 backend with the same server-side behavior as `t3 serve --tailscale-serve`, then the server asks
 Tailscale Serve to proxy HTTPS traffic to the local backend. Turn the same switch off to stop it.
 
-The Tailscale support is an endpoint provider add-on. The core remote model still works without Tailscale: LAN HTTP endpoints, custom HTTPS endpoints, future tunnels, and SSH-launched environments all use the same saved environment and pairing flow.
+The Tailscale support is an endpoint provider add-on. The core remote model still works without Tailscale: LAN HTTP endpoints, custom HTTPS endpoints, peer-to-peer access, future tunnels, and SSH-launched environments all use the same saved environment and pairing flow.
+
+### Peer-to-Peer Access
+
+Peer-to-peer access lets a paired device dial your environment directly from any network — no VPN,
+no account, and no traffic through anyone's servers. The environment announces itself on a public
+peer-to-peer network (a DHT) under a stable key; a paired client dials that key and gets an
+end-to-end encrypted connection, hole-punched through most home and office NATs.
+
+Turn it on in **Settings** → **Connections** with the **Peer-to-peer access** toggle, or start a
+headless server with:
+
+```bash
+npx t3 serve --p2p
+```
+
+While it is on, pairing links gain a **Peer-to-peer** share option (a `t3+p2p://…` URL), and
+`npx t3 pair` prints a P2P pairing URL and QR code alongside the regular one. Pair once with either;
+the saved environment then reconnects over the DHT wherever both devices are.
+
+What to expect:
+
+- The DHT is used for discovery only. Everything you and your agents exchange stays end-to-end
+  encrypted between your devices; no intermediary can read it.
+- Behind unusually strict NATs (some cellular carriers and corporate networks), the connection can
+  fall back to relaying through peer-to-peer network nodes. It stays encrypted but may be slower.
+- Dialing peer-to-peer environments works from the desktop and mobile apps. Browsers cannot dial
+  directly — use one of the apps or another access method there.
+- On the phone, the peer-to-peer connection pauses while the app is in the background and resumes
+  when you come back, like the rest of the app's connections.
+- Treat the `t3+p2p://` pairing URL like any pairing link. The key alone works like a hostname:
+  finding it does not grant access, your normal pairing and session auth still apply.
+- To rotate the environment's peer-to-peer identity, delete `secrets/p2p-endpoint-seed.bin` from the
+  server's state directory and re-pair your devices.
 
 For `https://app.t3.codes`, prefer an HTTPS Tailnet or other HTTPS endpoint. A plain `http://100.x.y.z:3773` endpoint can still work from a desktop client or another browser page served over HTTP, but it will not work from the hosted HTTPS app because of browser mixed-content rules.
 

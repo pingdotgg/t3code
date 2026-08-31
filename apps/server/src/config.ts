@@ -88,6 +88,8 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    readonly p2pEnabled: boolean;
+    readonly p2pBootstrap: ReadonlyArray<string>;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -200,6 +202,8 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     logWebSocketEvents: false,
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    p2pEnabled: false,
+    p2pBootstrap: [],
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,

@@ -61,4 +61,21 @@ describe("parsePairingUrl", () => {
       code: "pairing-token",
     });
   });
+
+  it("splits a P2P pairing url into its address and code", () => {
+    const key = "ybndrfg8ejkmcpqxot1uwisza345h769ybndrfg8ejkmcpqxot1u";
+    expect(parsePairingUrl(`t3+p2p://${key}/#token=pairing-token`)).toEqual({
+      host: `t3+p2p://${key}`,
+      code: "pairing-token",
+    });
+  });
+
+  it("round-trips a P2P pairing url with a bootstrap list through host and code", () => {
+    const key = "ybndrfg8ejkmcpqxot1uwisza345h769ybndrfg8ejkmcpqxot1u";
+    const original = `t3+p2p://${key}/?bootstrap=10.0.0.5%3A49737#token=pairing-token`;
+    const { host, code } = parsePairingUrl(original);
+    expect(host).toBe(`t3+p2p://${key}/?bootstrap=10.0.0.5%3A49737`);
+    expect(code).toBe("pairing-token");
+    expect(buildPairingUrl(host, code)).toBe(original);
+  });
 });

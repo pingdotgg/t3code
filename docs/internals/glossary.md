@@ -145,6 +145,23 @@ The patch difference between two checkpoints. Query logic lives in [CheckpointDi
 
 The file patch and changed-file summary for one turn. It is usually computed in [CheckpointDiffQuery.ts][20], represented in [the contracts][1], and recorded into thread state by [projector.ts][4].
 
+### Remote access
+
+#### P2P endpoint
+
+An environment's presence on the Hyperswarm DHT: a persistent keypair (derived from
+`secrets/p2p-endpoint-seed.bin`) whose z-base-32 public key is the dialable address. The server
+relays each accepted end-to-end encrypted stream to its own HTTP port, so remote clients speak the
+ordinary HTTP + WebSocket protocol through the tunnel. Owned by `P2pEndpointRuntime`
+(`apps/server/src/remoteAccess/`) on top of [packages/p2p](../../packages/p2p). See
+[remote.md](./remote.md).
+
+#### DHT public key
+
+The `t3+p2p://<z32-key>` address a paired device dials to reach a [P2P endpoint](#p2p-endpoint).
+Knowing it is equivalent to knowing a hostname: pairing and session auth still gate access. Deleting
+the seed rotates it.
+
 ### Appearance
 
 #### Environment theme

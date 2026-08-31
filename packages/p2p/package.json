@@ -1,0 +1,41 @@
+{
+  "name": "@t3tools/p2p",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./announcer": {
+      "types": "./src/announcer.ts",
+      "import": "./src/announcer.ts"
+    },
+    "./dialer": {
+      "types": "./src/dialer.ts",
+      "import": "./src/dialer.ts"
+    },
+    "./errors": {
+      "types": "./src/errors.ts",
+      "import": "./src/errors.ts"
+    },
+    "./keys": {
+      "types": "./src/keys.ts",
+      "import": "./src/keys.ts"
+    },
+    "./testing": {
+      "types": "./src/testing.ts",
+      "import": "./src/testing.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "effect": "catalog:",
+    "hyperdht": "^6.33.2",
+    "z32": "^1.1.0"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

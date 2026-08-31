@@ -1,0 +1,299 @@
+diff --git a/android/link.mjs b/android/link.mjs
+index 0d603caf9eeabe7b1374ca20bb2d02f191fb1a3d..8afb04be76ece82b7f278256776e14d9e0471319 100644
+--- a/android/link.mjs
++++ b/android/link.mjs
+@@ -1,12 +1,108 @@
++import fs from 'fs'
++import os from 'os'
+ import path from 'path'
+ import { fileURLToPath } from 'url'
+ import link from 'bare-link'
+ 
+ const __filename = fileURLToPath(import.meta.url)
++const packageRoot = path.resolve(path.join(__filename, '..', '..'))
+ 
+-for await (const resource of link(path.join(__filename, '..', '..', '..', '..'), {
+-  hosts: ['android-arm64', 'android-arm', 'android-ia32', 'android-x64'],
+-  out: path.join(__filename, '..', 'src', 'main', 'addons')
+-})) {
+-  console.log('Wrote', resource)
++/**
++ * Classic installs resolve four parents up to the app root. pnpm's virtual
++ * store nests the package deeper, so walk upward (and check apps/mobile in a
++ * monorepo) for a package that declares Holepunch deps bare-link must vendor.
++ */
++function findAppPackage(start) {
++  let dir = start
++  for (let i = 0; i < 12; i++) {
++    for (const candidate of [dir, path.join(dir, 'apps', 'mobile')]) {
++      const pkgPath = path.join(candidate, 'package.json')
++      if (!fs.existsSync(pkgPath)) continue
++      try {
++        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
++        const deps = {
++          ...pkg.dependencies,
++          ...pkg.optionalDependencies,
++          ...pkg.peerDependencies,
++          ...pkg.devDependencies
++        }
++        if (deps.hyperdht || deps['bare-tcp'] || deps['udx-native']) {
++          return { dir: candidate, pkg }
++        }
++      } catch {
++        // Keep walking.
++      }
++    }
++    const parent = path.dirname(dir)
++    if (parent === dir) break
++    dir = parent
++  }
++  return null
++}
++
++/**
++ * bare-link resolves dependencies by walking node_modules from each package
++ * directory. pnpm's symlink layout hides transitive addons (udx-native lives
++ * next to hyperdht in the virtual store, not under apps/mobile/node_modules).
++ * Stage against the flat `.pnpm/node_modules` hoist — same trick as the P2P
++ * worklet packer — so every Holepunch addon resolves as a sibling.
++ */
++function prepareLinkBase(app) {
++  const classic = path.resolve(path.join(__filename, '..', '..', '..', '..'))
++  if (app === null) return { base: classic, cleanup: () => {} }
++
++  let repoRoot = app.dir
++  for (let i = 0; i < 6; i++) {
++    if (fs.existsSync(path.join(repoRoot, 'pnpm-workspace.yaml'))) break
++    const parent = path.dirname(repoRoot)
++    if (parent === repoRoot) break
++    repoRoot = parent
++  }
++
++  const flatModules = path.join(repoRoot, 'node_modules', '.pnpm', 'node_modules')
++  if (!fs.existsSync(flatModules)) {
++    return { base: app.dir, cleanup: () => {} }
++  }
++
++  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 't3-bare-link-'))
++  const deps = {
++    ...app.pkg.dependencies,
++    ...app.pkg.optionalDependencies
++  }
++  fs.writeFileSync(
++    path.join(stage, 'package.json'),
++    JSON.stringify(
++      {
++        name: 't3-bare-link-stage',
++        private: true,
++        dependencies: Object.fromEntries(
++          Object.entries(deps).filter(([name]) =>
++            /^(hyperdht|bare-tcp|udx-native|sodium-native)$/.test(name)
++          )
++        )
++      },
++      null,
++      2
++    )
++  )
++  fs.symlinkSync(flatModules, path.join(stage, 'node_modules'))
++  return {
++    base: stage,
++    cleanup: () => fs.rmSync(stage, { recursive: true, force: true })
++  }
++}
++
++const app = findAppPackage(path.dirname(packageRoot))
++const { base, cleanup } = prepareLinkBase(app)
++console.log(`[react-native-bare-kit] linking Android addons from ${base}`)
++
++try {
++  for await (const resource of link(base, {
++    hosts: ['android-arm64', 'android-arm', 'android-ia32', 'android-x64'],
++    out: path.join(__filename, '..', 'src', 'main', 'addons')
++  })) {
++    console.log('Wrote', resource)
++  }
++} finally {
++  cleanup()
+ }
+diff --git a/index.js b/index.js
+index 7e7bd52443797d9ecec96b9b3135f9230f4fb06b..a27122306a272a13c8f739400dbfc6ce0a2cb7d3 100644
+--- a/index.js
++++ b/index.js
+@@ -63,9 +63,18 @@ class BareKitIPC extends Duplex {
+   }
+ 
+   _write(data, cb) {
++    // Pass the TypedArray view itself. On React Native's New Architecture,
++    // TurboModule Object params drop bare ArrayBuffers as `undefined`
++    // ("Value is undefined, expected an Object"). Native getArrayBuffer()
++    // accepts ArrayBufferView objects, so the view is the portable handle.
++    if (typeof data !== 'object' || data === null || !ArrayBuffer.isView(data)) {
++      cb(new TypeError('IPC write requires a TypedArray'))
++      return
++    }
++
+     const written = NativeBareKit.write(
+       this._worklet._handle,
+-      data.buffer,
++      data,
+       data.byteOffset,
+       data.byteLength
+     )
+@@ -214,7 +223,7 @@ class BareKitWorklet extends EventEmitter {
+         NativeBareKit.startBytes(
+           this._handle,
+           filename,
+-          source.buffer,
++          source,
+           source.byteOffset,
+           source.byteLength,
+           args
+diff --git a/ios/link.mjs b/ios/link.mjs
+index 44124a27fcf4a1b813101898451f081a207f8c9a..6620c331dcf98098ed38c7771d77089a1606f35e 100644
+--- a/ios/link.mjs
++++ b/ios/link.mjs
+@@ -1,12 +1,108 @@
++import fs from 'fs'
++import os from 'os'
+ import path from 'path'
+ import { fileURLToPath } from 'url'
+ import link from 'bare-link'
+ 
+ const __filename = fileURLToPath(import.meta.url)
++const packageRoot = path.resolve(path.join(__filename, '..', '..'))
+ 
+-for await (const resource of link(path.join(__filename, '..', '..', '..', '..'), {
+-  hosts: ['ios-arm64', 'ios-arm64-simulator', 'ios-x64-simulator'],
+-  out: path.join(__filename, '..', 'addons')
+-})) {
+-  console.log('Wrote', resource)
++/**
++ * Classic installs resolve four parents up to the app root. pnpm's virtual
++ * store nests the package deeper, so walk upward (and check apps/mobile in a
++ * monorepo) for a package that declares Holepunch deps bare-link must vendor.
++ */
++function findAppPackage(start) {
++  let dir = start
++  for (let i = 0; i < 12; i++) {
++    for (const candidate of [dir, path.join(dir, 'apps', 'mobile')]) {
++      const pkgPath = path.join(candidate, 'package.json')
++      if (!fs.existsSync(pkgPath)) continue
++      try {
++        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
++        const deps = {
++          ...pkg.dependencies,
++          ...pkg.optionalDependencies,
++          ...pkg.peerDependencies,
++          ...pkg.devDependencies
++        }
++        if (deps.hyperdht || deps['bare-tcp'] || deps['udx-native']) {
++          return { dir: candidate, pkg }
++        }
++      } catch {
++        // Keep walking.
++      }
++    }
++    const parent = path.dirname(dir)
++    if (parent === dir) break
++    dir = parent
++  }
++  return null
++}
++
++/**
++ * bare-link resolves dependencies by walking node_modules from each package
++ * directory. pnpm's symlink layout hides transitive addons (udx-native lives
++ * next to hyperdht in the virtual store, not under apps/mobile/node_modules).
++ * Stage against the flat `.pnpm/node_modules` hoist — same trick as the P2P
++ * worklet packer — so every Holepunch addon resolves as a sibling.
++ */
++function prepareLinkBase(app) {
++  const classic = path.resolve(path.join(__filename, '..', '..', '..', '..'))
++  if (app === null) return { base: classic, cleanup: () => {} }
++
++  let repoRoot = app.dir
++  for (let i = 0; i < 6; i++) {
++    if (fs.existsSync(path.join(repoRoot, 'pnpm-workspace.yaml'))) break
++    const parent = path.dirname(repoRoot)
++    if (parent === repoRoot) break
++    repoRoot = parent
++  }
++
++  const flatModules = path.join(repoRoot, 'node_modules', '.pnpm', 'node_modules')
++  if (!fs.existsSync(flatModules)) {
++    return { base: app.dir, cleanup: () => {} }
++  }
++
++  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 't3-bare-link-'))
++  const deps = {
++    ...app.pkg.dependencies,
++    ...app.pkg.optionalDependencies
++  }
++  fs.writeFileSync(
++    path.join(stage, 'package.json'),
++    JSON.stringify(
++      {
++        name: 't3-bare-link-stage',
++        private: true,
++        dependencies: Object.fromEntries(
++          Object.entries(deps).filter(([name]) =>
++            /^(hyperdht|bare-tcp|udx-native|sodium-native)$/.test(name)
++          )
++        )
++      },
++      null,
++      2
++    )
++  )
++  fs.symlinkSync(flatModules, path.join(stage, 'node_modules'))
++  return {
++    base: stage,
++    cleanup: () => fs.rmSync(stage, { recursive: true, force: true })
++  }
++}
++
++const app = findAppPackage(path.dirname(packageRoot))
++const { base, cleanup } = prepareLinkBase(app)
++console.log(`[react-native-bare-kit] linking iOS addons from ${base}`)
++
++try {
++  for await (const resource of link(base, {
++    hosts: ['ios-arm64', 'ios-arm64-simulator', 'ios-x64-simulator'],
++    out: path.join(__filename, '..', 'addons')
++  })) {
++    console.log('Wrote', resource)
++  }
++} finally {
++  cleanup()
+ }
+diff --git a/shared/BareKitModule.cc b/shared/BareKitModule.cc
+index 0685f0239aeafd66c8b506c7b689d61f560b2773..7554673d87b87d07f5979fe1e11b93609706853e 100644
+--- a/shared/BareKitModule.cc
++++ b/shared/BareKitModule.cc
+@@ -331,7 +331,10 @@ struct BareKitWorklet : HostObject {
+ 
+     auto string = jsi_to_string_owned(rt, filename);
+ 
+-    auto buffer = jsi_to_buffer(rt, source.getArrayBuffer(rt), offset, length);
++    auto array_buffer = source.isArrayBuffer(rt)
++                          ? source.getArrayBuffer(rt)
++                          : source.getProperty(rt, "buffer").asObject(rt).getArrayBuffer(rt);
++    auto buffer = jsi_to_buffer(rt, array_buffer, offset, length);
+ 
+     auto argv = std::vector<const char *>(args.size(rt));
+ 
+@@ -409,7 +412,12 @@ struct BareKitWorklet : HostObject {
+   write(Runtime &rt, Object handle, Object data, size_t offset, size_t length) {
+     int err;
+ 
+-    auto buffer = jsi_to_buffer(rt, data.getArrayBuffer(rt), offset, length);
++    // Accept ArrayBuffer or TypedArray. RN callers should pass the view —
++    // passing typedArray.buffer can arrive as undefined across TurboModules.
++    auto array_buffer = data.isArrayBuffer(rt)
++                          ? data.getArrayBuffer(rt)
++                          : data.getProperty(rt, "buffer").asObject(rt).getArrayBuffer(rt);
++    auto buffer = jsi_to_buffer(rt, array_buffer, offset, length);
+ 
+     err = bare_ipc_write(ipc, buffer.base, buffer.len);
+     assert(err >= 0 || err == bare_ipc_would_block);

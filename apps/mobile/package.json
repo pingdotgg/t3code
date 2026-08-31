@@ -41,6 +41,7 @@
     "profile:android:hermes": "mkdir -p profiles/review && react-native profile-hermes profiles/review",
     "sync:pierre-icons": "node modules/t3-markdown-text/scripts/sync-pierre-file-icons.mjs",
     "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-uniwind-themes.mts",
+    "generate:p2p-worklet": "node scripts/build-p2p-worklet.mjs",
     "test": "vp test run",
     "typecheck": "tsc --noEmit"
   },
@@ -69,6 +70,8 @@
     "@t3tools/mobile-terminal-native": "file:./modules/t3-terminal",
     "@t3tools/shared": "workspace:*",
     "@tabler/icons-react-native": "^3.44.0",
+    "b4a": "^1.8.1",
+    "bare-tcp": "^2.6.1",
     "clsx": "^2.1.1",
     "diff": "8.0.3",
     "effect": "catalog:",
@@ -105,9 +108,12 @@
     "expo-video": "~57.0.3",
     "expo-web-browser": "~57.0.2",
     "expo-widgets": "~57.0.15",
+    "hyperdht": "^6.33.2",
+    "punycode": "^2.3.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-bare-kit": "^0.15.0",
     "react-native-gesture-handler": "~2.32.0",
     "react-native-image-viewing": "^0.2.2",
     "react-native-keyboard-controller": "1.21.13",
@@ -129,8 +135,10 @@
     "@pierre/trees": "1.0.0-beta.4",
     "@types/react": "~19.2.0",
     "babel-preset-expo": "~57.0.9",
+    "bare-pack": "^2.2.1",
     "tailwindcss": "^4.0.0",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "z32": "^1.1.0"
   },
   "overrides": {
     "react-native-nitro-markdown": "file:deps/react-native-nitro-markdown-0.5.0.tgz"

@@ -17,6 +17,7 @@
     "@effect/platform-node": "catalog:",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/p2p": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/ssh": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
@@ -24,8 +25,10 @@
     "electron": "43.4.1",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.6.2",
+    "hyperdht": "^6.33.2",
     "playwright-core": "1.60.0",
-    "react-grab": "^0.1.32"
+    "react-grab": "^0.1.32",
+    "z32": "^1.1.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

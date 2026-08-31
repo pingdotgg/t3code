@@ -390,6 +390,24 @@ export const DesktopSshPasswordPromptResolutionInputSchema = Schema.Struct({
   password: Schema.NullOr(Schema.String),
 });
 
+export const DesktopP2pEnvironmentDialInputSchema = Schema.Struct({
+  publicKeyZ32: Schema.String,
+  /** DHT bootstrap nodes as host:port entries; empty means the public DHT. */
+  bootstrap: Schema.Array(Schema.String),
+});
+export type DesktopP2pEnvironmentDialInput = typeof DesktopP2pEnvironmentDialInputSchema.Type;
+
+export const DesktopP2pEnvironmentDisconnectInputSchema = Schema.Struct({
+  publicKeyZ32: Schema.String,
+});
+
+/** Loopback base URLs of the local tunnel the renderer connects through. */
+export const DesktopP2pEnvironmentEndpointSchema = Schema.Struct({
+  httpBaseUrl: Schema.String,
+  wsBaseUrl: Schema.String,
+});
+export type DesktopP2pEnvironmentEndpoint = typeof DesktopP2pEnvironmentEndpointSchema.Type;
+
 export const PersistedSavedEnvironmentRecordSchema = Schema.Struct({
   environmentId: EnvironmentId,
   label: Schema.String,
@@ -1083,6 +1101,12 @@ export interface DesktopBridge {
   ) => Promise<AuthWebSocketTicketResult>;
   onSshPasswordPrompt: (listener: (request: DesktopSshPasswordPromptRequest) => void) => () => void;
   resolveSshPasswordPrompt: (requestId: string, password: string | null) => Promise<void>;
+  /** Optional while older desktop shells can host a newer web client. */
+  ensureP2pEnvironment?: (
+    input: DesktopP2pEnvironmentDialInput,
+  ) => Promise<DesktopP2pEnvironmentEndpoint>;
+  /** Optional while older desktop shells can host a newer web client. */
+  disconnectP2pEnvironment?: (publicKeyZ32: string) => Promise<void>;
   getServerExposureState: () => Promise<DesktopServerExposureState>;
   setServerExposureMode: (mode: DesktopServerExposureMode) => Promise<DesktopServerExposureState>;
   setTailscaleServeEnabled: (input: {

@@ -1,12 +1,68 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildP2pPairingUrl,
+  isP2pPairingUrl,
+  parseP2pPairingUrl,
   RemoteBackendUrlInvalidError,
   RemoteBackendUrlMissingError,
   RemotePairingTokenMissingError,
   RemotePairingUrlInvalidError,
   resolveRemotePairingTarget,
 } from "./remote.ts";
+
+const P2P_KEY = "qrqydpuhgpq7zhwyrjk8x9pxffi44wpzxxos7rpxgiakyuf8q99o";
+
+describe("p2p pairing urls", () => {
+  it("round-trips a p2p pairing url with a bootstrap list", () => {
+    const url = buildP2pPairingUrl({
+      publicKeyZ32: P2P_KEY,
+      credential: "pairing-token",
+      bootstrap: ["10.0.0.1:49737", "10.0.0.2:49737"],
+    });
+    expect(isP2pPairingUrl(url)).toBe(true);
+    expect(parseP2pPairingUrl(url)).toEqual({
+      credential: "pairing-token",
+      publicKeyZ32: P2P_KEY,
+      bootstrap: ["10.0.0.1:49737", "10.0.0.2:49737"],
+    });
+  });
+
+  it("round-trips a p2p pairing url without bootstrap nodes", () => {
+    const url = buildP2pPairingUrl({ publicKeyZ32: P2P_KEY, credential: "pairing-token" });
+    expect(parseP2pPairingUrl(url)).toEqual({
+      credential: "pairing-token",
+      publicKeyZ32: P2P_KEY,
+      bootstrap: [],
+    });
+  });
+
+  it("returns null for non-p2p inputs so callers fall through", () => {
+    expect(parseP2pPairingUrl("https://remote.example.com/pair#token=x")).toBeNull();
+    expect(parseP2pPairingUrl("not a url")).toBeNull();
+  });
+
+  it("rejects a malformed p2p key", () => {
+    expect(() => parseP2pPairingUrl("t3+p2p://short-key/#token=x")).toThrow(
+      RemotePairingUrlInvalidError,
+    );
+    expect(() => parseP2pPairingUrl(`t3+p2p://${"0".repeat(52)}/#token=x`)).toThrow(
+      RemotePairingUrlInvalidError,
+    );
+  });
+
+  it("rejects a p2p pairing url without a token", () => {
+    expect(() => parseP2pPairingUrl(`t3+p2p://${P2P_KEY}/`)).toThrow(
+      RemotePairingTokenMissingError,
+    );
+  });
+
+  it("keeps rejecting p2p urls in the ordinary pairing resolver", () => {
+    expect(() =>
+      resolveRemotePairingTarget({ pairingUrl: `t3+p2p://${P2P_KEY}/#token=x` }),
+    ).toThrow(RemotePairingUrlInvalidError);
+  });
+});
 
 describe("remote", () => {
   it("derives backend urls and token from a pairing url", () => {

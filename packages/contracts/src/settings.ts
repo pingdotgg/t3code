@@ -643,6 +643,14 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const RemoteAccessSettings = Schema.Struct({
+  /** Whether this environment announces itself on the peer-to-peer DHT. */
+  p2pEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** DHT bootstrap nodes as host:port entries; empty means the public DHT. */
+  p2pBootstrap: Schema.Array(TrimmedString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type RemoteAccessSettings = typeof RemoteAccessSettings.Type;
+
 export const SourceControlWritingStyleMode = Schema.Literals([
   "repo_conventions",
   "conventional_commits",
@@ -814,6 +822,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  remoteAccess: RemoteAccessSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -992,6 +1001,12 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  remoteAccess: Schema.optionalKey(
+    Schema.Struct({
+      p2pEnabled: Schema.optionalKey(Schema.Boolean),
+      p2pBootstrap: Schema.optionalKey(Schema.Array(TrimmedString)),
     }),
   ),
   providers: Schema.optionalKey(

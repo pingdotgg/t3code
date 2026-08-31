@@ -103,6 +103,10 @@ export function connectionCatalogDisplayUrl(entry: ConnectionCatalogEntry): stri
       return Option.isSome(entry.profile) && entry.profile.value._tag === "SshConnectionProfile"
         ? `${entry.profile.value.target.username}@${entry.profile.value.target.hostname}`
         : null;
+    case "P2pConnectionTarget":
+      return Option.isSome(entry.profile) && entry.profile.value._tag === "P2pConnectionProfile"
+        ? `t3+p2p://${entry.profile.value.publicKeyZ32}`
+        : null;
   }
 }
 

@@ -15,6 +15,7 @@ import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   type ConnectionCatalogEntry,
+  P2pConnectionProfile,
   SshConnectionProfile,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
@@ -27,6 +28,7 @@ import {
 import type {
   BearerConnectionTarget,
   ConnectionTarget,
+  P2pConnectionTarget,
   PreparedConnection,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
@@ -46,6 +48,7 @@ export class ConnectionResolver extends Context.Service<
 
 const isBearerProfile = Schema.is(BearerConnectionProfile);
 const isSshProfile = Schema.is(SshConnectionProfile);
+const isP2pProfile = Schema.is(P2pConnectionProfile);
 const isBearerCredential = Schema.is(BearerConnectionCredential);
 
 function primarySocketUrl(
@@ -251,11 +254,70 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
   });
 });
 
+const makeP2pBroker = Effect.fn("clientRuntime.connection.broker.makeP2p")(function* () {
+  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const p2p = yield* ClientCapabilities.P2pEnvironmentGateway;
+  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+
+  return Effect.fn("clientRuntime.connection.broker.p2p")(function* (
+    entry: ConnectionCatalogEntry & { readonly target: P2pConnectionTarget },
+  ) {
+    const target = entry.target;
+    const profile = yield* Option.match(entry.profile, {
+      onNone: () => Effect.fail(profileMissingError(target.connectionId)),
+      onSome: Effect.succeed,
+    });
+    if (!isP2pProfile(profile)) {
+      return yield* new ConnectionBlockedError({
+        reason: "configuration",
+        detail: `Connection profile ${target.connectionId} is not a P2P connection.`,
+      });
+    }
+    if (profile.environmentId !== target.environmentId) {
+      return yield* environmentMismatchError({
+        expected: target.environmentId,
+        actual: profile.environmentId,
+      });
+    }
+    const credential = yield* credentials.get(target.connectionId).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.fail(credentialMissingError(target.connectionId)),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
+    if (!isBearerCredential(credential)) {
+      return yield* credentialMissingError(target.connectionId);
+    }
+    const prepared = yield* p2p.prepare({
+      publicKeyZ32: profile.publicKeyZ32,
+      bootstrap: profile.bootstrap,
+    });
+    const authorized = yield* remote.authorizeBearer({
+      expectedEnvironmentId: target.environmentId,
+      httpBaseUrl: prepared.httpBaseUrl,
+      wsBaseUrl: prepared.wsBaseUrl,
+      bearerToken: credential.token,
+      connectionMethod: "p2p",
+    });
+    return {
+      environmentId: authorized.environmentId,
+      label: authorized.label,
+      httpBaseUrl: authorized.httpBaseUrl,
+      socketUrl: authorized.socketUrl,
+      httpAuthorization: authorized.httpAuthorization,
+      target,
+    } satisfies PreparedConnection;
+  });
+});
+
 export const make = Effect.gen(function* () {
   const primary = yield* makePrimaryBroker();
   const bearer = yield* makeBearerBroker();
   const relay = yield* makeRelayBroker();
   const ssh = yield* makeSshBroker();
+  const p2p = yield* makeP2pBroker();
 
   const prepare = Effect.fn("clientRuntime.connection.broker.prepare")(function* (
     entry: ConnectionCatalogEntry,
@@ -274,6 +336,8 @@ export const make = Effect.gen(function* () {
         return yield* relay(target);
       case "SshConnectionTarget":
         return yield* ssh({ ...entry, target });
+      case "P2pConnectionTarget":
+        return yield* p2p({ ...entry, target });
     }
   });
 

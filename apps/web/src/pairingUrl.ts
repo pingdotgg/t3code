@@ -1,4 +1,5 @@
 export {
+  buildP2pPairingUrl,
   getPairingTokenFromUrl,
   setPairingTokenOnUrl,
   stripPairingTokenFromUrl,

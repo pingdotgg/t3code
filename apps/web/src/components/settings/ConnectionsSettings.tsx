@@ -90,7 +90,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { AnimatedHeight } from "../AnimatedHeight";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Textarea } from "../ui/textarea";
-import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
+import { buildP2pPairingUrl, getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import {
   createServerPairingCredential,
@@ -520,6 +520,12 @@ function endpointShareHint(endpoint: AdvertisedEndpoint, url: string): string {
   }
 }
 
+/** The announced DHT address a pairing link can also be shared through. */
+type P2pShareTarget = {
+  readonly publicKeyZ32: string;
+  readonly bootstrap: ReadonlyArray<string>;
+};
+
 type PairingLinkListRowProps = {
   pairingLink: ServerPairingLinkRecord;
   endpointUrl: string | null | undefined;
@@ -527,6 +533,7 @@ type PairingLinkListRowProps = {
   defaultEndpointKey: string | null;
   presentation?: AccessSectionPresentation;
   revokingPairingLinkId: string | null;
+  p2pShareTarget?: P2pShareTarget | null;
   onRevoke: (id: string) => void;
 };
 
@@ -537,6 +544,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   defaultEndpointKey,
   presentation = "current",
   revokingPairingLinkId,
+  p2pShareTarget = null,
   onRevoke,
 }: PairingLinkListRowProps) {
   const nowMs = useRelativeTimeTick(1_000);
@@ -589,8 +597,22 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
         qrShareable: isQrShareableEndpoint(endpoint),
       });
     }
+    if (p2pShareTarget) {
+      options.push({
+        id: "p2p",
+        preferenceKey: "p2p",
+        label: "Peer-to-peer",
+        url: buildP2pPairingUrl({
+          publicKeyZ32: p2pShareTarget.publicKeyZ32,
+          credential: pairingLink.credential,
+          bootstrap: p2pShareTarget.bootstrap,
+        }),
+        detail: "Dials this environment by key over the DHT, from any network",
+        qrShareable: true,
+      });
+    }
     return options;
-  }, [endpoints, pairingLink.credential]);
+  }, [endpoints, p2pShareTarget, pairingLink.credential]);
   const shareablePairingUrl =
     endpointPairingUrl ??
     (endpointUrl != null && endpointUrl !== ""
@@ -1164,6 +1186,7 @@ type PairingClientsListProps = {
   clientSessions: ReadonlyArray<ServerClientSessionRecord>;
   revokingPairingLinkId: string | null;
   revokingClientSessionId: string | null;
+  p2pShareTarget?: P2pShareTarget | null;
   onRevokePairingLink: (id: string) => void;
   onRevokeClientSession: (sessionId: ServerClientSessionRecord["sessionId"]) => void;
 };
@@ -1178,6 +1201,7 @@ const PairingClientsList = memo(function PairingClientsList({
   clientSessions,
   revokingPairingLinkId,
   revokingClientSessionId,
+  p2pShareTarget = null,
   onRevokePairingLink,
   onRevokeClientSession,
 }: PairingClientsListProps) {
@@ -1192,6 +1216,7 @@ const PairingClientsList = memo(function PairingClientsList({
           defaultEndpointKey={defaultEndpointKey}
           presentation={presentation}
           revokingPairingLinkId={revokingPairingLinkId}
+          p2pShareTarget={p2pShareTarget}
           onRevoke={onRevokePairingLink}
         />
       ))}
@@ -1894,6 +1919,57 @@ export function ConnectionsSettings() {
   const primaryVersionMismatch = resolveServerConfigVersionMismatch(primaryServerConfig);
   const primaryServerUpdateState = useAtomValue(
     serverEnvironment.updateStateAtom(primaryEnvironmentId),
+  );
+  // Present only on servers that can report peer-to-peer state; the row and
+  // share option stay hidden against older backends.
+  const p2pRemoteAccess = primaryServerConfig?.remoteAccess?.p2p ?? null;
+  const p2pSettings = primaryServerConfig?.settings.remoteAccess ?? null;
+  const persistP2pSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: false,
+  });
+  const [isUpdatingP2pAccess, setIsUpdatingP2pAccess] = useState(false);
+  const [p2pAccessError, setP2pAccessError] = useState<string | null>(null);
+  const isP2pEnabled = p2pRemoteAccess?.enabled ?? false;
+  const p2pShareTarget: P2pShareTarget | null =
+    p2pRemoteAccess?.publicKeyZ32 !== undefined
+      ? {
+          publicKeyZ32: p2pRemoteAccess.publicKeyZ32,
+          bootstrap: p2pSettings?.p2pBootstrap ?? [],
+        }
+      : null;
+  const p2pStatusDescription = (() => {
+    if (!isP2pEnabled) {
+      return "Announce this environment on the peer-to-peer DHT so paired devices can dial it directly from any network — end-to-end encrypted, no account or VPN.";
+    }
+    if (p2pRemoteAccess?.publicKeyZ32 !== undefined) {
+      return `Announced on the DHT as t3+p2p://${p2pRemoteAccess.publicKeyZ32}. Paired devices dial this key directly, end-to-end encrypted.`;
+    }
+    if (p2pRemoteAccess?.error !== undefined) {
+      return "Enabled, but the DHT announcement failed.";
+    }
+    return "Enabled. Waiting for the DHT announcement — this can take a minute the first time.";
+  })();
+  const handleSetP2pEnabled = useCallback(
+    async (enabled: boolean) => {
+      if (primaryEnvironmentId === null) {
+        return;
+      }
+      setIsUpdatingP2pAccess(true);
+      setP2pAccessError(null);
+      try {
+        await persistP2pSettings({
+          environmentId: primaryEnvironmentId,
+          input: { patch: { remoteAccess: { p2pEnabled: enabled } } },
+        });
+      } catch (error) {
+        setP2pAccessError(
+          error instanceof Error ? error.message : "Failed to update peer-to-peer access.",
+        );
+      } finally {
+        setIsUpdatingP2pAccess(false);
+      }
+    },
+    [persistP2pSettings, primaryEnvironmentId],
   );
   const [isAdvertisedEndpointListExpanded, setIsAdvertisedEndpointListExpanded] = useState(false);
   const defaultAdvertisedEndpointKey = useUiStateStore(
@@ -2931,6 +3007,35 @@ export function ConnectionsSettings() {
     );
   };
 
+  const renderP2pRow = () => {
+    if (p2pRemoteAccess === null) {
+      return null;
+    }
+    return (
+      <SettingsRow
+        title="Peer-to-peer access"
+        description={p2pStatusDescription}
+        status={
+          p2pAccessError || p2pRemoteAccess?.error ? (
+            <span className="block text-destructive">
+              {p2pAccessError ?? p2pRemoteAccess?.error}
+            </span>
+          ) : null
+        }
+        control={
+          <Switch
+            checked={isP2pEnabled}
+            disabled={primaryEnvironmentId === null || isUpdatingP2pAccess}
+            onCheckedChange={(checked) => {
+              void handleSetP2pEnabled(checked);
+            }}
+            aria-label="Enable peer-to-peer access"
+          />
+        }
+      />
+    );
+  };
+
   const renderTailscaleRow = () => (
     <SettingsRow
       title={searchableSetting("tailscale-https").title}
@@ -2976,6 +3081,7 @@ export function ConnectionsSettings() {
         clientSessions={desktopClientSessions}
         revokingPairingLinkId={revokingDesktopPairingLinkId}
         revokingClientSessionId={revokingDesktopClientSessionId}
+        p2pShareTarget={p2pShareTarget}
         onRevokePairingLink={handleRevokeDesktopPairingLink}
         onRevokeClientSession={handleRevokeDesktopClientSession}
       />
@@ -3115,12 +3221,14 @@ export function ConnectionsSettings() {
                 {renderNetworkAccessRow()}
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}
+                {renderP2pRow()}
                 {renderWslRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />
               </>
             ) : (
               <>
                 {renderDisabledNetworkAccessRow()}
+                {renderP2pRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />
               </>
             )}

@@ -185,6 +185,69 @@ export const readHostedPairingRequest = (url: URL): HostedPairingRequest | null 
   };
 };
 
+const P2P_PAIRING_PROTOCOL = "t3+p2p:";
+const P2P_BOOTSTRAP_PARAM = "bootstrap";
+/** z-base-32 alphabet, 52 characters — a 32-byte DHT public key. */
+const P2P_PUBLIC_KEY_PATTERN = /^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/;
+
+export interface P2pPairingTarget {
+  readonly credential: string;
+  readonly publicKeyZ32: string;
+  readonly bootstrap: ReadonlyArray<string>;
+}
+
+export const isP2pPairingUrl = (value: string): boolean =>
+  value.trim().toLowerCase().startsWith(`${P2P_PAIRING_PROTOCOL}//`);
+
+/**
+ * `t3+p2p://<z32-public-key>/?bootstrap=host:port,…#token=<credential>` — the
+ * key is the address, the one-time credential stays in the hash like every
+ * other pairing URL, and the bootstrap list only appears for servers on a
+ * non-public DHT.
+ */
+export const buildP2pPairingUrl = (input: {
+  readonly publicKeyZ32: string;
+  readonly credential: string;
+  readonly bootstrap?: ReadonlyArray<string>;
+}): string => {
+  const url = new URL(`${P2P_PAIRING_PROTOCOL}//${input.publicKeyZ32}/`);
+  if (input.bootstrap !== undefined && input.bootstrap.length > 0) {
+    url.searchParams.set(P2P_BOOTSTRAP_PARAM, input.bootstrap.join(","));
+  }
+  return setPairingTokenOnUrl(url, input.credential).toString();
+};
+
+/**
+ * Returns null when the value is not a P2P pairing URL at all, so callers can
+ * fall through to the ordinary URL-shaped pairing path; throws the shared
+ * pairing errors when it is one but is malformed.
+ */
+export const parseP2pPairingUrl = (rawValue: string): P2pPairingTarget | null => {
+  const trimmed = rawValue.trim();
+  if (!isP2pPairingUrl(trimmed)) {
+    return null;
+  }
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch (cause) {
+    throw new RemotePairingUrlInvalidError({ cause });
+  }
+  const publicKeyZ32 = url.hostname;
+  if (!P2P_PUBLIC_KEY_PATTERN.test(publicKeyZ32)) {
+    throw new RemotePairingUrlInvalidError({ protocol: url.protocol });
+  }
+  const credential = getPairingTokenFromUrl(url) ?? "";
+  if (!credential) {
+    throw new RemotePairingTokenMissingError({ host: publicKeyZ32 });
+  }
+  const bootstrap = (url.searchParams.get(P2P_BOOTSTRAP_PARAM) ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  return { credential, publicKeyZ32, bootstrap };
+};
+
 export const resolveRemotePairingTarget = (input: {
   readonly pairingUrl?: string;
   readonly host?: string;

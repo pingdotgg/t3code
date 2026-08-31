@@ -1,11 +1,16 @@
 import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
+import { buildP2pPairingUrl } from "@t3tools/shared/remote";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { remoteHttpClientLayer } from "../rpc/http.ts";
-import { ClientPresentation, SshEnvironmentGateway } from "../platform/capabilities.ts";
+import {
+  ClientPresentation,
+  P2pEnvironmentGateway,
+  SshEnvironmentGateway,
+} from "../platform/capabilities.ts";
 import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
 import { BearerConnectionTarget } from "./model.ts";
 import {
@@ -23,6 +28,18 @@ const CLIENT_PRESENTATION_LAYER = Layer.succeed(
       os: "Test OS",
     },
     scopes: AuthStandardClientScopes,
+  }),
+);
+
+const P2P_GATEWAY_STUB_LAYER = Layer.succeed(
+  P2pEnvironmentGateway,
+  P2pEnvironmentGateway.of({
+    prepare: () =>
+      Effect.succeed({
+        httpBaseUrl: "http://127.0.0.1:39999",
+        wsBaseUrl: "ws://127.0.0.1:39999",
+      }),
+    disconnect: () => Effect.void,
   }),
 );
 
@@ -81,7 +98,15 @@ describe("connection onboarding", () => {
       const registration = yield* preparePairingRegistration({
         host: "remote.example.test",
         pairingCode: "pairing-token",
-      }).pipe(Effect.provide(Layer.mergeAll(CLIENT_PRESENTATION_LAYER, pairingHttpLayer(calls))));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CLIENT_PRESENTATION_LAYER,
+            P2P_GATEWAY_STUB_LAYER,
+            pairingHttpLayer(calls),
+          ),
+        ),
+      );
 
       expect(registration).toMatchObject({
         _tag: "BearerConnectionRegistration",
@@ -118,6 +143,84 @@ describe("connection onboarding", () => {
     }),
   );
 
+  it.effect("prepares a persisted p2p registration from a t3+p2p pairing URL", () =>
+    Effect.gen(function* () {
+      const publicKeyZ32 = "y".repeat(52);
+      const dialed: Array<{ publicKeyZ32: string; bootstrap: ReadonlyArray<string> }> = [];
+      const gatewayLayer = Layer.succeed(
+        P2pEnvironmentGateway,
+        P2pEnvironmentGateway.of({
+          prepare: (input) => {
+            dialed.push(input);
+            return Effect.succeed({
+              httpBaseUrl: "http://127.0.0.1:39999",
+              wsBaseUrl: "ws://127.0.0.1:39999",
+            });
+          },
+          disconnect: () => Effect.void,
+        }),
+      );
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const registration = yield* preparePairingRegistration({
+        pairingUrl: buildP2pPairingUrl({
+          publicKeyZ32,
+          credential: "pairing-token",
+          bootstrap: ["10.0.0.9:49737"],
+        }),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(CLIENT_PRESENTATION_LAYER, gatewayLayer, pairingHttpLayer(calls)),
+        ),
+      );
+
+      expect(registration).toMatchObject({
+        _tag: "P2pConnectionRegistration",
+        target: {
+          environmentId: "environment-paired",
+          label: "Paired environment",
+          connectionId: "p2p:environment-paired",
+        },
+        profile: {
+          connectionId: "p2p:environment-paired",
+          publicKeyZ32,
+          bootstrap: ["10.0.0.9:49737"],
+        },
+        credential: {
+          token: "bearer-token",
+        },
+      });
+      expect(dialed).toEqual([{ publicKeyZ32, bootstrap: ["10.0.0.9:49737"] }]);
+      expect(calls.map((call) => call.url)).toEqual([
+        "http://127.0.0.1:39999/.well-known/t3/environment",
+        "http://127.0.0.1:39999/oauth/token",
+      ]);
+    }),
+  );
+
+  it.effect("rejects a malformed t3+p2p pairing URL before dialing", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const error = yield* preparePairingRegistration({
+        pairingUrl: "t3+p2p://not-a-valid-key/#token=abc",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CLIENT_PRESENTATION_LAYER,
+            P2P_GATEWAY_STUB_LAYER,
+            pairingHttpLayer(calls),
+          ),
+        ),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "configuration",
+      });
+      expect(calls).toEqual([]);
+    }),
+  );
+
   it.effect("does not consume a pairing credential when descriptor discovery fails", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
@@ -129,6 +232,7 @@ describe("connection onboarding", () => {
         Effect.provide(
           Layer.mergeAll(
             CLIENT_PRESENTATION_LAYER,
+            P2P_GATEWAY_STUB_LAYER,
             pairingHttpLayer(calls, { failDescriptor: true }),
           ),
         ),
@@ -148,7 +252,13 @@ describe("connection onboarding", () => {
         host: "",
         pairingCode: "",
       }).pipe(
-        Effect.provide(Layer.mergeAll(CLIENT_PRESENTATION_LAYER, pairingHttpLayer(calls))),
+        Effect.provide(
+          Layer.mergeAll(
+            CLIENT_PRESENTATION_LAYER,
+            P2P_GATEWAY_STUB_LAYER,
+            pairingHttpLayer(calls),
+          ),
+        ),
         Effect.flip,
       );
 

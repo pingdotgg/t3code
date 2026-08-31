@@ -93,6 +93,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   resolveSshPasswordPrompt: (requestId, password) =>
     ipcRenderer.invoke(IpcChannels.RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL, { requestId, password }),
+  ensureP2pEnvironment: (input) =>
+    ipcRenderer.invoke(IpcChannels.ENSURE_P2P_ENVIRONMENT_CHANNEL, input),
+  disconnectP2pEnvironment: (publicKeyZ32) =>
+    ipcRenderer.invoke(IpcChannels.DISCONNECT_P2P_ENVIRONMENT_CHANNEL, { publicKeyZ32 }),
   getServerExposureState: () => ipcRenderer.invoke(IpcChannels.GET_SERVER_EXPOSURE_STATE_CHANNEL),
   setServerExposureMode: (mode) =>
     ipcRenderer.invoke(IpcChannels.SET_SERVER_EXPOSURE_MODE_CHANNEL, mode),

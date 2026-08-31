@@ -66,3 +66,32 @@ export class SshEnvironmentGateway extends Context.Service<
     ) => Effect.Effect<void, ConnectionAttemptError>;
   }
 >()("@t3tools/client-runtime/platform/capabilities/SshEnvironmentGateway") {}
+
+export interface P2pDialInput {
+  /** The remote endpoint's z-base-32 DHT public key address. */
+  readonly publicKeyZ32: string;
+  /** DHT bootstrap nodes as host:port entries; empty means the public DHT. */
+  readonly bootstrap: ReadonlyArray<string>;
+}
+
+export interface PreparedP2pEnvironment {
+  readonly httpBaseUrl: string;
+  readonly wsBaseUrl: string;
+}
+
+/**
+ * Dials a P2P endpoint by public key and exposes it as loopback base URLs the
+ * ordinary connection stack consumes unchanged (the SSH tunnel pattern).
+ * Tunnels are keyed by public key: prepare reuses a live tunnel, disconnect
+ * tears it down. Browsers without a host bridge cannot dial and fail with
+ * `ConnectionBlockedError("unsupported")`.
+ */
+export class P2pEnvironmentGateway extends Context.Service<
+  P2pEnvironmentGateway,
+  {
+    readonly prepare: (
+      input: P2pDialInput,
+    ) => Effect.Effect<PreparedP2pEnvironment, ConnectionAttemptError>;
+    readonly disconnect: (publicKeyZ32: string) => Effect.Effect<void, ConnectionAttemptError>;
+  }
+>()("@t3tools/client-runtime/platform/capabilities/P2pEnvironmentGateway") {}

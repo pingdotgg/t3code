@@ -30,13 +30,16 @@
     "@opencode-ai/sdk": "^1.3.15",
     "@pierre/diffs": "catalog:",
     "effect": "catalog:",
+    "hyperdht": "^6.33.2",
     "msgpackr-extract": "3.0.4",
     "node-pty": "^1.1.0",
-    "yaml": "catalog:"
+    "yaml": "catalog:",
+    "z32": "^1.1.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/p2p": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
     "@t3tools/web": "workspace:*",

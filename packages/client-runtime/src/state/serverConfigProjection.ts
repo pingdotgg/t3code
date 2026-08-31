@@ -58,14 +58,38 @@ export function applyServerConfigProjection(
         source: "live",
       }));
     case "settingsUpdated":
-      return Option.map(current, (projection) => ({
-        config: {
-          ...projection.config,
-          settings: event.payload.settings,
-        },
-        latestEvent: event,
-        source: "live",
-      }));
+      return Option.map(current, (projection) => {
+        const settings = event.payload.settings;
+        // Prefer the server-provided remoteAccess (includes the dialable key after
+        // announce). Older servers omit it; fall back to syncing enabled from the
+        // settings patch only when this environment already reported P2P support.
+        const remoteAccess =
+          event.payload.remoteAccess ??
+          (projection.config.remoteAccess === undefined
+            ? undefined
+            : {
+                p2p: {
+                  enabled: settings.remoteAccess.p2pEnabled,
+                  ...(settings.remoteAccess.p2pEnabled &&
+                  projection.config.remoteAccess.p2p?.publicKeyZ32 !== undefined
+                    ? { publicKeyZ32: projection.config.remoteAccess.p2p.publicKeyZ32 }
+                    : {}),
+                  ...(settings.remoteAccess.p2pEnabled &&
+                  projection.config.remoteAccess.p2p?.error !== undefined
+                    ? { error: projection.config.remoteAccess.p2p.error }
+                    : {}),
+                },
+              });
+        return {
+          config: {
+            ...projection.config,
+            settings,
+            ...(remoteAccess === undefined ? {} : { remoteAccess }),
+          },
+          latestEvent: event,
+          source: "live" as const,
+        };
+      });
     case "environmentThemesUpdated":
       return Option.map(current, (projection) => ({
         config: {

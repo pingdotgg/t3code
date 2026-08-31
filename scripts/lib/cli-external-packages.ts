@@ -48,6 +48,70 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   // becoming real if either is ever declared as a dependency.
   "bufferutil",
   "utf-8-validate",
+  // The Holepunch DHT stack behind @t3tools/p2p (P2P remote access). hyperdht
+  // loads udx-native and sodium-native, whose loader (require-addon) dlopens
+  // prebuilds by real filesystem path, so the hyperdht entry point stays
+  // external — and with it, per the closure rule above, every package it can
+  // require at runtime. hyperdht and z32 are direct server dependencies, so
+  // they select as sidecar roots and pull the rest of this family in.
+  "hyperdht", // also hyperdht-address
+  "z32",
+  "@hyperswarm/", // secret-stream
+  "dht-rpc",
+  "udx-native",
+  "sodium-", // sodium-native, sodium-secretstream, sodium-universal
+  "require-addon",
+  "which-runtime",
+  // The bare-* runtime shims require-addon and bare-stream pull in. Listed by
+  // name rather than as a "bare-" prefix: the repo also holds Bare build
+  // tooling (bare-pack, bare-link — mobile devDependencies) whose closures are
+  // not runtime-external.
+  "bare-abort-controller",
+  "bare-addon-resolve",
+  "bare-ansi-escapes",
+  "bare-buffer",
+  "bare-assert",
+  "bare-events",
+  "bare-fs",
+  "bare-inspect",
+  "bare-module-resolve",
+  "bare-path",
+  "bare-semver",
+  "bare-stream",
+  "bare-type",
+  "bare-url",
+  "b4a",
+  "react-native-b4a", // optional binding declared by b4a; never loaded by Node
+  "streamx",
+  "compact-encoding", // also -bitfield, -net
+  "hypercore-crypto",
+  "hypercore-id-encoding",
+  "hyperschema",
+  "adaptive-timeout",
+  "bits-to-bytes",
+  "blind-relay",
+  "bogon",
+  "events-universal",
+  "fast-fifo",
+  "generate-object-property",
+  "generate-string",
+  "is-property",
+  "kademlia-routing-table",
+  "nanoassert",
+  "nat-sampler",
+  "noise-curve-ed",
+  "noise-handshake",
+  "protomux",
+  "queue-tick",
+  "record-cache",
+  "safety-catch",
+  "signal-promise",
+  "teex",
+  "text-decoder",
+  "time-ordered-set",
+  "timeout-refresh",
+  "unslab",
+  "xache",
 ] as const;
 
 /**

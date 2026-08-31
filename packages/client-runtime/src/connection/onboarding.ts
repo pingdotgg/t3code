@@ -1,5 +1,5 @@
 import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
-import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
+import { parseP2pPairingUrl, resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -18,6 +18,8 @@ import {
   BearerConnectionRegistration,
   type ConnectionCatalogEntry,
   type ConnectionCredential,
+  P2pConnectionProfile,
+  P2pConnectionRegistration,
   SshConnectionProfile,
   SshConnectionRegistration,
 } from "./catalog.ts";
@@ -26,6 +28,7 @@ import { mapRemoteEnvironmentError } from "./errors.ts";
 import {
   BearerConnectionTarget,
   ConnectionBlockedError,
+  P2pConnectionTarget,
   SshConnectionTarget,
   type ConnectionAttemptError,
 } from "./model.ts";
@@ -83,9 +86,76 @@ const resolvePairingTarget = Effect.fn("clientRuntime.connection.onboarding.reso
   },
 );
 
+const resolveP2pPairingTarget = Effect.fn(
+  "clientRuntime.connection.onboarding.resolveP2pPairingTarget",
+)(function* (pairingUrl: string) {
+  return yield* Effect.try({
+    try: () => parseP2pPairingUrl(pairingUrl),
+    catch: (cause) =>
+      new ConnectionBlockedError({
+        reason: "configuration",
+        detail: cause instanceof Error ? cause.message : "The pairing details are invalid.",
+      }),
+  });
+});
+
+/**
+ * Pairing against a `t3+p2p://` address: dial the key first, then run the
+ * ordinary descriptor + bearer bootstrap over the tunnel's loopback URLs.
+ */
+export const prepareP2pRegistration = Effect.fn(
+  "clientRuntime.connection.onboarding.prepareP2pRegistration",
+)(function* (target: {
+  readonly credential: string;
+  readonly publicKeyZ32: string;
+  readonly bootstrap: ReadonlyArray<string>;
+}) {
+  const gateway = yield* ClientCapabilities.P2pEnvironmentGateway;
+  const presentation = yield* ClientCapabilities.ClientPresentation;
+  const prepared = yield* gateway.prepare({
+    publicKeyZ32: target.publicKeyZ32,
+    bootstrap: target.bootstrap,
+  });
+  const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+    httpBaseUrl: prepared.httpBaseUrl,
+  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+  const access = yield* bootstrapRemoteBearerSession({
+    httpBaseUrl: prepared.httpBaseUrl,
+    credential: target.credential,
+    scopes: presentation.scopes,
+    clientMetadata: presentation.metadata,
+  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+  const connectionId = `p2p:${descriptor.environmentId}`;
+
+  return new P2pConnectionRegistration({
+    target: new P2pConnectionTarget({
+      environmentId: descriptor.environmentId,
+      label: descriptor.label,
+      connectionId,
+    }),
+    profile: new P2pConnectionProfile({
+      connectionId,
+      environmentId: descriptor.environmentId,
+      label: descriptor.label,
+      publicKeyZ32: target.publicKeyZ32,
+      bootstrap: target.bootstrap,
+    }),
+    credential: new BearerConnectionCredential({
+      token: access.access_token,
+    }),
+  });
+});
+
 export const preparePairingRegistration = Effect.fn(
   "clientRuntime.connection.onboarding.preparePairingRegistration",
 )(function* (input: PairingConnectionInput) {
+  const p2pTarget =
+    input.pairingUrl !== undefined && input.pairingUrl.trim().length > 0
+      ? yield* resolveP2pPairingTarget(input.pairingUrl)
+      : null;
+  if (p2pTarget !== null) {
+    return yield* prepareP2pRegistration(p2pTarget);
+  }
   const target = yield* resolvePairingTarget(input);
   const presentation = yield* ClientCapabilities.ClientPresentation;
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
@@ -247,6 +317,7 @@ export const make = Effect.gen(function* () {
   const presentation = yield* ClientCapabilities.ClientPresentation;
   const httpClient = yield* HttpClient.HttpClient;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
+  const p2p = yield* ClientCapabilities.P2pEnvironmentGateway;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
 
   return ConnectionOnboarding.of({
@@ -255,6 +326,7 @@ export const make = Effect.gen(function* () {
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
         Effect.provideService(ClientCapabilities.ClientPresentation, presentation),
         Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.provideService(ClientCapabilities.P2pEnvironmentGateway, p2p),
       ),
     registerSsh: (input) =>
       registerSshConnection(input).pipe(

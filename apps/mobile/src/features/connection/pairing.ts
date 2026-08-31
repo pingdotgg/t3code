@@ -1,4 +1,4 @@
-import { readHostedPairingRequest } from "@t3tools/shared/remote";
+import { isP2pPairingUrl, readHostedPairingRequest } from "@t3tools/shared/remote";
 import * as Schema from "effect/Schema";
 
 const MOBILE_PAIRING_URL_PARAM = "pairingUrl";
@@ -62,8 +62,12 @@ export function parsePairingUrl(url: string): { host: string; code: string } {
     const code = hashToken || queryToken || "";
 
     parsed.hash = "";
-    parsed.search = "";
-    parsed.pathname = "/";
+    // A t3+p2p:// address keeps its query (the DHT bootstrap list) — only the
+    // credential is split out into the code field.
+    if (!isP2pPairingUrl(trimmed)) {
+      parsed.search = "";
+      parsed.pathname = "/";
+    }
     return { host: parsed.toString().replace(/\/$/, ""), code };
   } catch {
     return { host: trimmed, code: "" };

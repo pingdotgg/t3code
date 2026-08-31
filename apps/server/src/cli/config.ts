@@ -74,6 +74,24 @@ export const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
   Flag.optional,
 );
+export const p2pFlag = Flag.boolean("p2p").pipe(
+  Flag.withDescription(
+    "Announce this backend on the peer-to-peer DHT so paired devices can dial it directly.",
+  ),
+  Flag.optional,
+);
+export const p2pBootstrapFlag = Flag.string("p2p-bootstrap").pipe(
+  Flag.withDescription(
+    "Comma-separated host:port DHT bootstrap nodes; defaults to the public DHT.",
+  ),
+  Flag.optional,
+);
+
+const splitCommaList = (value: string): ReadonlyArray<string> =>
+  value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 
 const EnvServerConfig = Config.all({
   logLevel: Config.logLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
@@ -139,6 +157,11 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  p2pEnabled: Config.boolean("T3CODE_P2P").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  p2pBootstrap: Config.string("T3CODE_P2P_BOOTSTRAP").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 export interface CliServerFlags {
@@ -154,6 +177,8 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
+  readonly p2pEnabled: Option.Option<boolean>;
+  readonly p2pBootstrap: Option.Option<string>;
 }
 
 export interface CliAuthLocationFlags {
@@ -188,6 +213,8 @@ export const sharedServerCommandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  p2pEnabled: p2pFlag,
+  p2pBootstrap: p2pBootstrapFlag,
 } as const;
 
 const resolveOptionPrecedence = <Value>(
@@ -231,6 +258,8 @@ export const resolveServerConfig = (
       logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
       tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
       tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+      p2pEnabled: flags.p2pEnabled ?? Option.none(),
+      p2pBootstrap: flags.p2pBootstrap ?? Option.none(),
     } satisfies CliServerFlags;
     const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
@@ -336,6 +365,19 @@ export const resolveServerConfig = (
       ),
       () => 443,
     );
+    const p2pEnabled = Option.getOrElse(
+      resolveOptionPrecedence(normalizedFlags.p2pEnabled, Option.fromUndefinedOr(env.p2pEnabled)),
+      () => false,
+    );
+    const p2pBootstrap = splitCommaList(
+      Option.getOrElse(
+        resolveOptionPrecedence(
+          normalizedFlags.p2pBootstrap,
+          Option.fromUndefinedOr(env.p2pBootstrap),
+        ),
+        () => "",
+      ),
+    );
     const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -384,6 +426,8 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      p2pEnabled,
+      p2pBootstrap,
     };
 
     return config;
@@ -407,6 +451,8 @@ export const resolveCliAuthConfig = (
       logWebSocketEvents: Option.none(),
       tailscaleServeEnabled: Option.none(),
       tailscaleServePort: Option.none(),
+      p2pEnabled: Option.none(),
+      p2pBootstrap: Option.none(),
     },
     cliLogLevel,
   );

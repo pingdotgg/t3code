@@ -70,6 +70,11 @@ authenticated.
 - `vp run dist:desktop:dmg`: Builds a shareable macOS `.dmg` into `./release`. Architecture defaults
   to the host, so this produces an arm64 DMG on Apple Silicon. Use `dist:desktop:dmg:arm64` or
   `dist:desktop:dmg:x64`, or pass `--arch <arm64|x64|universal>`, to force one.
+- `node scripts/install-desktop-local.ts`: Builds an unsigned macOS DMG (host arch by default), quits
+  any running packaged app, installs the `.app` into `/Applications`, and clears quarantine. Useful
+  for local iteration without remounting the DMG by hand. Flags: `--skip-build`, `--open`,
+  `--enable-p2p`, `--arch`, `--verbose`. Prefer invoking the node script directly so flags are not
+  swallowed by `vp run … --`.
 - `vp run dist:desktop:linux`: Builds a Linux AppImage into `./release`.
 - `vp run dist:desktop:win`: Builds a Windows NSIS installer into `./release`. `:arm64` and `:x64`
   variants exist.

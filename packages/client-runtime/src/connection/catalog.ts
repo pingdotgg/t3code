@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 import {
   BearerConnectionTarget,
+  P2pConnectionTarget,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
@@ -33,7 +34,21 @@ export class SshConnectionProfile extends Schema.TaggedClass<SshConnectionProfil
   },
 ) {}
 
-export const ConnectionProfile = Schema.Union([BearerConnectionProfile, SshConnectionProfile]);
+export class P2pConnectionProfile extends Schema.TaggedClass<P2pConnectionProfile>()(
+  "P2pConnectionProfile",
+  {
+    ...ConnectionProfileBase,
+    publicKeyZ32: Schema.String,
+    /** DHT bootstrap nodes as host:port entries; empty means the public DHT. */
+    bootstrap: Schema.Array(Schema.String),
+  },
+) {}
+
+export const ConnectionProfile = Schema.Union([
+  BearerConnectionProfile,
+  SshConnectionProfile,
+  P2pConnectionProfile,
+]);
 export type ConnectionProfile = typeof ConnectionProfile.Type;
 
 export interface ConnectionCatalogEntry {
@@ -82,10 +97,20 @@ export class SshConnectionRegistration extends Schema.TaggedClass<SshConnectionR
   },
 ) {}
 
+export class P2pConnectionRegistration extends Schema.TaggedClass<P2pConnectionRegistration>()(
+  "P2pConnectionRegistration",
+  {
+    target: P2pConnectionTarget,
+    profile: P2pConnectionProfile,
+    credential: BearerConnectionCredential,
+  },
+) {}
+
 export const ConnectionRegistration = Schema.Union([
   RelayConnectionRegistration,
   BearerConnectionRegistration,
   SshConnectionRegistration,
+  P2pConnectionRegistration,
 ]);
 export type ConnectionRegistration = typeof ConnectionRegistration.Type;
 
@@ -116,6 +141,7 @@ export function connectionRegistrationCatalogEntry(
       };
     case "BearerConnectionRegistration":
     case "SshConnectionRegistration":
+    case "P2pConnectionRegistration":
       return {
         target: registration.target,
         profile: Option.some(registration.profile),

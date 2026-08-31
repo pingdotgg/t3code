@@ -16,6 +16,7 @@ import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   type ConnectionCatalogEntry,
+  P2pConnectionProfile,
   SshConnectionProfile,
   type ConnectionCredential,
   type ConnectionProfile,
@@ -24,6 +25,7 @@ import * as ConnectionCredentialStore from "./credentialStore.ts";
 import {
   BearerConnectionTarget,
   ConnectionTransientError,
+  P2pConnectionTarget,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
@@ -97,6 +99,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   readonly authorizeDpop?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeDpop"];
   readonly primaryBearerToken?: string;
   readonly prepareSsh?: ClientCapabilities.SshEnvironmentGateway["Service"]["prepare"];
+  readonly prepareP2p?: ClientCapabilities.P2pEnvironmentGateway["Service"]["prepare"];
 }) => {
   const profiles = new Map(
     (options?.profiles ?? []).map((profile) => [profile.connectionId, profile]),
@@ -161,6 +164,16 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
         })),
     disconnect: () => Effect.void,
   });
+  const p2p = ClientCapabilities.P2pEnvironmentGateway.of({
+    prepare:
+      options?.prepareP2p ??
+      (() =>
+        Effect.succeed({
+          httpBaseUrl: "http://127.0.0.1:4020",
+          wsBaseUrl: "ws://127.0.0.1:4020",
+        })),
+    disconnect: () => Effect.void,
+  });
 
   const dependencies = Layer.mergeAll(
     Layer.succeed(ConnectionProfileStore.ConnectionProfileStore, profileStore),
@@ -190,6 +203,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
     ),
     Layer.succeed(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization, remote),
     Layer.succeed(ClientCapabilities.SshEnvironmentGateway, ssh),
+    Layer.succeed(ClientCapabilities.P2pEnvironmentGateway, p2p),
     Layer.succeed(
       ManagedRelay.ManagedRelayClient,
       relayClient(
@@ -467,6 +481,80 @@ describe("ConnectionResolver", () => {
       ).toContain("wsTicket=bearer");
       expect(yield* Ref.get(preparedTargets)).toEqual([SSH_TARGET]);
       expect(yield* Ref.get(connectionMethods)).toEqual(["ssh"]);
+    }),
+  );
+
+  it.effect("dials the P2P gateway by public key before remote authorization", () =>
+    Effect.gen(function* () {
+      const dialed = yield* Ref.make<ReadonlyArray<ClientCapabilities.P2pDialInput>>([]);
+      const connectionMethods = yield* Ref.make<ReadonlyArray<string>>([]);
+      const publicKeyZ32 = "y".repeat(52);
+      const target = new P2pConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "P2P",
+        connectionId: "p2p-1",
+      });
+      const profile = new P2pConnectionProfile({
+        connectionId: "p2p-1",
+        environmentId: ENVIRONMENT_ID,
+        label: "P2P",
+        publicKeyZ32,
+        bootstrap: ["10.0.0.9:49737"],
+      });
+      const brokerLayer = yield* makeDependencies({
+        credentials: [["p2p-1", new BearerConnectionCredential({ token: "p2p-bearer" })]],
+        prepareP2p: (input) =>
+          Ref.update(dialed, (values) => [...values, input]).pipe(
+            Effect.as({
+              httpBaseUrl: "http://127.0.0.1:4020",
+              wsBaseUrl: "ws://127.0.0.1:4020",
+            }),
+          ),
+        authorizeBearer: (input) =>
+          Ref.update(connectionMethods, (methods) => [...methods, input.connectionMethod]).pipe(
+            Effect.as({
+              environmentId: input.expectedEnvironmentId,
+              label: "P2P",
+              httpBaseUrl: input.httpBaseUrl,
+              socketUrl: "ws://127.0.0.1:4020/ws?wsTicket=bearer",
+              httpAuthorization: {
+                _tag: "Bearer" as const,
+                token: input.bearerToken,
+              },
+            }),
+          ),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+
+      const prepared = yield* broker.prepare(catalogEntry(target, Option.some(profile)));
+      expect(prepared.httpBaseUrl).toBe("http://127.0.0.1:4020");
+      expect(prepared.socketUrl).toContain("wsTicket=bearer");
+      expect(yield* Ref.get(dialed)).toEqual([{ publicKeyZ32, bootstrap: ["10.0.0.9:49737"] }]);
+      expect(yield* Ref.get(connectionMethods)).toEqual(["p2p"]);
+    }),
+  );
+
+  it.effect("fails blocked when a P2P entry has no stored credential", () =>
+    Effect.gen(function* () {
+      const target = new P2pConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "P2P",
+        connectionId: "p2p-1",
+      });
+      const profile = new P2pConnectionProfile({
+        connectionId: "p2p-1",
+        environmentId: ENVIRONMENT_ID,
+        label: "P2P",
+        publicKeyZ32: "y".repeat(52),
+        bootstrap: [],
+      });
+      const brokerLayer = yield* makeDependencies();
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+
+      const error = yield* broker
+        .prepare(catalogEntry(target, Option.some(profile)))
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("ConnectionBlockedError");
     }),
   );
 
