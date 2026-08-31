@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { ChevronUpIcon } from "lucide-react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
@@ -46,6 +47,8 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
   const [stackExpanded, setStackExpanded] = useState(false);
   const noticesRef = useRef<HTMLDivElement>(null);
   const peekRef = useRef<HTMLButtonElement>(null);
+  const expandedItemsRef = useRef<HTMLDivElement>(null);
+  const pendingFocusRef = useRef<"peek" | "notice" | null>(null);
   const expandedItemsId = useId();
   const [requestedExitingItemId, setExitingItemId] = useState<string | null>(null);
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -65,6 +68,19 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
   useEffect(() => {
     if (items.length < 2) setStackExpanded(false);
   }, [items.length]);
+
+  useLayoutEffect(() => {
+    if (stackExpanded && pendingFocusRef.current === "notice") {
+      pendingFocusRef.current = null;
+      const firstControl = expandedItemsRef.current?.querySelector<HTMLElement>(
+        'button:not(:disabled), a[href], input:not(:disabled), [tabindex="0"]',
+      );
+      (firstControl ?? expandedItemsRef.current)?.focus({ preventScroll: true });
+    } else if (!stackExpanded && pendingFocusRef.current === "peek") {
+      pendingFocusRef.current = null;
+      peekRef.current?.focus({ preventScroll: true });
+    }
+  }, [stackExpanded]);
 
   if (items.length === 0) {
     return null;
@@ -130,14 +146,17 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
         {hasStack ? (
           <div
             ref={noticesRef}
-            className="relative z-20"
+            className={cn("relative z-20", stackExpanded ? "min-h-3" : "pointer-coarse:pt-11")}
             onPointerEnter={(event) => {
-              if (event.pointerType !== "touch") setStackExpanded(true);
+              if (event.pointerType === "touch") return;
+              if (document.activeElement === peekRef.current) {
+                pendingFocusRef.current = "notice";
+              }
+              setStackExpanded(true);
             }}
             onPointerLeave={(event) => {
               if (!event.currentTarget.contains(document.activeElement)) setStackExpanded(false);
             }}
-            onFocusCapture={() => setStackExpanded(true)}
             onBlurCapture={(event) => {
               if (
                 !event.currentTarget.contains(event.relatedTarget) &&
@@ -148,8 +167,9 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
             }}
             onKeyDown={(event) => {
               if (event.key !== "Escape") return;
+              event.preventDefault();
               event.stopPropagation();
-              peekRef.current?.focus({ preventScroll: true });
+              pendingFocusRef.current = "peek";
               setStackExpanded(false);
             }}
           >
@@ -160,18 +180,30 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
                 aria-label="Show other notices"
                 aria-expanded={stackExpanded}
                 aria-controls={expandedItemsId}
+                aria-hidden={stackExpanded || undefined}
+                tabIndex={stackExpanded ? -1 : 0}
                 onClick={(event) => {
                   event.currentTarget.focus({ preventScroll: true });
+                  pendingFocusRef.current = "notice";
                   setStackExpanded(true);
                 }}
-                className={cn(stackExpanded && "opacity-0")}
-              />
+                className={cn(stackExpanded && "pointer-events-none invisible opacity-0")}
+              >
+                <span className="hidden items-center justify-center gap-1 text-xs text-muted-foreground pointer-coarse:flex">
+                  <ChevronUpIcon aria-hidden className="size-3.5" />
+                  {stackedItems.length} more {stackedItems.length === 1 ? "notice" : "notices"}
+                </span>
+              </ComposerBanner.Peek>
             ) : null}
             <div
               id={expandedItemsId}
+              ref={expandedItemsRef}
+              role="group"
+              aria-label="Other notices"
+              tabIndex={-1}
               data-composer-banner-stack-expanded-items="true"
               className={cn(
-                "grid transition-[grid-template-rows] duration-150 ease-out",
+                "grid transition-[grid-template-rows] duration-150 ease-out focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
                 stackExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
               )}
             >
@@ -244,7 +276,12 @@ function ComposerBannerStackAlert({
     >
       <ComposerBanner.Row layout="wrap-actions">
         <ComposerBanner.Icon>{item.icon}</ComposerBanner.Icon>
-        <ComposerBanner.Content className="font-medium">{item.title}</ComposerBanner.Content>
+        <ComposerBanner.Content className="flex-col items-start gap-0">
+          <span className="w-full min-w-0 font-medium">{item.title}</span>
+          {item.description ? (
+            <span className="text-muted-foreground">{item.description}</span>
+          ) : null}
+        </ComposerBanner.Content>
         {item.actions || item.onDismiss ? (
           <ComposerBanner.Actions>
             {item.actions}
@@ -258,19 +295,7 @@ function ComposerBannerStackAlert({
           </ComposerBanner.Actions>
         ) : null}
       </ComposerBanner.Row>
-      {item.description || item.children ? (
-        <ComposerBanner.Children>
-          {item.description ? (
-            <ComposerBanner.Row>
-              <ComposerBanner.Icon />
-              <ComposerBanner.Content className="text-muted-foreground">
-                {item.description}
-              </ComposerBanner.Content>
-            </ComposerBanner.Row>
-          ) : null}
-          {item.children}
-        </ComposerBanner.Children>
-      ) : null}
+      {item.children ? <ComposerBanner.Children>{item.children}</ComposerBanner.Children> : null}
     </ComposerBanner.Root>
   );
 }

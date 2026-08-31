@@ -89,6 +89,7 @@ function Peek({
         surfaceColors,
         neutralOutline,
         "absolute inset-x-0 bottom-0 z-0 mx-auto h-3 w-[96%] cursor-pointer rounded-t-2xl border border-b-0 shadow-[0_6px_18px_rgb(0_0_0/6%)]",
+        "pointer-coarse:h-11",
         "bg-[color-mix(in_srgb,var(--chat-composer-attached-surface)_var(--glass-opacity),transparent)] backdrop-blur-(--glass-blur) backdrop-saturate-(--glass-saturation)",
         "not-supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:bg-(--chat-composer-attached-surface)",
         "transition-opacity duration-150 ease-out focus-visible:outline-2 focus-visible:outline-ring",
@@ -105,7 +106,7 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
     <div
       data-slot="composer-banner-attachment"
       className={cn(
-        "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2.75rem)] max-w-[45.25rem]",
+        "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
         // Adjacent attachments share their outline, including notices outside the form.
         "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0",
         "[&+:has([data-chat-composer-form])_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:rounded-none [&+:has([data-chat-composer-form])_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:border-t-0",
@@ -311,7 +312,11 @@ function ToggleIcon({ expanded, className }: { expanded: boolean; className?: st
   return (
     <span
       aria-hidden
-      className={cn(buttonVariants({ size: "icon-xs", variant: "ghost" }), className)}
+      className={cn(
+        buttonVariants({ size: "icon-xs", variant: "ghost" }),
+        "pointer-events-none",
+        className,
+      )}
     >
       <ChevronDownIcon className={cn("size-3.5", !expanded && "rotate-180")} />
     </span>

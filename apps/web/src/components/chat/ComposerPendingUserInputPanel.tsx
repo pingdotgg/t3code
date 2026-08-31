@@ -201,7 +201,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         </ComposerBanner.Actions>
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        <ComposerBanner.Body>
+        <ComposerBanner.Body className="pe-1 pb-1">
           <p className="text-sm text-foreground/85">{activeQuestion.question}</p>
           {activeQuestion.multiSelect ? (
             <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
