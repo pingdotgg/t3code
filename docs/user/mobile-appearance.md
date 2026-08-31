@@ -19,6 +19,3 @@ preview circle inside a card to change only that appearance.
 
 **System** follows the device appearance automatically. Theme, text, code, and terminal appearance
 preferences are stored on the device.
-
-Running tool rows shimmer while their tool run is active. The effect pauses when you leave the
-thread or put the app in the background, and respects your device's Reduce Motion setting.
