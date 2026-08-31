@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import {
   DesktopMicrophoneSettingsSchema,
+  DesktopSpeechPreparationSchema,
   DesktopSpeechEventSchema,
   DesktopSpeechStatusSchema,
 } from "./speech.ts";
@@ -37,6 +38,12 @@ describe("desktop speech contracts", () => {
     ).toEqual({
       devices: ["Built-in Microphone", "USB Microphone"],
       selected: "USB Microphone",
+    });
+  });
+
+  it("accepts desktop transcription preparation", () => {
+    expect(Schema.decodeUnknownSync(DesktopSpeechPreparationSchema)({ locale: "en" })).toEqual({
+      locale: "en",
     });
   });
 });

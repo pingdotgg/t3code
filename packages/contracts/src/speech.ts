@@ -30,6 +30,11 @@ export const DesktopMicrophoneSettingsSchema = Schema.Struct({
 });
 export type DesktopMicrophoneSettings = typeof DesktopMicrophoneSettingsSchema.Type;
 
+export const DesktopSpeechPreparationSchema = Schema.Struct({
+  locale: Schema.String,
+});
+export type DesktopSpeechPreparation = typeof DesktopSpeechPreparationSchema.Type;
+
 export const DesktopSpeechEventSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("status"),

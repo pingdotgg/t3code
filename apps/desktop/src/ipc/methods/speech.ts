@@ -1,4 +1,8 @@
-import { DesktopMicrophoneSettingsSchema, DesktopSpeechStatusSchema } from "@t3tools/contracts";
+import {
+  DesktopMicrophoneSettingsSchema,
+  DesktopSpeechPreparationSchema,
+  DesktopSpeechStatusSchema,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -43,33 +47,73 @@ export const setSpeechMicrophone = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const startSpeech = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.SPEECH_START_CHANNEL,
+export const prepareSpeech = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SPEECH_PREPARE_CHANNEL,
   payload: Schema.Void,
-  result: DesktopSpeechStatusSchema,
-  handler: Effect.fn("desktop.ipc.speech.start")(function* () {
+  result: DesktopSpeechPreparationSchema,
+  handler: Effect.fn("desktop.ipc.speech.prepare")(function* () {
     const speech = yield* DesktopSpeech.DesktopSpeech;
-    return yield* speech.start;
+    return yield* speech.prepare;
   }),
 });
 
-export const stopSpeech = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.SPEECH_STOP_CHANNEL,
+export const cancelSpeechPreparation = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SPEECH_CANCEL_PREPARATION_CHANNEL,
   payload: Schema.Void,
-  result: DesktopSpeechStatusSchema,
-  handler: Effect.fn("desktop.ipc.speech.stop")(function* () {
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.speech.cancelPreparation")(function* () {
     const speech = yield* DesktopSpeech.DesktopSpeech;
-    return yield* speech.stop;
+    yield* speech.cancelPreparation;
   }),
 });
 
-export const cancelSpeech = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.SPEECH_CANCEL_CHANNEL,
+export const startSpeechRecording = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SPEECH_START_RECORDING_CHANNEL,
   payload: Schema.Void,
-  result: DesktopSpeechStatusSchema,
-  handler: Effect.fn("desktop.ipc.speech.cancel")(function* () {
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.speech.startRecording")(function* () {
     const speech = yield* DesktopSpeech.DesktopSpeech;
-    return yield* speech.cancel;
+    yield* speech.startRecording;
+  }),
+});
+
+export const stopSpeechRecording = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SPEECH_STOP_RECORDING_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.String,
+  handler: Effect.fn("desktop.ipc.speech.stopRecording")(function* () {
+    const speech = yield* DesktopSpeech.DesktopSpeech;
+    return yield* speech.stopRecording;
+  }),
+});
+
+export const cancelSpeechRecording = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SPEECH_CANCEL_RECORDING_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.speech.cancelRecording")(function* () {
+    const speech = yield* DesktopSpeech.DesktopSpeech;
+    yield* speech.cancelRecording;
+  }),
+});
+
+export const transcribeSpeech = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SPEECH_TRANSCRIBE_CHANNEL,
+  payload: Schema.String,
+  result: Schema.String,
+  handler: Effect.fn("desktop.ipc.speech.transcribe")(function* (uri) {
+    const speech = yield* DesktopSpeech.DesktopSpeech;
+    return yield* speech.transcribe(uri);
+  }),
+});
+
+export const deleteSpeechRecording = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SPEECH_DELETE_RECORDING_CHANNEL,
+  payload: Schema.String,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.speech.deleteRecording")(function* (uri) {
+    const speech = yield* DesktopSpeech.DesktopSpeech;
+    yield* speech.deleteRecording(uri);
   }),
 });
 

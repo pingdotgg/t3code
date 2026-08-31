@@ -1,4 +1,4 @@
-import type { DesktopSpeechStatus } from "@t3tools/contracts";
+import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import { CircleAlertIcon, MicIcon, SquareIcon, XIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
@@ -8,7 +8,7 @@ import { cn } from "~/lib/utils";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 
 export function ComposerSpeechButton(props: {
-  status: DesktopSpeechStatus | null;
+  state: VoiceInputState;
   progress: { downloaded: number; total: number } | null;
   level: number;
   disabled?: boolean;
@@ -17,19 +17,20 @@ export function ComposerSpeechButton(props: {
   onCancel(): void;
 }) {
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  if (props.status?.supported === false) return null;
-  const state = props.status?.supported ? props.status.state : "missing-model";
-  const recording = state === "recording";
-  const busy = state === "downloading" || state === "transcribing";
+  const phase = props.state.phase;
+  const recording = phase === "recording";
+  const busy = phase === "preparing" || phase === "transcribing";
   const inactive = !recording && (props.disabled || busy);
   const label = recording
     ? "Stop and transcribe"
-    : state === "downloading"
-      ? `Downloading speech model${props.progress ? ` ${Math.round((props.progress.downloaded / Math.max(1, props.progress.total)) * 100)}%` : ""}`
-      : state === "transcribing"
+    : phase === "preparing"
+      ? props.progress
+        ? `Downloading speech model ${Math.round((props.progress.downloaded / Math.max(1, props.progress.total)) * 100)}%`
+        : "Preparing voice input"
+      : phase === "transcribing"
         ? "Transcribing voice input"
-        : state === "error"
-          ? (props.status?.message ?? "Voice input failed")
+        : phase === "error"
+          ? (props.state.error ?? "Voice input failed")
           : "Start voice input";
 
   return (
@@ -41,7 +42,7 @@ export function ComposerSpeechButton(props: {
               type="button"
               size="icon-sm"
               variant={
-                recording ? "destructive" : state === "error" ? "destructive-outline" : "ghost"
+                recording ? "destructive" : phase === "error" ? "destructive-outline" : "ghost"
               }
               aria-label={label}
               aria-pressed={recording}
@@ -69,7 +70,7 @@ export function ComposerSpeechButton(props: {
                 </>
               ) : busy ? (
                 <Spinner aria-hidden />
-              ) : state === "error" ? (
+              ) : phase === "error" ? (
                 <CircleAlertIcon />
               ) : (
                 <MicIcon />

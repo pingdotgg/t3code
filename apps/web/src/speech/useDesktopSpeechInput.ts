@@ -1,118 +1,154 @@
+import {
+  VoiceInputController,
+  type VoiceDraftSnapshot,
+  type VoiceInputState,
+} from "@t3tools/client-runtime/voice-input";
 import type { DesktopSpeechStatus } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ensureLocalApi } from "../localApi";
-import { toastManager } from "../components/ui/toast";
+import { createDesktopVoiceInputPlatform } from "./desktopVoiceInput";
 
-export function useDesktopSpeechInput(onTranscript: (text: string) => void, ownerKey: string) {
+const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
+
+type DraftInput = {
+  readonly text: string;
+  readonly selection: { readonly start: number; readonly end: number };
+};
+
+export function useDesktopSpeechInput(input: {
+  readonly ownerKey: string;
+  readonly draftText: string;
+  readonly readDraft: () => DraftInput;
+  readonly commitDraft: (
+    text: string,
+    selection: { readonly start: number; readonly end: number },
+  ) => void;
+}) {
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge?.speech;
-  const [status, setStatus] = useState<DesktopSpeechStatus | null>(null);
+  const [available, setAvailable] = useState(false);
+  const [modelStatus, setModelStatus] = useState<DesktopSpeechStatus | null>(null);
+  const [state, setState] = useState<VoiceInputState>(INITIAL_STATE);
   const [progress, setProgress] = useState<{ downloaded: number; total: number } | null>(null);
   const [level, setLevel] = useState(0);
-  const activeRef = useRef(false);
-  const transcriptRef = useRef(onTranscript);
-  const currentOwnerRef = useRef(ownerKey);
-  const recordingOwnerRef = useRef<string | null>(null);
-  transcriptRef.current = onTranscript;
-  currentOwnerRef.current = ownerKey;
+  const controllerRef = useRef<VoiceInputController | null>(null);
+  const latestInputRef = useRef(input);
+  latestInputRef.current = input;
+  const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
+  if (
+    draftRevisionRef.current.ownerKey !== input.ownerKey ||
+    draftRevisionRef.current.text !== input.draftText
+  ) {
+    draftRevisionRef.current = {
+      ownerKey: input.ownerKey,
+      text: input.draftText,
+      revision: draftRevisionRef.current.revision + 1,
+    };
+  }
+
+  if (!controllerRef.current && bridge) {
+    const platform = createDesktopVoiceInputPlatform(bridge);
+
+    const readDraft = (): VoiceDraftSnapshot => {
+      const current = latestInputRef.current;
+      const draft = current.readDraft();
+      const revision = draftRevisionRef.current;
+      if (revision.ownerKey !== current.ownerKey || revision.text !== draft.text) {
+        draftRevisionRef.current = {
+          ownerKey: current.ownerKey,
+          text: draft.text,
+          revision: revision.revision + 1,
+        };
+      }
+      return {
+        ownerKey: current.ownerKey,
+        text: draft.text,
+        selection: draft.selection,
+        revision: draftRevisionRef.current.revision,
+      };
+    };
+
+    const controller = new VoiceInputController({
+      recorder: platform.recorder,
+      getTranscriber: () => platform.transcriber,
+      requestPermission: async () => ({ granted: true, canAskAgain: true }),
+      configureRecording: async () => undefined,
+      releaseRecording: () => bridge.cancelRecording(),
+      deleteRecording: (uri) => void bridge.deleteRecording(uri),
+      readDraft,
+      commitDraft: (text, selection) => latestInputRef.current.commitDraft(text, selection),
+      onStateChange: setState,
+    });
+    platform.setDurationLimitHandler(() => void controller.stop());
+    controllerRef.current = controller;
+  }
+
+  const controller = controllerRef.current;
 
   useEffect(() => {
     if (!bridge) return;
     let disposed = false;
-    void bridge.getStatus().then((next) => {
-      if (!disposed) setStatus(next);
+    void bridge.getStatus().then((status) => {
+      if (disposed) return;
+      setModelStatus(status);
+      setAvailable(status.supported);
     });
     const unsubscribe = bridge.onEvent((event) => {
       if (event.type === "status") {
-        setStatus(event.status);
-        activeRef.current = event.status.supported && event.status.state === "recording";
+        setModelStatus(event.status);
+        setAvailable(event.status.supported);
       } else if (event.type === "download-progress") {
         setProgress({ downloaded: event.downloaded, total: event.total });
       } else if (event.type === "level") {
         setLevel(event.level);
-      } else if (event.type === "transcript") {
-        if (recordingOwnerRef.current === currentOwnerRef.current) {
-          transcriptRef.current(event.text);
-        } else {
-          toastManager.add({
-            type: "info",
-            title: "Voice input finished in another draft",
-            description: event.text,
-          });
-        }
-        recordingOwnerRef.current = null;
-      } else if (event.type === "error") {
-        setStatus({ supported: true, state: "error", message: event.message });
       }
     });
     return () => {
       disposed = true;
       unsubscribe();
-      recordingOwnerRef.current = null;
-      if (activeRef.current) void bridge.cancel();
     };
   }, [bridge]);
 
+  const previousOwnerRef = useRef(input.ownerKey);
   useEffect(() => {
-    if (!bridge || recordingOwnerRef.current === null) return;
-    if (recordingOwnerRef.current === ownerKey) return;
-    if (status?.supported && status.state === "transcribing") return;
-    recordingOwnerRef.current = null;
-    activeRef.current = false;
-    void bridge.cancel();
-  }, [bridge, ownerKey, status]);
+    if (!controller || previousOwnerRef.current === input.ownerKey) return;
+    previousOwnerRef.current = input.ownerKey;
+    controller.ownerChanged();
+  }, [controller, input.ownerKey]);
+
+  useEffect(() => () => controller?.dispose(), [controller]);
 
   useEffect(() => {
-    if (!bridge || !status?.supported || status.state !== "recording") return;
-    const timeout = window.setTimeout(() => void bridge.stop(), 120_000);
+    if (!controller || state.phase !== "recording") return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
-      void bridge.cancel();
+      controller.cancel();
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.clearTimeout(timeout);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [bridge, status]);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [controller, state.phase]);
 
   const start = useCallback(async () => {
-    if (!bridge) return;
-    if (!status || (status.supported && status.state === "missing-model")) {
+    if (!controller) return;
+    if (!modelStatus || (modelStatus.supported && modelStatus.state === "missing-model")) {
       const confirmed = await ensureLocalApi().dialogs.confirm(
         "Download a 48 MiB English speech model? Voice input is processed locally and microphone audio is not saved.",
       );
       if (!confirmed) return;
     }
     setProgress(null);
-    recordingOwnerRef.current = ownerKey;
-    const next = await bridge.start();
-    activeRef.current = next.supported && next.state === "recording";
-    setStatus(next);
-  }, [bridge, ownerKey, status]);
-
-  const stop = useCallback(async () => {
-    if (!bridge) return;
-    activeRef.current = false;
-    setStatus({ supported: true, state: "transcribing" });
-    setStatus(await bridge.stop());
-  }, [bridge]);
-
-  const cancel = useCallback(async () => {
-    if (!bridge) return;
-    activeRef.current = false;
-    recordingOwnerRef.current = null;
-    setStatus(await bridge.cancel());
-  }, [bridge]);
+    setLevel(0);
+    await controller.start();
+  }, [controller, modelStatus]);
 
   return {
-    available: bridge !== undefined && status?.supported !== false,
-    status,
+    available,
+    state,
     progress,
     level,
     start,
-    stop,
-    cancel,
+    stop: useCallback(() => controller?.stop() ?? Promise.resolve(), [controller]),
+    cancel: useCallback(() => controller?.cancel(), [controller]),
   };
 }

@@ -17,12 +17,13 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 
 import * as DesktopAppIdentity from "../app/DesktopAppIdentity.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import { DesktopMicrophoneCapture } from "./DesktopMicrophoneCapture.ts";
-import { DesktopSpeechController } from "./DesktopSpeechController.ts";
+import { DesktopSpeechRuntime } from "./DesktopSpeechRuntime.ts";
 import { DesktopTranscriptionBackend } from "./DesktopTranscriptionBackend.ts";
 import {
   SPEECH_MODEL,
@@ -54,9 +55,13 @@ export class DesktopSpeech extends Context.Service<
     readonly setMicrophone: (
       deviceName: string,
     ) => Effect.Effect<DesktopMicrophoneSettings, DesktopSpeechOperationError>;
-    readonly start: Effect.Effect<DesktopSpeechStatus, DesktopSpeechOperationError>;
-    readonly stop: Effect.Effect<DesktopSpeechStatus, DesktopSpeechOperationError>;
-    readonly cancel: Effect.Effect<DesktopSpeechStatus, DesktopSpeechOperationError>;
+    readonly prepare: Effect.Effect<{ locale: string }, DesktopSpeechOperationError>;
+    readonly cancelPreparation: Effect.Effect<void>;
+    readonly startRecording: Effect.Effect<void, DesktopSpeechOperationError>;
+    readonly stopRecording: Effect.Effect<string, DesktopSpeechOperationError>;
+    readonly cancelRecording: Effect.Effect<void, DesktopSpeechOperationError>;
+    readonly transcribe: (uri: string) => Effect.Effect<string, DesktopSpeechOperationError>;
+    readonly deleteRecording: (uri: string) => Effect.Effect<void>;
     readonly removeModel: Effect.Effect<DesktopSpeechStatus, DesktopSpeechOperationError>;
     readonly subscribe: (listener: SpeechEventListener) => Effect.Effect<void, never, Scope.Scope>;
   }
@@ -136,12 +141,12 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  const controller = new DesktopSpeechController({
+  const runtime = new DesktopSpeechRuntime({
     supported: availability.supported,
     ...(availability.reason ? { unsupportedReason: availability.reason } : {}),
     modelPath: speechModelPath(directory),
     modelReady: () => isSpeechModelReady(directory),
-    downloadModel: (onProgress) =>
+    downloadModel: (signal, onProgress) =>
       downloadVerifiedModel({
         directory,
         filename: SPEECH_MODEL.filename,
@@ -149,6 +154,7 @@ export const make = Effect.gen(function* () {
         size: SPEECH_MODEL.size,
         sha256: SPEECH_MODEL.sha256,
         request: requestModel,
+        signal,
         onProgress,
       }),
     removeModel: () => removeSpeechModel(directory),
@@ -158,11 +164,12 @@ export const make = Effect.gen(function* () {
         await runPromise(Ref.get(selectedMicrophone)),
       ),
     createBackend: (modelPath) => new DesktopTranscriptionBackend(modelPath),
+    createRecordingUri: () => `desktop-speech://${NodeCrypto.randomUUID()}`,
     emit,
   });
 
   yield* Effect.addFinalizer(() =>
-    attempt("shutdown", () => controller.shutdown()).pipe(Effect.orDie),
+    attempt("shutdown", () => runtime.shutdown()).pipe(Effect.orDie),
   );
 
   const subscribe = (listener: SpeechEventListener): Effect.Effect<void, never, Scope.Scope> =>
@@ -177,7 +184,7 @@ export const make = Effect.gen(function* () {
     ).pipe(Effect.asVoid);
 
   return DesktopSpeech.of({
-    getStatus: attempt("get status", () => controller.getStatus()),
+    getStatus: attempt("get status", () => runtime.getStatus()),
     getMicrophones: attempt("get microphones", async () => ({
       devices: DesktopMicrophoneCapture.getAvailableDevices(),
       selected: await runPromise(Ref.get(selectedMicrophone)),
@@ -202,10 +209,14 @@ export const make = Effect.gen(function* () {
           (cause) => new DesktopSpeechOperationError({ operation: "set microphone", cause }),
         ),
       ),
-    start: attempt("start", () => controller.start()),
-    stop: attempt("stop", () => controller.stop()),
-    cancel: attempt("cancel", () => controller.cancel()),
-    removeModel: attempt("remove model", () => controller.removeModel()),
+    prepare: attempt("prepare", () => runtime.prepare()),
+    cancelPreparation: Effect.sync(() => runtime.cancelPreparation()),
+    startRecording: attempt("start recording", () => runtime.startRecording()),
+    stopRecording: attempt("stop recording", () => runtime.stopRecording()),
+    cancelRecording: attempt("cancel recording", () => runtime.cancelRecording()),
+    transcribe: (uri) => attempt("transcribe", () => runtime.transcribe(uri)),
+    deleteRecording: (uri) => Effect.sync(() => runtime.deleteRecording(uri)),
+    removeModel: attempt("remove model", () => runtime.removeModel()),
     subscribe,
   });
 });
