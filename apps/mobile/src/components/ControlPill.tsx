@@ -19,24 +19,33 @@ import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
 import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
 
-const ThemedMenuView = withUniwind(function NativeMenuView({
-  iconColor,
-  destructiveIconColor,
-  ...props
-}: ComponentProps<typeof MenuView> & {
-  readonly iconColor?: ColorValue;
-  readonly destructiveIconColor?: ColorValue;
-}) {
-  const actions = useMemo(
-    () =>
-      withMenuActionIconColors(props.actions, {
-        icon: iconColor,
-        destructiveIcon: destructiveIconColor,
-      }),
-    [props.actions, iconColor, destructiveIconColor],
-  );
-  return <MenuView {...props} actions={actions} />;
-});
+const ThemedMenuView = withUniwind(
+  function NativeMenuView({
+    iconColor,
+    destructiveIconColor,
+    ...props
+  }: ComponentProps<typeof MenuView> & {
+    readonly iconColor?: ColorValue;
+    readonly destructiveIconColor?: ColorValue;
+  }) {
+    const actions = useMemo(
+      () =>
+        withMenuActionIconColors(props.actions, {
+          icon: iconColor,
+          destructiveIcon: destructiveIconColor,
+        }),
+      [props.actions, iconColor, destructiveIconColor],
+    );
+    return <MenuView {...props} actions={actions} />;
+  },
+  {
+    iconColor: { fromClassName: "iconColorClassName", styleProperty: "accentColor" },
+    destructiveIconColor: {
+      fromClassName: "destructiveIconColorClassName",
+      styleProperty: "accentColor",
+    },
+  },
+);
 
 export function ControlPill(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
