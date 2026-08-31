@@ -1,5 +1,6 @@
-import { FolderGit2Icon, FolderGitIcon, FolderIcon, HistoryIcon } from "lucide-react";
-import { memo, useMemo } from "react";
+import { ChevronDownIcon, FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
+import { memo } from "react";
+import type { VcsWorktree } from "@t3tools/contracts";
 
 import {
   resolveCurrentWorkspaceLabel,
@@ -7,25 +8,26 @@ import {
   resolveLockedWorkspaceLabel,
   type EnvMode,
 } from "./BranchToolbar.logic";
+import { ExistingWorktreesMenuSub } from "./ExistingWorktreesMenuSub";
+import { Button } from "./ui/button";
 import {
-  Select,
-  SelectGroup,
-  SelectGroupLabel,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
-
-export const PREVIOUS_WORKTREE_SELECT_VALUE = "previous-worktree";
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuTrigger,
+} from "./ui/menu";
 
 interface BranchToolbarEnvModeSelectorProps {
   envLocked: boolean;
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
-  previousWorktreeLabel?: string | null;
-  onUsePreviousWorktree?: () => void;
+  existingWorktrees: ReadonlyArray<VcsWorktree>;
+  onUseExistingWorktree: (worktree: VcsWorktree) => void;
 }
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
@@ -33,21 +35,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   effectiveEnvMode,
   activeWorktreePath,
   onEnvModeChange,
-  previousWorktreeLabel,
-  onUsePreviousWorktree,
+  existingWorktrees,
+  onUseExistingWorktree,
 }: BranchToolbarEnvModeSelectorProps) {
-  const showPreviousWorktree = Boolean(previousWorktreeLabel && onUsePreviousWorktree);
-  const envModeItems = useMemo(
-    () => [
-      { value: "local", label: resolveCurrentWorkspaceLabel(activeWorktreePath) },
-      { value: "worktree", label: resolveEnvModeLabel("worktree") },
-      ...(showPreviousWorktree && previousWorktreeLabel
-        ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
-        : []),
-    ],
-    [activeWorktreePath, previousWorktreeLabel, showPreviousWorktree],
-  );
-
   if (envLocked) {
     return (
       <span
@@ -55,37 +45,25 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         data-composer-context-control
       >
         {activeWorktreePath ? (
-          <>
-            <FolderGitIcon className="size-3" />
-            {resolveLockedWorkspaceLabel(activeWorktreePath)}
-          </>
+          <FolderGitIcon className="size-3" />
         ) : (
-          <>
-            <FolderIcon className="size-3" />
-            {resolveLockedWorkspaceLabel(activeWorktreePath)}
-          </>
+          <FolderIcon className="size-3" />
         )}
+        {resolveLockedWorkspaceLabel(activeWorktreePath)}
       </span>
     );
   }
 
+  const workspaceLabel =
+    effectiveEnvMode === "worktree"
+      ? resolveEnvModeLabel("worktree")
+      : resolveCurrentWorkspaceLabel(activeWorktreePath);
+
   return (
-    <Select
-      modal={false}
-      value={effectiveEnvMode}
-      onValueChange={(value: string | null) => {
-        if (value === PREVIOUS_WORKTREE_SELECT_VALUE) {
-          onUsePreviousWorktree?.();
-          return;
-        }
-        onEnvModeChange(value as EnvMode);
-      }}
-      items={envModeItems}
-    >
-      <SelectTrigger
-        variant="ghost"
-        size="xs"
-        className="min-w-0 shrink font-medium"
+    <Menu modal={false}>
+      <MenuTrigger
+        render={<Button variant="ghost-muted" size="xs" />}
+        className="min-w-0 shrink font-medium [--control-icon-color:currentColor]"
         aria-label="Workspace"
         data-composer-context-control
       >
@@ -104,39 +82,43 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
             data-composer-label-motion
             className="block w-full min-w-0 max-w-[240px] origin-left truncate transition-[opacity,transform] duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:[transform:translateX(-0.25rem)_scaleX(0.95)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transform-none motion-reduce:transition-opacity"
           >
-            <SelectValue />
+            {workspaceLabel}
           </span>
         </span>
-      </SelectTrigger>
-      <SelectPopup>
-        <SelectGroup>
-          <SelectGroupLabel>Workspace</SelectGroupLabel>
-          <SelectItem value="local">
-            <span className="inline-flex items-center gap-1.5">
-              {activeWorktreePath ? (
-                <FolderGitIcon className="size-3" />
-              ) : (
-                <FolderIcon className="size-3" />
-              )}
-              {resolveCurrentWorkspaceLabel(activeWorktreePath)}
-            </span>
-          </SelectItem>
-          <SelectItem value="worktree">
-            <span className="inline-flex items-center gap-1.5">
-              <FolderGit2Icon className="size-3" />
-              {resolveEnvModeLabel("worktree")}
-            </span>
-          </SelectItem>
-          {showPreviousWorktree && previousWorktreeLabel ? (
-            <SelectItem value={PREVIOUS_WORKTREE_SELECT_VALUE}>
+        <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
+      </MenuTrigger>
+      <MenuPopup align="start" side="top">
+        <MenuGroup>
+          <MenuGroupLabel>Workspace</MenuGroupLabel>
+          <MenuRadioGroup
+            value={effectiveEnvMode}
+            onValueChange={(value) => onEnvModeChange(value as EnvMode)}
+          >
+            <MenuRadioItem value="local">
               <span className="inline-flex items-center gap-1.5">
-                <HistoryIcon className="size-3" />
-                {previousWorktreeLabel}
+                {activeWorktreePath ? (
+                  <FolderGitIcon className="size-3" />
+                ) : (
+                  <FolderIcon className="size-3" />
+                )}
+                {resolveCurrentWorkspaceLabel(activeWorktreePath)}
               </span>
-            </SelectItem>
-          ) : null}
-        </SelectGroup>
-      </SelectPopup>
-    </Select>
+            </MenuRadioItem>
+            <MenuRadioItem value="worktree">
+              <span className="inline-flex items-center gap-1.5">
+                <FolderGit2Icon className="size-3" />
+                {resolveEnvModeLabel("worktree")}
+              </span>
+            </MenuRadioItem>
+          </MenuRadioGroup>
+        </MenuGroup>
+        {existingWorktrees.length > 0 ? <MenuSeparator /> : null}
+        <ExistingWorktreesMenuSub
+          worktrees={existingWorktrees}
+          disabled={false}
+          onSelect={onUseExistingWorktree}
+        />
+      </MenuPopup>
+    </Menu>
   );
 });

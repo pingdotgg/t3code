@@ -3,6 +3,7 @@ import {
   type VcsListRefsInput,
   type VcsListRefsResult,
   type VcsStatusResult,
+  type VcsWorktree,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
@@ -15,7 +16,11 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
-import { createEnvironmentRpcCommand, createEnvironmentSubscriptionAtomFamily } from "./runtime.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
+} from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
@@ -36,6 +41,10 @@ const VCS_REFS_RETRY_SCHEDULE = Schedule.exponential("1 second").pipe(
     Effect.succeed(Duration.min(duration, Duration.seconds(30))),
   ),
 );
+
+export function vcsWorktreeLabel(worktree: Pick<VcsWorktree, "branch" | "head">): string {
+  return worktree.branch ?? `Detached at ${worktree.head.slice(0, 7)}`;
+}
 
 function canUseVcsRefsCache(input: VcsListRefsInput): boolean {
   return (
@@ -61,7 +70,9 @@ export const commitVcsRefsRefresh = Effect.fn("CachedVcsRefsState.commitRefresh"
   return yield* withVcsRefsPersistenceLock(
     input.environmentId,
     Effect.gen(function* () {
-      const stateAtom = vcsRefsCacheStateAtom({ environmentId: input.environmentId });
+      const stateAtom = vcsRefsCacheStateAtom({
+        environmentId: input.environmentId,
+      });
       const state = registry.get(stateAtom);
       if (state.revision !== input.expectedRevision) {
         return false;
@@ -263,7 +274,10 @@ export function createVcsEnvironmentAtoms<R, E>(
     readonly input: VcsListRefsInput;
   }) => listRefsFamily(JSON.stringify([target.environmentId, target.input]));
   const invalidateRefs = (
-    target: { readonly environmentId: EnvironmentId; readonly input: { readonly cwd: string } },
+    target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: { readonly cwd: string };
+    },
     registry: AtomRegistry.AtomRegistry,
   ) =>
     invalidateCachedVcsRefs(registry, {
@@ -273,6 +287,11 @@ export function createVcsEnvironmentAtoms<R, E>(
 
   return {
     listRefs,
+    listWorktrees: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:list-worktrees",
+      tag: WS_METHODS.vcsListWorktrees,
+      staleTimeMs: 5_000,
+    }),
     status: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:vcs:status",
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>

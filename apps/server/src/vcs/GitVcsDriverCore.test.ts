@@ -74,7 +74,9 @@ const writeTextFile = (
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     const filePath = pathService.join(cwd, relativePath);
-    yield* fileSystem.makeDirectory(pathService.dirname(filePath), { recursive: true });
+    yield* fileSystem.makeDirectory(pathService.dirname(filePath), {
+      recursive: true,
+    });
     yield* fileSystem.writeFileString(filePath, contents);
   });
 
@@ -129,7 +131,10 @@ const initRepoWithCommit = (
   });
 
 it.effect("uses stable diagnostics for every parsed non-repository command", () => {
-  const commands: Array<{ readonly args: ReadonlyArray<string>; readonly lcAll?: string }> = [];
+  const commands: Array<{
+    readonly args: ReadonlyArray<string>;
+    readonly lcAll?: string;
+  }> = [];
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.sync(() => {
       if (!ChildProcess.isStandardCommand(command)) {
@@ -1030,7 +1035,9 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* driver.initRepo({ cwd });
         const initialBranch = yield* git(cwd, ["symbolic-ref", "--short", "HEAD"]);
 
-        const status = yield* driver.statusDetailsRemote(cwd, { refreshUpstream: false });
+        const status = yield* driver.statusDetailsRemote(cwd, {
+          refreshUpstream: false,
+        });
 
         assert.equal(status.isRepo, true);
         assert.equal(status.branch, initialBranch);
@@ -1261,7 +1268,10 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           false,
         );
 
-        const complete = yield* driver.listRefs({ cwd, includeMatchingRemoteRefs: true });
+        const complete = yield* driver.listRefs({
+          cwd,
+          includeMatchingRemoteRefs: true,
+        });
         assert.equal(
           complete.refs.some((ref) => ref.name === initialBranch),
           true,
@@ -1310,7 +1320,10 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const driver = yield* GitVcsDriver.GitVcsDriver;
 
         yield* driver.createRef({ cwd, refName: "feature/original" });
-        const switchRef = yield* driver.switchRef({ cwd, refName: "feature/original" });
+        const switchRef = yield* driver.switchRef({
+          cwd,
+          refName: "feature/original",
+        });
         assert.equal(switchRef.refName, "feature/original");
 
         const renamed = yield* driver.renameBranch({
@@ -1348,6 +1361,61 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
+    it.effect("lists other branch and detached worktrees without pagination", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const branchPath = pathService.join(worktreesRoot, "branch");
+        const detachedPath = pathService.join(worktreesRoot, "detached");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* git(cwd, ["worktree", "add", "-b", "feature/linked", branchPath]);
+        yield* git(cwd, ["worktree", "add", "--detach", detachedPath, "HEAD"]);
+
+        const result = yield* driver.listWorktrees({ cwd });
+
+        assert.equal(result.isRepo, true);
+        assert.deepStrictEqual(
+          result.worktrees
+            .map(({ path, branch }) => ({ path, branch }))
+            .toSorted((left, right) => left.path.localeCompare(right.path)),
+          [
+            {
+              path: yield* fileSystem.realPath(branchPath),
+              branch: "feature/linked",
+            },
+            { path: yield* fileSystem.realPath(detachedPath), branch: null },
+          ].toSorted((left, right) => left.path.localeCompare(right.path)),
+        );
+      }),
+    );
+
+    it.effect("excludes the requested checkout when cwd is a symlink", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const branchPath = pathService.join(worktreesRoot, "branch");
+        const cwdLink = pathService.join(worktreesRoot, "cwd-link");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* git(cwd, ["worktree", "add", "-b", "feature/linked", branchPath]);
+        yield* fileSystem.symlink(cwd, cwdLink);
+
+        const result = yield* driver.listWorktrees({ cwd: cwdLink });
+
+        assert.deepStrictEqual(
+          result.worktrees.map(({ path, branch }) => ({ path, branch })),
+          [{ path: yield* fileSystem.realPath(branchPath), branch: "feature/linked" }],
+        );
+      }),
+    );
+
     it.effect("preserves newline characters in worktree paths when listing refs", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -1943,7 +2011,9 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["remote", "add", "origin", originRemote]);
         yield* git(cwd, ["remote", "add", "origin-1", publishRemote]);
 
-        const pushed = yield* driver.pushCurrentBranch(cwd, null, { remoteName: "origin-1" });
+        const pushed = yield* driver.pushCurrentBranch(cwd, null, {
+          remoteName: "origin-1",
+        });
 
         assert.deepInclude(pushed, {
           status: "pushed",
