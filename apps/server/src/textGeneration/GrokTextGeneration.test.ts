@@ -101,6 +101,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
             branch: "feature/grok",
             stagedSummary: "M apps/server/src/provider/Drivers/GrokDriver.ts",
             stagedPatch: "diff --git a/.../GrokDriver.ts b/.../GrokDriver.ts",
+            prompts: { commitMessage: "Keep the exact generated release subject." },
             modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-mock-alt"),
           });
 
@@ -108,6 +109,16 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
           expect(generated.body).toBe("Wire up the ACP runtime and headless text generation path.");
 
           const requests = readJsonRpcRequests(requestLogPath);
+          expect(
+            requests.find((request) => request.method === "session/prompt")?.params?.prompt,
+          ).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                type: "text",
+                text: expect.stringContaining("Keep the exact generated release subject."),
+              }),
+            ]),
+          );
           expect(
             requests.find((request) => request.method === "initialize")?.params?.clientCapabilities,
           ).toMatchObject({

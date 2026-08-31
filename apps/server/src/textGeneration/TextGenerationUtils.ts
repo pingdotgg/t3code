@@ -19,9 +19,12 @@ export function limitSection(value: string, maxChars: number): string {
   return `${truncated}\n\n[truncated]`;
 }
 
-/** Normalise a raw commit subject to imperative-mood, ≤72 chars, no trailing period. */
-export function sanitizeCommitSubject(raw: string): string {
+/** Apply legacy commit editorial rules, or only single-line safety for a custom prompt. */
+export function sanitizeCommitSubject(raw: string, custom = false): string {
   const singleLine = raw.trim().split(/\r?\n/g)[0]?.trim() ?? "";
+  if (custom) {
+    return singleLine || "Update project files";
+  }
   const withoutTrailingPeriod = singleLine.replace(/[.]+$/g, "").trim();
   if (withoutTrailingPeriod.length === 0) {
     return "Update project files";
@@ -42,8 +45,16 @@ export function sanitizePrTitle(raw: string): string {
   return "Update project changes";
 }
 
-/** Normalise a raw thread title to a compact single-line sidebar-safe label. */
-export function sanitizeThreadTitle(raw: string): string {
+/** Keep a custom single-line result intact and substitute a fallback for blank output. */
+function sanitizeCustomLine(raw: string, fallback: string): string {
+  return raw.trim().split(/\r?\n/g)[0]?.trim() || fallback;
+}
+
+/** Apply legacy title editorial rules, or only single-line safety for a custom prompt. */
+export function sanitizeThreadTitle(raw: string, custom = false): string {
+  if (custom) {
+    return sanitizeCustomLine(raw, "New thread");
+  }
   const normalized = raw
     .trim()
     .split(/\r?\n/g)[0]

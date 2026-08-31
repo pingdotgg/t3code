@@ -1,7 +1,12 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import type {
+  ChatAttachment,
+  ModelSelection,
+  ProviderInstanceId,
+  T3ProjectFileTextGenerationPrompts,
+} from "@t3tools/contracts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
@@ -18,6 +23,7 @@ export interface CommitMessageGenerationInput {
   /** When true, the model also returns a semantic branch name for the change. */
   includeBranch?: boolean;
   policy?: TextGenerationPolicy | undefined;
+  prompts?: T3ProjectFileTextGenerationPrompts | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
 }
@@ -38,6 +44,7 @@ export interface PrContentGenerationInput {
   diffPatch: string;
   changeRequestTemplate?: string | undefined;
   policy?: TextGenerationPolicy | undefined;
+  prompts?: T3ProjectFileTextGenerationPrompts | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
 }
@@ -51,6 +58,7 @@ export interface BranchNameGenerationInput {
   cwd: string;
   message: string;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  prompts?: T3ProjectFileTextGenerationPrompts | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
 }
@@ -65,6 +73,7 @@ export interface ThreadTitleGenerationInput {
   /** Present when replacing an existing title from the current thread history. */
   previousTitle?: string | undefined;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  prompts?: T3ProjectFileTextGenerationPrompts | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
 }

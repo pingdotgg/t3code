@@ -26,6 +26,19 @@ describe("buildT3ProjectFileJsonSchema", () => {
         {
           description?: string;
           items?: { properties: Record<string, unknown>; required: ReadonlyArray<string> };
+          properties?: Record<
+            string,
+            {
+              description?: string;
+              properties?: Record<
+                string,
+                {
+                  description?: string;
+                  allOf?: ReadonlyArray<{ minLength?: number; maxLength?: number }>;
+                }
+              >;
+            }
+          >;
         }
       >;
       required?: ReadonlyArray<string>;
@@ -36,10 +49,22 @@ describe("buildT3ProjectFileJsonSchema", () => {
       "defaultThreadEnvMode",
       "iconPath",
       "scripts",
+      "textGeneration",
     ]);
     expect(schema.required).toBeUndefined();
     expect(schema.properties.iconPath?.description).toContain("Workspace-relative path");
     expect(schema.properties.defaultThreadEnvMode?.description).toContain("new threads start");
+
+    const prompts = schema.properties.textGeneration?.properties?.prompts?.properties;
+    expect(Object.keys(prompts ?? {}).sort()).toEqual([
+      "branchName",
+      "changeRequest",
+      "commitMessage",
+      "threadTitle",
+      "threadTitleRegeneration",
+    ]);
+    expect(prompts?.commitMessage?.allOf).toContainEqual({ maxLength: 20_000 });
+    expect(prompts?.threadTitleRegeneration?.description).toContain("Defaults to threadTitle");
 
     const script = schema.properties.scripts?.items;
     expect(script?.required).toEqual(["name", "command"]);

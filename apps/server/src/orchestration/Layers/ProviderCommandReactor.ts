@@ -10,9 +10,15 @@ import {
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
+  type T3ProjectFileTextGenerationPrompts,
+  TextGenerationError,
   type TurnId,
 } from "@t3tools/contracts";
-import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import {
+  isTemporaryWorktreeBranch,
+  resolveAvailableGeneratedBranchName,
+  WORKTREE_BRANCH_PREFIX,
+} from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -32,6 +38,7 @@ import { increment, orchestrationEventsProcessedTotal } from "../../observabilit
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
+import { TextGenerationPromptResolver } from "../../textGeneration/TextGenerationPromptResolver.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -48,6 +55,8 @@ import {
 } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
+import { validateGeneratedBranchName } from "../../git/GeneratedBranchName.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -309,9 +318,11 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
+  const gitCore = yield* GitVcsDriver.GitVcsDriver;
   const fileSystem = yield* FileSystem.FileSystem;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
+  const textGenerationPromptResolver = yield* TextGenerationPromptResolver;
   const serverSettingsService = yield* ServerSettingsService;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
@@ -840,6 +851,7 @@ const make = Effect.gen(function* () {
     readonly worktreePath: string | null;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
+    readonly prompts?: T3ProjectFileTextGenerationPrompts;
   }) {
     if (!input.branch || !input.worktreePath) {
       return;
@@ -865,11 +877,28 @@ const make = Effect.gen(function* () {
         cwd,
         message: input.messageText,
         ...(attachments.length > 0 ? { attachments } : {}),
+        ...(input.prompts ? { prompts: input.prompts } : {}),
         modelSelection,
       });
       if (!generated) return;
 
-      const targetBranch = buildGeneratedWorktreeBranchName(generated.branch);
+      const validatedBranch =
+        input.prompts?.branchName !== undefined
+          ? yield* validateGeneratedBranchName(gitCore, cwd, generated.branch)
+          : buildGeneratedWorktreeBranchName(generated.branch);
+      if (validatedBranch === null) {
+        return yield* new TextGenerationError({
+          operation: "generateBranchName",
+          detail: "The custom branch-name prompt returned an invalid or reserved Git branch name.",
+        });
+      }
+      const targetBranch =
+        input.prompts?.branchName !== undefined
+          ? resolveAvailableGeneratedBranchName(
+              yield* gitCore.listLocalBranchNames(cwd),
+              validatedBranch,
+            )
+          : validatedBranch;
       if (targetBranch === oldBranch) return;
 
       const renamed = yield* gitWorkflow.renameBranch({ cwd, oldBranch, newBranch: targetBranch });
@@ -900,6 +929,7 @@ const make = Effect.gen(function* () {
       readonly messageText: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
       readonly titleSeed?: string;
+      readonly prompts?: T3ProjectFileTextGenerationPrompts;
     }) {
       const attachments = input.attachments ?? [];
       yield* Effect.gen(function* () {
@@ -911,6 +941,7 @@ const make = Effect.gen(function* () {
             cwd: input.cwd,
             message: input.messageText,
             ...(attachments.length > 0 ? { attachments } : {}),
+            ...(input.prompts ? { prompts: input.prompts } : {}),
             modelSelection,
           })
           .pipe(
@@ -975,11 +1006,13 @@ const make = Effect.gen(function* () {
       }) ?? process.cwd();
     const { textGenerationModelSelection: modelSelection } =
       yield* serverSettingsService.getSettings;
+    const prompts = yield* textGenerationPromptResolver.resolve(cwd);
     const generated = yield* textGeneration.generateThreadTitle({
       cwd,
       message,
       previousTitle,
       ...(attachments.length > 0 ? { attachments } : {}),
+      ...(prompts ? { prompts } : {}),
       modelSelection,
     });
     if (generated.title === DEFAULT_THREAD_TITLE || generated.title === previousTitle) {
@@ -1152,10 +1185,12 @@ const make = Effect.gen(function* () {
           thread,
           projects: project ? [project] : [],
         }) ?? process.cwd();
+      const prompts = yield* textGenerationPromptResolver.resolve(generationCwd);
       const generationInput = {
         messageText: message.text,
         ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
         ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
+        ...(prompts ? { prompts } : {}),
       };
 
       yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({

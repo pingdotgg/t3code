@@ -380,22 +380,36 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
   );
 
   it.effect("generates branch names and normalizes branch fragments", () =>
+    withFakeCodexEnv({ output: JSON.stringify({ branch: "  Feat/Session  " }) }, (textGeneration) =>
+      Effect.gen(function* () {
+        const generated = yield* textGeneration.generateBranchName({
+          cwd: process.cwd(),
+          message: "Please update session handling.",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+        expect(generated.branch).toBe("feat/session");
+      }),
+    ),
+  );
+
+  it.effect("forwards a custom branch prompt and preserves its result", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
-          branch: "  Feat/Session  ",
+          branch: "  Release/V2.Session  ",
         }),
-        stdinMustNotContain: "Image attachments supplied to the model",
+        stdinMustContain: "Keep release branch spelling and punctuation.",
       },
       (textGeneration) =>
         Effect.gen(function* () {
           const generated = yield* textGeneration.generateBranchName({
             cwd: process.cwd(),
             message: "Please update session handling.",
+            prompts: { branchName: "Keep release branch spelling and punctuation." },
             modelSelection: DEFAULT_TEST_MODEL_SELECTION,
           });
 
-          expect(generated.branch).toBe("feat/session");
+          expect(generated.branch).toBe("Release/V2.Session");
         }),
     ),
   );

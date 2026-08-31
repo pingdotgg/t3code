@@ -19,6 +19,7 @@ import { expect } from "vite-plus/test";
 import type {
   GitActionProgressEvent,
   GitPreparePullRequestThreadInput,
+  T3ProjectFileTextGenerationPrompts,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -31,12 +32,14 @@ import {
 } from "@t3tools/contracts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as TextGenerationPromptResolver from "../textGeneration/TextGenerationPromptResolver.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitManager from "./GitManager.ts";
@@ -618,6 +621,7 @@ function preparePullRequestThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
+  prompts?: T3ProjectFileTextGenerationPrompts;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
 }) {
@@ -628,6 +632,14 @@ function makeManager(input?: {
   });
 
   const serverSettingsLayer = ServerSettings.ServerSettingsService.layerTest(input?.serverSettings);
+  const promptResolverLayer = input?.prompts
+    ? Layer.succeed(
+        TextGenerationPromptResolver.TextGenerationPromptResolver,
+        TextGenerationPromptResolver.TextGenerationPromptResolver.of({
+          resolve: () => Effect.succeed(input.prompts),
+        }),
+      )
+    : TextGenerationPromptResolver.layer.pipe(Layer.provide(T3ProjectFileLoader.layer));
 
   const vcsDriverLayer = GitVcsDriver.layer.pipe(
     Layer.provideMerge(VcsProcess.layer),
@@ -651,6 +663,7 @@ function makeManager(input?: {
 
   const managerLayer = Layer.mergeAll(
     Layer.succeed(TextGeneration.TextGeneration, textGeneration),
+    promptResolverLayer,
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed([]),
     }),
@@ -2140,6 +2153,124 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       );
       expect(mergeBase).toBe(mainSha);
       expect(generatedCount).toBe(1);
+    }),
+  );
+
+  it.effect("resolves a custom branch namespace conflict and preserves custom commit output", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["branch", "Theo"]);
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, "t3.json"),
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          textGeneration: {
+            prompts: {
+              commitMessage: "Return the exact commit format.",
+              branchName: "Return the complete branch name.",
+            },
+          },
+        }),
+      );
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\ncustom prompts\n");
+      const subject =
+        "Keep This Mixed-Case Commit Subject With Its Final Period And More Than Seventy-Two Characters.";
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            expect(input.prompts).toMatchObject({
+              commitMessage: "Return the exact commit format.",
+              branchName: "Return the complete branch name.",
+            });
+            return Effect.succeed({ subject, body: "Exact body.", branch: "Theo/Fix.v2" });
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        featureBranch: true,
+      });
+
+      expect(result.branch).toEqual({ status: "created", name: "Theo-1/Fix.v2" });
+      expect(result.commit.subject).toBe(subject);
+      expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe(
+        "Theo-1/Fix.v2",
+      );
+      expect((yield* runGit(repoDir, ["log", "-1", "--pretty=%s"])).stdout.trim()).toBe(subject);
+    }),
+  );
+
+  it.effect("uses the custom branch task with a manual commit message", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nmanual custom branch\n");
+      let commitGenerationCount = 0;
+      let branchInput: TextGeneration.BranchNameGenerationInput | undefined;
+
+      const { manager } = yield* makeManager({
+        prompts: { branchName: "Return the complete branch name." },
+        textGeneration: {
+          generateCommitMessage: () => {
+            commitGenerationCount += 1;
+            return Effect.succeed({ subject: "unused", body: "" });
+          },
+          generateBranchName: (input) => {
+            branchInput = input;
+            return Effect.succeed({ branch: "Team/Manual.Change" });
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        featureBranch: true,
+        commitMessage: "feat: keep this manual message\n\nManual details.",
+      });
+
+      expect(commitGenerationCount).toBe(0);
+      expect(branchInput?.prompts?.branchName).toBe("Return the complete branch name.");
+      expect(branchInput?.message).toContain("feat: keep this manual message");
+      expect(branchInput?.message).toContain("README.md");
+      expect(branchInput?.message).toContain("manual custom branch");
+      expect(result.branch).toEqual({ status: "created", name: "Team/Manual.Change" });
+      expect(result.commit.subject).toBe("feat: keep this manual message");
+    }),
+  );
+
+  it.effect("rejects an invalid custom branch before creating a branch or commit", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\ninvalid branch\n");
+
+      const { manager } = yield* makeManager({
+        prompts: { branchName: "Return the complete branch name." },
+        textGeneration: {
+          generateCommitMessage: () =>
+            Effect.succeed({ subject: "Do not commit this", body: "", branch: "bad..branch" }),
+        },
+      });
+
+      const error = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        featureBranch: true,
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "GitManagerError",
+        operation: "runFeatureBranchStep",
+      });
+      expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+      expect((yield* runGit(repoDir, ["log", "--oneline"])).stdout.trim().split("\n")).toHaveLength(
+        1,
+      );
     }),
   );
 

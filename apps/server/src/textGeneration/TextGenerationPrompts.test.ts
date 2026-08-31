@@ -66,6 +66,60 @@ describe("buildCommitMessagePrompt", () => {
     expect(result.prompt).toContain("Additional instructions:");
     expect(result.prompt).toContain("Use a terse repository-specific subject.");
   });
+
+  it("keeps default commit rules when only the branch prompt is custom", () => {
+    const result = buildCommitMessagePrompt({
+      branch: "main",
+      stagedSummary: "M a.ts",
+      stagedPatch: "diff",
+      includeBranch: true,
+      policy: {
+        kind: "custom",
+        commitInstructions: "Use the package scope.",
+        inferRepositoryConventions: false,
+      },
+      prompts: { branchName: "Keep the release/ prefix and uppercase words." },
+    });
+
+    expect(result.prompt).toContain("subject must be imperative, <= 72 chars");
+    expect(result.prompt).toContain("Use the package scope.");
+    expect(result.prompt).toContain("Keep the release/ prefix and uppercase words.");
+    expect(result.prompt).not.toContain("branch must be a short semantic git branch fragment");
+  });
+
+  it("keeps the default branch rule when only the commit prompt is custom", () => {
+    const result = buildCommitMessagePrompt({
+      branch: "main",
+      stagedSummary: "M a.ts",
+      stagedPatch: "diff",
+      includeBranch: true,
+      prompts: { commitMessage: "Use our exact release note as the subject." },
+    });
+
+    expect(result.prompt).toContain("Use our exact release note as the subject.");
+    expect(result.prompt).toContain("branch must be a short semantic git branch fragment");
+    expect(result.prompt).not.toContain("subject must be imperative");
+  });
+
+  it("labels independent commit and branch overrides", () => {
+    const result = buildCommitMessagePrompt({
+      branch: "main",
+      stagedSummary: "M a.ts",
+      stagedPatch: "diff",
+      includeBranch: true,
+      prompts: {
+        commitMessage: "Use the release note as the subject.",
+        branchName: "Use uppercase ticket IDs and snake_case.",
+      },
+    });
+
+    expect(result.prompt).toContain(
+      "Commit message instructions:\nUse the release note as the subject.",
+    );
+    expect(result.prompt).toContain(
+      "Branch name instructions:\nUse uppercase ticket IDs and snake_case.",
+    );
+  });
 });
 
 describe("buildPrContentPrompt", () => {
@@ -87,6 +141,23 @@ describe("buildPrContentPrompt", () => {
     expect(result.prompt).toContain("Diff patch:");
     expect(result.prompt).toContain("export function login()");
     expect(result.prompt).toContain("include headings '## Summary' and '## Testing'");
+  });
+
+  it("uses a custom task and keeps the repository template as reference", () => {
+    const result = buildPrContentPrompt({
+      baseBranch: "main",
+      headBranch: "release",
+      commitSummary: "Release changes",
+      diffSummary: "1 file changed",
+      diffPatch: "diff",
+      changeRequestTemplate: "## Required default section",
+      prompts: { changeRequest: "Write the body as a deployment checklist." },
+    });
+
+    expect(result.prompt).toContain("Write the body as a deployment checklist.");
+    expect(result.prompt).toContain("Repository change request template for reference:");
+    expect(result.prompt).not.toContain("follow the repository change request template structure");
+    expect(result.prompt).not.toContain("include headings '## Summary' and '## Testing'");
   });
 
   it("follows a repository PR template instead of the default body headings", () => {
@@ -234,6 +305,32 @@ describe("buildThreadTitlePrompt", () => {
     );
     expect(result.prompt.match(/\[Earlier content truncated\]/g)).toHaveLength(1);
   });
+
+  it("falls back to the initial custom prompt for regeneration", () => {
+    const result = buildThreadTitlePrompt({
+      message: "USER:\nKeep this title literal",
+      previousTitle: "Old title",
+      prompts: { threadTitle: "Use the user's exact product wording." },
+    });
+
+    expect(result.prompt).toContain("Use the user's exact product wording.");
+    expect(result.prompt).toContain('Previous title: "Old title"');
+    expect(result.prompt).not.toContain("Editorial rules:");
+  });
+
+  it("uses the regeneration prompt when configured", () => {
+    const result = buildThreadTitlePrompt({
+      message: "USER:\nUpdate the existing title",
+      previousTitle: "Old title",
+      prompts: {
+        threadTitle: "Initial instruction",
+        threadTitleRegeneration: "Regeneration-only instruction",
+      },
+    });
+
+    expect(result.prompt).toContain("Regeneration-only instruction");
+    expect(result.prompt).not.toContain("Initial instruction");
+  });
 });
 
 describe("sanitizeThreadTitle", () => {
@@ -243,6 +340,12 @@ describe("sanitizeThreadTitle", () => {
         '  "Reconnect failures after restart because the session state does not recover"  ',
       ),
     ).toBe("Reconnect failures after restart because the se...");
+  });
+
+  it("keeps custom punctuation, quotes, and long text", () => {
+    const title =
+      '"Release/v2: Keep Exact Punctuation! This title is longer than fifty characters"';
+    expect(sanitizeThreadTitle(`  ${title}  `, true)).toBe(title);
   });
 });
 

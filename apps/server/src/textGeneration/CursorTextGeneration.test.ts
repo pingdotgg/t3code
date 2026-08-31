@@ -9,6 +9,7 @@ import { it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -230,10 +231,43 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
               model: "composer-2",
             },
           });
-
           expect(generated.title).toBe("Trim reconnect spinner status after resume.");
         }),
     ),
+  );
+
+  it.effect("forwards custom title behavior through Cursor ACP text generation", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const requestLogDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-cursor-custom-title-log-",
+      });
+      const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+      return yield* withFakeAcpAgent(
+        {
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_PROMPT_RESPONSE_TEXT:
+            '{"title":"\\"Trim reconnect spinner status after resume.\\""}',
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generated = yield* textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Fix the reconnect spinner after a resumed session.",
+              prompts: { threadTitle: "Keep title punctuation." },
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("cursor"),
+                model: "composer-2",
+              },
+            });
+
+            expect(generated.title).toBe('"Trim reconnect spinner status after resume."');
+            expect(NodeFS.readFileSync(requestLogPath, "utf8")).toContain(
+              "Keep title punctuation.",
+            );
+          }),
+      );
+    }),
   );
 
   it.effect("closes the ACP child process after text generation completes", () => {

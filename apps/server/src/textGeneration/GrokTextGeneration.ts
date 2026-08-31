@@ -175,6 +175,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         stagedPatch: input.stagedPatch,
         includeBranch: input.includeBranch === true,
         policy: input.policy,
+        prompts: input.prompts,
       });
 
       const generated = yield* runGrokJson({
@@ -186,10 +187,18 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       });
 
       return {
-        subject: sanitizeCommitSubject(generated.subject),
+        subject: sanitizeCommitSubject(
+          generated.subject,
+          input.prompts?.commitMessage !== undefined,
+        ),
         body: generated.body.trim(),
         ...("branch" in generated && typeof generated.branch === "string"
-          ? { branch: sanitizeFeatureBranchName(generated.branch) }
+          ? {
+              branch:
+                input.prompts?.branchName === undefined
+                  ? sanitizeFeatureBranchName(generated.branch)
+                  : generated.branch.trim(),
+            }
           : {}),
       };
     });
@@ -204,6 +213,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         diffPatch: input.diffPatch,
         policy: input.policy,
         changeRequestTemplate: input.changeRequestTemplate,
+        prompts: input.prompts,
       });
 
       const generated = yield* runGrokJson({
@@ -225,6 +235,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       const { prompt, outputSchema } = buildBranchNamePrompt({
         message: input.message,
         attachments: input.attachments,
+        prompts: input.prompts,
       });
 
       const generated = yield* runGrokJson({
@@ -236,7 +247,10 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       });
 
       return {
-        branch: sanitizeBranchFragment(generated.branch),
+        branch:
+          input.prompts?.branchName === undefined
+            ? sanitizeBranchFragment(generated.branch)
+            : generated.branch.trim(),
       };
     });
 
@@ -246,6 +260,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         message: input.message,
         previousTitle: input.previousTitle,
         attachments: input.attachments,
+        prompts: input.prompts,
       });
 
       const generated = yield* runGrokJson({
@@ -257,7 +272,12 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       });
 
       return {
-        title: sanitizeThreadTitle(generated.title),
+        title: sanitizeThreadTitle(
+          generated.title,
+          (input.previousTitle === undefined
+            ? input.prompts?.threadTitle
+            : (input.prompts?.threadTitleRegeneration ?? input.prompts?.threadTitle)) !== undefined,
+        ),
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 

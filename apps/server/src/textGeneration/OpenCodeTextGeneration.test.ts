@@ -245,6 +245,7 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
         yield* textGeneration.generateThreadTitle({
           cwd: process.cwd(),
           message: "Review these attachments.",
+          prompts: { threadTitle: "Use the attachment's exact report name." },
           modelSelection: DEFAULT_TEST_MODEL_SELECTION,
           attachments: [
             {
@@ -268,6 +269,10 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
           expect.objectContaining({ type: "text" }),
           expect.objectContaining({ type: "file", filename: "screenshot.png" }),
         ]);
+        expect(runtimeMock.state.promptParts[0]?.[0]).toMatchObject({
+          type: "text",
+          text: expect.stringContaining("Use the attachment's exact report name."),
+        });
       }),
     ),
   );

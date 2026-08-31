@@ -10,6 +10,15 @@ describe("T3ProjectFile", () => {
     const decoded = decode({
       $schema: "https://t3.codes/schema/t3.json",
       iconPath: "assets/logo.svg",
+      textGeneration: {
+        prompts: {
+          commitMessage: "Use Conventional Commits.",
+          changeRequest: "State the problem before the fix.",
+          branchName: "Use fix/<slug> for bugs.",
+          threadTitle: "Name the durable goal.",
+          threadTitleRegeneration: "Keep the original subject when it is still accurate.",
+        },
+      },
       scripts: [
         {
           name: "Dev",
@@ -24,6 +33,7 @@ describe("T3ProjectFile", () => {
     });
 
     expect(decoded.iconPath).toBe("assets/logo.svg");
+    expect(decoded.textGeneration?.prompts?.branchName).toBe("Use fix/<slug> for bugs.");
     expect(decoded.scripts).toHaveLength(2);
     expect(decoded.scripts?.[1]).toEqual({ name: "Test", command: "pnpm test" });
   });
@@ -41,6 +51,29 @@ describe("T3ProjectFile", () => {
 
     expect(decoded.iconPath).toBe("assets/logo.svg");
     expect(decoded.scripts?.[0]).toEqual({ name: "Dev", command: "pnpm dev" });
+  });
+
+  it("trims text generation prompts and ignores unknown prompt fields", () => {
+    const decoded = decode({
+      textGeneration: {
+        prompts: {
+          commitMessage: "  Use a direct subject.  ",
+          futurePrompt: "future value",
+        },
+      },
+    });
+
+    expect(decoded.textGeneration?.prompts).toEqual({
+      commitMessage: "Use a direct subject.",
+    });
+  });
+
+  it("rejects empty or oversized text generation prompts", () => {
+    expect(() => decode({ textGeneration: { prompts: { commitMessage: "   " } } })).toThrow();
+    expect(() => decode({ textGeneration: { prompts: { changeRequest: false } } })).toThrow();
+    expect(() =>
+      decode({ textGeneration: { prompts: { branchName: "x".repeat(20_001) } } }),
+    ).toThrow();
   });
 
   it("rejects scripts without a command", () => {

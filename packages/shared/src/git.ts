@@ -81,6 +81,41 @@ export function resolveAutoFeatureBranchName(
   return `${resolvedBase}-${suffix}`;
 }
 
+/** Add numeric suffixes to resolve ref namespace conflicts without changing other spelling. */
+export function resolveAvailableGeneratedBranchName(
+  existingBranchNames: readonly string[],
+  preferredBranch: string,
+): string {
+  const preferredParts = preferredBranch.split("/");
+  const candidateParts = [...preferredParts];
+  const suffixes = preferredParts.map(() => 0);
+  const existingBranches = existingBranchNames.map((branchName) => branchName.split("/"));
+
+  while (true) {
+    const blockingComponentIndex = existingBranches.reduce<number | null>(
+      (nearestBlocker, existingParts) => {
+        const sharedLength = Math.min(candidateParts.length, existingParts.length);
+        for (let index = 0; index < sharedLength; index += 1) {
+          if (candidateParts[index] !== existingParts[index]) {
+            return nearestBlocker;
+          }
+        }
+
+        const blockerIndex = sharedLength - 1;
+        return nearestBlocker === null ? blockerIndex : Math.min(nearestBlocker, blockerIndex);
+      },
+      null,
+    );
+    if (blockingComponentIndex === null) {
+      return candidateParts.join("/");
+    }
+
+    suffixes[blockingComponentIndex] = (suffixes[blockingComponentIndex] ?? 0) + 1;
+    candidateParts[blockingComponentIndex] =
+      `${preferredParts[blockingComponentIndex]}-${suffixes[blockingComponentIndex]}`;
+  }
+}
+
 /**
  * Strip the remote prefix from a remote ref such as `origin/feature/demo`.
  */
