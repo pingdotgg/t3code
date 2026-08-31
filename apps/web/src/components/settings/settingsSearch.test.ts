@@ -80,6 +80,7 @@ describe("searchSettings", () => {
       title: "WSL backend",
       to: "/settings/connections",
       desktopOnly: true,
+      windowsOnly: true,
     });
   });
 
