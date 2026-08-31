@@ -4,17 +4,29 @@ Messages can contain up to 120,000 characters. If a draft is longer, T3 Code kee
 composer and shows how many characters need to be removed. Shorten the draft or split it into
 multiple messages, then send again in the same thread.
 
-You can attach images up to 10 MB. On servers that support file uploads, web and desktop can also
-attach text files, PDFs, ZIP archives, and other files. Each file can be up to the limit advertised
+On mobile, an empty composer shows an interrupt button while the agent is working. Adding text
+or an attachment replaces it with the send button. This applies to both compact and expanded
+composers.
+
+You can attach images up to 10 MB. On servers that support file uploads, you can also
+attach videos, text files, PDFs, ZIP archives, and other files. Each file can be up to the limit advertised
 by the server, capped at 50 MB. Each message can contain up to eight attachments in total. Files
 upload directly to the environment, where your agent can read, copy, or edit them by their file path.
 
 On web and desktop, attachments upload as soon as you add them. The send button becomes available
-after every upload finishes. Failed uploads can be retried or removed. On mobile, attachments are
-currently limited to images.
+after every upload finishes. Failed uploads can be retried or removed. On mobile, tap **+** to open
+the photo library from either the compact or expanded composer. When the connected server supports
+file uploads, **+** opens a menu beside the button with **Photo Library** and **Choose Files**.
+Videos use the server's file upload limit. You can also share photos, videos, and files into
+T3 Code from other apps through the system share sheet. Mobile uploads happen when the message
+sends, so queued messages keep their files until they deliver. Select a received file on mobile
+to save it or open it in another app through the system share sheet.
 
-If you reload before a file finishes uploading, the draft keeps the file's name and shows **Attach
-again** next to it. Attach the file again or remove it, then send.
+On web and desktop, select a video attachment before or after sending to play it with the browser's
+built-in controls. Playback depends on the video formats and codecs that the browser supports.
+
+On web and desktop, if you reload before a file finishes uploading, the draft keeps the file's name
+and shows **Attach again** next to it. Attach the file again or remove it, then send.
 
 On web and desktop, HEIC and HEIF photos are automatically converted to JPEG when you drag them into
 the composer or paste them into a message.
@@ -31,6 +43,23 @@ menu. Stashes that contain files must be restored in the environment where those
 uploaded. Stashed files stay uploaded on the server for 24 hours. If you restore an entry after
 that, the file comes back with **Attach again** next to it. Attach the file again or remove it, then
 send.
+
+## Voice input on iPhone
+
+On supported iPhones with iOS 26 or later, tap the microphone in the composer to record a message.
+An expanded composer keeps your draft visible and flips its bottom toolbar into recording controls
+with waves that respond to your voice. A collapsed composer flips into a compact recording strip
+without changing height. Tap the checkmark to finish and transcribe on your device. The waves fade
+into a transcription status, then the usual
+controls return with the text inserted at the selection where recording started. If the keyboard
+is open when you start, it stays open during voice input. You can review and edit the text before
+you send it.
+
+The first use can download Apple's speech model and needs a network connection. Later transcription
+works offline for that language. A recording can be up to five minutes long. Canceling voice input,
+leaving the screen, or an audio interruption discards the new recording and keeps the existing draft
+and attachments. T3 Code deletes the local audio file after transcription or cancellation. It sends
+only the normal message text when you submit the draft.
 
 ## Commands and skills
 
