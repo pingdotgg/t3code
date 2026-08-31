@@ -29,6 +29,9 @@ public class T3ComposerEditorModule: Module {
       Prop("editable") { (view: T3ComposerEditorView, editable: Bool) in
         view.setEditable(editable)
       }
+      Prop("readOnly") { (view: T3ComposerEditorView, readOnly: Bool) in
+        view.setReadOnly(readOnly)
+      }
       Prop("scrollEnabled") { (view: T3ComposerEditorView, scrollEnabled: Bool) in
         view.setScrollEnabled(scrollEnabled)
       }
