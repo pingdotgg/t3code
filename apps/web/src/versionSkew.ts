@@ -1,4 +1,5 @@
 import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@t3tools/contracts";
+import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 
@@ -12,6 +13,18 @@ export interface VersionMismatch {
 }
 
 export const VERSION_MISMATCH_DISMISSALS_STORAGE_KEY = "t3code:version-mismatch-dismissals:v1";
+
+// Runtime failures retain their identity until the next attempt. Dismiss only
+// that attempt, across chat remounts, without clearing the error in Settings.
+const dismissedServerUpdateFailures = new WeakSet<ServerUpdateState>();
+
+export function isServerUpdateFailureDismissed(state: ServerUpdateState): boolean {
+  return state.status === "failed" && dismissedServerUpdateFailures.has(state);
+}
+
+export function dismissServerUpdateFailure(state: ServerUpdateState): void {
+  if (state.status === "failed") dismissedServerUpdateFailures.add(state);
+}
 
 const VersionMismatchDismissalsSchema = Schema.Struct({
   keys: Schema.Array(Schema.String),
@@ -158,18 +171,4 @@ export function dismissVersionMismatch(dismissalKey: string | null | undefined):
   writeVersionMismatchDismissals({
     keys: [...document.keys, dismissalKey],
   });
-}
-
-export function appendVersionMismatchHint(
-  message: string | null | undefined,
-  mismatch: VersionMismatch | null | undefined,
-): string | null {
-  const normalizedMessage = normalizeVersion(message);
-  if (!normalizedMessage) {
-    return mismatch?.hint ?? null;
-  }
-  if (!mismatch) {
-    return normalizedMessage;
-  }
-  return `${normalizedMessage} Hint: ${mismatch.hint}`;
 }

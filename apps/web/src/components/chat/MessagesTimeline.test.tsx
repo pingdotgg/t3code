@@ -187,6 +187,7 @@ function buildProps() {
     revertTurnCountByUserMessageId: new Map(),
     onRevertUserMessage: () => {},
     isRevertingCheckpoint: false,
+    openingVideoAttachmentId: null,
     onImageExpand: () => {},
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,
     markdownCwd: undefined,
@@ -342,7 +343,7 @@ describe("MessagesTimeline", () => {
 
     expect(compactMarkup).toContain('class="h-3 sm:h-4"');
     expect(compactMarkup).not.toContain("topbar-scroll-fade");
-    expect(fadedMarkup).toContain('class="h-10 sm:h-12"');
+    expect(fadedMarkup).toContain('class="h-[var(--workspace-titlebar-scroll-fade-height)]"');
     expect(fadedMarkup).toContain("topbar-scroll-fade");
   });
 
@@ -556,6 +557,153 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("data-anchor-index=");
     expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
     expect(onAnchorReady).not.toHaveBeenCalled();
+  });
+
+  it("renders generic attachments as download links instead of image previews", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Read the report."),
+      message: {
+        ...buildUserTimelineEntry("Read the report.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "attachment-report-pdf",
+            name: "report.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 42,
+            previewUrl: "https://environment.test/api/assets/report.pdf",
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain(
+      '<a href="https://environment.test/api/assets/report.pdf" download="report.pdf" class="flex min-w-0 items-center gap-2 rounded-md py-1 text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
+    );
+    expect(markup).not.toContain('alt="report.pdf"');
+  });
+
+  it("renders video attachments as play buttons", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Watch the demo."),
+      message: {
+        ...buildUserTimelineEntry("Watch the demo.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "attachment-demo-mp4",
+            name: "demo.mp4",
+            mimeType: "video/mp4",
+            sizeBytes: 42,
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+    const busyMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[entry]}
+        openingVideoAttachmentId="attachment-demo-mp4"
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Play demo.mp4"');
+    expect(markup).toContain("min-h-[72px]");
+    expect(markup).toContain(">demo.mp4</span>");
+    expect(markup).not.toContain('aria-label="Download demo.mp4"');
+    expect(busyMarkup).toContain('aria-busy="true"');
+    expect(busyMarkup).toContain('aria-disabled="true"');
+    expect(busyMarkup).not.toContain('disabled=""');
+    expect(busyMarkup).toContain(">Loading…</span>");
+  });
+  it("renders a file download button without creating its URL in advance", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Read the report."),
+      message: {
+        ...buildUserTimelineEntry("Read the report.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "attachment-report-pdf",
+            name: "report.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 42,
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain(
+      '<button type="button" aria-label="Download report.pdf" class="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
+    );
+    expect(markup).not.toContain("href=");
+  });
+
+  it("does not download an optimistic file before the server supplies its attachment ID", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Read the report."),
+      message: {
+        ...buildUserTimelineEntry("Read the report.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "composer-local-report",
+            name: "report.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 42,
+            downloadable: false,
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain("report.pdf");
+    expect(markup).not.toContain('aria-label="Download report.pdf"');
+  });
+
+  it("renders unknown attachment types as inert rows instead of crashing", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Play the recording."),
+      message: {
+        ...buildUserTimelineEntry("Play the recording.").message,
+        attachments: [
+          {
+            // A newer server can introduce attachment types this build does
+            // not know. They ride the open contract member.
+            type: "recording",
+            id: "attachment-voice-memo",
+            name: "voice-memo.ogg",
+            mimeType: "audio/ogg",
+            sizeBytes: 42,
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
+    );
+
+    expect(markup).toContain("voice-memo.ogg");
+    expect(markup).not.toContain('aria-label="Download voice-memo.ogg"');
+    expect(markup).not.toContain('alt="voice-memo.ogg"');
+    expect(markup).not.toContain("href=");
   });
 
   it("keeps reserved end space when tool work starts while reading history", () => {
@@ -905,7 +1053,6 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Context compacted");
-    expect(markup).toContain("Work Log");
   });
 
   it("summarizes changed files in one line", () => {
@@ -1062,7 +1209,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("+2 previous log entries");
+    expect(markup).toContain("Ran 2 commands and received 1 update");
     expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
   });
 
@@ -1200,21 +1347,6 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("tool call failed");
   });
 
-  it("aligns the iconless Thinking row with the working timer", () => {
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        isWorking
-        activeTurnStartedAt={MESSAGE_CREATED_AT}
-        timelineEntries={[]}
-      />,
-    );
-
-    expect(markup).toContain("Working for");
-    expect(markup).toContain("Thinking");
-    expect(markup).toContain("gap-1.5 py-0.5 px-1");
-  });
-
   it("renders review comment contexts as structured cards instead of raw tags", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1292,7 +1424,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-testid="file-diff"');
   });
 
-  it("renders a muted failure marker for failed tool lifecycle entries", () => {
+  it("keeps failed lifecycle entries discoverable in mixed activity summaries", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -1325,8 +1457,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("lucide-x");
-    expect(markup).toContain('aria-label="Tool call failed"');
+    expect(markup).toContain('aria-label="Received 1 update and used 1 tool, tool call failed"');
     // Ordinary tool failures render muted, not red.
     expect(markup).not.toContain("text-destructive");
   });
@@ -1363,7 +1494,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("lucide-x");
+    expect(markup).toContain("lucide-circle-alert");
     expect(markup).toContain("text-destructive");
   });
 });

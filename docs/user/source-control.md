@@ -33,6 +33,8 @@ T3 Code works with the platforms your team already uses:
 
 - Push a branch and create a pull request from the Git actions controls in the toolbar
 - T3 Code can suggest titles and descriptions based on your commits
+- With **Repository conventions** selected, generated source control text follows the project's
+  `AGENTS.md` along with recent commit subjects. Claude writers also follow `CLAUDE.md`
 - Supports GitHub Pull Requests, GitLab Merge Requests, Bitbucket Pull Requests, and Azure DevOps Pull Requests
 
 **Stay on top of open reviews**

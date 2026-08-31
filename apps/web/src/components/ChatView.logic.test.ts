@@ -9,6 +9,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { Thread, ThreadShell } from "../types";
+import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
@@ -21,6 +22,8 @@ import {
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getStartedThreadModelChangeBlockReason,
+  loadVideoPreviewUrl,
+  isVideoPreviewRequestCurrent,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
@@ -33,16 +36,57 @@ import {
   resolveDraftHeroState,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
+  codexArtifactTemplatePromptToAppend,
   shouldDockDraftHeroForSubmission,
   shouldReleaseTimelineAnchorForToolActivity,
   shouldShowBranchMismatchBanner,
+  shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
+
+describe("loadVideoPreviewUrl", () => {
+  it("loads video bytes into an object URL", async () => {
+    const objectUrl = await loadVideoPreviewUrl("data:video/mp4;base64,AA==");
+    expect(objectUrl).toMatch(/^blob:/);
+    URL.revokeObjectURL(objectUrl);
+  });
+
+  it("stops loading when the preview request is cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      loadVideoPreviewUrl("data:video/mp4;base64,AA==", controller.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  });
+});
+
+describe("isVideoPreviewRequestCurrent", () => {
+  it("rejects changed threads and replaced previews", () => {
+    expect(isVideoPreviewRequestCurrent("thread-1", "thread-2", 1, 1)).toBe(false);
+    expect(isVideoPreviewRequestCurrent("thread-1", "thread-1", 1, 2)).toBe(false);
+    expect(isVideoPreviewRequestCurrent("thread-1", "thread-1", 2, 2)).toBe(true);
+  });
+});
 
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+const helloWorldTemplate: CodexArtifactTemplate = {
+  artifactKind: "document",
+  displayName: "Hello World",
+  skillDirectory: "/Users/test/.codex/skills/artifact-template-hello-world",
+  skillName: "artifact-template-hello-world",
+};
+
+describe("artifact template composer insertion", () => {
+  it("does not insert an already-present prompt", () => {
+    const prompt = "Create a document using this $artifact-template-hello-world about…";
+
+    expect(codexArtifactTemplatePromptToAppend(prompt, helloWorldTemplate)).toBeNull();
+  });
+});
 
 describe("draft hero submission transition", () => {
   it("does not dock the composer before a background submission", () => {
@@ -588,6 +632,31 @@ describe("shouldShowBranchMismatchBanner", () => {
     expect(
       shouldShowBranchMismatchBanner({ ...base, composerHasContent: true, hasMismatch: false }),
     ).toBe(false);
+  });
+});
+
+describe("shouldShowPlanFollowUpPrompt", () => {
+  const base = {
+    pendingUserInputCount: 0,
+    interactionMode: "plan" as const,
+    latestTurnSettled: true,
+    hasActionableProposedPlan: true,
+    hasComposerAttachments: false,
+  };
+
+  it("shows plan actions for a settled actionable plan without attachments", () => {
+    expect(shouldShowPlanFollowUpPrompt(base)).toBe(true);
+  });
+
+  it("hides plan actions while the composer has staged attachments", () => {
+    expect(shouldShowPlanFollowUpPrompt({ ...base, hasComposerAttachments: true })).toBe(false);
+  });
+
+  it("preserves the existing plan follow-up gates", () => {
+    expect(shouldShowPlanFollowUpPrompt({ ...base, pendingUserInputCount: 1 })).toBe(false);
+    expect(shouldShowPlanFollowUpPrompt({ ...base, interactionMode: "default" })).toBe(false);
+    expect(shouldShowPlanFollowUpPrompt({ ...base, latestTurnSettled: false })).toBe(false);
+    expect(shouldShowPlanFollowUpPrompt({ ...base, hasActionableProposedPlan: false })).toBe(false);
   });
 });
 
