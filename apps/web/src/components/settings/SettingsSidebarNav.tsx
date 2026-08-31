@@ -7,6 +7,8 @@ import {
   type ComponentType,
   type KeyboardEvent,
 } from "react";
+import { useEnvironmentQuery } from "~/state/query";
+import { desktopWslStateAtom } from "~/state/desktopWslState";
 import {
   ArchiveIcon,
   BlocksIcon,
@@ -21,6 +23,7 @@ import {
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
+import { isElectron } from "~/env";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Kbd } from "../ui/kbd";
@@ -38,6 +41,7 @@ import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
+  SETTINGS_SEARCH_ITEMS,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchItem,
@@ -78,7 +82,15 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const results = useMemo(() => searchSettings(query), [query]);
+  const desktopWsl = useEnvironmentQuery(isElectron ? desktopWslStateAtom : null);
+  const searchableItems = useMemo(() => {
+    const wslState = desktopWsl.data;
+    if (wslState?.available || wslState?.enabled || wslState?.wslOnly) {
+      return SETTINGS_SEARCH_ITEMS;
+    }
+    return SETTINGS_SEARCH_ITEMS.filter((item) => item.id !== "wsl-backend");
+  }, [desktopWsl.data]);
+  const results = useMemo(() => searchSettings(query, searchableItems), [query, searchableItems]);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
 
