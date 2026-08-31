@@ -1,4 +1,7 @@
-import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import {
+  isAssetPreviewTypeValidationFailure,
+  resolveAssetUrl,
+} from "@t3tools/client-runtime/state/assets";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useMemo } from "react";
@@ -35,7 +38,8 @@ export function useWorkspaceFileAssetUrl(props: {
 
 /** One-shot imperative mint for flows that must not reuse a failed or expired
     grant: every call refreshes the signed URL. Throws with the server's
-    message on failure. */
+    message on failure, except a preview-type refusal — an older server's
+    answer to any external-open file — which becomes upgrade guidance. */
 export async function requestWorkspaceFileAssetUrl(input: {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
@@ -63,10 +67,19 @@ export async function requestWorkspaceFileAssetUrl(input: {
     },
   );
   if (result._tag !== "Success") {
-    const error = squashAtomCommandFailure(result);
-    throw error instanceof Error
-      ? error
-      : new Error("The file could not be authorized.", { cause: error });
+    const failure = squashAtomCommandFailure(result);
+    // Classified on the raw squashed failure: the generic wrap below hides
+    // the failure's `_tag` from callers, so this is the last place the
+    // structured failure is guaranteed intact.
+    if (isAssetPreviewTypeValidationFailure(failure)) {
+      throw new Error(
+        "This environment's server doesn't support opening files in another app yet. Update its T3 server and retry.",
+        { cause: failure },
+      );
+    }
+    throw failure instanceof Error
+      ? failure
+      : new Error("The file could not be authorized.", { cause: failure });
   }
   const url = resolveAssetUrl(input.httpBaseUrl, result.value.relativeUrl);
   if (url === null) {

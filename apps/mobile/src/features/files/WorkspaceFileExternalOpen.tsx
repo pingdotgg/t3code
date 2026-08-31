@@ -63,24 +63,13 @@ export function WorkspaceFileExternalOpen(props: {
       if (httpBaseUrl === null) {
         throw new Error("Not connected to the environment.");
       }
-      try {
-        return await requestWorkspaceFileAssetUrl({
-          cwd: props.cwd,
-          environmentId: props.environmentId,
-          httpBaseUrl,
-          relativePath: props.relativePath,
-          threadId: props.threadId,
-        });
-      } catch (error) {
-        // An older server refuses to authorize external-open files at all;
-        // explain that instead of echoing its preview-only message.
-        throw (error as { _tag?: string })._tag === "AssetPreviewTypeValidationError"
-          ? new Error(
-              "This environment's server doesn't support opening files in another app yet. Update its T3 server and retry.",
-              { cause: error },
-            )
-          : error;
-      }
+      return await requestWorkspaceFileAssetUrl({
+        cwd: props.cwd,
+        environmentId: props.environmentId,
+        httpBaseUrl,
+        relativePath: props.relativePath,
+        threadId: props.threadId,
+      });
     });
 
   const isPreparing = status._tag === "preparing";

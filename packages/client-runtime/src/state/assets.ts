@@ -43,6 +43,24 @@ export function resolveAssetUrl(httpBaseUrl: string, relativeUrl: string): strin
   }
 }
 
+/**
+ * Whether a failed asset-URL mint means the server refused the resource's
+ * preview type — the signal that an older server does not authorize this kind
+ * of file access at all, as opposed to a transient transport failure.
+ *
+ * A structural `_tag` check rather than a schema check: the squashed cause of
+ * a failed RPC is not guaranteed to be a decoded error class instance, only a
+ * tagged value.
+ */
+export function isAssetPreviewTypeValidationFailure(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "AssetPreviewTypeValidationError"
+  );
+}
+
 export function createAssetEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
