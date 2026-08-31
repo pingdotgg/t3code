@@ -68,12 +68,13 @@ guarded `enterFullScreenAnimated:completionHandler:` selector as Expo Video;
 if that selector is unavailable, the player also falls back to a standard modal.
 
 `FilePreviewModal` resolves image and PDF sources from a URI, a signed environment asset,
-or a retained composer file. On iOS, static images use `UIImageView` inside `UIScrollView`,
-with standard navigation-bar Close and Share items. The image is decoded before presentation
-so UIKit's iOS 18+ `preferredTransition` can zoom from the thumbnail into visible content.
-Quick Look delays image rendering until after presentation, leaving a blank zoom destination.
-It remains the viewer for PDFs and animated images, providing document search and sharing.
-Missing sources, older systems, and Reduce Motion use a standard presentation.
+or a retained composer file. On iOS, Quick Look owns image and document layout, controls,
+zooming, sharing, and interactive dismissal. Its delegate supplies the registered thumbnail
+and its bounds for Quick Look's source-view zoom. Do not layer `preferredTransition` or
+another image scroll view over that presentation: Quick Look coordinates its image gestures
+with the return to the thumbnail. Missing sources use the standard transition, and Reduce
+Motion disables animation. A pending programmatic Close waits until the current presentation
+or cancelled dismissal has settled before starting another transition.
 
 The shared native presenter copies original bytes into its own temporary directory and
 removes that copy after dismissal. Network downloads write to disk, and sharing never edits
