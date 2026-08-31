@@ -279,6 +279,9 @@ export const assetRouteLayer = HttpRouter.add(
     }
     return yield* HttpServerResponse.file(asset.path, {
       status: 200,
+      // Bound the stream to the cap-checked size so a file that grows between
+      // the resolve-time check and serving cannot stream extra bytes.
+      ...(asset.sizeBytes !== undefined ? { bytesToRead: asset.sizeBytes } : {}),
       headers: assetResponseHeaders(
         asset.path,
         asset.download || asset.mimeType !== undefined

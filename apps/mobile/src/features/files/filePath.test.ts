@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   isBrowserPreviewFile,
+  isExternalOpenFile,
   isImagePreviewFile,
   isSvgImagePreviewFile,
   resolveWorkspaceRelativeFilePath,
@@ -39,5 +40,13 @@ describe("file preview types", () => {
   it("identifies SVG images that need web rendering", () => {
     expect(isSvgImagePreviewFile("assets/diagram.svg#icon")).toBe(true);
     expect(isSvgImagePreviewFile("assets/photo.png")).toBe(false);
+  });
+
+  it("identifies external-open files that skip the text readFile path", () => {
+    // Extension policy lives in @t3tools/shared/filePreview and is covered
+    // there; this pins the Android-only platform gate.
+    expect(isExternalOpenFile("models/scene.glb", "android")).toBe(true);
+    expect(isExternalOpenFile("models/scene.glb", "ios")).toBe(false);
+    expect(isExternalOpenFile("src/main.ts", "android")).toBe(false);
   });
 });

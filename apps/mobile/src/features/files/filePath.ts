@@ -1,5 +1,6 @@
 import {
   isWorkspaceBrowserPreviewPath,
+  isWorkspaceExternalOpenPath,
   isWorkspaceImagePreviewPath,
 } from "@t3tools/shared/filePreview";
 
@@ -93,6 +94,13 @@ export function isBrowserPreviewFile(path: string): boolean {
 
 export function isImagePreviewFile(path: string): boolean {
   return isWorkspaceImagePreviewPath(path);
+}
+
+/** Files T3 never renders itself: they get the "Open in another app" handoff
+    instead of the text readFile path. Only Android performs the handoff today;
+    pass `Platform.OS` so the policy lives in one place. */
+export function isExternalOpenFile(path: string, platform: string): boolean {
+  return platform === "android" && isWorkspaceExternalOpenPath(path);
 }
 
 export function isSvgImagePreviewFile(path: string): boolean {

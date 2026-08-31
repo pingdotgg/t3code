@@ -1,12 +1,36 @@
-import { Pressable, View } from "react-native";
+import { ActivityIndicator, Pressable, View } from "react-native";
 
 import { AppText as Text } from "./AppText";
+
+function EmptyStateAction(props: {
+  readonly label: string;
+  readonly onPress: () => void;
+  readonly busy: boolean;
+  readonly className: string;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={props.label}
+      accessibilityState={{ busy: props.busy, disabled: props.busy }}
+      disabled={props.busy}
+      className={`flex-row items-center justify-center gap-2 rounded-full bg-primary active:opacity-70 ${props.className}${props.busy ? " opacity-60" : ""}`}
+      onPress={props.onPress}
+    >
+      {props.busy ? (
+        <ActivityIndicator colorClassName={"accent-primary-foreground"} size="small" />
+      ) : null}
+      <Text className="text-sm font-t3-bold text-primary-foreground">{props.label}</Text>
+    </Pressable>
+  );
+}
 
 export function EmptyState(props: {
   readonly title: string;
   readonly detail: string;
   readonly actionLabel?: string;
   readonly onAction?: () => void;
+  readonly actionBusy?: boolean;
   readonly variant?: "card" | "plain";
 }) {
   if (props.variant === "plain") {
@@ -17,14 +41,12 @@ export function EmptyState(props: {
           {props.detail}
         </Text>
         {props.actionLabel && props.onAction ? (
-          <Pressable
-            className="mt-5 rounded-full bg-primary px-5 py-3 active:opacity-70"
+          <EmptyStateAction
+            busy={props.actionBusy ?? false}
+            className="mt-5 px-5 py-3"
+            label={props.actionLabel}
             onPress={props.onAction}
-          >
-            <Text className="text-sm font-t3-bold text-primary-foreground">
-              {props.actionLabel}
-            </Text>
-          </Pressable>
+          />
         ) : null}
       </View>
     );
@@ -37,12 +59,12 @@ export function EmptyState(props: {
         {props.detail}
       </Text>
       {props.actionLabel && props.onAction ? (
-        <Pressable
-          className="mt-4 self-start rounded-full bg-primary px-4 py-2.5 active:opacity-70"
+        <EmptyStateAction
+          busy={props.actionBusy ?? false}
+          className="mt-4 self-start px-4 py-2.5"
+          label={props.actionLabel}
           onPress={props.onAction}
-        >
-          <Text className="text-sm font-t3-bold text-primary-foreground">{props.actionLabel}</Text>
-        </Pressable>
+        />
       ) : null}
     </View>
   );
