@@ -898,7 +898,7 @@ function AgentInstallTerminal({
       setupQueueRef.current = setupQueueRef.current.then(async () => {
         await closeTerminal({
           environmentId,
-          input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId },
+          input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, deleteHistory: true },
         });
       });
     };
