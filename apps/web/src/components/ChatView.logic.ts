@@ -52,16 +52,6 @@ export function codexArtifactTemplatePromptToAppend(
     ? null
     : codexArtifactTemplateUsePrompt(template);
 }
-export function shoulderTabReserve(overlay: HTMLElement): number {
-  if (overlay.querySelector(".chat-composer-tasks-tab")) return 0;
-  const tab = overlay.querySelector<HTMLElement>(".chat-composer-shoulder-tab");
-  const surface = overlay.querySelector<HTMLElement>('[data-chat-composer-main-surface="true"]');
-  if (!tab || !surface) return 0;
-  return Math.max(
-    0,
-    Math.round(surface.getBoundingClientRect().top - tab.getBoundingClientRect().top),
-  );
-}
 
 export function shouldDockDraftHeroForSubmission(input: {
   isDraftHeroState: boolean;
