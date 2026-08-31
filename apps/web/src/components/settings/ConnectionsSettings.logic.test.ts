@@ -2,8 +2,12 @@ import type { AdvertisedEndpoint, DesktopWslState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  excludeHiddenAccessRows,
   isQrShareableEndpoint,
+  reconcileHiddenAccessIds,
   selectQrEndpointOption,
+  withHiddenAccessId,
+  withHiddenAccessIds,
 } from "./ConnectionsSettings.logic";
 
 const baseWslState: DesktopWslState = {
@@ -161,5 +165,30 @@ describe("selectQrEndpointOption", () => {
     const loopbackOnly = options.slice(0, 1);
     expect(selectQrEndpointOption(loopbackOnly, null, null)?.id).toBe("desktop-loopback:4780");
     expect(selectQrEndpointOption([], "anything", "anything")).toBeNull();
+  });
+});
+
+describe("authorized client optimistic hide helpers", () => {
+  it("excludes rows the user already revoked", () => {
+    const rows = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    expect(excludeHiddenAccessRows(rows, new Set(["b"]), (row) => row.id)).toEqual([
+      { id: "a" },
+      { id: "c" },
+    ]);
+  });
+
+  it("keeps hidden ids that are still live and drops ones the stream already removed", () => {
+    const hidden = new Set(["gone", "still-live"]);
+    const next = reconcileHiddenAccessIds(hidden, new Set(["still-live", "other"]));
+    expect([...next]).toEqual(["still-live"]);
+  });
+
+  it("adds newly revoked ids without mutating the previous set", () => {
+    const previous = new Set(["a"]);
+    const single = withHiddenAccessId(previous, "b");
+    const many = withHiddenAccessIds(previous, ["b", "c"]);
+    expect([...previous]).toEqual(["a"]);
+    expect([...single].toSorted()).toEqual(["a", "b"]);
+    expect([...many].toSorted()).toEqual(["a", "b", "c"]);
   });
 });

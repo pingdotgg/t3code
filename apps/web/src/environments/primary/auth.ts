@@ -426,8 +426,9 @@ export async function listServerPairingLinks(): Promise<ReadonlyArray<ServerPair
 }
 
 export async function revokeServerPairingLink(id: string): Promise<void> {
+  let result: { readonly revoked: boolean };
   try {
-    await runPrimaryHttp(
+    result = await runPrimaryHttp(
       PrimaryEnvironmentHttpClient.pipe(
         Effect.flatMap((client) => client.auth.revokePairingLink({ headers: {}, payload: { id } })),
       ),
@@ -438,6 +439,11 @@ export async function revokeServerPairingLink(id: string): Promise<void> {
       pairingLinkId: id,
       cause: error,
     });
+  }
+  // Server returns 200 with revoked:false when nothing matched — surface that
+  // so the UI does not treat a no-op as success while the row stays put.
+  if (!result.revoked) {
+    throw new Error("That pairing link is no longer active.");
   }
 }
 
@@ -474,8 +480,9 @@ export async function listServerClientSessions(): Promise<
 }
 
 export async function revokeServerClientSession(sessionId: AuthSessionId): Promise<void> {
+  let result: { readonly revoked: boolean };
   try {
-    await runPrimaryHttp(
+    result = await runPrimaryHttp(
       PrimaryEnvironmentHttpClient.pipe(
         Effect.flatMap((client) =>
           client.auth.revokeClient({ headers: {}, payload: { sessionId } }),
@@ -488,6 +495,11 @@ export async function revokeServerClientSession(sessionId: AuthSessionId): Promi
       sessionId,
       cause: error,
     });
+  }
+  // Server returns 200 with revoked:false when nothing matched — surface that
+  // so the UI does not treat a no-op as success while the row stays put.
+  if (!result.revoked) {
+    throw new Error("That client session is no longer active.");
   }
 }
 

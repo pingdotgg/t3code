@@ -62,3 +62,67 @@ export async function applyWslEnableSelection(input: {
   }
   return await bridge.setWslBackendEnabled(true);
 }
+
+/**
+ * Hides rows the user already revoked while the auth-access stream catches up.
+ * Drops ids that left the live snapshot so the set does not grow forever.
+ */
+export function reconcileHiddenAccessIds(
+  hiddenIds: ReadonlySet<string>,
+  liveIds: ReadonlySet<string>,
+): ReadonlySet<string> {
+  if (hiddenIds.size === 0) {
+    return hiddenIds;
+  }
+  let changed = false;
+  const next = new Set<string>();
+  for (const id of hiddenIds) {
+    if (liveIds.has(id)) {
+      next.add(id);
+    } else {
+      changed = true;
+    }
+  }
+  return changed ? next : hiddenIds;
+}
+
+export function excludeHiddenAccessRows<T>(
+  rows: ReadonlyArray<T>,
+  hiddenIds: ReadonlySet<string>,
+  idOf: (row: T) => string,
+): ReadonlyArray<T> {
+  if (hiddenIds.size === 0) {
+    return rows;
+  }
+  return rows.filter((row) => !hiddenIds.has(idOf(row)));
+}
+
+export function withHiddenAccessId(
+  hiddenIds: ReadonlySet<string>,
+  id: string,
+): ReadonlySet<string> {
+  if (hiddenIds.has(id)) {
+    return hiddenIds;
+  }
+  const next = new Set(hiddenIds);
+  next.add(id);
+  return next;
+}
+
+export function withHiddenAccessIds(
+  hiddenIds: ReadonlySet<string>,
+  ids: ReadonlyArray<string>,
+): ReadonlySet<string> {
+  if (ids.length === 0) {
+    return hiddenIds;
+  }
+  const next = new Set(hiddenIds);
+  let changed = false;
+  for (const id of ids) {
+    if (!next.has(id)) {
+      next.add(id);
+      changed = true;
+    }
+  }
+  return changed ? next : hiddenIds;
+}
