@@ -1,6 +1,7 @@
 import DateTimePicker from "@expo/ui/community/datetime-picker";
 import {
   resolveSnoozeForDefault,
+  snoozeWallTimeFromDate,
   snoozeForTimeError,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -17,9 +18,12 @@ import { useThreadShell } from "../../state/entities";
 import { useThreadListActions } from "../home/useThreadListActions";
 
 import {
+  formatAndroidSnoozeDate,
+  formatAndroidSnoozeTime,
   mergeAndroidPickerValue,
   resolveAndroidMinimumDate,
   resolveAndroidPickerValue,
+  resolveAndroidSnoozeValue,
   type AndroidSnoozePicker,
 } from "./SnoozeForRouteScreen.logic";
 
@@ -27,19 +31,6 @@ type SnoozeForRouteParams = {
   readonly environmentId: string;
   readonly threadId: string;
 };
-
-function formatDate(value: Date): string {
-  return value.toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function formatTime(value: Date): string {
-  return value.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-}
 
 export function SnoozeForRouteScreen({ route }: StaticScreenProps<SnoozeForRouteParams>) {
   const navigation = useNavigation();
@@ -49,23 +40,37 @@ export function SnoozeForRouteScreen({ route }: StaticScreenProps<SnoozeForRoute
     threadId: ThreadId.make(route.params.threadId),
   });
   const { snoozeThread } = useThreadListActions();
-  const [value, setValue] = useState(() => resolveSnoozeForDefault(new Date()));
+  const [values, setValues] = useState(() => {
+    const instant = resolveSnoozeForDefault(new Date());
+    return { instant, androidWallTime: snoozeWallTimeFromDate(instant) };
+  });
   const [androidPicker, setAndroidPicker] = useState<AndroidSnoozePicker | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleValueChange = useCallback((selected: Date) => {
-    setValue(selected);
+    setValues((current) => ({ ...current, instant: selected }));
     setError(null);
   }, []);
 
   const handleSubmit = useCallback(async () => {
     if (isSubmitting) return;
 
-    const validationError = snoozeForTimeError(value, { now: new Date() });
-    if (validationError !== null) {
-      setError(validationError);
-      return;
+    const now = new Date();
+    let snoozeUntil = values.instant;
+    if (Platform.OS === "android") {
+      const result = resolveAndroidSnoozeValue(values.androidWallTime, { now });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      snoozeUntil = result.value;
+    } else {
+      const validationError = snoozeForTimeError(snoozeUntil, { now });
+      if (validationError !== null) {
+        setError(validationError);
+        return;
+      }
     }
     if (thread === null) {
       Alert.alert(
@@ -76,13 +81,13 @@ export function SnoozeForRouteScreen({ route }: StaticScreenProps<SnoozeForRoute
     }
 
     setIsSubmitting(true);
-    const succeeded = await snoozeThread(thread, value.toISOString());
+    const succeeded = await snoozeThread(thread, snoozeUntil.toISOString());
     if (succeeded) {
       navigation.goBack();
       return;
     }
     setIsSubmitting(false);
-  }, [isSubmitting, navigation, snoozeThread, thread, value]);
+  }, [isSubmitting, navigation, snoozeThread, thread, values]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -125,31 +130,31 @@ export function SnoozeForRouteScreen({ route }: StaticScreenProps<SnoozeForRoute
                 mode="datetime"
                 onValueChange={(_event, selected) => handleValueChange(selected)}
                 style={{ alignSelf: "stretch" }}
-                value={value}
+                value={values.instant}
               />
             ) : (
               <View className="overflow-hidden rounded-[16px] border border-input-border bg-input">
                 <Pressable
-                  accessibilityLabel={`Date, ${formatDate(value)}`}
+                  accessibilityLabel={`Date, ${formatAndroidSnoozeDate(values.androidWallTime)}`}
                   accessibilityRole="button"
                   className="flex-row items-center justify-between gap-4 px-4 py-3.5"
                   onPress={() => setAndroidPicker("date")}
                 >
                   <Text className="text-sm font-t3-medium text-foreground-muted">Date</Text>
                   <Text className="flex-1 text-right text-base text-foreground" numberOfLines={1}>
-                    {formatDate(value)}
+                    {formatAndroidSnoozeDate(values.androidWallTime)}
                   </Text>
                 </Pressable>
                 <View className="ml-4 h-px bg-border-subtle" />
                 <Pressable
-                  accessibilityLabel={`Time, ${formatTime(value)}`}
+                  accessibilityLabel={`Time, ${formatAndroidSnoozeTime(values.androidWallTime)}`}
                   accessibilityRole="button"
                   className="flex-row items-center justify-between gap-4 px-4 py-3.5"
                   onPress={() => setAndroidPicker("time")}
                 >
                   <Text className="text-sm font-t3-medium text-foreground-muted">Time</Text>
                   <Text className="flex-1 text-right text-base text-foreground" numberOfLines={1}>
-                    {formatTime(value)}
+                    {formatAndroidSnoozeTime(values.androidWallTime)}
                   </Text>
                 </Pressable>
               </View>
@@ -180,11 +185,19 @@ export function SnoozeForRouteScreen({ route }: StaticScreenProps<SnoozeForRoute
           mode={androidPicker}
           onDismiss={() => setAndroidPicker(null)}
           onValueChange={(_event, selected) => {
-            handleValueChange(mergeAndroidPickerValue(value, selected, androidPicker));
+            setValues((current) => ({
+              ...current,
+              androidWallTime: mergeAndroidPickerValue(
+                current.androidWallTime,
+                selected,
+                androidPicker,
+              ),
+            }));
+            setError(null);
             setAndroidPicker(null);
           }}
           presentation="dialog"
-          value={resolveAndroidPickerValue(value, androidPicker)}
+          value={resolveAndroidPickerValue(values.androidWallTime, androidPicker)}
         />
       ) : null}
     </View>
