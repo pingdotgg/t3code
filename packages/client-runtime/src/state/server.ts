@@ -775,6 +775,16 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
     }),
     configProjection,
+    runStartedAt: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:run-started-at",
+      tag: WS_METHODS.subscribeServerLifecycle,
+      transform: (stream) =>
+        stream.pipe(
+          Stream.filterMap((event) =>
+            event.type === "ready" ? Result.succeed(event.payload.at) : Result.failVoid,
+          ),
+        ),
+    }),
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",
       tag: WS_METHODS.subscribeServerLifecycle,

@@ -41,6 +41,7 @@ import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
+import { useChatWarningDismissals } from "../../chatWarningDismissals";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -1863,6 +1864,8 @@ function LegacyFeaturesSection() {
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const [warningDismissals, setWarningDismissals] = useChatWarningDismissals();
+  const dismissedWarningIds = warningDismissals.permanent;
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
@@ -2138,6 +2141,27 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Check provider versions"
             />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("dismissed-warnings")}
+          description={
+            dismissedWarningIds.length === 0
+              ? `Warnings hidden with "Don't show again" will appear here.`
+              : `${dismissedWarningIds.length} ${
+                  dismissedWarningIds.length === 1 ? "warning" : "warnings"
+                } hidden with "Don't show again".`
+          }
+          control={
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={dismissedWarningIds.length === 0}
+              onClick={() => setWarningDismissals((current) => ({ ...current, permanent: [] }))}
+            >
+              Restore all
+            </Button>
           }
         />
 
