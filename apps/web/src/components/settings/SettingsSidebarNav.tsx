@@ -24,6 +24,7 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { isElectron } from "~/env";
+import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Kbd } from "../ui/kbd";
@@ -85,11 +86,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const desktopWsl = useEnvironmentQuery(isElectron ? desktopWslStateAtom : null);
   const searchableItems = useMemo(() => {
     const wslState = desktopWsl.data;
-    // Mirror renderWslRow: the retry row renders only without a snapshot,
-    // while a stale snapshot plus a failed refresh follows the snapshot path.
-    const rowRenders = wslState
-      ? wslState.available || wslState.enabled || wslState.wslOnly
-      : desktopWsl.error !== null;
+    const rowRenders = isWslSettingsRowVisible({
+      state: wslState,
+      error: desktopWsl.error,
+    });
     if (rowRenders) {
       return SETTINGS_SEARCH_ITEMS;
     }
