@@ -148,6 +148,7 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
         supportsText: true,
         supportsWebUrlWithMaxCount: 1,
         supportsImageWithMaxCount: 8,
+        supportsMovieWithMaxCount: 8,
         supportsFileWithMaxCount: 8,
       },
     },
@@ -293,6 +294,15 @@ const config: ExpoConfig = {
             backgroundColor: variant.assets.androidAdaptiveBackgroundColor,
           },
         },
+      },
+    ],
+    [
+      "expo-audio",
+      {
+        microphonePermission: "Allow T3 Code to use your microphone for voice input.",
+        recordAudioAndroid: false,
+        enableBackgroundPlayback: false,
+        enableBackgroundRecording: false,
       },
     ],
     [
