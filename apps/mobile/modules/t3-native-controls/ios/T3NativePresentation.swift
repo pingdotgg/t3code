@@ -102,8 +102,19 @@ func presentFileShare(
   promise: Promise
 ) throws {
   guard url.isFileURL, FileManager.default.isReadableFile(atPath: url.path) else {
-    throw NSError(domain: "T3NativePresentation", code: 1,
-      userInfo: [NSLocalizedDescriptionKey: "The file is no longer available."])
+    throw NSError(
+      domain: "T3NativePresentation",
+      code: 1,
+      userInfo: [NSLocalizedDescriptionKey: "The file is no longer available."]
+    )
+  }
+
+  guard let origin = source ?? presenter.view else {
+    throw NSError(
+      domain: "T3NativePresentation",
+      code: 2,
+      userInfo: [NSLocalizedDescriptionKey: "The presenting screen is no longer open."]
+    )
   }
 
   let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
@@ -112,7 +123,6 @@ func presentFileShare(
     ?? presenter.traitCollection.userInterfaceStyle
   activity.completionWithItemsHandler = { _, _, _, _ in promise.resolve(nil) }
   activity.modalPresentationStyle = .popover
-  let origin = source ?? presenter.view!
   activity.popoverPresentationController?.sourceView = origin
   activity.popoverPresentationController?.sourceRect = source?.bounds
     ?? CGRect(x: origin.bounds.midX, y: origin.bounds.maxY, width: 0, height: 0)

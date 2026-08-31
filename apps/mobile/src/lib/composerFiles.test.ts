@@ -332,12 +332,43 @@ describe("composer file attachments", () => {
       ],
       error: null,
     });
-    expect(mocks.pickFile).toHaveBeenCalledWith({ multiple: true, copyToCacheDirectory: false });
+    expect(mocks.pickFile).toHaveBeenCalledWith({ multiple: true, copyToCacheDirectory: true });
     expect(mocks.copy).toHaveBeenCalledWith(
       uri,
       "file:///documents/t3-composer-attachments/attachment-id-preview-h264.mp4",
     );
     expect(mocks.delete).not.toHaveBeenCalled();
+  });
+
+  it("persists provider selections that require a readable cache copy", async () => {
+    const providerUri = "content://cloud-provider/documents/clip";
+    const cachedUri = "file:///cache/DocumentPicker/clip.mp4";
+    mocks.pickFile.mockImplementation(async (options) => ({
+      canceled: false,
+      assets: [
+        {
+          uri: options.copyToCacheDirectory ? cachedUri : providerUri,
+          name: "Cloud recording.mp4",
+          mimeType: "video/mp4",
+          size: 42,
+          lastModified: 0,
+        },
+      ],
+    }));
+    mocks.copy.mockImplementation((uri: string) => {
+      if (uri === providerUri) throw new Error("The provider URI is not directly readable.");
+    });
+
+    const result = await pickComposerFiles({ existingCount: 0 });
+
+    expect(result.error).toBeNull();
+    expect(result.files).toEqual([
+      expect.objectContaining({
+        name: "Cloud recording.mp4",
+        fileUri: "file:///documents/t3-composer-attachments/attachment-id-Cloud recording.mp4",
+      }),
+    ]);
+    expect(mocks.copy).toHaveBeenCalledWith(cachedUri, result.files[0]!.fileUri);
   });
 
   it("ends the foreground handoff when the picker is canceled without copying files", async () => {

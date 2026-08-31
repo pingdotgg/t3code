@@ -12,7 +12,18 @@ final class T3NativeVideoPresentation: NSObject, AVPlayerViewControllerDelegate,
   private var presented = false
   private var dismissRequested = false
   private var finished = false
-  private var previousAudioSession: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)?
+  private struct AudioSessionConfiguration {
+    let category: AVAudioSession.Category
+    let mode: AVAudioSession.Mode
+    let options: AVAudioSession.CategoryOptions
+
+    init(_ session: AVAudioSession) {
+      category = session.category
+      mode = session.mode
+      options = session.categoryOptions
+    }
+  }
+  private var previousAudioSession: AudioSessionConfiguration?
   private weak var fullScreenController: UIViewController?
   private var embedded = false
 
@@ -35,8 +46,11 @@ final class T3NativeVideoPresentation: NSObject, AVPlayerViewControllerDelegate,
       guard item.status == .failed else { return }
       DispatchQueue.main.async {
         guard let self else { return }
-        self.playbackError = item.error ?? NSError(domain: "T3NativeVideo", code: 1,
-          userInfo: [NSLocalizedDescriptionKey: "This video couldn't be played on this device."])
+        self.playbackError = item.error ?? NSError(
+          domain: "T3NativeVideo",
+          code: 1,
+          userInfo: [NSLocalizedDescriptionKey: "This video couldn't be played on this device."]
+        )
         self.dismiss()
       }
     }
@@ -47,10 +61,9 @@ final class T3NativeVideoPresentation: NSObject, AVPlayerViewControllerDelegate,
 
   func present(from presenter: UIViewController, sources: T3PresentationSources, sourceIdentifier: String) {
     let audioSession = AVAudioSession.sharedInstance()
-    previousAudioSession = (audioSession.category, audioSession.mode, audioSession.categoryOptions)
+    previousAudioSession = AudioSessionConfiguration(audioSession)
     do {
       try audioSession.setCategory(.playback, mode: .moviePlayback)
-      try audioSession.setActive(true)
     } catch {
       NSLog("T3 video audio session: %@", error.localizedDescription)
     }
@@ -135,14 +148,19 @@ final class T3NativeVideoPresentation: NSObject, AVPlayerViewControllerDelegate,
       controller.removeFromParent()
     }
     itemObservation = nil
+    controller.player = nil
     if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
     backgroundObserver = nil
     let audioSession = AVAudioSession.sharedInstance()
     if let previousAudioSession, audioSession.category == .playback,
       audioSession.mode == .moviePlayback, audioSession.categoryOptions.isEmpty {
-      try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
-      try? audioSession.setCategory(previousAudioSession.0, mode: previousAudioSession.1,
-        options: previousAudioSession.2)
+      // AVPlayer owns activation. Deactivating the shared session here could
+      // stop another player or recorder that was active before this preview.
+      try? audioSession.setCategory(
+        previousAudioSession.category,
+        mode: previousAudioSession.mode,
+        options: previousAudioSession.options
+      )
     }
     completion(playbackError)
   }

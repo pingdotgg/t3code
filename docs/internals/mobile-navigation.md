@@ -84,13 +84,16 @@ restart playback. Saving or sharing still downloads the original file.
 The native presentation promise completes after dismissal. Local draft previews
 hold their file lease until that promise settles. The iOS preview component requests
 native dismissal when its source screen unmounts. Playback pauses in the background.
-The presenter restores its previous audio-session configuration on close if no
-other component changed it during playback. Android retains its React Native
-modal and Expo Video player.
+AVPlayer activates audio as playback starts. The presenter pauses and releases
+its own player on close, then restores the previous audio-session configuration
+if no other component changed it during playback. It does not deactivate the
+shared session, which may still serve another player or recorder. Android retains
+its React Native modal and Expo Video player.
 
-Use React Native's `StatusBar` API for app-owned status-bar changes. The app has
-`UIViewControllerBasedStatusBarAppearance` disabled, so native-stack
-`statusBarStyle` options raise an error.
+Use React Native's `StatusBar` API for app-owned status-bar changes. Expo's base
+Info.plist prebuild mod sets `UIViewControllerBasedStatusBarAppearance` to `false`,
+even though `app.config.ts` does not override the key. With that generated setting,
+native-stack `statusBarStyle` options raise an error.
 
 `shareFileFromSource` uses the same source registration to anchor UIKit's activity
 controller. Its promise completes when the native share flow finishes, keeping

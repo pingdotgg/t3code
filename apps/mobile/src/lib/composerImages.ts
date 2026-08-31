@@ -211,9 +211,9 @@ export async function pickComposerFiles(input: {
   const endHandoff = beginForegroundHandoff();
   let result: DocumentPickerResult;
   try {
-    // Our bounded copy owns persistence. iOS already imports with asCopy;
-    // Android returns a readable content URI, so neither needs another cache copy.
-    result = await getDocumentAsync({ multiple: true, copyToCacheDirectory: false });
+    // File providers may expose a URI that FileSystem cannot read directly.
+    // Import a readable cache copy before persisting the draft's owned file.
+    result = await getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
   } catch (cause) {
     return {
       files: [],
