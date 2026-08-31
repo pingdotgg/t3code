@@ -89,6 +89,19 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
     }).pipe(Effect.provide(makePairingGrantStoreLayer())),
   );
 
+  it.effect("validates bootstrap credentials without consuming them", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const issued = yield* bootstrapCredentials.issueOneTimeToken();
+
+      const available = yield* bootstrapCredentials.validateAvailable(issued.credential);
+      const consumed = yield* bootstrapCredentials.consume(issued.credential);
+
+      expect(available.subject).toBe("one-time-token");
+      expect(consumed.subject).toBe("one-time-token");
+    }).pipe(Effect.provide(makePairingGrantStoreLayer())),
+  );
+
   it.effect("atomically consumes a one-time token when multiple requests race", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;

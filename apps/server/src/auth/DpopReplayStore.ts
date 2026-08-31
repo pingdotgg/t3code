@@ -1,0 +1,236 @@
+import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as Predicate from "effect/Predicate";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
+
+import * as ServerConfig from "../config.ts";
+
+const REPLAY_BUCKET_DURATION = Duration.minutes(10);
+const REPLAY_BUCKET_MILLISECONDS = Duration.toMillis(REPLAY_BUCKET_DURATION);
+const LEGACY_REPLAY_RETENTION = Duration.minutes(6);
+const REPLAY_DIRECTORY_NAME = "dpop-replay";
+const replayBucketPattern = /^(0|[1-9][0-9]*)$/;
+const legacyReplayMarkerPattern = /^dpop-proof-[A-Za-z0-9_-]{43}\.bin$/;
+
+const dpopReplayStoreErrorContext = {
+  cause: Schema.Defect(),
+};
+
+export class DpopReplayStoreSetupError extends Schema.TaggedErrorClass<DpopReplayStoreSetupError>()(
+  "DpopReplayStoreSetupError",
+  dpopReplayStoreErrorContext,
+) {
+  override get message(): string {
+    return "Failed to initialize DPoP replay storage.";
+  }
+}
+
+export class DpopReplayStoreKeyCalculationError extends Schema.TaggedErrorClass<DpopReplayStoreKeyCalculationError>()(
+  "DpopReplayStoreKeyCalculationError",
+  dpopReplayStoreErrorContext,
+) {
+  override get message(): string {
+    return "Failed to calculate DPoP replay key.";
+  }
+}
+
+export class DpopReplayStoreClaimError extends Schema.TaggedErrorClass<DpopReplayStoreClaimError>()(
+  "DpopReplayStoreClaimError",
+  dpopReplayStoreErrorContext,
+) {
+  override get message(): string {
+    return "Failed to claim DPoP replay state.";
+  }
+}
+
+export class DpopReplayStorePruneError extends Schema.TaggedErrorClass<DpopReplayStorePruneError>()(
+  "DpopReplayStorePruneError",
+  dpopReplayStoreErrorContext,
+) {
+  override get message(): string {
+    return "Failed to prune DPoP replay state.";
+  }
+}
+
+export const DpopReplayStoreError = Schema.Union([
+  DpopReplayStoreSetupError,
+  DpopReplayStoreKeyCalculationError,
+  DpopReplayStoreClaimError,
+  DpopReplayStorePruneError,
+]);
+export type DpopReplayStoreError = typeof DpopReplayStoreError.Type;
+export const isDpopReplayStoreError = Schema.is(DpopReplayStoreError);
+
+const isPlatformError = (value: unknown): value is PlatformError.PlatformError =>
+  Predicate.isTagged(value, "PlatformError");
+
+export const isDpopReplayAlreadyExistsError = (error: DpopReplayStoreError): boolean =>
+  error._tag === "DpopReplayStoreClaimError" &&
+  isPlatformError(error.cause) &&
+  error.cause.reason._tag === "AlreadyExists";
+
+export class DpopReplayStore extends Context.Service<
+  DpopReplayStore,
+  {
+    readonly claim: (input: {
+      readonly thumbprint: string;
+      readonly jti: string;
+    }) => Effect.Effect<void, DpopReplayStoreKeyCalculationError | DpopReplayStoreClaimError>;
+    readonly prune: () => Effect.Effect<void, DpopReplayStorePruneError>;
+  }
+>()("t3/auth/DpopReplayStore") {}
+
+const bucketFor = (now: DateTime.DateTime) =>
+  Math.floor(now.epochMilliseconds / REPLAY_BUCKET_MILLISECONDS);
+
+const isBucketDirectory = (entry: string) => replayBucketPattern.test(entry);
+
+export const make = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const config = yield* ServerConfig.ServerConfig;
+  const replayDirectory = path.join(config.secretsDir, REPLAY_DIRECTORY_NAME);
+  const legacyProtectionEndsAt = DateTime.add(yield* DateTime.now, {
+    milliseconds: Duration.toMillis(LEGACY_REPLAY_RETENTION),
+  });
+
+  yield* Effect.gen(function* () {
+    yield* fileSystem.makeDirectory(replayDirectory, { recursive: true });
+    yield* fileSystem.chmod(replayDirectory, 0o700);
+  }).pipe(Effect.mapError((cause) => new DpopReplayStoreSetupError({ cause })));
+
+  const ensureBucketDirectory = (bucket: number) => {
+    const directory = path.join(replayDirectory, String(bucket));
+    return Effect.gen(function* () {
+      yield* fileSystem.makeDirectory(directory, { recursive: true });
+      yield* fileSystem.chmod(directory, 0o700);
+      return directory;
+    }).pipe(Effect.mapError((cause) => new DpopReplayStoreClaimError({ cause })));
+  };
+
+  const legacyMarkerExists = (replayKey: string) => {
+    const markerPath = path.join(config.secretsDir, `dpop-proof-${replayKey}.bin`);
+    return fileSystem.stat(markerPath).pipe(
+      Effect.as(true),
+      Effect.catch((cause) =>
+        cause.reason._tag === "NotFound"
+          ? Effect.succeed(false)
+          : Effect.fail(new DpopReplayStoreClaimError({ cause })),
+      ),
+      Effect.flatMap((exists) =>
+        exists
+          ? Effect.fail(
+              new DpopReplayStoreClaimError({
+                cause: PlatformError.systemError({
+                  _tag: "AlreadyExists",
+                  module: "FileSystem",
+                  method: "open",
+                  pathOrDescriptor: markerPath,
+                }),
+              }),
+            )
+          : Effect.void,
+      ),
+    );
+  };
+
+  const pruneLegacy = Effect.fn("DpopReplayStore.pruneLegacy")(function* () {
+    const entries = yield* fileSystem
+      .readDirectory(config.secretsDir, { recursive: false })
+      .pipe(Effect.mapError((cause) => new DpopReplayStorePruneError({ cause })));
+    yield* Effect.forEach(
+      entries,
+      (entry) =>
+        legacyReplayMarkerPattern.test(entry)
+          ? fileSystem
+              .remove(path.join(config.secretsDir, entry), { force: true })
+              .pipe(Effect.mapError((cause) => new DpopReplayStorePruneError({ cause })))
+          : Effect.void,
+      { concurrency: 1 },
+    );
+  });
+
+  const prune: DpopReplayStore["Service"]["prune"] = Effect.fn("DpopReplayStore.prune")(
+    function* () {
+      const now = yield* DateTime.now;
+      const currentBucket = bucketFor(now);
+      const entries = yield* fileSystem
+        .readDirectory(replayDirectory, { recursive: false })
+        .pipe(Effect.mapError((cause) => new DpopReplayStorePruneError({ cause })));
+
+      yield* Effect.forEach(
+        entries,
+        (entry) => {
+          if (!isBucketDirectory(entry)) {
+            return Effect.void;
+          }
+          const bucket = Number(entry);
+          if (!Number.isSafeInteger(bucket) || bucket >= currentBucket) {
+            return Effect.void;
+          }
+          return fileSystem
+            .remove(path.join(replayDirectory, entry), { recursive: true, force: true })
+            .pipe(Effect.mapError((cause) => new DpopReplayStorePruneError({ cause })));
+        },
+        { concurrency: 1 },
+      );
+
+      if (!DateTime.isLessThan(now, legacyProtectionEndsAt)) {
+        yield* pruneLegacy();
+      }
+    },
+  );
+
+  const claim: DpopReplayStore["Service"]["claim"] = Effect.fn("DpopReplayStore.claim")(function* ({
+    thumbprint,
+    jti,
+  }) {
+    const replayKey = yield* crypto
+      .digest("SHA-256", new TextEncoder().encode(`${thumbprint}:${jti}`))
+      .pipe(
+        Effect.map(Encoding.encodeBase64Url),
+        Effect.mapError((cause) => new DpopReplayStoreKeyCalculationError({ cause })),
+      );
+    const now = yield* DateTime.now;
+    const currentBucket = bucketFor(now);
+
+    if (DateTime.isLessThan(now, legacyProtectionEndsAt)) {
+      yield* legacyMarkerExists(replayKey);
+    }
+
+    // Claim the future bucket first so a partial failure leaves a marker that
+    // cannot be pruned while the proof is still inside its acceptance window.
+    for (const bucket of [currentBucket + 1, currentBucket]) {
+      const directory = yield* ensureBucketDirectory(bucket);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const marker = yield* fileSystem.open(path.join(directory, replayKey), {
+            flag: "wx",
+            mode: 0o600,
+          });
+          yield* marker.sync;
+        }),
+      ).pipe(Effect.mapError((cause) => new DpopReplayStoreClaimError({ cause })));
+    }
+  });
+
+  yield* prune().pipe(
+    Effect.catch((cause) => Effect.logWarning("Failed to prune DPoP replay state.", { cause })),
+    Effect.repeat(Schedule.spaced(REPLAY_BUCKET_DURATION)),
+    Effect.forkScoped,
+  );
+
+  return DpopReplayStore.of({ claim, prune });
+});
+
+export const layer = Layer.effect(DpopReplayStore, make);

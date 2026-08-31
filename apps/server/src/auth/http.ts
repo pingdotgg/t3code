@@ -38,7 +38,7 @@ import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
-import { verifyRequestDpopProof } from "./dpop.ts";
+import { claimDpopProofReplay, verifyRequestDpopProof } from "./dpop.ts";
 
 const CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -292,7 +292,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             if (requestedScopes === null) {
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }
-            const proofKeyThumbprint = args.headers.dpop
+            const proof = args.headers.dpop
               ? yield* verifyRequestDpopProof({ request }).pipe(
                   Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
                     appendDpopChallengeHeader.pipe(
@@ -309,6 +309,15 @@ export const authHttpApiLayer = HttpApiBuilder.group(
                   ),
                 )
               : undefined;
+            if (proof) {
+              yield* serverAuth.validateBootstrapCredentialAvailable(args.payload.subject_token, {
+                proofKeyThumbprint: proof.thumbprint,
+              });
+              yield* claimDpopProofReplay({
+                thumbprint: proof.thumbprint,
+                jti: proof.jti,
+              });
+            }
             yield* appendCredentialResponseHeaders;
             return yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
               args.payload.subject_token,
@@ -323,7 +332,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
                   ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
                 },
               }),
-              proofKeyThumbprint ? { proofKeyThumbprint } : undefined,
+              proof ? { proofKeyThumbprint: proof.thumbprint } : undefined,
             );
           },
           traceRelayRequest,
