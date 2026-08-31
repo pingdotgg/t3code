@@ -519,6 +519,8 @@ export const makeEnvironmentServerWelcomeState = Effect.fn("EnvironmentServerWel
 
     yield* SubscriptionRef.changes(supervisor.session).pipe(
       Stream.runForEach(() =>
+        // Read the latest value so queued notifications cannot move currentSession
+        // backward after a newer session is already active.
         SubscriptionRef.get(supervisor.session).pipe(
           Effect.flatMap((session) =>
             SubscriptionRef.update(state, (current) => ({

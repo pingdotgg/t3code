@@ -1189,7 +1189,7 @@ html[data-theme-id]:not([data-theme-id=""]) {
    saved custom themes cannot override it while onboarding is mounted. */
 html[data-onboarding-surface]:root {
   color-scheme: dark;
-  --accent: #171717;
+  --accent: #262626;
   --accent-foreground: #fff;
   --appearance-contrast-target: #fff;
   --app-chrome-background: #000;
