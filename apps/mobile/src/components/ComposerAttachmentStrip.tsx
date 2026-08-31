@@ -6,15 +6,18 @@ import { Alert, Image, Pressable, ScrollView, View } from "react-native";
 import { AppText as Text } from "./AppText";
 import type { DraftComposerAttachment, DraftComposerFileAttachment } from "../lib/composerImages";
 import { VideoAttachmentTile } from "./VideoAttachmentTile";
-import { loadLocalVideoPreview } from "../lib/localVideoPreview";
+import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
+import { PresentationSource } from "./NativePresentation";
+import type { FilePreviewSource } from "./FilePreviewModal";
+import { isPdfFile } from "../lib/filePreview";
 
 export interface ComposerAttachmentStripProps {
   /** Attachments to display. */
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   /** Called when the user removes an attachment. */
   readonly onRemove: (imageId: string) => void;
-  /** Called when the user taps on an image thumbnail to preview it. */
-  readonly onPressImage?: (previewUri: string) => void;
+  /** Called when the user taps an image or PDF to preview it. */
+  readonly onPressPreview?: (source: FilePreviewSource) => void;
   readonly onPressVideo?: (
     attachment: DraftComposerFileAttachment,
     sourceIdentifier: string,
@@ -32,7 +35,7 @@ export function ComposerAttachmentThumbnail(props: {
   readonly size: number;
   readonly borderRadius: number;
   readonly compact?: boolean;
-  readonly onPressImage?: (previewUri: string) => void;
+  readonly onPressPreview?: (source: FilePreviewSource) => void;
   readonly onPressVideo?: (
     attachment: DraftComposerFileAttachment,
     sourceIdentifier: string,
@@ -41,17 +44,30 @@ export function ComposerAttachmentThumbnail(props: {
   const { attachment } = props;
   const style = { width: props.size, height: props.size, borderRadius: props.borderRadius };
   if (attachment.type === "image") {
+    const sourceIdentifier = `draft-image:${attachment.id}`;
     return (
-      <Pressable
-        onPress={props.onPressImage ? () => props.onPressImage?.(attachment.previewUri) : undefined}
-      >
-        <Image
-          source={{ uri: attachment.previewUri }}
-          style={style}
-          className="bg-subtle"
-          resizeMode="cover"
-        />
-      </Pressable>
+      <PresentationSource identifier={sourceIdentifier}>
+        <Pressable
+          accessibilityRole="imagebutton"
+          accessibilityLabel={`Open ${attachment.name}`}
+          disabled={!props.onPressPreview}
+          onPress={() =>
+            props.onPressPreview?.({
+              kind: "image",
+              uri: attachment.dataUrl,
+              name: attachment.name,
+              sourceIdentifier,
+            })
+          }
+        >
+          <Image
+            source={{ uri: attachment.previewUri }}
+            style={style}
+            className="bg-subtle"
+            resizeMode="cover"
+          />
+        </Pressable>
+      </PresentationSource>
     );
   }
   const onPressVideo = props.onPressVideo;
@@ -60,27 +76,42 @@ export function ComposerAttachmentThumbnail(props: {
       <ComposerVideoAttachment {...props} attachment={attachment} onPressVideo={onPressVideo} />
     );
   }
+  const canPreview = isPdfFile(attachment) && props.onPressPreview !== undefined;
+  const sourceIdentifier = `draft-file:${attachment.id}`;
   return (
-    <View
-      className={
-        props.compact
-          ? "items-center justify-center bg-subtle"
-          : "items-center justify-center gap-1 bg-subtle px-2"
-      }
-      style={style}
-    >
-      <SymbolView
-        name="doc.text"
-        size={props.compact ? 15 : 22}
-        tintColor="#a3a3a3"
-        type="monochrome"
-      />
-      {!props.compact ? (
-        <Text className="w-full text-center text-2xs text-foreground" numberOfLines={1}>
-          {attachment.name}
-        </Text>
-      ) : null}
-    </View>
+    <PresentationSource identifier={sourceIdentifier}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${attachment.name}`}
+        disabled={!canPreview}
+        onPress={() =>
+          props.onPressPreview?.({
+            kind: "pdf",
+            name: attachment.name,
+            attachment,
+            sourceIdentifier,
+          })
+        }
+        className={
+          props.compact
+            ? "items-center justify-center bg-subtle"
+            : "items-center justify-center gap-1 bg-subtle px-2"
+        }
+        style={style}
+      >
+        <SymbolView
+          name="doc.text"
+          size={props.compact ? 15 : 22}
+          tintColor="#a3a3a3"
+          type="monochrome"
+        />
+        {!props.compact ? (
+          <Text className="w-full text-center text-2xs text-foreground" numberOfLines={1}>
+            {attachment.name}
+          </Text>
+        ) : null}
+      </Pressable>
+    </PresentationSource>
   );
 }
 
@@ -113,7 +144,7 @@ function ComposerVideoAttachment(props: {
     shareRef.current = controller;
     setSharing(true);
     void (async () => {
-      const preview = await loadLocalVideoPreview(attachment, controller.signal);
+      const preview = await loadLocalAttachmentPreview(attachment, controller.signal);
       if (!preview) return;
       try {
         await preview.share(controller.signal, sourceIdentifier);
@@ -185,7 +216,7 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
               attachment={attachment}
               size={size}
               borderRadius={radius}
-              onPressImage={props.onPressImage}
+              onPressPreview={props.onPressPreview}
               onPressVideo={props.onPressVideo}
             />
             <Pressable

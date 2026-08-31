@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { StyleSheet } from "react-native";
 
 import type { DraftComposerFileAttachment } from "../lib/composerImages";
-import { loadLocalVideoPreview } from "../lib/localVideoPreview";
+import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 import { cachedVideoThumbnail, loadVideoThumbnail } from "../lib/videoThumbnails";
 
 export function VideoThumbnailImage(props: {
@@ -25,7 +25,7 @@ export function VideoThumbnailImage(props: {
       async (signal) =>
         typeof source === "string"
           ? { uri: source, dispose: () => undefined }
-          : loadLocalVideoPreview(source, signal),
+          : loadLocalAttachmentPreview(source, signal),
       controller.signal,
     ).then((thumbnail) => {
       if (thumbnail && !controller.signal.aborted) setLoaded({ key: cacheKey, thumbnail });

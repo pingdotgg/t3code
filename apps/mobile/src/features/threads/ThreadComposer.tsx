@@ -20,7 +20,7 @@ import {
   type RefObject,
 } from "react";
 import { ActivityIndicator, Platform, Pressable, View, type ViewStyle } from "react-native";
-import ImageViewing from "react-native-image-viewing";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import Animated, {
   FadeIn,
   FadeInDown,
@@ -311,7 +311,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const inFlightThreadIdsRef = useRef(new Set<string>());
   const { onExpandedChange } = props;
 
-  const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   const showStopAction =
@@ -372,17 +372,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     onExpandedChange?.(isExpanded);
   }, [isExpanded, onExpandedChange]);
 
-  const onPressImage = useCallback(
-    (uri: string) => {
+  const onPressPreview = useCallback(
+    (source: FilePreviewSource) => {
       wasExpandedBeforePreviewRef.current = isFocused;
       setPreviewVideo(null);
-      setPreviewImageUri(uri);
+      setPreviewFile((current) => current ?? source);
     },
     [isFocused],
   );
 
   const closePreview = useCallback(() => {
-    setPreviewImageUri(null);
+    setPreviewFile(null);
     setPreviewVideo(null);
     if (wasExpandedBeforePreviewRef.current) {
       setTimeout(() => {
@@ -394,7 +394,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const onPressVideo = useCallback(
     (attachment: DraftComposerFileAttachment, sourceIdentifier: string) => {
       wasExpandedBeforePreviewRef.current = isFocused;
-      setPreviewImageUri(null);
+      setPreviewFile(null);
       setPreviewVideo((current) => current ?? { type: "local", attachment, sourceIdentifier });
     },
     [isFocused],
@@ -619,7 +619,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 <ComposerAttachmentStrip
                   attachments={props.draftAttachments}
                   onRemove={voiceInput.isBusy ? () => undefined : props.onRemoveDraftImage}
-                  onPressImage={voiceInput.isBusy ? undefined : onPressImage}
+                  onPressPreview={voiceInput.isBusy ? undefined : onPressPreview}
                   onPressVideo={voiceInput.isBusy ? undefined : onPressVideo}
                 />
               </Animated.View>
@@ -673,7 +673,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     size={30}
                     borderRadius={8}
                     compact
-                    onPressImage={onPressImage}
+                    onPressPreview={onPressPreview}
                     onPressVideo={onPressVideo}
                   />
                 ))}
@@ -819,14 +819,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       </Animated.View>
 
       <VideoPreviewModal source={previewVideo} onRequestClose={closePreview} />
-      <ImageViewing
-        images={previewImageUri ? [{ uri: previewImageUri }] : []}
-        imageIndex={0}
-        visible={previewImageUri !== null}
-        onRequestClose={closePreview}
-        swipeToCloseEnabled
-        doubleTapToZoomEnabled
-      />
+      <FilePreviewModal source={previewFile} onRequestClose={closePreview} />
     </Animated.View>
   );
 });

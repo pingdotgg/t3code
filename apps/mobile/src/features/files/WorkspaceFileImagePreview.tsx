@@ -1,24 +1,25 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { ActivityIndicator, Image, Pressable, View } from "react-native";
-import ImageViewing from "react-native-image-viewing";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { workspaceFileImageAtom } from "./workspace-file-image-cache";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { PresentationSource } from "../../components/NativePresentation";
 
 function ResolvedWorkspaceFileImagePreview(props: {
   readonly accessibilityLabel: string;
   readonly uri: string;
 }) {
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [fullScreenVisible, setFullScreenVisible] = useState(false);
+  const [preview, setPreview] = useState<FilePreviewSource | null>(null);
+  const sourceIdentifier = useId();
   const imageSource = useMemo(
     () => ({ uri: props.uri, cache: "force-cache" as const }),
     [props.uri],
   );
-  const fullScreenImages = useMemo(() => [imageSource], [imageSource]);
 
   return (
     <View className="relative flex-1 bg-subtle">
@@ -27,18 +28,27 @@ function ResolvedWorkspaceFileImagePreview(props: {
         accessibilityLabel={`Open full-screen preview of ${props.accessibilityLabel}`}
         disabled={loadError !== null}
         className="flex-1 p-4 active:bg-subtle-strong"
-        onPress={() => setFullScreenVisible(true)}
+        onPress={() =>
+          setPreview({
+            kind: "image",
+            uri: props.uri,
+            name: props.accessibilityLabel,
+            sourceIdentifier,
+          })
+        }
       >
-        <Image
-          accessible={false}
-          source={imageSource}
-          className="h-full w-full"
-          resizeMode="contain"
-          onLoadStart={() => setLoadError(null)}
-          onError={(event) => {
-            setLoadError(event.nativeEvent.error || "The image could not be rendered.");
-          }}
-        />
+        <PresentationSource identifier={sourceIdentifier} style={{ flex: 1 }}>
+          <Image
+            accessible={false}
+            source={imageSource}
+            className="h-full w-full"
+            resizeMode="contain"
+            onLoadStart={() => setLoadError(null)}
+            onError={(event) => {
+              setLoadError(event.nativeEvent.error || "The image could not be rendered.");
+            }}
+          />
+        </PresentationSource>
       </Pressable>
 
       {loadError !== null ? (
@@ -47,14 +57,7 @@ function ResolvedWorkspaceFileImagePreview(props: {
         </View>
       ) : null}
 
-      <ImageViewing
-        images={fullScreenImages}
-        imageIndex={0}
-        visible={fullScreenVisible}
-        onRequestClose={() => setFullScreenVisible(false)}
-        swipeToCloseEnabled
-        doubleTapToZoomEnabled
-      />
+      <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
     </View>
   );
 }

@@ -20,7 +20,13 @@ file uploads, **+** opens a menu beside the button with **Photo Library** and **
 Videos use the server's file upload limit. You can also share photos, videos, and files into
 T3 Code from other apps through the system share sheet. Mobile uploads happen when the message
 sends, so queued messages keep their files until they deliver. Select a received file on mobile
-to save it or open it in another app through the system share sheet.
+to preview it or open the system share options.
+
+Tap an image or PDF before or after sending to open it. On iOS, images zoom from their thumbnail
+into the native viewer. Pinch or double-tap to zoom, and swipe down or tap Close to return.
+Use Share to save a copy or send it to another app. PDFs support page navigation and search.
+PDF links in assistant responses open the same preview. On Android, images open in the image
+viewer and PDFs open the system chooser.
 
 Select a video attachment before or after sending to play it. Web and desktop use the browser's
 built-in controls. On mobile, videos open in a full-screen player with native playback controls.
@@ -36,7 +42,8 @@ On web and desktop, if you reload before a file finishes uploading, the draft ke
 and shows **Attach again** next to it. Attach the file again or remove it, then send.
 
 On web and desktop, HEIC and HEIF photos are automatically converted to JPEG when you drag them into
-the composer or paste them into a message.
+the composer or paste them into a message. On iOS, selecting them from **Photo Library** also
+converts them to JPEG. The 10 MB image limit applies to the converted photo.
 
 On mobile, the model picker shows each OpenCode model's upstream provider, such as Anthropic,
 GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list

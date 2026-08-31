@@ -17,9 +17,11 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { EmptyState } from "../../components/EmptyState";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { resolveFileSelectionNavigationAction } from "../../lib/adaptive-navigation";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { isPdfFile } from "../../lib/filePreview";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -487,6 +489,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     readonly mode: FileViewMode;
   } | null>(null);
   const [previewRevision, setPreviewRevision] = useState(0);
+  const [fullScreenPreview, setFullScreenPreview] = useState<FilePreviewSource | null>(null);
   const isBrowserFile = relativePath !== null && isBrowserPreviewFile(relativePath);
   const isImageFile = relativePath !== null && isImagePreviewFile(relativePath);
   const canPreview =
@@ -586,6 +589,20 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         inline: false,
         onPress: () => copyTextWithHaptic(relativePath),
       } as const,
+      isPdfFile({ name: relativePath }) && previewUri !== null
+        ? ({
+            id: "open-pdf",
+            title: "Open PDF",
+            icon: "arrow.up.left.and.arrow.down.right",
+            inline: false,
+            onPress: () =>
+              setFullScreenPreview({
+                kind: "pdf",
+                uri: previewUri,
+                name: basename(relativePath),
+              }),
+          } as const)
+        : null,
       isBrowserFile && typeof assetPreviewUri === "string"
         ? ({
             id: "open-browser",
@@ -605,7 +622,15 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           } as const)
         : null,
     ].filter((action) => action !== null);
-  }, [assetPreviewUri, canPreview, isBrowserFile, isImageFile, relativePath, resolvedActiveMode]);
+  }, [
+    assetPreviewUri,
+    previewUri,
+    canPreview,
+    isBrowserFile,
+    isImageFile,
+    relativePath,
+    resolvedActiveMode,
+  ]);
 
   const androidFileMenuActions = useMemo<MenuAction[]>(
     () =>
@@ -765,6 +790,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           relativePath={relativePath}
           truncated={fileData?.truncated ?? false}
           onRefresh={() => fileQuery.refresh()}
+        />
+        <FilePreviewModal
+          source={fullScreenPreview}
+          onRequestClose={() => setFullScreenPreview(null)}
         />
       </View>
     </ReviewHighlighterProvider>
