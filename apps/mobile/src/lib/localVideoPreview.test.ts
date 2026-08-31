@@ -57,21 +57,24 @@ describe("loadLocalVideoPreview", () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a separate share lease after playback closes", async () => {
-    const shared = Promise.withResolvers<void>();
-    mocks.share.mockReturnValue(shared.promise);
-    const preview = await loadLocalVideoPreview(attachment, new AbortController().signal);
-    const share = preview!.share(new AbortController().signal);
-    expect(mocks.retain).toHaveBeenCalledTimes(2);
-    const releasePlayback = mocks.retain.mock.results[0]!.value;
-    const releaseShare = mocks.retain.mock.results[1]!.value;
-    preview!.dispose();
-    expect(releasePlayback).toHaveBeenCalledTimes(1);
-    expect(releaseShare).not.toHaveBeenCalled();
-    shared.resolve();
-    await share;
-    expect(releaseShare).toHaveBeenCalledTimes(1);
-  });
+  it.each([undefined, "share-button"])(
+    "keeps a separate share lease after playback closes (source: %s)",
+    async (sourceIdentifier) => {
+      const shared = Promise.withResolvers<void>();
+      mocks.share.mockReturnValue(shared.promise);
+      const preview = await loadLocalVideoPreview(attachment, new AbortController().signal);
+      const share = preview!.share(new AbortController().signal, sourceIdentifier);
+      expect(mocks.retain).toHaveBeenCalledTimes(2);
+      const releasePlayback = mocks.retain.mock.results[0]!.value;
+      const releaseShare = mocks.retain.mock.results[1]!.value;
+      preview!.dispose();
+      expect(releasePlayback).toHaveBeenCalledTimes(1);
+      expect(releaseShare).not.toHaveBeenCalled();
+      shared.resolve();
+      await share;
+      expect(releaseShare).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("releases a failed share while keeping playback retained", async () => {
     mocks.share.mockRejectedValue(new Error("Sharing unavailable"));

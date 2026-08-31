@@ -26,13 +26,14 @@ import { usePreparedConnection } from "../state/session";
 import { SymbolView } from "./AppSymbol";
 import { AppText } from "./AppText";
 
-export type VideoPreviewSource =
+export type VideoPreviewSource = (
   | { readonly type: "local"; readonly attachment: DraftComposerFileAttachment }
   | {
       readonly type: "remote";
       readonly environmentId: EnvironmentId;
       readonly attachment: ChatFileAttachment;
-    };
+    }
+) & { readonly sourceIdentifier?: string };
 
 function VideoPlayback(props: { readonly file: AttachmentPreviewFile }) {
   const player = useVideoPlayer(props.file.uri, (player) => {

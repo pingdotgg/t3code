@@ -1,4 +1,4 @@
-# Mobile navigation headers
+# Mobile navigation
 
 The iOS Home and thread routes share the root native stack in
 [`Stack.tsx`](../../apps/mobile/src/Stack.tsx). Keeping them in one navigation
@@ -48,3 +48,68 @@ iOS `MenuView` action, including nested actions. The menu library's Fabric bridg
 rendering `MenuView` directly. Explicit colors are preserved, and destructive
 actions default to the theme's danger foreground color. Native stack header menus
 use a separate implementation and do not need this workaround.
+
+## Native media presentations
+
+`PresentationSource` and `ZoomTransitionTarget` in `NativePresentation` connect a
+view to an iOS native-stack destination using UIKit's zoom transition. Wrap the
+thumbnail as the source's single child, pass its stable identifier in the route params, and wrap
+the destination content in a target with that `sourceIdentifier`. The target's
+bounds define the zoom alignment. These components do not load files or own
+playback, so image viewers can use the same API.
+
+The native module keeps weak references to source views and resolves the source
+again on dismissal. Recycled or compact composer thumbnails can register the
+same identifier. Identifiers must distinguish simultaneously visible attachments.
+Reduce Motion keeps the route's normal transition. Android wrappers use regular
+views and do not register a native transition.
+
+On iOS, video previews mount `AVPlayerViewController` temporarily inside the
+registered source and enter full screen through AVKit. AVKit
+owns that zoom, its playback controls, Close button, and interactive dismissal.
+Do not replace AVKit's transition with `preferredTransition`: in the iOS 27
+simulator, that leaves native Close unable to exit full screen. When the source is unavailable,
+the player uses a standard modal presentation. Programmatic entry uses the same
+guarded `enterFullScreenAnimated:completionHandler:` selector as Expo Video;
+if that selector is unavailable, the player also falls back to a standard modal.
+Future image viewers can use the
+same source registry with `configureZoom` or the native-stack target. Images
+retain their existing viewer.
+
+Received videos open directly from their signed asset URL. AVKit handles buffering;
+the client does not download the entire file or show a separate opening overlay before
+presentation. The URL is captured once per preview so credential refresh does not
+restart playback. Saving or sharing still downloads the original file.
+
+The native presentation promise completes after dismissal. Local draft previews
+hold their file lease until that promise settles. The iOS preview component requests
+native dismissal when its source screen unmounts. Playback pauses in the background.
+The presenter restores its previous audio-session configuration on close if no
+other component changed it during playback. Android retains its React Native
+modal and Expo Video player.
+
+Use React Native's `StatusBar` API for app-owned status-bar changes. The app has
+`UIViewControllerBasedStatusBarAppearance` disabled, so native-stack
+`statusBarStyle` options raise an error.
+
+`shareFileFromSource` uses the same source registration to anchor UIKit's activity
+controller. Its promise completes when the native share flow finishes, keeping
+the existing attachment lease and foreground handoff active for that duration.
+Android uses Expo Sharing. On iOS, received and draft video attachments expose
+Save or share through `VideoAttachmentMenu`. The attachment supplies the source
+identifier, and the native share presentation inherits its appearance. AVKit's
+iOS playback controls do not expose a public custom-share-action API.
+
+Video attachment thumbnails use Expo Video's native frame extraction and Expo Image.
+Received attachments use their signed asset URL; drafts retain and resolve their local file
+until extraction ends. Extraction is serial; temporary players never play or change audio settings. Leaving the screen cancels
+pending work; a 15-second limit prevents an unreachable source from holding up the queue.
+The client keeps at most 32 native images, each bounded to 480 pixels per side, keyed by
+environment and attachment identity rather than expiring URLs. Images still displayed keep
+their own references when evicted from that cache.
+
+The asset HTTP route supports single byte ranges for videos so iOS can read metadata and
+frames without first downloading the whole file. Normal downloads keep their full response;
+unsupported ranges and conditional `If-Range` requests also fall back to the full file.
+An older environment without range support may still show the play-card fallback. Thumbnail
+failure never disables playback or sharing.

@@ -1,10 +1,12 @@
 import { SymbolView } from "../components/AppSymbol";
 import { videoMimeType } from "@t3tools/shared/video";
-import { Image, Pressable, ScrollView, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Alert, Image, Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "./AppText";
 import type { DraftComposerAttachment, DraftComposerFileAttachment } from "../lib/composerImages";
 import { VideoAttachmentTile } from "./VideoAttachmentTile";
+import { loadLocalVideoPreview } from "../lib/localVideoPreview";
 
 export interface ComposerAttachmentStripProps {
   /** Attachments to display. */
@@ -13,7 +15,10 @@ export interface ComposerAttachmentStripProps {
   readonly onRemove: (imageId: string) => void;
   /** Called when the user taps on an image thumbnail to preview it. */
   readonly onPressImage?: (previewUri: string) => void;
-  readonly onPressVideo?: (attachment: DraftComposerFileAttachment) => void;
+  readonly onPressVideo?: (
+    attachment: DraftComposerFileAttachment,
+    sourceIdentifier: string,
+  ) => void;
   /** Image thumbnail size in points.  Defaults to 72. */
   readonly imageSize?: number;
   /** Border radius of each image thumbnail.  Defaults to 16. */
@@ -28,7 +33,10 @@ export function ComposerAttachmentThumbnail(props: {
   readonly borderRadius: number;
   readonly compact?: boolean;
   readonly onPressImage?: (previewUri: string) => void;
-  readonly onPressVideo?: (attachment: DraftComposerFileAttachment) => void;
+  readonly onPressVideo?: (
+    attachment: DraftComposerFileAttachment,
+    sourceIdentifier: string,
+  ) => void;
 }) {
   const { attachment } = props;
   const style = { width: props.size, height: props.size, borderRadius: props.borderRadius };
@@ -48,22 +56,8 @@ export function ComposerAttachmentThumbnail(props: {
   }
   const onPressVideo = props.onPressVideo;
   if (onPressVideo && videoMimeType(attachment) !== null) {
-    return props.compact ? (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Play ${attachment.name}`}
-        onPress={() => onPressVideo(attachment)}
-        style={style}
-        className="items-center justify-center bg-black/80"
-      >
-        <SymbolView name="play" size={15} tintColor="#ffffff" type="monochrome" />
-      </Pressable>
-    ) : (
-      <VideoAttachmentTile
-        name={attachment.name}
-        onPress={() => onPressVideo(attachment)}
-        style={style}
-      />
+    return (
+      <ComposerVideoAttachment {...props} attachment={attachment} onPressVideo={onPressVideo} />
     );
   }
   return (
@@ -87,6 +81,73 @@ export function ComposerAttachmentThumbnail(props: {
         </Text>
       ) : null}
     </View>
+  );
+}
+
+function ComposerVideoAttachment(props: {
+  readonly attachment: DraftComposerFileAttachment;
+  readonly size: number;
+  readonly borderRadius: number;
+  readonly compact?: boolean;
+  readonly onPressVideo: (
+    attachment: DraftComposerFileAttachment,
+    sourceIdentifier: string,
+  ) => void;
+}) {
+  const { attachment } = props;
+  const sourceIdentifier = `draft:${attachment.id}`;
+  const style = { width: props.size, height: props.size, borderRadius: props.borderRadius };
+  const shareRef = useRef<AbortController | null>(null);
+  const [sharing, setSharing] = useState(false);
+  useEffect(
+    () => () => {
+      shareRef.current?.abort();
+      shareRef.current = null;
+    },
+    [],
+  );
+
+  const onShare = () => {
+    if (shareRef.current) return;
+    const controller = new AbortController();
+    shareRef.current = controller;
+    setSharing(true);
+    void (async () => {
+      const preview = await loadLocalVideoPreview(attachment, controller.signal);
+      if (!preview) return;
+      try {
+        await preview.share(controller.signal, sourceIdentifier);
+      } finally {
+        preview.dispose();
+      }
+    })()
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          Alert.alert(
+            "Could not share video",
+            error instanceof Error ? error.message : "Try again.",
+          );
+        }
+      })
+      .finally(() => {
+        if (shareRef.current === controller) {
+          shareRef.current = null;
+          setSharing(false);
+        }
+      });
+  };
+
+  return (
+    <VideoAttachmentTile
+      name={attachment.name}
+      sourceIdentifier={sourceIdentifier}
+      thumbnailSource={attachment}
+      compact={props.compact}
+      onPress={() => props.onPressVideo(attachment, sourceIdentifier)}
+      onShare={onShare}
+      disabled={sharing}
+      style={style}
+    />
   );
 }
 

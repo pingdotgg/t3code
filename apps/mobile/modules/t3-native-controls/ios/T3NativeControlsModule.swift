@@ -3,8 +3,74 @@ import Security
 import UIKit
 
 public final class T3NativeControlsModule: Module {
+  private let presentationSources = T3PresentationSources()
+  private var videoPresentation: T3NativeVideoPresentation?
+
   public func definition() -> ModuleDefinition {
     Name("T3NativeControls")
+
+    AsyncFunction("presentVideo") {
+      (url: URL, title: String, sourceIdentifier: String, presentationIdentifier: String, promise: Promise) in
+      let isPlayableURL = url.isFileURL
+        ? FileManager.default.isReadableFile(atPath: url.path)
+        : (["https", "http"].contains(url.scheme?.lowercased() ?? "") && url.host != nil)
+      guard self.videoPresentation == nil,
+        let presenter = self.appContext?.utilities?.currentViewController(),
+        isPlayableURL
+      else {
+        throw NSError(domain: "T3NativeVideo", code: 2,
+          userInfo: [NSLocalizedDescriptionKey: "The video preview is no longer available."])
+      }
+      let presentation = T3NativeVideoPresentation(
+        identifier: presentationIdentifier, url: url, title: title
+      ) { [weak self] error in
+        self?.videoPresentation = nil
+        if let error { promise.reject(error) } else { promise.resolve(nil) }
+      }
+      self.videoPresentation = presentation
+      presentation.present(from: presenter, sources: self.presentationSources,
+        sourceIdentifier: sourceIdentifier)
+    }.runOnQueue(.main)
+
+    AsyncFunction("dismissVideo") { (identifier: String) in
+      if self.videoPresentation?.identifier == identifier { self.videoPresentation?.dismiss() }
+    }.runOnQueue(.main)
+
+    OnDestroy {
+      let presentation = self.videoPresentation
+      DispatchQueue.main.async { presentation?.dismiss() }
+    }
+
+    View(T3PresentationSourceView.self) {
+      ViewName("PresentationSource")
+      Prop("identifier") { (view: T3PresentationSourceView, identifier: String) in
+        view.sources = self.presentationSources
+        view.identifier = identifier
+      }
+    }
+
+    View(T3ZoomTransitionView.self) {
+      ViewName("ZoomTransitionTarget")
+      Prop("sourceIdentifier") { (view: T3ZoomTransitionView, identifier: String) in
+        view.sources = self.presentationSources
+        view.sourceIdentifier = identifier
+      }
+      Prop("colorScheme") { (view: T3ZoomTransitionView, colorScheme: String?) in
+        view.colorScheme = colorScheme
+      }
+      OnViewDidUpdateProps { (view: T3ZoomTransitionView) in
+        view.updateTransition()
+      }
+    }
+
+    AsyncFunction("shareFileFromSource") { (url: URL, title: String, identifier: String, promise: Promise) in
+      guard let presenter = self.appContext?.utilities?.currentViewController() else {
+        throw NSError(domain: "T3NativePresentation", code: 2,
+          userInfo: [NSLocalizedDescriptionKey: "The presenting screen is no longer open."])
+      }
+      try presentFileShare(url: url, title: title, source: self.presentationSources.view(for: identifier),
+        presenter: presenter, promise: promise)
+    }.runOnQueue(.main)
 
     Function("getShowcasePairingUrl") {
       let arguments = ProcessInfo.processInfo.arguments

@@ -33,7 +33,7 @@ export async function loadLocalVideoPreview(
         disposed = true;
         release();
       },
-      share: async (shareSignal) => {
+      share: async (shareSignal, sourceIdentifier) => {
         if (disposed || shareSignal.aborted) return;
         const releaseShare = retainComposerAttachmentFileForPreview(attachment);
         try {
@@ -44,6 +44,7 @@ export async function loadLocalVideoPreview(
               mimeType: videoMimeType(attachment) ?? attachment.mimeType,
             },
             signal: shareSignal,
+            sourceIdentifier,
           });
         } finally {
           releaseShare();

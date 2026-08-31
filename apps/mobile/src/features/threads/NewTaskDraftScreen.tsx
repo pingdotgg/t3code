@@ -33,7 +33,7 @@ import {
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
-import { VideoPreviewModal } from "../../components/VideoPreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
@@ -163,12 +163,12 @@ export function NewTaskDraftScreen(props: {
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
-  const [previewVideo, setPreviewVideo] = useState<DraftComposerFileAttachment | null>(null);
+  const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const wasFocusedBeforeVideoRef = useRef(false);
   const openVideoPreview = useCallback(
-    (attachment: DraftComposerFileAttachment) => {
+    (attachment: DraftComposerFileAttachment, sourceIdentifier: string) => {
       wasFocusedBeforeVideoRef.current = isComposerFocused;
-      setPreviewVideo(attachment);
+      setPreviewVideo((current) => current ?? { type: "local", attachment, sourceIdentifier });
     },
     [isComposerFocused],
   );
@@ -1281,10 +1281,7 @@ export function NewTaskDraftScreen(props: {
           </ComposerDictationToolbar>
         </Animated.View>
       </ComposerSurface>
-      <VideoPreviewModal
-        source={previewVideo ? { type: "local", attachment: previewVideo } : null}
-        onRequestClose={closeVideoPreview}
-      />
+      <VideoPreviewModal source={previewVideo} onRequestClose={closeVideoPreview} />
     </View>
   );
 

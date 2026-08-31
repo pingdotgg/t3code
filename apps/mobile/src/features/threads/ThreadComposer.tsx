@@ -42,7 +42,7 @@ import {
   ComposerAttachmentStrip,
   ComposerAttachmentThumbnail,
 } from "../../components/ComposerAttachmentStrip";
-import { VideoPreviewModal } from "../../components/VideoPreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { GlassSurface } from "../../components/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
@@ -312,7 +312,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
-  const [previewVideo, setPreviewVideo] = useState<DraftComposerFileAttachment | null>(null);
+  const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   const showStopAction =
     !hasContent &&
@@ -392,10 +392,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   }, [inputRef, navigation]);
 
   const onPressVideo = useCallback(
-    (attachment: DraftComposerFileAttachment) => {
+    (attachment: DraftComposerFileAttachment, sourceIdentifier: string) => {
       wasExpandedBeforePreviewRef.current = isFocused;
       setPreviewImageUri(null);
-      setPreviewVideo(attachment);
+      setPreviewVideo((current) => current ?? { type: "local", attachment, sourceIdentifier });
     },
     [isFocused],
   );
@@ -818,10 +818,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         ) : null}
       </Animated.View>
 
-      <VideoPreviewModal
-        source={previewVideo ? { type: "local", attachment: previewVideo } : null}
-        onRequestClose={closePreview}
-      />
+      <VideoPreviewModal source={previewVideo} onRequestClose={closePreview} />
       <ImageViewing
         images={previewImageUri ? [{ uri: previewImageUri }] : []}
         imageIndex={0}

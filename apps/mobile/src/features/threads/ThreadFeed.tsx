@@ -249,13 +249,25 @@ function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAtt
 function MessageAttachmentFile(props: {
   readonly environmentId: EnvironmentId;
   readonly attachment: ChatFileAttachment;
-  readonly onPressVideo: (attachment: ChatFileAttachment) => void;
+  readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
 }) {
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
   const preparedConnection = usePreparedConnection(props.environmentId);
   const { attachment } = props;
+  const videoType = videoMimeType(attachment);
+  const thumbnailUrl = useAssetUrl(
+    props.environmentId,
+    videoType === null
+      ? null
+      : {
+          _tag: "attachment",
+          attachmentId: attachment.id,
+          fileName: attachment.name,
+          mimeType: videoType,
+        },
+  );
   const httpBaseUrl = Option.isSome(preparedConnection)
     ? preparedConnection.value.httpBaseUrl
     : null;
@@ -272,12 +284,63 @@ function MessageAttachmentFile(props: {
     }, [props.environmentId, attachment.id, httpBaseUrl]),
   );
 
-  if (videoMimeType(attachment) !== null) {
+  const shareFile = (sourceIdentifier?: string) => {
+    if (httpBaseUrl === null || openingRef.current) return;
+    const controller = new AbortController();
+    openingRef.current = controller;
+    setOpening(true);
+    void (async () => {
+      try {
+        const result = await createAssetUrl({
+          environmentId: props.environmentId,
+          input: {
+            resource: {
+              _tag: "attachment",
+              attachmentId: attachment.id,
+              fileName: attachment.name,
+              mimeType: attachment.mimeType,
+            },
+          },
+        });
+        if (controller.signal.aborted) return;
+        if (result._tag === "Failure") {
+          throw squashAtomCommandFailure(result);
+        }
+        const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
+        if (url === null) {
+          throw new Error("The attachment could not be opened.");
+        }
+        await downloadAndShareAttachment({
+          url,
+          attachment,
+          signal: controller.signal,
+          sourceIdentifier,
+        });
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          Alert.alert(
+            "Could not open attachment",
+            error instanceof Error ? error.message : "The attachment is unavailable.",
+          );
+        }
+      } finally {
+        if (openingRef.current === controller) {
+          openingRef.current = null;
+          setOpening(false);
+        }
+      }
+    })();
+  };
+
+  if (videoType !== null) {
     return (
       <VideoAttachmentTile
         name={attachment.name}
-        disabled={httpBaseUrl === null}
-        onPress={() => props.onPressVideo(attachment)}
+        sourceIdentifier={`attachment:${props.environmentId}:${attachment.id}`}
+        thumbnailSource={thumbnailUrl}
+        disabled={opening || httpBaseUrl === null}
+        onPress={(sourceIdentifier) => props.onPressVideo(attachment, sourceIdentifier)}
+        onShare={() => shareFile(`attachment:${props.environmentId}:${attachment.id}`)}
         className="my-1 rounded-2xl"
         style={{ width: 224, maxWidth: "100%", aspectRatio: 16 / 9 }}
       />
@@ -291,48 +354,7 @@ function MessageAttachmentFile(props: {
       accessibilityState={{ disabled: opening || httpBaseUrl === null, busy: opening }}
       disabled={opening || httpBaseUrl === null}
       className="flex-row items-center gap-2 py-1"
-      onPress={() => {
-        if (httpBaseUrl === null || openingRef.current) return;
-        const controller = new AbortController();
-        openingRef.current = controller;
-        setOpening(true);
-        void (async () => {
-          try {
-            const result = await createAssetUrl({
-              environmentId: props.environmentId,
-              input: {
-                resource: {
-                  _tag: "attachment",
-                  attachmentId: attachment.id,
-                  fileName: attachment.name,
-                  mimeType: attachment.mimeType,
-                },
-              },
-            });
-            if (controller.signal.aborted) return;
-            if (result._tag === "Failure") {
-              throw squashAtomCommandFailure(result);
-            }
-            const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
-            if (url === null) {
-              throw new Error("The attachment could not be opened.");
-            }
-            await downloadAndShareAttachment({ url, attachment, signal: controller.signal });
-          } catch (error) {
-            if (!controller.signal.aborted) {
-              Alert.alert(
-                "Could not open attachment",
-                error instanceof Error ? error.message : "The attachment is unavailable.",
-              );
-            }
-          } finally {
-            if (openingRef.current === controller) {
-              openingRef.current = null;
-              setOpening(false);
-            }
-          }
-        })();
-      }}
+      onPress={() => shareFile()}
     >
       {opening ? (
         <ActivityIndicator size="small" />
@@ -1243,7 +1265,7 @@ function renderFeedEntry(
     readonly onToggleWorkRow: (rowId: string) => void;
     readonly onToggleTurnFold: (turnId: TurnId) => void;
     readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
-    readonly onPressVideo: (attachment: ChatFileAttachment) => void;
+    readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
     readonly onMarkdownLinkPress: (href: string) => void;
     readonly renderMarkdownImage: MarkdownImageRenderer;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
@@ -2267,8 +2289,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     setExpandedImage({ uri, headers });
   }, []);
   const onPressVideo = useCallback(
-    (attachment: ChatFileAttachment) => {
-      setExpandedVideo({ type: "remote", environmentId: props.environmentId, attachment });
+    (attachment: ChatFileAttachment, sourceIdentifier: string) => {
+      setExpandedVideo(
+        (current) =>
+          current ?? {
+            type: "remote",
+            environmentId: props.environmentId,
+            attachment,
+            sourceIdentifier,
+          },
+      );
     },
     [props.environmentId],
   );

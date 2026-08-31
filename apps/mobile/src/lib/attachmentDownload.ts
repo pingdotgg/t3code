@@ -1,5 +1,6 @@
 import type { ChatFileAttachment } from "@t3tools/contracts";
 import type { Directory } from "expo-file-system";
+import type { SharingOptions } from "expo-sharing";
 
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
@@ -56,7 +57,7 @@ type AttachmentFileMetadata = Pick<ChatFileAttachment, "name" | "mimeType">;
 
 export interface AttachmentPreviewFile {
   readonly uri: string;
-  readonly share: (signal: AbortSignal) => Promise<void>;
+  readonly share: (signal: AbortSignal, sourceIdentifier?: string) => Promise<void>;
   readonly dispose: () => void;
 }
 
@@ -117,7 +118,7 @@ async function createCachedAttachmentFile(attachment: AttachmentFileMetadata) {
       disposed = true;
       release();
     },
-    share: async (signal) => {
+    share: async (signal, sourceIdentifier) => {
       if (disposed || sharing || signal.aborted) return;
       sharing = true;
       try {
@@ -125,10 +126,17 @@ async function createCachedAttachmentFile(attachment: AttachmentFileMetadata) {
         if (Sharing === null || disposed) return;
         const endHandoff = beginForegroundHandoff();
         try {
-          await Sharing.shareAsync(file.uri, {
+          const options: SharingOptions = {
             mimeType: attachment.mimeType.split(";", 1)[0]?.trim() || "application/octet-stream",
             dialogTitle: attachment.name,
-          });
+          };
+          if (sourceIdentifier) {
+            const { shareFileFromSource } = await import("./shareFileFromSource");
+            if (signal.aborted || disposed) return;
+            await shareFileFromSource(file.uri, options, sourceIdentifier);
+          } else {
+            await Sharing.shareAsync(file.uri, options);
+          }
           shared = true;
         } catch (cause) {
           if (!signal.aborted) {
@@ -181,12 +189,13 @@ export async function downloadAndShareAttachment(input: {
   readonly url: string;
   readonly attachment: AttachmentFileMetadata;
   readonly signal: AbortSignal;
+  readonly sourceIdentifier?: string;
 }): Promise<void> {
   if ((await availableSharing(input.signal)) === null) return;
   const file = await downloadAttachmentForPreview(input);
   if (file === null) return;
   try {
-    await file.share(input.signal);
+    await file.share(input.signal, input.sourceIdentifier);
   } finally {
     file.dispose();
   }
@@ -197,6 +206,7 @@ export async function shareLocalAttachment(input: {
   readonly uri: string;
   readonly attachment: AttachmentFileMetadata;
   readonly signal: AbortSignal;
+  readonly sourceIdentifier?: string;
 }): Promise<void> {
   if ((await availableSharing(input.signal)) === null) return;
   const { File } = await import("expo-file-system");
@@ -210,7 +220,7 @@ export async function shareLocalAttachment(input: {
       throw new Error("Could not prepare the attachment for sharing.", { cause });
     }
     if (!input.signal.aborted) {
-      await cached.preview.share(input.signal);
+      await cached.preview.share(input.signal, input.sourceIdentifier);
     }
   } finally {
     cached.preview.dispose();
