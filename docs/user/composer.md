@@ -39,9 +39,8 @@ when starting a thread or changing an existing thread's model.
 
 On web and desktop, additional notices peek out above the attached banner. Hover over the peek
 to reveal them, or focus **Show other notices** with `Tab` and press `Enter` or `Space`. Press
-`Escape` to close the stack and return focus to that control. On a touchscreen, tap the strip
-labeled with the number of additional notices. Interacting with the attached banner or composer
-does not open the stack.
+`Escape` to close the stack and return focus to that control. On a touchscreen, tap the peek to
+open the stack. Interacting with the attached banner or composer does not open the stack.
 
 ## Prompt stash
 

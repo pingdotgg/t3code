@@ -89,7 +89,6 @@ function Peek({
         surfaceColors,
         neutralOutline,
         "absolute inset-x-0 bottom-0 z-0 mx-auto h-3 w-[96%] cursor-pointer rounded-t-2xl border border-b-0 shadow-[0_6px_18px_rgb(0_0_0/6%)]",
-        "pointer-coarse:h-11",
         "bg-[color-mix(in_srgb,var(--chat-composer-attached-surface)_var(--glass-opacity),transparent)] backdrop-blur-(--glass-blur) backdrop-saturate-(--glass-saturation)",
         "not-supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:bg-(--chat-composer-attached-surface)",
         "transition-opacity duration-150 ease-out focus-visible:outline-2 focus-visible:outline-ring",

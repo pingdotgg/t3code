@@ -1,4 +1,3 @@
-import { ChevronUpIcon } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -146,7 +145,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
         {hasStack ? (
           <div
             ref={noticesRef}
-            className={cn("relative z-20", stackExpanded ? "min-h-3" : "pointer-coarse:pt-11")}
+            className={cn("relative z-20", stackExpanded && "min-h-3")}
             onPointerEnter={(event) => {
               if (event.pointerType === "touch") return;
               if (document.activeElement === peekRef.current) {
@@ -188,12 +187,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
                   setStackExpanded(true);
                 }}
                 className={cn(stackExpanded && "pointer-events-none invisible opacity-0")}
-              >
-                <span className="hidden items-center justify-center gap-1 text-xs text-muted-foreground pointer-coarse:flex">
-                  <ChevronUpIcon aria-hidden className="size-3.5" />
-                  {stackedItems.length} more {stackedItems.length === 1 ? "notice" : "notices"}
-                </span>
-              </ComposerBanner.Peek>
+              />
             ) : null}
             <div
               id={expandedItemsId}
@@ -276,12 +270,7 @@ function ComposerBannerStackAlert({
     >
       <ComposerBanner.Row layout="wrap-actions">
         <ComposerBanner.Icon>{item.icon}</ComposerBanner.Icon>
-        <ComposerBanner.Content className="flex-col items-start gap-0">
-          <span className="w-full min-w-0 font-medium">{item.title}</span>
-          {item.description ? (
-            <span className="text-muted-foreground">{item.description}</span>
-          ) : null}
-        </ComposerBanner.Content>
+        <ComposerBanner.Content className="font-medium">{item.title}</ComposerBanner.Content>
         {item.actions || item.onDismiss ? (
           <ComposerBanner.Actions>
             {item.actions}
@@ -295,7 +284,19 @@ function ComposerBannerStackAlert({
           </ComposerBanner.Actions>
         ) : null}
       </ComposerBanner.Row>
-      {item.children ? <ComposerBanner.Children>{item.children}</ComposerBanner.Children> : null}
+      {item.description || item.children ? (
+        <ComposerBanner.Children>
+          {item.description ? (
+            <ComposerBanner.Row>
+              <ComposerBanner.Icon />
+              <ComposerBanner.Content className="text-muted-foreground">
+                {item.description}
+              </ComposerBanner.Content>
+            </ComposerBanner.Row>
+          ) : null}
+          {item.children}
+        </ComposerBanner.Children>
+      ) : null}
     </ComposerBanner.Root>
   );
 }
