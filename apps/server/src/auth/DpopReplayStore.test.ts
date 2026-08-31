@@ -38,7 +38,7 @@ const SecondMarkerOpenFailureFileSystemLayer = Layer.effect(
     return {
       ...fileSystem,
       open: (path, options) =>
-        String(path).includes("/dpop-replay/")
+        String(path).includes("/dpop-replay/") && options?.flag === "wx"
           ? Ref.updateAndGet(markerOpenCount, (count) => count + 1).pipe(
               Effect.flatMap((count) =>
                 count === 2

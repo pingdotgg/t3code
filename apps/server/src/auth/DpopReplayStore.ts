@@ -23,6 +23,7 @@ const dpopReplayStoreSetupStage = Schema.Literals(["make-directory", "set-permis
 const dpopReplayStoreClaimStage = Schema.Literals([
   "ensure-bucket",
   "legacy-lookup",
+  "sync-directory",
   "write-marker",
 ]);
 const dpopReplayStorePruneStage = Schema.Literals([
@@ -324,6 +325,22 @@ export const make = Effect.gen(function* () {
                 resource: markerPath,
                 bucket,
               }),
+        ),
+      );
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const bucketDirectory = yield* fileSystem.open(directory, { flag: "r" });
+          yield* bucketDirectory.sync;
+        }),
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DpopReplayStoreClaimError({
+              cause,
+              stage: "sync-directory",
+              resource: directory,
+              bucket,
+            }),
         ),
       );
     }
