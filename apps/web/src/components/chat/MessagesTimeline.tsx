@@ -1339,16 +1339,7 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
           {isPreparingWorktree ? (
             <>
               Setting up worktree…
-              <span
-                aria-hidden
-                className="live-activity-focus pointer-events-none absolute inset-y-0 select-none"
-              >
-                <span className="live-activity-focus-counter block">
-                  <span className="live-activity-focus-aligned block text-foreground">
-                    Setting up worktree…
-                  </span>
-                </span>
-              </span>
+              <ActivityShimmerOverlay>Setting up worktree…</ActivityShimmerOverlay>
             </>
           ) : row.createdAt ? (
             <>
@@ -1433,6 +1424,19 @@ const WorkGroupSection = memo(function WorkGroupSection({
   );
 });
 
+function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
+  return (
+    <span
+      aria-hidden
+      className="live-activity-focus pointer-events-none absolute inset-y-0 select-none"
+    >
+      <span className="live-activity-focus-counter block">
+        <span className="live-activity-focus-aligned block text-foreground">{children}</span>
+      </span>
+    </span>
+  );
+}
+
 function LiveActivityRow({
   label,
   iconName,
@@ -1450,16 +1454,9 @@ function LiveActivityRow({
         failed={failed}
         announceFailure={failed}
       />
-      <div
-        aria-hidden
-        className="live-activity-focus pointer-events-none absolute inset-y-0 select-none"
-      >
-        <div className="live-activity-focus-counter">
-          <div className="live-activity-focus-aligned">
-            <LiveActivityContent label={label} iconName={iconName} failed={failed} highlighted />
-          </div>
-        </div>
-      </div>
+      <ActivityShimmerOverlay>
+        <LiveActivityContent label={label} iconName={iconName} failed={failed} highlighted />
+      </ActivityShimmerOverlay>
     </div>
   );
 }
@@ -1480,7 +1477,7 @@ function LiveActivityContent({
   const resolvedIconName = failed ? "circle-alert" : iconName;
 
   return (
-    <div
+    <span
       className={cn(
         "flex min-h-6 min-w-0 items-center gap-1.5 py-0.5",
         resolvedIconName ? "px-0.5" : "px-1",
@@ -1503,7 +1500,7 @@ function LiveActivityContent({
         </span>
       ) : null}
       <span className="min-w-0 flex-1 truncate">{label}</span>
-    </div>
+    </span>
   );
 }
 
