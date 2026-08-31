@@ -27,10 +27,11 @@ import {
   TerminalIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { mountOnboardingTheme } from "../../hooks/useTheme";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
@@ -122,6 +123,7 @@ export function WelcomeWizard({
   readonly localAvailable: boolean;
   readonly onDone: (projectRef?: ScopedProjectRef) => void;
 }) {
+  useLayoutEffect(() => mountOnboardingTheme(), []);
   const completeOnboarding = useCompleteOnboarding();
   const [step, setStep] = useState<WizardStep>("connection");
   const [mode, setMode] = useState<ConnectionMode>("local");
@@ -136,10 +138,7 @@ export function WelcomeWizard({
   );
 
   return (
-    <div
-      data-onboarding-surface
-      className="dark flex h-dvh min-h-0 flex-col overflow-hidden bg-black text-foreground [--accent-foreground:#fff] [--accent:#171717] [--appearance-contrast-target:#fff] [--background:#000] [--border:#262626] [--card-foreground:#fff] [--card:#000] [--destructive:var(--color-red-400)] [--foreground:#fff] [--icon-muted:#a1a1aa] [--input:#262626] [--muted-foreground:#a1a1aa] [--muted:#171717] [--placeholder:#71717a] [--popover-foreground:#fff] [--popover:#171717] [--ring:#737373] [--secondary-foreground:#fff] [--secondary-label:#a1a1aa] [--secondary:#171717] [--success-foreground:var(--color-emerald-400)] [--terminal-background:#000] [--terminal-cursor:#fff] [--terminal-foreground:#fff] [--terminal-selection-background:rgb(255_255_255_/_0.2)] [color-scheme:dark]"
-    >
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-black text-foreground">
       {isElectron ? (
         <div
           aria-hidden
