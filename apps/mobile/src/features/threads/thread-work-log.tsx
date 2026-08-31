@@ -9,6 +9,7 @@ import {
   type ColorValue,
   Pressable,
   ScrollView,
+  StyleSheet,
   View,
 } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -143,7 +144,7 @@ function ShimmeringWorkContent(props: {
 
   return (
     <View
-      className="min-w-0 flex-1"
+      className="min-w-0 flex-1 overflow-hidden"
       onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width)}
     >
       <ShimmerWorkContent
@@ -164,7 +165,7 @@ function ShimmeringWorkContent(props: {
           style={[{ width: SHIMMER_WIDTH }, sweepStyle]}
         >
           <MaskedView
-            className="absolute inset-0"
+            style={StyleSheet.absoluteFill}
             maskElement={
               <Svg width="100%" height="100%">
                 <Defs>

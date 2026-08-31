@@ -942,8 +942,27 @@ describe("buildThreadFeed", () => {
       summary: "Running pnpm",
       summaryKind: "command",
       live: true,
-      shimmer: false,
+      shimmer: true,
     });
+    expect(rows[0]).toMatchObject({ live: false, shimmer: false });
+
+    const stoppedRows = deriveThreadFeedPresentation(feed, latestTurn, new Set());
+    expect(stoppedRows.filter((entry) => entry.type === "work-toggle")).toMatchObject([
+      { live: false, shimmer: false },
+      { live: false, shimmer: false },
+    ]);
+
+    const completedRows = deriveThreadFeedPresentation(
+      feed,
+      { ...latestTurn, state: "completed", completedAt: "2026-04-01T00:00:04.000Z" },
+      new Set([turnId]),
+      new Set(),
+      latestTurn.startedAt,
+    );
+    expect(completedRows.filter((entry) => entry.type === "work-toggle")).toMatchObject([
+      { live: false, shimmer: false },
+      { live: false, shimmer: false },
+    ]);
   });
 
   it("does not revive cached in-progress tools after work stops", () => {
