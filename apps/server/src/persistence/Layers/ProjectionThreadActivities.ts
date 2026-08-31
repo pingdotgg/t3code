@@ -22,6 +22,7 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
     sequence: Schema.NullOr(NonNegativeInt),
   }),
 );
+const PendingUserInputCountRowSchema = Schema.Struct({ count: Schema.Number });
 
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
   return (cause: unknown) =>
@@ -97,6 +98,46 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
       `,
   });
 
+  const countPendingUserInputRows = SqlSchema.findOne({
+    Request: ListProjectionThreadActivitiesInput,
+    Result: PendingUserInputCountRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        WITH user_input_lifecycle AS (
+          SELECT
+            kind,
+            json_extract(payload_json, '$.requestId') AS request_id,
+            ROW_NUMBER() OVER (
+              PARTITION BY json_extract(payload_json, '$.requestId')
+              ORDER BY created_at DESC, activity_id DESC
+            ) AS request_order
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+            AND (
+              kind IN ('user-input.requested', 'user-input.resolved')
+              OR (
+                kind = 'provider.user-input.respond.failed'
+                AND (
+                  lower(COALESCE(json_extract(payload_json, '$.detail'), ''))
+                    LIKE '%stale pending user-input request%'
+                  OR lower(COALESCE(json_extract(payload_json, '$.detail'), ''))
+                    LIKE '%unknown pending user-input request%'
+                  OR lower(COALESCE(json_extract(payload_json, '$.detail'), ''))
+                    LIKE '%unknown pending user input request%'
+                  OR lower(COALESCE(json_extract(payload_json, '$.detail'), ''))
+                    LIKE '%unknown pending codex user input request%'
+                )
+              )
+            )
+            AND json_extract(payload_json, '$.requestId') IS NOT NULL
+        )
+        SELECT COUNT(*) AS count
+        FROM user_input_lifecycle
+        WHERE request_order = 1
+          AND kind = 'user-input.requested'
+      `,
+  });
+
   const deleteProjectionThreadActivityRows = SqlSchema.void({
     Request: DeleteProjectionThreadActivitiesInput,
     execute: ({ threadId }) =>
@@ -139,6 +180,18 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
       ),
     );
 
+  const countPendingUserInputs: ProjectionThreadActivityRepositoryShape["countPendingUserInputs"] =
+    (input) =>
+      countPendingUserInputRows(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionThreadActivityRepository.countPendingUserInputs:query",
+            "ProjectionThreadActivityRepository.countPendingUserInputs:decodeRow",
+          ),
+        ),
+        Effect.map((row) => row.count),
+      );
+
   const deleteByThreadId: ProjectionThreadActivityRepositoryShape["deleteByThreadId"] = (input) =>
     deleteProjectionThreadActivityRows(input).pipe(
       Effect.mapError(
@@ -149,6 +202,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
   return {
     upsert,
     listByThreadId,
+    countPendingUserInputs,
     deleteByThreadId,
   } satisfies ProjectionThreadActivityRepositoryShape;
 });

@@ -68,6 +68,13 @@ export interface ProjectionThreadActivityRepositoryShape {
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
 
   /**
+   * Count unresolved user-input requests without hydrating activity payloads.
+   */
+  readonly countPendingUserInputs: (
+    input: ListProjectionThreadActivitiesInput,
+  ) => Effect.Effect<number, ProjectionRepositoryError>;
+
+  /**
    * Delete projected thread activity rows by thread.
    */
   readonly deleteByThreadId: (

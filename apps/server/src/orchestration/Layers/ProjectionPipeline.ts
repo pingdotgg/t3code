@@ -18,8 +18,10 @@ import { OrchestrationEventStore } from "../../persistence/Services/Orchestratio
 import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
-import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
-import { type ProjectionThreadActivity } from "../../persistence/Services/ProjectionThreadActivities.ts";
+import {
+  type ProjectionThreadActivity,
+  ProjectionThreadActivityRepository,
+} from "../../persistence/Services/ProjectionThreadActivities.ts";
 import {
   type ProjectionThreadMessage,
   ProjectionThreadMessageRepository,
@@ -151,52 +153,6 @@ function shouldRefreshThreadShellSummary(event: OrchestrationEvent): boolean {
     default:
       return false;
   }
-}
-
-function derivePendingUserInputCountFromActivities(
-  activities: ReadonlyArray<ProjectionThreadActivity>,
-): number {
-  const openRequestIds = new Set<string>();
-  const ordered = [...activities].toSorted(
-    (left, right) =>
-      left.createdAt.localeCompare(right.createdAt) ||
-      left.activityId.localeCompare(right.activityId),
-  );
-
-  for (const activity of ordered) {
-    const requestId = extractActivityRequestId(activity.payload);
-    if (requestId === null) {
-      continue;
-    }
-    const payload =
-      typeof activity.payload === "object" && activity.payload !== null
-        ? (activity.payload as Record<string, unknown>)
-        : null;
-    const detail = typeof payload?.detail === "string" ? payload.detail.toLowerCase() : null;
-
-    if (activity.kind === "user-input.requested") {
-      openRequestIds.add(requestId);
-      continue;
-    }
-
-    if (activity.kind === "user-input.resolved") {
-      openRequestIds.delete(requestId);
-      continue;
-    }
-
-    if (
-      activity.kind === "provider.user-input.respond.failed" &&
-      detail !== null &&
-      (detail.includes("stale pending user-input request") ||
-        detail.includes("unknown pending user-input request") ||
-        detail.includes("unknown pending user input request") ||
-        detail.includes("unknown pending codex user input request"))
-    ) {
-      openRequestIds.delete(requestId);
-    }
-  }
-
-  return openRequestIds.size;
 }
 
 function deriveHasActionableProposedPlan(input: {
@@ -585,11 +541,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         return;
       }
 
-      const [messages, proposedPlans, activities, pendingApprovals] = yield* Effect.all([
+      const [messages, proposedPlans, pendingApprovals, pendingUserInputCount] = yield* Effect.all([
         projectionThreadMessageRepository.listByThreadId({ threadId }),
         projectionThreadProposedPlanRepository.listByThreadId({ threadId }),
-        projectionThreadActivityRepository.listByThreadId({ threadId }),
         projectionPendingApprovalRepository.listByThreadId({ threadId }),
+        projectionThreadActivityRepository.countPendingUserInputs({ threadId }),
       ]);
 
       let latestUserMessageAt: string | null = null;
@@ -605,7 +561,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       const pendingApprovalCount = pendingApprovals.filter(
         (approval) => approval.status === "pending",
       ).length;
-      const pendingUserInputCount = derivePendingUserInputCountFromActivities(activities);
       const hasActionableProposedPlan = deriveHasActionableProposedPlan({
         latestTurnId: existingRow.value.latestTurnId,
         proposedPlans,
@@ -1648,8 +1603,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           // Only approval-requested activities should create pending-approval
           // rows.  Other activity kinds that happen to carry a requestId
           // (e.g. user-input.requested / user-input.resolved) must not
-          // pollute this projection — they have their own accounting via
-          // derivePendingUserInputCountFromActivities.
+          // pollute this projection — they have their own activity lifecycle
+          // accounting in ProjectionThreadActivityRepository.
           if (event.payload.activity.kind !== "approval.requested") {
             return;
           }
