@@ -166,6 +166,41 @@ describe("VoiceInputController", () => {
     expect(denied.recorder.record).not.toHaveBeenCalled();
   });
 
+  it.each(["permission", "transcription"] as const)(
+    "clears %s errors when switching to another draft",
+    async (failure) => {
+      const harness = createHarness(
+        failure === "permission"
+          ? { requestPermission: async () => ({ granted: false, canAskAgain: false }) }
+          : {
+              getTranscriber: () => ({
+                prepare: async () =>
+                  preparedTranscription(async () => {
+                    throw new Error("Transcription failed");
+                  }),
+              }),
+            },
+      );
+      await harness.controller.start();
+      await harness.controller.stop();
+      expect(harness.controller.currentState).toMatchObject({
+        phase: "error",
+        error: expect.any(String),
+        errorAction: failure === "permission" ? "settings" : "retry",
+      });
+
+      harness.setDraft(draft({ ownerKey: "environment:other-thread" }));
+      harness.controller.ownerChanged();
+
+      expect(harness.controller.currentState).toEqual({
+        phase: "idle",
+        error: null,
+        errorAction: null,
+      });
+      expect(harness.commits).toEqual([]);
+    },
+  );
+
   it.each(["permission", "preparation", "recording"] as const)(
     "keeps the selected transcriber when preferences change during %s",
     async (changeDuring) => {

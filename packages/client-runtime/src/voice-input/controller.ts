@@ -330,7 +330,7 @@ export class VoiceInputController {
   }
 
   ownerChanged(): void {
-    if (this.state.phase === "idle" || this.state.phase === "error") return;
+    if (this.state.phase === "idle") return;
     this.cancel();
   }
 
