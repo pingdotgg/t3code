@@ -55,7 +55,7 @@ const LIST_RESULT: PullRequestListResult = {
       createdAt: "2026-07-01T00:00:00Z",
       updatedAt: "2026-07-02T00:00:00Z",
       viewerReviewRequested: false,
-      labels: [{ name: "backend", color: null }],
+      labels: [{ name: "backend", color: null, description: "Touches server behavior." }],
     },
   ],
   errors: [],
@@ -85,6 +85,18 @@ describe("PullRequestListResult", () => {
 
     expect(decoded.viewers["github.com"]).toBe("bilal");
     expect(decoded.viewers["github.acme.dev"]).toBe("b.hassan");
+  });
+
+  it("accepts labels from hosts that do not provide descriptions", () => {
+    const decoded = decodeListResult({
+      ...LIST_RESULT,
+      entries: LIST_RESULT.entries.map((entry) => ({
+        ...entry,
+        labels: [{ name: "backend", color: null }],
+      })),
+    });
+
+    expect(decoded.entries[0]?.labels[0]?.description).toBeUndefined();
   });
 });
 
