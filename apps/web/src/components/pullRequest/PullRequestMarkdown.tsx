@@ -1,10 +1,42 @@
 import { ExternalLinkIcon, PaperclipIcon, PlayIcon } from "lucide-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { createContext, type ReactNode, useContext, useMemo } from "react";
 
 import { cn } from "~/lib/utils";
 
 import ChatMarkdown from "../ChatMarkdown";
 import { splitPullRequestBody } from "./pullRequestMarkdown.logic";
+
+interface PullRequestThreadScope {
+  readonly threadRef: ScopedThreadRef | undefined;
+  readonly scopeWorkspaceToThread: boolean;
+}
+
+const PullRequestThreadRefContext = createContext<PullRequestThreadScope>({
+  threadRef: undefined,
+  scopeWorkspaceToThread: false,
+});
+
+/** Keeps pull request links beside a thread without assigning foreign files to its workspace. */
+export function PullRequestThreadRefProvider({
+  threadRef,
+  scopeWorkspaceToThread,
+  children,
+}: {
+  threadRef: ScopedThreadRef | undefined;
+  scopeWorkspaceToThread: boolean;
+  children: ReactNode;
+}) {
+  const value = useMemo(
+    () => ({ threadRef, scopeWorkspaceToThread }),
+    [scopeWorkspaceToThread, threadRef],
+  );
+  return (
+    <PullRequestThreadRefContext.Provider value={value}>
+      {children}
+    </PullRequestThreadRefContext.Provider>
+  );
+}
 
 /**
  * A pull request body, rendered with the app's markdown renderer plus a card for each upload
@@ -26,6 +58,7 @@ export function PullRequestMarkdown({
   environmentId: EnvironmentId;
   className?: string;
 }) {
+  const threadScope = useContext(PullRequestThreadRefContext);
   const segments = splitPullRequestBody(text);
   return (
     <div className={cn("space-y-3", className)}>
@@ -37,6 +70,8 @@ export function PullRequestMarkdown({
               text={segment.text}
               cwd={cwd}
               environmentId={environmentId}
+              threadRef={threadScope.scopeWorkspaceToThread ? threadScope.threadRef : undefined}
+              pullRequestLinkThreadRef={threadScope.threadRef}
             />
           );
         }

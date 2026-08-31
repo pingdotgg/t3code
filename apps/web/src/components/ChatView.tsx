@@ -171,6 +171,7 @@ import {
 } from "../previewMiniPlayerStore";
 import { isThreadOwnPullRequest } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
+import { PullRequestThreadRefProvider } from "./pullRequest/PullRequestMarkdown";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs, type PullRequestTabStatus } from "./RightPanelTabs";
@@ -7007,6 +7008,20 @@ function ChatViewContent(props: ChatViewProps) {
       {panelToggleControls}
     </div>
   );
+  const activePullRequestBelongsToThread =
+    activeRightPanelSurface?.kind === "pull-request" &&
+    isThreadOwnPullRequest(
+      {
+        projectId: linkedThreadPullRequest?.projectId ?? activeProject?.id ?? null,
+        repository: threadRepository,
+        number: activeThreadPr?.number ?? null,
+      },
+      {
+        projectId: activeRightPanelSurface.projectId,
+        repository: activeRightPanelSurface.repository,
+        number: activeRightPanelSurface.number,
+      },
+    );
   const rightPanelContent = activeThreadRef ? (
     activeRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
@@ -7062,33 +7077,23 @@ function ChatViewContent(props: ChatViewProps) {
       // is only right for the thread's own pull request, whose branch is already under the
       // reader's feet. A link the agent wrote can open any other one here, and that one has to be
       // checkable out like it is anywhere else.
-      <PullRequestDetailPanel
-        key={`${activeRightPanelSurface.repository}#${activeRightPanelSurface.number}`}
-        environmentId={activeThread.environmentId}
-        reference={{
-          projectId: activeRightPanelSurface.projectId as ProjectId,
-          repository: activeRightPanelSurface.repository,
-          number: activeRightPanelSurface.number,
-        }}
-        context={
-          isThreadOwnPullRequest(
-            {
-              projectId: linkedThreadPullRequest?.projectId ?? activeProject?.id ?? null,
-              repository: threadRepository,
-              number: activeThreadPr?.number ?? null,
-            },
-            {
-              projectId: activeRightPanelSurface.projectId,
-              repository: activeRightPanelSurface.repository,
-              number: activeRightPanelSurface.number,
-            },
-          )
-            ? "thread"
-            : "page"
-        }
-        composerDraftTarget={composerDraftTarget}
-        onStateChange={handlePullRequestTabStatusChange}
-      />
+      <PullRequestThreadRefProvider
+        threadRef={activeThreadRef}
+        scopeWorkspaceToThread={activePullRequestBelongsToThread}
+      >
+        <PullRequestDetailPanel
+          key={`${activeRightPanelSurface.repository}#${activeRightPanelSurface.number}`}
+          environmentId={activeThread.environmentId}
+          reference={{
+            projectId: activeRightPanelSurface.projectId as ProjectId,
+            repository: activeRightPanelSurface.repository,
+            number: activeRightPanelSurface.number,
+          }}
+          context={activePullRequestBelongsToThread ? "thread" : "page"}
+          composerDraftTarget={composerDraftTarget}
+          onStateChange={handlePullRequestTabStatusChange}
+        />
+      </PullRequestThreadRefProvider>
     ) : activeRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
         model={agentPanelModel}
