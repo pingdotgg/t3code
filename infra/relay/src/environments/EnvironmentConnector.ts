@@ -111,6 +111,10 @@ export class EnvironmentMintResponseInvalid extends Schema.TaggedErrorClass<Envi
   {
     environmentId: Schema.String,
     operation: Schema.Literals(["connect", "status"]),
+    // Only set when this wraps a real failure (a decoded EnvironmentHttp*Error
+    // response, or a schema decode error) instead of a proof-verification
+    // mismatch, which has no underlying error to attach.
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -169,10 +173,13 @@ function isEnvironmentResponseInvalid(cause: unknown): boolean {
   return isEnvironmentCloudResponseError(cause) || Schema.isSchemaError(cause);
 }
 
-function environmentRequestFailureMessage(cause: unknown): string {
+// Only the status() path returns this over the wire (as the "offline" status
+// error), so its wording stays health-specific even though the underlying
+// classification is now shared with connect()'s (log-only) failure reason.
+function environmentHealthRequestFailureMessage(cause: unknown): string {
   return isEnvironmentCloudResponseError(cause)
-    ? `Managed endpoint request failed: ${cause.message}`
-    : "Managed endpoint request failed.";
+    ? `Managed endpoint health request failed: ${cause.message}`
+    : "Managed endpoint health request failed.";
 }
 
 function environmentRequestFailureReason(cause: unknown): string {
@@ -518,7 +525,7 @@ const make = Effect.gen(function* () {
           endpoint,
           status: "offline" as const,
           checkedAt,
-          error: environmentRequestFailureMessage(responseOption.value.cause),
+          error: environmentHealthRequestFailureMessage(responseOption.value.cause),
           traceId,
         };
       }
@@ -668,6 +675,7 @@ const make = Effect.gen(function* () {
           return yield* new EnvironmentMintResponseInvalid({
             environmentId: input.environmentId,
             operation: "connect",
+            cause: mintResult.cause,
           });
         }
         return yield* new EnvironmentMintRequestFailed({

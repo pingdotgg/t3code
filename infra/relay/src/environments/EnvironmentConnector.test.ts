@@ -544,7 +544,7 @@ describe("EnvironmentConnector", () => {
       expect(result).toMatchObject({
         environmentId: "env-connector-test",
         status: "offline",
-        error: "Managed endpoint request failed: Environment is unavailable.",
+        error: "Managed endpoint health request failed: Environment is unavailable.",
         traceId: expect.any(String),
       });
     }).pipe(Effect.provide(connectorTestLayer(execute)));
@@ -809,7 +809,7 @@ describe("EnvironmentConnector", () => {
 
       return Effect.gen(function* () {
         const connector = yield* EnvironmentConnector.EnvironmentConnector;
-        const result = yield* Effect.exit(
+        const result = yield* Effect.result(
           connector.connect({
             userId: "user_123",
             environmentId: "env-connector-test",
@@ -817,15 +817,23 @@ describe("EnvironmentConnector", () => {
           }),
         );
 
-        expect(result._tag).toBe("Failure");
-        if (result._tag === "Failure") {
+        expect(Result.isFailure(result)).toBe(true);
+        if (Result.isFailure(result)) {
           // Before the fix, any failed mint request — including a well-typed
           // error the environment actually returned — collapsed into
           // EnvironmentMintRequestFailed ("endpoint_request_failed"), telling
           // the client the endpoint was unreachable when it had, in fact,
           // answered.
-          expect(result.cause.toString()).toContain("EnvironmentMintResponseInvalid");
-          expect(result.cause.toString()).not.toContain("EnvironmentMintRequestFailed");
+          expect(result.failure._tag).toBe("EnvironmentMintResponseInvalid");
+          // The underlying environment response must not be discarded: it's
+          // the only way to see why the mint request was actually rejected.
+          expect(result.failure).toMatchObject({
+            _tag: "EnvironmentMintResponseInvalid",
+            cause: expect.objectContaining({
+              _tag: "EnvironmentHttpInternalServerError",
+              message: "Could not issue cloud connection credential.",
+            }),
+          });
         }
       }).pipe(Effect.provide(connectorTestLayer(execute)));
     },
