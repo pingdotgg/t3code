@@ -84,7 +84,7 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   align-items: center !important;
   font-family: var(--font-sans) !important;
   font-size: 12px !important;
-  line-height: 1 !important;
+  line-height: 16px !important;
   min-height: 32px !important;
   padding-block: 6px !important;
   padding-inline: 8px 12px !important;
@@ -196,12 +196,12 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 
 [data-diffs-header] [data-header-content] {
   align-items: center !important;
-  line-height: 1 !important;
+  line-height: 16px !important;
 }
 
 [data-diffs-header] [data-metadata] {
   align-items: center !important;
-  line-height: 1 !important;
+  line-height: 16px !important;
   font-variant-numeric: tabular-nums;
 }
 
@@ -210,7 +210,7 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   font-family: var(--font-mono) !important;
   font-size: 11px !important;
   font-variant-numeric: tabular-nums;
-  line-height: 1 !important;
+  line-height: 16px !important;
 }
 
 [data-diffs-header] [data-change-icon],
