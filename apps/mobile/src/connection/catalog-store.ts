@@ -108,7 +108,11 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
               Option.match({
                 onNone: () =>
                   Effect.fail(
-                    catalogError("recover", "No valid connection catalog backup is available."),
+                    new ConnectionTransientError({
+                      reason: "remote-unavailable",
+                      detail:
+                        "Could not recover the local connection catalog: No valid connection catalog backup is available.",
+                    }),
                   ),
                 onSome: Effect.succeed,
               }),
