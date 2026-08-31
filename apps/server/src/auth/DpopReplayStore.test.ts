@@ -92,6 +92,27 @@ it.layer(NodeServices.layer)("DpopReplayStore.layer", (it) => {
     }).pipe(Effect.provide(makeDpopReplayStoreLayer())),
   );
 
+  it.effect("creates a durable legacy marker during the compatibility window", () =>
+    Effect.gen(function* () {
+      const replayStore = yield* DpopReplayStore.DpopReplayStore;
+      const crypto = yield* Crypto.Crypto;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const thumbprint = "legacy-thumbprint";
+      const jti = "new-legacy-marker-jti";
+      const replayKey = yield* crypto
+        .digest("SHA-256", new TextEncoder().encode(`${thumbprint}:${jti}`))
+        .pipe(Effect.map(Encoding.encodeBase64Url));
+
+      yield* replayStore.claim({ thumbprint, jti });
+
+      const legacyMarker = path.join(config.secretsDir, `dpop-proof-${replayKey}.bin`);
+      const marker = yield* fileSystem.readFile(legacyMarker);
+      assert.equal(marker.byteLength, 0);
+    }).pipe(Effect.provide(makeDpopReplayStoreLayer())),
+  );
+
   it.effect("keeps current and next buckets while pruning stale buckets", () =>
     Effect.gen(function* () {
       const replayStore = yield* DpopReplayStore.DpopReplayStore;
@@ -166,6 +187,9 @@ it.layer(NodeServices.layer)("DpopReplayStore.layer", (it) => {
 
       const protectedReplay = yield* Effect.flip(replayStore.claim({ thumbprint, jti }));
       assert.isTrue(DpopReplayStore.isDpopReplayAlreadyClaimedError(protectedReplay));
+      if (protectedReplay._tag === "DpopReplayAlreadyClaimedError") {
+        assert.equal(protectedReplay.source, "legacy");
+      }
 
       yield* TestClock.adjust(Duration.minutes(6));
       yield* replayStore.prune();

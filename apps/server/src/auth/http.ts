@@ -316,7 +316,18 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               yield* claimDpopProofReplay({
                 thumbprint: proof.thumbprint,
                 jti: proof.jti,
-              });
+              }).pipe(
+                Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+                  appendDpopChallengeHeader.pipe(
+                    Effect.andThen(
+                      failEnvironmentAuthInvalid(
+                        EnvironmentAuth.serverAuthCredentialReason(error),
+                        EnvironmentAuth.serverAuthDpopFailureReason(error),
+                      ),
+                    ),
+                  ),
+                ),
+              );
             }
             yield* appendCredentialResponseHeaders;
             return yield* serverAuth.exchangeBootstrapCredentialForAccessToken(

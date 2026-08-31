@@ -1900,6 +1900,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(replayBootstrap.body.code, "auth_invalid");
       assert.equal(replayBootstrap.body.reason, "invalid_credential");
       assert.equal(replayBootstrap.body.dpopFailureReason, "replay");
+      assert.equal(replayBootstrap.response.headers["www-authenticate"], "DPoP");
       assert.equal(typeof replayBootstrap.body.traceId, "string");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
