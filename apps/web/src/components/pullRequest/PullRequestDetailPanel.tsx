@@ -1168,7 +1168,7 @@ export function PullRequestDetailPanel({
                         aria-label={`Open pull request #${detail.number} on host`}
                       >
                         #{detail.number}
-                        <ExternalLinkIcon aria-hidden className="size-3 translate-y-px" />
+                        <ExternalLinkIcon aria-hidden className="size-2.5" />
                       </button>
                     }
                   />
@@ -1204,7 +1204,7 @@ export function PullRequestDetailPanel({
                         aria-label={`Open pull request #${detail.number} on host`}
                       >
                         #{detail.number}
-                        <ExternalLinkIcon aria-hidden className="size-3 translate-y-px" />
+                        <ExternalLinkIcon aria-hidden className="size-2.5" />
                       </button>
                     }
                   />
