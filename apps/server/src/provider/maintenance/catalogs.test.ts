@@ -341,6 +341,30 @@ it.effect("rejects a nested npm package in a Windows global prefix", () => {
   );
 });
 
+it.effect("rejects a nested package inside a pnpm global root", () => {
+  const prefix = "/opt/pnpm";
+  const wrapper = `${prefix}/bin/codex`;
+  const managerRoot = `${prefix}/global/5/node_modules`;
+  const packageRoot = `${managerRoot}/host/node_modules/@openai/codex`;
+  const pnpm = `${prefix}/bin/pnpm`;
+  return resolveCatalog({
+    binaryPath: "codex",
+    resolvedCommandPath: wrapper,
+    commands: { pnpm },
+    files: {
+      [wrapper]: `exec "$basedir/../global/5/node_modules/host/node_modules/@openai/codex/bin/codex.js" "$@"`,
+      [`${packageRoot}/package.json`]: packageManifest("1.0.0"),
+    },
+    probes: {
+      [`${pnpm} root -g`]: probe(managerRoot),
+    },
+  }).pipe(
+    Effect.map((installation) => {
+      expectManualInstallation(installation, true);
+    }),
+  );
+});
+
 it.effect("does not fall back to npm when a managed package path has no available owner", () =>
   resolveCatalog({
     binaryPath: "codex",
@@ -723,6 +747,36 @@ it.effect("does not classify a Linux /usr/local/bin executable as Homebrew", () 
     }),
   ),
 );
+
+it.effect("rejects Homebrew ownership from an unrelated formula", () => {
+  const brew = "/opt/homebrew/bin/brew";
+  const formulaPrefix = "/opt/homebrew/opt/other-tool";
+  const realFormulaPrefix = "/opt/homebrew/Cellar/other-tool/1.2.3";
+  return resolveCatalog({
+    binaryPath: "codex",
+    resolvedCommandPath: "/opt/homebrew/bin/codex",
+    realCommandPath: `${realFormulaPrefix}/bin/codex`,
+    commands: { brew },
+    realPaths: { [formulaPrefix]: realFormulaPrefix },
+    probes: {
+      [`${brew} --prefix --installed other-tool`]: probe(formulaPrefix),
+      [`${brew} info --json=v2 other-tool`]: probe(
+        JSON.stringify({
+          formulae: [
+            {
+              installed: [{ version: "1.2.3" }],
+              versions: { stable: "1.2.4" },
+            },
+          ],
+        }),
+      ),
+    },
+  }).pipe(
+    Effect.map((installation) => {
+      expectManualInstallation(installation, true);
+    }),
+  );
+});
 
 it.effect("preserves a matching tap-qualified Homebrew formula", () => {
   const brew = "/opt/homebrew/bin/brew";

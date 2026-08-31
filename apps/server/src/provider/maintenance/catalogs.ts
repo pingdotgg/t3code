@@ -90,7 +90,16 @@ function packageRoot(path: string, packageName: string): string | null {
   const normalized = path.replaceAll("\\", "/");
   const needle = `/node_modules/${packageName}/`;
   const index = normalized.toLowerCase().lastIndexOf(needle.toLowerCase());
-  return index < 0 ? null : normalized.slice(0, index + needle.length - 1);
+  if (index < 0 || normalized.slice(0, index).toLowerCase().includes("/node_modules/")) {
+    return null;
+  }
+  return normalized.slice(0, index + needle.length - 1);
+}
+
+function hasNestedPackageRoot(path: string, packageName: string): boolean {
+  const normalized = path.replaceAll("\\", "/").toLowerCase();
+  const index = normalized.lastIndexOf(`/node_modules/${packageName.toLowerCase()}/`);
+  return index >= 0 && normalized.slice(0, index).includes("/node_modules/");
 }
 
 function wrapperTargetPath(
@@ -273,7 +282,11 @@ function detectNodePackage(input: ProviderMaintenanceDefinitionInput, manager: N
       input.packageName,
     );
     let root = packageRoot(observed, input.packageName) ?? wrapperRoot;
-    if (!root && wrapperMentionsPackage(wrapper, input.packageName)) {
+    if (
+      !root &&
+      (hasNestedPackageRoot(observed, input.packageName) ||
+        wrapperMentionsPackage(wrapper, input.packageName))
+    ) {
       return undetermined;
     }
     if (!root && manager.id !== "bun") return notMatched;
@@ -493,8 +506,15 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
       if (!executable) return undetermined;
       const pathPackage = homebrewPackageFromPath(observed);
       const configuredBaseName = configuredFormula.split("/").at(-1);
-      const configuredMatchesPath =
-        pathPackage !== null && configuredBaseName?.toLowerCase() === pathPackage.toLowerCase();
+      if (
+        !pathPackage ||
+        !configuredBaseName ||
+        (pathPackage.toLowerCase() !== configuredBaseName.toLowerCase() &&
+          !pathPackage.toLowerCase().startsWith(`${configuredBaseName.toLowerCase()}@`))
+      ) {
+        return undetermined;
+      }
+      const configuredMatchesPath = configuredBaseName.toLowerCase() === pathPackage.toLowerCase();
       const candidates = [
         ...new Set(
           [configuredMatchesPath ? configuredFormula : null, pathPackage, configuredFormula].filter(
