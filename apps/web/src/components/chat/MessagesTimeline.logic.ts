@@ -235,7 +235,6 @@ export type MessagesTimelineRow =
       kind: "working";
       id: string;
       createdAt: string | null;
-      showThinking: boolean;
     };
 
 export interface StableMessagesTimelineRowsState {
@@ -702,24 +701,6 @@ export function deriveMessagesTimelineRows(input: {
     unsettledTurnId !== null &&
     entry.toolLifecycleStatus === "inProgress" &&
     entry.turnId === unsettledTurnId;
-  const activeEntries = input.isWorking
-    ? input.timelineEntries.filter((entry, index) => entryBelongsToActiveTurn(entry, index))
-    : [];
-  const activeTurnHasVisibleContent = activeEntries.some((entry) => {
-    if (entry.kind === "message") {
-      return entry.message.role === "assistant" && (entry.message.text?.trim().length ?? 0) > 0;
-    }
-    if (entry.kind === "work") {
-      return (
-        entry.entry.agentSpawn === undefined &&
-        workLogEntryIsToolLike(entry.entry) &&
-        entry.entry.toolLifecycleStatus === "inProgress"
-      );
-    }
-    if (entry.kind === "proposed-plan") return true;
-    return false;
-  });
-
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
   for (let index = input.timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
     const entry = input.timelineEntries[index]!;
@@ -761,7 +742,6 @@ export function deriveMessagesTimelineRows(input: {
       kind: "working",
       id: "working-indicator-row",
       createdAt: input.activeTurnStartedAt,
-      showThinking: activeWorkRow === null && !activeTurnHasVisibleContent,
     });
   };
   const appendActiveWorkRows = () => {
@@ -996,9 +976,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
   switch (a.kind) {
     case "working":
-      return (
-        a.createdAt === (b as typeof a).createdAt && a.showThinking === (b as typeof a).showThinking
-      );
+      return a.createdAt === (b as typeof a).createdAt;
 
     case "turn-fold": {
       const bf = b as typeof a;

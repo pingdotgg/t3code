@@ -78,7 +78,7 @@ function ShimmerWorkContent(props: {
   );
 }
 
-function ShimmeringWorkContent(props: {
+export function ShimmeringWorkContent(props: {
   readonly icon: AppSymbolName;
   readonly iconSubtleColor: ColorValue;
   readonly label: string;

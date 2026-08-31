@@ -115,7 +115,7 @@ describe("draft hero submission transition", () => {
     expect(
       resolveDraftPromotionNavigationTarget({
         serverThreadRef: { environmentId, threadId },
-        serverThreadStarted: true,
+        serverThread: makeThread({ latestTurn: completedTurn }),
         backgroundSubmissionPending: true,
       }),
     ).toBeNull();
@@ -315,6 +315,66 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+describe("draft promotion during worktree setup", () => {
+  const serverThreadRef = { environmentId, threadId };
+
+  it.each([null, "idle", "starting", "ready"] as const)(
+    "keeps the draft mounted while the first turn waits with session %s",
+    (status) => {
+      const serverThread = makeThread({
+        messages: [
+          {
+            id: MessageId.make("submitted-message"),
+            role: "user",
+            text: "Start in a new worktree",
+            turnId: null,
+            createdAt: now,
+            updatedAt: now,
+            streaming: false,
+          },
+        ],
+        session: status ? { ...readySession, status } : null,
+      });
+
+      expect(
+        resolveDraftPromotionNavigationTarget({
+          serverThreadRef,
+          serverThread,
+          backgroundSubmissionPending: false,
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("promotes when the provider starts the first turn", () => {
+    const latestTurn = { ...completedTurn, state: "running" as const, completedAt: null };
+
+    expect(
+      resolveDraftPromotionNavigationTarget({
+        serverThreadRef,
+        serverThread: makeThread({
+          latestTurn,
+          session: { ...readySession, status: "running", activeTurnId: latestTurn.turnId },
+        }),
+        backgroundSubmissionPending: false,
+      }),
+    ).toEqual(serverThreadRef);
+  });
+
+  it.each(["error", "stopped", "interrupted"] as const)(
+    "promotes a startup that ends as %s before a turn starts",
+    (status) => {
+      expect(
+        resolveDraftPromotionNavigationTarget({
+          serverThreadRef,
+          serverThread: makeThread({ session: { ...readySession, status } }),
+          backgroundSubmissionPending: false,
+        }),
+      ).toEqual(serverThreadRef);
+    },
+  );
+});
 
 describe("buildLoadingThreadFromShell", () => {
   it("preserves shell metadata and supplies empty detail collections", () => {
