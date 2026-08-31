@@ -47,6 +47,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
         expandableContent: <DesktopUpdateReleaseNotes releaseNotes={releaseNotes} />,
         expandableLabels: { collapse: "Hide changes", expand: "View changes" },
       },
+      timeout: 0,
       type: "success",
       title: "Update downloaded",
       description: "Restart the app from the update button to install it.",
