@@ -3,7 +3,10 @@ import type { MenuAction } from "@react-native-menu/menu";
 // MenuView's iOS bridge treats an omitted imageColor as transparent.
 export function withMenuActionIconColors(
   actions: readonly MenuAction[],
-  colors: { readonly icon: string; readonly destructiveIcon: string },
+  colors: {
+    readonly icon: MenuAction["imageColor"];
+    readonly destructiveIcon: MenuAction["imageColor"];
+  },
 ): MenuAction[] {
   return actions.map((action) => ({
     ...action,

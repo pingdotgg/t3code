@@ -9,15 +9,34 @@ import {
   useMemo,
   useRef,
 } from "react";
-import { Platform, Pressable, View, type PressableProps } from "react-native";
+import { Platform, Pressable, View, type ColorValue, type PressableProps } from "react-native";
+import { withUniwind } from "uniwind";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 
 import { cn } from "../lib/cn";
 import { withMenuActionIconColors } from "../lib/menu-action-colors";
-import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
 import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
+
+const ThemedMenuView = withUniwind(function NativeMenuView({
+  iconColor,
+  destructiveIconColor,
+  ...props
+}: ComponentProps<typeof MenuView> & {
+  readonly iconColor?: ColorValue;
+  readonly destructiveIconColor?: ColorValue;
+}) {
+  const actions = useMemo(
+    () =>
+      withMenuActionIconColors(props.actions, {
+        icon: iconColor,
+        destructiveIcon: destructiveIconColor,
+      }),
+    [props.actions, iconColor, destructiveIconColor],
+  );
+  return <MenuView {...props} actions={actions} />;
+});
 
 export function ControlPill(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
@@ -123,19 +142,6 @@ export function ControlPillMenu(
 ) {
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
-  const theme = useUniwindTheme();
-  const iconColor = theme["--color-icon"];
-  const destructiveIconColor = theme["--color-danger-foreground"];
-  const actions = useMemo(
-    () =>
-      Platform.OS === "android"
-        ? props.actions
-        : withMenuActionIconColors(props.actions, {
-            icon: iconColor,
-            destructiveIcon: destructiveIconColor,
-          }),
-    [props.actions, iconColor, destructiveIconColor],
-  );
   const menuPress = useRef({ isPreparing: false, isOpen: false, suppressPress: false });
   const pendingPress = useRef<(() => void) | null>(null);
 
@@ -233,8 +239,13 @@ export function ControlPillMenu(
     };
   }
   return (
-    <MenuView {...menuProps} actions={actions} themeVariant={isDarkMode ? "dark" : "light"}>
+    <ThemedMenuView
+      {...menuProps}
+      iconColorClassName="accent-icon"
+      destructiveIconColorClassName="accent-danger-foreground"
+      themeVariant={isDarkMode ? "dark" : "light"}
+    >
       {children}
-    </MenuView>
+    </ThemedMenuView>
   );
 }

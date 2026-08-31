@@ -8,7 +8,6 @@ const APPEARANCE_VARIANT_PATTERN = /\b(?:dark|light):(?=\S)/u;
 const APPEARANCE_VARIANT_MESSAGE =
   "dark:/light: utilities do not follow registered custom themes; use an adaptive semantic token.";
 const THEME_INTEROP_ALLOWLIST = new Set([
-  "components/ControlPill.tsx",
   "features/archive/ArchivedThreadsScreen.tsx",
   "features/connection/ConnectionsNewRouteScreen.tsx",
   "features/files/FileMarkdownPreview.tsx",
