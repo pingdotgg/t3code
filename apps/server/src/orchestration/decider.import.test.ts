@@ -15,9 +15,9 @@ import { decideOrchestrationCommand } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
 it.layer(NodeServices.layer)("thread history import", (it) => {
-  it.effect("emits completed user and assistant messages without starting a turn", () =>
+  it.effect("settles imported messages at the latest absolute timestamp", () =>
     Effect.gen(function* () {
-      const createdAt = "2026-08-24T10:00:00.000Z";
+      const createdAt = "2026-08-24T10:30:00.000+02:00";
       const threadId = ThreadId.make("import:codex:session-1");
       const readModel = yield* projectEvent(createEmptyReadModel(createdAt), {
         sequence: 1,
@@ -60,7 +60,7 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
               messageId: MessageId.make(`${threadId}:000001`),
               role: "assistant",
               text: "Fixed",
-              createdAt: "2026-08-24T10:01:00.000Z",
+              createdAt: "2026-08-24T09:00:00.000Z",
             },
           ],
         },
@@ -81,10 +81,10 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
         {
           type: "thread.settled",
           metadata: { historyImport: true },
-          occurredAt: "2026-08-24T10:01:00.000Z",
+          occurredAt: "2026-08-24T09:00:00.000Z",
           payload: {
-            settledAt: "2026-08-24T10:01:00.000Z",
-            updatedAt: "2026-08-24T10:01:00.000Z",
+            settledAt: "2026-08-24T09:00:00.000Z",
+            updatedAt: "2026-08-24T09:00:00.000Z",
           },
         },
       ]);

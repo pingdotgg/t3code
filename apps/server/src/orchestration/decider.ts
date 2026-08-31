@@ -9,6 +9,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
+import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -1376,7 +1377,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
       const settledAt = command.messages.reduce(
-        (latest, message) => (message.createdAt > latest ? message.createdAt : latest),
+        (latest, message) =>
+          compareDateTimeStrings(message.createdAt, latest) > 0 ? message.createdAt : latest,
         firstMessage.createdAt,
       );
       events.push({

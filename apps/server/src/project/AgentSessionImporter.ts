@@ -14,6 +14,7 @@ import {
   ThreadId,
   type AgentSessionImportInput,
   type AgentSessionImportResult,
+  type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -54,6 +55,45 @@ class AgentSessionThreadProjectConflictError extends Schema.TaggedErrorClass<Age
   }
 }
 
+class AgentSessionThreadModifiedError extends Schema.TaggedErrorClass<AgentSessionThreadModifiedError>()(
+  "AgentSessionThreadModifiedError",
+  { threadId: ThreadId },
+) {
+  override get message(): string {
+    return `Imported thread '${this.threadId}' changed before its history import completed.`;
+  }
+}
+
+function hasImportedHistory(thread: OrchestrationThread): boolean {
+  return thread.messages.some((message) => isImportedAgentSessionMessageId(message.id));
+}
+
+function hasImportBlockingActivity(
+  thread: OrchestrationThread,
+  importedHistoryPresent: boolean,
+): boolean {
+  return (
+    thread.archivedAt !== null ||
+    thread.deletedAt !== null ||
+    thread.latestTurn !== null ||
+    thread.session !== null ||
+    thread.messages.some((message) => !isImportedAgentSessionMessageId(message.id)) ||
+    thread.proposedPlans.length > 0 ||
+    thread.activities.length > 0 ||
+    thread.checkpoints.length > 0 ||
+    thread.snoozedUntil != null ||
+    thread.snoozedAt != null ||
+    thread.pinnedAt != null ||
+    thread.pinOrderKey != null ||
+    thread.titleRegeneration != null ||
+    thread.linkedPullRequest != null ||
+    thread.unsettledAt != null ||
+    (importedHistoryPresent
+      ? thread.settledOverride !== "settled"
+      : thread.settledOverride !== null || thread.settledAt !== null)
+  );
+}
+
 /** Import recent transcript text and persist the cursor needed to resume its provider session. */
 export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(function* (
   input: AgentSessionImportInput,
@@ -78,8 +118,13 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
   let importedCount = 0;
   let skippedCount = 0;
 
-  yield* Stream.runForEach(threads, (thread) =>
+  yield* Stream.runForEach(threads, (outcome) =>
     Effect.gen(function* () {
+      if (outcome._tag === "Skipped") {
+        skippedCount += 1;
+        return;
+      }
+      const thread = outcome.thread;
       const imported = yield* Effect.gen(function* () {
         const threadId = ThreadId.make(
           `import:${thread.providerInstanceId}:${thread.providerSessionId}`,
@@ -107,10 +152,52 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
           });
         }
 
-        // The binding is the last import step. Its presence marks a complete
-        // one-shot import and protects an active session from retry writes.
-        if (Option.isSome(existingThread) && Option.isSome(existingBinding)) {
+        const importedHistoryPresent = Option.isSome(existingThread)
+          ? hasImportedHistory(existingThread.value)
+          : false;
+        if (
+          Option.isSome(existingThread) &&
+          importedHistoryPresent &&
+          Option.isSome(existingBinding)
+        ) {
           return true;
+        }
+
+        if (
+          Option.isSome(existingThread) &&
+          hasImportBlockingActivity(existingThread.value, importedHistoryPresent)
+        ) {
+          return yield* new AgentSessionThreadModifiedError({ threadId });
+        }
+
+        if (
+          Option.isSome(existingBinding) &&
+          (existingBinding.value.provider !== provider ||
+            existingBinding.value.providerInstanceId !== thread.providerInstanceId ||
+            existingBinding.value.status !== "stopped")
+        ) {
+          return yield* new AgentSessionThreadModifiedError({ threadId });
+        }
+
+        // Install the cursor before the thread becomes visible. A concurrent
+        // real session can replace it, while insert-ignore keeps this import
+        // from replacing that newer binding.
+        if (Option.isNone(existingBinding)) {
+          yield* directory.upsert(
+            {
+              threadId,
+              provider,
+              providerInstanceId: thread.providerInstanceId,
+              status: "stopped",
+              runtimeMode: DEFAULT_RUNTIME_MODE,
+              resumeCursor:
+                thread.source === "codex"
+                  ? { threadId: thread.providerSessionId }
+                  : { threadId, resume: thread.providerSessionId },
+              runtimePayload: { cwd: workspaceRoot },
+            },
+            { onConflict: "ignore" },
+          );
         }
 
         if (Option.isNone(existingThread)) {
@@ -129,12 +216,7 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
           });
         }
 
-        const hasImportedHistory = Option.isSome(existingThread)
-          ? existingThread.value.messages.some((message) =>
-              isImportedAgentSessionMessageId(message.id),
-            )
-          : false;
-        if (!hasImportedHistory) {
+        if (!importedHistoryPresent) {
           yield* engine.dispatch({
             type: "thread.history.import",
             commandId: CommandId.make(yield* crypto.randomUUIDv4),
@@ -146,24 +228,6 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
               createdAt: message.createdAt,
             })),
           });
-        }
-
-        if (Option.isNone(existingBinding)) {
-          yield* directory.upsert(
-            {
-              threadId,
-              provider,
-              providerInstanceId: thread.providerInstanceId,
-              status: "stopped",
-              runtimeMode: DEFAULT_RUNTIME_MODE,
-              resumeCursor:
-                thread.source === "codex"
-                  ? { threadId: thread.providerSessionId }
-                  : { threadId, resume: thread.providerSessionId },
-              runtimePayload: { cwd: workspaceRoot },
-            },
-            { onConflict: "ignore" },
-          );
         }
 
         return true;

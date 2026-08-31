@@ -13,6 +13,7 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import { isImportedAgentSessionMessageId } from "@t3tools/contracts";
+import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 
 export type ThreadDetailReducerResult =
   | { readonly kind: "updated"; readonly thread: OrchestrationThread }
@@ -777,7 +778,8 @@ function retainMessagesAfterRevert(
       )
       .toSorted(
         (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+          compareDateTimeStrings(left.createdAt, right.createdAt) ||
+          left.id.localeCompare(right.id),
       )
       .slice(0, missingCount);
     for (const message of fallbackMessages) {

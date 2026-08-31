@@ -6,6 +6,7 @@ import {
   type OrchestrationSessionStatus,
   ThreadId,
 } from "@t3tools/contracts";
+import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -275,7 +276,7 @@ function retainProjectionMessagesAfterRevert(
       )
       .toSorted(
         (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) ||
+          compareDateTimeStrings(left.createdAt, right.createdAt) ||
           left.messageId.localeCompare(right.messageId),
       )
       .slice(0, missingUserCount);
@@ -301,7 +302,7 @@ function retainProjectionMessagesAfterRevert(
       )
       .toSorted(
         (left, right) =>
-          left.createdAt.localeCompare(right.createdAt) ||
+          compareDateTimeStrings(left.createdAt, right.createdAt) ||
           left.messageId.localeCompare(right.messageId),
       )
       .slice(0, missingAssistantCount);

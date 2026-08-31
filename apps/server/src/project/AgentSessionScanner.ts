@@ -21,6 +21,7 @@ import {
   CodexSettings,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProviderInstanceEnabled,
   type AgentSessionProjectCandidate,
   type AgentSessionScanResult,
   type ProviderInstanceConfig,
@@ -121,6 +122,10 @@ export interface AgentSessionThread {
   readonly messages: ReadonlyArray<AgentSessionThreadMessage>;
 }
 
+export type AgentSessionRecentThread =
+  | { readonly _tag: "Importable"; readonly thread: AgentSessionThread }
+  | { readonly _tag: "Skipped" };
+
 /** Service tag for agent session discovery. */
 export class AgentSessionScanner extends Context.Service<
   AgentSessionScanner,
@@ -134,7 +139,7 @@ export class AgentSessionScanner extends Context.Service<
     readonly scan: Effect.Effect<AgentSessionScanResult, AgentSessionScanError>;
     readonly recentThreads: (
       workspaceRoot: string,
-    ) => Stream.Stream<AgentSessionThread, AgentSessionScanError>;
+    ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
   }
 >()("t3/project/AgentSessionScanner") {}
 
@@ -144,13 +149,19 @@ type AgentSessionSource = AgentSessionProjectCandidate["sources"][number];
 interface RawCandidate {
   readonly cwd: string;
   readonly source: AgentSessionSource;
-  readonly providerInstanceIds: Array<ProviderInstanceId>;
+  readonly providerInstanceId: ProviderInstanceId;
   readonly threadCount: number;
   readonly lastActiveAtMs: number | null;
   readonly transcripts: ReadonlyArray<{
     readonly filePath: string;
     readonly mtimeMs: number | null;
   }>;
+}
+
+interface TranscriptCandidate {
+  readonly filePath: string;
+  readonly mtimeMs: number;
+  readonly providerInstanceId: ProviderInstanceId;
 }
 
 function extractText(
@@ -486,7 +497,7 @@ export const make = Effect.gen(function* () {
                 Math.min(TRANSCRIPT_PREFIX_BYTES, expectedBytes + 1 - bytesRead),
               );
               if (Option.isNone(next)) {
-                return contents + decoder.decode();
+                return bytesRead === expectedBytes ? contents + decoder.decode() : null;
               }
 
               bytesRead += next.value.byteLength;
@@ -519,151 +530,120 @@ export const make = Effect.gen(function* () {
     return path.join(NodeOS.homedir(), ".claude");
   };
 
-  /**
-   * Claude keeps one directory per project under `projects/`, named after a
-   * lossy slug of the path. The slug can't be decoded (both `/` and `.` become
-   * `-`), so the real path comes from the `cwd` recorded in the newest
-   * transcript inside it.
-   */
-  const scanClaude = Effect.fn("AgentSessionScanner.scanClaude")(function* (
-    homePath: string,
-    providerInstanceId: ProviderInstanceId,
-  ) {
-    const projectsDir = path.join(homePath, "projects");
-    const projectDirectories = yield* listDirectory(projectsDir);
-    let statBudget = MAX_STATS_PER_SOURCE;
-    const transcripts: Array<{ filePath: string; mtimeMs: number }> = [];
+  const discoverClaudeTranscripts = Effect.fn("AgentSessionScanner.discoverClaudeTranscripts")(
+    function* (homePath: string, providerInstanceId: ProviderInstanceId, statBudget: number) {
+      const projectsDir = path.join(homePath, "projects");
+      const projectDirectories = yield* listDirectory(projectsDir);
+      let statsRemaining = statBudget;
+      const transcripts: Array<TranscriptCandidate> = [];
 
-    for (const projectDirectory of projectDirectories) {
-      if (statBudget <= 0) break;
-      const directory = path.join(projectsDir, projectDirectory);
-      const directoryTranscripts = (yield* listDirectory(directory))
-        .filter((entry) => entry.endsWith(".jsonl"))
-        .map((entry) => path.join(directory, entry));
-      if (directoryTranscripts.length === 0) continue;
+      for (const projectDirectory of projectDirectories) {
+        if (statsRemaining <= 0) break;
+        const directory = path.join(projectsDir, projectDirectory);
+        const directoryTranscripts = (yield* listDirectory(directory))
+          .filter((entry) => entry.endsWith(".jsonl"))
+          .map((entry) => path.join(directory, entry));
+        if (directoryTranscripts.length === 0) continue;
 
-      const statted = directoryTranscripts.slice(0, statBudget);
-      statBudget -= statted.length;
-      for (const filePath of statted) {
-        const stats = yield* statOption(filePath);
-        if (Option.isNone(stats) || Option.isNone(stats.value.mtime)) continue;
-        transcripts.push({ filePath, mtimeMs: stats.value.mtime.value.getTime() });
+        const statted = directoryTranscripts.slice(0, statsRemaining);
+        statsRemaining -= statted.length;
+        for (const filePath of statted) {
+          const stats = yield* statOption(filePath);
+          if (Option.isNone(stats) || Option.isNone(stats.value.mtime)) continue;
+          transcripts.push({
+            filePath,
+            mtimeMs: stats.value.mtime.value.getTime(),
+            providerInstanceId,
+          });
+        }
       }
-    }
+      return transcripts;
+    },
+  );
 
-    // Apply the read budget across every project, not separately by directory.
-    transcripts.sort((left, right) => right.mtimeMs - left.mtimeMs);
-    transcripts.splice(MAX_TRANSCRIPTS_PER_SOURCE);
+  const discoverCodexTranscripts = Effect.fn("AgentSessionScanner.discoverCodexTranscripts")(
+    function* (homePath: string, providerInstanceId: ProviderInstanceId, statBudget: number) {
+      const sessionsDir = path.join(homePath, "sessions");
 
-    const byCwd = new Map<
+      const transcripts: Array<TranscriptCandidate> = [];
+      let statsRemaining = statBudget;
+      // Date-partitioned directories sort chronologically, so walking them in
+      // reverse spends each home's share of the stat budget on recent sessions.
+      for (const year of (yield* listDirectory(sessionsDir)).toSorted().toReversed()) {
+        for (const month of (yield* listDirectory(path.join(sessionsDir, year)))
+          .toSorted()
+          .toReversed()) {
+          for (const day of (yield* listDirectory(path.join(sessionsDir, year, month)))
+            .toSorted()
+            .toReversed()) {
+            const directory = path.join(sessionsDir, year, month, day);
+            for (const entry of (yield* listDirectory(directory)).toSorted().toReversed()) {
+              if (!entry.startsWith("rollout-") || !entry.endsWith(".jsonl")) continue;
+              const filePath = path.join(directory, entry);
+              statsRemaining -= 1;
+              const stats = yield* statOption(filePath);
+              if (Option.isSome(stats) && Option.isSome(stats.value.mtime)) {
+                transcripts.push({
+                  filePath,
+                  mtimeMs: stats.value.mtime.value.getTime(),
+                  providerInstanceId,
+                });
+              }
+              if (statsRemaining <= 0) break;
+            }
+            if (statsRemaining <= 0) break;
+          }
+          if (statsRemaining <= 0) break;
+        }
+        if (statsRemaining <= 0) break;
+      }
+      return transcripts;
+    },
+  );
+
+  const groupTranscriptsByCwd = Effect.fn("AgentSessionScanner.groupTranscriptsByCwd")(function* (
+    source: AgentSessionSource,
+    transcripts: ReadonlyArray<TranscriptCandidate>,
+  ) {
+    const byOwnerAndCwd = new Map<
       string,
       {
-        threadCount: number;
+        cwd: string;
+        providerInstanceId: ProviderInstanceId;
         lastActiveAtMs: number;
         transcripts: Array<{ filePath: string; mtimeMs: number }>;
       }
     >();
-    for (const entry of transcripts) {
-      const cwd = yield* readCwd(entry.filePath);
+
+    for (const transcript of transcripts) {
+      const cwd = yield* readCwd(transcript.filePath);
       if (cwd === null) continue;
-      const existing = byCwd.get(cwd);
+      const key = `${transcript.providerInstanceId}\0${cwd}`;
+      const existing = byOwnerAndCwd.get(key);
       if (existing) {
-        existing.threadCount += 1;
-        existing.lastActiveAtMs = Math.max(existing.lastActiveAtMs, entry.mtimeMs);
-        existing.transcripts.push(entry);
+        existing.lastActiveAtMs = Math.max(existing.lastActiveAtMs, transcript.mtimeMs);
+        existing.transcripts.push(transcript);
       } else {
-        byCwd.set(cwd, {
-          threadCount: 1,
-          lastActiveAtMs: entry.mtimeMs,
-          transcripts: [entry],
+        byOwnerAndCwd.set(key, {
+          cwd,
+          providerInstanceId: transcript.providerInstanceId,
+          lastActiveAtMs: transcript.mtimeMs,
+          transcripts: [transcript],
         });
       }
     }
 
     return Array.from(
-      byCwd,
-      ([cwd, group]): RawCandidate => ({
-        cwd,
-        source: "claudeAgent",
-        providerInstanceIds: [providerInstanceId],
-        threadCount: group.threadCount,
+      byOwnerAndCwd.values(),
+      (group): RawCandidate => ({
+        cwd: group.cwd,
+        source,
+        providerInstanceId: group.providerInstanceId,
+        threadCount: group.transcripts.length,
         lastActiveAtMs: group.lastActiveAtMs,
         transcripts: group.transcripts,
       }),
     );
-  });
-
-  /**
-   * Codex writes `sessions/YYYY/MM/DD/rollout-*.jsonl`. Always scan the shared
-   * home: in auth-overlay mode the effective home only symlinks to it.
-   */
-  const scanCodex = Effect.fn("AgentSessionScanner.scanCodex")(function* (
-    homePath: string,
-    providerInstanceId: ProviderInstanceId,
-  ) {
-    const sessionsDir = path.join(homePath, "sessions");
-
-    const rollouts: Array<string> = [];
-    // Date-partitioned directories sort chronologically, so walking them in
-    // reverse keeps the newest sessions when the budget runs out.
-    for (const year of (yield* listDirectory(sessionsDir)).toSorted().toReversed()) {
-      for (const month of (yield* listDirectory(path.join(sessionsDir, year)))
-        .toSorted()
-        .toReversed()) {
-        for (const day of (yield* listDirectory(path.join(sessionsDir, year, month)))
-          .toSorted()
-          .toReversed()) {
-          const directory = path.join(sessionsDir, year, month, day);
-          for (const entry of (yield* listDirectory(directory)).toSorted().toReversed()) {
-            if (!entry.startsWith("rollout-") || !entry.endsWith(".jsonl")) continue;
-            rollouts.push(path.join(directory, entry));
-            if (rollouts.length >= MAX_TRANSCRIPTS_PER_SOURCE) break;
-          }
-          if (rollouts.length >= MAX_TRANSCRIPTS_PER_SOURCE) break;
-        }
-        if (rollouts.length >= MAX_TRANSCRIPTS_PER_SOURCE) break;
-      }
-      if (rollouts.length >= MAX_TRANSCRIPTS_PER_SOURCE) break;
-    }
-
-    const byCwd = new Map<string, Array<{ filePath: string; mtimeMs: number | null }>>();
-    for (const rollout of rollouts) {
-      const cwd = yield* readCwd(rollout);
-      if (cwd === null) continue;
-      const stats = yield* statOption(rollout);
-      const mtimeMs =
-        Option.isSome(stats) && Option.isSome(stats.value.mtime)
-          ? stats.value.mtime.value.getTime()
-          : null;
-      const transcript = { filePath: rollout, mtimeMs };
-      const existing = byCwd.get(cwd);
-      if (existing) {
-        existing.push(transcript);
-      } else {
-        byCwd.set(cwd, [transcript]);
-      }
-    }
-
-    const candidates: Array<RawCandidate> = [];
-    for (const [cwd, transcripts] of byCwd) {
-      candidates.push({
-        cwd,
-        source: "codex",
-        providerInstanceIds: [providerInstanceId],
-        threadCount: transcripts.length,
-        lastActiveAtMs: transcripts.reduce<number | null>(
-          (latest, transcript) =>
-            transcript.mtimeMs === null
-              ? latest
-              : latest === null
-                ? transcript.mtimeMs
-                : Math.max(latest, transcript.mtimeMs),
-          null,
-        ),
-        transcripts,
-      });
-    }
-    return candidates;
   });
 
   const collectCandidates = Effect.fn("AgentSessionScanner.collectCandidates")(function* () {
@@ -672,28 +652,41 @@ export const make = Effect.gen(function* () {
     );
 
     const raw: Array<RawCandidate> = [];
-    const scannedHomes = new Map<string, ReadonlyArray<RawCandidate>>();
 
     for (const source of ["claudeAgent", "codex"] as const) {
       const instances: Array<{
         readonly instanceId: ProviderInstanceId;
         readonly config: ProviderInstanceConfig;
       }> = Object.entries(settings.providerInstances)
-        .filter(([, instance]) => instance.driver === source)
+        .filter(
+          ([, instance]) => instance.driver === source && resolveProviderInstanceEnabled(instance),
+        )
         .map(([instanceId, config]) => ({
           instanceId: ProviderInstanceId.make(instanceId),
           config,
         }));
       if (!Object.hasOwn(settings.providerInstances, source)) {
-        instances.push({
+        const legacyInstance = {
           instanceId: ProviderInstanceId.make(source),
           config: {
             driver: ProviderDriverKind.make(source),
             config: settings.providers[source],
           },
-        });
+        };
+        if (resolveProviderInstanceEnabled(legacyInstance.config)) {
+          instances.push(legacyInstance);
+        }
       }
 
+      // A shared home contains one copy of each session. Prefer the built-in
+      // instance as its owner, then keep configured order for custom accounts.
+      instances.sort((left, right) => {
+        const leftDefault = left.instanceId === source ? 0 : 1;
+        const rightDefault = right.instanceId === source ? 0 : 1;
+        return leftDefault - rightDefault;
+      });
+      const homes: Array<{ homePath: string; providerInstanceId: ProviderInstanceId }> = [];
+      const seenHomes = new Set<string>();
       for (const { instanceId, config: instance } of instances) {
         const homeVariable = source === "claudeAgent" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
         const environmentHome =
@@ -724,21 +717,30 @@ export const make = Effect.gen(function* () {
           .realPath(homePath)
           .pipe(Effect.orElseSucceed(() => homePath));
         const homeKey = `${source}\0${normalizeProjectPathForComparison(realHomePath)}`;
-        const existingCandidates = scannedHomes.get(homeKey);
-        if (existingCandidates !== undefined) {
-          for (const candidate of existingCandidates) {
-            if (!candidate.providerInstanceIds.includes(instanceId)) {
-              candidate.providerInstanceIds.push(instanceId);
-            }
-          }
-          continue;
-        }
-        const candidates = yield* source === "claudeAgent"
-          ? scanClaude(homePath, instanceId)
-          : scanCodex(homePath, instanceId);
-        scannedHomes.set(homeKey, candidates);
-        raw.push(...candidates);
+        if (seenHomes.has(homeKey)) continue;
+        seenHomes.add(homeKey);
+        homes.push({ homePath, providerInstanceId: instanceId });
       }
+
+      const transcriptCandidates: Array<TranscriptCandidate> = [];
+      const baseStatBudget = Math.floor(MAX_STATS_PER_SOURCE / Math.max(1, homes.length));
+      const extraStatBudgets = MAX_STATS_PER_SOURCE % Math.max(1, homes.length);
+      for (const [index, home] of homes.entries()) {
+        const statBudget = baseStatBudget + (index < extraStatBudgets ? 1 : 0);
+        if (statBudget === 0) continue;
+        transcriptCandidates.push(
+          ...(yield* source === "claudeAgent"
+            ? discoverClaudeTranscripts(home.homePath, home.providerInstanceId, statBudget)
+            : discoverCodexTranscripts(home.homePath, home.providerInstanceId, statBudget)),
+        );
+      }
+
+      transcriptCandidates.sort(
+        (left, right) =>
+          right.mtimeMs - left.mtimeMs || left.filePath.localeCompare(right.filePath),
+      );
+      transcriptCandidates.splice(MAX_TRANSCRIPTS_PER_SOURCE);
+      raw.push(...(yield* groupTranscriptsByCwd(source, transcriptCandidates)));
     }
 
     return raw;
@@ -806,9 +808,8 @@ export const make = Effect.gen(function* () {
           : Math.max(existing.lastActiveAtMs, candidate.lastActiveAtMs);
     }
 
-    // One snapshot read, compared with the same normalization the
-    // project.create invariant uses, so a root that differs only by case or
-    // separators is still recognized as imported.
+    // Resolve persisted roots too. A project and a transcript can name
+    // different symlinks to the same directory.
     const shellSnapshot = yield* projectionSnapshotQuery
       .getShellSnapshot()
       .pipe(
@@ -816,31 +817,35 @@ export const make = Effect.gen(function* () {
           (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
         ),
       );
-    const importedProjectsByRoot = new Map(
-      shellSnapshot.projects.map(
-        (project) =>
-          [normalizeProjectPathForComparison(project.workspaceRoot), project.id] as const,
-      ),
-    );
+    const importedProjectsByRoot = new Map<string, (typeof shellSnapshot.projects)[number]>();
+    for (const project of shellSnapshot.projects) {
+      const projectRoot = path.resolve(expandHomePath(project.workspaceRoot));
+      const realProjectRoot = yield* fileSystem
+        .realPath(projectRoot)
+        .pipe(Effect.orElseSucceed(() => projectRoot));
+      importedProjectsByRoot.set(normalizeProjectPathForComparison(projectRoot), project);
+      importedProjectsByRoot.set(normalizeProjectPathForComparison(realProjectRoot), project);
+    }
 
     const candidates: Array<AgentSessionProjectCandidate> = [];
     for (const [key, entry] of merged.entries()) {
       // Projects may have been created under either the recorded spelling or
       // the resolved realpath (e.g. a symlinked home) — check both.
-      const projectId =
+      const importedProject =
         importedProjectsByRoot.get(normalizeProjectPathForComparison(entry.path)) ??
         importedProjectsByRoot.get(normalizeProjectPathForComparison(key));
+      const candidatePath = importedProject?.workspaceRoot ?? entry.path;
       candidates.push({
-        path: entry.path,
-        title: path.basename(entry.path) || entry.path,
-        ...(projectId === undefined ? {} : { projectId }),
+        path: candidatePath,
+        title: path.basename(candidatePath) || candidatePath,
+        ...(importedProject === undefined ? {} : { projectId: importedProject.id }),
         sources: entry.sources,
         threadCount: entry.threadCount,
         lastActiveAt:
           entry.lastActiveAtMs === null
             ? null
             : DateTime.formatIso(DateTime.makeUnsafe(entry.lastActiveAtMs)),
-        alreadyImported: projectId !== undefined,
+        alreadyImported: importedProject !== undefined,
       });
     }
 
@@ -865,7 +870,8 @@ export const make = Effect.gen(function* () {
     const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
     if (isExcludedProjectPath(root) || isExcludedProjectPath(realRoot)) return Stream.empty;
     const normalizedRoot = normalizeProjectPathForComparison(realRoot);
-    const cutoffMs = DateTime.toEpochMillis(yield* DateTime.now) - RECENT_THREAD_WINDOW_MS;
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+    const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;
 
     const candidates = cachedCandidates ?? (yield* collectCandidates());
     cachedCandidates = candidates;
@@ -884,7 +890,13 @@ export const make = Effect.gen(function* () {
       if (normalizeProjectPathForComparison(realCandidate) !== normalizedRoot) continue;
 
       for (const transcript of candidate.transcripts) {
-        if (transcript.mtimeMs === null || transcript.mtimeMs < cutoffMs) continue;
+        if (
+          transcript.mtimeMs === null ||
+          transcript.mtimeMs < cutoffMs ||
+          transcript.mtimeMs > nowMs
+        ) {
+          continue;
+        }
         eligibleTranscripts.push({
           candidate,
           transcript: { ...transcript, mtimeMs: transcript.mtimeMs },
@@ -904,36 +916,36 @@ export const make = Effect.gen(function* () {
       Stream.mapEffect(({ candidate, transcript }) =>
         Effect.gen(function* () {
           const stats = yield* statOption(transcript.filePath);
-          if (Option.isNone(stats)) return [];
+          if (Option.isNone(stats)) {
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+          }
           const contents = yield* readTranscript(transcript.filePath, stats.value.size);
-          if (contents === null) return [];
+          if (contents === null) {
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+          }
 
-          const primaryInstanceId = candidate.providerInstanceIds[0];
-          if (primaryInstanceId === undefined) return [];
           const parsedThread = parseAgentSessionTranscript({
             contents,
             source: candidate.source,
-            providerInstanceId: primaryInstanceId,
+            providerInstanceId: candidate.providerInstanceId,
             fallbackSessionId: path.basename(transcript.filePath, ".jsonl"),
             lastActiveAtMs: transcript.mtimeMs,
           });
-          if (parsedThread === null) return [];
-
-          const threads: Array<AgentSessionThread> = [];
-          for (const providerInstanceId of candidate.providerInstanceIds) {
-            const thread =
-              providerInstanceId === primaryInstanceId
-                ? parsedThread
-                : { ...parsedThread, providerInstanceId };
-            const sessionKey = `${thread.providerInstanceId}\0${thread.providerSessionId}`;
-            if (importedSessions.has(sessionKey)) continue;
-            importedSessions.add(sessionKey);
-            threads.push(thread);
+          if (parsedThread === null) {
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
-          return threads;
+
+          const sessionKey = `${parsedThread.providerInstanceId}\0${parsedThread.providerSessionId}`;
+          if (importedSessions.has(sessionKey)) return Option.none<AgentSessionRecentThread>();
+          importedSessions.add(sessionKey);
+          return Option.some<AgentSessionRecentThread>({
+            _tag: "Importable",
+            thread: parsedThread,
+          });
         }),
       ),
-      Stream.flatMap(Stream.fromIterable),
+      Stream.map(Option.toArray),
+      Stream.flattenIterable,
     );
   });
 
