@@ -10,10 +10,11 @@ import {
   type EnvironmentId,
   type UploadChatImageAttachment,
 } from "@t3tools/contracts";
-import type { PickMultipleFilesResult } from "expo-file-system";
+import type { DocumentPickerResult } from "expo-document-picker";
 import { estimateBase64ByteSize } from "./base64";
 import {
   COMPOSER_ATTACHMENT_DIRECTORY,
+  isComposerAttachmentFileRetained,
   resolveOwnedComposerAttachmentFileUri,
 } from "./composerAttachmentFiles";
 import { beginForegroundHandoff } from "./foreground-handoff";
@@ -145,7 +146,7 @@ export async function removePersistedComposerAttachmentFile(uri: string): Promis
   try {
     const { File, Paths } = await import("expo-file-system");
     const ownedUri = resolveOwnedComposerAttachmentFileUri(uri, Paths.document.uri);
-    if (ownedUri === null) {
+    if (ownedUri === null || isComposerAttachmentFileRetained(ownedUri)) {
       return;
     }
     const file = new File(ownedUri);
@@ -206,11 +207,18 @@ export async function pickComposerFiles(input: {
     };
   }
 
-  const { File } = await import("expo-file-system");
+  const { getDocumentAsync } = await import("expo-document-picker");
   const endHandoff = beginForegroundHandoff();
-  let result: PickMultipleFilesResult;
+  let result: DocumentPickerResult;
   try {
-    result = await File.pickFileAsync({ multipleFiles: true });
+    // File providers may expose a URI that FileSystem cannot read directly.
+    // Import a readable cache copy before persisting the draft's owned file.
+    result = await getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
+  } catch (cause) {
+    return {
+      files: [],
+      error: cause instanceof Error ? cause.message : "Could not open the file picker.",
+    };
   } finally {
     endHandoff();
   }
@@ -224,7 +232,7 @@ export async function pickComposerFiles(input: {
   const attachments: DraftComposerFileAttachment[] = [];
   let error: string | null = null;
   let exceededAttachmentLimit = false;
-  for (const file of result.result) {
+  for (const file of result.assets) {
     if (attachments.length >= remainingSlots) {
       exceededAttachmentLimit = true;
       break;
@@ -238,7 +246,7 @@ export async function pickComposerFiles(input: {
         await createComposerFileAttachment({
           uri: file.uri,
           name,
-          mimeType: file.type || "application/octet-stream",
+          mimeType: file.mimeType || "application/octet-stream",
           sizeBytes: file.size ?? null,
           maxBytes,
         }),

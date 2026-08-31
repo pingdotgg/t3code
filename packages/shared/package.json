@@ -199,6 +199,10 @@
       "types": "./src/filePreview.ts",
       "import": "./src/filePreview.ts"
     },
+    "./video": {
+      "types": "./src/video.ts",
+      "import": "./src/video.ts"
+    },
     "./chatList": {
       "types": "./src/chatList.ts",
       "import": "./src/chatList.ts"

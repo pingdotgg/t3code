@@ -22,8 +22,15 @@ T3 Code from other apps through the system share sheet. Mobile uploads happen wh
 sends, so queued messages keep their files until they deliver. Select a received file on mobile
 to save it or open it in another app through the system share sheet.
 
-On web and desktop, select a video attachment before or after sending to play it with the browser's
-built-in controls. Playback depends on the video formats and codecs that the browser supports.
+Select a video attachment before or after sending to play it. Web and desktop use the browser's
+built-in controls. On mobile, videos open in a full-screen player with native playback controls.
+Supported videos show a thumbnail in the conversation and composer.
+On iOS, received videos stream from their environment as they play. Supported formats and codecs
+depend on the browser or device; you can save an unsupported video to open it in another app.
+
+On iOS, the system player zooms from the attachment. Swipe down or tap Close to return to the
+conversation or draft. Touch and hold the attachment, then choose **Save or share video** to open
+the system share options. On Android, use **Save or share video** inside the preview.
 
 On web and desktop, if you reload before a file finishes uploading, the draft keeps the file's name
 and shows **Attach again** next to it. Attach the file again or remove it, then send.

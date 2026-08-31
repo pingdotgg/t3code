@@ -6,6 +6,7 @@ const IOS_DOCUMENTS_PATH = new RegExp(
   `^(.*/Containers/Data/Application/)${UUID_PATTERN}/Documents$`,
   "i",
 );
+const retainedFiles = new Map<string, number>();
 
 function fileUriPath(uri: string): string | null {
   try {
@@ -50,6 +51,30 @@ export function composerAttachmentFileReferenceKey(uri: string): string {
     ? `${containerPrefix}<app>/Documents`
     : location.documentPath;
   return `file://${documentPath}/${COMPOSER_ATTACHMENT_DIRECTORY}/${encodeURIComponent(location.name)}`;
+}
+
+/** Holds a local copy until its last player or share-copy operation releases it. */
+export function retainComposerAttachmentFile(uri: string, onLastRelease: () => void): () => void {
+  const key = composerAttachmentFileReferenceKey(uri);
+  retainedFiles.set(key, (retainedFiles.get(key) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    const remaining = (retainedFiles.get(key) ?? 1) - 1;
+    if (remaining > 0) {
+      retainedFiles.set(key, remaining);
+      return;
+    }
+    retainedFiles.delete(key);
+    onLastRelease();
+  };
+}
+
+export function isComposerAttachmentFileRetained(uri: string): boolean {
+  return retainedFiles.has(composerAttachmentFileReferenceKey(uri));
 }
 
 /**
