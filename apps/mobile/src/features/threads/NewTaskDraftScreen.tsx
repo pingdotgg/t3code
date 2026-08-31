@@ -1,9 +1,11 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import {
+  CommonActions,
   StackActions,
   useFocusEffect,
   useNavigation,
   usePreventRemove,
+  type NavigationAction,
 } from "@react-navigation/native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
@@ -212,6 +214,9 @@ export function NewTaskDraftScreen(props: {
   const [isCancellingShareImport, setIsCancellingShareImport] = useState(false);
   const [cancelledIncomingShareId, setCancelledIncomingShareId] = useState<string | null>(null);
   const [isReturningToProjectPicker, setIsReturningToProjectPicker] = useState(false);
+  const [submitNavigationAction, setSubmitNavigationAction] = useState<NavigationAction | null>(
+    null,
+  );
   const [shareImportAttempt, setShareImportAttempt] = useState(0);
   const startedShareImportKeyRef = useRef<string | null>(null);
   const cancellingShareImportKeyRef = useRef<string | null>(null);
@@ -275,12 +280,23 @@ export function NewTaskDraftScreen(props: {
     voiceInput.elapsedSeconds,
   );
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
-  usePreventRemove(
+  const preventRemove =
     (isIncomingShareTransferPending && !isProjectPickerReturnActive) ||
-      isCancellingShareImport ||
-      flow.submitting,
-    () => undefined,
-  );
+    isCancellingShareImport ||
+    flow.submitting;
+  usePreventRemove(preventRemove, () => undefined);
+  useEffect(() => {
+    if (preventRemove || submitNavigationAction === null) {
+      return;
+    }
+    // Give the guard update a frame to reach the parent sheet before navigating,
+    // just like the project-picker fallback below.
+    const frame = requestAnimationFrame(() => {
+      setSubmitNavigationAction(null);
+      (navigation.getParent() ?? navigation).dispatch(submitNavigationAction);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [navigation, preventRemove, submitNavigationAction]);
   const hasImportedIncomingShare = Boolean(
     props.incomingShareId &&
     flow.draftKey &&
@@ -872,7 +888,7 @@ export function NewTaskDraftScreen(props: {
           clearWorkspaceSelection: true,
         });
       }
-      navigation.getParent()?.goBack();
+      setSubmitNavigationAction(CommonActions.goBack());
       return;
     }
 
@@ -943,7 +959,7 @@ export function NewTaskDraftScreen(props: {
         clearWorkspaceSelection: true,
       });
     }
-    navigation.dispatch(
+    setSubmitNavigationAction(
       StackActions.replace("Thread", {
         environmentId: String(result.value.environmentId),
         threadId: String(result.value.threadId),
