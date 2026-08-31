@@ -2421,6 +2421,71 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
     }),
   );
 
+  it.effect("bounds activity hydration by serialized payload bytes", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`
+        WITH RECURSIVE activity_rows(sequence) AS (
+          SELECT 1
+          UNION ALL
+          SELECT sequence + 1 FROM activity_rows WHERE sequence < 31
+        )
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        )
+        SELECT
+          printf('activity-%04d', sequence),
+          'thread-w',
+          'turn-5',
+          'tool',
+          'tool.completed',
+          'ran tool',
+          json_object(
+            'output',
+            printf('%.*c', CASE WHEN sequence = 31 THEN 700000 ELSE 400000 END, 'x')
+          ),
+          sequence,
+          '2026-03-01T00:04:00.000Z'
+        FROM activity_rows
+      `;
+
+      const assertBoundedActivities = (
+        activities: ReadonlyArray<{ readonly id: string; readonly payload: unknown }>,
+      ) => {
+        assert.equal(activities.length, 20);
+        assert.equal(activities[0]?.id, asEventId("activity-0012"));
+        assert.equal(activities.at(-1)?.id, asEventId("activity-0031"));
+        assert.deepStrictEqual(activities.at(-1)?.payload, {
+          t3PayloadTruncated: true,
+          originalBytes: 700013,
+        });
+        const serializedPayloadBytes = activities.reduce(
+          (total, activity) => total + Buffer.byteLength(JSON.stringify(activity.payload)),
+          0,
+        );
+        assert.ok(serializedPayloadBytes <= 8 * 1024 * 1024);
+      };
+
+      const fullDetail = yield* snapshotQuery.getThreadDetailById(threadW);
+      assert.equal(fullDetail._tag, "Some");
+      if (fullDetail._tag === "Some") {
+        assertBoundedActivities(fullDetail.value.activities);
+      }
+
+      const windowedDetail = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
+        turnLimit: 2,
+      });
+      assert.equal(windowedDetail._tag, "Some");
+      if (windowedDetail._tag === "Some") {
+        assertBoundedActivities(windowedDetail.value.thread.activities);
+      }
+    }),
+  );
+
   it.effect("a thread with no turns returns its content unwindowed on the first page", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
