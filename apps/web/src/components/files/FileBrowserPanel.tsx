@@ -3,10 +3,10 @@ import type {
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
-import { FileTree, useFileTree, useFileTreeSearch } from "@pierre/trees/react";
+import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { ChevronsDownUpIcon, ChevronsUpDownIcon, RotateCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
@@ -257,14 +257,8 @@ export default function FileBrowserPanel({
     unsafeCSS: TREE_UNSAFE_CSS,
   });
   const search = useFileTreeSearch(model);
-  const subscribeToTree = useCallback(
-    (onStoreChange: () => void) => model.subscribe(onStoreChange),
-    [model],
-  );
-  const allDirectoriesExpanded = useSyncExternalStore(
-    subscribeToTree,
-    () => areAllDirectoriesExpanded(model, directoryPaths),
-    () => false,
+  const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
+    areAllDirectoriesExpanded(currentModel, directoryPaths),
   );
   const toggleAllDirectories = () => {
     setAllDirectoriesExpanded(model, directoryPaths, !allDirectoriesExpanded);
