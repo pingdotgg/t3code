@@ -30,6 +30,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { OrchestrationLayerLive } from "../orchestration/runtimeLayer.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "../persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import { loadUserProjectScripts } from "../project/UserProjectScripts.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -425,7 +426,13 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const output = yield* run({
         snapshot,
-        dispatch: (command) => orchestrationEngine.dispatch(command),
+        dispatch: (command) =>
+          command.type === "project.create"
+            ? loadUserProjectScripts(config.stateDir).pipe(
+                Effect.flatMap((scripts) => orchestrationEngine.dispatch({ ...command, scripts })),
+                Effect.asVoid,
+              )
+            : orchestrationEngine.dispatch(command).pipe(Effect.asVoid),
         mode: "offline",
       });
       yield* Console.log(output);

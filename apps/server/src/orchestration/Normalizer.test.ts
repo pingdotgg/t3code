@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vite-plus/test";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
   type ClientOrchestrationCommand,
@@ -7,8 +8,13 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
-import { canonicalizeClientCommandTimestamps } from "./Normalizer.ts";
+import * as ServerConfig from "../config.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { canonicalizeClientCommandTimestamps, normalizeDispatchCommand } from "./Normalizer.ts";
 
 const clientCreatedAt = "2031-01-01T00:00:00.000Z";
 const serverReceivedAt = "2026-07-18T00:00:00.000Z";
@@ -71,3 +77,62 @@ describe("canonicalizeClientCommandTimestamps", () => {
     expect(result.bootstrap?.createThread?.createdAt).toBe(serverReceivedAt);
   });
 });
+
+it.effect("seeds project.create from the user t3.json instead of client input", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-normalizer-user-actions-",
+      });
+      const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-normalizer-project-",
+      });
+      yield* fileSystem.writeFileString(
+        path.join(stateDir, "t3.json"),
+        '{ "scripts": [{ "name": "Handoff", "command": "t3-handoff action" }] }',
+      );
+
+      const command: ClientOrchestrationCommand = {
+        type: "project.create",
+        commandId: CommandId.make("command-user-actions"),
+        projectId: ProjectId.make("project-user-actions"),
+        title: "User actions",
+        workspaceRoot,
+        scripts: [
+          {
+            id: "spoofed",
+            name: "Spoofed",
+            command: "false",
+            icon: "play",
+            runOnWorktreeCreate: false,
+          },
+        ],
+        createdAt: clientCreatedAt,
+      };
+
+      const normalized = yield* normalizeDispatchCommand(command).pipe(
+        Effect.provideService(ServerConfig.ServerConfig, { stateDir } as never),
+        Effect.provideService(WorkspacePaths.WorkspacePaths, {
+          normalizeWorkspaceRoot: (value) => Effect.succeed(value),
+          resolveRelativePathWithinRoot: () => Effect.die("unused"),
+        }),
+      );
+
+      expect(normalized.type).toBe("project.create");
+      if (normalized.type !== "project.create") {
+        throw new Error("Expected project.create");
+      }
+      expect(normalized.scripts).toEqual([
+        {
+          id: "handoff",
+          name: "Handoff",
+          command: "t3-handoff action",
+          icon: "play",
+          runOnWorktreeCreate: false,
+        },
+      ]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);

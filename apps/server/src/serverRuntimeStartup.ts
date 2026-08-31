@@ -37,6 +37,7 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
+import { loadUserProjectScripts } from "./project/UserProjectScripts.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import {
@@ -213,6 +214,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
           title: bootstrapProjectTitle,
           workspaceRoot: serverConfig.cwd,
           defaultModelSelection: nextProjectDefaultModelSelection,
+          scripts: yield* loadUserProjectScripts(serverConfig.stateDir),
           createdAt,
         });
       } else {
