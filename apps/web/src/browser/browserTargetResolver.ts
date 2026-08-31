@@ -216,7 +216,16 @@ export function resolveBrowserNavigationTarget(
     }
     if (parsed && isLoopbackHost(parsed.hostname)) {
       const environmentUrl = readEnvironmentUrl(environmentId);
-      if (parsed.hostname === "0.0.0.0" || !isLocalLoopbackHost(environmentUrl.hostname)) {
+      // Only rewrite a loopback URL onto the connected environment when that
+      // environment is reachable on the private network (local, SSH, LAN,
+      // Tailscale). A public relay host such as T3 Connect has no preview
+      // gateway yet, so the rewrite is impossible; leaving the explicit
+      // client-local URL unchanged lets a browser-forwarded localhost port
+      // (e.g. via SSH `-L`) load, instead of rejecting it up front.
+      if (
+        (parsed.hostname === "0.0.0.0" || !isLocalLoopbackHost(environmentUrl.hostname)) &&
+        isPrivateNetworkHost(environmentUrl.hostname)
+      ) {
         return resolveEnvironmentPortTarget(
           environmentId,
           {

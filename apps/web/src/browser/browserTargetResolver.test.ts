@@ -108,7 +108,7 @@ describe("browser target resolver", () => {
     });
   });
 
-  it("refuses public relay hosts until the authenticated gateway exists", async () => {
+  it("refuses environment-port targets on public relay hosts until the gateway exists", async () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://relay.example.com" });
     const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
     expect(() =>
@@ -117,12 +117,22 @@ describe("browser target resolver", () => {
         port: 5173,
       }),
     ).toThrow(/authenticated preview gateway/);
-    expect(() =>
+  });
+
+  it("passes client-local localhost URLs straight through on public relay hosts", async () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://relay.example.com" });
+    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
+    expect(
       resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
         kind: "url",
-        url: "http://localhost:5173",
+        url: "http://localhost:5173/app?mode=test#results",
       }),
-    ).toThrow(/authenticated preview gateway/);
+    ).toEqual({
+      requestedUrl: "http://localhost:5173/app?mode=test#results",
+      resolvedUrl: "http://localhost:5173/app?mode=test#results",
+      resolutionKind: "direct",
+      environmentId: "environment-1",
+    });
   });
 
   it("normalizes schemeless localhost server-picker values", async () => {
