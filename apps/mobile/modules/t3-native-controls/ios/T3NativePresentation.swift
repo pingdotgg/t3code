@@ -1,5 +1,4 @@
 import ExpoModulesCore
-import RNScreens
 import UIKit
 
 final class T3PresentationSources {
@@ -24,21 +23,6 @@ final class T3PresentationSources {
     // Use the child bounds, not the wrapper's potentially stretched layout bounds.
     entries[identifier]?.view?.subviews.first
   }
-
-  func configureZoom(
-    for controller: UIViewController,
-    sourceIdentifier: String,
-    alignmentRect: @escaping (UIViewController) -> CGRect? = { _ in nil }
-  ) {
-    guard #available(iOS 18.0, *), !UIAccessibility.isReduceMotionEnabled,
-      !sourceIdentifier.isEmpty
-    else { return }
-    let options = UIViewController.Transition.ZoomOptions()
-    options.alignmentRectProvider = { context in alignmentRect(context.zoomedViewController) }
-    controller.preferredTransition = .zoom(options: options) { [weak self] _ in
-      self?.view(for: sourceIdentifier)
-    }
-  }
 }
 
 final class T3PresentationSourceView: ExpoView {
@@ -52,45 +36,6 @@ final class T3PresentationSourceView: ExpoView {
 
   deinit {
     sources?.remove(self, identifier: identifier)
-  }
-}
-
-final class T3ZoomTransitionView: ExpoView {
-  weak var sources: T3PresentationSources?
-  var sourceIdentifier = ""
-  var colorScheme: String? {
-    didSet {
-      overrideUserInterfaceStyle = colorScheme == "dark" ? .dark
-        : colorScheme == "light" ? .light : .unspecified
-    }
-  }
-
-  override func didMoveToSuperview() {
-    super.didMoveToSuperview()
-    updateTransition()
-  }
-
-  func updateTransition() {
-    guard superview != nil else { return }
-    // The native stack attaches its screen controller after mounting the children.
-    DispatchQueue.main.async { [weak self] in self?.configureTransition() }
-  }
-
-  private func configureTransition() {
-    var responder: UIResponder? = self
-    while let current = responder {
-      if let screen = current as? RNSScreen {
-        // RNS wraps a modal with a visible native header in an inner stack.
-        // UIKit presents the outer screen, so it owns the zoom and dismissal.
-        let destination = screen.navigationController?.parent as? RNSScreen ?? screen
-        sources?.configureZoom(for: destination, sourceIdentifier: sourceIdentifier) { [weak self] controller in
-          guard let self else { return nil }
-          return self.convert(self.bounds, to: controller.view)
-        }
-        return
-      }
-      responder = current.next
-    }
   }
 }
 

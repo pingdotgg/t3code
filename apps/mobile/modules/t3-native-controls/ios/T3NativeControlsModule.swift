@@ -36,20 +36,6 @@ public final class T3NativeControlsModule: Module {
       }
     }
 
-    View(T3ZoomTransitionView.self) {
-      ViewName("ZoomTransitionTarget")
-      Prop("sourceIdentifier") { (view: T3ZoomTransitionView, identifier: String) in
-        view.sources = self.presentationSources
-        view.sourceIdentifier = identifier
-      }
-      Prop("colorScheme") { (view: T3ZoomTransitionView, colorScheme: String?) in
-        view.colorScheme = colorScheme
-      }
-      OnViewDidUpdateProps { (view: T3ZoomTransitionView) in
-        view.updateTransition()
-      }
-    }
-
     AsyncFunction("shareFileFromSource") { (url: URL, title: String, identifier: String, promise: Promise) in
       try self.shareFile(url: url, title: title, sourceIdentifier: identifier, promise: promise)
     }.runOnQueue(.main)

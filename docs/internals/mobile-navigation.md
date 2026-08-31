@@ -51,18 +51,13 @@ use a separate implementation and do not need this workaround.
 
 ## Native media presentations
 
-`PresentationSource` and `ZoomTransitionTarget` in `NativePresentation` connect a
-view to an iOS native-stack destination using UIKit's zoom transition. Wrap the
-thumbnail as the source's single child, pass its stable identifier in the route params, and wrap
-the destination content in a target with that `sourceIdentifier`. The target's
-bounds define the zoom alignment. These components do not load files or own
-playback, so image viewers can use the same API.
-
-The native module keeps weak references to source views and resolves the source
-again on dismissal. Recycled or compact composer thumbnails can register the
-same identifier. Identifiers must distinguish simultaneously visible attachments.
-Reduce Motion keeps the route's normal transition. Android wrappers use regular
-views and do not register a native transition.
+`PresentationSource` in `NativePresentation` registers a thumbnail for AVKit's
+full-screen entry and UIKit's share sheet. Wrap the thumbnail as its single child
+and pass the stable identifier to the presentation. The registry keeps weak
+references to source views; recycled or compact composer thumbnails can register
+the same identifier. Identifiers must distinguish simultaneously visible attachments.
+This source registration does not own playback and can be reused by a future image
+viewer. Android uses a regular view.
 
 On iOS, video previews mount `AVPlayerViewController` temporarily inside the
 registered source and enter full screen through AVKit. AVKit
@@ -72,9 +67,7 @@ simulator, that leaves native Close unable to exit full screen. When the source 
 the player uses a standard modal presentation. Programmatic entry uses the same
 guarded `enterFullScreenAnimated:completionHandler:` selector as Expo Video;
 if that selector is unavailable, the player also falls back to a standard modal.
-Future image viewers can use the
-same source registry with `configureZoom` or the native-stack target. Images
-retain their existing viewer.
+Images retain their existing viewer.
 
 Received videos open directly from their signed asset URL. AVKit handles buffering;
 the client does not download the entire file or show a separate opening overlay before
@@ -89,11 +82,6 @@ its own player on close, then restores the previous audio-session configuration
 if no other component changed it during playback. It does not deactivate the
 shared session, which may still serve another player or recorder. Android retains
 its React Native modal and Expo Video player.
-
-Use React Native's `StatusBar` API for app-owned status-bar changes. Expo's base
-Info.plist prebuild mod sets `UIViewControllerBasedStatusBarAppearance` to `false`,
-even though `app.config.ts` does not override the key. With that generated setting,
-native-stack `statusBarStyle` options raise an error.
 
 `shareFileFromSource` uses the same source registration to anchor UIKit's activity
 controller. Its promise completes when the native share flow finishes, keeping
