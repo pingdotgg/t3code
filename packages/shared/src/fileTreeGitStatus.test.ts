@@ -46,6 +46,32 @@ describe("workingTreeGitStatusByPath", () => {
     expect(byPath.get("src")).toBe("modified");
   });
 
+  it("does not paint a directory deleted when a same-named file was deleted", () => {
+    const byPath = workingTreeGitStatusByPath(
+      [
+        { path: "foo", insertions: 0, deletions: 0, status: "deleted" },
+        { path: "foo/", insertions: 0, deletions: 0, status: "untracked" },
+        { path: "foo/bar.ts", insertions: 0, deletions: 0, status: "untracked" },
+      ],
+      ["foo/", "foo/bar.ts"],
+    );
+
+    expect(byPath.get("foo/")).toBe("untracked");
+    expect(byPath.get("foo/bar.ts")).toBe("untracked");
+    expect(byPath.get("foo")).toBeUndefined();
+  });
+
+  it("still rolls a deleted file onto its parent when the file is gone from the tree", () => {
+    const byPath = workingTreeGitStatusByPath(
+      [{ path: "src/gone.ts", insertions: 0, deletions: 0, status: "deleted" }],
+      ["src/", "src/keep.ts"],
+    );
+
+    expect(byPath.get("src/gone.ts")).toBe("deleted");
+    expect(byPath.get("src/")).toBe("deleted");
+    expect(byPath.get("src/keep.ts")).toBeUndefined();
+  });
+
   it("rolls the strongest child status up onto ancestor directories", () => {
     const byPath = workingTreeGitStatusByPath(
       [
