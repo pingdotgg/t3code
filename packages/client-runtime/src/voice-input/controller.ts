@@ -1,5 +1,7 @@
 import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 
+import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcription.ts";
+
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
 export type VoiceInputPhase = "idle" | "preparing" | "recording" | "transcribing" | "error";
@@ -43,13 +45,11 @@ export interface VoiceRecorder {
 
 export type VoiceInputControllerDependencies = {
   readonly recorder: VoiceRecorder;
-  readonly isAvailable: () => boolean;
+  readonly getTranscriber: () => VoiceTranscriber | null;
   readonly requestPermission: () => Promise<{
     readonly granted: boolean;
     readonly canAskAgain: boolean;
   }>;
-  readonly prepareTranscription: () => Promise<string>;
-  readonly transcribeRecording: (uri: string, locale: string) => Promise<string>;
   readonly configureRecording: () => Promise<void>;
   readonly releaseRecording: () => Promise<void>;
   readonly deleteRecording: (uri: string) => void;
@@ -178,7 +178,8 @@ export class VoiceInputController {
   private state: VoiceInputState = IDLE_STATE;
   private operationToken = 0;
   private sessionToken: symbol | null = null;
-  private locale: string | null = null;
+  private transcription: PreparedVoiceTranscription | null = null;
+  private transcriptionAbortController: AbortController | null = null;
   private capturedDraft: VoiceDraftSnapshot | null = null;
   private recordingUri: string | null = null;
   private readonly ownedRecordingUris = new Set<string>();
@@ -208,11 +209,14 @@ export class VoiceInputController {
 
     this.sessionToken = sessionToken;
     const operationToken = ++this.operationToken;
+    const abortController = new AbortController();
+    this.transcriptionAbortController = abortController;
     this.setState({ phase: "preparing", error: null, errorAction: null });
 
     try {
-      if (!this.dependencies.isAvailable()) {
-        this.setError("Voice transcription is not available on this device.", null);
+      const transcriber = this.dependencies.getTranscriber();
+      if (!transcriber) {
+        this.setError("Voice transcription is not available.", null);
         return;
       }
 
@@ -227,7 +231,9 @@ export class VoiceInputController {
       }
 
       try {
-        this.locale = await runTranscriptionOperation(this.dependencies.prepareTranscription);
+        this.transcription = await runTranscriptionOperation(() =>
+          transcriber.prepare({ signal: abortController.signal }),
+        );
       } catch (error) {
         if (this.isCurrent(operationToken)) this.setError(preparationErrorMessage(error), "retry");
         return;
@@ -275,14 +281,14 @@ export class VoiceInputController {
         this.setState(IDLE_STATE);
         return;
       case "preparing":
-        this.operationToken += 1;
+        this.invalidateOperation();
         this.setState(IDLE_STATE);
         return;
       case "recording":
         this.discardRecording(null);
         return;
       case "transcribing":
-        this.operationToken += 1;
+        this.invalidateOperation();
         this.setState(IDLE_STATE);
         return;
     }
@@ -300,7 +306,7 @@ export class VoiceInputController {
 
   appMovedToBackground(): Promise<void> | void {
     if (this.state.phase === "preparing") {
-      this.operationToken += 1;
+      this.invalidateOperation();
       this.setError("Voice input stopped when the app moved to the background.", "retry");
       return;
     }
@@ -334,7 +340,7 @@ export class VoiceInputController {
       return;
     }
     if (this.state.phase === "preparing" || this.state.phase === "transcribing") {
-      this.operationToken += 1;
+      this.invalidateOperation();
       this.setState(IDLE_STATE);
     }
   }
@@ -354,18 +360,24 @@ export class VoiceInputController {
       this.recordingUri = completedUri ?? this.dependencies.recorder.uri ?? this.recordingUri;
       this.rememberRecordingUri(this.recordingUri);
       if (!this.isCurrent(operationToken)) return;
-      if (!this.recordingUri || !this.locale || !this.capturedDraft) {
+      if (
+        !this.recordingUri ||
+        !this.transcription ||
+        !this.transcriptionAbortController ||
+        !this.capturedDraft
+      ) {
         this.setError("Could not finish voice recording.", "retry");
         return;
       }
 
       const recordingUri = this.recordingUri;
-      const locale = this.locale;
+      const transcription = this.transcription;
+      const signal = this.transcriptionAbortController.signal;
       const capturedDraft = this.capturedDraft;
       let transcript: string;
       try {
         transcript = await runTranscriptionOperation(() =>
-          this.dependencies.transcribeRecording(recordingUri, locale),
+          transcription.transcribe(recordingUri, { signal }),
         );
       } catch (error) {
         if (this.isCurrent(operationToken)) {
@@ -379,7 +391,7 @@ export class VoiceInputController {
         capturedDraft,
         this.dependencies.readDraft(),
         transcript,
-        locale,
+        transcription.locale,
       );
       if (result.kind === "stale") {
         this.setError(
@@ -406,7 +418,7 @@ export class VoiceInputController {
   }
 
   private async discardRecording(error: string | null): Promise<void> {
-    this.operationToken += 1;
+    this.invalidateOperation();
     this.setState(
       error
         ? { phase: "error", error, errorAction: "retry" }
@@ -438,7 +450,8 @@ export class VoiceInputController {
     releaseSession(this.sessionToken);
     this.sessionToken = null;
     this.capturedDraft = null;
-    this.locale = null;
+    this.transcription = null;
+    this.transcriptionAbortController = null;
   }
 
   private rememberRecordingUri(uri: string | null): void {
@@ -453,6 +466,11 @@ export class VoiceInputController {
     } catch {
       // Final cleanup retries if the prompt release before transcription fails.
     }
+  }
+
+  private invalidateOperation(): void {
+    this.operationToken += 1;
+    this.transcriptionAbortController?.abort();
   }
 
   private isCurrent(operationToken: number): boolean {

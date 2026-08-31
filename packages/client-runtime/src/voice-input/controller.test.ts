@@ -10,6 +10,7 @@ import {
   type VoiceInputControllerDependencies,
   type VoiceRecorder,
 } from "./controller.ts";
+import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcription.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -26,6 +27,12 @@ class TestRecorder implements VoiceRecorder {
   readonly prepareToRecordAsync = vi.fn(async () => undefined);
   readonly record = vi.fn();
   readonly stop = vi.fn(async () => undefined);
+}
+
+function preparedTranscription(
+  transcribe: PreparedVoiceTranscription["transcribe"] = async () => "new text",
+): PreparedVoiceTranscription {
+  return { locale: "en-US", transcribe };
 }
 
 function draft(overrides: Partial<VoiceDraftSnapshot> = {}): VoiceDraftSnapshot {
@@ -48,10 +55,8 @@ function createHarness(
   const deleted: string[] = [];
   const dependencies: VoiceInputControllerDependencies = {
     recorder,
-    isAvailable: () => true,
+    getTranscriber: () => ({ prepare: async () => preparedTranscription() }),
     requestPermission: async () => ({ granted: true, canAskAgain: true }),
-    prepareTranscription: async () => "en-US",
-    transcribeRecording: async () => "new text",
     configureRecording: async () => undefined,
     releaseRecording: async () => undefined,
     deleteRecording: (uri) => deleted.push(uri),
@@ -148,7 +153,7 @@ describe("VoiceInputController", () => {
   beforeEach(() => resetVoiceInputGlobalsForTests());
 
   it("checks support and permission before recording", async () => {
-    const unsupported = createHarness({ isAvailable: () => false });
+    const unsupported = createHarness({ getTranscriber: () => null });
     await unsupported.controller.start();
     expect(unsupported.controller.currentState.error).toContain("not available");
     expect(unsupported.recorder.record).not.toHaveBeenCalled();
@@ -160,6 +165,65 @@ describe("VoiceInputController", () => {
     expect(denied.controller.currentState.errorAction).toBe("settings");
     expect(denied.recorder.record).not.toHaveBeenCalled();
   });
+
+  it.each(["permission", "preparation", "recording"] as const)(
+    "keeps the selected transcriber when preferences change during %s",
+    async (changeDuring) => {
+      const permission = deferred<{ granted: boolean; canAskAgain: boolean }>();
+      const permissionEntered = deferred<void>();
+      const preparation = deferred<void>();
+      const preparationEntered = deferred<void>();
+      const preparationSignals: AbortSignal[] = [];
+      const transcriptionSignals: AbortSignal[] = [];
+      const transcriber = (text: string): VoiceTranscriber => ({
+        prepare: async ({ signal }) => {
+          preparationSignals.push(signal);
+          preparationEntered.resolve(undefined);
+          await preparation.promise;
+          return preparedTranscription(async (_uri, { signal }) => {
+            transcriptionSignals.push(signal);
+            return text;
+          });
+        },
+      });
+      const first = transcriber("first choice");
+      const second = transcriber("second choice");
+      let selected = first;
+      const harness = createHarness({
+        getTranscriber: () => selected,
+        requestPermission: () => {
+          permissionEntered.resolve(undefined);
+          return permission.promise;
+        },
+      });
+
+      const starting = harness.controller.start();
+      await permissionEntered.promise;
+      if (changeDuring === "permission") selected = second;
+      permission.resolve({ granted: true, canAskAgain: true });
+      await preparationEntered.promise;
+      if (changeDuring === "preparation") selected = second;
+      preparation.resolve(undefined);
+      await starting;
+      if (changeDuring === "recording") selected = second;
+      await harness.controller.stop();
+
+      expect(harness.commits.map((commit) => commit.text)).toEqual(["hello first choice"]);
+
+      await harness.controller.start();
+      await harness.controller.stop();
+
+      expect(harness.commits.map((commit) => commit.text)).toEqual([
+        "hello first choice",
+        "hello second choice",
+      ]);
+      expect(preparationSignals).toHaveLength(2);
+      expect(transcriptionSignals).toHaveLength(2);
+      expect(transcriptionSignals[0]).toBe(preparationSignals[0]);
+      expect(transcriptionSignals[1]).toBe(preparationSignals[1]);
+      expect(preparationSignals[1]).not.toBe(preparationSignals[0]);
+    },
+  );
 
   it("blocks submit while voice input can still change the draft", () => {
     expect(voiceInputBlocksSubmission({ phase: "preparing", error: null, errorAction: null })).toBe(
@@ -198,15 +262,70 @@ describe("VoiceInputController", () => {
     expect(harness.deleted).toEqual(["file:///voice.m4a"]);
   });
 
-  it("keeps the draft unchanged when transcription is canceled", async () => {
+  it.each(["cancel", "dispose", "ownerChanged"] as const)(
+    "holds the session after %s until non-abortable transcription settles",
+    async (action) => {
+      const transcription = deferred<string>();
+      const transcriptionEntered = deferred<AbortSignal>();
+      const harness = createHarness({
+        getTranscriber: () => ({
+          prepare: async () =>
+            preparedTranscription((_uri, { signal }) => {
+              transcriptionEntered.resolve(signal);
+              return transcription.promise;
+            }),
+        }),
+      });
+      await harness.controller.start();
+      const stopping = harness.controller.stop();
+      const signal = await transcriptionEntered.promise;
+      expect(signal.aborted).toBe(false);
+      if (action === "ownerChanged") {
+        harness.setDraft(draft({ ownerKey: "environment:other-thread" }));
+      }
+      harness.controller[action]();
+      expect(signal.aborted).toBe(true);
+
+      const next = createHarness();
+      await next.controller.start();
+      expect(next.controller.currentState.error).toContain("already active");
+      expect(next.recorder.record).not.toHaveBeenCalled();
+
+      transcription.resolve("late text");
+      await stopping;
+
+      expect(harness.commits).toEqual([]);
+      expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+      expect(harness.controller.currentState.phase).toBe("idle");
+
+      await next.controller.start();
+      expect(next.controller.currentState.phase).toBe("recording");
+      await next.controller.interruptRecording();
+    },
+  );
+
+  it("cancels an in-flight transcriber that rejects when its signal aborts", async () => {
     const transcription = deferred<string>();
-    const harness = createHarness({ transcribeRecording: () => transcription.promise });
+    const transcriptionEntered = deferred<AbortSignal>();
+    const harness = createHarness({
+      getTranscriber: () => ({
+        prepare: async () =>
+          preparedTranscription((_uri, { signal }) => {
+            signal.addEventListener("abort", () => transcription.reject(new Error("aborted")), {
+              once: true,
+            });
+            transcriptionEntered.resolve(signal);
+            return transcription.promise;
+          }),
+      }),
+    });
     await harness.controller.start();
     const stopping = harness.controller.stop();
+    const signal = await transcriptionEntered.promise;
     harness.controller.cancel();
-    transcription.resolve("late text");
     await stopping;
 
+    expect(signal.aborted).toBe(true);
     expect(harness.commits).toEqual([]);
     expect(harness.deleted).toEqual(["file:///voice.m4a"]);
     expect(harness.controller.currentState.phase).toBe("idle");
@@ -218,10 +337,13 @@ describe("VoiceInputController", () => {
       releaseRecording: async () => {
         events.push("released");
       },
-      transcribeRecording: async () => {
-        events.push("transcribed");
-        return "done";
-      },
+      getTranscriber: () => ({
+        prepare: async () =>
+          preparedTranscription(async () => {
+            events.push("transcribed");
+            return "done";
+          }),
+      }),
     });
     await harness.controller.start();
     await harness.controller.stop();
@@ -253,9 +375,19 @@ describe("VoiceInputController", () => {
 
   it("ignores a late transcript after the draft owner changes", async () => {
     const transcription = deferred<string>();
-    const harness = createHarness({ transcribeRecording: () => transcription.promise });
+    const transcriptionEntered = deferred<void>();
+    const harness = createHarness({
+      getTranscriber: () => ({
+        prepare: async () =>
+          preparedTranscription(() => {
+            transcriptionEntered.resolve(undefined);
+            return transcription.promise;
+          }),
+      }),
+    });
     await harness.controller.start();
     const stopping = harness.controller.stop();
+    await transcriptionEntered.promise;
     harness.setDraft(draft({ ownerKey: "environment:other-thread" }));
     transcription.resolve("late text");
     await stopping;
@@ -264,18 +396,29 @@ describe("VoiceInputController", () => {
     expect(harness.controller.currentState.error).toContain("draft changed");
   });
 
-  it("keeps the app-wide session locked until canceled transcription work settles", async () => {
-    const preparation = deferred<string>();
-    const first = createHarness({ prepareTranscription: () => preparation.promise });
+  it("keeps the app-wide session locked until canceled preparation settles", async () => {
+    const preparation = deferred<PreparedVoiceTranscription>();
+    const preparationEntered = deferred<AbortSignal>();
+    const first = createHarness({
+      getTranscriber: () => ({
+        prepare: ({ signal }) => {
+          preparationEntered.resolve(signal);
+          return preparation.promise;
+        },
+      }),
+    });
     const firstStart = first.controller.start();
+    const signal = await preparationEntered.promise;
     first.controller.cancel();
+    expect(signal.aborted).toBe(true);
 
     const blocked = createHarness();
     await blocked.controller.start();
     expect(blocked.controller.currentState.error).toContain("already active");
 
-    preparation.resolve("en-US");
+    preparation.resolve(preparedTranscription());
     await firstStart;
+    expect(first.recorder.record).not.toHaveBeenCalled();
     blocked.controller.cancel();
 
     const next = createHarness();
@@ -285,21 +428,39 @@ describe("VoiceInputController", () => {
   });
 
   it("does not start the microphone for an owner that changed during preparation", async () => {
-    const preparation = deferred<string>();
-    const harness = createHarness({ prepareTranscription: () => preparation.promise });
+    const preparation = deferred<PreparedVoiceTranscription>();
+    const preparationEntered = deferred<void>();
+    const harness = createHarness({
+      getTranscriber: () => ({
+        prepare: () => {
+          preparationEntered.resolve(undefined);
+          return preparation.promise;
+        },
+      }),
+    });
     const starting = harness.controller.start();
+    await preparationEntered.promise;
     harness.setDraft(draft({ ownerKey: "environment:other-thread", text: "other draft" }));
-    preparation.resolve("en-US");
+    preparation.resolve(preparedTranscription());
     await starting;
 
     expect(harness.recorder.record).not.toHaveBeenCalled();
     expect(harness.controller.currentState.error).toContain("no longer available");
   });
 
-  it("discards native cap errors and audio interruptions without transcribing", async () => {
-    const transcribeRecording = vi.fn(async () => "ignored");
-    const harness = createHarness({ transcribeRecording });
+  it("discards recorder errors and audio interruptions without transcribing", async () => {
+    const transcribe = vi.fn(async () => "ignored");
+    const preparationEntered = deferred<AbortSignal>();
+    const harness = createHarness({
+      getTranscriber: () => ({
+        prepare: async ({ signal }) => {
+          preparationEntered.resolve(signal);
+          return preparedTranscription(transcribe);
+        },
+      }),
+    });
     await harness.controller.start();
+    const signal = await preparationEntered.promise;
     harness.recorder.uri = "file:///reset-empty.m4a";
     await harness.controller.handleRecorderStatus({
       isFinished: true,
@@ -309,17 +470,28 @@ describe("VoiceInputController", () => {
     });
 
     expect(harness.commits).toEqual([]);
-    expect(transcribeRecording).not.toHaveBeenCalled();
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(signal.aborted).toBe(true);
     expect(harness.controller.currentState.error).toBe("Audio route changed");
     expect(harness.deleted).toEqual(["file:///voice.m4a", "file:///reset-empty.m4a"]);
   });
 
   it("cancels preparation when the app reaches the background", async () => {
-    const preparation = deferred<string>();
-    const harness = createHarness({ prepareTranscription: () => preparation.promise });
+    const preparation = deferred<PreparedVoiceTranscription>();
+    const preparationEntered = deferred<AbortSignal>();
+    const harness = createHarness({
+      getTranscriber: () => ({
+        prepare: ({ signal }) => {
+          preparationEntered.resolve(signal);
+          return preparation.promise;
+        },
+      }),
+    });
     const starting = harness.controller.start();
+    const signal = await preparationEntered.promise;
     harness.controller.appMovedToBackground();
-    preparation.resolve("en-US");
+    expect(signal.aborted).toBe(true);
+    preparation.resolve(preparedTranscription());
     await starting;
 
     expect(harness.recorder.record).not.toHaveBeenCalled();

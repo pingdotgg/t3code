@@ -1,10 +1,13 @@
 import AppleTranscription from "@react-native-ai/apple/src/NativeAppleTranscription";
 import { File } from "expo-file-system";
 
-import { VoiceTranscriptionError } from "./voiceTranscription.types";
-
-export { VoiceTranscriptionError } from "./voiceTranscription.types";
-export type { VoiceTranscriptionErrorCode } from "./voiceTranscription.types";
+import {
+  VoiceTranscriptionError,
+  throwIfVoiceTranscriptionAborted,
+  type PreparedVoiceTranscription,
+  type VoiceTranscriber,
+  type VoiceTranscriptionOptions,
+} from "@t3tools/client-runtime/voice-input";
 
 function getDeviceLocale(): string {
   return Intl.DateTimeFormat().resolvedOptions().locale;
@@ -30,12 +33,17 @@ function getNativeErrorCode(error: unknown): string | undefined {
   return typeof error.code === "string" ? error.code : undefined;
 }
 
-export function isVoiceTranscriptionAvailable(): boolean {
-  return AppleTranscription.isAvailable(getDeviceLocale());
+export function getLocalVoiceTranscriber(): VoiceTranscriber | null {
+  const locale = getDeviceLocale();
+  if (!AppleTranscription.isAvailable(locale)) return null;
+  return { prepare: (options) => prepareVoiceTranscription(locale, options) };
 }
 
-export async function prepareVoiceTranscription(): Promise<string> {
-  const locale = getDeviceLocale();
+async function prepareVoiceTranscription(
+  locale: string,
+  { signal }: VoiceTranscriptionOptions,
+): Promise<PreparedVoiceTranscription> {
+  throwIfVoiceTranscriptionAborted(signal);
   if (!AppleTranscription.isAvailable(locale)) {
     throw new VoiceTranscriptionError(
       "unavailable",
@@ -44,8 +52,14 @@ export async function prepareVoiceTranscription(): Promise<string> {
   }
 
   try {
-    return await AppleTranscription.prepare(locale);
+    const supportedLocale = await AppleTranscription.prepare(locale);
+    throwIfVoiceTranscriptionAborted(signal);
+    return {
+      locale: supportedLocale,
+      transcribe: (uri, options) => transcribeVoiceRecording(uri, supportedLocale, options),
+    };
   } catch (error) {
+    throwIfVoiceTranscriptionAborted(signal);
     if (getNativeErrorCode(error) === "AppleTranscriptionUnsupportedLocale") {
       throw new VoiceTranscriptionError(
         "unsupported-locale",
@@ -62,15 +76,23 @@ export async function prepareVoiceTranscription(): Promise<string> {
   }
 }
 
-export async function transcribeVoiceRecording(uri: string, locale: string): Promise<string> {
+async function transcribeVoiceRecording(
+  uri: string,
+  locale: string,
+  { signal }: VoiceTranscriptionOptions,
+): Promise<string> {
   try {
+    throwIfVoiceTranscriptionAborted(signal);
     const audio = await new File(uri).arrayBuffer();
+    throwIfVoiceTranscriptionAborted(signal);
     const result = await AppleTranscription.transcribe(audio, locale);
+    throwIfVoiceTranscriptionAborted(signal);
     return result.segments
       .map((segment) => segment.text)
       .join(" ")
       .trim();
   } catch (error) {
+    throwIfVoiceTranscriptionAborted(signal);
     throw wrapError("transcription-failed", "Voice transcription failed.", error);
   }
 }

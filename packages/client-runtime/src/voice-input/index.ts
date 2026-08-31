@@ -11,3 +11,11 @@ export {
   type VoiceRecorder,
   type VoiceRecorderStatus,
 } from "./controller.ts";
+export {
+  VoiceTranscriptionError,
+  throwIfVoiceTranscriptionAborted,
+  type PreparedVoiceTranscription,
+  type VoiceTranscriber,
+  type VoiceTranscriptionErrorCode,
+  type VoiceTranscriptionOptions,
+} from "./transcription.ts";

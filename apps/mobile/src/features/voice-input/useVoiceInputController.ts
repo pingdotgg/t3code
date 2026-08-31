@@ -13,11 +13,7 @@ import { AppState } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
-import {
-  isVoiceTranscriptionAvailable,
-  prepareVoiceTranscription,
-  transcribeVoiceRecording,
-} from "../../native/voiceTranscription";
+import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
 import {
   VoiceInputController,
   VOICE_RECORDING_LIMIT_SECONDS,
@@ -103,13 +99,11 @@ export function useVoiceInputController(input: {
   if (!controllerRef.current) {
     controllerRef.current = new VoiceInputController({
       recorder,
-      isAvailable: isVoiceTranscriptionAvailable,
+      getTranscriber: getLocalVoiceTranscriber,
       requestPermission: async () => {
         const permission = await requestRecordingPermissionsAsync();
         return { granted: permission.granted, canAskAgain: permission.canAskAgain };
       },
-      prepareTranscription: prepareVoiceTranscription,
-      transcribeRecording: transcribeVoiceRecording,
       configureRecording: configureVoiceRecordingAudio,
       releaseRecording: releaseVoiceRecordingAudio,
       deleteRecording: (uri) => new File(uri).delete(),
@@ -209,7 +203,7 @@ export function useVoiceInputController(input: {
   const cancel = useCallback(() => controller.cancel(), [controller]);
 
   return {
-    isAvailable: isVoiceTranscriptionAvailable(),
+    isAvailable: getLocalVoiceTranscriber() !== null,
     state,
     audioLevels,
     elapsedSeconds,

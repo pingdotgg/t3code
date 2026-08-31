@@ -14,12 +14,19 @@ draft selection. Applications import it through the [voice-input entry point][vo
 `@t3tools/client-runtime/voice-input`. Its dependencies separate capture from transcription; the
 controller imports neither React Native nor an Apple transcription API.
 
+The shared [transcription contract][transcription] defines `VoiceTranscriber`,
+`PreparedVoiceTranscription`, and transcription errors. The controller calls `getTranscriber()` once
+at the start of an operation, before asking for microphone permission. Preparation returns a resolved
+locale and a bound `transcribe` function. The controller retains that result for the recording, so a
+selection change cannot prepare with one implementation and transcribe with another.
+
 [`useVoiceInputController`][hook] supplies Expo audio capture, microphone permissions, audio-session
 management, waveform samples, and app and navigation lifecycle handling. It normalizes Expo's
 `mediaServicesDidReset` into a generic recorder error. [`voiceTranscription.ios.ts`][ios] adapts
-`@react-native-ai/apple`, including locale preparation and error translation. The other-platform
-binding reports local transcription as unavailable. That result describes the local implementation,
-not whether a client could use an environment's transcription service.
+`@react-native-ai/apple` through `getLocalVoiceTranscriber()`, capturing the requested device locale
+and binding the prepared transcriber to Apple's resolved locale. The other-platform binding returns
+no local transcriber. That result describes the local implementation, not whether a client could use
+an environment's transcription service.
 
 Mobile's [`voiceInputPresentation.ts`][presentation] maps shared state to toolbar labels and actions.
 Waveform and toolbar rendering stay in mobile. The composer edits draft text without selecting a
@@ -27,9 +34,11 @@ speech vendor.
 Recording captures the draft owner, revision, text, and selection. A late transcript cannot overwrite
 a different or edited draft. Only normal message submission sends the resulting text to an agent.
 
-Cancellation invalidates the operation immediately. The current native binding cannot abort an
-in-flight transcription, so the controller retains its session until that work settles, ignores its
-result, and cleans up the recording.
+Each operation passes one `AbortSignal` through preparation and transcription. Cancellation
+invalidates the operation and aborts that signal immediately. Implementations settle their promises
+only after their underlying work stops. The Apple binding checks cancellation between asynchronous
+steps but cannot interrupt an in-flight native request. The controller retains its session until
+that work settles, ignores its result, and cleans up the recording.
 
 ## Ownership decisions
 
@@ -75,12 +84,13 @@ existing chat-attachment retention is not a transcription cleanup policy.
 
 Future service selection and environment requests belong alongside the controller in
 `packages/client-runtime`, with wire contracts in `packages/contracts`. Capture and native local
-recognition remain client-specific. The current injected transcription functions provide the
-boundary for the local release; introducing a second implementation is the point to bind preparation
-and transcription into a selected session.
+recognition remain client-specific. An environment-backed transcriber implements the same shared
+contract, with its environment and service bound when selected. The controller does not own service
+credentials, provider SDKs, or transport selection.
 
 [controller]: ../../packages/client-runtime/src/voice-input/controller.ts
 [voice-input]: ../../packages/client-runtime/src/voice-input/index.ts
+[transcription]: ../../packages/client-runtime/src/voice-input/transcription.ts
 [hook]: ../../apps/mobile/src/features/voice-input/useVoiceInputController.ts
 [presentation]: ../../apps/mobile/src/features/voice-input/voiceInputPresentation.ts
 [ios]: ../../apps/mobile/src/native/voiceTranscription.ios.ts
