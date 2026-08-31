@@ -1,4 +1,3 @@
-import { useComposerPlayground } from "./ComposerPlayground.local";
 import type {
   ApprovalRequestId,
   ChatFileAttachment,
@@ -735,7 +734,6 @@ export interface ChatComposerProps {
 // --------------------------------------------------------------------------
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
-  props = useComposerPlayground(props);
   const {
     composerDraftTarget,
     environmentId,
