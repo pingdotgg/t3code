@@ -20,6 +20,7 @@ import {
 } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useTheme } from "~/hooks/useTheme";
+import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { cn } from "~/lib/utils";
 
 import {
@@ -36,6 +37,7 @@ interface FileBreadcrumbsProps {
   readonly onOpenFile: (relativePath: string) => void;
   readonly projectName: string;
   readonly relativePath: string;
+  readonly workspaceMutationId: string | null;
 }
 
 function pathLabel(path: string, projectName: string): string {
@@ -78,8 +80,14 @@ function BreadcrumbMenuContent(props: {
   readonly onOpenFile: (path: string) => void;
   readonly projectName: string;
   readonly rootPath: string;
+  readonly workspaceMutationId: string | null;
 }) {
   const entriesQuery = useProjectEntriesQuery(props.environmentId, props.cwd);
+  useWorkspaceMutationRefresh({
+    mutationId: props.workspaceMutationId,
+    refresh: entriesQuery.refresh,
+    resourceKey: `files:${props.environmentId}:${props.cwd}`,
+  });
   const { resolvedTheme } = useTheme();
   const entries = entriesQuery.data?.entries ?? [];
   const children = useMemo(
@@ -250,6 +258,7 @@ function DirectoryBreadcrumb(props: FileBreadcrumbsProps & { readonly crumb: Fil
           onOpenFile={props.onOpenFile}
           projectName={props.projectName}
           rootPath={props.crumb.path}
+          workspaceMutationId={props.workspaceMutationId}
         />
       ) : null}
     </Menu>

@@ -890,6 +890,7 @@ export default function FilePreviewPanel({
                 onOpenFile={onOpenFile}
                 projectName={projectName}
                 relativePath={relativePath}
+                workspaceMutationId={workspaceMutationId}
               />
             </div>
           </ScrollArea>
