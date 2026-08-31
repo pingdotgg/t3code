@@ -30,6 +30,7 @@ dist-electron/
 .electron-runtime/
 .showcase/
 apps/mobile/.showcase/
+apps/mobile/.generated/
 artifacts/app-store/screenshots/
 .github/pr-assets/
 native/**/target/
