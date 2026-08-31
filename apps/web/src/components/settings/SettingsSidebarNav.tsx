@@ -94,7 +94,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       return SETTINGS_SEARCH_ITEMS;
     }
     return SETTINGS_SEARCH_ITEMS.filter((item) => item.id !== "wsl-backend");
-  }, [desktopWsl.data]);
+  }, [desktopWsl.data, desktopWsl.error]);
   const results = useMemo(() => searchSettings(query, searchableItems), [query, searchableItems]);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
