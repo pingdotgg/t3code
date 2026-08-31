@@ -12,6 +12,16 @@ type SlashSearchItem = Extract<
   { type: "slash-command" | "provider-slash-command" | "skill" }
 >;
 
+export function slashCommandItemsForPromptPosition(
+  items: ReadonlyArray<SlashSearchItem>,
+  isAtPromptStart: boolean,
+): SlashSearchItem[] {
+  if (isAtPromptStart) {
+    return [...items];
+  }
+  return items.filter((item) => item.type !== "skill");
+}
+
 function scoreSlashCommandItem(item: SlashSearchItem, query: string): number | null {
   if (item.type === "skill") {
     if (query === "skill") {
