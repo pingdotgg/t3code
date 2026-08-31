@@ -19,9 +19,7 @@ const REPLAY_DIRECTORY_NAME = "dpop-replay";
 const replayBucketPattern = /^(0|[1-9][0-9]*)$/;
 const legacyReplayMarkerPattern = /^dpop-proof-[A-Za-z0-9_-]{43}\.bin$/;
 
-const dpopReplayStoreErrorContext = {
-  cause: Schema.Defect(),
-};
+const dpopReplayStoreSetupStage = Schema.Literals(["make-directory", "set-permissions"]);
 const dpopReplayStoreClaimStage = Schema.Literals([
   "ensure-bucket",
   "legacy-lookup",
@@ -36,16 +34,20 @@ const dpopReplayStorePruneStage = Schema.Literals([
 
 export class DpopReplayStoreSetupError extends Schema.TaggedErrorClass<DpopReplayStoreSetupError>()(
   "DpopReplayStoreSetupError",
-  dpopReplayStoreErrorContext,
+  {
+    cause: Schema.Defect(),
+    stage: dpopReplayStoreSetupStage,
+    resource: Schema.String,
+  },
 ) {
   override get message(): string {
-    return "Failed to initialize DPoP replay storage.";
+    return `Failed to ${this.stage} for DPoP replay storage at ${this.resource}.`;
   }
 }
 
 export class DpopReplayStoreKeyCalculationError extends Schema.TaggedErrorClass<DpopReplayStoreKeyCalculationError>()(
   "DpopReplayStoreKeyCalculationError",
-  dpopReplayStoreErrorContext,
+  { cause: Schema.Defect() },
 ) {
   override get message(): string {
     return "Failed to calculate DPoP replay key.";
@@ -133,10 +135,26 @@ export const make = Effect.gen(function* () {
     milliseconds: Duration.toMillis(LEGACY_REPLAY_RETENTION),
   });
 
-  yield* Effect.gen(function* () {
-    yield* fileSystem.makeDirectory(replayDirectory, { recursive: true });
-    yield* fileSystem.chmod(replayDirectory, 0o700);
-  }).pipe(Effect.mapError((cause) => new DpopReplayStoreSetupError({ cause })));
+  yield* fileSystem.makeDirectory(replayDirectory, { recursive: true }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DpopReplayStoreSetupError({
+          cause,
+          stage: "make-directory",
+          resource: replayDirectory,
+        }),
+    ),
+  );
+  yield* fileSystem.chmod(replayDirectory, 0o700).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DpopReplayStoreSetupError({
+          cause,
+          stage: "set-permissions",
+          resource: replayDirectory,
+        }),
+    ),
+  );
 
   const ensureBucketDirectory = (bucket: number) => {
     const directory = path.join(replayDirectory, String(bucket));
