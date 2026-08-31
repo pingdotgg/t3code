@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { MessageId, TurnId } from "@t3tools/contracts";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
@@ -828,6 +829,7 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
     const finalRow = rows.find((row) => row.id === "assistant-final-entry");
     expect(finalRow?.kind === "message" && finalRow.showAssistantMeta).toBe(true);
+    expect(rows.find((row) => row.kind === "working")).toMatchObject({ showThinking: true });
   });
 
   it("does not fold the active in-progress turn", () => {
@@ -942,6 +944,7 @@ describe("deriveMessagesTimelineRows", () => {
     });
 
     expect(rows.map((row) => row.kind)).toEqual(["working", "work-live"]);
+    expect(rows.find((row) => row.kind === "working")).toMatchObject({ showThinking: false });
     expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
       entry: { id: "running-command" },
       groupedEntries: [
@@ -1375,6 +1378,7 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(assistantRow?.showAssistantMeta).toBe(false);
     expect(assistantRow?.showAssistantCopyButton).toBe(false);
+    expect(rows.find((row) => row.kind === "working")).toMatchObject({ showThinking: false });
   });
 
   it.each([
@@ -1543,6 +1547,54 @@ describe("deriveMessagesTimelineRows", () => {
 });
 
 describe("computeStableMessagesTimelineRows", () => {
+  it.each(["", " \n"])("replaces Thinking when assistant content grows from %j", (text) => {
+    const startedAt = "2026-01-01T00:00:00Z";
+    const turnId = TurnId.make("turn-1");
+    const input = {
+      runningTurnId: turnId,
+      isWorking: true,
+      activeTurnStartedAt: startedAt,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    };
+    const assistantEntry = {
+      id: "assistant-entry",
+      kind: "message" as const,
+      createdAt: startedAt,
+      message: {
+        id: MessageId.make("assistant-1"),
+        role: "assistant" as const,
+        text,
+        turnId,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+        streaming: true,
+      },
+    };
+    const initial = computeStableMessagesTimelineRows(
+      deriveMessagesTimelineRows({ ...input, timelineEntries: [assistantEntry] }),
+      { byId: new Map(), result: [] },
+    );
+    const updated = computeStableMessagesTimelineRows(
+      deriveMessagesTimelineRows({
+        ...input,
+        timelineEntries: [
+          {
+            ...assistantEntry,
+            message: { ...assistantEntry.message, text: "I will inspect the repository." },
+          },
+        ],
+      }),
+      initial,
+    );
+
+    const initialWorking = initial.byId.get("working-indicator-row");
+    const updatedWorking = updated.byId.get("working-indicator-row");
+    expect(initialWorking).toMatchObject({ showThinking: true });
+    expect(updatedWorking).toMatchObject({ showThinking: false });
+    expect(updatedWorking).not.toBe(initialWorking);
+  });
+
   it("returns the previous result when row order and content are unchanged", () => {
     const firstUserMessage = {
       id: "user-1" as never,
