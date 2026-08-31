@@ -289,10 +289,13 @@ export function NewTaskDraftScreen(props: {
     if (preventRemove || submitNavigationAction === null) {
       return;
     }
-    // setSubmitting(false) does not release the guard synchronously. Navigate
-    // after usePreventRemove has committed, for both sent and queued tasks.
-    setSubmitNavigationAction(null);
-    (navigation.getParent() ?? navigation).dispatch(submitNavigationAction);
+    // Give the guard update a frame to reach the parent sheet before navigating,
+    // just like the project-picker fallback below.
+    const frame = requestAnimationFrame(() => {
+      setSubmitNavigationAction(null);
+      (navigation.getParent() ?? navigation).dispatch(submitNavigationAction);
+    });
+    return () => cancelAnimationFrame(frame);
   }, [navigation, preventRemove, submitNavigationAction]);
   const hasImportedIncomingShare = Boolean(
     props.incomingShareId &&
