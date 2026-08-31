@@ -1831,7 +1831,7 @@ describe("buildThreadFeed", () => {
     expect(collapsed[1]).toMatchObject({ type: "turn-fold", label: "Worked for 17s" });
   });
 
-  it("folds assistant messages between the first and terminal messages", () => {
+  it("keeps a substantive answer visible before trailing provider commentary", () => {
     const turnId = TurnId.make("turn-1");
     const thread = makeThread({
       id: ThreadId.make("thread-middle-message"),
@@ -1849,7 +1849,7 @@ describe("buildThreadFeed", () => {
         {
           id: MessageId.make("assistant-first"),
           role: "assistant",
-          text: "The main result is ready.",
+          text: "The requested migration is complete, and all targeted checks now pass.",
           turnId,
           streaming: false,
           createdAt: "2026-04-01T00:00:01.000Z",
@@ -1858,7 +1858,7 @@ describe("buildThreadFeed", () => {
         {
           id: MessageId.make("assistant-middle"),
           role: "assistant",
-          text: "I am checking one more detail.",
+          text: "One final check is still running.",
           turnId,
           streaming: false,
           createdAt: "2026-04-01T00:00:03.000Z",
@@ -1867,7 +1867,7 @@ describe("buildThreadFeed", () => {
         {
           id: MessageId.make("assistant-final"),
           role: "assistant",
-          text: "Verification finished.",
+          text: "Done.",
           turnId,
           streaming: false,
           createdAt: "2026-04-01T00:00:05.000Z",
@@ -1881,7 +1881,7 @@ describe("buildThreadFeed", () => {
 
     expect(rows.map((entry) => entry.id)).toEqual([
       "assistant-first",
-      "turn-fold:turn-1",
+      "assistant-middle",
       "assistant-final",
     ]);
   });
