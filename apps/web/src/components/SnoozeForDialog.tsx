@@ -1,5 +1,5 @@
 import { resolveSnoozeForDefault } from "@t3tools/client-runtime/state/thread-settled";
-import { type FormEvent, useState, useSyncExternalStore } from "react";
+import { type FormEvent, useEffect, useState, useSyncExternalStore } from "react";
 
 import {
   closeSnoozeForDialog,
@@ -94,6 +94,16 @@ export function SnoozeForDialogHost() {
     readSnoozeForDialogState,
     readSnoozeForDialogState,
   );
+  const [closingRequest, setClosingRequest] = useState<Extract<
+    SnoozeForDialogState,
+    { readonly status: "open" }
+  > | null>(null);
+
+  useEffect(() => {
+    if (state.status === "open") setClosingRequest(state);
+  }, [state]);
+
+  const request = state.status === "open" ? state : closingRequest;
 
   return (
     <Dialog
@@ -101,9 +111,12 @@ export function SnoozeForDialogHost() {
       onOpenChange={(open) => {
         if (!open) closeSnoozeForDialog();
       }}
+      onOpenChangeComplete={(open) => {
+        if (!open) setClosingRequest(null);
+      }}
     >
       <DialogPopup className="max-w-sm">
-        {state.status === "open" ? <SnoozeForForm key={state.id} request={state} /> : null}
+        {request ? <SnoozeForForm key={request.id} request={request} /> : null}
       </DialogPopup>
     </Dialog>
   );
