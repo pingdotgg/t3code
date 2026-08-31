@@ -530,6 +530,36 @@ describe("CheckpointReactor", () => {
     ).toBe("v2\n");
   });
 
+  it("skips checkpoint capture when git metadata is incomplete", async () => {
+    const invalidCwd = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-invalid-git-"));
+    NodeFS.mkdirSync(NodePath.join(invalidCwd, ".git"));
+    tempDirs.push(invalidCwd);
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      projectWorkspaceRoot: invalidCwd,
+      threadWorktreePath: invalidCwd,
+      providerSessionCwd: invalidCwd,
+    });
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-invalid-git"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-invalid-git"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(
+      thread?.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
+    ).toBe(false);
+  });
+
   it("refreshes local git status state on turn completion using the session cwd", async () => {
     const gitStatusRefreshCalls: string[] = [];
     const harness = await createHarness({
