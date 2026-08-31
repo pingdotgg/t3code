@@ -63,11 +63,11 @@ export function workingTreeGitStatusByPath(
     if (normalized.length === 0) continue;
     assign(normalized, status);
     if (status !== "untracked" || !file.path.endsWith("/")) continue;
-    for (const treePath of treePaths) {
-      const treeNormalized = normalizeGitTreePath(treePath);
-      if (treeNormalized.length === 0) continue;
+    for (const [treeNormalized, originals] of originalsByNormalized) {
       if (!isPathUnderGitTreePrefix(treeNormalized, normalized)) continue;
-      byPath.set(treePath, preferFileTreeGitStatus(byPath.get(treePath), "untracked"));
+      for (const original of originals) {
+        byPath.set(original, preferFileTreeGitStatus(byPath.get(original), "untracked"));
+      }
     }
   }
 

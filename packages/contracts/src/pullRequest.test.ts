@@ -252,6 +252,15 @@ describe("naming a repository for pull request operations", () => {
     ).toBe("checkout");
   });
 
+  it("keeps an Azure DevOps repository whose name is `_git`", () => {
+    expect(
+      pullRequestRepositoryOf({
+        provider: "azure-devops",
+        displayName: "contoso/payments/_git/_git",
+      }),
+    ).toBe("_git");
+  });
+
   it("keeps a GitLab repository's full path", () => {
     expect(
       pullRequestRepositoryOf({

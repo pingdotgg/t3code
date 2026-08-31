@@ -129,11 +129,12 @@ export default function FileBrowserPanel({
   const refreshGitStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
   const handleRefresh = useCallback(() => {
     entriesQuery.refresh();
+    onRefreshSelectedFile?.();
     void refreshGitStatus({
       environmentId,
       input: { cwd },
     });
-  }, [cwd, entriesQuery, environmentId, refreshGitStatus]);
+  }, [cwd, entriesQuery, environmentId, onRefreshSelectedFile, refreshGitStatus]);
   const entries = entriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
   const entryKinds = useMemo(
     () => new Map(entries.map((entry) => [entry.path, entry.kind] as const)),
@@ -286,10 +287,6 @@ export default function FileBrowserPanel({
       return;
     }
     search.setValue(value);
-  };
-  const handleRefresh = () => {
-    entriesQuery.refresh();
-    onRefreshSelectedFile?.();
   };
   useWorkspaceMutationRefresh({
     mutationId: workspaceMutationId,

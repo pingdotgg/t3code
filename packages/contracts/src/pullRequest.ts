@@ -1031,8 +1031,8 @@ export function pullRequestHostOf(
  *
  * Azure DevOps is the exception: `az repos pr list --repository` takes a repository name and
  * takes the organisation and project from the checkout it detects — so the recorded
- * `org/project/_git/repo` path is refused. Its name is the last segment, which is what this
- * hands over.
+ * `org/project/_git/repo` path is refused. Its name is the last path segment after the `_git`
+ * separator, including a repository whose name is itself `_git`.
  *
  * Shared so a link or thread that opens a change request names the repository the same way
  * `requireProject` will check it, rather than sending a path the host cannot be asked with.
@@ -1050,7 +1050,7 @@ export function pullRequestRepositoryOf(
 ): string | null {
   if (!identity) return null;
   if (identity.provider === "azure-devops") {
-    const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "_git");
+    const segments = (identity.displayName ?? "").split("/");
     return identity.name || segments.at(-1) || null;
   }
   if (identity.displayName) return identity.displayName;
