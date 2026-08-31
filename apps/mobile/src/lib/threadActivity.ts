@@ -1512,10 +1512,8 @@ function appendToolGroupRows(
     ),
     hasFailure: activities.findLast((activity) => activity.toolLike)?.status === "failure",
     live,
-    shimmer:
-      isWorking &&
-      latestActivity.lifecycleStatus === "inProgress" &&
-      latestActivity.turnId === unsettledTurnId,
+    // Match the live label until the turn or contiguous tool run settles.
+    shimmer: live,
   });
   if (!expanded) {
     return;
