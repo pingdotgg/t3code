@@ -17,6 +17,7 @@ subpath. The package intentionally has no root export.
 | `relay`               | Managed relay API and environment discovery                      |
 | `rpc`                 | HTTP/RPC clients, protocol, sessions, and subscriptions          |
 | `state/<domain>`      | Focused shared state, retention, reducers, and Atom constructors |
+| `voice-input`         | Recording lifecycle, draft ownership, and transcript insertion   |
 
 ## Dependency direction
 
@@ -24,6 +25,9 @@ Platform applications provide `platform` services. `connection` composes those
 capabilities with `authorization`, `relay`, and `rpc` to supervise environment
 sessions. Independent `state` modules consume the connection registry and expose
 focused state or Atom constructors to application-owned runtimes.
+
+The `voice-input` controller accepts capture and transcription callbacks. Applications
+provide recorder events, permissions, native bindings, and presentation.
 
 Applications should import the narrowest relevant subpath. There is no broad
 `state` export: use domain paths such as `state/shell`, `state/threads`,

@@ -8,18 +8,22 @@ devices. Environment-provided transcription and transcription on web and desktop
 
 ## Current boundaries
 
-[`VoiceInputController`][controller] owns preparation, recording, transcription, cancellation,
-temporary-file cleanup, and insertion into the captured draft selection. Its dependencies separate
-the recorder from the functions that prepare transcription and transcribe a recording. The
+The shared [`VoiceInputController`][controller] in `packages/client-runtime` owns preparation,
+recording, transcription, cancellation, temporary-file cleanup, and insertion into the captured
+draft selection. Applications import it through the [voice-input entry point][voice-input] as
+`@t3tools/client-runtime/voice-input`. Its dependencies separate capture from transcription; the
 controller imports neither React Native nor an Apple transcription API.
 
 [`useVoiceInputController`][hook] supplies Expo audio capture, microphone permissions, audio-session
-management, waveform samples, and the local transcription binding. [`voiceTranscription.ios.ts`][ios]
-adapts `@react-native-ai/apple`, including locale preparation and error translation. The other-platform
+management, waveform samples, and app and navigation lifecycle handling. It normalizes Expo's
+`mediaServicesDidReset` into a generic recorder error. [`voiceTranscription.ios.ts`][ios] adapts
+`@react-native-ai/apple`, including locale preparation and error translation. The other-platform
 binding reports local transcription as unavailable. That result describes the local implementation,
 not whether a client could use an environment's transcription service.
 
-The composer renders recording state and edits draft text without selecting a speech vendor.
+Mobile's [`voiceInputPresentation.ts`][presentation] maps shared state to toolbar labels and actions.
+Waveform and toolbar rendering stay in mobile. The composer edits draft text without selecting a
+speech vendor.
 Recording captures the draft owner, revision, text, and selection. A late transcript cannot overwrite
 a different or edited draft. Only normal message submission sends the resulting text to an agent.
 
@@ -69,13 +73,16 @@ The [attachment upload contracts][uploads] and [shared upload operations][attach
 pattern for authorized binary uploads through an environment, including remote connections. Their
 existing chat-attachment retention is not a transcription cleanup policy.
 
-Shared service selection and environment requests belong in `packages/client-runtime`, with wire
-contracts in `packages/contracts`. Capture and native local recognition remain client-specific. The
-current injected transcription functions provide the boundary for the local release; introducing a
-second implementation is the point to bind preparation and transcription into a selected session.
+Future service selection and environment requests belong alongside the controller in
+`packages/client-runtime`, with wire contracts in `packages/contracts`. Capture and native local
+recognition remain client-specific. The current injected transcription functions provide the
+boundary for the local release; introducing a second implementation is the point to bind preparation
+and transcription into a selected session.
 
-[controller]: ../../apps/mobile/src/features/voice-input/voiceInputController.ts
+[controller]: ../../packages/client-runtime/src/voice-input/controller.ts
+[voice-input]: ../../packages/client-runtime/src/voice-input/index.ts
 [hook]: ../../apps/mobile/src/features/voice-input/useVoiceInputController.ts
+[presentation]: ../../apps/mobile/src/features/voice-input/voiceInputPresentation.ts
 [ios]: ../../apps/mobile/src/native/voiceTranscription.ios.ts
 [settings]: ../../apps/server/src/serverSettings.ts
 [secrets]: ../../apps/server/src/auth/ServerSecretStore.ts

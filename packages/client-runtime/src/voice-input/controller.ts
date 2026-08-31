@@ -20,70 +20,6 @@ export function voiceInputFreezesEditor(state: VoiceInputState): boolean {
   return voiceInputBlocksSubmission(state);
 }
 
-export type VoiceComposerPresentation = {
-  readonly leadingAction: "cancel" | null;
-  readonly trailingAction: "mic" | "confirm";
-  readonly showsSend: boolean;
-  readonly statusKind: "active" | "error" | null;
-  readonly statusLabel: string | null;
-  readonly confirmationEnabled: boolean;
-};
-
-export function resolveVoiceComposerPresentation(
-  state: VoiceInputState,
-  elapsedSeconds: number,
-): VoiceComposerPresentation {
-  switch (state.phase) {
-    case "idle":
-      return {
-        leadingAction: null,
-        trailingAction: "mic",
-        showsSend: true,
-        statusKind: null,
-        statusLabel: null,
-        confirmationEnabled: false,
-      };
-    case "error":
-      return {
-        leadingAction: null,
-        trailingAction: "mic",
-        showsSend: true,
-        statusKind: "error",
-        statusLabel: state.error,
-        confirmationEnabled: false,
-      };
-    case "preparing":
-      return {
-        leadingAction: "cancel",
-        trailingAction: "confirm",
-        showsSend: false,
-        statusKind: "active",
-        statusLabel: "Preparing",
-        confirmationEnabled: false,
-      };
-    case "recording": {
-      const seconds = Math.max(0, Math.floor(elapsedSeconds));
-      return {
-        leadingAction: "cancel",
-        trailingAction: "confirm",
-        showsSend: false,
-        statusKind: "active",
-        statusLabel: `Recording ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`,
-        confirmationEnabled: true,
-      };
-    }
-    case "transcribing":
-      return {
-        leadingAction: "cancel",
-        trailingAction: "confirm",
-        showsSend: false,
-        statusKind: "active",
-        statusLabel: "Transcribing",
-        confirmationEnabled: false,
-      };
-  }
-}
-
 export type VoiceDraftSnapshot = {
   readonly ownerKey: string;
   readonly text: string;
@@ -96,7 +32,6 @@ export type VoiceRecorderStatus = {
   readonly hasError: boolean;
   readonly error: string | null;
   readonly url: string | null;
-  readonly mediaServicesDidReset?: boolean;
 };
 
 export interface VoiceRecorder {
@@ -187,7 +122,7 @@ export function resolveTranscriptCommit(
 }
 
 let activeSession: symbol | null = null;
-let activeNativeOperation: Promise<unknown> | null = null;
+let activeTranscriptionOperation: Promise<unknown> | null = null;
 
 function acquireSession(): symbol | null {
   if (activeSession) return null;
@@ -200,17 +135,17 @@ function releaseSession(token: symbol | null): void {
   if (token && activeSession === token) activeSession = null;
 }
 
-async function runNativeOperation<T>(operation: () => Promise<T>): Promise<T> {
-  if (activeNativeOperation) {
+async function runTranscriptionOperation<T>(operation: () => Promise<T>): Promise<T> {
+  if (activeTranscriptionOperation) {
     throw new Error("voice-operation-busy");
   }
 
   const promise = operation();
-  activeNativeOperation = promise;
+  activeTranscriptionOperation = promise;
   try {
     return await promise;
   } finally {
-    if (activeNativeOperation === promise) activeNativeOperation = null;
+    if (activeTranscriptionOperation === promise) activeTranscriptionOperation = null;
   }
 }
 
@@ -226,7 +161,7 @@ function preparationErrorMessage(error: unknown): string {
   if (errorCode(error) === "unsupported-locale") {
     return "Voice transcription is not available for this language.";
   }
-  return "Could not prepare offline transcription.";
+  return "Could not prepare voice transcription.";
 }
 
 function transcriptionErrorMessage(error: unknown): string {
@@ -239,6 +174,7 @@ function transcriptionErrorMessage(error: unknown): string {
 const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 
 export class VoiceInputController {
+  private readonly dependencies: VoiceInputControllerDependencies;
   private state: VoiceInputState = IDLE_STATE;
   private operationToken = 0;
   private sessionToken: symbol | null = null;
@@ -249,7 +185,9 @@ export class VoiceInputController {
   private recordingConfigured = false;
   private finishing = false;
 
-  constructor(private readonly dependencies: VoiceInputControllerDependencies) {}
+  constructor(dependencies: VoiceInputControllerDependencies) {
+    this.dependencies = dependencies;
+  }
 
   get currentState(): VoiceInputState {
     return this.state;
@@ -289,7 +227,7 @@ export class VoiceInputController {
       }
 
       try {
-        this.locale = await runNativeOperation(this.dependencies.prepareTranscription);
+        this.locale = await runTranscriptionOperation(this.dependencies.prepareTranscription);
       } catch (error) {
         if (this.isCurrent(operationToken)) this.setError(preparationErrorMessage(error), "retry");
         return;
@@ -371,7 +309,7 @@ export class VoiceInputController {
 
   handleRecorderStatus(status: VoiceRecorderStatus): Promise<void> | void {
     if (this.state.phase !== "recording") return;
-    if (status.hasError || status.mediaServicesDidReset) {
+    if (status.hasError) {
       return this.interruptRecording(
         status.error ?? "Voice recording was interrupted.",
         status.url,
@@ -426,7 +364,7 @@ export class VoiceInputController {
       const capturedDraft = this.capturedDraft;
       let transcript: string;
       try {
-        transcript = await runNativeOperation(() =>
+        transcript = await runTranscriptionOperation(() =>
           this.dependencies.transcribeRecording(recordingUri, locale),
         );
       } catch (error) {
@@ -533,5 +471,5 @@ export class VoiceInputController {
 
 export function resetVoiceInputGlobalsForTests(): void {
   activeSession = null;
-  activeNativeOperation = null;
+  activeTranscriptionOperation = null;
 }

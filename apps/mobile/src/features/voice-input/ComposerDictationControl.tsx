@@ -1,3 +1,4 @@
+import type { VoiceInputPhase, VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import { memo, useCallback, useLayoutEffect, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
@@ -22,11 +23,7 @@ import Animated, {
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { cn } from "../../lib/cn";
-import type {
-  VoiceComposerPresentation,
-  VoiceInputPhase,
-  VoiceInputState,
-} from "./voiceInputController";
+import type { VoiceComposerPresentation } from "./voiceInputPresentation";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 
 const DICTATION_TIMING = {

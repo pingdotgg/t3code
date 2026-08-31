@@ -45,7 +45,7 @@ import {
   ComposerDictationToolbar,
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
-import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputController";
+import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,

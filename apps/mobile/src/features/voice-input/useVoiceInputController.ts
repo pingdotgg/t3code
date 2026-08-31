@@ -25,7 +25,7 @@ import {
   voiceInputFreezesEditor,
   type VoiceDraftSnapshot,
   type VoiceInputState,
-} from "./voiceInputController";
+} from "@t3tools/client-runtime/voice-input";
 import { normalizeVoiceInputDecibels, VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
@@ -91,7 +91,12 @@ export function useVoiceInputController(input: {
   latestInputRef.current = input;
 
   const handleRecorderStatus = useCallback((status: RecordingStatus) => {
-    controllerRef.current?.handleRecorderStatus(status);
+    controllerRef.current?.handleRecorderStatus({
+      isFinished: status.isFinished,
+      hasError: status.hasError || status.mediaServicesDidReset === true,
+      error: status.error,
+      url: status.url,
+    });
   }, []);
   const recorder = useAudioRecorder(VOICE_RECORDING_OPTIONS, handleRecorderStatus);
 
