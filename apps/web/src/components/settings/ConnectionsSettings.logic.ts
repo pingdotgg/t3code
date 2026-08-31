@@ -11,6 +11,14 @@ export function isQrShareableEndpoint(endpoint: AdvertisedEndpoint): boolean {
   return endpoint.status !== "unavailable" && endpoint.reachability !== "loopback";
 }
 
+export function isWslSettingsRowVisible(input: {
+  readonly state: DesktopWslState | null;
+  readonly error: string | null;
+}): boolean {
+  const { state, error } = input;
+  return state ? state.available || state.enabled || state.wslOnly : error !== null;
+}
+
 export type QrEndpointOption = {
   /** Unique per endpoint instance (AdvertisedEndpoint.id); safe as a React key. */
   readonly id: string;
