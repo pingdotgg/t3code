@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, it, assert } from "@effect/vitest";
+import { describe, it, assert, vi } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -404,6 +404,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(observedLaunchArgs, "--strict-config --enable foo");
+        }),
+      );
+
+      it.effect("uses Linux home for Codex probe cwd when the server cwd is on /mnt/", () =>
+        Effect.gen(function* () {
+          let observedCwd: string | undefined;
+          const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/mnt/c/Users/id173869");
+
+          try {
+            const status = yield* checkCodexProviderStatus(
+              defaultCodexSettings,
+              (input) => {
+                observedCwd = input.cwd;
+                return Effect.succeed(makeCodexProbeSnapshot());
+              },
+              { HOME: "/home/testuser" },
+            );
+
+            assert.strictEqual(status.status, "ready");
+            assert.strictEqual(observedCwd, "/home/testuser");
+          } finally {
+            cwdSpy.mockRestore();
+          }
         }),
       );
 

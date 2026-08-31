@@ -27,6 +27,7 @@ import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/co
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { resolveCodexProbeCwd } from "./codexProbeCwd.ts";
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
@@ -544,7 +545,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
-    cwd: process.cwd(),
+    cwd: resolveCodexProbeCwd(process.cwd(), resolvedEnvironment),
     customModels: codexSettings.customModels,
     environment: resolvedEnvironment,
   }).pipe(
