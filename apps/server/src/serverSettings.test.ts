@@ -541,10 +541,12 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         '{"providers":{"opencode":{"serverUrl":"http://127.0.0.1:4096"}}}',
       );
       yield* recordProviderUsage("opencode");
+      yield* recordProviderUsage("hermes");
 
       const settings = yield* serverSettings.getSettings;
 
       assert.isFalse(settings.providers.grok.enabled);
+      assert.isTrue(settings.providers.hermes.enabled);
       assert.isTrue(settings.providers.opencode.enabled);
       assert.isFalse(settings.providers.cursor.enabled);
       assert.equal(settings.providers.opencode.serverUrl, "http://127.0.0.1:4096");
@@ -964,6 +966,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             enabled: false,
           },
           grok: {
+            enabled: false,
+          },
+          hermes: {
             enabled: false,
           },
           opencode: {
