@@ -3439,14 +3439,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           />
           {!activityStackItem && (props.threadSyncPhase || inlineTasksBadge) ? (
             <ComposerBanner.Attachment>
-              <ComposerBanner.Root
-                width={
-                  props.threadSyncPhase && !showComposerTopDrawer && !isComposerCollapsedMobile
-                    ? "content"
-                    : "fill"
-                }
-                data-chat-composer-activity-strip="true"
-              >
+              <ComposerBanner.Root data-chat-composer-activity-strip="true">
                 {props.threadSyncPhase ? (
                   <ComposerActivityRow phase={props.threadSyncPhase} />
                 ) : (
