@@ -82,6 +82,7 @@ Review changed TypeScript and directly affected call sites for the conventions b
 ## Change discipline
 
 - Preserve useful comments, invariants, and specification documentation while moving code.
+- Require every new or broadened directive that disables or suppresses a lint, type-checker, LSP, or other static-analysis diagnostic to have an adjacent comment explaining why that diagnostic must be disabled there. The directive itself is not an explanation. Report a missing explanation as a concrete violation.
 - Do not add large tests solely to prove a mechanical refactor. Update existing tests and imports as needed.
 - If backend behavior changes, require focused tests. Use test implementations/layers for external services only; do not mock out core business logic.
 - Do not require `Layer.effect`, universal namespace imports, generic `make`/`layer` names for abstract-port implementations, separate error classes for diagnostic-only fields, or new tests for import-only changes.
