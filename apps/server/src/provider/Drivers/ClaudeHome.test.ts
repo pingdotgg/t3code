@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 
 import {
   makeClaudeCapabilitiesCacheKey,
+  makeClaudeCapabilitiesProbeContext,
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
   resolveClaudeHomePath,
@@ -20,6 +21,9 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         const resolved = path.resolve(NodeOS.homedir());
 
         expect(yield* resolveClaudeHomePath({ homePath: "" })).toBe(resolved);
+        expect((yield* makeClaudeCapabilitiesProbeContext({ homePath: "" })).cwd).toBe(
+          path.resolve(NodeOS.tmpdir()),
+        );
         expect(yield* makeClaudeEnvironment({ homePath: "" })).toBe(process.env);
       }),
     );
@@ -31,20 +35,39 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         const resolved = path.resolve(NodeOS.homedir(), ".claude-work");
 
         expect(yield* resolveClaudeHomePath({ homePath })).toBe(resolved);
+        const probeContext = yield* makeClaudeCapabilitiesProbeContext({ homePath });
+        expect(probeContext.cwd).toBe(path.resolve(NodeOS.tmpdir()));
+        expect(probeContext.environment.CLAUDE_CONFIG_DIR).toBe(resolved);
         expect((yield* makeClaudeEnvironment({ homePath })).CLAUDE_CONFIG_DIR).toBe(resolved);
         expect(yield* makeClaudeContinuationGroupKey({ homePath })).toBe(`claude:home:${resolved}`);
         expect(yield* makeClaudeCapabilitiesCacheKey({ binaryPath: "claude", homePath })).toBe(
-          `claude\0${resolved}\0`,
+          `claude\0${resolved}`,
         );
       }),
     );
 
-    it.effect("separates capability probes by cwd", () =>
+    it.effect("keeps a relative inherited config dir stable when the probe cwd changes", () =>
       Effect.gen(function* () {
-        const config = { binaryPath: "claude", homePath: "" };
-        const first = yield* makeClaudeCapabilitiesCacheKey(config, "/repo-a");
-        const second = yield* makeClaudeCapabilitiesCacheKey(config, "/repo-b");
-        expect(first).not.toBe(second);
+        const path = yield* Path.Path;
+        const workspaceCwd = path.join(NodeOS.tmpdir(), "claude-workspace");
+        const resolvedConfigDir = path.resolve(workspaceCwd, "relative-config");
+        const environment = { CLAUDE_CONFIG_DIR: "relative-config" };
+
+        const probeContext = yield* makeClaudeCapabilitiesProbeContext(
+          { homePath: "" },
+          environment,
+          workspaceCwd,
+        );
+
+        expect(probeContext.cwd).toBe(path.resolve(NodeOS.tmpdir()));
+        expect(probeContext.environment.CLAUDE_CONFIG_DIR).toBe(resolvedConfigDir);
+        expect(
+          yield* makeClaudeCapabilitiesCacheKey(
+            { binaryPath: "claude", homePath: "" },
+            environment,
+            workspaceCwd,
+          ),
+        ).toBe(`claude\0${resolvedConfigDir}`);
       }),
     );
 

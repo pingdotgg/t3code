@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import { ClaudeSettings } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -14,7 +16,7 @@ import {
 
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
-it("isolates Claude capability probes without dropping workspace setting sources", () => {
+it("isolates Claude capability probes without dropping filesystem setting sources", () => {
   const abortController = new AbortController();
   const options = buildClaudeCapabilitiesProbeQueryOptions({
     executablePath: "/usr/bin/claude",
@@ -23,12 +25,12 @@ it("isolates Claude capability probes without dropping workspace setting sources
       HOME: "/home/user",
       ENABLE_CLAUDEAI_MCP_SERVERS: "true",
     },
-    cwd: "/workspace/project",
+    cwd: "/claude-config",
   });
 
   assert.deepEqual(options.mcpServers, {});
   assert.equal(options.strictMcpConfig, true);
-  assert.equal(options.cwd, "/workspace/project");
+  assert.equal(options.cwd, "/claude-config");
   assert.deepEqual(options.settingSources, [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES]);
   assert.deepEqual(options.settings, { disableAllHooks: true });
   assert.deepEqual(options.allowedTools, []);
@@ -40,15 +42,14 @@ it("isolates Claude capability probes without dropping workspace setting sources
 });
 
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
-  it.effect("serializes strict no-MCP options and still resolves account capabilities", () =>
+  it.effect("runs from an existing neutral cwd when the Claude config dir is missing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-probe-sdk-" });
       const executablePath = path.join(tempDir, "fake-claude.mjs");
       const invocationPath = path.join(tempDir, "invocation.json");
-      const workspaceCwd = path.join(tempDir, "workspace");
-      yield* fs.makeDirectory(workspaceCwd, { recursive: true });
+      const claudeConfigDir = path.join(tempDir, "missing-claude-config");
 
       yield* fs.writeFileString(
         executablePath,
@@ -67,6 +68,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "writeFileSync(process.env.T3_PROBE_INVOCATION_PATH, JSON.stringify({",
           "  args,",
           "  cwd: process.cwd(),",
+          "  configDir: process.env.CLAUDE_CONFIG_DIR,",
           "  connectorEnv: process.env.ENABLE_CLAUDEAI_MCP_SERVERS,",
           "  mcpConfig,",
           "}));",
@@ -97,13 +99,12 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       yield* fs.chmod(executablePath, 0o755);
 
       const capabilities = yield* probeClaudeCapabilities(
-        decodeClaudeSettings({ binaryPath: executablePath }),
+        decodeClaudeSettings({ binaryPath: executablePath, homePath: claudeConfigDir }),
         {
           ...process.env,
           T3_PROBE_INVOCATION_PATH: invocationPath,
           ENABLE_CLAUDEAI_MCP_SERVERS: "true",
         },
-        workspaceCwd,
       );
 
       assert.deepEqual(capabilities, {
@@ -124,10 +125,13 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       const invocation = JSON.parse(yield* fs.readFileString(invocationPath)) as {
         readonly args: ReadonlyArray<string>;
         readonly cwd: string;
+        readonly configDir: string;
         readonly connectorEnv: string;
         readonly mcpConfig: unknown;
       };
-      assert.equal(invocation.cwd, yield* fs.realPath(workspaceCwd));
+      assert.equal(invocation.cwd, yield* fs.realPath(NodeOS.tmpdir()));
+      assert.notEqual(invocation.cwd, yield* fs.realPath(process.cwd()));
+      assert.equal(invocation.configDir, path.resolve(claudeConfigDir));
       assert.equal(invocation.connectorEnv, "false");
       assert.equal(invocation.args.includes("--strict-mcp-config"), true);
       assert.equal(invocation.args.includes("--mcp-config"), false);

@@ -34,6 +34,42 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   };
 });
 
+/**
+ * Build the environment and neutral cwd used by Claude's capability probe.
+ *
+ * Claude treats `<cwd>/.claude/settings.json` as project settings, so the
+ * probe runs from the existing OS temp directory instead of the server or
+ * config directory. A relative inherited `CLAUDE_CONFIG_DIR` is made absolute
+ * first so changing cwd does not change which credentials Claude reads.
+ */
+export const makeClaudeCapabilitiesProbeContext = Effect.fn("makeClaudeCapabilitiesProbeContext")(
+  function* (
+    config: Pick<ClaudeSettings, "homePath">,
+    baseEnv?: NodeJS.ProcessEnv,
+    cwd?: string,
+  ): Effect.fn.Return<
+    { readonly cwd: string; readonly environment: NodeJS.ProcessEnv },
+    never,
+    Path.Path
+  > {
+    const path = yield* Path.Path;
+    const environment = yield* makeClaudeEnvironment(config, baseEnv);
+    const configDir = environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
+    const normalizedConfigDir =
+      configDir.length > 0 && !path.isAbsolute(configDir)
+        ? path.resolve(cwd ?? process.cwd(), configDir)
+        : configDir;
+
+    return {
+      cwd: path.resolve(NodeOS.tmpdir()),
+      environment:
+        normalizedConfigDir !== configDir
+          ? { ...environment, CLAUDE_CONFIG_DIR: normalizedConfigDir }
+          : environment,
+    };
+  },
+);
+
 export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationGroupKey")(
   function* (config: Pick<ClaudeSettings, "homePath">): Effect.fn.Return<string, never, Path.Path> {
     const resolvedHomePath = yield* resolveClaudeHomePath(config);
@@ -44,9 +80,12 @@ export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationG
 export const makeClaudeCapabilitiesCacheKey = Effect.fn("makeClaudeCapabilitiesCacheKey")(
   function* (
     config: Pick<ClaudeSettings, "binaryPath" | "homePath">,
+    environment?: NodeJS.ProcessEnv,
     cwd?: string,
   ): Effect.fn.Return<string, never, Path.Path> {
     const resolvedHomePath = yield* resolveClaudeHomePath(config);
-    return `${config.binaryPath}\0${resolvedHomePath}\0${cwd ?? ""}`;
+    const probeContext = yield* makeClaudeCapabilitiesProbeContext(config, environment, cwd);
+    const configDir = probeContext.environment.CLAUDE_CONFIG_DIR?.trim() || resolvedHomePath;
+    return `${config.binaryPath}\0${configDir}`;
   },
 );

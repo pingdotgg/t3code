@@ -40,7 +40,10 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
-import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import {
+  makeClaudeCapabilitiesProbeContext,
+  makeClaudeEnvironment,
+} from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -593,7 +596,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly executablePath: string;
   readonly abortController: AbortController;
   readonly environment: NodeJS.ProcessEnv;
-  readonly cwd: string | undefined;
+  readonly cwd: string;
 }): ClaudeQueryOptions {
   return {
     persistSession: false,
@@ -615,7 +618,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
       // config; disable them independently for this health check.
       ENABLE_CLAUDEAI_MCP_SERVERS: "false",
     },
-    ...(input.cwd ? { cwd: input.cwd } : {}),
+    cwd: input.cwd,
     stderr: () => {},
   };
 }
@@ -730,10 +733,14 @@ const probeClaudeCapabilities = (
 ) => {
   const abort = new AbortController();
   return Effect.gen(function* () {
-    const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+    const probeContext = yield* makeClaudeCapabilitiesProbeContext(
+      claudeSettings,
+      environment,
+      cwd,
+    );
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
-      claudeEnvironment,
+      probeContext.environment,
     );
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
@@ -746,8 +753,8 @@ const probeClaudeCapabilities = (
         options: buildClaudeCapabilitiesProbeQueryOptions({
           executablePath,
           abortController: abort,
-          environment: claudeEnvironment,
-          cwd,
+          environment: probeContext.environment,
+          cwd: probeContext.cwd,
         }),
       });
       const init = await q.initializationResult();
