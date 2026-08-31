@@ -1,6 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off - the executed suite runs the generated launch script through a real POSIX shell.
 import { assert, describe, it } from "@effect/vitest";
 import { afterAll } from "vite-plus/test";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - the executed suite runs the generated launch script through a real POSIX shell.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
