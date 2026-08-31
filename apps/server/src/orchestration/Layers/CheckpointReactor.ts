@@ -723,7 +723,10 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const currentTurnCount = thread.checkpoints.reduce(
+    const orderedCheckpoints = [...thread.checkpoints].sort(
+      (left, right) => left.checkpointTurnCount - right.checkpointTurnCount,
+    );
+    const currentTurnCount = orderedCheckpoints.reduce(
       (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
       0,
     );
@@ -738,12 +741,16 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const targetCheckpoint =
+      event.payload.turnCount === 0
+        ? undefined
+        : orderedCheckpoints.find(
+            (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
+          );
     const targetCheckpointRef =
       event.payload.turnCount === 0
         ? checkpointRefForThreadTurn(event.payload.threadId, 0)
-        : thread.checkpoints.find(
-            (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
-          )?.checkpointRef;
+        : targetCheckpoint?.checkpointRef;
 
     if (!targetCheckpointRef) {
       yield* appendRevertFailureActivity({
@@ -754,6 +761,29 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.catch(() => Effect.void));
       return;
     }
+
+    if (
+      event.payload.turnCount > 0 &&
+      !(yield* checkpointStore.hasCheckpointRef({
+        cwd: sessionRuntime.value.cwd,
+        checkpointRef: targetCheckpointRef,
+      }))
+    ) {
+      yield* appendRevertFailureActivity({
+        threadId: event.payload.threadId,
+        turnCount: event.payload.turnCount,
+        detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.`,
+        createdAt: now,
+      }).pipe(Effect.catch(() => Effect.void));
+      return;
+    }
+
+    const rollbackTarget = yield* providerService.prepareConversationRollback({
+      threadId: sessionRuntime.value.threadId,
+      ...(targetCheckpoint === undefined ? {} : { retainedThroughTurnId: targetCheckpoint.turnId }),
+    });
+
+    yield* providerService.rollbackConversation(rollbackTarget);
 
     const restored = yield* checkpointStore.restoreCheckpoint({
       cwd: sessionRuntime.value.cwd,
@@ -774,16 +804,8 @@ const make = Effect.gen(function* () {
     // reflects the reverted filesystem state.
     yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
 
-    const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
-    if (rolledBackTurns > 0) {
-      yield* providerService.rollbackConversation({
-        threadId: sessionRuntime.value.threadId,
-        numTurns: rolledBackTurns,
-      });
-    }
-
     const staleCheckpointRefs: Array<CheckpointRef> = [];
-    for (const checkpoint of thread.checkpoints) {
+    for (const checkpoint of orderedCheckpoints) {
       if (checkpoint.checkpointTurnCount > event.payload.turnCount) {
         staleCheckpointRefs.push(checkpoint.checkpointRef);
       }

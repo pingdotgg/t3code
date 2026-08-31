@@ -64,15 +64,19 @@ application files under `/mnt/c` instead and reinstalls the runtime on the next 
 T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
 to use, then authenticate it.
 
-| Provider   | CLI                                                   | Default binary | Log in with           |
-| ---------- | ----------------------------------------------------- | -------------- | --------------------- |
-| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`         |
-| Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login`   |
-| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
-| Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
-| OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
+| Provider   | CLI                                                   | Install                                                     | Default binary | Log in with                                  |
+| ---------- | ----------------------------------------------------- | ----------------------------------------------------------- | -------------- | -------------------------------------------- |
+| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | See provider instructions                                   | `codex`        | `codex login`                                |
+| Claude     | [Claude Code](https://claude.com/product/claude-code) | See provider instructions                                   | `claude`       | `claude auth login`                          |
+| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | See provider instructions                                   | `cursor-agent` | `agent login`                                |
+| Droid      | [Factory Droid](https://www.factory.ai/)              | [See provider guide](providers-droid.md#install-and-log-in) | `droid`        | Run `droid` and sign in through your browser |
+| Grok Build | [Grok Build CLI](https://x.ai/cli)                    | See provider instructions                                   | `grok`         | `grok login`                                 |
+| OpenCode   | [OpenCode](https://opencode.ai)                       | See provider instructions                                   | `opencode`     | `opencode auth login`                        |
 
-Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
+On Windows, follow the [Droid provider guide](providers-droid.md#install-and-log-in) to download and
+run the installer script.
+
+Codex, Claude, and Cursor are on by default. Droid, Grok Build, and OpenCode are off by default; turn
 them on in **Settings** → the provider's card when you want to use them.
 
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
@@ -99,7 +103,8 @@ T3 Code. You can install T3 Code, open it, and add providers afterwards. A provi
 authenticated shows its status in **Settings** and fails at session start with the login command
 to run.
 
-For multi-account setups, see [Codex](./providers-codex.md) and [Claude](./providers-claude.md).
+For provider-specific setup, see [Codex](./providers-codex.md),
+[Claude](./providers-claude.md), and [Droid](./providers-droid.md).
 
 ## Next Steps
 

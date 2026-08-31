@@ -132,9 +132,34 @@ export const ProviderRequestKind = Schema.Literals([
   "command",
   "file-read",
   "file-change",
+  "plan",
   "mcp-elicitation",
 ]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
+
+/** Maps provider request vocabulary to the client-facing approval kind. */
+export function providerRequestKindFromRequestType(
+  requestType: string | null | undefined,
+): ProviderRequestKind | undefined {
+  switch (requestType) {
+    case "command_execution_approval":
+    case "exec_command_approval":
+    case "dynamic_tool_call":
+      return "command";
+    case "file_read_approval":
+      return "file-read";
+    case "file_change_approval":
+    case "apply_patch_approval":
+      return "file-change";
+    case "plan_approval":
+      return "plan";
+    case "mcp_elicitation_approval":
+      return "mcp-elicitation";
+    default:
+      return undefined;
+  }
+}
+
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
 export type AssistantDeliveryMode = typeof AssistantDeliveryMode.Type;
 export const ProviderApprovalDecision = Schema.Literals([

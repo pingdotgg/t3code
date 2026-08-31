@@ -48,6 +48,17 @@ const nativePackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
     isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
   },
 });
+const resolvedNativePackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
+  provider: driver("resolvedNativePackageTool"),
+  npmPackageName: "@example/resolved-native-package-tool",
+  homebrewFormula: null,
+  nativeUpdate: {
+    executable: (commandPath) => commandPath,
+    args: ["update"],
+    lockKey: "resolved-native-package-tool-native",
+    isCommandPath: isNativeTestCommandPath("/.local/bin/resolved-native-package-tool"),
+  },
+});
 const scopedPackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
   provider: driver("scopedPackageTool"),
   npmPackageName: "@example/scoped-package-tool",
@@ -368,6 +379,26 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         });
       }),
   );
+
+  it("can invoke a native updater through its resolved executable path", () => {
+    const resolvedCommandPath = "/home/example/.local/bin/resolved-native-package-tool";
+
+    expect(
+      resolvedNativePackageToolUpdate.resolve({
+        binaryPath: "resolved-native-package-tool",
+        resolvedCommandPath,
+      }),
+    ).toEqual({
+      provider: driver("resolvedNativePackageTool"),
+      packageName: "@example/resolved-native-package-tool",
+      update: {
+        command: `${resolvedCommandPath} update`,
+        executable: resolvedCommandPath,
+        args: ["update"],
+        lockKey: "resolved-native-package-tool-native",
+      },
+    });
+  });
 
   it.effect(
     "switches scoped-package-tool to native upgrades when the binary resolves through the standalone installer",

@@ -18,13 +18,17 @@ without prompting; commands and anything else still stop for approval.
 **Auto**: routine actions proceed without you; risky ones still ask. How this is enforced depends
 on the provider: Codex delegates routine approvals to an AI reviewer, Claude uses its own auto
 permission mode, and providers without an equivalent (such as OpenCode) fall back to asking, like
-Supervised.
+Supervised. Droid allows edits and read-only commands in **Auto-accept edits**, adds reversible
+commands in **Auto**, and only runs every command without prompting in **Full access**.
 
 **Full access**: allow commands and edits without prompts. The default. The agent runs
 unattended until it finishes or asks a question of its own.
 
+For Droid, **Full access** selects its highest autonomy level. T3 Code does not pass Droid's
+`--skip-permissions-unsafe` override.
+
 Approvals appear inline in the conversation. Approve or reject one and the agent continues from
-there.
+there. For Droid, rejecting an approval ends the current turn.
 
 For Grok, **Always allow this session** remembers the matching command or tool input. Other
 actions still ask for approval. It does not change the thread to **Full access**.

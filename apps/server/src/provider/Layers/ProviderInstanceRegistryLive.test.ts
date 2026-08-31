@@ -28,6 +28,7 @@ import {
   type ClaudeSettings,
   type CodexSettings,
   type CursorSettings,
+  type DroidSettings,
   type GrokSettings,
   type OpenCodeSettings,
   ProviderDriverKind,
@@ -37,6 +38,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -47,10 +50,13 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
+import { DroidDriver } from "../Drivers/DroidDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
+import { ProviderDriverError } from "../Errors.ts";
+import type { AnyProviderDriver } from "../ProviderDriver.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
 
@@ -135,6 +141,14 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
   customModels: [],
   ...overrides,
 });
+
+const makeDroidConfig = (overrides: Partial<DroidSettings>) =>
+  ({
+    enabled: false,
+    binaryPath: "droid",
+    customModels: [],
+    ...overrides,
+  }) satisfies DroidSettings;
 
 describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
   // `ServerConfig.layerTest` needs `FileSystem` to materialize its scratch
@@ -292,6 +306,58 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         expect(ghost.unavailableReason).toMatch(/ghostDriver/);
       }).pipe(Effect.provide(testLayer)),
   );
+
+  it.effect("logs a normalized error tag when provider creation fails", () => {
+    const logs: Array<{ readonly message: string; readonly details: object }> = [];
+    const logger = Logger.make(({ message }) => {
+      const parts = Array.isArray(message) ? message : [message];
+      logs.push({
+        message: String(parts[0]),
+        details: typeof parts[1] === "object" && parts[1] !== null ? parts[1] : {},
+      });
+    });
+    const secret = "raw-provider-driver-cause";
+    const driverKind = ProviderDriverKind.make("failing-driver");
+    const instanceId = ProviderInstanceId.make("failing-instance");
+    const driver = {
+      driverKind,
+      metadata: { displayName: "Failing driver" },
+      configSchema: Schema.Struct({ enabled: Schema.Boolean }),
+      defaultConfig: () => ({ enabled: true }),
+      create: () =>
+        Effect.fail(
+          new ProviderDriverError({
+            driver: driverKind,
+            instanceId,
+            detail: "Driver creation failed.",
+            cause: new Error(secret),
+          }),
+        ),
+    } satisfies AnyProviderDriver;
+
+    return Effect.gen(function* () {
+      yield* makeProviderInstanceRegistry({
+        drivers: [driver],
+        configMap: {
+          [instanceId]: {
+            driver: driverKind,
+            enabled: true,
+            config: { enabled: true },
+          },
+        },
+      });
+
+      const diagnostic = logs.find(
+        (entry) => entry.message === "Failed to create provider instance",
+      );
+      expect(diagnostic?.details).toEqual({
+        instanceId,
+        driver: driverKind,
+        detail: "Driver creation failed.",
+        errorTag: "Error",
+      });
+    }).pipe(Effect.scoped, Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+  });
 });
 
 describe("ProviderInstanceRegistryLive — all drivers slice", () => {
@@ -326,12 +392,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursorId = ProviderInstanceId.make("cursor_default");
       const grokId = ProviderInstanceId.make("grok_default");
       const openCodeId = ProviderInstanceId.make("opencode_default");
+      const droidId = ProviderInstanceId.make("droid_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
       const cursorDriverKind = ProviderDriverKind.make("cursor");
       const grokDriverKind = ProviderDriverKind.make("grok");
       const openCodeDriverKind = ProviderDriverKind.make("opencode");
+      const droidDriverKind = ProviderDriverKind.make("droid");
 
       const configMap: ProviderInstanceConfigMap = {
         [codexId]: {
@@ -367,10 +435,16 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
           enabled: false,
           config: makeOpenCodeConfig({}),
         },
+        [droidId]: {
+          driver: droidDriverKind,
+          displayName: "Droid",
+          enabled: false,
+          config: makeDroidConfig({}),
+        },
       };
 
       const { registry } = yield* makeProviderInstanceRegistry<BuiltInDriversEnv>({
-        drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver],
+        drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver, DroidDriver],
         configMap,
       });
 
@@ -380,9 +454,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(5);
+      expect(instances).toHaveLength(6);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, cursorId, grokId, openCodeId].toSorted(),
+        [codexId, claudeId, cursorId, grokId, openCodeId, droidId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
@@ -393,16 +467,19 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursor = yield* registry.getInstance(cursorId);
       const grok = yield* registry.getInstance(grokId);
       const openCode = yield* registry.getInstance(openCodeId);
+      const droid = yield* registry.getInstance(droidId);
       expect(codex?.driverKind).toBe(codexDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(cursor?.driverKind).toBe(cursorDriverKind);
       expect(grok?.driverKind).toBe(grokDriverKind);
       expect(openCode?.driverKind).toBe(openCodeDriverKind);
+      expect(droid?.driverKind).toBe(droidDriverKind);
       expect(codex?.displayName).toBe("Codex");
       expect(claude?.displayName).toBe("Claude");
       expect(cursor?.displayName).toBe("Cursor");
       expect(grok?.displayName).toBe("Grok");
       expect(openCode?.displayName).toBe("OpenCode");
+      expect(droid?.displayName).toBe("Droid");
 
       // Every instance owns its own set of closures — no sharing across
       // drivers. `adapter` / `textGeneration` / `snapshot` are all
@@ -415,6 +492,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.adapter,
         grok!.adapter,
         openCode!.adapter,
+        droid!.adapter,
       ];
       expect(new Set(adapters).size).toBe(adapters.length);
       const textGenerations = [
@@ -423,6 +501,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.textGeneration,
         grok!.textGeneration,
         openCode!.textGeneration,
+        droid!.textGeneration,
       ];
       expect(new Set(textGenerations).size).toBe(textGenerations.length);
       const snapshots = [
@@ -431,6 +510,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.snapshot,
         grok!.snapshot,
         openCode!.snapshot,
+        droid!.snapshot,
       ];
       expect(new Set(snapshots).size).toBe(snapshots.length);
 
@@ -473,6 +553,12 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(openCodeSnapshot.continuation?.groupKey).toBe(
         `${openCodeDriverKind}:instance:${openCodeId}`,
       );
+
+      const droidSnapshot = yield* droid!.snapshot.getSnapshot;
+      expect(droidSnapshot.instanceId).toBe(droidId);
+      expect(droidSnapshot.driver).toBe(droidDriverKind);
+      expect(droidSnapshot.enabled).toBe(false);
+      expect(droidSnapshot.continuation?.groupKey).toBe(`${droidDriverKind}:instance:${droidId}`);
     }).pipe(Effect.provide(testLayer)),
   );
 });

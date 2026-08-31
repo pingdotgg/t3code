@@ -41,6 +41,7 @@ import {
   type ProviderDriverKind,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { errorTag } from "@t3tools/shared/observability";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -189,6 +190,7 @@ const buildEntry = <R>(input: {
         instanceId: rawInstanceId,
         driver: entry.driver,
         detail: createResult.failure.detail,
+        errorTag: errorTag(createResult.failure.cause),
       });
       yield* Scope.close(childScope, Exit.void).pipe(Effect.ignore);
       return {

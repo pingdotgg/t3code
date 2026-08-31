@@ -1,4 +1,5 @@
 import { memo } from "react";
+
 import { type PendingApproval } from "../../session-logic";
 import { cn } from "~/lib/utils";
 
@@ -20,7 +21,9 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
         ? "Command approval"
         : approval.requestKind === "file-read"
           ? "File read approval"
-          : "File change approval";
+          : approval.requestKind === "plan"
+            ? "Plan approval"
+            : "File change approval";
   const detailAriaLabel =
     approval.requestKind === "mcp-elicitation"
       ? "App access request"
@@ -28,7 +31,9 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
         ? "Command"
         : approval.requestKind === "file-read"
           ? "File to read"
-          : "File change";
+          : approval.requestKind === "plan"
+            ? "Plan"
+            : "File change";
 
   return (
     <span

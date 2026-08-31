@@ -10,9 +10,10 @@
  * @module ProviderServiceLive
  */
 import {
+  EventId,
   ModelSelection,
-  NonNegativeInt,
   ThreadId,
+  TurnId,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
@@ -49,7 +50,10 @@ import {
   withMetrics,
 } from "../../observability/Metrics.ts";
 import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import {
+  rollbackTargetMatchesKnownHistory,
+  type ProviderAdapterShape,
+} from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -84,7 +88,8 @@ type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["S
 
 const ProviderRollbackConversationInput = Schema.Struct({
   threadId: ThreadId,
-  numTurns: NonNegativeInt,
+  turnIds: Schema.Array(TurnId),
+  anchorTurnId: Schema.optional(TurnId),
 });
 
 function toValidationError(
@@ -284,14 +289,32 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
 
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
-    Effect.succeed(event).pipe(
-      Effect.tap((canonicalEvent) =>
-        canonicalEventLogger
-          ? canonicalEventLogger.write(canonicalEvent, canonicalEvent.threadId)
-          : Effect.void,
+    increment(providerRuntimeEventsTotal, {
+      provider: event.provider,
+      eventType: event.type,
+    }).pipe(
+      Effect.andThen(
+        canonicalEventLogger ? canonicalEventLogger.write(event, event.threadId) : Effect.void,
       ),
-      Effect.flatMap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
+      Effect.andThen(PubSub.publish(runtimeEventPubSub, event)),
       Effect.asVoid,
+    );
+
+  const persistResumeCursor = (input: {
+    readonly threadId: ThreadId;
+    readonly provider: ProviderDriverKind;
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly resumeCursor: unknown;
+  }) =>
+    directory.upsert(input).pipe(
+      Effect.as(true),
+      Effect.catch((error) =>
+        Effect.logWarning("Failed to persist provider resume cursor.", {
+          threadId: input.threadId,
+          provider: input.provider,
+          cause: error,
+        }).pipe(Effect.as(false)),
+      ),
     );
 
   const requireBindingInstanceId = (
@@ -346,10 +369,39 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   ): Effect.Effect<void> =>
     Effect.sync(() => correlateRuntimeEventWithInstance(source, event)).pipe(
       Effect.flatMap((canonicalEvent) =>
-        increment(providerRuntimeEventsTotal, {
-          provider: canonicalEvent.provider,
-          eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
+        Effect.gen(function* () {
+          let persistenceWarning: ProviderRuntimeEvent | undefined;
+          if (
+            canonicalEvent.type === "turn.completed" &&
+            canonicalEvent.payload?.resumeCursor !== undefined
+          ) {
+            const cursorPersisted = yield* persistResumeCursor({
+              threadId: canonicalEvent.threadId,
+              provider: canonicalEvent.provider,
+              providerInstanceId: source.instanceId,
+              resumeCursor: canonicalEvent.payload.resumeCursor,
+            });
+            if (!cursorPersisted) {
+              persistenceWarning = {
+                type: "runtime.warning",
+                eventId: EventId.make(`${canonicalEvent.eventId}:resume-cursor-persistence-failed`),
+                provider: canonicalEvent.provider,
+                providerInstanceId: source.instanceId,
+                threadId: canonicalEvent.threadId,
+                ...(canonicalEvent.turnId !== undefined ? { turnId: canonicalEvent.turnId } : {}),
+                createdAt: canonicalEvent.createdAt,
+                payload: {
+                  message:
+                    "Failed to persist provider resume state. Restarting this thread may resume stale provider history.",
+                },
+              };
+            }
+          }
+          yield* publishRuntimeEvent(canonicalEvent);
+          if (persistenceWarning !== undefined) {
+            yield* publishRuntimeEvent(persistenceWarning);
+          }
+        }),
       ),
     );
 
@@ -1075,6 +1127,63 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const getInstanceInfo: ProviderServiceMethod<"getInstanceInfo"> = (instanceId) =>
     registry.getInstanceInfo(instanceId);
 
+  const validateRollbackTarget = Effect.fn("validateRollbackTarget")(function* (
+    input: Schema.Schema.Type<typeof ProviderRollbackConversationInput>,
+    operation: string,
+  ) {
+    if (input.turnIds.length === 0 && input.anchorTurnId === undefined) {
+      return yield* toValidationError(
+        operation,
+        "Rollback target must include at least one turn ID or an anchor turn ID.",
+      );
+    }
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation,
+      allowRecovery: true,
+    });
+    const current = yield* routed.adapter.readThread(routed.threadId);
+    const target = {
+      turnIds: input.turnIds,
+      ...(input.anchorTurnId !== undefined ? { anchorTurnId: input.anchorTurnId } : {}),
+    };
+    if (!rollbackTargetMatchesKnownHistory(current.turns, target)) {
+      return yield* toValidationError(
+        operation,
+        "Rollback target does not match the current thread history.",
+      );
+    }
+    return { current, routed };
+  });
+
+  const prepareConversationRollback: ProviderServiceMethod<"prepareConversationRollback"> =
+    Effect.fn("prepareConversationRollback")(function* (input) {
+      const operation = "ProviderService.prepareConversationRollback";
+      const routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation,
+        allowRecovery: true,
+      });
+      const current = yield* routed.adapter.readThread(routed.threadId);
+      const retainedTurnCount =
+        input.retainedThroughTurnId === undefined
+          ? 0
+          : current.turns.findIndex((turn) => turn.id === input.retainedThroughTurnId) + 1;
+      if (input.retainedThroughTurnId !== undefined && retainedTurnCount === 0) {
+        return yield* toValidationError(
+          operation,
+          "Retained rollback turn does not exist in the current thread history.",
+        );
+      }
+      const turnIds = current.turns.slice(0, retainedTurnCount).map((turn) => turn.id);
+      const anchorTurnId = current.turns[retainedTurnCount]?.id;
+      return {
+        threadId: input.threadId,
+        turnIds,
+        ...(anchorTurnId !== undefined ? { anchorTurnId } : {}),
+      };
+    });
+
   const rollbackConversation: ProviderServiceMethod<"rollbackConversation"> = Effect.fn(
     "rollbackConversation",
   )(function* (rawInput) {
@@ -1083,28 +1192,35 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       schema: ProviderRollbackConversationInput,
       payload: rawInput,
     });
-    if (input.numTurns === 0) {
-      return;
-    }
     let metricProvider = "unknown";
     return yield* Effect.gen(function* () {
-      const routed = yield* resolveRoutableSession({
-        threadId: input.threadId,
-        operation: "ProviderService.rollbackConversation",
-        allowRecovery: true,
-      });
+      const { current, routed } = yield* validateRollbackTarget(
+        input,
+        "ProviderService.rollbackConversation",
+      );
       metricProvider = routed.adapter.provider;
       yield* Effect.annotateCurrentSpan({
         "provider.operation": "rollback-conversation",
         "provider.kind": routed.adapter.provider,
         "provider.thread_id": input.threadId,
-        "provider.rollback_turns": input.numTurns,
+        "provider.rollback_target_turn_count": input.turnIds.length,
       });
-      yield* routed.adapter.rollbackThread(routed.threadId, input.numTurns);
+      const numTurns = current.turns.length - input.turnIds.length;
+      const snapshot =
+        numTurns === 0 ? current : yield* routed.adapter.rollbackThread(routed.threadId, numTurns);
+      if (numTurns > 0 && snapshot.resumeCursor !== undefined) {
+        yield* persistResumeCursor({
+          threadId: input.threadId,
+          provider: routed.adapter.provider,
+          providerInstanceId: routed.instanceId,
+          resumeCursor: snapshot.resumeCursor,
+        });
+      }
       yield* analytics.record("provider.conversation.rolled_back", {
         provider: routed.adapter.provider,
-        turns: input.numTurns,
+        targetTurnCount: input.turnIds.length,
       });
+      return snapshot;
     }).pipe(
       withMetrics({
         counter: providerTurnsTotal,
@@ -1227,6 +1343,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     listSessions,
     getCapabilities,
     getInstanceInfo,
+    prepareConversationRollback,
     rollbackConversation,
     uploadFeedback,
     // Each access creates a fresh PubSub subscription so that multiple

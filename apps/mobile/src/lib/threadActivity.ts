@@ -3,6 +3,7 @@ import {
   isToolLifecycleItemType,
   ProviderApprovalOption,
   ProviderRequestKind,
+  providerRequestKindFromRequestType,
 } from "@t3tools/contracts";
 import type {
   OrchestrationLatestTurn,
@@ -159,23 +160,6 @@ export type ThreadFeedLatestTurn = Pick<
   OrchestrationLatestTurn,
   "turnId" | "state" | "startedAt" | "completedAt"
 >;
-
-function requestKindFromRequestType(requestType: unknown): PendingApproval["requestKind"] | null {
-  switch (requestType) {
-    case "command_execution_approval":
-    case "exec_command_approval":
-      return "command";
-    case "file_read_approval":
-      return "file-read";
-    case "file_change_approval":
-    case "apply_patch_approval":
-      return "file-change";
-    case "mcp_elicitation_approval":
-      return "mcp-elicitation";
-    default:
-      return null;
-  }
-}
 
 function isStalePendingRequestFailureDetail(detail: string | undefined): boolean {
   const normalized = detail?.toLowerCase();
@@ -1064,14 +1048,12 @@ function extractWorkLogItemType(
 function extractWorkLogRequestKind(
   payload: Record<string, unknown> | null,
 ): WorkLogEntry["requestKind"] | undefined {
-  if (
-    payload?.requestKind === "command" ||
-    payload?.requestKind === "file-read" ||
-    payload?.requestKind === "file-change"
-  ) {
+  if (isProviderRequestKind(payload?.requestKind)) {
     return payload.requestKind;
   }
-  return requestKindFromRequestType(payload?.requestType) ?? undefined;
+  return providerRequestKindFromRequestType(
+    typeof payload?.requestType === "string" ? payload.requestType : undefined,
+  );
 }
 
 function pushChangedFile(target: string[], seen: Set<string>, value: unknown) {
@@ -1575,7 +1557,9 @@ export function derivePendingApprovals(
     const requestId = parseApprovalRequestId(payload?.requestId);
     const requestKind = isProviderRequestKind(payload?.requestKind)
       ? payload.requestKind
-      : requestKindFromRequestType(payload?.requestType);
+      : providerRequestKindFromRequestType(
+          typeof payload?.requestType === "string" ? payload.requestType : undefined,
+        );
     const detail = typeof payload?.detail === "string" ? payload.detail : undefined;
     const appName = typeof payload?.appName === "string" ? payload.appName : undefined;
     const options = Array.isArray(payload?.options)

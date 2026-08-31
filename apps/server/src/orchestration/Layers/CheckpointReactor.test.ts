@@ -85,7 +85,34 @@ function createProviderServiceHarness(
   const now = "2026-01-01T00:00:00.000Z";
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
   const rollbackConversation = vi.fn(
-    (_input: { readonly threadId: ThreadId; readonly numTurns: number }) => Effect.void,
+    (input: {
+      readonly threadId: ThreadId;
+      readonly turnIds: ReadonlyArray<TurnId>;
+      readonly anchorTurnId?: TurnId;
+    }) =>
+      Effect.succeed({
+        threadId: input.threadId,
+        turns: input.turnIds.map((id) => ({ id, items: [] })),
+      }),
+  );
+  const providerTurnIds =
+    providerName === ProviderDriverKind.make("claudeAgent")
+      ? [asTurnId("turn-claude-1"), asTurnId("turn-claude-2")]
+      : [asTurnId("turn-1"), asTurnId("turn-2")];
+  const prepareConversationRollback = vi.fn(
+    (input: { readonly threadId: ThreadId; readonly retainedThroughTurnId?: TurnId }) => {
+      const retainedTurnCount =
+        input.retainedThroughTurnId === undefined
+          ? 0
+          : providerTurnIds.findIndex((turnId) => turnId === input.retainedThroughTurnId) + 1;
+      const turnIds = providerTurnIds.slice(0, retainedTurnCount);
+      const anchorTurnId = providerTurnIds[retainedTurnCount];
+      return Effect.succeed({
+        threadId: input.threadId,
+        turnIds,
+        ...(anchorTurnId !== undefined ? { anchorTurnId } : {}),
+      });
+    },
   );
 
   const unsupported = <A>() =>
@@ -124,6 +151,7 @@ function createProviderServiceHarness(
           continuationKey: `${providerName}:instance:${instanceId}`,
         },
       }),
+    prepareConversationRollback,
     rollbackConversation,
     uploadFeedback: () => unsupported(),
     get streamEvents() {
@@ -137,6 +165,7 @@ function createProviderServiceHarness(
 
   return {
     service,
+    prepareConversationRollback,
     rollbackConversation,
     emit,
   };
@@ -1005,6 +1034,30 @@ describe("CheckpointReactor", () => {
   it("executes provider revert and emits thread.reverted for checkpoint revert requests", async () => {
     const harness = await createHarness();
     const createdAt = "2026-01-01T00:00:00.000Z";
+    let filesystemAtValidation: string | undefined;
+    let filesystemAtRollback: string | undefined;
+    harness.provider.prepareConversationRollback.mockImplementation((input) =>
+      Effect.sync(() => {
+        filesystemAtValidation = NodeFS.readFileSync(
+          NodePath.join(harness.cwd, "README.md"),
+          "utf8",
+        );
+        return {
+          threadId: input.threadId,
+          turnIds: [asTurnId("turn-1")],
+          anchorTurnId: asTurnId("turn-2"),
+        };
+      }),
+    );
+    harness.provider.rollbackConversation.mockImplementation((input) =>
+      Effect.sync(() => {
+        filesystemAtRollback = NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8");
+        return {
+          threadId: input.threadId,
+          turns: input.turnIds.map((id) => ({ id, items: [] })),
+        };
+      }),
+    );
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -1073,9 +1126,16 @@ describe("CheckpointReactor", () => {
     expect(thread.checkpoints).toHaveLength(1);
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
     expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
+    expect(harness.provider.prepareConversationRollback).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+      retainedThroughTurnId: asTurnId("turn-1"),
+    });
+    expect(filesystemAtValidation).toBe("v3\n");
+    expect(filesystemAtRollback).toBe("v3\n");
     expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
       threadId: ThreadId.make("thread-1"),
-      numTurns: 1,
+      turnIds: [asTurnId("turn-1")],
+      anchorTurnId: asTurnId("turn-2"),
     });
     expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v2\n");
     expect(
@@ -1148,7 +1208,8 @@ describe("CheckpointReactor", () => {
     expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
     expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
       threadId: ThreadId.make("thread-1"),
-      numTurns: 1,
+      turnIds: [asTurnId("turn-claude-1")],
+      anchorTurnId: asTurnId("turn-claude-2"),
     });
   });
 
@@ -1206,9 +1267,9 @@ describe("CheckpointReactor", () => {
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.checkpoint.revert",
-        commandId: CommandId.make("cmd-sequenced-revert-request-1"),
+        commandId: CommandId.make("cmd-sequenced-revert-request-2"),
         threadId: ThreadId.make("thread-1"),
-        turnCount: 1,
+        turnCount: 2,
         createdAt,
       }),
     );
@@ -1227,11 +1288,12 @@ describe("CheckpointReactor", () => {
     expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(2);
     expect(harness.provider.rollbackConversation.mock.calls[0]?.[0]).toEqual({
       threadId: ThreadId.make("thread-1"),
-      numTurns: 1,
+      turnIds: [asTurnId("turn-1"), asTurnId("turn-2")],
     });
     expect(harness.provider.rollbackConversation.mock.calls[1]?.[0]).toEqual({
       threadId: ThreadId.make("thread-1"),
-      numTurns: 1,
+      turnIds: [],
+      anchorTurnId: asTurnId("turn-1"),
     });
   });
 

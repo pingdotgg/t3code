@@ -350,6 +350,7 @@ describe("ProviderCommandReactor", () => {
           },
         });
       },
+      prepareConversationRollback: () => unsupported(),
       rollbackConversation: () => unsupported(),
       uploadFeedback: () => unsupported(),
       get streamEvents() {

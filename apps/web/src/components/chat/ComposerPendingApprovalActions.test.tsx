@@ -39,6 +39,7 @@ describe("ComposerPendingApprovalActions", () => {
     expect(markup).toContain("Always allow Safari");
     expect(markup).toContain(">Approve<");
     expect(markup).not.toContain("Always allow this session");
+    expect(markup).not.toContain(">Cancel<");
   });
 
   it("limits provider-supplied approval labels so narrow rows can wrap", () => {

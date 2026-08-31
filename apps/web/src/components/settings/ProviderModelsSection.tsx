@@ -10,7 +10,7 @@ import {
   StarIcon,
   XIcon,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -35,6 +35,7 @@ const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, strin
   [ProviderDriverKind.make("claudeAgent")]: "claude-sonnet-5",
   [ProviderDriverKind.make("cursor")]: "claude-sonnet-4-6",
   [ProviderDriverKind.make("opencode")]: "openai/gpt-5",
+  [ProviderDriverKind.make("droid")]: "claude-opus-5",
 };
 
 interface ProviderModelsSectionProps {
@@ -100,6 +101,7 @@ export function ProviderModelsSection({
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const scrollToAddedModelRef = useRef(false);
   const hiddenModelSet = useMemo(() => new Set(hiddenModels), [hiddenModels]);
   const favoriteModelSet = useMemo(() => new Set(favoriteModels), [favoriteModels]);
   const orderedModels = useMemo(() => {
@@ -109,6 +111,16 @@ export function ProviderModelsSection({
       modelOrder,
     });
   }, [favoriteModelSet, modelOrder, models]);
+
+  useEffect(() => {
+    if (!scrollToAddedModelRef.current) return;
+    scrollToAddedModelRef.current = false;
+    const frame = requestAnimationFrame(() => {
+      const el = listRef.current;
+      el?.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [models.length]);
 
   const handleAdd = () => {
     const normalized = normalizeCustomModelSlug(input);
@@ -132,21 +144,7 @@ export function ProviderModelsSection({
     onChange([...customModels, normalized]);
     setInput("");
     setError(null);
-
-    // Scroll the new row into view once the DOM reflects the commit.
-    // `MutationObserver` handles the one-frame gap between `onChange` and
-    // the `models` prop update; the `requestAnimationFrame` covers the
-    // common case where the parent updates synchronously.
-    const el = listRef.current;
-    if (!el) return;
-    const scrollToEnd = () => el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    requestAnimationFrame(scrollToEnd);
-    const observer = new MutationObserver(() => {
-      scrollToEnd();
-      observer.disconnect();
-    });
-    observer.observe(el, { childList: true, subtree: true });
-    setTimeout(() => observer.disconnect(), 2_000);
+    scrollToAddedModelRef.current = true;
   };
 
   const handleRemove = (slug: string) => {

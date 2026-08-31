@@ -847,6 +847,23 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("preserves canonical plan approval kinds", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "plan-approval",
+        kind: "approval.requested",
+        summary: "Plan approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-plan",
+          requestKind: "plan",
+        },
+      }),
+    ]);
+
+    expect(entries).toMatchObject([{ id: "plan-approval", requestKind: "plan" }]);
+  });
+
   it("keeps the latest task progress without emitting plan-update log entries", () => {
     const activities = [
       makeActivity({ id: "before", kind: "tool.completed", summary: "Read files", sequence: 0 }),

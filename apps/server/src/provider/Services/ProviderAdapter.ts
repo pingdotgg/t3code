@@ -42,6 +42,25 @@ export interface ProviderThreadTurnSnapshot {
 export interface ProviderThreadSnapshot {
   readonly threadId: ThreadId;
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
+  readonly resumeCursor?: unknown;
+}
+
+interface ProviderThreadRollbackTarget {
+  readonly turnIds: ReadonlyArray<TurnId>;
+  readonly anchorTurnId?: TurnId;
+}
+
+export function rollbackTargetMatchesKnownHistory(
+  turns: ReadonlyArray<Pick<ProviderThreadTurnSnapshot, "id">>,
+  target: ProviderThreadRollbackTarget,
+): boolean {
+  if (!target.turnIds.every((turnId, index) => turns[index]?.id === turnId)) {
+    return false;
+  }
+  if (target.anchorTurnId === undefined) {
+    return turns.length === target.turnIds.length;
+  }
+  return turns[target.turnIds.length]?.id === target.anchorTurnId;
 }
 
 export interface ProviderAdapterShape<TError> {
@@ -108,9 +127,7 @@ export interface ProviderAdapterShape<TError> {
    */
   readonly readThread: (threadId: ThreadId) => Effect.Effect<ProviderThreadSnapshot, TError>;
 
-  /**
-   * Roll back a provider thread by N turns.
-   */
+  /** Roll back a provider thread by N turns. */
   readonly rollbackThread: (
     threadId: ThreadId,
     numTurns: number,

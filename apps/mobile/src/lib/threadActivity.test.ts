@@ -234,6 +234,33 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps canonical plan approvals tool-like", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-plan-approval"),
+      projectId: ProjectId.make("project-1"),
+      title: "Plan approval",
+      activities: [
+        makeActivity({
+          id: EventId.make("plan-approval"),
+          kind: "approval.requested",
+          summary: "Plan approval requested",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          payload: {
+            requestId: "req-plan",
+            requestKind: "plan",
+          },
+        }),
+      ],
+    });
+
+    expect(buildThreadFeed(thread)).toMatchObject([
+      {
+        type: "activity-group",
+        activities: [{ id: "plan-approval", toolLike: true }],
+      },
+    ]);
+  });
+
   it("keeps older local feedback before newer messages returned by the server", () => {
     const submission = {
       id: MessageId.make("feedback-command-ordering"),

@@ -52,6 +52,25 @@ export class ProviderAdapterSessionClosedError extends Schema.TaggedErrorClass<P
 }
 
 /**
+ * ProviderAdapterSessionInvalidatedError - A provider mutation may have
+ * committed without a trustworthy response, so the persisted resume state
+ * must not be reused.
+ */
+export class ProviderAdapterSessionInvalidatedError extends Schema.TaggedErrorClass<ProviderAdapterSessionInvalidatedError>()(
+  "ProviderAdapterSessionInvalidatedError",
+  {
+    provider: Schema.String,
+    threadId: Schema.String,
+    operation: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `${this.provider} adapter session became unsafe after ${this.operation}: ${this.threadId}`;
+  }
+}
+
+/**
  * ProviderAdapterRequestError - Provider protocol request failed or timed out.
  */
 export class ProviderAdapterRequestError extends Schema.TaggedErrorClass<ProviderAdapterRequestError>()(
@@ -191,6 +210,7 @@ export type ProviderAdapterError =
   | ProviderAdapterValidationError
   | ProviderAdapterSessionNotFoundError
   | ProviderAdapterSessionClosedError
+  | ProviderAdapterSessionInvalidatedError
   | ProviderAdapterRequestError
   | ProviderAdapterProcessError;
 

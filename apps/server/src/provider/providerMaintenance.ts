@@ -68,7 +68,7 @@ export interface PackageManagedProviderMaintenanceDefinition {
   readonly npmPackageName: string;
   readonly homebrewFormula: string | null;
   readonly nativeUpdate: {
-    readonly executable: string;
+    readonly executable: string | ((resolvedCommandPath: string) => string);
     readonly args: ReadonlyArray<string>;
     readonly lockKey: string;
     readonly isCommandPath: (commandPath: string) => boolean;
@@ -209,6 +209,7 @@ function makeHomebrewProviderMaintenanceCapabilities(
 
 function makeNativeProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  resolvedCommandPath: string,
 ): ProviderMaintenanceCapabilities | null {
   if (!definition.nativeUpdate) {
     return null;
@@ -217,7 +218,10 @@ function makeNativeProviderMaintenanceCapabilities(
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
-    updateExecutable: definition.nativeUpdate.executable,
+    updateExecutable:
+      typeof definition.nativeUpdate.executable === "function"
+        ? definition.nativeUpdate.executable(resolvedCommandPath)
+        : definition.nativeUpdate.executable,
     updateArgs: definition.nativeUpdate.args,
     updateLockKey: definition.nativeUpdate.lockKey,
   });
@@ -292,12 +296,12 @@ export function resolvePackageManagedProviderMaintenance(
     ];
 
     const nativeUpdate = definition.nativeUpdate;
-    if (
-      nativeUpdate &&
-      commandPaths.some((commandPath) => nativeUpdate.isCommandPath(commandPath))
-    ) {
+    const nativeCommandPath = nativeUpdate
+      ? commandPaths.find((commandPath) => nativeUpdate.isCommandPath(commandPath))
+      : undefined;
+    if (nativeCommandPath !== undefined) {
       return (
-        makeNativeProviderMaintenanceCapabilities(definition) ??
+        makeNativeProviderMaintenanceCapabilities(definition, nativeCommandPath) ??
         makeNpmGlobalProviderMaintenanceCapabilities(definition)
       );
     }

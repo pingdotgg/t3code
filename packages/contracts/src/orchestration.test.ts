@@ -29,6 +29,7 @@ import {
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
   isProviderSendTurnSupportedImageMimeType,
+  providerRequestKindFromRequestType,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -1109,4 +1110,33 @@ it("isProviderSendTurnSupportedImageMimeType accepts raster formats and rejects 
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/png"), true);
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("IMAGE/JPEG"), true);
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/svg+xml"), false);
+});
+
+it("maps provider request types to client-facing approval kinds", () => {
+  assert.deepStrictEqual(
+    [
+      "command_execution_approval",
+      "exec_command_approval",
+      "dynamic_tool_call",
+      "file_read_approval",
+      "file_change_approval",
+      "apply_patch_approval",
+      "plan_approval",
+      "mcp_elicitation_approval",
+      "tool_user_input",
+      undefined,
+    ].map(providerRequestKindFromRequestType),
+    [
+      "command",
+      "command",
+      "command",
+      "file-read",
+      "file-change",
+      "file-change",
+      "plan",
+      "mcp-elicitation",
+      undefined,
+      undefined,
+    ],
+  );
 });

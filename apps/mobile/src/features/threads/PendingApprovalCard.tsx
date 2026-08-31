@@ -33,7 +33,8 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
         Approval needed
       </Text>
       <Text className="font-t3-bold text-lg text-adaptive-neutral-950-50">
-        {props.approval.appName ?? props.approval.requestKind}
+        {props.approval.appName ??
+          (props.approval.requestKind === "plan" ? "Plan approval" : props.approval.requestKind)}
       </Text>
       {props.approval.detail ? (
         <Text className="font-sans text-sm leading-normal text-adaptive-neutral-600-400">

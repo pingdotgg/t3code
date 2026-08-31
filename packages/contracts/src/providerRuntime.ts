@@ -27,6 +27,8 @@ const RuntimeEventRawSource = Schema.Union([
   Schema.Literal("claude.sdk.permission"),
   Schema.Literal("codex.sdk.thread-event"),
   Schema.Literal("opencode.sdk.event"),
+  Schema.Literal("droid.jsonrpc.notification"),
+  Schema.Literal("droid.jsonrpc.request"),
   Schema.Literal("acp.jsonrpc"),
   Schema.TemplateLiteral(["acp.", Schema.String, ".extension"]),
 ]);
@@ -139,6 +141,7 @@ export const CanonicalRequestType = Schema.Literals([
   "file_change_approval",
   "apply_patch_approval",
   "exec_command_approval",
+  "plan_approval",
   "mcp_elicitation_approval",
   "tool_user_input",
   "dynamic_tool_call",
@@ -367,6 +370,11 @@ export type TurnStartedPayload = typeof TurnStartedPayload.Type;
 const TurnCompletedPayload = Schema.Struct({
   state: RuntimeTurnState,
   stopReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
+  /**
+   * The provider's resume cursor as of this completion. Adapters emit it when
+   * the provider advances durable conversation identity.
+   */
+  resumeCursor: Schema.optional(Schema.Unknown),
   usage: Schema.optional(Schema.Unknown),
   modelUsage: Schema.optional(UnknownRecordSchema),
   totalCostUsd: Schema.optional(Schema.Number),
@@ -434,6 +442,11 @@ const RequestOpenedPayload = Schema.Struct({
   requestType: CanonicalRequestType,
   detail: Schema.optional(TrimmedNonEmptyStringSchema),
   appName: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Decision choices this request supports, with provider-supplied labels.
+   * Absent means the client's default option set applies; adapters emit it
+   * only when their set or labels differ from that default.
+   */
   options: Schema.optional(Schema.Array(ProviderApprovalOption)),
   args: Schema.optional(Schema.Unknown),
 });
