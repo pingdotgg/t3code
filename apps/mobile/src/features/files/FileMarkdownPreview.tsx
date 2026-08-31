@@ -13,7 +13,7 @@ import {
   resolveMarkdownFontSizes,
   resolveNativeMarkdownTypography,
 } from "../../lib/appearancePreferences";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   hasNativeSelectableMarkdownText,
@@ -38,14 +38,15 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
     () => resolveNativeMarkdownTypography(appearance.baseFontSize),
     [appearance.baseFontSize],
   );
-  const body = String(useThemeColor("--color-md-body"));
-  const strong = String(useThemeColor("--color-md-strong"));
-  const link = String(useThemeColor("--color-md-link"));
-  const blockquoteBorder = String(useThemeColor("--color-md-blockquote-border"));
-  const blockquoteBackground = String(useThemeColor("--color-md-blockquote-bg"));
-  const codeBackground = String(useThemeColor("--color-md-code-bg"));
-  const codeText = String(useThemeColor("--color-md-code-text"));
-  const horizontalRule = String(useThemeColor("--color-md-hr"));
+  const theme = useUniwindTheme();
+  const body = theme["--color-md-body"];
+  const strong = theme["--color-md-strong"];
+  const link = theme["--color-md-link"];
+  const blockquoteBorder = theme["--color-md-blockquote-border"];
+  const blockquoteBackground = theme["--color-md-blockquote-bg"];
+  const codeBackground = theme["--color-md-code-bg"];
+  const codeText = theme["--color-md-code-text"];
+  const horizontalRule = theme["--color-md-hr"];
   const regularFontFamily = useFontFamily("regular");
   const mediumFontFamily = useFontFamily("medium");
   const boldFontFamily = useFontFamily("bold");

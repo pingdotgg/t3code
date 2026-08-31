@@ -8,11 +8,7 @@ import { pipe } from "effect/Function";
 import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
 import { resolveMobileCodeSurface } from "../../lib/appearancePreferences";
 import { MOBILE_CODE_SURFACE } from "../../lib/typography";
-import {
-  DEFAULT_MOBILE_THEME_ID,
-  getMobileThemeVariables,
-  type MobileThemeId,
-} from "../../lib/mobileTheme";
+import { type MobileThemeId, type MobileThemeVariables } from "../../lib/mobileTheme";
 import { getMobileTerminalTheme, type TerminalAppearanceScheme } from "../terminal/terminalTheme";
 import { computeWordAltDiffRanges } from "./reviewWordDiffs";
 import {
@@ -137,10 +133,10 @@ function buildReviewCommentsCacheKey(comments: ReadonlyArray<ReviewInlineComment
 
 export function createNativeReviewDiffTheme(
   scheme: TerminalAppearanceScheme,
-  themeId: MobileThemeId = DEFAULT_MOBILE_THEME_ID,
+  themeId: MobileThemeId,
+  appTheme: MobileThemeVariables,
 ): NativeReviewDiffTheme {
   const terminalTheme = getMobileTerminalTheme(themeId, scheme);
-  const appTheme = getMobileThemeVariables(themeId, scheme);
   const [, terminalRed] = terminalTheme.palette;
   // Swift expects #RRGGBB/#RRGGBBAA while Android expects #RRGGBB/#AARRGGBB.
   // Flatten translucent app tokens onto the code surface so both native

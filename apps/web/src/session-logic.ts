@@ -2,6 +2,7 @@ import * as Option from "effect/Option";
 import * as Arr from "effect/Array";
 import * as Schema from "effect/Schema";
 import { isBackgroundTaskActivity } from "@t3tools/client-runtime/state/subagentRuntime";
+import { isWorktreeSetupActivity } from "@t3tools/client-runtime/work-log/presentation";
 import {
   ApprovalRequestId,
   isToolLifecycleItemType,
@@ -171,12 +172,6 @@ export type TimelineEntry =
     }
   | {
       id: string;
-      kind: "turn-plan";
-      createdAt: string;
-      turnPlan: TurnPlanEntry;
-    }
-  | {
-      id: string;
       kind: "work";
       createdAt: string;
       entry: WorkLogEntry;
@@ -277,6 +272,17 @@ export function workEntryIndicatesToolFailure(entry: WorkLogEntry): boolean {
 /** True when the rendered result indicates failure. The command itself is user intent, not output. */
 export function workEntryDisplayIndicatesToolFailure(entry: WorkLogEntry): boolean {
   return workEntryIndicatesToolFailureFromOutput(entry, false);
+}
+
+/** Severe failures keep the red treatment ordinary tool failures lost: runtime
+ *  errors and orchestration `*.failed` activities (provider.turn.start.failed,
+ *  checkpoint.capture.failed, ...) mean the turn or a core side effect broke,
+ *  not that a command exited nonzero. */
+export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
+  return (
+    entry.sourceActivityKind === "runtime.error" ||
+    entry.sourceActivityKind?.endsWith(".failed") === true
+  );
 }
 
 /** Tool/command row completed without failure (blue check affordance). */
@@ -701,62 +707,6 @@ export function deriveActivePlanState(
   return addPlanStepDurations(plan, matchingActivities.slice(latestClearIndex + 1));
 }
 
-export interface TurnPlanEntry {
-  /** Stable per-turn row id (plans rewrite constantly; the row must not churn). */
-  id: string;
-  /** Anchor timestamp: the turn's FIRST plan activity, so the chip renders where planning began. */
-  createdAt: string;
-  turnId: TurnId | null;
-  plan: ActivePlanState;
-}
-
-/**
- * One inline plan chip per turn that produced plan/todo steps: the latest
- * snapshot for the turn, anchored at the first snapshot's timestamp. Turn-less
- * plan activities collapse into a single chip keyed by thread order.
- */
-export function deriveTurnPlans(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-): TurnPlanEntry[] {
-  const ordered = [...activities].toSorted(compareActivitiesByOrder);
-  const byTurn = new Map<
-    string,
-    { activities: OrchestrationThreadActivity[]; entry: TurnPlanEntry }
-  >();
-  for (const activity of ordered) {
-    if (activity.kind !== "turn.plan.updated") {
-      continue;
-    }
-    const plan = planStateFromActivity(activity);
-    const key = activity.turnId ?? "no-turn";
-    if (!plan) {
-      // A later snapshot with no steps clears the turn's plan; keeping the
-      // stale entry would freeze the chip on a withdrawn plan.
-      byTurn.delete(key);
-      continue;
-    }
-    const existing = byTurn.get(key);
-    if (existing) {
-      existing.entry.plan = plan;
-      existing.activities.push(activity);
-    } else {
-      byTurn.set(key, {
-        activities: [activity],
-        entry: {
-          id: `turn-plan:${key}`,
-          createdAt: activity.createdAt,
-          turnId: activity.turnId,
-          plan,
-        },
-      });
-    }
-  }
-  return [...byTurn.values()].map(({ activities: planActivities, entry }) => ({
-    ...entry,
-    plan: addPlanStepDurations(entry.plan, planActivities),
-  }));
-}
-
 export function findLatestProposedPlan(
   proposedPlans: ReadonlyArray<ProposedPlan>,
   latestTurnId: TurnId | string | null | undefined,
@@ -860,6 +810,7 @@ export function deriveWorkLogEntries(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
+    if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
     if (activity.kind === "tool.started") continue;
     // Agent task.started rows are CTA seeds: they carry the true spawn turn,
     // which is the batch key (completions of background subagents arrive
@@ -869,12 +820,25 @@ export function deriveWorkLogEntries(
     if (activity.kind === "task.updated") continue;
     if (activity.kind === "tool.progress") continue;
     if (activity.kind === "context-window.updated") continue;
+    if (activity.kind === "turn.plan.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
+    if (isNoContentRuntimeWarning(activity)) continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     if (isAgentInternalActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
   return collapseDerivedWorkLogEntries(entries);
+}
+
+/** Adapters forward unknown wire-only SDK messages (background_tasks_changed,
+ *  commands_changed, ...) as runtime warnings. The suffix comes from
+ *  describeUnknownSdkMessage in the Claude adapter; a row with no displayable
+ *  text carries nothing a user can act on, so it does not render. */
+function isNoContentRuntimeWarning(activity: OrchestrationThreadActivity): boolean {
+  return (
+    activity.kind === "runtime.warning" &&
+    activity.summary.endsWith("(no displayable text content)")
+  );
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -1824,7 +1788,6 @@ export function deriveTimelineEntries(
   messages: ReadonlyArray<ChatMessage>,
   proposedPlans: ReadonlyArray<ProposedPlan>,
   workEntries: ReadonlyArray<WorkLogEntry>,
-  turnPlans: ReadonlyArray<TurnPlanEntry> = [],
 ): TimelineEntry[] {
   const messageRows: TimelineEntry[] = messages.map((message) => ({
     id: message.id,
@@ -1838,19 +1801,13 @@ export function deriveTimelineEntries(
     createdAt: proposedPlan.createdAt,
     proposedPlan,
   }));
-  const turnPlanRows: TimelineEntry[] = turnPlans.map((turnPlan) => ({
-    id: turnPlan.id,
-    kind: "turn-plan",
-    createdAt: turnPlan.createdAt,
-    turnPlan,
-  }));
   const workRows: TimelineEntry[] = workEntries.map((entry) => ({
     id: entry.id,
     kind: "work",
     createdAt: entry.createdAt,
     entry,
   }));
-  return [...messageRows, ...proposedPlanRows, ...turnPlanRows, ...workRows].toSorted((a, b) =>
+  return [...messageRows, ...proposedPlanRows, ...workRows].toSorted((a, b) =>
     a.createdAt.localeCompare(b.createdAt),
   );
 }

@@ -4,6 +4,7 @@ import {
   ProjectId,
   type MessageId,
   type ModelSelection,
+  type ProviderInteractionMode,
   type ProviderDriverKind,
   type ServerProvider,
   type ScopedProjectRef,
@@ -11,7 +12,18 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
-import { type ChatMessage, type SessionPhase, type Thread, type ThreadShell } from "../types";
+import {
+  appendCodexArtifactTemplateUsePrompt,
+  codexArtifactTemplateUsePrompt,
+  type CodexArtifactTemplate,
+} from "@t3tools/client-runtime/codex-artifact-templates";
+import {
+  type ChatMessage,
+  isImageAttachment,
+  type SessionPhase,
+  type Thread,
+  type ThreadShell,
+} from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -85,6 +97,15 @@ export function resolveThreadErrorProviderStatus<T extends { instanceId: string 
   return activeProviderStatus;
 }
 
+export function codexArtifactTemplatePromptToAppend(
+  currentDraft: string,
+  template: CodexArtifactTemplate,
+): string | null {
+  return appendCodexArtifactTemplateUsePrompt(currentDraft, template) === currentDraft
+    ? null
+    : codexArtifactTemplateUsePrompt(template);
+}
+
 export function shouldDockDraftHeroForSubmission(input: {
   isDraftHeroState: boolean;
   activeThreadKey: string | null;
@@ -142,13 +163,19 @@ export function resolveDraftHeroState(input: {
 
 export function resolveDraftPromotionNavigationTarget(input: {
   serverThreadRef: ScopedThreadRef | null;
-  serverThreadStarted: boolean;
+  serverThread: Pick<Thread, "latestTurn" | "session"> | null | undefined;
   backgroundSubmissionPending: boolean;
 }): ScopedThreadRef | null {
   if (input.backgroundSubmissionPending) {
     return null;
   }
-  return input.serverThreadStarted ? input.serverThreadRef : null;
+  const sessionStatus = input.serverThread?.session?.status;
+  const turnStarted = input.serverThread?.latestTurn?.startedAt != null;
+  const startupStopped =
+    sessionStatus === "error" || sessionStatus === "stopped" || sessionStatus === "interrupted";
+  // Keep local preparation feedback mounted until the server can render the
+  // running turn or its startup error on the canonical thread route.
+  return turnStarted || startupStopped ? input.serverThreadRef : null;
 }
 
 export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {
@@ -325,12 +352,27 @@ export function revokeBlobPreviewUrl(previewUrl: string | undefined): void {
   URL.revokeObjectURL(previewUrl);
 }
 
+export async function loadVideoPreviewUrl(url: string, signal?: AbortSignal): Promise<string> {
+  const response = await fetch(url, signal ? { signal } : {});
+  if (!response.ok) throw new Error(`Could not load video (${response.status}).`);
+  return URL.createObjectURL(await response.blob());
+}
+
+export function isVideoPreviewRequestCurrent(
+  requestThreadKey: string,
+  currentThreadKey: string,
+  requestId: number,
+  currentRequestId: number,
+): boolean {
+  return requestThreadKey === currentThreadKey && requestId === currentRequestId;
+}
+
 export function revokeUserMessagePreviewUrls(message: ChatMessage): void {
   if (message.role !== "user" || !message.attachments) {
     return;
   }
   for (const attachment of message.attachments) {
-    if (attachment.type !== "image") {
+    if (!isImageAttachment(attachment)) {
       continue;
     }
     revokeBlobPreviewUrl(attachment.previewUrl);
@@ -343,7 +385,7 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
   }
   const previewUrls: string[] = [];
   for (const attachment of message.attachments) {
-    if (attachment.type !== "image") continue;
+    if (!isImageAttachment(attachment)) continue;
     if (!attachment.previewUrl || !attachment.previewUrl.startsWith("blob:")) continue;
     previewUrls.push(attachment.previewUrl);
   }
@@ -490,6 +532,22 @@ export function shouldShowBranchMismatchBanner(input: {
     return false;
   }
   return input.composerHasContent || input.wasShownForCurrentMismatch;
+}
+
+export function shouldShowPlanFollowUpPrompt(input: {
+  pendingUserInputCount: number;
+  interactionMode: ProviderInteractionMode;
+  latestTurnSettled: boolean;
+  hasActionableProposedPlan: boolean;
+  hasComposerAttachments: boolean;
+}): boolean {
+  return (
+    input.pendingUserInputCount === 0 &&
+    input.interactionMode === "plan" &&
+    input.latestTurnSettled &&
+    input.hasActionableProposedPlan &&
+    !input.hasComposerAttachments
+  );
 }
 
 // Session-scoped (module-level so it survives ChatView remounts, e.g. route

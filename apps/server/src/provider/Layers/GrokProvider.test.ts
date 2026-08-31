@@ -6,9 +6,182 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { GrokSettings } from "@t3tools/contracts";
 
-import { buildInitialGrokProviderSnapshot, checkGrokProviderStatus } from "./GrokProvider.ts";
+import {
+  buildGrokModelCapabilities,
+  buildInitialGrokProviderSnapshot,
+  checkGrokProviderStatus,
+} from "./GrokProvider.ts";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
+
+describe("buildGrokModelCapabilities", () => {
+  it("preserves ACP-provided reasoning labels and the active default", () => {
+    const capabilities = buildGrokModelCapabilities({
+      modelId: "grok-4.6",
+      name: "Grok 4.6",
+      _meta: {
+        supportsReasoningEffort: true,
+        reasoningEffort: "xhigh",
+        reasoningEfforts: [
+          { value: "xhigh", label: "Extra High Effort", default: true },
+          { value: "high", label: "High Effort", default: true },
+          { value: "medium", label: "Medium Effort" },
+          { value: "low", label: "Low Effort" },
+        ],
+      },
+    });
+
+    expect(capabilities.optionDescriptors).toEqual([
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        currentValue: "xhigh",
+        options: [
+          { id: "xhigh", label: "Extra High Effort", isDefault: true },
+          { id: "high", label: "High Effort" },
+          { id: "medium", label: "Medium Effort" },
+          { id: "low", label: "Low Effort" },
+        ],
+      },
+    ]);
+  });
+
+  it("uses raw ACP values when option labels are omitted", () => {
+    const capabilities = buildGrokModelCapabilities({
+      modelId: "grok-4.6",
+      name: "Grok 4.6",
+      _meta: {
+        supportsReasoningEffort: true,
+        reasoningEffort: "xhigh",
+        reasoningEfforts: [{ value: "xhigh" }, { value: "medium" }],
+      },
+    });
+
+    expect(capabilities.optionDescriptors).toEqual([
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        currentValue: "xhigh",
+        options: [
+          { id: "xhigh", label: "xhigh" },
+          { id: "medium", label: "medium" },
+        ],
+      },
+    ]);
+  });
+
+  it("keeps ACP current effort separate from its collapsed advertised default", () => {
+    const capabilities = buildGrokModelCapabilities({
+      modelId: "grok-4.6",
+      name: "Grok 4.6",
+      _meta: {
+        supportsReasoningEffort: true,
+        reasoningEffort: "medium",
+        reasoningEfforts: [
+          { value: "xhigh", label: "Extra High Effort", default: true },
+          { value: "high", label: "High Effort", default: true },
+          { value: "medium", label: "Medium Effort" },
+        ],
+      },
+    });
+
+    expect(capabilities.optionDescriptors).toEqual([
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        currentValue: "medium",
+        options: [
+          { id: "xhigh", label: "Extra High Effort", isDefault: true },
+          { id: "high", label: "High Effort" },
+          { id: "medium", label: "Medium Effort" },
+        ],
+      },
+    ]);
+  });
+
+  it("preserves ACP descriptions and falls back from invalid values to valid ids", () => {
+    const capabilities = buildGrokModelCapabilities({
+      modelId: "grok-4.6",
+      name: "Grok 4.6",
+      _meta: {
+        supportsReasoningEffort: true,
+        reasoningEffort: "high",
+        reasoningEfforts: [
+          {
+            id: "high",
+            value: "not a token",
+            label: "High Effort",
+            description: "Higher implementation quality",
+            default: true,
+          },
+          { id: "bad id", value: "also invalid", label: "Invalid" },
+        ],
+      },
+    });
+
+    expect(capabilities.optionDescriptors).toEqual([
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        currentValue: "high",
+        options: [
+          {
+            id: "high",
+            label: "High Effort",
+            description: "Higher implementation quality",
+            isDefault: true,
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("accepts an advertised ACP menu when the support flag is omitted", () => {
+    const capabilities = buildGrokModelCapabilities({
+      modelId: "grok-4.6",
+      name: "Grok 4.6",
+      _meta: {
+        reasoningEffort: "high",
+        reasoningEfforts: [{ value: "high", label: "High Effort", default: true }],
+      },
+    });
+
+    expect(capabilities.optionDescriptors).toHaveLength(1);
+  });
+
+  it("honors an explicit ACP opt-out even when a menu is present", () => {
+    const capabilities = buildGrokModelCapabilities({
+      modelId: "grok-4.6",
+      name: "Grok 4.6",
+      _meta: {
+        supportsReasoningEffort: false,
+        reasoningEfforts: [{ value: "high", label: "High Effort", default: true }],
+      },
+    });
+
+    expect(capabilities.optionDescriptors).toEqual([]);
+  });
+
+  it("does not synthesize a reasoning menu when ACP omits it", () => {
+    expect(
+      buildGrokModelCapabilities({
+        modelId: "grok-4.6",
+        name: "Grok 4.6",
+        _meta: { supportsReasoningEffort: true, reasoningEffort: "xhigh" },
+      }).optionDescriptors,
+    ).toEqual([]);
+  });
+
+  it("keeps non-reasoning Grok models free of reasoning controls", () => {
+    expect(
+      buildGrokModelCapabilities({ modelId: "grok-build", name: "Grok Build" }).optionDescriptors,
+    ).toEqual([]);
+  });
+});
 
 describe("buildInitialGrokProviderSnapshot", () => {
   it.effect("returns a disabled snapshot when settings.enabled is false", () =>
@@ -41,7 +214,7 @@ describe("buildInitialGrokProviderSnapshot", () => {
       expect(snapshot.status).toBe("warning");
       expect(snapshot.version).toBeNull();
       expect(snapshot.message).toContain("Checking Grok");
-      expect(snapshot.requiresNewThreadForModelChange).toBe(true);
+      expect(snapshot.requiresNewThreadForModelChange).toBeUndefined();
     }),
   );
 });

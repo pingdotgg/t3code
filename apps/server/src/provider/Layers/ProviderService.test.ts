@@ -14,7 +14,6 @@ import type {
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
-  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -25,6 +24,8 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { it, assert, describe, vi } from "@effect/vitest";
 
+import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -1145,6 +1146,33 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const imageOnlyInput = routing.codex.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
       assert.equal(imageOnlyInput.input?.startsWith('[Attached image "screenshot.png"'), true);
 
+      const fileAttachment = {
+        type: "file" as const,
+        id: "thread-attach-12345678-1234-1234-1234-123456789abc-pdf",
+        name: "report.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 456,
+      };
+
+      routing.codex.sendTurn.mockClear();
+      yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: "summarize the report",
+        attachments: [attachment, fileAttachment],
+      });
+      const mixedInput = routing.codex.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
+      assert.include(mixedInput.input ?? "", '[Attached file "report.pdf" is saved at: ');
+      assert.include(mixedInput.input ?? "", `${fileAttachment.id}.pdf]`);
+      // Every attachment reaches the adapter; each adapter decides what its
+      // provider ingests natively.
+      assert.deepEqual(mixedInput.attachments, [attachment, fileAttachment]);
+
+      routing.codex.sendTurn.mockClear();
+      yield* provider.sendTurn({ threadId: session.threadId, attachments: [fileAttachment] });
+      const fileOnlyInput = routing.codex.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
+      assert.include(fileOnlyInput.input ?? "", '[Attached file "report.pdf" is saved at: ');
+      assert.deepEqual(fileOnlyInput.attachments, [fileAttachment]);
+
       yield* provider.stopSession({ threadId: session.threadId });
     }),
   );
@@ -1500,6 +1528,67 @@ routing.layer("ProviderServiceLive routing", (it) => {
           assert.equal(runtimePayload.activeTurnId, `turn-${String(session.threadId)}`);
           assert.equal(runtimePayload.lastError, null);
           assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
+        }
+      }
+    }),
+  );
+
+  it.effect("does not persist running after a concurrent send is interrupted", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const sendStarted = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      routing.codex.sendTurn.mockImplementationOnce(() =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(sendStarted, undefined);
+          yield* Deferred.await(interrupted);
+          return yield* Effect.interrupt;
+        }),
+      );
+      routing.codex.interruptTurn.mockImplementationOnce(() =>
+        Deferred.succeed(interrupted, undefined).pipe(Effect.asVoid),
+      );
+
+      const threadId = asThreadId("thread-interrupted-send-directory");
+      const session = yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const sendExitFiber = yield* provider
+        .sendTurn({
+          threadId: session.threadId,
+          input: "hold this prompt",
+          attachments: [],
+        })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(sendStarted);
+      yield* provider.interruptTurn({ threadId: session.threadId });
+      const sendExit = yield* Fiber.join(sendExitFiber);
+
+      assert.equal(Exit.isFailure(sendExit), true);
+      if (Exit.isFailure(sendExit)) {
+        assert.equal(Cause.hasInterruptsOnly(sendExit.cause), true);
+      }
+      const persisted = yield* runtimeRepository.getByThreadId({
+        threadId: session.threadId,
+      });
+      assert.equal(Option.isSome(persisted), true);
+      if (Option.isSome(persisted)) {
+        // The directory folds both adapter "ready" and "running" into its
+        // runtime "running" state. The payload proves sendTurn did not upsert.
+        assert.equal(persisted.value.status, "running");
+        const payload = persisted.value.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            activeTurnId?: string | null;
+            lastRuntimeEvent?: string | null;
+          };
+          assert.equal(runtimePayload.activeTurnId ?? null, null);
+          assert.notEqual(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
         }
       }
     }),

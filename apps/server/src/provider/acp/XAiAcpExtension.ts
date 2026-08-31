@@ -1,8 +1,11 @@
+import * as NodeOS from "node:os";
+
 import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import type * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -19,11 +22,15 @@ type XAiPromptCompleteNotification = typeof XAiPromptCompleteNotification.Type;
 interface PendingXAiPromptCompletion {
   readonly sessionId: string;
   readonly promptId: string;
-  readonly deferred: Deferred.Deferred<EffectAcpSchema.PromptResponse>;
+  readonly deferred: Deferred.Deferred<
+    EffectAcpSchema.PromptResponse,
+    EffectAcpErrors.AcpRequestError
+  >;
 }
 
 const completedXAiPromptIdLimit = 128;
 const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
+const xAiRateLimitedErrorCode = -32003;
 
 const XAiAskUserQuestionOption = Schema.Struct({
   label: Schema.String,
@@ -196,6 +203,218 @@ export function makeXAiAskUserQuestionCancelledResponse(): XAiAskUserQuestionCan
   return { outcome: "cancelled" };
 }
 
+// ---------------------------------------------------------------------------
+// x.ai/exit_plan_mode — plan approval gate (mirrors Grok Build TUI plan window)
+// ---------------------------------------------------------------------------
+
+const XAiExitPlanModeParams = Schema.Struct({
+  sessionId: Schema.String,
+  toolCallId: Schema.String,
+  planContent: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const XAiWrappedExitPlanModeParams = Schema.Struct({
+  method: Schema.Literals(["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"]),
+  params: XAiExitPlanModeParams,
+});
+
+export const XAiExitPlanModeRequest = Schema.Union([
+  XAiExitPlanModeParams,
+  XAiWrappedExitPlanModeParams,
+]);
+
+type XAiExitPlanModeRequestParams = typeof XAiExitPlanModeParams.Type;
+type XAiExitPlanModeRequest = typeof XAiExitPlanModeRequest.Type;
+
+function unwrapExitPlanModeParams(params: XAiExitPlanModeRequest): XAiExitPlanModeRequestParams {
+  return "params" in params ? params.params : params;
+}
+
+/** Empty-state copy when Grok exits plan mode without a plan file. */
+export const XAI_EMPTY_PLAN_MARKDOWN =
+  "# No plan written yet\n\n(The agent exited plan mode without writing a plan.)";
+
+export function extractXAiExitPlanMarkdown(
+  params: XAiExitPlanModeRequest,
+  fallback?: string | null,
+): string {
+  const content = unwrapExitPlanModeParams(params).planContent;
+  const fromRequest = typeof content === "string" ? trimmed(content) : undefined;
+  if (fromRequest) {
+    return fromRequest;
+  }
+  const fromFallback = fallback?.trim();
+  if (fromFallback && fromFallback.length > 0) {
+    return fromFallback;
+  }
+  return XAI_EMPTY_PLAN_MARKDOWN;
+}
+
+export type XAiExitPlanModeOutcome = "approved" | "abandoned" | "request_changes";
+
+export interface XAiExitPlanModeResponse {
+  readonly outcome: XAiExitPlanModeOutcome;
+  readonly feedback?: string;
+}
+
+/**
+ * Client captured the plan for T3's proposed-plan card. Abandon the native
+ * Grok plan-approval gate so the turn unblocks; the user implements via T3 UI.
+ */
+export function makeXAiExitPlanModeCapturedResponse(feedback?: string): XAiExitPlanModeResponse {
+  return {
+    outcome: "abandoned",
+    feedback:
+      feedback ??
+      "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+  };
+}
+
+function normalizeFsPath(value: string): string {
+  return value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function pathHasTraversalSegment(normalized: string): boolean {
+  return normalized.split("/").includes("..");
+}
+
+function addGrokSessionPrefix(
+  prefixes: Set<string>,
+  homeOrRoot: string,
+  nestedGrokDir: boolean,
+): void {
+  const root = normalizeFsPath(homeOrRoot);
+  if (!root) {
+    return;
+  }
+  prefixes.add(nestedGrokDir ? `${root}/.grok/sessions/` : `${root}/sessions/`);
+}
+
+/** Injected host bits so these helpers stay off `process.platform` / `process.env`. */
+export interface GrokPlanPathHost {
+  readonly platform: NodeJS.Platform;
+  readonly environment: NodeJS.ProcessEnv;
+}
+
+function grokPlanSessionPrefixes(environment: NodeJS.ProcessEnv): ReadonlySet<string> {
+  const prefixes = new Set<string>();
+  addGrokSessionPrefix(prefixes, NodeOS.homedir(), true);
+  addGrokSessionPrefix(prefixes, "~", true);
+  addGrokSessionPrefix(prefixes, environment.HOME ?? "", true);
+  addGrokSessionPrefix(prefixes, environment.USERPROFILE ?? "", true);
+  // ACP mock and isolated Grok spawns use a HOME that is not the server process home.
+  addGrokSessionPrefix(prefixes, "/tmp/mock-home", true);
+  const grokHome = environment.GROK_HOME ?? "";
+  addGrokSessionPrefix(prefixes, grokHome, false);
+  addGrokSessionPrefix(prefixes, grokHome, true);
+  return prefixes;
+}
+
+const CANONICAL_HOME_GROK_SESSION_PATH =
+  /^(?:\/home\/[^/]+|\/Users\/[^/]+|[a-zA-Z]:\/Users\/[^/]+)\/\.grok\/sessions\/(?:[^/]+\/)+plan\.md$/;
+const CASE_INSENSITIVE_CANONICAL_HOME_GROK_SESSION_PATH = new RegExp(
+  CANONICAL_HOME_GROK_SESSION_PATH.source,
+  "i",
+);
+
+/**
+ * True when a path is Grok's session plan file under a Grok home
+ * (`~/.grok/sessions/.../plan.md`, `$HOME/.grok/sessions/...`, or `$GROK_HOME/sessions/...`).
+ * Deliberately does not match workspace files named `plan.md` (e.g. docs/plan.md
+ * or a repo-local `.grok/sessions/.../plan.md`).
+ */
+export function isGrokPlanMarkdownPath(
+  path: string | undefined | null,
+  host: GrokPlanPathHost,
+): boolean {
+  if (typeof path !== "string") {
+    return false;
+  }
+  const normalized = path.trim().replace(/\\/g, "/");
+  const win32 = host.platform === "win32";
+  const haystack = win32 ? normalized.toLowerCase() : normalized;
+  if (
+    normalized.length === 0 ||
+    !haystack.endsWith("/plan.md") ||
+    pathHasTraversalSegment(normalized)
+  ) {
+    return false;
+  }
+  for (const prefix of grokPlanSessionPrefixes(host.environment)) {
+    const needle = win32 ? prefix.toLowerCase() : prefix;
+    if (!haystack.startsWith(needle)) {
+      continue;
+    }
+    const rest = haystack.slice(needle.length);
+    // Session layout: <home>/.grok/sessions/<encoded-cwd>/<session-id>/plan.md
+    if (rest !== "plan.md" && rest.endsWith("plan.md")) {
+      return true;
+    }
+  }
+  return (
+    win32 ? CASE_INSENSITIVE_CANONICAL_HOME_GROK_SESSION_PATH : CANONICAL_HOME_GROK_SESSION_PATH
+  ).test(haystack);
+}
+
+/**
+ * Extract plan markdown from a Grok write/edit tool call targeting plan.md.
+ * Used so T3 can show the plan while plan mode is still active (before exit).
+ */
+export function extractGrokPlanMarkdownFromToolCallData(
+  data: Record<string, unknown> | undefined,
+  host: GrokPlanPathHost,
+): string | undefined {
+  if (!data) {
+    return undefined;
+  }
+
+  let sawPlanWrite = false;
+  const takePlanText = (
+    value: string | undefined,
+    filePath: string | undefined,
+  ): string | undefined => {
+    if (!isGrokPlanMarkdownPath(filePath, host) || value === undefined) {
+      return undefined;
+    }
+    sawPlanWrite = true;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  };
+
+  const rawInput = data.rawInput;
+  if (isRecord(rawInput)) {
+    const filePath =
+      (typeof rawInput.file_path === "string" ? rawInput.file_path : undefined) ??
+      (typeof rawInput.path === "string" ? rawInput.path : undefined);
+    const content = typeof rawInput.content === "string" ? rawInput.content : undefined;
+    const fromRaw = takePlanText(content, filePath);
+    if (fromRaw !== undefined) {
+      return fromRaw;
+    }
+  }
+
+  const content = data.content;
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (!isRecord(block) || block.type !== "diff") {
+        continue;
+      }
+      const path = typeof block.path === "string" ? block.path : undefined;
+      const newText = typeof block.newText === "string" ? block.newText : undefined;
+      const fromDiff = takePlanText(newText, path);
+      if (fromDiff !== undefined) {
+        return fromDiff;
+      }
+    }
+  }
+
+  return sawPlanWrite ? "" : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Adds Grok's private prompt-completion fallback around a standards-only ACP runtime.
  * The underlying runtime remains unaware of xAI methods and metadata.
@@ -278,7 +497,7 @@ const registerXAiPromptCompletionFallback = (
   sessionId: string,
   promptId: string,
 ) =>
-  Deferred.make<EffectAcpSchema.PromptResponse>().pipe(
+  Deferred.make<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpRequestError>().pipe(
     Effect.tap((deferred) =>
       Ref.update(pendingRef, (pending) => [...pending, { sessionId, promptId, deferred }]),
     ),
@@ -287,7 +506,7 @@ const registerXAiPromptCompletionFallback = (
 
 const unregisterXAiPromptCompletionFallback = (
   pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,
-  deferred: Deferred.Deferred<EffectAcpSchema.PromptResponse>,
+  deferred: Deferred.Deferred<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpRequestError>,
 ) => Ref.update(pendingRef, (pending) => pending.filter((entry) => entry.deferred !== deferred));
 
 const abortPendingPromptCompletions = (
@@ -358,12 +577,47 @@ const resolveXAiPromptCompletionFallback = ({
           return [Effect.void, pending] as const;
         }
         return [
-          Deferred.succeed(entry.deferred, promptResponseFromXAi(notification)).pipe(Effect.asVoid),
+          settleXAiPromptCompletion(entry.deferred, notification),
           [...pending.slice(0, index), ...pending.slice(index + 1)],
         ] as const;
       }).pipe(Effect.flatten);
     }),
   );
+
+const settleXAiPromptCompletion = (
+  deferred: Deferred.Deferred<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpRequestError>,
+  notification: XAiPromptCompleteNotification,
+) => {
+  if (notification.stopReason === "rate_limit") {
+    return Deferred.fail(
+      deferred,
+      new EffectAcpErrors.AcpRequestError({
+        code: xAiRateLimitedErrorCode,
+        errorMessage: "Grok usage limit reached. Try again later.",
+      }),
+    ).pipe(Effect.asVoid);
+  }
+  if (notification.stopReason === "error") {
+    return Deferred.fail(
+      deferred,
+      EffectAcpErrors.AcpRequestError.internalError(
+        xAiAgentResultMessage(notification.agentResult) ?? "Grok prompt failed.",
+      ),
+    ).pipe(Effect.asVoid);
+  }
+  return Deferred.succeed(deferred, promptResponseFromXAi(notification)).pipe(Effect.asVoid);
+};
+
+function xAiAgentResultMessage(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return trimmed(value);
+  }
+  if (value === null || typeof value !== "object") {
+    return undefined;
+  }
+  const message = "message" in value ? value.message : undefined;
+  return typeof message === "string" ? trimmed(message) : undefined;
+}
 
 const rememberCompletedXAiPromptId = (
   completedPromptIdsRef: Ref.Ref<ReadonlyArray<string>>,
