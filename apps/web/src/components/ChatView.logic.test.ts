@@ -9,6 +9,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { Thread, ThreadShell } from "../types";
+import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
@@ -21,6 +22,8 @@ import {
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getStartedThreadModelChangeBlockReason,
+  loadVideoPreviewUrl,
+  isVideoPreviewRequestCurrent,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
@@ -32,16 +35,77 @@ import {
   resolveSendEnvMode,
   resolveDraftHeroState,
   scheduleEnvironmentReconnectWarning,
+  shoulderTabReserve,
   startNewThreadForProject,
+  codexArtifactTemplatePromptToAppend,
   shouldDockDraftHeroForSubmission,
+  shouldReleaseTimelineAnchorForToolActivity,
   shouldShowBranchMismatchBanner,
+  shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
+
+describe("loadVideoPreviewUrl", () => {
+  it("loads video bytes into an object URL", async () => {
+    const objectUrl = await loadVideoPreviewUrl("data:video/mp4;base64,AA==");
+    expect(objectUrl).toMatch(/^blob:/);
+    URL.revokeObjectURL(objectUrl);
+  });
+
+  it("stops loading when the preview request is cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      loadVideoPreviewUrl("data:video/mp4;base64,AA==", controller.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  });
+});
+
+describe("isVideoPreviewRequestCurrent", () => {
+  it("rejects changed threads and replaced previews", () => {
+    expect(isVideoPreviewRequestCurrent("thread-1", "thread-2", 1, 1)).toBe(false);
+    expect(isVideoPreviewRequestCurrent("thread-1", "thread-1", 1, 2)).toBe(false);
+    expect(isVideoPreviewRequestCurrent("thread-1", "thread-1", 2, 2)).toBe(true);
+  });
+});
 
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+const helloWorldTemplate: CodexArtifactTemplate = {
+  artifactKind: "document",
+  displayName: "Hello World",
+  skillDirectory: "/Users/test/.codex/skills/artifact-template-hello-world",
+  skillName: "artifact-template-hello-world",
+};
+
+describe("artifact template composer insertion", () => {
+  it("does not insert an already-present prompt", () => {
+    const prompt = "Create a document using this $artifact-template-hello-world about…";
+
+    expect(codexArtifactTemplatePromptToAppend(prompt, helloWorldTemplate)).toBeNull();
+  });
+});
+
+describe("shoulderTabReserve", () => {
+  it("ignores the top drawer when measuring the shoulder tab band", () => {
+    const elementAt = (top: number) => ({ getBoundingClientRect: () => ({ top }) }) as HTMLElement;
+    const elements = new Map<string, HTMLElement>([
+      ['[data-chat-composer-form="true"]', elementAt(20)],
+      [".chat-composer-shoulder-tab", elementAt(100)],
+      ['[data-chat-composer-main-surface="true"]', elementAt(128)],
+    ]);
+    const overlay = {
+      querySelector: (selector: string) => elements.get(selector) ?? null,
+    } as HTMLElement;
+
+    expect(shoulderTabReserve(overlay)).toBe(28);
+    elements.set(".chat-composer-tasks-tab", elementAt(100));
+    expect(shoulderTabReserve(overlay)).toBe(0);
+  });
+});
 
 describe("draft hero submission transition", () => {
   it("does not dock the composer before a background submission", () => {
@@ -74,6 +138,114 @@ describe("draft hero submission transition", () => {
         backgroundSubmissionPending: true,
       }),
     ).toBeNull();
+  });
+});
+
+describe("shouldReleaseTimelineAnchorForToolActivity", () => {
+  const activeTurnId = TurnId.make("active-turn");
+  const anchorMessageId = MessageId.make("anchored-message");
+  const activeToolEntry = {
+    id: "tool-entry",
+    kind: "work" as const,
+    createdAt: now,
+    entry: {
+      id: "active-tool",
+      createdAt: now,
+      turnId: activeTurnId,
+      label: "Run command",
+      tone: "tool" as const,
+      command: "git status",
+    },
+  };
+
+  it("releases the send anchor for tool activity in the active turn", () => {
+    expect(
+      shouldReleaseTimelineAnchorForToolActivity({
+        anchorMessageId,
+        liveFollowEnabled: true,
+        runningTurnId: activeTurnId,
+        timelineEntries: [activeToolEntry],
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the anchor while the user reads history", () => {
+    expect(
+      shouldReleaseTimelineAnchorForToolActivity({
+        anchorMessageId,
+        liveFollowEnabled: false,
+        runningTurnId: activeTurnId,
+        timelineEntries: [activeToolEntry],
+      }),
+    ).toBe(false);
+  });
+
+  it("ignores tool activity from earlier turns", () => {
+    expect(
+      shouldReleaseTimelineAnchorForToolActivity({
+        anchorMessageId,
+        liveFollowEnabled: true,
+        runningTurnId: activeTurnId,
+        timelineEntries: [
+          {
+            ...activeToolEntry,
+            entry: {
+              ...activeToolEntry.entry,
+              turnId: TurnId.make("previous-turn"),
+            },
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("ignores thinking and error rows without tool activity", () => {
+    expect(
+      shouldReleaseTimelineAnchorForToolActivity({
+        anchorMessageId,
+        liveFollowEnabled: true,
+        runningTurnId: activeTurnId,
+        timelineEntries: [
+          {
+            ...activeToolEntry,
+            entry: {
+              id: "thinking-entry",
+              createdAt: now,
+              turnId: activeTurnId,
+              label: "Thinking",
+              tone: "thinking",
+            },
+          },
+          {
+            ...activeToolEntry,
+            id: "error-entry",
+            entry: {
+              id: "error-entry",
+              createdAt: now,
+              turnId: activeTurnId,
+              label: "Provider error",
+              tone: "error",
+            },
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("does nothing without an anchor or running turn", () => {
+    const input = {
+      anchorMessageId,
+      liveFollowEnabled: true,
+      runningTurnId: activeTurnId,
+      timelineEntries: [activeToolEntry],
+    };
+
+    expect(shouldReleaseTimelineAnchorForToolActivity({ ...input, anchorMessageId: null })).toBe(
+      false,
+    );
+    expect(shouldReleaseTimelineAnchorForToolActivity({ ...input, runningTurnId: null })).toBe(
+      false,
+    );
   });
 });
 
@@ -479,6 +651,31 @@ describe("shouldShowBranchMismatchBanner", () => {
     expect(
       shouldShowBranchMismatchBanner({ ...base, composerHasContent: true, hasMismatch: false }),
     ).toBe(false);
+  });
+});
+
+describe("shouldShowPlanFollowUpPrompt", () => {
+  const base = {
+    pendingUserInputCount: 0,
+    interactionMode: "plan" as const,
+    latestTurnSettled: true,
+    hasActionableProposedPlan: true,
+    hasComposerAttachments: false,
+  };
+
+  it("shows plan actions for a settled actionable plan without attachments", () => {
+    expect(shouldShowPlanFollowUpPrompt(base)).toBe(true);
+  });
+
+  it("hides plan actions while the composer has staged attachments", () => {
+    expect(shouldShowPlanFollowUpPrompt({ ...base, hasComposerAttachments: true })).toBe(false);
+  });
+
+  it("preserves the existing plan follow-up gates", () => {
+    expect(shouldShowPlanFollowUpPrompt({ ...base, pendingUserInputCount: 1 })).toBe(false);
+    expect(shouldShowPlanFollowUpPrompt({ ...base, interactionMode: "default" })).toBe(false);
+    expect(shouldShowPlanFollowUpPrompt({ ...base, latestTurnSettled: false })).toBe(false);
+    expect(shouldShowPlanFollowUpPrompt({ ...base, hasActionableProposedPlan: false })).toBe(false);
   });
 });
 

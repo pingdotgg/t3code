@@ -111,6 +111,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-native-controls-inset: 0px;
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
+  --workspace-titlebar-scroll-fade-height: 1.5rem;
 
   @variant dark {
     --appearance-contrast-target: white;
@@ -354,7 +355,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @utility topbar-scroll-fade {
-  --topbar-scroll-fade-height: 2.5rem;
   -webkit-mask-image:
     linear-gradient(
       to bottom,
@@ -370,8 +370,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   -webkit-mask-position: top, bottom, right;
   -webkit-mask-repeat: no-repeat;
   -webkit-mask-size:
-    100% var(--topbar-scroll-fade-height),
-    100% calc(100% - var(--topbar-scroll-fade-height)),
+    100% var(--workspace-titlebar-scroll-fade-height),
+    100% calc(100% - var(--workspace-titlebar-scroll-fade-height)),
     var(--app-scrollbar-width) 100%;
   mask-image:
     linear-gradient(
@@ -388,13 +388,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   mask-position: top, bottom, right;
   mask-repeat: no-repeat;
   mask-size:
-    100% var(--topbar-scroll-fade-height),
-    100% calc(100% - var(--topbar-scroll-fade-height)),
+    100% var(--workspace-titlebar-scroll-fade-height),
+    100% calc(100% - var(--workspace-titlebar-scroll-fade-height)),
     var(--app-scrollbar-width) 100%;
-
-  @variant sm {
-    --topbar-scroll-fade-height: 3rem;
-  }
 }
 
 /* Virtualizers own their native scroll element, so they cannot use ScrollArea's
@@ -2271,13 +2267,13 @@ code {
   font-size: 0.75rem;
 }
 
-.chat-markdown a.chat-markdown-file-link,
-.chat-markdown a.chat-markdown-file-link:hover {
+.chat-markdown .chat-markdown-file-link,
+.chat-markdown .chat-markdown-file-link:hover {
   color: var(--contrast-foreground);
   text-decoration: none;
 }
 
-.chat-markdown a.chat-markdown-file-link:focus-visible {
+.chat-markdown .chat-markdown-file-link:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 70%, transparent);
 }

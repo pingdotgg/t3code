@@ -5,12 +5,24 @@ import ReactMarkdown from "react-markdown";
 
 import {
   extractMarkdownLinkHrefs,
+  isWindowsDrivePathHref,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
+  shouldOpenMarkdownFileLinkInBrowserByDefault,
   shouldOpenMarkdownFileLinkInEditor,
 } from "./markdown-links";
+
+describe("isWindowsDrivePathHref", () => {
+  it.each([
+    ["C:\\repo\\image.png", true],
+    ["C:%5Crepo%5Cimage.png", true],
+    ["https://example.com/image.png", false],
+  ])("classifies %s as %s", (href, expected) => {
+    expect(isWindowsDrivePathHref(href)).toBe(expected);
+  });
+});
 
 function renderMarkdownLinkHref(markdown: string): string | undefined {
   let renderedHref: string | undefined;
@@ -66,6 +78,15 @@ describe("shouldOpenMarkdownFileLinkInEditor", () => {
     expect(
       shouldOpenMarkdownFileLinkInEditor({ metaKey: true, ctrlKey: false }, "Linux x86_64"),
     ).toBe(false);
+  });
+});
+
+describe("shouldOpenMarkdownFileLinkInBrowserByDefault", () => {
+  it("keeps PDFs browser-first while source files open in the file viewer", () => {
+    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.pdf")).toBe(true);
+    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.PDF?download=1")).toBe(true);
+    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.html")).toBe(false);
+    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.xml")).toBe(false);
   });
 });
 
@@ -197,6 +218,20 @@ describe("resolveMarkdownFileLinkTarget", () => {
       basename: "My Folder",
     });
   });
+
+  it.each(["md", "html", "xml"])(
+    "resolves a bare spaced .%s filename from the markdown renderer",
+    (extension) => {
+      const href = renderMarkdownLinkHref(`[checklist](<Updated cutover checklist.${extension}>)`);
+
+      expect(href).toBe(`Updated%20cutover%20checklist.${extension}`);
+      expect(resolveMarkdownFileLinkMeta(href, "/repo/project")).toMatchObject({
+        targetPath: `/repo/project/Updated cutover checklist.${extension}`,
+        workspaceRelativePath: `Updated cutover checklist.${extension}`,
+        basename: `Updated cutover checklist.${extension}`,
+      });
+    },
+  );
 
   it("formats tooltip display paths relative to the cwd for slash-prefixed windows paths", () => {
     expect(

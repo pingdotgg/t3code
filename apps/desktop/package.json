@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/desktop",
-  "version": "0.0.33",
+  "version": "0.0.36",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
@@ -30,6 +30,7 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
+    "acorn": "8.16.0",
     "cross-env": "^10.1.0",
     "electron-builder": "26.15.6",
     "tailwindcss": "^4.0.0",

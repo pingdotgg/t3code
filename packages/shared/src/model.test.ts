@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
 
 import {
+  applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
   createModelCapabilities,
   createModelSelection,
@@ -153,5 +154,35 @@ describe("model slug normalization", () => {
 
     expect(normalizeModelSlug("opus", claude)).toBe("claude-opus-5");
     expect(normalizeCustomModelSlug(" opus ")).toBe("opus");
+  });
+});
+
+describe("applyClaudePromptEffortPrefix", () => {
+  it("keeps slash commands intact when ultrathink is selected", () => {
+    expect(applyClaudePromptEffortPrefix("/compact", "ultrathink")).toBe("/compact");
+    expect(applyClaudePromptEffortPrefix(" /compact keep recent errors ", "ultrathink")).toBe(
+      "/compact keep recent errors",
+    );
+    expect(applyClaudePromptEffortPrefix(" /review src/model.ts ", "ultrathink")).toBe(
+      "/review src/model.ts",
+    );
+    expect(applyClaudePromptEffortPrefix("/security-review", "ultrathink")).toBe(
+      "/security-review",
+    );
+    expect(applyClaudePromptEffortPrefix("/plugin:skill run", "ultrathink")).toBe(
+      "/plugin:skill run",
+    );
+    expect(applyClaudePromptEffortPrefix("/deploy.prod to staging", "ultrathink")).toBe(
+      "/deploy.prod to staging",
+    );
+  });
+
+  it("still adds the ultrathink prefix to ordinary prompts", () => {
+    expect(applyClaudePromptEffortPrefix("Investigate this failure", "ultrathink")).toBe(
+      "Ultrathink:\nInvestigate this failure",
+    );
+    expect(applyClaudePromptEffortPrefix("/home/theo/app.ts crashed on load", "ultrathink")).toBe(
+      "Ultrathink:\n/home/theo/app.ts crashed on load",
+    );
   });
 });

@@ -66,7 +66,7 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
       aria-label={`Stashed prompts: ${props.count}. Open stash.`}
       aria-expanded={props.menuOpen}
       className={cn(
-        "chat-composer-shoulder-tab chat-composer-stash-tab absolute -top-7 right-4 z-0 inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-t-xl border border-b-0 px-3 pb-1 text-xs leading-none",
+        "chat-composer-shoulder-tab chat-composer-stash-tab absolute -top-7 right-5.5 z-0 inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-t-xl border border-b-0 px-3 pb-1 text-xs leading-none",
         "transition-[color,border-color] duration-200",
         props.menuOpen && "pointer-events-none",
         props.menuOpen || props.pulsing

@@ -1,4 +1,4 @@
-import { ListTodoIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, ListTodoIcon, XIcon } from "lucide-react";
 import { memo } from "react";
 
 import { formatDuration } from "../../session-logic";
@@ -17,6 +17,8 @@ export interface ComposerTaskStep {
   readonly status: "pending" | "inProgress" | "completed";
 }
 
+const MAX_TASK_SEGMENTS = 10;
+
 function keyedTaskSteps(steps: readonly ComposerTaskStep[]) {
   const occurrences = new Map<string, number>();
   return steps.map((step) => {
@@ -33,7 +35,7 @@ function TaskSegments({
   readonly className?: string;
   readonly steps: readonly ComposerTaskStep[];
 }) {
-  if (steps.length <= 1) return null;
+  if (steps.length <= 1 || steps.length > MAX_TASK_SEGMENTS) return null;
 
   return (
     <span aria-hidden className={cn("flex w-10 shrink-0 items-center gap-0.5", className)}>
@@ -116,8 +118,8 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
   return (
     <div
       className={cn(
-        "chat-composer-shoulder-tab chat-composer-tasks-tab absolute -top-7 left-4 z-0 flex h-8 items-center gap-1 rounded-t-xl border border-b-0 px-2 pb-1 text-xs leading-none text-muted-foreground",
-        hasTrailingShoulder ? "right-28" : "right-4",
+        "chat-composer-shoulder-tab chat-composer-tasks-tab absolute -top-7 left-5.5 z-0 flex h-8 items-center gap-1 rounded-t-xl border border-b-0 px-2 pb-1 text-xs leading-none text-muted-foreground",
+        hasTrailingShoulder ? "right-30" : "right-5.5",
         allDone && "text-foreground",
       )}
       data-composer-tasks-badge="true"
@@ -174,11 +176,16 @@ export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
   readonly steps: readonly ComposerTaskStep[];
 }) {
   return (
-    <div className="chat-composer-top-drawer" data-chat-composer-tasks-drawer="true">
+    <div
+      className="chat-composer-top-drawer"
+      data-chat-composer-collapsed-controls="true"
+      data-chat-composer-tasks-drawer="true"
+    >
       <div className="flex items-center gap-1 px-3 py-1.5 sm:px-4">
         <button
           type="button"
           aria-expanded="true"
+          aria-label={`Collapse tasks. ${progress.completedSteps} of ${progress.totalSteps} complete.`}
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 self-stretch text-left text-xs text-muted-foreground hover:text-foreground"
           onClick={onCollapse}
           onPointerDown={(event) => event.preventDefault()}
@@ -188,6 +195,7 @@ export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
           <span className="tabular-nums">
             {progress.completedSteps}/{progress.totalSteps}
           </span>
+          <ChevronDownIcon aria-hidden className="ml-auto size-3.5 shrink-0" />
         </button>
         <Button
           size="icon-micro"
@@ -200,7 +208,13 @@ export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
           <XIcon aria-hidden className="size-3" />
         </Button>
       </div>
-      <div className="space-y-px px-3 pb-4 sm:px-4" role="list">
+      <div
+        aria-label={`Task list. ${progress.completedSteps} of ${progress.totalSteps} complete.`}
+        className="max-h-[min(24rem,40dvh)] space-y-px overflow-y-auto overscroll-contain px-3 pb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 sm:px-4"
+        data-composer-tasks-list="true"
+        role="list"
+        tabIndex={0}
+      >
         {keyedTaskSteps(steps).map(({ key, step }) => (
           <div key={key} className="flex items-baseline gap-2 text-xs leading-5" role="listitem">
             <span

@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/web",
-  "version": "0.0.33",
+  "version": "0.0.36",
   "private": true,
   "type": "module",
   "scripts": {
@@ -34,6 +34,7 @@
     "class-variance-authority": "^0.7.1",
     "culori": "^4.0.2",
     "effect": "catalog:",
+    "heic-to": "^1.5.2",
     "jose": "catalog:",
     "jsonc-parser": "3.3.1",
     "jszip": "3.10.1",

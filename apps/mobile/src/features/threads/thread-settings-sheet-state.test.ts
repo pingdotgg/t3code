@@ -12,7 +12,7 @@ function modelOption(
   return {
     key: `codex:${model}`,
     label: model,
-    subtitle: "Codex",
+    subtitle: "",
     providerKey: "codex",
     providerLabel: "Codex",
     providerDriver: "codex",
@@ -46,6 +46,21 @@ describe("thread settings sheet state", () => {
         query: "   ",
       }),
     ).toBe(true);
+  });
+
+  it("matches the upstream provider's display name", () => {
+    const model = {
+      ...modelOption("opencode/claude-fable-5"),
+      label: "Claude Fable 5",
+      subtitle: "OpenCode Zen",
+    };
+
+    expect(modelMatchesCatalogQuery({ model, providerLabel: "OpenCode", query: " ZEN " })).toBe(
+      true,
+    );
+    expect(modelMatchesCatalogQuery({ model, providerLabel: "OpenCode", query: "copilot" })).toBe(
+      false,
+    );
   });
 
   it("clears staging when the applied model is pressed", () => {
