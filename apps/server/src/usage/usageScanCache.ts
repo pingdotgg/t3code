@@ -14,6 +14,9 @@
  *
  * @module usageScanCache
  */
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
+
 import type { UsageProviderKind } from "@t3tools/contracts";
 
 import type { UsageRecord } from "./usageTranscripts.ts";
@@ -229,7 +232,15 @@ export function pruneScanCache(cache: ScanCache, options: PruneOptions): number 
   let removed = 0;
   for (const [path, entry] of cache) {
     const agedOut = entry.mtimeMs < options.retentionCutoffMs;
-    const underWalkedRoot = options.walkedRoots.some((root) => path.startsWith(root));
+    const underWalkedRoot = options.walkedRoots.some((root) => {
+      const relative = NodePath.relative(root, path);
+      return (
+        relative === "" ||
+        (relative !== ".." &&
+          !relative.startsWith(`..${NodePath.sep}`) &&
+          !NodePath.isAbsolute(relative))
+      );
+    });
     const deleted =
       underWalkedRoot && entry.mtimeMs >= options.windowStartMs && !options.livePaths.has(path);
     if (agedOut || deleted) {

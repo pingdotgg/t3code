@@ -193,6 +193,20 @@ describe("pruneScanCache with an unwalked root", () => {
     expect(removed).toBe(0);
     expect(cache.size).toBe(1);
   });
+
+  it("keeps entries under a sibling path that only shares the walked root prefix", () => {
+    const cache = cacheWith([["/claude/projects-copy/a.jsonl", 5000, [record()]]]);
+
+    const removed = pruneScanCache(cache, {
+      livePaths: new Set(),
+      walkedRoots: ["/claude/projects"],
+      windowStartMs: 4000,
+      retentionCutoffMs: 1000,
+    });
+
+    expect(removed).toBe(0);
+    expect(cache.size).toBe(1);
+  });
 });
 
 describe("dedupeWithinFile", () => {
