@@ -41,3 +41,10 @@ After changing a dependency patch, refresh CocoaPods before rebuilding an
 existing iOS project. pnpm installs each patch hash in a different directory;
 an old Pods project can keep compiling the previous directory even though Metro
 and `apps/mobile/node_modules` resolve to the new patch.
+
+`ControlPillMenu` resolves semantic icon colors through `withUniwind` and supplies them to every
+iOS `MenuView` action, including nested actions. The menu library's Fabric bridge converts a missing
+`imageColor` to transparent, so callers should use this wrapper instead of
+rendering `MenuView` directly. Explicit colors are preserved, and destructive
+actions default to the theme's danger foreground color. Native stack header menus
+use a separate implementation and do not need this workaround.

@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { ImagePickerAsset } from "expo-image-picker";
 
 const mocks = vi.hoisted(() => ({
   documentUri: "file:///documents",
   pickFile: vi.fn(),
+  pickMedia: vi.fn(),
   copy: vi.fn(),
   delete: vi.fn(),
   open: vi.fn(),
@@ -37,6 +39,14 @@ vi.mock("expo-file-system", () => {
       return mocks.size(this.uri) ?? null;
     }
 
+    get name(): string {
+      return this.uri.split("/").at(-1) ?? "";
+    }
+
+    get type(): string {
+      return "video/quicktime";
+    }
+
     create(): void {}
 
     open(mode: string) {
@@ -64,23 +74,201 @@ vi.mock("expo-file-system", () => {
   };
 });
 
+vi.mock("expo-image-picker", () => ({ launchImageLibraryAsync: mocks.pickMedia }));
 vi.mock("./uuid", () => ({ uuidv4: () => "attachment-id" }));
 
 import {
   persistComposerAttachmentFile,
   pickComposerFiles,
+  pickComposerImages,
+  pickComposerMedia,
   removePersistedComposerAttachmentFile,
 } from "./composerImages";
+import { isForegroundHandoffActive } from "./foreground-handoff";
 
-describe("pickComposerFiles", () => {
+describe("composer file attachments", () => {
   beforeEach(() => {
     mocks.documentUri = "file:///documents";
     mocks.pickFile.mockReset();
+    mocks.pickMedia.mockReset();
     mocks.copy.mockReset();
     mocks.delete.mockReset();
     mocks.open.mockReset();
     mocks.size.mockReset();
     mocks.size.mockImplementation((uri: string) => (uri.startsWith("content:") ? null : 42));
+  });
+
+  describe("photo library videos", () => {
+    const image: ImagePickerAsset = {
+      uri: "file:///picker/photo.png",
+      type: "image",
+      fileName: "photo.png",
+      mimeType: "image/png",
+      fileSize: 3,
+      base64: "YWJj",
+      width: 1,
+      height: 1,
+    };
+    const video: ImagePickerAsset = {
+      uri: "file:///picker/clip.mov",
+      type: "video",
+      fileName: "clip.mov",
+      mimeType: "video/quicktime",
+      fileSize: 20 * 1024 * 1024,
+      base64: null,
+      width: 1920,
+      height: 1080,
+    };
+
+    it("retains mixed photos and videos, keeping video bytes in durable file storage", async () => {
+      mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [image, video] });
+      mocks.size.mockReturnValue(video.fileSize);
+
+      const result = await pickComposerMedia({ existingCount: 0, maxVideoBytes: 50 * 1024 * 1024 });
+
+      expect(mocks.pickMedia).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mediaTypes: ["images", "videos"],
+          shouldDownloadFromNetwork: true,
+        }),
+      );
+      expect(result).toEqual({
+        attachments: [
+          expect.objectContaining({ type: "image", dataUrl: "data:image/png;base64,YWJj" }),
+          {
+            id: "attachment-id",
+            type: "file",
+            name: "clip.mov",
+            mimeType: "video/quicktime",
+            sizeBytes: video.fileSize,
+            fileUri: "file:///documents/t3-composer-attachments/attachment-id-clip.mov",
+          },
+        ],
+        error: null,
+      });
+      expect(mocks.copy).toHaveBeenCalledWith(
+        video.uri,
+        "file:///documents/t3-composer-attachments/attachment-id-clip.mov",
+      );
+      expect(mocks.delete).not.toHaveBeenCalled();
+    });
+
+    it("keeps image-only destinations on the image picker path", async () => {
+      mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [image] });
+
+      const result = await pickComposerImages({ existingCount: 0 });
+
+      expect(mocks.pickMedia).toHaveBeenCalledWith(
+        expect.objectContaining({ mediaTypes: ["images"] }),
+      );
+      expect(result.images).toEqual([
+        expect.objectContaining({ type: "image", name: "photo.png" }),
+      ]);
+      expect(result.error).toBeNull();
+      expect(mocks.copy).not.toHaveBeenCalled();
+    });
+
+    it("does not persist videos when the destination lacks file support", async () => {
+      mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [video, image] });
+
+      const result = await pickComposerMedia({ existingCount: 0 });
+
+      expect(result.attachments).toEqual([expect.objectContaining({ type: "image" })]);
+      expect(result.error).toBe("Video attachments are unavailable here.");
+      expect(mocks.copy).not.toHaveBeenCalled();
+    });
+
+    it("uses local video metadata when the picker omits its name, MIME type, or size", async () => {
+      mocks.pickMedia.mockResolvedValue({
+        canceled: false,
+        assets: [{ ...video, fileName: null, mimeType: undefined, fileSize: undefined }],
+      });
+
+      const result = await pickComposerMedia({ existingCount: 0, maxVideoBytes: 1024 });
+
+      expect(result.error).toBeNull();
+      expect(result.attachments).toEqual([
+        expect.objectContaining({
+          type: "file",
+          name: "clip.mov",
+          mimeType: "video/quicktime",
+          sizeBytes: 42,
+        }),
+      ]);
+    });
+
+    it.each([
+      {
+        reason: "picker size exceeds the server limit",
+        reported: 2 * 1024 * 1024,
+        stored: 42,
+        limit: 1024 * 1024,
+        error: "'clip.mov' exceeds the 1 MB attachment limit.",
+      },
+      {
+        reason: "actual size exceeds the server limit",
+        reported: 42,
+        stored: 2 * 1024 * 1024,
+        limit: 1024 * 1024,
+        error: "'clip.mov' exceeds the 1 MB attachment limit.",
+      },
+      {
+        reason: "stored copy is empty",
+        reported: 42,
+        stored: 0,
+        limit: 1024 * 1024,
+        error: "'clip.mov' is empty or could not be read.",
+      },
+      {
+        reason: "server advertises more than the contract limit",
+        reported: 51 * 1024 * 1024,
+        stored: 42,
+        limit: 80 * 1024 * 1024,
+        error: "'clip.mov' exceeds the 50 MB attachment limit.",
+      },
+    ])(
+      "rejects a video when $reason while retaining the selected photo",
+      async ({ reported, stored, limit, error }) => {
+        mocks.pickMedia.mockResolvedValue({
+          canceled: false,
+          assets: [{ ...video, fileSize: reported }, image],
+        });
+        mocks.size.mockReturnValue(stored);
+
+        const result = await pickComposerMedia({ existingCount: 0, maxVideoBytes: limit });
+
+        expect(result).toEqual({
+          attachments: [expect.objectContaining({ type: "image" })],
+          error,
+        });
+        if (stored === 0) {
+          expect(mocks.delete).toHaveBeenCalledWith(
+            "file:///documents/t3-composer-attachments/attachment-id-clip.mov",
+          );
+        }
+      },
+    );
+
+    it("applies the remaining attachment slots to photos and videos together", async () => {
+      mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [image, video] });
+
+      const result = await pickComposerMedia({ existingCount: 7, maxVideoBytes: 50 * 1024 * 1024 });
+
+      expect(result.attachments).toEqual([expect.objectContaining({ type: "image" })]);
+      expect(result.error).toBe("You can attach up to 8 attachments per message.");
+      expect(mocks.pickMedia).toHaveBeenCalledWith(expect.objectContaining({ selectionLimit: 1 }));
+      expect(mocks.copy).not.toHaveBeenCalled();
+    });
+
+    it("reports a native video retrieval error and ends the foreground handoff", async () => {
+      mocks.pickMedia.mockRejectedValue(new Error("Could not download video from iCloud."));
+
+      await expect(pickComposerMedia({ existingCount: 0, maxVideoBytes: 1024 })).resolves.toEqual({
+        attachments: [],
+        error: "Could not download video from iCloud.",
+      });
+      expect(isForegroundHandoffActive()).toBe(false);
+    });
   });
 
   it("copies picked files into app-owned storage without loading their contents", async () => {

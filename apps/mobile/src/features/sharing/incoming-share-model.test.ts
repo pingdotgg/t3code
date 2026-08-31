@@ -181,6 +181,54 @@ describe("incoming native shares", () => {
     expect(removeOwnedFile).toHaveBeenCalledWith(file.value);
   });
 
+  it.each([
+    { value: "file:///shared/clip.MOV", mimeType: "video/quicktime", originalName: "clip.MOV" },
+    { value: "content://media/videos/12", mimeType: "video/mp4", originalName: "clip.mp4" },
+  ])("imports a shared video from $value without reading it as an image", async (video) => {
+    const sizeBytes = 20 * 1024 * 1024;
+    const fileUri = `file:///documents/${video.originalName}`;
+    const readBase64 = vi.fn(async () => "unused");
+    const persistFile = vi.fn(async () => fileUri);
+    const removeOwnedFile = vi.fn(async () => undefined);
+
+    const result = await buildIncomingShareDraft({
+      id: "share-video",
+      createdAt: "2026-08-30T10:00:00.000Z",
+      payloads: [{ ...video, shareType: "video" }],
+      resolvedPayloads: [],
+      fileReader: { readBase64, persistFile, readSize: async () => sizeBytes, removeOwnedFile },
+    });
+
+    expect(result.warnings).toEqual([]);
+    expect(result.attachments).toEqual([
+      {
+        id: "share-video:file:0",
+        type: "file",
+        name: video.originalName,
+        mimeType: video.mimeType,
+        sizeBytes,
+        fileUri,
+      },
+    ]);
+    expect(readBase64).not.toHaveBeenCalled();
+    expect(removeOwnedFile).toHaveBeenCalledWith(video.value);
+    expect(
+      selectIncomingShareAttachments({
+        attachments: result.attachments,
+        maxFileAttachmentBytes: 50 * 1024 * 1024,
+      }),
+    ).toEqual({ attachments: result.attachments, warnings: [] });
+    expect(
+      selectIncomingShareAttachments({
+        attachments: result.attachments,
+        maxFileAttachmentBytes: 10 * 1024 * 1024,
+      }),
+    ).toEqual({
+      attachments: [],
+      warnings: [`'${video.originalName}' exceeds the 10 MB attachment limit.`],
+    });
+  });
+
   it("reports an unreadable shared file without calling it oversized", async () => {
     const file: SharePayload = {
       shareType: "file",
