@@ -147,6 +147,7 @@ import {
 } from "../workspaceBasenameLookup";
 import {
   findProjectForChangeRequest,
+  pullRequestTargetOf,
   matchesLinkedPullRequestUrl,
   parseChangeRequestUrl,
   useOpenChangeRequestLink,
@@ -1936,12 +1937,9 @@ function ChatMarkdown({
         parsed,
       );
       if (project === undefined) return null;
-      return {
-        projectId: project.id,
-        repository: project.repositoryIdentity?.displayName ?? parsed.repository,
-        number: parsed.number,
-        url: href,
-      };
+      const target = pullRequestTargetOf(project, parsed.number);
+      if (target === null) return null;
+      return { ...target, url: href };
     },
     [projects, threadRef, threadServerConfig],
   );
