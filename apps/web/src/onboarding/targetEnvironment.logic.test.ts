@@ -1,3 +1,7 @@
+import {
+  BearerConnectionTarget,
+  PrimaryConnectionTarget,
+} from "@t3tools/client-runtime/connection";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -6,22 +10,54 @@ import { resolveOnboardingTargetEnvironment } from "./targetEnvironment.logic";
 const primaryEnvironment = {
   environmentId: EnvironmentId.make("primary"),
   connection: { phase: "connected" },
-  entry: { target: { _tag: "PrimaryConnectionTarget" } },
+  entry: {
+    target: new PrimaryConnectionTarget({
+      environmentId: EnvironmentId.make("primary"),
+      label: "This computer",
+      httpBaseUrl: "http://127.0.0.1:3773",
+      wsBaseUrl: "ws://127.0.0.1:3773",
+    }),
+  },
   label: "This computer",
 } as const;
 
 const olderRemote = {
   environmentId: EnvironmentId.make("older-remote"),
   connection: { phase: "connected" },
-  entry: { target: { _tag: "BearerConnectionTarget" } },
+  entry: {
+    target: new BearerConnectionTarget({
+      environmentId: EnvironmentId.make("older-remote"),
+      label: "Older computer",
+      connectionId: "older-remote",
+    }),
+  },
   label: "Older computer",
 } as const;
 
 const pairedRemote = {
   environmentId: EnvironmentId.make("paired-remote"),
   connection: { phase: "connected" },
-  entry: { target: { _tag: "BearerConnectionTarget" } },
+  entry: {
+    target: new BearerConnectionTarget({
+      environmentId: EnvironmentId.make("paired-remote"),
+      label: "New computer",
+      connectionId: "paired-remote",
+    }),
+  },
   label: "New computer",
+} as const;
+
+const desktopLocalEnvironment = {
+  environmentId: EnvironmentId.make("desktop-local-wsl"),
+  connection: { phase: "connected" },
+  entry: {
+    target: new BearerConnectionTarget({
+      environmentId: EnvironmentId.make("desktop-local-wsl"),
+      label: "WSL",
+      connectionId: "local:wsl:Ubuntu",
+    }),
+  },
+  label: "WSL",
 } as const;
 
 describe("resolveOnboardingTargetEnvironment", () => {
@@ -93,6 +129,28 @@ describe("resolveOnboardingTargetEnvironment", () => {
         pairedEnvironmentId: null,
       }),
     ).toBe(pairedRemote);
+  });
+
+  it("does not mistake a desktop-managed backend for a remote computer", () => {
+    expect(
+      resolveOnboardingTargetEnvironment({
+        mode: "connect",
+        environments: [primaryEnvironment, pairedRemote, desktopLocalEnvironment],
+        primaryEnvironment,
+        pairedEnvironmentId: null,
+      }),
+    ).toBe(pairedRemote);
+  });
+
+  it("uses the primary computer when the only other connection is desktop-managed", () => {
+    expect(
+      resolveOnboardingTargetEnvironment({
+        mode: "connect",
+        environments: [primaryEnvironment, desktopLocalEnvironment],
+        primaryEnvironment,
+        pairedEnvironmentId: null,
+      }),
+    ).toBe(primaryEnvironment);
   });
 
   it("falls back to the connected primary when no remote is available", () => {

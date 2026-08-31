@@ -1,9 +1,12 @@
+import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
+
+import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 
 interface OnboardingEnvironment {
   readonly environmentId: EnvironmentId;
   readonly connection: { readonly phase: string };
-  readonly entry: { readonly target: { readonly _tag: string } };
+  readonly entry: { readonly target: ConnectionTarget };
 }
 
 /** Keep a directly paired machine pinned while its initial connection completes. */
@@ -28,7 +31,8 @@ export function resolveOnboardingTargetEnvironment<TEnvironment extends Onboardi
   const connectedRemotes = environments.filter(
     (environment) =>
       environment.connection.phase === "connected" &&
-      environment.entry.target._tag !== "PrimaryConnectionTarget",
+      environment.entry.target._tag !== "PrimaryConnectionTarget" &&
+      !isDesktopLocalConnectionTarget(environment.entry.target),
   );
 
   if (mode !== "local" && connectedRemotes.length > 0) {

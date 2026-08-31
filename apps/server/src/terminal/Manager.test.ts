@@ -1736,6 +1736,26 @@ it.layer(
     }),
   );
 
+  it.effect("expands provider home paths passed to setup terminals", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5);
+
+      yield* manager.open({
+        ...openInput(),
+        env: {
+          CODEX_HOME: "~/.codex-work",
+          CLAUDE_CONFIG_DIR: "~/.claude-work",
+          CUSTOM_ACCOUNT: "~/leave-this-value-alone",
+        },
+      });
+
+      const environment = ptyAdapter.spawnInputs[0]?.env;
+      expect(environment?.CODEX_HOME).toMatch(/[\\/][.]codex-work$/);
+      expect(environment?.CLAUDE_CONFIG_DIR).toMatch(/[\\/][.]claude-work$/);
+      expect(environment?.CUSTOM_ACCOUNT).toBe("~/leave-this-value-alone");
+    }),
+  );
+
   it.effect("strips AppImage runtime env from terminal sessions", () =>
     Effect.gen(function* () {
       const appDir = "/tmp/.mount_T3Codeabc123";

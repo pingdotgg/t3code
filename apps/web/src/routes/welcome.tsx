@@ -1,6 +1,7 @@
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 
 import { WelcomeWizard } from "../components/onboarding/WelcomeWizard";
+import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 
 /**
  * First-run welcome wizard. Full-screen, outside the sidebar shell (the root
@@ -21,6 +22,7 @@ export const Route = createFileRoute("/welcome")({
 function WelcomeRouteView() {
   const { authGateState } = Route.useRouteContext();
   const navigate = useNavigate();
+  const openNewThread = useNewThreadHandler();
   // An authenticated gate means a primary server is serving this app —
   // desktop, `npx t3`, or a dev server — and that server is "this machine"
   // no matter what hostname the browser used. Only hosted-static has no
@@ -29,7 +31,13 @@ function WelcomeRouteView() {
   return (
     <WelcomeWizard
       localAvailable={localAvailable}
-      onDone={() => {
+      onDone={(projectRef) => {
+        if (projectRef !== undefined) {
+          void openNewThread(projectRef, { replace: true }).catch(() => {
+            void navigate({ to: "/", replace: true });
+          });
+          return;
+        }
         void navigate({ to: "/", replace: true });
       }}
     />

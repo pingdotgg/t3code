@@ -1,8 +1,15 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   getOnboardingProviderState,
+  resolveOnboardingProviderLoginCommand,
+  resolveOnboardingProviderTerminalEnvironment,
   selectOnboardingProvidersByDriver,
 } from "./providerReadiness.logic";
 
@@ -119,5 +126,201 @@ describe("selectOnboardingProvidersByDriver", () => {
 
   it("handles provider snapshots that have not arrived", () => {
     expect(selectOnboardingProvidersByDriver(undefined).size).toBe(0);
+  });
+
+  it("keeps a ready custom account when the default account is signed out", () => {
+    const signedOutDefault: ServerProvider = {
+      ...readyCodex,
+      status: "error",
+      auth: { status: "unauthenticated" },
+    };
+    const readyCustom: ServerProvider = {
+      ...readyCodex,
+      instanceId: ProviderInstanceId.make("codex_work"),
+    };
+
+    expect(selectOnboardingProvidersByDriver([signedOutDefault, readyCustom]).get("codex")).toBe(
+      readyCustom,
+    );
+  });
+});
+
+describe("resolveOnboardingProviderTerminalEnvironment", () => {
+  it("uses the selected Codex account instead of the default home", () => {
+    const provider = { ...readyCodex, instanceId: ProviderInstanceId.make("codex_work") };
+
+    expect(
+      resolveOnboardingProviderTerminalEnvironment(provider, {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [provider.instanceId]: {
+            driver: provider.driver,
+            config: { homePath: "~/.codex-work" },
+          },
+        },
+      }),
+    ).toEqual({ CODEX_HOME: "~/.codex-work" });
+  });
+
+  it("uses the account-specific Codex shadow home for sign-in", () => {
+    const provider = { ...readyCodex, instanceId: ProviderInstanceId.make("codex_work") };
+
+    expect(
+      resolveOnboardingProviderTerminalEnvironment(provider, {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [provider.instanceId]: {
+            driver: provider.driver,
+            config: { homePath: "~/.codex", shadowHomePath: "~/.codex-work" },
+          },
+        },
+      }),
+    ).toEqual({ CODEX_HOME: "~/.codex-work" });
+  });
+
+  it("keeps account variables and lets the configured Claude home win", () => {
+    const provider: ServerProvider = {
+      ...readyCodex,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      instanceId: ProviderInstanceId.make("claude_work"),
+    };
+
+    expect(
+      resolveOnboardingProviderTerminalEnvironment(provider, {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [provider.instanceId]: {
+            driver: provider.driver,
+            config: { homePath: "~/.claude-work" },
+            environment: [
+              { name: "CLAUDE_CONFIG_DIR", value: "~/.claude-old", sensitive: false },
+              { name: "CUSTOM_ACCOUNT", value: "work", sensitive: false },
+              { name: "HIDDEN_TOKEN", value: "", sensitive: true, valueRedacted: true },
+            ],
+          },
+        },
+      }),
+    ).toEqual({ CLAUDE_CONFIG_DIR: "~/.claude-work", CUSTOM_ACCOUNT: "work" });
+  });
+
+  it("uses a configured home on the default provider instance", () => {
+    expect(
+      resolveOnboardingProviderTerminalEnvironment(readyCodex, {
+        ...DEFAULT_SERVER_SETTINGS,
+        providers: {
+          ...DEFAULT_SERVER_SETTINGS.providers,
+          codex: { ...DEFAULT_SERVER_SETTINGS.providers.codex, homePath: "~/.codex-default" },
+        },
+      }),
+    ).toEqual({ CODEX_HOME: "~/.codex-default" });
+  });
+});
+
+describe("resolveOnboardingProviderLoginCommand", () => {
+  it("uses the selected Codex account binary", () => {
+    const provider = { ...readyCodex, instanceId: ProviderInstanceId.make("codex_work") };
+
+    expect(
+      resolveOnboardingProviderLoginCommand(
+        provider,
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            [provider.instanceId]: {
+              driver: provider.driver,
+              config: { binaryPath: "/opt/codex-work/bin/codex" },
+            },
+          },
+        },
+        "linux",
+      ),
+    ).toBe("/opt/codex-work/bin/codex login");
+  });
+
+  it("uses the selected Claude account binary", () => {
+    const provider: ServerProvider = {
+      ...readyCodex,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      instanceId: ProviderInstanceId.make("claude_work"),
+    };
+
+    expect(
+      resolveOnboardingProviderLoginCommand(
+        provider,
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            [provider.instanceId]: {
+              driver: provider.driver,
+              config: { binaryPath: "/opt/claude-work/bin/claude" },
+            },
+          },
+        },
+        "linux",
+      ),
+    ).toBe("/opt/claude-work/bin/claude auth login");
+  });
+
+  it("quotes a Codex path with spaces for PowerShell", () => {
+    expect(
+      resolveOnboardingProviderLoginCommand(
+        readyCodex,
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          providers: {
+            ...DEFAULT_SERVER_SETTINGS.providers,
+            codex: {
+              ...DEFAULT_SERVER_SETTINGS.providers.codex,
+              binaryPath: "C:\\Program Files\\Codex & Tools\\codex.exe",
+            },
+          },
+        },
+        "windows",
+      ),
+    ).toBe("& 'C:\\Program Files\\Codex & Tools\\codex.exe' login");
+  });
+
+  it("quotes a Claude path with shell metacharacters on POSIX", () => {
+    const provider: ServerProvider = {
+      ...readyCodex,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      instanceId: ProviderInstanceId.make("claude"),
+    };
+
+    expect(
+      resolveOnboardingProviderLoginCommand(
+        provider,
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          providers: {
+            ...DEFAULT_SERVER_SETTINGS.providers,
+            claudeAgent: {
+              ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
+              binaryPath: "/opt/Claude Tools/$current/claude",
+            },
+          },
+        },
+        "linux",
+      ),
+    ).toBe("'/opt/Claude Tools/$current/claude' auth login");
+  });
+
+  it("uses the default command when an old server reports an unknown shell", () => {
+    expect(
+      resolveOnboardingProviderLoginCommand(
+        readyCodex,
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          providers: {
+            ...DEFAULT_SERVER_SETTINGS.providers,
+            codex: {
+              ...DEFAULT_SERVER_SETTINGS.providers.codex,
+              binaryPath: "/opt/Codex Tools/codex",
+            },
+          },
+        },
+        "unknown",
+      ),
+    ).toBe("codex login");
   });
 });

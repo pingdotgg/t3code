@@ -13,6 +13,7 @@ const freshWorkspace = {
   bootstrapped: true,
   authoritative: true,
   workspaceAuthoritative: true,
+  catalogReady: true,
   serverConfigAvailable: true,
   workspaceFresh: true,
   projectCount: 1,
@@ -59,6 +60,27 @@ describe("resolveFirstRunDecision", () => {
       resolveFirstRunDecision({
         ...freshWorkspace,
         bootstrapped: false,
+        projectCount: 3,
+        workspaceFresh: false,
+      }),
+    ).toEqual({
+      decision: "app",
+      persistCompletion: false,
+    });
+  });
+
+  it("waits for managed environments before treating a workspace as new", () => {
+    expect(resolveFirstRunDecision({ ...freshWorkspace, catalogReady: false })).toEqual({
+      decision: "pending",
+      persistCompletion: false,
+    });
+  });
+
+  it("does not complete onboarding before the environment catalog is ready", () => {
+    expect(
+      resolveFirstRunDecision({
+        ...freshWorkspace,
+        catalogReady: false,
         projectCount: 3,
         workspaceFresh: false,
       }),

@@ -1,4 +1,29 @@
-import type { ServerProvider } from "@t3tools/contracts";
+import {
+  ClaudeSettings,
+  CodexSettings,
+  type ExecutionEnvironmentPlatformOs,
+  type ServerProvider,
+  type ServerSettings,
+} from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+
+const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
+const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
+const SAFE_SHELL_BINARY_PATTERN = /^[A-Za-z0-9_./:\\-]+$/;
+
+function quoteProviderBinary(
+  binaryPath: string,
+  fallback: string,
+  platform: ExecutionEnvironmentPlatformOs,
+): string {
+  if (SAFE_SHELL_BINARY_PATTERN.test(binaryPath)) return binaryPath;
+  if (platform === "windows") return `& '${binaryPath.replaceAll("'", "''")}'`;
+  if (platform === "darwin" || platform === "linux") {
+    return `'${binaryPath.replaceAll("'", `'"'"'`)}'`;
+  }
+  return fallback;
+}
 
 export function getOnboardingProviderState(provider: ServerProvider | undefined) {
   if (provider === undefined) return "checking";
@@ -36,4 +61,62 @@ export function selectOnboardingProvidersByDriver(
   }
 
   return providersByDriver;
+}
+
+/** Give the setup terminal the same account and home as the selected provider instance. */
+export function resolveOnboardingProviderTerminalEnvironment(
+  provider: ServerProvider,
+  settings: ServerSettings,
+): Record<string, string> {
+  const instance = settings.providerInstances[provider.instanceId];
+  const environment = Object.fromEntries(
+    (instance?.environment ?? [])
+      .filter((variable) => variable.valueRedacted !== true)
+      .map((variable) => [variable.name, variable.value]),
+  );
+
+  if (provider.driver === "claudeAgent") {
+    const config = decodeClaudeSettings(
+      instance ? (instance.config ?? {}) : settings.providers.claudeAgent,
+    );
+    const homePath = Option.isSome(config) ? config.value.homePath.trim() : "";
+    if (homePath.length > 0) environment.CLAUDE_CONFIG_DIR = homePath;
+  } else if (provider.driver === "codex") {
+    const config = decodeCodexSettings(
+      instance ? (instance.config ?? {}) : settings.providers.codex,
+    );
+    const homePath = Option.isSome(config)
+      ? config.value.shadowHomePath.trim() || config.value.homePath.trim()
+      : "";
+    if (homePath.length > 0) environment.CODEX_HOME = homePath;
+  }
+
+  return environment;
+}
+
+/** Use the selected provider instance's binary when the setup terminal opens its login flow. */
+export function resolveOnboardingProviderLoginCommand(
+  provider: ServerProvider,
+  settings: ServerSettings,
+  platform: ExecutionEnvironmentPlatformOs,
+): string {
+  const instance = settings.providerInstances[provider.instanceId];
+
+  if (provider.driver === "claudeAgent") {
+    const config = decodeClaudeSettings(
+      instance ? (instance.config ?? {}) : settings.providers.claudeAgent,
+    );
+    const binaryPath = Option.isSome(config) ? config.value.binaryPath : "claude";
+    return `${quoteProviderBinary(binaryPath, "claude", platform)} auth login`;
+  }
+
+  if (provider.driver === "codex") {
+    const config = decodeCodexSettings(
+      instance ? (instance.config ?? {}) : settings.providers.codex,
+    );
+    const binaryPath = Option.isSome(config) ? config.value.binaryPath : "codex";
+    return `${quoteProviderBinary(binaryPath, "codex", platform)} login`;
+  }
+
+  return provider.driver;
 }

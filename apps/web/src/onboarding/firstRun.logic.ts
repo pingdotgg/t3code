@@ -26,6 +26,7 @@ interface FirstRunDecisionInput {
   readonly bootstrapped: boolean;
   readonly authoritative: boolean;
   readonly workspaceAuthoritative: boolean;
+  readonly catalogReady: boolean;
   readonly serverConfigAvailable: boolean;
   readonly workspaceFresh: boolean;
   readonly projectCount: number;
@@ -92,11 +93,17 @@ export function resolveFirstRunDecision(input: FirstRunDecisionInput): {
         input.bootstrapped &&
         input.authoritative &&
         input.workspaceAuthoritative &&
+        input.catalogReady &&
         input.serverConfigAvailable,
     };
   }
 
-  if (!input.bootstrapped || !input.authoritative || !input.serverConfigAvailable) {
+  if (
+    !input.bootstrapped ||
+    !input.authoritative ||
+    !input.catalogReady ||
+    !input.serverConfigAvailable
+  ) {
     return { decision: "pending", persistCompletion: false };
   }
 

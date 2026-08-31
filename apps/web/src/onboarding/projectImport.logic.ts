@@ -12,10 +12,11 @@ export function partitionOnboardingProjects(
 
   return {
     available: candidates,
-    recent: candidates.filter(
-      (candidate) =>
-        candidate.lastActiveAt !== null && Date.parse(candidate.lastActiveAt) >= cutoff,
-    ),
+    recent: candidates.filter((candidate) => {
+      if (candidate.lastActiveAt === null) return false;
+      const lastActiveAt = Date.parse(candidate.lastActiveAt);
+      return lastActiveAt >= cutoff && lastActiveAt <= now;
+    }),
   };
 }
 
@@ -28,16 +29,9 @@ export function resolveOnboardingProjectId(
   }>,
   environmentId: EnvironmentId,
   workspaceRoot: string,
-  scannedProjectId?: ProjectId,
 ): ProjectId | null {
   const environmentProjects = projects.filter((project) => project.environmentId === environmentId);
   const currentRootMatch = findProjectByPath(environmentProjects, workspaceRoot);
   if (currentRootMatch !== undefined) return currentRootMatch.id;
-  if (
-    scannedProjectId !== undefined &&
-    environmentProjects.some((project) => project.id === scannedProjectId)
-  ) {
-    return scannedProjectId;
-  }
   return null;
 }

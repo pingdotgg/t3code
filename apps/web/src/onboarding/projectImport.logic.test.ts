@@ -42,6 +42,18 @@ describe("partitionOnboardingProjects", () => {
       recent: [recent],
     });
   });
+
+  it("keeps future activity out of the default selection", () => {
+    const recent = candidate("/projects/recent");
+    const future = candidate("/projects/future", {
+      lastActiveAt: "2026-08-23T12:00:00.000Z",
+    });
+
+    expect(partitionOnboardingProjects([recent, future], now)).toEqual({
+      available: [recent, future],
+      recent: [recent],
+    });
+  });
 });
 
 describe("resolveOnboardingProjectId", () => {
@@ -86,7 +98,7 @@ describe("resolveOnboardingProjectId", () => {
     ).toBeNull();
   });
 
-  it("uses a live scanner project hint when the candidate path is an alias", () => {
+  it("finds an alias after the scanner returns its persisted project root", () => {
     expect(
       resolveOnboardingProjectId(
         [
@@ -97,8 +109,7 @@ describe("resolveOnboardingProjectId", () => {
           },
         ],
         localEnvironmentId,
-        "/linked/projects/repo",
-        localProjectId,
+        "/real/projects/repo",
       ),
     ).toBe(localProjectId);
   });
@@ -121,14 +132,23 @@ describe("resolveOnboardingProjectId", () => {
         ],
         localEnvironmentId,
         "/projects/repo",
-        localProjectId,
       ),
     ).toBe(recreatedProjectId);
   });
 
-  it("ignores a scanner hint after its project was deleted", () => {
+  it("does not reuse a project after its root changed since the scan", () => {
     expect(
-      resolveOnboardingProjectId([], localEnvironmentId, "/linked/projects/repo", localProjectId),
+      resolveOnboardingProjectId(
+        [
+          {
+            id: localProjectId,
+            environmentId: localEnvironmentId,
+            workspaceRoot: "/projects/moved",
+          },
+        ],
+        localEnvironmentId,
+        "/projects/repo",
+      ),
     ).toBeNull();
   });
 });

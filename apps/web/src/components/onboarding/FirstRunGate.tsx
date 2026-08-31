@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useState } from "react";
 
@@ -71,6 +71,7 @@ export function FirstRunGate({
   readonly children: React.ReactNode;
 }) {
   const navigate = useNavigate();
+  const pathname = useLocation({ select: (location) => location.pathname });
   const hydrated = useClientSettingsHydrated();
   const completeOnboarding = useCompleteOnboarding();
   const onboardingCompletedAt = useClientSettings((settings) => settings.onboardingCompletedAt);
@@ -118,6 +119,7 @@ export function FirstRunGate({
         bootstrapped,
         authoritative: primaryShellLive,
         workspaceAuthoritative: workspaceEvidenceLive,
+        catalogReady: environmentCatalogReady,
         serverConfigAvailable: serverConfig !== null,
         workspaceFresh,
         projectCount: projects.length,
@@ -128,7 +130,7 @@ export function FirstRunGate({
     if (decision === "wizard" || !hydrated) return;
 
     if (persistCompletion && onboardingCompletedAt === null) {
-      completeOnboarding();
+      void completeOnboarding();
     }
 
     if (
@@ -156,10 +158,10 @@ export function FirstRunGate({
   }, [decision, enabled, hydrated]);
 
   useEffect(() => {
-    if (decision === "wizard") {
+    if (decision === "wizard" && pathname !== "/welcome") {
       void navigate({ to: "/welcome", replace: true });
     }
-  }, [decision, navigate]);
+  }, [decision, navigate, pathname]);
 
   if (decision !== "app") {
     return null;

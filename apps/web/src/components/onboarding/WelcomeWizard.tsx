@@ -4,14 +4,15 @@ import type {
   AgentSessionProjectCandidate,
   EnvironmentId,
   ProjectId,
+  ScopedProjectRef,
   ServerProvider,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { CommandId, ThreadId } from "@t3tools/contracts";
+import { CommandId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import {
   ArrowRightIcon,
@@ -38,6 +39,8 @@ import {
 } from "../../onboarding/projectImport.logic";
 import {
   getOnboardingProviderState,
+  resolveOnboardingProviderLoginCommand,
+  resolveOnboardingProviderTerminalEnvironment,
   selectOnboardingProvidersByDriver,
 } from "../../onboarding/providerReadiness.logic";
 import { resolveOnboardingTargetEnvironment } from "../../onboarding/targetEnvironment.logic";
@@ -55,6 +58,8 @@ import { serverEnvironment } from "../../state/server";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
+import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
+import { isElectron } from "../../env";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { getProviderSummary } from "../settings/providerStatus";
 import { getDriverOption } from "../settings/providerDriverMeta";
@@ -116,7 +121,7 @@ export function WelcomeWizard({
    * was opened from. Only hosted-static (app.t3.codes) has no local server.
    */
   readonly localAvailable: boolean;
-  readonly onDone: () => void;
+  readonly onDone: (projectRef?: ScopedProjectRef) => void;
 }) {
   const completeOnboarding = useCompleteOnboarding();
   const [step, setStep] = useState<WizardStep>("connection");
@@ -124,13 +129,24 @@ export function WelcomeWizard({
   const [pairedEnvironmentId, setPairedEnvironmentId] = useState<EnvironmentId | null>(null);
   const targetEnvironment = useOnboardingTargetEnvironment(mode, pairedEnvironmentId);
   const stageIndex = step === "agents" ? 1 : step === "import" ? 2 : 0;
-  const finish = useCallback(() => {
-    completeOnboarding();
-    onDone();
-  }, [completeOnboarding, onDone]);
+  const finish = useCallback(
+    (projectRef?: ScopedProjectRef) => {
+      void completeOnboarding().then(() => onDone(projectRef));
+    },
+    [completeOnboarding, onDone],
+  );
 
   return (
-    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-black text-white [--accent-foreground:#fff] [--accent:#171717] [--background:#000] [--border:#262626] [--card-foreground:#fff] [--card:#000] [--foreground:#fff] [--input:#262626] [--muted-foreground:#a1a1aa] [--muted:#171717] [--placeholder:#71717a] [--popover-foreground:#fff] [--popover:#171717] [--ring:#737373] [--secondary-foreground:#fff] [--secondary:#171717] [--terminal-background:#000] [--terminal-cursor:#fff] [--terminal-foreground:#fff] [--terminal-selection-background:rgb(255_255_255_/_0.2)] [color-scheme:dark]">
+    <div
+      data-onboarding-surface
+      className="dark flex h-dvh min-h-0 flex-col overflow-hidden bg-black text-foreground [--accent-foreground:#fff] [--accent:#171717] [--appearance-contrast-target:#fff] [--background:#000] [--border:#262626] [--card-foreground:#fff] [--card:#000] [--destructive:var(--color-red-400)] [--foreground:#fff] [--icon-muted:#a1a1aa] [--input:#262626] [--muted-foreground:#a1a1aa] [--muted:#171717] [--placeholder:#71717a] [--popover-foreground:#fff] [--popover:#171717] [--ring:#737373] [--secondary-foreground:#fff] [--secondary-label:#a1a1aa] [--secondary:#171717] [--success-foreground:var(--color-emerald-400)] [--terminal-background:#000] [--terminal-cursor:#fff] [--terminal-foreground:#fff] [--terminal-selection-background:rgb(255_255_255_/_0.2)] [color-scheme:dark]"
+    >
+      {isElectron ? (
+        <div
+          aria-hidden
+          className="drag-region h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 wco:pr-[var(--workspace-native-controls-inset)]"
+        />
+      ) : null}
       <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
         <div className="mx-auto grid min-h-full w-full max-w-5xl content-center gap-10 px-6 py-12 sm:grid-cols-[170px_minmax(0,1fr)] sm:gap-14 sm:px-10 lg:px-12">
           <aside className="flex min-w-0 flex-col justify-between sm:min-h-72">
@@ -142,10 +158,10 @@ export function WelcomeWizard({
                   className={cn(
                     "flex min-h-9 items-center gap-2.5 text-sm",
                     index < stageIndex
-                      ? "text-emerald-400"
+                      ? "text-success-foreground"
                       : index === stageIndex
-                        ? "text-white"
-                        : "text-white/35",
+                        ? "text-foreground"
+                        : "text-muted-foreground/60",
                   )}
                 >
                   {index < stageIndex ? (
@@ -158,8 +174,8 @@ export function WelcomeWizard({
               ))}
             </nav>
             {targetEnvironment ? (
-              <div className="mt-8 hidden items-center gap-2 text-xs text-white/55 sm:flex">
-                <span className="size-1.5 rounded-full bg-emerald-400" />
+              <div className="mt-8 hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
+                <span className="size-1.5 rounded-full bg-success" />
                 <span className="truncate">{targetEnvironment.label}</span>
               </div>
             ) : null}
@@ -258,9 +274,9 @@ function ConnectionStep({
 
   return (
     <>
-      <h1 className="text-3xl font-semibold text-white sm:text-[34px]">Where is your code?</h1>
-      <p className="mt-2.5 text-sm text-white/55">Choose where your agents will run.</p>
-      <div className="mt-8 border-t border-white/12">
+      <h1 className="text-3xl font-semibold text-foreground sm:text-[34px]">Where is your code?</h1>
+      <p className="mt-2.5 text-sm text-muted-foreground">Choose where your agents will run.</p>
+      <div className="mt-8 border-t border-border">
         {localAvailable ? (
           <ConnectionOption
             icon={MonitorIcon}
@@ -321,18 +337,26 @@ function ConnectionOption({
       aria-pressed={selected}
       onClick={onSelect}
       className={cn(
-        "group flex min-h-20 w-full cursor-pointer items-center gap-4 border-b border-white/12 px-1 py-3 text-left transition-colors",
-        "outline-none focus-visible:bg-white/5 focus-visible:ring-1 focus-visible:ring-white/35",
-        selected ? "text-white" : "text-white/70 hover:bg-white/[0.035] hover:text-white",
+        "group flex min-h-20 w-full cursor-pointer items-center gap-4 border-b border-border px-1 py-3 text-left transition-colors",
+        "outline-none focus-visible:bg-accent focus-visible:ring-1 focus-visible:ring-ring",
+        selected
+          ? "text-foreground"
+          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
       )}
     >
-      <Icon className={cn("size-[18px]", selected ? "text-emerald-400" : "text-white/40")} />
+      <Icon
+        className={cn("size-[18px]", selected ? "text-success-foreground" : "text-icon-muted")}
+      />
       <span className="min-w-0 flex-1">
         <span className="block text-sm font-medium">{title}</span>
-        <span className="mt-1 block truncate text-xs text-white/50">{description}</span>
+        <span className="mt-1 block truncate text-xs text-muted-foreground">{description}</span>
       </span>
-      <span className="hidden text-xs text-white/45 sm:block">{detail}</span>
-      {selected ? <CheckIcon className="size-4 text-emerald-400" /> : <span className="size-4" />}
+      <span className="hidden text-xs text-muted-foreground sm:block">{detail}</span>
+      {selected ? (
+        <CheckIcon className="size-4 text-success-foreground" />
+      ) : (
+        <span className="size-4" />
+      )}
     </button>
   );
 }
@@ -363,7 +387,9 @@ function ConnectMachinesStep({
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const savedEnvironments = environments.filter(
-    (environment) => environment.entry.target._tag !== "PrimaryConnectionTarget",
+    (environment) =>
+      environment.entry.target._tag !== "PrimaryConnectionTarget" &&
+      !isDesktopLocalConnectionTarget(environment.entry.target),
   );
   // Only a live connection counts: a saved-but-offline machine must not show
   // the "connected" confirmation (the agents step would find nothing to
@@ -402,7 +428,7 @@ function ConnectMachinesStep({
     >
       {hasRemoteMachines ? (
         <>
-          <div className="mt-6 overflow-hidden border-y border-white/12">
+          <div className="mt-6 overflow-hidden border-y border-border">
             <CloudEnvironmentConnectRows
               primaryEnvironmentId={primaryEnvironment?.environmentId ?? null}
               savedEnvironments={savedEnvironments}
@@ -411,7 +437,7 @@ function ConnectMachinesStep({
             />
           </div>
           <Collapsible className="mt-4">
-            <CollapsibleTrigger className="group flex items-center gap-1 text-xs text-white/55 transition-colors hover:text-white">
+            <CollapsibleTrigger className="group flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
               <ChevronRightIcon className="size-3.5 transition-transform duration-200 group-data-panel-open:rotate-90" />
               Add another machine
             </CollapsibleTrigger>
@@ -426,24 +452,26 @@ function ConnectMachinesStep({
       ) : (
         <>
           <CommandBlock command={CONNECT_LOGIN_COMMAND} className="mt-7" prominent />
-          <div className="mt-5 overflow-hidden border-y border-white/12">
+          <div className="mt-5 overflow-hidden border-y border-border">
             <CloudEnvironmentConnectRows
               primaryEnvironmentId={primaryEnvironment?.environmentId ?? null}
               savedEnvironments={savedEnvironments}
               showSavedEnvironments
               empty={
-                <p className="px-1 py-4 text-xs text-white/50">
+                <p className="px-1 py-4 text-xs text-muted-foreground">
                   Waiting for your computer to connect.
                 </p>
               }
             />
           </div>
           <div className="mt-7 flex items-center justify-between">
-            <Button variant="ghost" onClick={onContinue}>
+            <Button variant="ghost-muted" onClick={onContinue}>
               Skip for now
             </Button>
             <div className="flex items-center gap-3">
-              <span className="hidden text-xs text-white/50 sm:block">Waiting for connection</span>
+              <span className="hidden text-xs text-muted-foreground sm:block">
+                Waiting for connection
+              </span>
               <Button disabled>Continue</Button>
             </div>
           </div>
@@ -503,21 +531,23 @@ function PairDirectStep({
     >
       <div className="mt-7 space-y-5">
         <div>
-          <p className="text-sm text-white/65">
-            <span className="font-mono text-white/40">01</span> Run this on your server
+          <p className="text-sm text-muted-foreground">
+            <span className="font-mono text-muted-foreground/70">01</span> Run this on your server
           </p>
           <CommandBlock command="npx t3 pair" className="mt-2" />
-          <p className="mt-2 text-xs text-white/45">
-            Add <code className="font-mono text-white/65">--tailscale</code> to use your tailnet.
+          <p className="mt-2 text-xs text-muted-foreground">
+            Start the server with <code className="font-mono">npx t3 serve</code> first. Add{" "}
+            <code className="font-mono">--tailscale</code> to use your tailnet.
           </p>
         </div>
         <div>
-          <label className="block text-sm text-white/65" htmlFor="onboarding-pairing-url">
-            <span className="font-mono text-white/40">02</span> Paste the pairing link
+          <label className="block text-sm text-muted-foreground" htmlFor="onboarding-pairing-url">
+            <span className="font-mono text-muted-foreground/70">02</span> Paste the pairing link
           </label>
           <Input
             id="onboarding-pairing-url"
-            className="mt-2 border-white/15 bg-transparent text-white"
+            className="mt-2"
+            size="lg"
             autoCapitalize="none"
             autoComplete="off"
             autoCorrect="off"
@@ -554,16 +584,11 @@ function PairDirectStep({
 // ── Step 3: agents ───────────────────────────────────────────
 
 const PRIMARY_AGENT_DRIVERS = ["claudeAgent", "codex"] as const;
+type OnboardingAgentDriver = (typeof PRIMARY_AGENT_DRIVERS)[number];
 
-const AGENT_INSTALL_COMMANDS: Record<string, string> = {
+const AGENT_INSTALL_COMMANDS: Record<OnboardingAgentDriver, string> = {
   claudeAgent: "npm install -g @anthropic-ai/claude-code",
   codex: "npm install -g @openai/codex",
-};
-
-// Claude has no `login` subcommand — running it interactively prompts OAuth.
-const AGENT_LOGIN_COMMANDS: Record<string, string> = {
-  claudeAgent: "claude",
-  codex: "codex login",
 };
 
 /**
@@ -594,7 +619,7 @@ function AgentsStep({
         onBack={onBack}
       >
         <div className="mt-6 flex justify-end">
-          <Button variant="ghost" onClick={onSkip}>
+          <Button variant="ghost-muted" onClick={onSkip}>
             Skip for now
           </Button>
         </div>
@@ -629,7 +654,7 @@ function ConnectedAgentsStep({
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const [terminalAgent, setTerminalAgent] = useState<string | null>(null);
+  const [terminalAgent, setTerminalAgent] = useState<OnboardingAgentDriver | null>(null);
 
   // Re-probe on entry so freshly installed CLIs show up without a manual
   // refresh; harmless when nothing changed (single-flighted per environment).
@@ -646,9 +671,10 @@ function ConnectedAgentsStep({
   const readyCount = primaryAgents.filter(
     ({ provider }) => getOnboardingProviderState(provider) === "ready",
   ).length;
+  const terminalProvider = terminalAgent === null ? undefined : byDriver.get(terminalAgent);
   return (
     <StepShell title="Your agents" description={`Detected on ${machineLabel}.`} onBack={onBack}>
-      <div className="mt-7 border-t border-white/12">
+      <div className="mt-7 border-t border-border">
         {primaryAgents.map(({ driver, provider }) => (
           <AgentCard
             key={driver}
@@ -659,12 +685,12 @@ function ConnectedAgentsStep({
           />
         ))}
       </div>
-      {terminalAgent !== null ? (
+      {terminalAgent !== null && terminalProvider !== undefined ? (
         <AgentInstallTerminal
           key={terminalAgent}
           environmentId={environmentId}
           driver={terminalAgent}
-          installed={byDriver.get(terminalAgent)?.installed ?? false}
+          provider={terminalProvider}
           onClose={() => {
             setTerminalAgent(null);
             void refreshProviders({ environmentId, input: {} });
@@ -672,11 +698,11 @@ function ConnectedAgentsStep({
         />
       ) : null}
       <div className="mt-7 flex items-center justify-between gap-3">
-        <Button className="text-white/60" variant="ghost" onClick={onSkip}>
+        <Button variant="ghost-muted" onClick={onSkip}>
           Skip
         </Button>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-white/50">
+          <span className="text-xs text-muted-foreground">
             {readyCount} of {primaryAgents.length} ready
           </span>
           <Button className="gap-2" onClick={onContinue}>
@@ -695,41 +721,41 @@ function AgentCard({
   terminalOpen,
   onOpenTerminal,
 }: {
-  readonly driver: string;
+  readonly driver: OnboardingAgentDriver;
   readonly provider: ServerProvider | undefined;
   readonly terminalOpen: boolean;
   readonly onOpenTerminal: () => void;
 }) {
-  const meta = getDriverOption(driver as never);
+  const meta = getDriverOption(ProviderDriverKind.make(driver));
   const Icon = meta?.icon;
   const displayName = driver === "claudeAgent" ? "Claude Code" : (meta?.label ?? driver);
   const summary = getProviderSummary(provider);
   const providerState = getOnboardingProviderState(provider);
 
   return (
-    <div className="flex min-h-20 items-center gap-4 border-b border-white/12 py-3">
+    <div className="flex min-h-20 items-center gap-4 border-b border-border py-3">
       {Icon ? (
-        <Icon className={cn("size-6 shrink-0", driver !== "claudeAgent" && "fill-white")} />
+        <Icon className={cn("size-6 shrink-0", driver !== "claudeAgent" && "fill-foreground")} />
       ) : null}
       <div className="min-w-0 flex-1">
-        <span className="block text-sm font-medium text-white">{displayName}</span>
-        <p className="mt-1 truncate text-xs text-white/50">
+        <span className="block text-sm font-medium text-foreground">{displayName}</span>
+        <p className="mt-1 truncate text-xs text-muted-foreground">
           {summary.headline}
           {summary.detail ? ` · ${summary.detail}` : ""}
         </p>
       </div>
       <div className="shrink-0">
         {providerState === "ready" ? (
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
             <CheckIcon className="size-3.5" />
             Ready
           </span>
         ) : providerState === "checking" ? (
-          <span className="text-xs text-white/45">Checking...</span>
+          <span className="text-xs text-muted-foreground">Checking...</span>
         ) : providerState === "disabled" ? (
-          <span className="text-xs text-white/45">Disabled</span>
+          <span className="text-xs text-muted-foreground">Disabled</span>
         ) : providerState === "attention" ? (
-          <span className="text-xs text-white/55">{summary.headline}</span>
+          <span className="text-xs text-muted-foreground">{summary.headline}</span>
         ) : (
           <Button size="xs" variant="ghost" onClick={onOpenTerminal} disabled={terminalOpen}>
             <TerminalIcon className="size-3.5" />
@@ -750,12 +776,12 @@ function AgentCard({
 function AgentInstallTerminal({
   environmentId,
   driver,
-  installed,
+  provider,
   onClose,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly driver: string;
-  readonly installed: boolean;
+  readonly driver: OnboardingAgentDriver;
+  readonly provider: ServerProvider;
   readonly onClose: () => void;
 }) {
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
@@ -770,7 +796,9 @@ function AgentInstallTerminal({
   const openTerminal = useAtomCommand(terminalEnvironment.open, { reportFailure: false });
   const writeTerminal = useAtomCommand(terminalEnvironment.write, { reportFailure: false });
   const closeTerminal = useAtomCommand(terminalEnvironment.close, { reportFailure: false });
-  const preparedRef = useRef(false);
+  const setupQueueRef = useRef(Promise.resolve());
+  const setupGenerationRef = useRef(0);
+  const activeSetupGenerationRef = useRef<number | null>(null);
   const [terminalId] = useState(() => `onboarding-${driver}-${randomUUID()}`);
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, AGENT_ONBOARDING_THREAD_ID),
@@ -779,102 +807,138 @@ function AgentInstallTerminal({
   // The terminal manager stats the cwd verbatim (no tilde expansion), so use
   // the server process's own working directory — always real on that machine.
   const cwd = serverConfig?.cwd ?? null;
+  const providerEnvironment = useMemo(
+    () =>
+      serverConfig === null
+        ? {}
+        : resolveOnboardingProviderTerminalEnvironment(provider, serverConfig.settings),
+    [provider, serverConfig],
+  );
 
-  const command = installed
-    ? (AGENT_LOGIN_COMMANDS[driver] ?? "")
-    : (AGENT_INSTALL_COMMANDS[driver] ?? "");
-  const [preTypeFailed, setPreTypeFailed] = useState(false);
+  const command =
+    provider.installed && serverConfig !== null
+      ? resolveOnboardingProviderLoginCommand(
+          provider,
+          serverConfig.settings,
+          serverConfig.environment.platform.os,
+        )
+      : AGENT_INSTALL_COMMANDS[driver];
+  const [setupAttempt, setSetupAttempt] = useState(0);
+  const [setupState, setSetupState] = useState<
+    "preparing" | "ready" | "openFailed" | "writeFailed"
+  >("preparing");
+  const terminalReady = setupState === "ready" || setupState === "writeFailed";
 
-  // Open + pre-type, and tear the PTY down again on cleanup. Both live in one
-  // effect so a Strict Mode setup/cleanup/setup cycle (or any remount) always
-  // re-opens: the previous run's session is closed and `preparedRef` is reset
-  // together, instead of the ref surviving a teardown and leaving the drawer
-  // attached to a dead session.
+  // Keep each setup generation distinct. In Strict Mode, a canceled open can
+  // finish after the replacement setup starts; it must not close or pre-type
+  // into the replacement session that shares this terminal id.
   useEffect(() => {
     if (cwd === null) return;
-    let cancelled = false;
-    if (!preparedRef.current) {
-      preparedRef.current = true;
-      void (async () => {
-        const opened = await openTerminal({
-          environmentId,
-          input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, cwd },
-        });
-        // A transient RPC failure should retry rather than leave a dead
-        // terminal, so only a successful open keeps the ref set.
-        if (opened._tag !== "Success") {
-          preparedRef.current = false;
-          return;
-        }
-        // Cleanup may have run while the open was in flight — its close was a
-        // no-op against a not-yet-created session, so reap the PTY here.
-        if (cancelled) {
-          void closeTerminal({
-            environmentId,
-            input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId },
-          });
-          return;
-        }
-        if (command.length === 0) return;
-        // Pre-type without the trailing carriage return; the user submits.
-        // The terminal id is unique to this mount, so this session has never
-        // been written to before.
-        const wrote = await writeTerminal({
-          environmentId,
-          input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, data: command },
-        });
-        // A silent failure would leave a blank prompt under copy that says
-        // "review the command" — fall back to telling the user what to type.
-        if (!cancelled && wrote._tag !== "Success") setPreTypeFailed(true);
-      })();
-    }
+    const generation = setupGenerationRef.current + 1;
+    setupGenerationRef.current = generation;
+    activeSetupGenerationRef.current = generation;
+    setSetupState("preparing");
+
+    setupQueueRef.current = setupQueueRef.current.then(async () => {
+      if (activeSetupGenerationRef.current !== generation) return;
+      const opened = await openTerminal({
+        environmentId,
+        input: {
+          threadId: AGENT_ONBOARDING_THREAD_ID,
+          terminalId,
+          cwd,
+          ...(Object.keys(providerEnvironment).length > 0 ? { env: providerEnvironment } : {}),
+        },
+      });
+      if (opened._tag !== "Success") {
+        if (activeSetupGenerationRef.current === generation) setSetupState("openFailed");
+        return;
+      }
+
+      if (activeSetupGenerationRef.current !== generation) return;
+
+      const wrote = await writeTerminal({
+        environmentId,
+        input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId, data: command },
+      });
+      if (activeSetupGenerationRef.current !== generation) return;
+      setSetupState(wrote._tag === "Success" ? "ready" : "writeFailed");
+    });
+
     // Every exit path unmounts the drawer (Done, Continue/Skip, card switch,
     // session exit), so this cleanup is the single place the PTY dies —
     // nothing is left running behind the wizard. An interrupted install is
     // re-runnable from the card.
     return () => {
-      cancelled = true;
-      preparedRef.current = false;
-      void closeTerminal({
-        environmentId,
-        input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId },
+      if (activeSetupGenerationRef.current === generation) {
+        activeSetupGenerationRef.current = null;
+      }
+      setupQueueRef.current = setupQueueRef.current.then(async () => {
+        await closeTerminal({
+          environmentId,
+          input: { threadId: AGENT_ONBOARDING_THREAD_ID, terminalId },
+        });
       });
     };
-  }, [closeTerminal, command, cwd, environmentId, openTerminal, terminalId, writeTerminal]);
+  }, [
+    closeTerminal,
+    command,
+    cwd,
+    environmentId,
+    openTerminal,
+    providerEnvironment,
+    setupAttempt,
+    terminalId,
+    writeTerminal,
+  ]);
 
   if (cwd === null) {
     return null;
   }
 
   return (
-    <div className="thread-terminal-drawer mt-4 overflow-hidden rounded-lg border border-border/70 bg-black text-white">
+    <div className="thread-terminal-drawer mt-4 overflow-hidden rounded-lg border border-border/70 bg-background text-foreground">
       <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
         <span className="text-[11px] font-medium text-muted-foreground">
-          {preTypeFailed ? (
+          {setupState === "writeFailed" ? (
             <>
               Run <code className="rounded bg-muted px-1 font-mono">{command}</code> in this
               terminal.
             </>
-          ) : (
+          ) : setupState === "ready" ? (
             "Review the command, then press Enter to run it."
+          ) : setupState === "openFailed" ? (
+            "Could not open the setup terminal."
+          ) : (
+            "Preparing command..."
           )}
         </span>
-        <Button size="xs" variant="ghost" onClick={onClose}>
-          Done
-        </Button>
+        <div className="flex items-center gap-1">
+          {setupState === "openFailed" ? (
+            <Button size="xs" variant="ghost" onClick={() => setSetupAttempt((value) => value + 1)}>
+              Retry
+            </Button>
+          ) : null}
+          <Button size="xs" variant="ghost-muted" onClick={onClose}>
+            Close
+          </Button>
+        </div>
       </div>
-      <div className="h-64">
+      <div className="h-64" inert={!terminalReady}>
         <TerminalViewport
           threadRef={threadRef}
           threadId={AGENT_ONBOARDING_THREAD_ID}
           terminalId={terminalId}
           terminalLabel={`Install ${driver}`}
           cwd={cwd}
+          {...(Object.keys(providerEnvironment).length > 0
+            ? { runtimeEnv: providerEnvironment }
+            : {})}
           advancedTypography={advancedTypography}
           onSessionExited={onClose}
           onAddTerminalContext={() => undefined}
-          focusRequestId={1}
-          autoFocus
+          focusRequestId={terminalReady ? 1 : 0}
+          autoFocus={terminalReady}
           resizeEpoch={0}
           drawerHeight={256}
           keybindings={keybindings}
@@ -901,7 +965,7 @@ function ImportStep({
   readonly mode: ConnectionMode;
   readonly pairedEnvironmentId: EnvironmentId | null;
   readonly onBack: () => void;
-  readonly onDone: () => void;
+  readonly onDone: (projectRef?: ScopedProjectRef) => void;
 }) {
   const targetEnvironment = useOnboardingTargetEnvironment(mode, pairedEnvironmentId);
   const environmentId = targetEnvironment?.environmentId ?? null;
@@ -919,8 +983,11 @@ function ImportStep({
   const [deselected, setDeselected] = useState<ReadonlySet<string>>(new Set());
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState("");
+  const [landingProject, setLandingProject] = useState<ScopedProjectRef | null>(null);
   // Keep project creation attempts separate from completed history imports so both can retry.
-  const importedPathsRef = useRef(new Set<string>());
+  const importedProjectsRef = useRef(new Map<string, ScopedProjectRef>());
+  const projectRefsRef = useRef(new Map<string, ScopedProjectRef>());
+  const lastImportSelectionRef = useRef<ReadonlyArray<string>>([]);
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
   const projectAttemptsRef = useRef(
@@ -935,18 +1002,47 @@ function ImportStep({
     setDeselected(new Set());
     setIsImporting(false);
     setImportError("");
-    importedPathsRef.current = new Set();
+    setLandingProject(null);
+    importedProjectsRef.current = new Map();
+    projectRefsRef.current = new Map();
+    lastImportSelectionRef.current = [];
     projectAttemptsRef.current = new Map();
     return () => {
       importGenerationRef.current += 1;
     };
   }, [environmentId]);
 
+  useEffect(() => {
+    if (
+      landingProject !== null &&
+      projects.some(
+        (project) =>
+          project.id === landingProject.projectId &&
+          project.environmentId === landingProject.environmentId,
+      )
+    ) {
+      setLandingProject(null);
+      onDone(landingProject);
+    }
+  }, [landingProject, onDone, projects]);
+
   const { available: candidates, recent } = useMemo(
     () => partitionOnboardingProjects(scan.data?.candidates ?? []),
     [scan.data],
   );
-  const older = candidates.length - recent.length;
+  const more = candidates.length - recent.length;
+
+  const finishAfterImport = () => {
+    const projectRef = lastImportSelectionRef.current
+      .map((path) => projectRefsRef.current.get(path))
+      .find((ref) => ref !== undefined);
+    if (projectRef === undefined) {
+      onDone();
+      return;
+    }
+    setIsImporting(true);
+    setLandingProject(projectRef);
+  };
 
   const runImport = async (selection: ReadonlyArray<AgentSessionProjectCandidate>) => {
     if (environmentId === null || selection.length === 0) {
@@ -955,8 +1051,9 @@ function ImportStep({
     }
     setIsImporting(true);
     setImportError("");
+    lastImportSelectionRef.current = selection.map((candidate) => candidate.path);
     const importGeneration = importGenerationRef.current;
-    const importedPaths = importedPathsRef.current;
+    const importedProjects = importedProjectsRef.current;
     const projectAttempts = projectAttemptsRef.current;
     const defaultModelSelection = resolveDefaultProviderModelSelection(providers ?? [], null);
     // Interrupted imports are neither failures nor successes — the command was
@@ -964,23 +1061,24 @@ function ImportStep({
     // they must not read as "imported everything". Retries skip paths that
     // already landed this session (re-creating them would only trip the
     // duplicate-root invariant and read as a failure).
-    let imported =
-      importedPaths.size > 0
-        ? selection.filter((candidate) => importedPaths.has(candidate.path)).length
+    let importedProjectsCount =
+      importedProjects.size > 0
+        ? selection.filter((candidate) => importedProjects.has(candidate.path)).length
         : 0;
+    let importedThreadCount = 0;
+    let skippedThreadCount = 0;
     for (const candidate of selection) {
       if (
         importGeneration !== importGenerationRef.current ||
-        importedPaths !== importedPathsRef.current
+        importedProjects !== importedProjectsRef.current
       ) {
         return;
       }
-      if (importedPaths.has(candidate.path)) continue;
+      if (importedProjects.has(candidate.path)) continue;
       let projectId = resolveOnboardingProjectId(
         projectsRef.current,
         environmentId,
         candidate.path,
-        candidate.projectId,
       );
       if (projectId === null) {
         let attempt = projectAttempts.get(candidate.path);
@@ -1006,7 +1104,7 @@ function ImportStep({
         });
         if (
           importGeneration !== importGenerationRef.current ||
-          importedPaths !== importedPathsRef.current
+          importedProjects !== importedProjectsRef.current
         ) {
           return;
         }
@@ -1016,39 +1114,49 @@ function ImportStep({
         }
       }
 
+      projectRefsRef.current.set(candidate.path, scopeProjectRef(environmentId, projectId));
+
       const threadImportResult = await importThreads({
         environmentId,
         input: { projectId },
       });
       if (
         importGeneration !== importGenerationRef.current ||
-        importedPaths !== importedPathsRef.current
+        importedProjects !== importedProjectsRef.current
       ) {
         return;
       }
-      if (
-        threadImportResult._tag === "Success" &&
-        (threadImportResult.value.importedCount > 0 || threadImportResult.value.skippedCount === 0)
-      ) {
-        imported += 1;
-        importedPaths.add(candidate.path);
-      } else if (
-        threadImportResult._tag !== "Success" &&
-        !isAtomCommandInterrupted(threadImportResult)
-      ) {
+      if (threadImportResult._tag === "Success") {
+        importedThreadCount += threadImportResult.value.importedCount;
+        skippedThreadCount += threadImportResult.value.skippedCount;
+        if (threadImportResult.value.skippedCount === 0) {
+          importedProjectsCount += 1;
+          importedProjects.set(candidate.path, scopeProjectRef(environmentId, projectId));
+        }
+      } else if (!isAtomCommandInterrupted(threadImportResult)) {
         projectAttempts.delete(candidate.path);
       }
     }
     setIsImporting(false);
-    if (imported < selection.length) {
-      setImportError(
-        imported === 0
-          ? "Could not import thread history. Retry, or continue without it."
-          : `Imported thread history for ${imported} of ${selection.length} projects. Retry, or continue without the rest.`,
-      );
+    if (importedProjectsCount < selection.length) {
+      if (importedThreadCount > 0 && skippedThreadCount > 0) {
+        setImportError(
+          `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. ${skippedThreadCount} ${skippedThreadCount === 1 ? "thread" : "threads"} could not be imported.`,
+        );
+      } else if (skippedThreadCount > 0) {
+        setImportError(
+          `${skippedThreadCount} ${skippedThreadCount === 1 ? "thread could" : "threads could"} not be imported.`,
+        );
+      } else if (importedThreadCount > 0) {
+        setImportError(
+          `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. Some thread history could not be imported.`,
+        );
+      } else {
+        setImportError("Could not import thread history.");
+      }
       return;
     }
-    onDone();
+    finishAfterImport();
   };
 
   if (environmentId === null || (scan.isPending && scan.data === null)) {
@@ -1059,7 +1167,7 @@ function ImportStep({
         onBack={onBack}
       >
         <div className="mt-6 flex justify-end">
-          <Button variant="ghost" onClick={onDone}>
+          <Button variant="ghost-muted" onClick={() => onDone()}>
             Skip
           </Button>
         </div>
@@ -1079,7 +1187,7 @@ function ImportStep({
         onBack={onBack}
       >
         {scan.error !== null ? (
-          <p className="mt-3 text-xs text-white/50">You can add projects later.</p>
+          <p className="mt-3 text-xs text-muted-foreground">You can add projects later.</p>
         ) : null}
         <div className="mt-6 flex justify-end gap-2">
           {scan.error !== null ? (
@@ -1087,7 +1195,12 @@ function ImportStep({
               Retry
             </Button>
           ) : null}
-          <Button onClick={onDone}>{scan.error !== null ? "Skip" : "Start coding"}</Button>
+          <Button
+            variant={scan.error !== null ? "ghost-muted" : "default"}
+            onClick={() => onDone()}
+          >
+            {scan.error !== null ? "Skip" : "Start coding"}
+          </Button>
         </div>
       </StepShell>
     );
@@ -1102,11 +1215,11 @@ function ImportStep({
         backDisabled={isImporting}
         description={`${candidates.length} found on ${machineLabel}.`}
       >
-        <div className="mt-6 max-h-72 overflow-x-hidden overflow-y-auto border-y border-white/12">
+        <div className="mt-6 max-h-72 overflow-x-hidden overflow-y-auto border-y border-border">
           {candidates.map((candidate) => (
             <label
               key={candidate.path}
-              className="flex min-h-12 cursor-pointer items-center gap-3 border-b border-white/8 px-1 py-2 last:border-b-0 hover:bg-white/[0.035]"
+              className="flex min-h-12 cursor-pointer items-center gap-3 border-b border-border/60 px-1 py-2 last:border-b-0 hover:bg-accent/50"
             >
               <Checkbox
                 checked={!deselected.has(candidate.path)}
@@ -1119,10 +1232,10 @@ function ImportStep({
                   });
                 }}
               />
-              <span className="min-w-0 flex-1 truncate font-mono text-xs text-white/85">
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
                 {candidate.path}
               </span>
-              <span className="hidden shrink-0 whitespace-nowrap text-[11px] text-white/45 sm:block">
+              <span className="hidden shrink-0 whitespace-nowrap text-[11px] text-muted-foreground sm:block">
                 {candidate.sources.map(formatSource).join(", ")} · {candidate.threadCount}{" "}
                 {candidate.threadCount === 1 ? "thread" : "threads"}
                 {candidate.lastActiveAt
@@ -1134,8 +1247,12 @@ function ImportStep({
         </div>
         {importError ? <p className="mt-3 text-sm text-destructive">{importError}</p> : null}
         <div className="mt-7 flex items-center justify-between">
-          <Button variant="ghost" disabled={isImporting} onClick={onDone}>
-            Skip
+          <Button
+            variant="ghost-muted"
+            disabled={isImporting}
+            onClick={importError ? finishAfterImport : () => onDone()}
+          >
+            {importError ? "Continue without the rest" : "Skip"}
           </Button>
           <Button
             disabled={isImporting || selected.length === 0}
@@ -1151,33 +1268,39 @@ function ImportStep({
   return (
     <StepShell
       title="Your recent projects"
-      description={`${recent.length} ${recent.length === 1 ? "project" : "projects"} found on ${machineLabel}.${older > 0 ? ` ${older} older available.` : ""}`}
+      description={`${recent.length} ${recent.length === 1 ? "project" : "projects"} found on ${machineLabel}.${more > 0 ? ` ${more} more available.` : ""}`}
       onBack={onBack}
       backDisabled={isImporting}
     >
-      <div className="mt-6 border-y border-white/12">
+      <div className="mt-6 border-y border-border">
         {recent.slice(0, 4).map((candidate) => (
           <div
             key={candidate.path}
-            className="flex min-h-12 items-center gap-3 border-b border-white/8 px-1 py-2 last:border-b-0"
+            className="flex min-h-12 items-center gap-3 border-b border-border/60 px-1 py-2 last:border-b-0"
           >
-            <CheckIcon className="size-3.5 shrink-0 text-emerald-400" />
-            <span className="min-w-0 flex-1 truncate font-mono text-xs text-white/85">
+            <CheckIcon className="size-3.5 shrink-0 text-success-foreground" />
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
               {candidate.path}
             </span>
-            <span className="hidden shrink-0 whitespace-nowrap text-[11px] text-white/45 sm:block">
+            <span className="hidden shrink-0 whitespace-nowrap text-[11px] text-muted-foreground sm:block">
               {candidate.sources.map(formatSource).join(", ")}
             </span>
           </div>
         ))}
         {recent.length > 4 ? (
-          <p className="px-1 py-3 text-xs text-white/45">{recent.length - 4} more projects</p>
+          <p className="px-1 py-3 text-xs text-muted-foreground">
+            {recent.length - 4} more projects
+          </p>
         ) : null}
       </div>
       {importError ? <p className="mt-3 text-sm text-destructive">{importError}</p> : null}
       <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
-        <Button className="text-white/60" variant="ghost" disabled={isImporting} onClick={onDone}>
-          Skip
+        <Button
+          variant="ghost-muted"
+          disabled={isImporting}
+          onClick={importError ? finishAfterImport : () => onDone()}
+        >
+          {importError ? "Continue without the rest" : "Skip"}
         </Button>
         <div className="flex items-center gap-2">
           <Button variant="ghost" disabled={isImporting} onClick={() => setChoosing(true)}>
@@ -1216,7 +1339,7 @@ function StepShell({
     <>
       {onBack ? (
         <Button
-          className="mb-5 -ml-2 text-white/55 hover:text-white"
+          className="mb-5 -ml-2"
           disabled={backDisabled}
           onClick={onBack}
           size="xs"
@@ -1226,9 +1349,9 @@ function StepShell({
           Back
         </Button>
       ) : null}
-      <h1 className="text-3xl font-semibold text-white sm:text-[34px]">{title}</h1>
+      <h1 className="text-3xl font-semibold text-foreground sm:text-[34px]">{title}</h1>
       {description ? (
-        <p className="mt-2.5 text-sm leading-relaxed text-white/55">{description}</p>
+        <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">{description}</p>
       ) : null}
       {children}
     </>
@@ -1275,7 +1398,7 @@ function CommandBlock({
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-3 border border-white/15 bg-white/[0.035] font-mono",
+        "flex items-center justify-between gap-3 border border-border bg-accent/50 font-mono",
         prominent ? "px-4 py-3.5 text-base" : "px-3 py-2.5 text-sm",
         className,
       )}
