@@ -240,7 +240,7 @@ function DirectoryBreadcrumb(props: FileBreadcrumbsProps & { readonly crumb: Fil
                 <button
                   type="button"
                   aria-label={`Browse ${props.crumb.label}`}
-                  className="block max-w-40 cursor-pointer truncate rounded-sm px-0.5 text-left text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-accent data-popup-open:text-foreground"
+                  className="relative block max-w-40 cursor-pointer truncate rounded-sm px-0.5 text-left text-muted-foreground outline-none pointer-coarse:after:-inset-y-3 pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-accent data-popup-open:text-foreground"
                 />
               }
             />
