@@ -265,8 +265,10 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
     let needed = 0;
     let groups = 0;
     for (const child of current.children) {
-      if (!(child instanceof HTMLElement) || child.offsetWidth <= 1) continue;
-      needed += contentWidth(child);
+      if (!(child instanceof HTMLElement)) continue;
+      const width = contentWidth(child);
+      if (width <= 1) continue;
+      needed += width;
       groups += 1;
     }
     needed += stripGap * Math.max(0, groups - 1);
@@ -356,7 +358,7 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
   // Label widths can change without the strip box moving (font family or
   // size preferences), so re-measure on every render as well as on resize
   // and font loads.
-  useEffect(() => {
+  useLayoutEffect(() => {
     measure();
   });
 
@@ -487,7 +489,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           onUsePreviousWorktree={onUsePreviousWorktree}
         />
       ) : (
-        <div className="flex min-w-0 flex-1 items-center gap-1">
+        <div className="flex min-w-10 flex-1 items-center gap-1">
           {showEnvironmentIndicator && availableEnvironments && (
             <>
               <BranchToolbarEnvironmentSelector
@@ -520,7 +522,7 @@ export const BranchToolbar = memo(function BranchToolbar({
 
       {showGitControls ? (
         <BranchToolbarBranchSelector
-          className="min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
+          className="min-w-0 flex-1 justify-end md:ml-auto md:flex-initial"
           environmentId={environmentId}
           threadId={threadId}
           {...(draftId ? { draftId } : {})}
