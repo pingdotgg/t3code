@@ -168,7 +168,6 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         UPDATE.resolve(),
         { enabled },
       );
-      const maintenanceCapabilities = yield* maintenanceSources.advisory;
 
       // `makeCodexAdapter` and `makeCodexTextGeneration` have `never` error
       // channels at construction time — their failure modes are all on the
@@ -204,7 +203,6 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       );
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CodexSettings>>({
-        maintenanceCapabilities,
         resolveMaintenance: maintenanceSources.fresh,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,

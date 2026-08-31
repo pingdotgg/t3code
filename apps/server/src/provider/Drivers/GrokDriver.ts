@@ -134,7 +134,6 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         GrokMaintenanceResolver.resolve(),
         { enabled },
       );
-      const maintenanceCapabilities = yield* maintenanceSources.advisory;
 
       const adapter = yield* makeGrokAdapter(effectiveConfig, {
         environment: processEnv,
@@ -151,7 +150,6 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<GrokSettings>>({
-        maintenanceCapabilities,
         resolveMaintenance: maintenanceSources.fresh,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,

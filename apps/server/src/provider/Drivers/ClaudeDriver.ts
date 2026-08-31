@@ -151,7 +151,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         UPDATE.resolve(),
         { enabled },
       );
-      const maintenanceCapabilities = yield* maintenanceSources.advisory;
       const continuationGroupKey = yield* makeClaudeContinuationGroupKey(effectiveConfig);
       const stampIdentity = withInstanceIdentity({
         instanceId,
@@ -205,7 +204,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<ClaudeSettings>>({
-        maintenanceCapabilities,
         resolveMaintenance: maintenanceSources.fresh,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,

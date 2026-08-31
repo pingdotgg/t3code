@@ -159,7 +159,6 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         UPDATE.resolve(),
         { enabled },
       );
-      const maintenanceCapabilities = yield* maintenanceSources.advisory;
 
       const adapter = yield* makeOpenCodeAdapter(effectiveConfig, {
         instanceId,
@@ -191,7 +190,6 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>(
         {
-          maintenanceCapabilities,
           resolveMaintenance: maintenanceSources.fresh,
           getSettings: snapshotSettings.getSettings,
           streamSettings: snapshotSettings.streamSettings,
