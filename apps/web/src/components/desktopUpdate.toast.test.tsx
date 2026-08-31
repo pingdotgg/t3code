@@ -59,6 +59,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
 
     expect(testState.addToast).toHaveBeenCalledWith({
       data: undefined,
+      timeout: 0,
       type: "success",
       title: "Update downloaded",
       description: "Restart the app from the update button to install it.",
