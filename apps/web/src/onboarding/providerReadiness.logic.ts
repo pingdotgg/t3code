@@ -17,7 +17,12 @@ function quoteProviderBinary(
   fallback: string,
   platform: ExecutionEnvironmentPlatformOs,
 ): string {
-  if (SAFE_SHELL_BINARY_PATTERN.test(binaryPath)) return binaryPath;
+  if (
+    SAFE_SHELL_BINARY_PATTERN.test(binaryPath) &&
+    (platform === "windows" || !binaryPath.includes("\\"))
+  ) {
+    return binaryPath;
+  }
   if (platform === "windows") return `& '${binaryPath.replaceAll("'", "''")}'`;
   if (platform === "darwin" || platform === "linux") {
     return `'${binaryPath.replaceAll("'", `'"'"'`)}'`;

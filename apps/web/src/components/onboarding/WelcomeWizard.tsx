@@ -5,6 +5,7 @@ import type {
   EnvironmentId,
   ProjectId,
   ScopedProjectRef,
+  ServerConfig,
   ServerProvider,
 } from "@t3tools/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -52,8 +53,6 @@ import { useProjects } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { projectEnvironment } from "../../state/projects";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-
 import { serverEnvironment } from "../../state/server";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -150,7 +149,10 @@ export function WelcomeWizard({
       <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
         <div className="mx-auto grid min-h-full w-full max-w-5xl content-center gap-10 px-6 py-12 sm:grid-cols-[170px_minmax(0,1fr)] sm:gap-14 sm:px-10 lg:px-12">
           <aside className="flex min-w-0 flex-col justify-between sm:min-h-72">
-            <nav aria-label="Setup progress" className="flex gap-5 sm:flex-col sm:gap-1">
+            <nav
+              aria-label="Setup progress"
+              className="flex flex-wrap gap-x-5 gap-y-1 sm:flex-col sm:gap-1"
+            >
               {ONBOARDING_STAGES.map((stage, index) => (
                 <div
                   key={stage}
@@ -443,6 +445,10 @@ function ConnectMachinesStep({
             </CollapsibleTrigger>
             <CollapsiblePanel>
               <CommandBlock command={CONNECT_LOGIN_COMMAND} className="mt-2" />
+              <p className="mt-2 text-xs text-muted-foreground">
+                Keep T3 Code running on that computer. If it is not running, open T3 Code or run{" "}
+                <code className="font-mono">npx t3 serve</code>.
+              </p>
             </CollapsiblePanel>
           </Collapsible>
           <div className="mt-7 flex justify-end">
@@ -452,6 +458,10 @@ function ConnectMachinesStep({
       ) : (
         <>
           <CommandBlock command={CONNECT_LOGIN_COMMAND} className="mt-7" prominent />
+          <p className="mt-2 text-xs text-muted-foreground">
+            Keep T3 Code running on that computer. If it is not running, open T3 Code or run{" "}
+            <code className="font-mono">npx t3 serve</code>.
+          </p>
           <div className="mt-5 overflow-hidden border-y border-border">
             <CloudEnvironmentConnectRows
               primaryEnvironmentId={primaryEnvironment?.environmentId ?? null}
@@ -464,11 +474,11 @@ function ConnectMachinesStep({
               }
             />
           </div>
-          <div className="mt-7 flex items-center justify-between">
+          <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
             <Button variant="ghost-muted" onClick={onContinue}>
               Skip for now
             </Button>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center justify-end gap-3">
               <span className="hidden text-xs text-muted-foreground sm:block">
                 Waiting for connection
               </span>
@@ -591,6 +601,17 @@ const AGENT_INSTALL_COMMANDS: Record<OnboardingAgentDriver, string> = {
   codex: "npm install -g @openai/codex",
 };
 
+/** Setup values stay fixed while provider probes refresh the surrounding cards. */
+interface AgentTerminalSession {
+  readonly environmentId: EnvironmentId;
+  readonly driver: OnboardingAgentDriver;
+  readonly providerInstanceId: ServerProvider["instanceId"];
+  readonly cwd: string;
+  readonly command: string;
+  readonly providerEnvironment: Record<string, string>;
+  readonly keybindings: ServerConfig["keybindings"];
+}
+
 /**
  * Claude Code and Codex use live probe status. Install opens the built-in terminal inline
  * with the command pre-typed — the update RPC can't install a binary that
@@ -628,6 +649,7 @@ function AgentsStep({
   }
   return (
     <ConnectedAgentsStep
+      key={targetEnvironment.environmentId}
       environmentId={targetEnvironment.environmentId}
       machineLabel={targetEnvironment.label}
       onBack={onBack}
@@ -654,7 +676,8 @@ function ConnectedAgentsStep({
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const [terminalAgent, setTerminalAgent] = useState<OnboardingAgentDriver | null>(null);
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const [terminalSession, setTerminalSession] = useState<AgentTerminalSession | null>(null);
 
   // Re-probe on entry so freshly installed CLIs show up without a manual
   // refresh; harmless when nothing changed (single-flighted per environment).
@@ -671,7 +694,6 @@ function ConnectedAgentsStep({
   const readyCount = primaryAgents.filter(
     ({ provider }) => getOnboardingProviderState(provider) === "ready",
   ).length;
-  const terminalProvider = terminalAgent === null ? undefined : byDriver.get(terminalAgent);
   return (
     <StepShell title="Your agents" description={`Detected on ${machineLabel}.`} onBack={onBack}>
       <div className="mt-7 border-t border-border">
@@ -680,28 +702,47 @@ function ConnectedAgentsStep({
             key={driver}
             driver={driver}
             provider={provider}
-            terminalOpen={terminalAgent === driver}
-            onOpenTerminal={() => setTerminalAgent(driver)}
+            terminalOpen={terminalSession?.driver === driver}
+            terminalAvailable={serverConfig !== null}
+            onOpenTerminal={() => {
+              if (provider === undefined || serverConfig === null) return;
+              setTerminalSession({
+                environmentId,
+                driver,
+                providerInstanceId: provider.instanceId,
+                cwd: serverConfig.cwd,
+                command: provider.installed
+                  ? resolveOnboardingProviderLoginCommand(
+                      provider,
+                      serverConfig.settings,
+                      serverConfig.environment.platform.os,
+                    )
+                  : AGENT_INSTALL_COMMANDS[driver],
+                providerEnvironment: resolveOnboardingProviderTerminalEnvironment(
+                  provider,
+                  serverConfig.settings,
+                ),
+                keybindings: serverConfig.keybindings,
+              });
+            }}
           />
         ))}
       </div>
-      {terminalAgent !== null && terminalProvider !== undefined ? (
+      {terminalSession !== null ? (
         <AgentInstallTerminal
-          key={terminalAgent}
-          environmentId={environmentId}
-          driver={terminalAgent}
-          provider={terminalProvider}
+          key={`${terminalSession.environmentId}:${terminalSession.providerInstanceId}:${terminalSession.driver}`}
+          session={terminalSession}
           onClose={() => {
-            setTerminalAgent(null);
+            setTerminalSession(null);
             void refreshProviders({ environmentId, input: {} });
           }}
         />
       ) : null}
-      <div className="mt-7 flex items-center justify-between gap-3">
+      <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
         <Button variant="ghost-muted" onClick={onSkip}>
           Skip
         </Button>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-3">
           <span className="text-xs text-muted-foreground">
             {readyCount} of {primaryAgents.length} ready
           </span>
@@ -719,11 +760,13 @@ function AgentCard({
   driver,
   provider,
   terminalOpen,
+  terminalAvailable,
   onOpenTerminal,
 }: {
   readonly driver: OnboardingAgentDriver;
   readonly provider: ServerProvider | undefined;
   readonly terminalOpen: boolean;
+  readonly terminalAvailable: boolean;
   readonly onOpenTerminal: () => void;
 }) {
   const meta = getDriverOption(ProviderDriverKind.make(driver));
@@ -757,7 +800,12 @@ function AgentCard({
         ) : providerState === "attention" ? (
           <span className="text-xs text-muted-foreground">{summary.headline}</span>
         ) : (
-          <Button size="xs" variant="ghost" onClick={onOpenTerminal} disabled={terminalOpen}>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={onOpenTerminal}
+            disabled={terminalOpen || !terminalAvailable}
+          >
             <TerminalIcon className="size-3.5" />
             {providerState === "signIn" ? "Sign in" : "Install"}
           </Button>
@@ -774,19 +822,13 @@ function AgentCard({
  * command without submitting, so the user reviews and presses Enter.
  */
 function AgentInstallTerminal({
-  environmentId,
-  driver,
-  provider,
+  session,
   onClose,
 }: {
-  readonly environmentId: EnvironmentId;
-  readonly driver: OnboardingAgentDriver;
-  readonly provider: ServerProvider;
+  readonly session: AgentTerminalSession;
   readonly onClose: () => void;
 }) {
-  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
-  // Keybindings follow the machine the terminal runs on, not the primary.
-  const keybindings = serverConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
+  const { command, cwd, driver, environmentId, keybindings, providerEnvironment } = session;
   // Same terminal typography preference the thread drawer honors.
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
@@ -804,25 +846,6 @@ function AgentInstallTerminal({
     () => scopeThreadRef(environmentId, AGENT_ONBOARDING_THREAD_ID),
     [environmentId],
   );
-  // The terminal manager stats the cwd verbatim (no tilde expansion), so use
-  // the server process's own working directory — always real on that machine.
-  const cwd = serverConfig?.cwd ?? null;
-  const providerEnvironment = useMemo(
-    () =>
-      serverConfig === null
-        ? {}
-        : resolveOnboardingProviderTerminalEnvironment(provider, serverConfig.settings),
-    [provider, serverConfig],
-  );
-
-  const command =
-    provider.installed && serverConfig !== null
-      ? resolveOnboardingProviderLoginCommand(
-          provider,
-          serverConfig.settings,
-          serverConfig.environment.platform.os,
-        )
-      : AGENT_INSTALL_COMMANDS[driver];
   const [setupAttempt, setSetupAttempt] = useState(0);
   const [setupState, setSetupState] = useState<
     "preparing" | "ready" | "openFailed" | "writeFailed"
@@ -833,7 +856,6 @@ function AgentInstallTerminal({
   // finish after the replacement setup starts; it must not close or pre-type
   // into the replacement session that shares this terminal id.
   useEffect(() => {
-    if (cwd === null) return;
     const generation = setupGenerationRef.current + 1;
     setupGenerationRef.current = generation;
     activeSetupGenerationRef.current = generation;
@@ -892,10 +914,6 @@ function AgentInstallTerminal({
     writeTerminal,
   ]);
 
-  if (cwd === null) {
-    return null;
-  }
-
   return (
     <div className="thread-terminal-drawer mt-4 overflow-hidden rounded-lg border border-border/70 bg-background text-foreground">
       <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
@@ -924,25 +942,27 @@ function AgentInstallTerminal({
           </Button>
         </div>
       </div>
-      <div className="h-64" inert={!terminalReady}>
-        <TerminalViewport
-          threadRef={threadRef}
-          threadId={AGENT_ONBOARDING_THREAD_ID}
-          terminalId={terminalId}
-          terminalLabel={`Install ${driver}`}
-          cwd={cwd}
-          {...(Object.keys(providerEnvironment).length > 0
-            ? { runtimeEnv: providerEnvironment }
-            : {})}
-          advancedTypography={advancedTypography}
-          onSessionExited={onClose}
-          onAddTerminalContext={() => undefined}
-          focusRequestId={terminalReady ? 1 : 0}
-          autoFocus={terminalReady}
-          resizeEpoch={0}
-          drawerHeight={256}
-          keybindings={keybindings}
-        />
+      <div className="h-64">
+        {terminalReady ? (
+          <TerminalViewport
+            threadRef={threadRef}
+            threadId={AGENT_ONBOARDING_THREAD_ID}
+            terminalId={terminalId}
+            terminalLabel={`Install ${driver}`}
+            cwd={cwd}
+            {...(Object.keys(providerEnvironment).length > 0
+              ? { runtimeEnv: providerEnvironment }
+              : {})}
+            advancedTypography={advancedTypography}
+            onSessionExited={onClose}
+            onAddTerminalContext={() => undefined}
+            focusRequestId={1}
+            autoFocus
+            resizeEpoch={0}
+            drawerHeight={256}
+            keybindings={keybindings}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -1246,7 +1266,7 @@ function ImportStep({
           ))}
         </div>
         {importError ? <p className="mt-3 text-sm text-destructive">{importError}</p> : null}
-        <div className="mt-7 flex items-center justify-between">
+        <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
           <Button
             variant="ghost-muted"
             disabled={isImporting}

@@ -5,12 +5,17 @@ export type FirstRunDecision = "pending" | "app" | "wizard";
 interface FirstRunWorkspaceInput {
   readonly primaryEnvironmentId: string | null;
   readonly serverCwd: string | null;
+  readonly bootstrapProjectId?: string | undefined;
+  readonly bootstrapThreadId?: string | undefined;
+  readonly bootstrapProjectCreated?: boolean | undefined;
+  readonly bootstrapThreadCreated?: boolean | undefined;
   readonly projects: ReadonlyArray<{
     readonly id: string;
     readonly environmentId: string;
     readonly workspaceRoot: string;
   }>;
   readonly threads: ReadonlyArray<{
+    readonly id: string;
     readonly projectId: string;
     readonly environmentId: string;
     readonly latestTurn: unknown;
@@ -26,6 +31,7 @@ interface FirstRunDecisionInput {
   readonly bootstrapped: boolean;
   readonly authoritative: boolean;
   readonly workspaceAuthoritative: boolean;
+  readonly workspaceProvenanceAuthoritative: boolean;
   readonly catalogReady: boolean;
   readonly serverConfigAvailable: boolean;
   readonly workspaceFresh: boolean;
@@ -40,7 +46,7 @@ interface HostedFirstRunDecisionInput {
   readonly environmentCount: number;
 }
 
-/** Only an untouched cwd-bootstrap project and its unused thread count as a fresh workspace. */
+/** Only a project and thread created by this startup count as a fresh nonempty workspace. */
 export function isFreshFirstRunWorkspace(input: FirstRunWorkspaceInput): boolean {
   if (input.projects.length > 1 || input.threads.length > 1) {
     return false;
@@ -49,6 +55,8 @@ export function isFreshFirstRunWorkspace(input: FirstRunWorkspaceInput): boolean
   const bootstrapProject = input.projects[0];
   if (bootstrapProject !== undefined) {
     if (
+      input.bootstrapProjectCreated !== true ||
+      input.bootstrapProjectId !== bootstrapProject.id ||
       input.serverCwd === null ||
       bootstrapProject.environmentId !== input.primaryEnvironmentId ||
       normalizeProjectPathForComparison(bootstrapProject.workspaceRoot) !==
@@ -65,6 +73,8 @@ export function isFreshFirstRunWorkspace(input: FirstRunWorkspaceInput): boolean
 
   return (
     bootstrapProject !== undefined &&
+    input.bootstrapThreadCreated === true &&
+    input.bootstrapThreadId === bootstrapThread.id &&
     bootstrapThread.environmentId === input.primaryEnvironmentId &&
     bootstrapThread.projectId === bootstrapProject.id &&
     bootstrapThread.latestTurn === null &&
@@ -101,6 +111,7 @@ export function resolveFirstRunDecision(input: FirstRunDecisionInput): {
   if (
     !input.bootstrapped ||
     !input.authoritative ||
+    !input.workspaceProvenanceAuthoritative ||
     !input.catalogReady ||
     !input.serverConfigAvailable
   ) {

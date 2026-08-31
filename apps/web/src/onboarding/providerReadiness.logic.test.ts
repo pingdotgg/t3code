@@ -305,6 +305,44 @@ describe("resolveOnboardingProviderLoginCommand", () => {
     ).toBe("'/opt/Claude Tools/$current/claude' auth login");
   });
 
+  it.each(["darwin", "linux"] as const)("quotes backslashes in a Codex path on %s", (platform) => {
+    expect(
+      resolveOnboardingProviderLoginCommand(
+        readyCodex,
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          providers: {
+            ...DEFAULT_SERVER_SETTINGS.providers,
+            codex: {
+              ...DEFAULT_SERVER_SETTINGS.providers.codex,
+              binaryPath: "/opt/codex\\work/codex",
+            },
+          },
+        },
+        platform,
+      ),
+    ).toBe("'/opt/codex\\work/codex' login");
+  });
+
+  it("keeps a plain Windows path unquoted", () => {
+    expect(
+      resolveOnboardingProviderLoginCommand(
+        readyCodex,
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          providers: {
+            ...DEFAULT_SERVER_SETTINGS.providers,
+            codex: {
+              ...DEFAULT_SERVER_SETTINGS.providers.codex,
+              binaryPath: "C:\\Tools\\codex.exe",
+            },
+          },
+        },
+        "windows",
+      ),
+    ).toBe("C:\\Tools\\codex.exe login");
+  });
+
   it("uses the default command when an old server reports an unknown shell", () => {
     expect(
       resolveOnboardingProviderLoginCommand(

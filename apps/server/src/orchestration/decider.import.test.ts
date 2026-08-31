@@ -255,4 +255,137 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
       expect(readModel.threads[0]?.updatedAt).toBe(liveMessageAt);
     }),
   );
+
+  for (const requestKind of ["approval.requested", "user-input.requested"] as const) {
+    it.effect(`rejects history import with an open ${requestKind} activity`, () =>
+      Effect.gen(function* () {
+        const createdAt = "2026-08-24T10:00:00.000Z";
+        const threadId = ThreadId.make(`import:codex:${requestKind}`);
+        const withThread = yield* projectEvent(createEmptyReadModel(createdAt), {
+          sequence: 1,
+          eventId: EventId.make(`event-${requestKind}-thread-created`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          type: "thread.created",
+          occurredAt: createdAt,
+          commandId: CommandId.make(`command-${requestKind}-thread-created`),
+          causationEventId: null,
+          correlationId: CommandId.make(`command-${requestKind}-thread-created`),
+          metadata: {},
+          payload: {
+            threadId,
+            projectId: ProjectId.make("project-1"),
+            title: "Imported thread",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        });
+        const readModel = yield* projectEvent(withThread, {
+          sequence: 2,
+          eventId: EventId.make(`event-${requestKind}`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          type: "thread.activity-appended",
+          occurredAt: createdAt,
+          commandId: CommandId.make(`command-${requestKind}`),
+          causationEventId: null,
+          correlationId: CommandId.make(`command-${requestKind}`),
+          metadata: {},
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make(`activity-${requestKind}`),
+              tone: "approval",
+              kind: requestKind,
+              summary: "Pending request",
+              payload: { requestId: "request-1" },
+              turnId: null,
+              createdAt,
+            },
+          },
+        });
+
+        const error = yield* Effect.flip(
+          decideOrchestrationCommand({
+            command: {
+              type: "thread.history.import",
+              commandId: CommandId.make(`command-import-${requestKind}`),
+              threadId,
+              messages: [
+                {
+                  messageId: MessageId.make(`${threadId}:000000`),
+                  role: "user",
+                  text: "Old work",
+                  createdAt,
+                },
+              ],
+            },
+            readModel,
+          }),
+        );
+
+        expect(error._tag).toBe("OrchestrationCommandInvariantError");
+        expect(error.message).toContain("must be active and empty");
+      }),
+    );
+  }
+
+  it.effect("rejects a live user message in the imported-session namespace", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-08-24T10:00:00.000Z";
+      const threadId = ThreadId.make("thread-live-message");
+      const readModel = yield* projectEvent(createEmptyReadModel(createdAt), {
+        sequence: 1,
+        eventId: EventId.make("event-live-thread-created"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.created",
+        occurredAt: createdAt,
+        commandId: CommandId.make("command-live-thread-created"),
+        causationEventId: null,
+        correlationId: CommandId.make("command-live-thread-created"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-1"),
+          title: "Live thread",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.turn.start",
+            commandId: CommandId.make("command-live-import-id"),
+            threadId,
+            message: {
+              messageId: MessageId.make("import:forged-live-message"),
+              role: "user",
+              text: "Live work",
+              attachments: [],
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt,
+          },
+          readModel,
+        }),
+      );
+
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      expect(error.message).toContain("reserved imported-session namespace");
+    }),
+  );
 });

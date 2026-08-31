@@ -18,7 +18,7 @@ import {
 } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { environmentProjects } from "../../state/projects";
-import { primaryServerConfigAtom } from "../../state/server";
+import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../../state/server";
 import { environmentShell } from "../../state/shell";
 import { environmentThreadShells } from "../../state/threads";
 
@@ -80,6 +80,7 @@ export function FirstRunGate({
   const projects = useProjects();
   const threads = useThreadShells();
   const serverConfig = useAtomValue(primaryServerConfigAtom);
+  const serverWelcome = useAtomValue(primaryServerWelcomeAtom);
   const primaryShellLive = useAtomValue(primaryShellLiveAtom);
   const workspaceEvidenceLive = useAtomValue(workspaceEvidenceLiveAtom);
   // Within a session settings stay hydrated, so remounts (e.g. returning from
@@ -101,6 +102,10 @@ export function FirstRunGate({
   const workspaceFresh = isFreshFirstRunWorkspace({
     primaryEnvironmentId,
     serverCwd,
+    bootstrapProjectId: serverWelcome?.bootstrapProjectId,
+    bootstrapThreadId: serverWelcome?.bootstrapThreadId,
+    bootstrapProjectCreated: serverWelcome?.bootstrapProjectCreated,
+    bootstrapThreadCreated: serverWelcome?.bootstrapThreadCreated,
     projects,
     threads,
   });
@@ -119,6 +124,8 @@ export function FirstRunGate({
         bootstrapped,
         authoritative: primaryShellLive,
         workspaceAuthoritative: workspaceEvidenceLive,
+        workspaceProvenanceAuthoritative:
+          (projects.length === 0 && threads.length === 0) || serverWelcome !== null,
         catalogReady: environmentCatalogReady,
         serverConfigAvailable: serverConfig !== null,
         workspaceFresh,

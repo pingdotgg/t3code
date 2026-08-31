@@ -194,6 +194,8 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
 
   let bootstrapProjectId: ProjectId | undefined;
   let bootstrapThreadId: ThreadId | undefined;
+  let bootstrapProjectCreated = false;
+  let bootstrapThreadCreated = false;
 
   if (serverConfig.autoBootstrapProjectFromCwd) {
     yield* Effect.gen(function* () {
@@ -206,6 +208,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
       if (Option.isNone(existingProject)) {
         const createdAt = DateTime.formatIso(yield* DateTime.now);
         nextProjectId = ProjectId.make(yield* randomUUID);
+        bootstrapProjectCreated = true;
         const bootstrapProjectTitle = path.basename(serverConfig.cwd) || "project";
         nextThreadModelSelection = getAutoBootstrapThreadModelSelection();
         yield* orchestrationEngine.dispatch({
@@ -242,6 +245,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
         });
         bootstrapProjectId = nextProjectId;
         bootstrapThreadId = createdThreadId;
+        bootstrapThreadCreated = true;
       } else {
         bootstrapProjectId = nextProjectId;
         bootstrapThreadId = existingThreadId.value;
@@ -252,6 +256,8 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   return {
     ...(bootstrapProjectId ? { bootstrapProjectId } : {}),
     ...(bootstrapThreadId ? { bootstrapThreadId } : {}),
+    ...(bootstrapProjectId ? { bootstrapProjectCreated } : {}),
+    ...(bootstrapThreadId ? { bootstrapThreadCreated } : {}),
   } as const;
 });
 

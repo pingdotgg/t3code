@@ -1639,6 +1639,7 @@ describe("parseAgentSessionTranscript", () => {
           payload: {
             type: "message",
             role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
             content: [
               {
                 type: "input_text",
@@ -1650,6 +1651,15 @@ describe("parseAgentSessionTranscript", () => {
         JSON.stringify({
           type: "event_msg",
           payload: { type: "user_message", message: "Fix the actual bug" },
+        }),
+        JSON.stringify({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
+            content: [{ type: "input_text", text: "Fix the actual bug" }],
+          },
         }),
         JSON.stringify({
           type: "response_item",
@@ -1672,7 +1682,7 @@ describe("parseAgentSessionTranscript", () => {
     ]);
   });
 
-  it("keeps distinct Codex response user messages in mixed-format transcripts", () => {
+  it("keeps mixed-format response users when turn IDs repeat after an assistant", () => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [
         encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
@@ -1681,6 +1691,7 @@ describe("parseAgentSessionTranscript", () => {
           payload: {
             type: "message",
             role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-older" },
             content: [{ type: "input_text", text: "Keep this older prompt" }],
           },
         }),
@@ -1693,6 +1704,7 @@ describe("parseAgentSessionTranscript", () => {
           payload: {
             type: "message",
             role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-newer" },
             content: [{ type: "input_text", text: "Keep this newer prompt" }],
           },
         }),
@@ -1709,6 +1721,7 @@ describe("parseAgentSessionTranscript", () => {
           payload: {
             type: "message",
             role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-newer" },
             content: [{ type: "input_text", text: "Keep this newer prompt" }],
           },
         }),
@@ -1724,6 +1737,41 @@ describe("parseAgentSessionTranscript", () => {
       "Keep this newer prompt",
       "Ask again when needed",
       "Keep this newer prompt",
+    ]);
+  });
+
+  it("preserves response user text when Codex turn metadata is ambiguous", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: ["unexpected"],
+            content: [{ type: "input_text", text: "Keep this legacy prompt" }],
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "   " },
+            content: [{ type: "input_text", text: "Keep this prompt with a blank turn ID" }],
+          },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.messages.map((message) => message.text)).toEqual([
+      "Keep this legacy prompt",
+      "Keep this prompt with a blank turn ID",
     ]);
   });
 
@@ -1767,24 +1815,36 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread).toBeNull();
   });
 
-  it("removes injected Codex environment records before choosing the thread title", () => {
+  it("uses the canonical Codex event when its turn has generated response context", () => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [
         encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
         encodeTranscriptRecord({
-          type: "event_msg",
+          type: "response_item",
           payload: {
-            type: "user_message",
-            message:
-              "<environment_context>\n<cwd>/tmp/project</cwd>\n<shell>zsh</shell>\n</environment_context>",
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
+            content: [
+              {
+                type: "input_text",
+                text: "<environment_context>\n<cwd>/tmp/project</cwd>\n<shell>zsh</shell>\n</environment_context>",
+              },
+            ],
           },
         }),
         encodeTranscriptRecord({
-          type: "event_msg",
+          type: "response_item",
           payload: {
-            type: "user_message",
-            message:
-              "# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>\nPrivate project rules\n</INSTRUCTIONS>",
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
+            content: [
+              {
+                type: "input_text",
+                text: "# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>\nPrivate project rules\n</INSTRUCTIONS>",
+              },
+            ],
           },
         }),
         encodeTranscriptRecord({
@@ -1792,6 +1852,20 @@ describe("parseAgentSessionTranscript", () => {
           payload: {
             type: "user_message",
             message: "Do something here so it looks like a real project.",
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
+            content: [
+              {
+                type: "input_text",
+                text: "Do something here so it looks like a real project.",
+              },
+            ],
           },
         }),
         encodeTranscriptRecord({
@@ -1816,7 +1890,8 @@ describe("parseAgentSessionTranscript", () => {
     ]);
   });
 
-  it("removes injected Codex context from fallback response messages", () => {
+  it("preserves context markup in response-only Codex messages", () => {
+    const context = "<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>";
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [
         encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
@@ -1828,7 +1903,7 @@ describe("parseAgentSessionTranscript", () => {
             content: [
               {
                 type: "input_text",
-                text: "<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>",
+                text: context,
               },
             ],
           },
@@ -1848,13 +1923,16 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("Initialize Git and add a README.");
+    expect(thread?.title).toBe("<environment_context>");
     expect(thread?.messages.map((message) => message.text)).toEqual([
+      context,
       "Initialize Git and add a README.",
     ]);
   });
 
-  it("preserves a real prompt that follows injected context in the same Codex message", () => {
+  it("preserves a canonical Codex event that starts with context markup", () => {
+    const prompt =
+      "<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>\n\nCreate a useful project.";
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [
         encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
@@ -1862,8 +1940,7 @@ describe("parseAgentSessionTranscript", () => {
           type: "event_msg",
           payload: {
             type: "user_message",
-            message:
-              "<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>\n\nCreate a useful project.",
+            message: prompt,
           },
         }),
       ].join("\n"),
@@ -1873,11 +1950,12 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("Create a useful project.");
-    expect(thread?.messages.map((message) => message.text)).toEqual(["Create a useful project."]);
+    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 
-  it("removes the Codex request heading after leading injected context", () => {
+  it("preserves a Codex request heading in a canonical event", () => {
+    const prompt = "\n  ## My request for Codex:\n\nFix the visible bug";
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [
         encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
@@ -1885,7 +1963,7 @@ describe("parseAgentSessionTranscript", () => {
           type: "event_msg",
           payload: {
             type: "user_message",
-            message: "\n  ## My request for Codex:\n\nFix the visible bug",
+            message: prompt,
           },
         }),
       ].join("\n"),
@@ -1895,8 +1973,8 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("Fix the visible bug");
-    expect(thread?.messages.map((message) => message.text)).toEqual(["Fix the visible bug"]);
+    expect(thread?.title).toBe("## My request for Codex:");
+    expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 
   it("keeps context markup quoted inside visible Codex user text", () => {

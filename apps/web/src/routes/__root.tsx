@@ -130,6 +130,8 @@ function RootRouteView() {
     return (
       <ToastProvider>
         <DocumentTitleSync />
+        <ContrastAppearanceSync />
+        <FontAppearanceSync />
         <Outlet />
       </ToastProvider>
     );

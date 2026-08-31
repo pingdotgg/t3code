@@ -13,6 +13,7 @@ const freshWorkspace = {
   bootstrapped: true,
   authoritative: true,
   workspaceAuthoritative: true,
+  workspaceProvenanceAuthoritative: true,
   catalogReady: true,
   serverConfigAvailable: true,
   workspaceFresh: true,
@@ -144,6 +145,18 @@ describe("resolveFirstRunDecision", () => {
     });
   });
 
+  it("waits for bootstrap provenance before judging a nonempty workspace", () => {
+    expect(
+      resolveFirstRunDecision({
+        ...freshWorkspace,
+        workspaceProvenanceAuthoritative: false,
+      }),
+    ).toEqual({
+      decision: "pending",
+      persistCompletion: false,
+    });
+  });
+
   it("does not wait for server data after onboarding is already complete", () => {
     expect(
       resolveFirstRunDecision({
@@ -239,6 +252,7 @@ const bootstrapProject = {
   workspaceRoot: "/projects/current",
 };
 const bootstrapThread = {
+  id: "bootstrap-thread",
   projectId: bootstrapProject.id,
   environmentId: primaryEnvironmentId,
   latestTurn: null,
@@ -263,10 +277,42 @@ describe("isFreshFirstRunWorkspace", () => {
       isFreshFirstRunWorkspace({
         primaryEnvironmentId,
         serverCwd: "/projects/current/",
+        bootstrapProjectId: bootstrapProject.id,
+        bootstrapThreadId: bootstrapThread.id,
+        bootstrapProjectCreated: true,
+        bootstrapThreadCreated: true,
         projects: [bootstrapProject],
         threads: [bootstrapThread],
       }),
     ).toBe(true);
+  });
+
+  it("rejects an existing unused cwd project and thread reused by startup", () => {
+    expect(
+      isFreshFirstRunWorkspace({
+        primaryEnvironmentId,
+        serverCwd: "/projects/current",
+        bootstrapProjectId: bootstrapProject.id,
+        bootstrapThreadId: bootstrapThread.id,
+        bootstrapProjectCreated: false,
+        bootstrapThreadCreated: false,
+        projects: [bootstrapProject],
+        threads: [bootstrapThread],
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects a nonempty workspace when an older server omits creation provenance", () => {
+    expect(
+      isFreshFirstRunWorkspace({
+        primaryEnvironmentId,
+        serverCwd: "/projects/current",
+        bootstrapProjectId: bootstrapProject.id,
+        bootstrapThreadId: bootstrapThread.id,
+        projects: [bootstrapProject],
+        threads: [bootstrapThread],
+      }),
+    ).toBe(false);
   });
 
   it("normalizes Windows project paths before checking the bootstrap workspace", () => {
@@ -274,6 +320,10 @@ describe("isFreshFirstRunWorkspace", () => {
       isFreshFirstRunWorkspace({
         primaryEnvironmentId,
         serverCwd: "C:\\Projects\\Current\\",
+        bootstrapProjectId: bootstrapProject.id,
+        bootstrapThreadId: bootstrapThread.id,
+        bootstrapProjectCreated: true,
+        bootstrapThreadCreated: true,
         projects: [{ ...bootstrapProject, workspaceRoot: "c:/projects/current" }],
         threads: [bootstrapThread],
       }),
