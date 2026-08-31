@@ -35,6 +35,13 @@ On mobile, the model picker shows each OpenCode model's upstream provider, such 
 GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list
 when starting a thread or changing an existing thread's model.
 
+## Notices above the composer
+
+On web and desktop, additional notices peek out above the attached banner. Hover over the peek
+to reveal them, or focus **Show other notices** with `Tab` and press `Enter` or `Space`. Press
+`Escape` to close the stack and return focus to that control. On a touchscreen, tap the peek to
+open the stack. Interacting with the attached banner or composer does not open the stack.
+
 ## Prompt stash
 
 Use the default shortcut, `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux, to stash the current
