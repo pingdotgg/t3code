@@ -85,12 +85,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const desktopWsl = useEnvironmentQuery(isElectron ? desktopWslStateAtom : null);
   const searchableItems = useMemo(() => {
     const wslState = desktopWsl.data;
-    if (
-      wslState?.available ||
-      wslState?.enabled ||
-      wslState?.wslOnly ||
-      desktopWsl.error !== null
-    ) {
+    // Mirror renderWslRow: the retry row renders only without a snapshot,
+    // while a stale snapshot plus a failed refresh follows the snapshot path.
+    const rowRenders = wslState
+      ? wslState.available || wslState.enabled || wslState.wslOnly
+      : desktopWsl.error !== null;
+    if (rowRenders) {
       return SETTINGS_SEARCH_ITEMS;
     }
     return SETTINGS_SEARCH_ITEMS.filter((item) => item.id !== "wsl-backend");
