@@ -351,7 +351,7 @@ export async function pickComposerMedia(input: {
       error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments per message.`;
       break;
     }
-    const mimeType = asset.mimeType?.toLowerCase();
+    let mimeType = asset.mimeType?.toLowerCase();
     if (asset.type === "video" || mimeType?.startsWith("video/")) {
       if (input.maxVideoBytes === undefined) {
         error = "Video attachments are unavailable here.";
@@ -375,35 +375,61 @@ export async function pickComposerMedia(input: {
       }
       continue;
     }
-    if (!mimeType?.startsWith("image/")) {
+    if (asset.type !== "image" && !mimeType?.startsWith("image/")) {
       error = `Unsupported file type for '${asset.fileName ?? "image"}'.`;
       continue;
     }
-    if (!isProviderSendTurnSupportedImageMimeType(mimeType)) {
-      error = `'${asset.fileName ?? "image"}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.`;
-      continue;
-    }
 
-    const base64 = asset.base64;
+    let base64 = asset.base64;
     if (!base64) {
       error = `Failed to read '${asset.fileName ?? "image"}'.`;
       continue;
     }
 
-    const sizeBytes = asset.fileSize ?? estimateBase64ByteSize(base64);
+    let name = asset.fileName?.trim() || "image";
+    // The iOS picker returns JPEG base64 even when its metadata describes HEIC,
+    // PNG, or GIF. Keep supported originals so transparency and animation survive;
+    // use the native JPEG conversion for formats providers cannot accept.
+    if (base64.startsWith("/9j/")) {
+      if (
+        mimeType &&
+        mimeType !== "image/jpeg" &&
+        isProviderSendTurnSupportedImageMimeType(mimeType)
+      ) {
+        try {
+          const { File } = await import("expo-file-system");
+          base64 = await new File(asset.uri).base64();
+        } catch {
+          error = `Failed to read '${name}'.`;
+          continue;
+        }
+      } else {
+        mimeType = "image/jpeg";
+        if (!/\.jpe?g$/i.test(name)) {
+          name = `${name.replace(/\.[^.]+$/, "")}.jpg`;
+        }
+      }
+    }
+    if (!mimeType || !isProviderSendTurnSupportedImageMimeType(mimeType)) {
+      error = `'${name}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.`;
+      continue;
+    }
+
+    const sizeBytes = estimateBase64ByteSize(base64);
     if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
       error = `'${asset.fileName ?? "image"}' exceeds the 10 MB attachment limit.`;
       continue;
     }
 
+    const dataUrl = `data:${mimeType};base64,${base64}`;
     attachments.push({
       id: uuidv4(),
       type: "image",
-      name: asset.fileName ?? "image",
+      name,
       mimeType,
       sizeBytes,
-      dataUrl: `data:${mimeType};base64,${base64}`,
-      previewUri: asset.uri,
+      dataUrl,
+      previewUri: mimeType === asset.mimeType?.toLowerCase() ? asset.uri : dataUrl,
     });
   }
 
