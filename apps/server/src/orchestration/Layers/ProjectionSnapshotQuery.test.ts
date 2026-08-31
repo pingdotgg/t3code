@@ -577,6 +577,25 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             '2026-04-06T00:00:05.000Z',
             '2026-04-06T00:00:06.000Z',
             NULL
+          ),
+          (
+            'thread-deleted',
+            'project-archive-test',
+            'Deleted Thread',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-04-06T00:00:07.000Z',
+            '2026-04-06T00:00:08.000Z',
+            NULL,
+            '2026-04-06T00:00:09.000Z'
           )
       `;
 
@@ -604,6 +623,34 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         [ThreadId.make("thread-archived")],
       );
       assert.equal(archivedShellSnapshot.threads[0]?.archivedAt, "2026-04-06T00:00:06.000Z");
+
+      const archivedDetail = yield* snapshotQuery.getThreadDetailSnapshot(
+        ThreadId.make("thread-archived"),
+      );
+      assert.equal(archivedDetail._tag, "Some");
+      if (archivedDetail._tag === "Some") {
+        assert.equal(archivedDetail.value.thread.id, ThreadId.make("thread-archived"));
+        assert.equal(archivedDetail.value.thread.archivedAt, "2026-04-06T00:00:06.000Z");
+      }
+
+      const archivedShell = yield* snapshotQuery.getThreadShellById(
+        ThreadId.make("thread-archived"),
+      );
+      assert.equal(archivedShell._tag, "Some");
+      if (archivedShell._tag === "Some") {
+        assert.equal(archivedShell.value.archivedAt, "2026-04-06T00:00:06.000Z");
+      }
+
+      const deletedDetail = yield* snapshotQuery.getThreadDetailSnapshot(
+        ThreadId.make("thread-deleted"),
+      );
+      assert.equal(deletedDetail._tag, "None");
+
+      const shellSnapshotAfterDetailRead = yield* snapshotQuery.getShellSnapshot();
+      assert.deepEqual(
+        shellSnapshotAfterDetailRead.threads.map((thread) => thread.id),
+        [ThreadId.make("thread-active")],
+      );
     }),
   );
 
