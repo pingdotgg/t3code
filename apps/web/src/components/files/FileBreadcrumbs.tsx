@@ -90,6 +90,7 @@ function BreadcrumbMenuContent(props: {
   });
   const { resolvedTheme } = useTheme();
   const entries = entriesQuery.data?.entries ?? [];
+  const entriesTruncated = entriesQuery.data?.truncated ?? false;
   const children = useMemo(
     () => fileBreadcrumbChildren(entries, props.directoryPath),
     [entries, props.directoryPath],
@@ -147,10 +148,14 @@ function BreadcrumbMenuContent(props: {
             <RotateCwIcon />
             <span className="min-w-0 flex-1 truncate">Retry loading folder</span>
           </MenuItem>
-        ) : !directoryAvailable ? (
+        ) : !directoryAvailable && !entriesTruncated ? (
           <MenuItem disabled>This folder is no longer available.</MenuItem>
         ) : children.length === 0 ? (
-          <MenuItem disabled>This folder is empty.</MenuItem>
+          <MenuItem disabled>
+            {entriesTruncated
+              ? "No entries from this folder are available in the partial workspace index."
+              : "This folder is empty."}
+          </MenuItem>
         ) : (
           children.map((entry) => {
             const isCurrentFile = entry.kind === "file" && entry.path === props.currentFilePath;
@@ -201,7 +206,7 @@ function BreadcrumbMenuContent(props: {
           </MenuItem>
         </>
       ) : null}
-      {entriesQuery.data?.truncated ? (
+      {entriesTruncated ? (
         <>
           <MenuSeparator />
           <MenuItem disabled>Some workspace entries are not shown.</MenuItem>
