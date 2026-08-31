@@ -85,7 +85,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const desktopWsl = useEnvironmentQuery(isElectron ? desktopWslStateAtom : null);
   const searchableItems = useMemo(() => {
     const wslState = desktopWsl.data;
-    if (wslState?.available || wslState?.enabled || wslState?.wslOnly) {
+    if (
+      wslState?.available ||
+      wslState?.enabled ||
+      wslState?.wslOnly ||
+      desktopWsl.error !== null
+    ) {
       return SETTINGS_SEARCH_ITEMS;
     }
     return SETTINGS_SEARCH_ITEMS.filter((item) => item.id !== "wsl-backend");
