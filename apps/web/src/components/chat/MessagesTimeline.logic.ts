@@ -523,10 +523,9 @@ function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
 }
 
 /**
- * Settled turns keep their first and terminal assistant messages visible.
- * Everything between them folds behind a "Worked for ..." row anchored at
- * the first hidden entry. Keeping both ends prevents a short follow-up from
- * hiding a substantive opening response while still bounding noisy turns.
+ * Settled turns keep only their terminal assistant message visible.
+ * Everything before it folds behind a "Worked for ..." row anchored at the
+ * first hidden entry, so the duration leads directly into the final response.
  */
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -596,12 +595,9 @@ function deriveTurnFolds(input: {
     if (group.hasStreamingMessage) {
       continue;
     }
-    const firstAssistantEntry = group.entries.find(
-      (entry): entry is Extract<TimelineEntry, { kind: "message" }> => entry.kind === "message",
-    );
     const hiddenEntryIds = new Set<string>();
     for (const entry of group.entries) {
-      if (entry.id === firstAssistantEntry?.id || entry.id === group.terminalEntry?.id) {
+      if (entry.id === group.terminalEntry?.id) {
         continue;
       }
       // Agent-spawn CTA rows never fold: workflows outlive their launching
