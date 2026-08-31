@@ -312,6 +312,7 @@ interface ClaudeSessionContext {
   lastKnownContextWindow: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   lastKnownTotalProcessedTokens: number | undefined;
+  readonly resumeAssistantUuid: string | undefined;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
   stopped: boolean;
@@ -2873,6 +2874,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    // Claude can replay the assistant snapshot at the persisted resume cursor
+    // after a session restart or compaction. Its native UUID is the durable
+    // identity, so processing it again would append already-persisted text as
+    // a new canonical assistant item.
+    if (message.uuid === context.resumeAssistantUuid) {
+      return;
+    }
+
     // Subagent-owned assistant snapshots (parent_tool_use_id set) are the
     // subagent's own conversation, not the parent's. Emitting them created
     // interleaved "Agent N done"-adjacent leak messages and spawned synthetic
@@ -4412,6 +4421,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastKnownContextWindow: initialContextWindow,
         lastKnownTokenUsage: undefined,
         lastKnownTotalProcessedTokens: undefined,
+        resumeAssistantUuid: resumeState?.resumeSessionAt,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
         stopped: false,

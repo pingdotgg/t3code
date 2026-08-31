@@ -3990,6 +3990,94 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("ignores an assistant snapshot replayed at the Claude resume cursor", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const replayedAssistantUuid = "assistant-before-resume";
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: {
+          threadId: RESUME_THREAD_ID,
+          resume: "550e8400-e29b-41d4-a716-446655440000",
+          resumeSessionAt: replayedAssistantUuid,
+          turnCount: 3,
+        },
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: RESUME_THREAD_ID,
+        input: "/compact",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: {
+          trigger: "manual",
+          pre_tokens: 200,
+          post_tokens: 40,
+        },
+        session_id: "550e8400-e29b-41d4-a716-446655440000",
+        uuid: "compact-boundary-after-resume",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "assistant",
+        session_id: "550e8400-e29b-41d4-a716-446655440000",
+        uuid: replayedAssistantUuid,
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-before-resume",
+          role: "assistant",
+          content: [{ type: "text", text: "Error during compaction: API Error: 502" }],
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "550e8400-e29b-41d4-a716-446655440000",
+        uuid: "result-after-resume",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.equal(
+        runtimeEvents.some(
+          (event) => event.type === "thread.state.changed" && event.payload.state === "compacted",
+        ),
+        true,
+      );
+      assert.equal(
+        runtimeEvents.some(
+          (event) =>
+            event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+        ),
+        false,
+      );
+      assert.equal(
+        runtimeEvents.some(
+          (event) =>
+            event.type === "item.completed" && event.payload.itemType === "assistant_message",
+        ),
+        false,
+      );
+
+      const thread = yield* adapter.readThread(RESUME_THREAD_ID);
+      assert.deepEqual(thread.turns.at(-1)?.items, []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("preserves durable resume ids across Claude resume hooks", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
