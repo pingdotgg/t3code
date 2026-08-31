@@ -322,11 +322,13 @@ export function useThreadComposerState() {
     }
 
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
+    const capabilities = selectedEnvironmentRuntime?.serverConfig?.environment.capabilities;
     const result = await pickComposerMedia({
       existingCount: composerDrafts[threadKey]?.attachments.length ?? 0,
       maxVideoBytes:
-        selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.fileAttachments
-          ?.maxUploadBytes,
+        capabilities?.attachmentUploads === true
+          ? capabilities.fileAttachments?.maxUploadBytes
+          : undefined,
     });
     const rejectedCount = appendComposerDraftAttachments(threadKey, result.attachments);
     const problems = [

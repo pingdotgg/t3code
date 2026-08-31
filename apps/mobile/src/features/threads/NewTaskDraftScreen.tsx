@@ -720,10 +720,13 @@ export function NewTaskDraftScreen(props: {
     if (isComposerInteractionLocked || voiceInput.isBusy) {
       return;
     }
+    const capabilities = selectedEnvironmentServerConfig?.environment.capabilities;
     const result = await pickComposerMedia({
       existingCount: flow.attachments.length,
       maxVideoBytes:
-        selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments?.maxUploadBytes,
+        capabilities?.attachmentUploads === true
+          ? capabilities.fileAttachments?.maxUploadBytes
+          : undefined,
     });
     const rejectedCount =
       result.attachments.length > 0 ? flow.appendAttachments(result.attachments) : 0;
