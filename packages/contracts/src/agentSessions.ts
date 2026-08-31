@@ -1,9 +1,14 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** Coding agent home directories the scanner knows how to read. */
 export const AgentSessionSource = Schema.Literals(["claudeAgent", "codex"]);
 export type AgentSessionSource = typeof AgentSessionSource.Type;
+
+/** Imported message ids retain their origin after event metadata is projected into SQLite. */
+export function isImportedAgentSessionMessageId(messageId: string): boolean {
+  return messageId.startsWith("import:");
+}
 
 /**
  * Empty for now. Kept as a struct so future scan options (source filters,
@@ -20,6 +25,7 @@ export type AgentSessionScanInput = typeof AgentSessionScanInput.Type;
 export const AgentSessionProjectCandidate = Schema.Struct({
   path: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
+  projectId: Schema.optional(ProjectId),
   sources: Schema.Array(AgentSessionSource),
   threadCount: NonNegativeInt,
   lastActiveAt: Schema.NullOr(IsoDateTime),
@@ -32,6 +38,26 @@ export const AgentSessionScanResult = Schema.Struct({
   scannedAt: IsoDateTime,
 });
 export type AgentSessionScanResult = typeof AgentSessionScanResult.Type;
+
+export const AgentSessionImportInput = Schema.Struct({
+  projectId: ProjectId,
+});
+export type AgentSessionImportInput = typeof AgentSessionImportInput.Type;
+
+export class AgentSessionImportProjectNotFoundError extends Schema.TaggedErrorClass<AgentSessionImportProjectNotFoundError>()(
+  "AgentSessionImportProjectNotFoundError",
+  { projectId: ProjectId },
+) {
+  override get message(): string {
+    return `Project '${this.projectId}' does not exist.`;
+  }
+}
+
+export const AgentSessionImportResult = Schema.Struct({
+  importedCount: NonNegativeInt,
+  skippedCount: NonNegativeInt,
+});
+export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
 
 export class AgentSessionScanError extends Schema.TaggedErrorClass<AgentSessionScanError>()(
   "AgentSessionScanError",

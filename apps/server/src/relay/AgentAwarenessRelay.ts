@@ -68,6 +68,8 @@ export function eventThreadId(event: OrchestrationEvent): ThreadId | null {
 
 export function shouldPublishAgentAwarenessEvent(event: OrchestrationEvent): boolean {
   switch (event.type) {
+    case "thread.settled":
+      return event.metadata.historyImport !== true;
     case "thread.message-sent":
     case "thread.turn-start-requested":
       // These events express intent to start work, but the shell still contains

@@ -58,6 +58,10 @@ export type GetProviderSessionRuntimeInput = typeof GetProviderSessionRuntimeInp
 export const DeleteProviderSessionRuntimeInput = Schema.Struct({ threadId: ThreadId });
 export type DeleteProviderSessionRuntimeInput = typeof DeleteProviderSessionRuntimeInput.Type;
 
+export interface ProviderSessionRuntimeUpsertOptions {
+  readonly onConflict?: "update" | "ignore";
+}
+
 /**
  * ProviderSessionRuntimeRepository - Service tag for provider runtime persistence.
  */
@@ -71,6 +75,7 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
      */
     readonly upsert: (
       runtime: ProviderSessionRuntime,
+      options?: ProviderSessionRuntimeUpsertOptions,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
 
     /**
@@ -186,6 +191,36 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const insertRuntimeRow = SqlSchema.void({
+    Request: ProviderSessionRuntimeDbRowSchema,
+    execute: (runtime) =>
+      sql`
+        INSERT INTO provider_session_runtime (
+          thread_id,
+          provider_name,
+          provider_instance_id,
+          adapter_key,
+          runtime_mode,
+          status,
+          last_seen_at,
+          resume_cursor_json,
+          runtime_payload_json
+        )
+        VALUES (
+          ${runtime.threadId},
+          ${runtime.providerName},
+          ${runtime.providerInstanceId},
+          ${runtime.adapterKey},
+          ${runtime.runtimeMode},
+          ${runtime.status},
+          ${runtime.lastSeenAt},
+          ${runtime.resumeCursor},
+          ${runtime.runtimePayload}
+        )
+        ON CONFLICT (thread_id) DO NOTHING
+      `,
+  });
+
   const getRuntimeRowByThreadId = SqlSchema.findOneOption({
     Request: GetRuntimeRequestSchema,
     Result: ProviderSessionRuntimeRawDbRowSchema,
@@ -235,8 +270,8 @@ export const make = Effect.gen(function* () {
       `,
   });
 
-  const upsert: ProviderSessionRuntimeRepository["Service"]["upsert"] = (runtime) =>
-    upsertRuntimeRow(runtime).pipe(
+  const upsert: ProviderSessionRuntimeRepository["Service"]["upsert"] = (runtime, options) =>
+    (options?.onConflict === "ignore" ? insertRuntimeRow(runtime) : upsertRuntimeRow(runtime)).pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.upsert:query",

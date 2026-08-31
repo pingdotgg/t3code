@@ -24,5 +24,13 @@ T3 Code finds directories that Claude Code or Codex has used. The default
 selection includes projects active within the last 30 days. Select **Choose**
 to include older projects or change the selection.
 
+Imported projects include Codex and Claude conversations active within the last
+30 days. You can continue those conversations in T3 Code.
+
+Conversation import is best effort. T3 Code keeps up to 200 recent visible user
+and assistant messages. It omits tool activity, attachments, and injected setup
+context. It reads one conversation at a time and skips files larger than 16 MB.
+It ignores malformed records and skips unreadable or unparseable conversations.
+
 You can skip agent setup and project import. Select **Back** to return to a
 previous step.
