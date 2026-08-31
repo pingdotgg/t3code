@@ -43,6 +43,14 @@ A single user-to-assistant work cycle inside a thread. It starts with user input
 
 A user-visible log item attached to a thread. In [the contracts][1], activities cover important non-message events like approvals, tool actions, and failures. They are projected into thread state in [projector.ts][4].
 
+#### Message channel
+
+An optional discriminator on a message in [the contracts][1]. No channel means ordinary conversation text; `reasoning` marks provider thinking. Read it through the `isReasoningMessage` helper rather than the raw field, so server and clients branch the same way.
+
+#### Reasoning message
+
+An assistant message with `channel: "reasoning"`, holding one burst of provider thinking. It is deliberately inert: [ProjectionPipeline.ts][11] does not let it settle a turn, [CheckpointReactor.ts][6] leaves it out of checkpoints, and [ProviderCommandReactor.ts][12] drops it from thread-title context. Delivery reuses the [assistant delivery mode](#assistant-delivery-mode) chosen in [ProviderRuntimeIngestion.ts][5]. The web timeline renders each one as a collapsible "Thought" row in [MessagesTimeline.tsx][27], excluded from timeline search and the minimap by [MessagesTimeline.logic.ts][28]; mobile filters them out entirely. See [reasoning][29] for the shipped behavior.
+
 ### Orchestration
 
 Orchestration is the server-side domain layer that turns runtime activity into stable app state. The main entry point is [OrchestrationEngine.ts][7], with core logic in [decider.ts][8] and [projector.ts][4].
@@ -201,3 +209,6 @@ ships T3 Code already matching it.
 [24]: ./overview.md
 [25]: ../../apps/server/src/environmentTheme.ts
 [26]: ../user/environment-theme.md
+[27]: ../../apps/web/src/components/chat/MessagesTimeline.tsx
+[28]: ../../apps/web/src/components/chat/MessagesTimeline.logic.ts
+[29]: ../user/reasoning.md

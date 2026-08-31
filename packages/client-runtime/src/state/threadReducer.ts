@@ -1,16 +1,17 @@
 import { pipe } from "effect/Function";
 import * as Arr from "effect/Array";
 import * as O from "effect/Order";
-import type {
-  MessageId,
-  OrchestrationCheckpointSummary,
-  OrchestrationEvent,
-  OrchestrationLatestTurn,
-  OrchestrationMessage,
-  OrchestrationSession,
-  OrchestrationThread,
-  OrchestrationThreadActivity,
-  TurnId,
+import {
+  isReasoningMessage,
+  type MessageId,
+  type OrchestrationCheckpointSummary,
+  type OrchestrationEvent,
+  type OrchestrationLatestTurn,
+  type OrchestrationMessage,
+  type OrchestrationSession,
+  type OrchestrationThread,
+  type OrchestrationThreadActivity,
+  type TurnId,
 } from "@t3tools/contracts";
 
 export type ThreadDetailReducerResult =
@@ -296,6 +297,7 @@ export function applyThreadDetailEvent(
       const message: OrchestrationMessage = {
         id: event.payload.messageId,
         role: event.payload.role,
+        ...(event.payload.channel !== undefined ? { channel: event.payload.channel } : {}),
         text: event.payload.text,
         ...(event.payload.attachments !== undefined
           ? { attachments: event.payload.attachments }
@@ -319,6 +321,7 @@ export function applyThreadDetailEvent(
                       ? message.text
                       : entry.text,
                   streaming: message.streaming,
+                  ...(message.channel !== undefined ? { channel: message.channel } : {}),
                   ...(message.turnId !== undefined ? { turnId: message.turnId } : {}),
                   ...(message.streaming ? {} : { updatedAt: message.updatedAt }),
                   ...(message.attachments !== undefined
@@ -339,6 +342,7 @@ export function applyThreadDetailEvent(
       const settlesTurn = !event.payload.streaming && !turnStillRunning;
       const latestTurn: OrchestrationThread["latestTurn"] =
         event.payload.role === "assistant" &&
+        !isReasoningMessage(event.payload) &&
         event.payload.turnId !== null &&
         (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
           ? {
@@ -369,7 +373,9 @@ export function applyThreadDetailEvent(
 
       // Rebind checkpoint assistant message IDs for assistant messages.
       const checkpoints =
-        event.payload.role === "assistant" && event.payload.turnId !== null
+        event.payload.role === "assistant" &&
+        !isReasoningMessage(event.payload) &&
+        event.payload.turnId !== null
           ? rebindCheckpointAssistantMessage(
               thread.checkpoints,
               event.payload.turnId,

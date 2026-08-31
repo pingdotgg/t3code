@@ -635,6 +635,8 @@ export function buildTurnStartParams(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    // Readable reasoning summaries; without this Codex emits empty reasoning items.
+    summary: "detailed",
     ...(collaborationMode ? { collaborationMode } : {}),
   }).pipe(
     Effect.mapError((cause) =>

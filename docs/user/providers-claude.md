@@ -53,6 +53,12 @@ T3 Code looks for Claude skills in the Claude config directory's `skills` folder
 
 If the same skill name exists in more than one folder, the later folder wins.
 
+## What Claude's Thoughts Show
+
+Claude's thinking appears in the thread timeline as **Thought** rows. Recent Claude Code versions
+do not hand out raw thinking, so T3 Code asks for the summarized form and that summary is what you
+read. See [Reasoning in a thread](./reasoning.md).
+
 ## I Want Work And Personal Claude Accounts
 
 Use a different Claude config directory for each account.

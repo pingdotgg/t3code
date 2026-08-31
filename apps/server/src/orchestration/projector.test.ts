@@ -1,3 +1,4 @@
+import { it as effectIt } from "@effect/vitest";
 import {
   CommandId,
   EventId,
@@ -448,6 +449,7 @@ describe("orchestration projector", () => {
             threadId: "thread-1",
             messageId: "assistant:msg-1",
             role: "assistant",
+            channel: "reasoning",
             text: "hello",
             turnId: "turn-1",
             streaming: true,
@@ -472,6 +474,7 @@ describe("orchestration projector", () => {
             threadId: "thread-1",
             messageId: "assistant:msg-1",
             role: "assistant",
+            channel: "reasoning",
             text: "",
             turnId: "turn-1",
             streaming: false,
@@ -484,12 +487,13 @@ describe("orchestration projector", () => {
 
     const message = afterComplete.threads[0]?.messages[0];
     expect(message?.id).toBe("assistant:msg-1");
+    expect(message?.channel).toBe("reasoning");
     expect(message?.text).toBe("hello");
     expect(message?.streaming).toBe(false);
     expect(message?.updatedAt).toBe(completeAt);
   });
 
-  it("prunes reverted turn messages from in-memory thread snapshot", async () => {
+  it("prunes reverted reasoning messages from in-memory thread snapshot", async () => {
     const createdAt = "2026-02-23T10:00:00.000Z";
     const model = createEmptyReadModel(createdAt);
 
@@ -625,6 +629,7 @@ describe("orchestration projector", () => {
           threadId: "thread-1",
           messageId: "assistant-msg-2",
           role: "assistant",
+          channel: "reasoning",
           text: "Updated README to v3.\n",
           turnId: "turn-2",
           streaming: false,
@@ -856,6 +861,356 @@ describe("orchestration projector", () => {
       })),
     ).toEqual([{ id: "assistant-keep", role: "assistant", turnId: "turn-1" }]);
   });
+
+  // Regression: retainThreadMessagesAfterRevert counts a kept turn's
+  // channel=reasoning message as the turn's assistant, so the turnless
+  // substantive assistant is never recovered through the fallback scan and
+  // is dropped by the revert.
+  effectIt.effect(
+    "reasoning on a kept turn does not satisfy the substantive assistant count on revert",
+    () =>
+      Effect.gen(function* () {
+        const createdAt = "2026-02-27T12:00:00.000Z";
+        const model = createEmptyReadModel(createdAt);
+
+        const afterCreate = yield* projectEvent(
+          model,
+          makeEvent({
+            sequence: 1,
+            type: "thread.created",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-count",
+            occurredAt: createdAt,
+            commandId: "cmd-rrcount-create",
+            payload: {
+              threadId: "thread-reason-count",
+              projectId: "project-1",
+              title: "demo",
+              modelSelection: {
+                provider: ProviderDriverKind.make("codex"),
+                model: "gpt-5-codex",
+              },
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          }),
+        );
+
+        const events: ReadonlyArray<OrchestrationEvent> = [
+          makeEvent({
+            sequence: 2,
+            type: "thread.message-sent",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-count",
+            occurredAt: "2026-02-27T12:00:01.500Z",
+            commandId: "cmd-rrcount-user-1",
+            payload: {
+              threadId: "thread-reason-count",
+              messageId: "user-count-1",
+              role: "user",
+              text: "first prompt",
+              turnId: "turn-count-1",
+              streaming: false,
+              createdAt: "2026-02-27T12:00:01.500Z",
+              updatedAt: "2026-02-27T12:00:01.500Z",
+            },
+          }),
+          makeEvent({
+            sequence: 3,
+            type: "thread.message-sent",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-count",
+            occurredAt: "2026-02-27T12:00:01.600Z",
+            commandId: "cmd-rrcount-reasoning-1",
+            payload: {
+              threadId: "thread-reason-count",
+              messageId: "reasoning-count-1",
+              role: "assistant",
+              channel: "reasoning",
+              text: "thinking about the first prompt",
+              turnId: "turn-count-1",
+              streaming: false,
+              createdAt: "2026-02-27T12:00:01.600Z",
+              updatedAt: "2026-02-27T12:00:01.600Z",
+            },
+          }),
+          makeEvent({
+            sequence: 4,
+            type: "thread.message-sent",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-count",
+            occurredAt: "2026-02-27T12:00:01.700Z",
+            commandId: "cmd-rrcount-assistant-1",
+            payload: {
+              threadId: "thread-reason-count",
+              messageId: "assistant-count-1",
+              role: "assistant",
+              text: "substantive first answer",
+              turnId: null,
+              streaming: false,
+              createdAt: "2026-02-27T12:00:01.700Z",
+              updatedAt: "2026-02-27T12:00:01.700Z",
+            },
+          }),
+          makeEvent({
+            sequence: 5,
+            type: "thread.turn-diff-completed",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-count",
+            occurredAt: "2026-02-27T12:00:02.000Z",
+            commandId: "cmd-rrcount-turn-1",
+            payload: {
+              threadId: "thread-reason-count",
+              turnId: "turn-count-1",
+              checkpointTurnCount: 1,
+              checkpointRef: "refs/t3/checkpoints/thread-reason-count/turn/1",
+              status: "ready",
+              files: [],
+              assistantMessageId: null,
+              completedAt: "2026-02-27T12:00:02.000Z",
+            },
+          }),
+          makeEvent({
+            sequence: 6,
+            type: "thread.message-sent",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-count",
+            occurredAt: "2026-02-27T12:00:02.500Z",
+            commandId: "cmd-rrcount-user-2",
+            payload: {
+              threadId: "thread-reason-count",
+              messageId: "user-count-2",
+              role: "user",
+              text: "second prompt",
+              turnId: "turn-count-2",
+              streaming: false,
+              createdAt: "2026-02-27T12:00:02.500Z",
+              updatedAt: "2026-02-27T12:00:02.500Z",
+            },
+          }),
+          makeEvent({
+            sequence: 7,
+            type: "thread.message-sent",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-count",
+            occurredAt: "2026-02-27T12:00:02.600Z",
+            commandId: "cmd-rrcount-assistant-2",
+            payload: {
+              threadId: "thread-reason-count",
+              messageId: "assistant-count-2",
+              role: "assistant",
+              text: "second answer",
+              turnId: "turn-count-2",
+              streaming: false,
+              createdAt: "2026-02-27T12:00:02.600Z",
+              updatedAt: "2026-02-27T12:00:02.600Z",
+            },
+          }),
+          makeEvent({
+            sequence: 8,
+            type: "thread.turn-diff-completed",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-count",
+            occurredAt: "2026-02-27T12:00:03.000Z",
+            commandId: "cmd-rrcount-turn-2",
+            payload: {
+              threadId: "thread-reason-count",
+              turnId: "turn-count-2",
+              checkpointTurnCount: 2,
+              checkpointRef: "refs/t3/checkpoints/thread-reason-count/turn/2",
+              status: "ready",
+              files: [],
+              assistantMessageId: "assistant-count-2",
+              completedAt: "2026-02-27T12:00:03.000Z",
+            },
+          }),
+          makeEvent({
+            sequence: 9,
+            type: "thread.reverted",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-count",
+            occurredAt: "2026-02-27T12:00:04.000Z",
+            commandId: "cmd-rrcount-revert",
+            payload: {
+              threadId: "thread-reason-count",
+              turnCount: 1,
+            },
+          }),
+        ];
+
+        let afterRevert = afterCreate;
+        for (const event of events) {
+          afterRevert = yield* projectEvent(afterRevert, event);
+        }
+
+        const thread = afterRevert.threads[0];
+        expect(
+          thread?.messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            channel: message.channel ?? null,
+            turnId: message.turnId,
+          })),
+        ).toEqual([
+          { id: "user-count-1", role: "user", channel: null, turnId: "turn-count-1" },
+          {
+            id: "reasoning-count-1",
+            role: "assistant",
+            channel: "reasoning",
+            turnId: "turn-count-1",
+          },
+          { id: "assistant-count-1", role: "assistant", channel: null, turnId: null },
+        ]);
+      }),
+  );
+
+  // Regression: the fallback assistant scan treats every role=assistant
+  // message as eligible, so a turnless channel=reasoning message left over
+  // from discarded later work is selected as the kept turn's assistant and
+  // survives the revert while the substantive assistant is dropped.
+  effectIt.effect(
+    "turnless reasoning from discarded work is never selected as a fallback assistant on revert",
+    () =>
+      Effect.gen(function* () {
+        const createdAt = "2026-02-27T12:10:00.000Z";
+        const model = createEmptyReadModel(createdAt);
+
+        const afterCreate = yield* projectEvent(
+          model,
+          makeEvent({
+            sequence: 1,
+            type: "thread.created",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-fallback",
+            occurredAt: createdAt,
+            commandId: "cmd-rrfall-create",
+            payload: {
+              threadId: "thread-reason-fallback",
+              projectId: "project-1",
+              title: "demo",
+              modelSelection: {
+                provider: ProviderDriverKind.make("codex"),
+                model: "gpt-5-codex",
+              },
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          }),
+        );
+
+        const events: ReadonlyArray<OrchestrationEvent> = [
+          makeEvent({
+            sequence: 2,
+            type: "thread.message-sent",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-fallback",
+            occurredAt: "2026-02-27T12:10:01.500Z",
+            commandId: "cmd-rrfall-user-1",
+            payload: {
+              threadId: "thread-reason-fallback",
+              messageId: "user-fallback-1",
+              role: "user",
+              text: "kept prompt",
+              turnId: "turn-fallback-1",
+              streaming: false,
+              createdAt: "2026-02-27T12:10:01.500Z",
+              updatedAt: "2026-02-27T12:10:01.500Z",
+            },
+          }),
+          makeEvent({
+            sequence: 3,
+            type: "thread.turn-diff-completed",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-fallback",
+            occurredAt: "2026-02-27T12:10:02.000Z",
+            commandId: "cmd-rrfall-turn-1",
+            payload: {
+              threadId: "thread-reason-fallback",
+              turnId: "turn-fallback-1",
+              checkpointTurnCount: 1,
+              checkpointRef: "refs/t3/checkpoints/thread-reason-fallback/turn/1",
+              status: "ready",
+              files: [],
+              assistantMessageId: null,
+              completedAt: "2026-02-27T12:10:02.000Z",
+            },
+          }),
+          makeEvent({
+            sequence: 4,
+            type: "thread.message-sent",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-fallback",
+            occurredAt: "2026-02-27T12:10:02.100Z",
+            commandId: "cmd-rrfall-reasoning",
+            payload: {
+              threadId: "thread-reason-fallback",
+              messageId: "reasoning-discarded",
+              role: "assistant",
+              channel: "reasoning",
+              text: "planning work that gets reverted away",
+              turnId: null,
+              streaming: false,
+              createdAt: "2026-02-27T12:10:02.100Z",
+              updatedAt: "2026-02-27T12:10:02.100Z",
+            },
+          }),
+          makeEvent({
+            sequence: 5,
+            type: "thread.message-sent",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-fallback",
+            occurredAt: "2026-02-27T12:10:02.200Z",
+            commandId: "cmd-rrfall-assistant",
+            payload: {
+              threadId: "thread-reason-fallback",
+              messageId: "assistant-recovered",
+              role: "assistant",
+              text: "substantive answer for the kept turn",
+              turnId: null,
+              streaming: false,
+              createdAt: "2026-02-27T12:10:02.200Z",
+              updatedAt: "2026-02-27T12:10:02.200Z",
+            },
+          }),
+          makeEvent({
+            sequence: 6,
+            type: "thread.reverted",
+            aggregateKind: "thread",
+            aggregateId: "thread-reason-fallback",
+            occurredAt: "2026-02-27T12:10:03.000Z",
+            commandId: "cmd-rrfall-revert",
+            payload: {
+              threadId: "thread-reason-fallback",
+              turnCount: 1,
+            },
+          }),
+        ];
+
+        let afterRevert = afterCreate;
+        for (const event of events) {
+          afterRevert = yield* projectEvent(afterRevert, event);
+        }
+
+        const thread = afterRevert.threads[0];
+        expect(
+          thread?.messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            channel: message.channel ?? null,
+            turnId: message.turnId,
+          })),
+        ).toEqual([
+          { id: "user-fallback-1", role: "user", channel: null, turnId: "turn-fallback-1" },
+          { id: "assistant-recovered", role: "assistant", channel: null, turnId: null },
+        ]);
+      }),
+  );
 
   it("caps message and checkpoint retention for long-lived threads", async () => {
     const createdAt = "2026-03-01T10:00:00.000Z";

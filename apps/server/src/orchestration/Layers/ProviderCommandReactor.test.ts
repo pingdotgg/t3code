@@ -776,6 +776,17 @@ describe("ProviderCommandReactor", () => {
     await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.message.assistant.delta",
+        commandId: CommandId.make("cmd-reasoning-before-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: asMessageId("reasoning-before-title-regeneration"),
+        delta: "Internal reasoning must not appear in title context.",
+        channel: "reasoning",
+        createdAt: "2026-01-01T00:00:00.500Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
         commandId: CommandId.make("cmd-assistant-before-title-regeneration"),
         threadId: ThreadId.make("thread-1"),
         messageId: asMessageId("assistant-message-before-title-regeneration"),

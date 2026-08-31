@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  isReasoningMessage,
   isToolLifecycleItemType,
   ProviderApprovalOption,
   ProviderRequestKind,
@@ -1730,12 +1731,13 @@ export function buildThreadFeed(
     readonly localMessages?: ReadonlyArray<OrchestrationThread["messages"][number]>;
   },
 ): ThreadFeedEntry[] {
-  const loadedMessages = options?.loadedMessages ?? thread.messages;
+  const sourceMessages = options?.loadedMessages ?? thread.messages;
+  const loadedMessages = sourceMessages.filter((message) => !isReasoningMessage(message));
   const messages = options?.localMessages
     ? [...loadedMessages, ...options.localMessages]
     : loadedMessages;
   const oldestLoadedMessageCreatedAt =
-    options?.loadedMessages !== undefined ? (loadedMessages[0]?.createdAt ?? null) : null;
+    options?.loadedMessages !== undefined ? (sourceMessages[0]?.createdAt ?? null) : null;
   const workLogEntries = deriveWorkLogEntries(thread.activities);
   const entries = Arr.sortWith(
     [

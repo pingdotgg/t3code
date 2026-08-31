@@ -1,4 +1,5 @@
 import {
+  isReasoningMessage,
   type ChatFileAttachment,
   type EnvironmentId,
   type MessageId,
@@ -39,6 +40,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
   deriveTimelineEntries,
+  formatDuration,
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,
@@ -94,6 +96,7 @@ import {
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  resolveReasoningDisclosureExpanded,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapHeightStyle,
@@ -102,6 +105,7 @@ import {
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapTopPercent,
   shouldPreserveAssistantLineBreaks,
+  toggleReasoningDisclosureExpansion,
   toolGroupAction,
   workEntryIsVisibleInGroup,
   type StableMessagesTimelineRowsState,
@@ -166,6 +170,12 @@ interface TimelineRowSharedState {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
+  reasoningExpansionOverrides: ReadonlyMap<MessageId, boolean>;
+  onToggleReasoningDisclosure: (
+    messageId: MessageId,
+    defaultExpanded: boolean,
+    anchorKey: string,
+  ) => void;
   agentPanelModel: AgentPanelModel;
   onOpenAgents: () => void;
 }
@@ -311,6 +321,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
+  const [reasoningExpansionOverrides, setReasoningExpansionOverrides] = useState<
+    ReadonlyMap<MessageId, boolean>
+  >(new Map());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   const disclosureAnchorKeyRef = useRef<string | null>(null);
@@ -399,6 +412,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         }
         return next;
       });
+    },
+    [suspendEndScrollMaintenanceForDisclosure],
+  );
+  const onToggleReasoningDisclosure = useCallback(
+    (messageId: MessageId, defaultExpanded: boolean, anchorKey: string) => {
+      suspendEndScrollMaintenanceForDisclosure(anchorKey);
+      setReasoningExpansionOverrides((existing) =>
+        toggleReasoningDisclosureExpansion(existing, messageId, defaultExpanded),
+      );
     },
     [suspendEndScrollMaintenanceForDisclosure],
   );
@@ -560,6 +582,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      reasoningExpansionOverrides,
+      onToggleReasoningDisclosure,
       agentPanelModel,
       onOpenAgents,
     }),
@@ -579,6 +603,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      reasoningExpansionOverrides,
+      onToggleReasoningDisclosure,
       agentPanelModel,
       onOpenAgents,
     ],
@@ -680,7 +706,9 @@ function keyExtractor(item: MessagesTimelineRow) {
 }
 
 function getItemType(item: MessagesTimelineRow) {
-  return item.kind === "message" ? `message:${item.message.role}` : item.kind;
+  return item.kind === "message"
+    ? `message:${isReasoningMessage(item.message) ? "reasoning" : item.message.role}`
+    : item.kind;
 }
 
 interface TimelineMinimapItem {
@@ -731,7 +759,7 @@ function resolveFinalAssistantTextForTurn(
     if (row.message.role === "user") {
       break;
     }
-    if (row.message.role === "assistant") {
+    if (row.message.role === "assistant" && !isReasoningMessage(row.message)) {
       finalAssistantText = row.message.text ?? null;
     }
   }
@@ -1009,7 +1037,11 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
-        <AssistantTimelineRow row={row} />
+        isReasoningMessage(row.message) ? (
+          <ReasoningTimelineRow row={row} />
+        ) : (
+          <AssistantTimelineRow row={row} />
+        )
       ) : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
@@ -1244,6 +1276,44 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         <span>{row.label}</span>
         <Icon className="size-3.5" />
       </button>
+    </div>
+  );
+}
+
+function ReasoningTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const streaming = row.message.streaming;
+  const expanded = resolveReasoningDisclosureExpanded(
+    ctx.reasoningExpansionOverrides,
+    row.message.id,
+    streaming,
+  );
+  const Icon = expanded ? ChevronDownIcon : ChevronRightIcon;
+  const durationMs = Date.parse(row.message.updatedAt) - Date.parse(row.message.createdAt);
+  const label = streaming
+    ? "Thinking..."
+    : Number.isFinite(durationMs) && durationMs >= 1_000
+      ? `Thought for ${formatDuration(durationMs)}`
+      : "Thought";
+  const text = row.message.text;
+
+  return (
+    <div className="min-w-0 px-1 py-0.5">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        data-scroll-anchor-ignore
+        onClick={() => ctx.onToggleReasoningDisclosure(row.message.id, streaming, row.id)}
+        className="flex cursor-pointer select-none items-center gap-1 rounded-md text-sm leading-relaxed text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      >
+        <span>{label}</span>
+        <Icon className="size-3.5" />
+      </button>
+      {expanded ? (
+        <div className="mt-1 whitespace-pre-wrap wrap-break-word border-l-2 border-border/60 pl-3 text-sm leading-relaxed text-muted-foreground">
+          {text}
+        </div>
+      ) : null}
     </div>
   );
 }

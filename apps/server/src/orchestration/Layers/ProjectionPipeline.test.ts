@@ -125,8 +125,9 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           threadId: ThreadId.make("thread-1"),
           messageId: MessageId.make("message-1"),
           role: "assistant",
+          channel: "reasoning",
           text: "hello",
-          turnId: null,
+          turnId: TurnId.make("turn-1"),
           streaming: false,
           createdAt: now,
           updatedAt: now,
@@ -153,13 +154,21 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       const messageRows = yield* sql<{
         readonly messageId: string;
         readonly text: string;
+        readonly channel: string | null;
       }>`
         SELECT
           message_id AS "messageId",
-          text
+          text,
+          channel
         FROM projection_thread_messages
       `;
-      assert.deepEqual(messageRows, [{ messageId: "message-1", text: "hello" }]);
+      assert.deepEqual(messageRows, [
+        { messageId: "message-1", text: "hello", channel: "reasoning" },
+      ]);
+      const turnRows = yield* sql<{ readonly assistantMessageId: string | null }>`
+        SELECT assistant_message_id AS "assistantMessageId" FROM projection_turns
+      `;
+      assert.deepEqual(turnRows, []);
 
       const stateRows = yield* sql<{
         readonly projector: string;
@@ -2551,7 +2560,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
-  it.effect("does not fallback-retain messages whose turnId is removed by revert", () =>
+  it.effect("removes reasoning messages whose turnId is removed by revert", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
       const eventStore = yield* OrchestrationEventStore;
@@ -2710,6 +2719,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           threadId: ThreadId.make("thread-revert"),
           messageId: MessageId.make("assistant-remove"),
           role: "assistant",
+          channel: "reasoning",
           text: "removed",
           turnId: TurnId.make("turn-2"),
           streaming: false,
@@ -2757,6 +2767,485 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 });
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-revert-reasoning-")))(
+  "OrchestrationProjectionPipeline revert reasoning retention",
+  (it) => {
+    // Regression: retainProjectionMessagesAfterRevert counts a kept turn's
+    // channel=reasoning row as the turn's assistant, so the turnless
+    // substantive assistant is never recovered through the fallback scan and
+    // is dropped by the revert.
+    it.effect(
+      "reasoning on a kept turn does not satisfy the substantive assistant count on revert",
+      () =>
+        Effect.gen(function* () {
+          const projectionPipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const sql = yield* SqlClient.SqlClient;
+          const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+            eventStore
+              .append(event)
+              .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+          yield* appendAndProject({
+            type: "project.created",
+            eventId: EventId.make("evt-rrcount-1"),
+            aggregateKind: "project",
+            aggregateId: ProjectId.make("project-reason-count"),
+            occurredAt: "2026-02-27T12:00:00.000Z",
+            commandId: CommandId.make("cmd-rrcount-1"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrcount-1"),
+            metadata: {},
+            payload: {
+              projectId: ProjectId.make("project-reason-count"),
+              title: "Project Reason Count",
+              workspaceRoot: "/tmp/project-reason-count",
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: "2026-02-27T12:00:00.000Z",
+              updatedAt: "2026-02-27T12:00:00.000Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.created",
+            eventId: EventId.make("evt-rrcount-2"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-count"),
+            occurredAt: "2026-02-27T12:00:01.000Z",
+            commandId: CommandId.make("cmd-rrcount-2"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrcount-2"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-count"),
+              projectId: ProjectId.make("project-reason-count"),
+              title: "Thread Reason Count",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5-codex",
+              },
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt: "2026-02-27T12:00:01.000Z",
+              updatedAt: "2026-02-27T12:00:01.000Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.message-sent",
+            eventId: EventId.make("evt-rrcount-3"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-count"),
+            occurredAt: "2026-02-27T12:00:01.500Z",
+            commandId: CommandId.make("cmd-rrcount-3"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrcount-3"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-count"),
+              messageId: MessageId.make("user-count-1"),
+              role: "user",
+              text: "first prompt",
+              turnId: TurnId.make("turn-count-1"),
+              streaming: false,
+              createdAt: "2026-02-27T12:00:01.500Z",
+              updatedAt: "2026-02-27T12:00:01.500Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.message-sent",
+            eventId: EventId.make("evt-rrcount-4"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-count"),
+            occurredAt: "2026-02-27T12:00:01.600Z",
+            commandId: CommandId.make("cmd-rrcount-4"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrcount-4"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-count"),
+              messageId: MessageId.make("reasoning-count-1"),
+              role: "assistant",
+              channel: "reasoning",
+              text: "thinking about the first prompt",
+              turnId: TurnId.make("turn-count-1"),
+              streaming: false,
+              createdAt: "2026-02-27T12:00:01.600Z",
+              updatedAt: "2026-02-27T12:00:01.600Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.message-sent",
+            eventId: EventId.make("evt-rrcount-5"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-count"),
+            occurredAt: "2026-02-27T12:00:01.700Z",
+            commandId: CommandId.make("cmd-rrcount-5"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrcount-5"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-count"),
+              messageId: MessageId.make("assistant-count-1"),
+              role: "assistant",
+              text: "substantive first answer",
+              turnId: null,
+              streaming: false,
+              createdAt: "2026-02-27T12:00:01.700Z",
+              updatedAt: "2026-02-27T12:00:01.700Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.turn-diff-completed",
+            eventId: EventId.make("evt-rrcount-6"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-count"),
+            occurredAt: "2026-02-27T12:00:02.000Z",
+            commandId: CommandId.make("cmd-rrcount-6"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrcount-6"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-count"),
+              turnId: TurnId.make("turn-count-1"),
+              checkpointTurnCount: 1,
+              checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-reason-count/turn/1"),
+              status: "ready",
+              files: [],
+              assistantMessageId: null,
+              completedAt: "2026-02-27T12:00:02.000Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.message-sent",
+            eventId: EventId.make("evt-rrcount-7"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-count"),
+            occurredAt: "2026-02-27T12:00:02.500Z",
+            commandId: CommandId.make("cmd-rrcount-7"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrcount-7"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-count"),
+              messageId: MessageId.make("user-count-2"),
+              role: "user",
+              text: "second prompt",
+              turnId: TurnId.make("turn-count-2"),
+              streaming: false,
+              createdAt: "2026-02-27T12:00:02.500Z",
+              updatedAt: "2026-02-27T12:00:02.500Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.message-sent",
+            eventId: EventId.make("evt-rrcount-8"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-count"),
+            occurredAt: "2026-02-27T12:00:02.600Z",
+            commandId: CommandId.make("cmd-rrcount-8"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrcount-8"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-count"),
+              messageId: MessageId.make("assistant-count-2"),
+              role: "assistant",
+              text: "second answer",
+              turnId: TurnId.make("turn-count-2"),
+              streaming: false,
+              createdAt: "2026-02-27T12:00:02.600Z",
+              updatedAt: "2026-02-27T12:00:02.600Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.turn-diff-completed",
+            eventId: EventId.make("evt-rrcount-9"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-count"),
+            occurredAt: "2026-02-27T12:00:03.000Z",
+            commandId: CommandId.make("cmd-rrcount-9"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrcount-9"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-count"),
+              turnId: TurnId.make("turn-count-2"),
+              checkpointTurnCount: 2,
+              checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-reason-count/turn/2"),
+              status: "ready",
+              files: [],
+              assistantMessageId: MessageId.make("assistant-count-2"),
+              completedAt: "2026-02-27T12:00:03.000Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.reverted",
+            eventId: EventId.make("evt-rrcount-10"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-count"),
+            occurredAt: "2026-02-27T12:00:04.000Z",
+            commandId: CommandId.make("cmd-rrcount-10"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrcount-10"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-count"),
+              turnCount: 1,
+            },
+          });
+
+          const messageRows = yield* sql<{
+            readonly messageId: string;
+            readonly turnId: string | null;
+            readonly role: string;
+            readonly channel: string | null;
+          }>`
+            SELECT
+              message_id AS "messageId",
+              turn_id AS "turnId",
+              role,
+              channel
+            FROM projection_thread_messages
+            WHERE thread_id = 'thread-reason-count'
+            ORDER BY created_at ASC, message_id ASC
+          `;
+          assert.deepEqual(messageRows, [
+            {
+              messageId: "user-count-1",
+              turnId: "turn-count-1",
+              role: "user",
+              channel: null,
+            },
+            {
+              messageId: "reasoning-count-1",
+              turnId: "turn-count-1",
+              role: "assistant",
+              channel: "reasoning",
+            },
+            {
+              messageId: "assistant-count-1",
+              turnId: null,
+              role: "assistant",
+              channel: null,
+            },
+          ]);
+        }),
+    );
+
+    // Regression: the fallback assistant scan treats every role=assistant row
+    // as eligible, so a turnless channel=reasoning row left over from
+    // discarded later work is selected as the kept turn's assistant and
+    // survives the revert while the substantive assistant is dropped.
+    it.effect(
+      "turnless reasoning from discarded work is never selected as a fallback assistant on revert",
+      () =>
+        Effect.gen(function* () {
+          const projectionPipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const sql = yield* SqlClient.SqlClient;
+          const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+            eventStore
+              .append(event)
+              .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+          yield* appendAndProject({
+            type: "project.created",
+            eventId: EventId.make("evt-rrfall-1"),
+            aggregateKind: "project",
+            aggregateId: ProjectId.make("project-reason-fallback"),
+            occurredAt: "2026-02-27T12:10:00.000Z",
+            commandId: CommandId.make("cmd-rrfall-1"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrfall-1"),
+            metadata: {},
+            payload: {
+              projectId: ProjectId.make("project-reason-fallback"),
+              title: "Project Reason Fallback",
+              workspaceRoot: "/tmp/project-reason-fallback",
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: "2026-02-27T12:10:00.000Z",
+              updatedAt: "2026-02-27T12:10:00.000Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.created",
+            eventId: EventId.make("evt-rrfall-2"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-fallback"),
+            occurredAt: "2026-02-27T12:10:01.000Z",
+            commandId: CommandId.make("cmd-rrfall-2"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrfall-2"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-fallback"),
+              projectId: ProjectId.make("project-reason-fallback"),
+              title: "Thread Reason Fallback",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5-codex",
+              },
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt: "2026-02-27T12:10:01.000Z",
+              updatedAt: "2026-02-27T12:10:01.000Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.message-sent",
+            eventId: EventId.make("evt-rrfall-3"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-fallback"),
+            occurredAt: "2026-02-27T12:10:01.500Z",
+            commandId: CommandId.make("cmd-rrfall-3"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrfall-3"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-fallback"),
+              messageId: MessageId.make("user-fallback-1"),
+              role: "user",
+              text: "kept prompt",
+              turnId: TurnId.make("turn-fallback-1"),
+              streaming: false,
+              createdAt: "2026-02-27T12:10:01.500Z",
+              updatedAt: "2026-02-27T12:10:01.500Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.turn-diff-completed",
+            eventId: EventId.make("evt-rrfall-4"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-fallback"),
+            occurredAt: "2026-02-27T12:10:02.000Z",
+            commandId: CommandId.make("cmd-rrfall-4"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrfall-4"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-fallback"),
+              turnId: TurnId.make("turn-fallback-1"),
+              checkpointTurnCount: 1,
+              checkpointRef: CheckpointRef.make(
+                "refs/t3/checkpoints/thread-reason-fallback/turn/1",
+              ),
+              status: "ready",
+              files: [],
+              assistantMessageId: null,
+              completedAt: "2026-02-27T12:10:02.000Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.message-sent",
+            eventId: EventId.make("evt-rrfall-5"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-fallback"),
+            occurredAt: "2026-02-27T12:10:02.100Z",
+            commandId: CommandId.make("cmd-rrfall-5"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrfall-5"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-fallback"),
+              messageId: MessageId.make("reasoning-discarded"),
+              role: "assistant",
+              channel: "reasoning",
+              text: "planning work that gets reverted away",
+              turnId: null,
+              streaming: false,
+              createdAt: "2026-02-27T12:10:02.100Z",
+              updatedAt: "2026-02-27T12:10:02.100Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.message-sent",
+            eventId: EventId.make("evt-rrfall-6"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-fallback"),
+            occurredAt: "2026-02-27T12:10:02.200Z",
+            commandId: CommandId.make("cmd-rrfall-6"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrfall-6"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-fallback"),
+              messageId: MessageId.make("assistant-recovered"),
+              role: "assistant",
+              text: "substantive answer for the kept turn",
+              turnId: null,
+              streaming: false,
+              createdAt: "2026-02-27T12:10:02.200Z",
+              updatedAt: "2026-02-27T12:10:02.200Z",
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.reverted",
+            eventId: EventId.make("evt-rrfall-7"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-reason-fallback"),
+            occurredAt: "2026-02-27T12:10:03.000Z",
+            commandId: CommandId.make("cmd-rrfall-7"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-rrfall-7"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-reason-fallback"),
+              turnCount: 1,
+            },
+          });
+
+          const messageRows = yield* sql<{
+            readonly messageId: string;
+            readonly turnId: string | null;
+            readonly role: string;
+            readonly channel: string | null;
+          }>`
+            SELECT
+              message_id AS "messageId",
+              turn_id AS "turnId",
+              role,
+              channel
+            FROM projection_thread_messages
+            WHERE thread_id = 'thread-reason-fallback'
+            ORDER BY created_at ASC, message_id ASC
+          `;
+          assert.deepEqual(messageRows, [
+            {
+              messageId: "user-fallback-1",
+              turnId: "turn-fallback-1",
+              role: "user",
+              channel: null,
+            },
+            {
+              messageId: "assistant-recovered",
+              turnId: null,
+              role: "assistant",
+              channel: null,
+            },
+          ]);
+        }),
+    );
+  },
+);
 
 it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-"))(
   "OrchestrationProjectionPipeline pending turn cleanup",

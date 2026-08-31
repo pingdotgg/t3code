@@ -126,7 +126,10 @@ function retainThreadMessagesAfterRevert(
   }
 
   const retainedAssistantCount = messages.filter(
-    (message) => message.role === "assistant" && retainedMessageIds.has(message.id),
+    (message) =>
+      message.role === "assistant" &&
+      message.channel !== "reasoning" &&
+      retainedMessageIds.has(message.id),
   ).length;
   const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
   if (missingAssistantCount > 0) {
@@ -134,6 +137,7 @@ function retainThreadMessagesAfterRevert(
       .filter(
         (message) =>
           message.role === "assistant" &&
+          message.channel !== "reasoning" &&
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
@@ -521,6 +525,7 @@ export function projectEvent(
           {
             id: payload.messageId,
             role: payload.role,
+            ...(payload.channel !== undefined ? { channel: payload.channel } : {}),
             text: payload.text,
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
             turnId: payload.turnId,
@@ -546,6 +551,7 @@ export function projectEvent(
                     streaming: message.streaming,
                     updatedAt: message.updatedAt,
                     turnId: message.turnId,
+                    ...(message.channel !== undefined ? { channel: message.channel } : {}),
                     ...(message.attachments !== undefined
                       ? { attachments: message.attachments }
                       : {}),

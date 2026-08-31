@@ -120,6 +120,7 @@ describe("buildTurnStartParams", () => {
       ],
       model: "gpt-5.3-codex",
       effort: "medium",
+      summary: "detailed",
       collaborationMode: {
         mode: "plan",
         settings: {
@@ -169,6 +170,7 @@ describe("buildTurnStartParams", () => {
         },
       ],
       model: "gpt-5.3-codex",
+      summary: "detailed",
       collaborationMode: {
         mode: "default",
         settings: {
@@ -220,6 +222,7 @@ describe("buildTurnStartParams", () => {
             text: "Ship it",
           },
         ],
+        summary: "detailed",
       });
     }),
   );
@@ -246,6 +249,7 @@ describe("buildTurnStartParams", () => {
           text: "Review",
         },
       ],
+      summary: "detailed",
     });
   });
 });

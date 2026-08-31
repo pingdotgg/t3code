@@ -4309,6 +4309,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
+        // Claude otherwise streams only redacted thinking token estimates.
+        ...(thinking === false ? {} : { thinking: { type: "adaptive", display: "summarized" } }),
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],

@@ -497,6 +497,58 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.latestTurn?.completedAt).toBeNull();
       }
     });
+
+    it("stores reasoning messages without rebinding answer or checkpoint semantics", () => {
+      const turnId = TurnId.make("turn-1");
+      const thread: OrchestrationThread = {
+        ...baseThread,
+        latestTurn: {
+          turnId,
+          state: "running",
+          requestedAt: "2026-04-01T06:59:00.000Z",
+          startedAt: "2026-04-01T06:59:00.000Z",
+          completedAt: null,
+          assistantMessageId: MessageId.make("answer-1"),
+        },
+        checkpoints: [
+          {
+            turnId,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("ref-1"),
+            status: "ready",
+            files: [],
+            assistantMessageId: MessageId.make("answer-1"),
+            completedAt: "2026-04-01T07:00:00.000Z",
+          },
+        ],
+      };
+      const result = applyThreadDetailEvent(thread, {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: "2026-04-01T07:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("reasoning-1"),
+          role: "assistant",
+          channel: "reasoning",
+          text: "Thinking",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T07:01:00.000Z",
+          updatedAt: "2026-04-01T07:01:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages.at(-1)?.channel).toBe("reasoning");
+        expect(result.thread.latestTurn?.assistantMessageId).toBe("answer-1");
+        expect(result.thread.checkpoints[0]?.assistantMessageId).toBe("answer-1");
+      }
+    });
   });
 
   describe("thread.session-set", () => {

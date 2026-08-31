@@ -123,21 +123,35 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           thread_id,
           turn_id,
           role,
+          channel,
           text,
           is_streaming,
           created_at,
           updated_at
         )
-        VALUES (
-          'message-1',
-          'thread-1',
-          'turn-1',
-          'assistant',
-          'hello from projection',
-          0,
-          '2026-02-24T00:00:04.000Z',
-          '2026-02-24T00:00:05.000Z'
-        )
+        VALUES
+          (
+            'reasoning-1',
+            'thread-1',
+            'turn-1',
+            'assistant',
+            'reasoning',
+            'thinking before answer',
+            0,
+            '2026-02-24T00:00:03.500Z',
+            '2026-02-24T00:00:03.600Z'
+          ),
+          (
+            'message-1',
+            'thread-1',
+            'turn-1',
+            'assistant',
+            NULL,
+            'hello from projection',
+            0,
+            '2026-02-24T00:00:04.000Z',
+            '2026-02-24T00:00:05.000Z'
+          )
       `;
 
       yield* sql`
@@ -337,6 +351,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           titleRegeneration: null,
           deletedAt: null,
           messages: [
+            {
+              id: asMessageId("reasoning-1"),
+              role: "assistant",
+              channel: "reasoning",
+              text: "thinking before answer",
+              turnId: asTurnId("turn-1"),
+              streaming: false,
+              createdAt: "2026-02-24T00:00:03.500Z",
+              updatedAt: "2026-02-24T00:00:03.600Z",
+            },
             {
               id: asMessageId("message-1"),
               role: "assistant",

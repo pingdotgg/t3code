@@ -9,7 +9,13 @@ import {
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
-import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
+import {
+  isReasoningMessage,
+  type MessageId,
+  type OrchestrationLatestTurn,
+  type OrchestrationMessageChannel,
+  type TurnId,
+} from "@t3tools/contracts";
 
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
@@ -66,6 +72,24 @@ export function resolveTimelineIsAtEnd(
 
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
+}
+
+export function resolveReasoningDisclosureExpanded(
+  overrides: ReadonlyMap<MessageId, boolean>,
+  messageId: MessageId,
+  streaming: boolean,
+): boolean {
+  return overrides.get(messageId) ?? streaming;
+}
+
+export function toggleReasoningDisclosureExpansion(
+  overrides: ReadonlyMap<MessageId, boolean>,
+  messageId: MessageId,
+  defaultExpanded: boolean,
+): ReadonlyMap<MessageId, boolean> {
+  const next = new Map(overrides);
+  next.set(messageId, !(overrides.get(messageId) ?? defaultExpanded));
+  return next;
 }
 
 export function resolveTimelineMinimapHeightStyle(itemCount: number): string {
@@ -166,6 +190,7 @@ function maxIsoTimestamp(a: string | null, b: string | null): string | null {
 export interface TimelineDurationMessage {
   id: string;
   role: "user" | "assistant" | "system";
+  channel?: OrchestrationMessageChannel | undefined;
   createdAt: string;
   updatedAt: string;
   streaming: boolean;
@@ -254,7 +279,7 @@ export function computeMessageDurationStart(
       lastBoundary = message.createdAt;
     }
     result.set(message.id, lastBoundary ?? message.createdAt);
-    if (message.role === "assistant" && !message.streaming) {
+    if (message.role === "assistant" && !isReasoningMessage(message) && !message.streaming) {
       lastBoundary = message.updatedAt;
     }
   }
@@ -453,7 +478,7 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
       nullTurnResponseIndex += 1;
       continue;
     }
-    if (message.role !== "assistant") {
+    if (message.role !== "assistant" || isReasoningMessage(message)) {
       continue;
     }
 
@@ -510,6 +535,15 @@ function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
     return entry.proposedPlan.turnId;
   }
   return entry.kind === "work" ? (entry.entry.turnId ?? null) : null;
+}
+
+function isEmptyCompletedReasoningEntry(entry: TimelineEntry): boolean {
+  return (
+    entry.kind === "message" &&
+    isReasoningMessage(entry.message) &&
+    !entry.message.streaming &&
+    entry.message.text.trim().length === 0
+  );
 }
 
 /**
@@ -657,16 +691,23 @@ export function deriveMessagesTimelineRows(input: {
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
-  const durationStartByMessageId = computeMessageDurationStart(
-    input.timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
+  // A whitespace-only completed reasoning message renders no row, so every
+  // derivation below (folds, forward/backward work-group scans, the row loop)
+  // must see the same list without it — otherwise an invisible entry breaks
+  // work-group adjacency.
+  const timelineEntries = input.timelineEntries.filter(
+    (entry) => !isEmptyCompletedReasoningEntry(entry),
   );
-  const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(input.timelineEntries);
+  const durationStartByMessageId = computeMessageDurationStart(
+    timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
+  );
+  const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
   const unsettledTurnId = deriveUnsettledTurnId(
     input.latestTurn ?? null,
     input.runningTurnId ?? null,
   );
   const foldsByAnchorEntryId = deriveTurnFolds({
-    timelineEntries: input.timelineEntries,
+    timelineEntries,
     terminalAssistantMessageIds,
     latestTurn: input.latestTurn ?? null,
     unsettledTurnId,
@@ -680,13 +721,13 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
 
-  let activeTurnHeaderIndex = input.timelineEntries.length;
+  let activeTurnHeaderIndex = timelineEntries.length;
   if (input.isWorking) {
-    const latestUserMessageIndex = lastUserMessageIndex(input.timelineEntries);
+    const latestUserMessageIndex = lastUserMessageIndex(timelineEntries);
     const firstOwnedAfterUser =
       unsettledTurnId === null
         ? -1
-        : input.timelineEntries.findIndex(
+        : timelineEntries.findIndex(
             (entry, index) =>
               index > latestUserMessageIndex && timelineEntryTurnId(entry) === unsettledTurnId,
           );
@@ -703,11 +744,16 @@ export function deriveMessagesTimelineRows(input: {
     entry.toolLifecycleStatus === "inProgress" &&
     entry.turnId === unsettledTurnId;
   const activeEntries = input.isWorking
-    ? input.timelineEntries.filter((entry, index) => entryBelongsToActiveTurn(entry, index))
+    ? timelineEntries.filter((entry, index) => entryBelongsToActiveTurn(entry, index))
     : [];
   const activeTurnHasVisibleContent = activeEntries.some((entry) => {
     if (entry.kind === "message") {
-      return entry.message.role === "assistant" && (entry.message.text?.trim().length ?? 0) > 0;
+      if (entry.message.role !== "assistant" || (entry.message.text?.trim().length ?? 0) === 0) {
+        return false;
+      }
+      // Completed reasoning is a transcript artifact, not live output; it only
+      // counts as visible content while it is still streaming.
+      return isReasoningMessage(entry.message) ? entry.message.streaming : true;
     }
     if (entry.kind === "work") {
       return (
@@ -721,8 +767,8 @@ export function deriveMessagesTimelineRows(input: {
   });
 
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
-  for (let index = input.timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
-    const entry = input.timelineEntries[index]!;
+  for (let index = timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
+    const entry = timelineEntries[index]!;
     if (
       !entryBelongsToActiveTurn(entry, index) ||
       entry.kind !== "work" ||
@@ -780,8 +826,8 @@ export function deriveMessagesTimelineRows(input: {
     }
   };
 
-  for (let index = 0; index < input.timelineEntries.length; index += 1) {
-    const timelineEntry = input.timelineEntries[index];
+  for (let index = 0; index < timelineEntries.length; index += 1) {
+    const timelineEntry = timelineEntries[index];
     if (!timelineEntry) {
       continue;
     }
@@ -828,8 +874,8 @@ export function deriveMessagesTimelineRows(input: {
       }
       const groupedEntries = [timelineEntry.entry];
       let cursor = index + 1;
-      while (cursor < input.timelineEntries.length) {
-        const nextEntry = input.timelineEntries[cursor];
+      while (cursor < timelineEntries.length) {
+        const nextEntry = timelineEntries[cursor];
         if (
           !nextEntry ||
           nextEntry.kind !== "work" ||
@@ -963,7 +1009,7 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
-  if (input.isWorking && activeTurnHeaderIndex === input.timelineEntries.length) {
+  if (input.isWorking && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();
   }
 

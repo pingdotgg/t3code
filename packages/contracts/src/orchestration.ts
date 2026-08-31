@@ -303,9 +303,13 @@ export type OrchestrationProject = typeof OrchestrationProject.Type;
 export const OrchestrationMessageRole = Schema.Literals(["user", "assistant", "system"]);
 export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
 
+export const OrchestrationMessageChannel = Schema.Literal("reasoning");
+export type OrchestrationMessageChannel = typeof OrchestrationMessageChannel.Type;
+
 export const OrchestrationMessage = Schema.Struct({
   id: MessageId,
   role: OrchestrationMessageRole,
+  channel: Schema.optional(OrchestrationMessageChannel),
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),
@@ -314,6 +318,12 @@ export const OrchestrationMessage = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type OrchestrationMessage = typeof OrchestrationMessage.Type;
+
+export function isReasoningMessage(message: {
+  readonly channel?: OrchestrationMessageChannel | undefined;
+}): boolean {
+  return message.channel === "reasoning";
+}
 
 export const OrchestrationProposedPlanId = TrimmedNonEmptyString;
 export type OrchestrationProposedPlanId = typeof OrchestrationProposedPlanId.Type;
@@ -1047,6 +1057,7 @@ const ThreadMessageAssistantDeltaCommand = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   delta: Schema.String,
+  channel: Schema.optional(OrchestrationMessageChannel),
   turnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
 });
@@ -1056,6 +1067,7 @@ const ThreadMessageAssistantCompleteCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   messageId: MessageId,
+  channel: Schema.optional(OrchestrationMessageChannel),
   turnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
 });
@@ -1306,6 +1318,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   role: OrchestrationMessageRole,
+  channel: Schema.optional(OrchestrationMessageChannel),
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),

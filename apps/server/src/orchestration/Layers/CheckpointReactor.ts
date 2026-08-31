@@ -3,10 +3,12 @@ import {
   type CheckpointRef,
   EventId,
   MessageId,
+  isReasoningMessage,
   type ProjectId,
   ThreadId,
   TurnId,
   type OrchestrationEvent,
+  type OrchestrationMessageChannel,
   type ProviderRuntimeEvent,
   type VcsStatusLocalResult,
 } from "@t3tools/contracts";
@@ -225,6 +227,7 @@ const make = Effect.gen(function* () {
       readonly messages: ReadonlyArray<{
         readonly id: MessageId;
         readonly role: string;
+        readonly channel?: OrchestrationMessageChannel | undefined;
         readonly turnId: TurnId | null;
       }>;
     };
@@ -298,7 +301,12 @@ const make = Effect.gen(function* () {
       input.assistantMessageId ??
       input.thread.messages
         .toReversed()
-        .find((entry) => entry.role === "assistant" && entry.turnId === input.turnId)?.id ??
+        .find(
+          (entry) =>
+            entry.role === "assistant" &&
+            !isReasoningMessage(entry) &&
+            entry.turnId === input.turnId,
+        )?.id ??
       MessageId.make(`assistant:${input.turnId}`);
 
     yield* orchestrationEngine.dispatch({

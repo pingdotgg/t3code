@@ -3,6 +3,7 @@ import {
   type ChatAttachment,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
+  isReasoningMessage,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -285,7 +286,10 @@ function retainProjectionMessagesAfterRevert(
   }
 
   const retainedAssistantCount = messages.filter(
-    (message) => message.role === "assistant" && retainedMessageIds.has(message.messageId),
+    (message) =>
+      message.role === "assistant" &&
+      message.channel !== "reasoning" &&
+      retainedMessageIds.has(message.messageId),
   ).length;
   const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
   if (missingAssistantCount > 0) {
@@ -293,6 +297,7 @@ function retainProjectionMessagesAfterRevert(
       .filter(
         (message) =>
           message.role === "assistant" &&
+          message.channel !== "reasoning" &&
           !retainedMessageIds.has(message.messageId) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
@@ -1035,6 +1040,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             turnId: event.payload.turnId,
             role: event.payload.role,
+            ...(event.payload.channel !== undefined ? { channel: event.payload.channel } : {}),
             text: nextText,
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
             isStreaming: event.payload.streaming,
@@ -1380,7 +1386,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.message-sent": {
-          if (event.payload.turnId === null || event.payload.role !== "assistant") {
+          if (
+            event.payload.turnId === null ||
+            event.payload.role !== "assistant" ||
+            isReasoningMessage(event.payload)
+          ) {
             return;
           }
           // A completed assistant message only settles the turn once the

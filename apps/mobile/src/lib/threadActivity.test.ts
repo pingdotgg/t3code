@@ -1186,4 +1186,26 @@ describe("quiet timeline: nested agents", () => {
       { type: "activity-group", id: "nested-done" },
     ]);
   });
+
+  it("filters reasoning messages at thread-feed derivation entry", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-reasoning"),
+      projectId: ProjectId.make("project-1"),
+      title: "Reasoning",
+      messages: [
+        {
+          id: MessageId.make("reasoning-1"),
+          role: "assistant",
+          channel: "reasoning",
+          text: "Private reasoning",
+          turnId: TurnId.make("turn-1"),
+          streaming: false,
+          createdAt: "2026-04-01T00:00:01.000Z",
+          updatedAt: "2026-04-01T00:00:01.000Z",
+        },
+      ],
+    });
+
+    expect(buildThreadFeed(thread)).toEqual([]);
+  });
 });

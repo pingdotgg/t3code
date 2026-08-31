@@ -1,5 +1,7 @@
 import {
   type ChatAttachment,
+  type OrchestrationMessageChannel,
+  isReasoningMessage,
   CommandId,
   EventId,
   type ModelSelection,
@@ -102,12 +104,13 @@ const FIRST_USER_CONTEXT_TRUNCATION_MARKER = "\n[First user message truncated]";
 
 type ThreadTitleMessage = {
   readonly role: "user" | "assistant" | "system";
+  readonly channel?: OrchestrationMessageChannel | undefined;
   readonly text: string;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
 };
 
 function formatThreadTitleSection(message: ThreadTitleMessage): string | undefined {
-  if (message.role === "system") {
+  if (message.role === "system" || isReasoningMessage(message)) {
     return undefined;
   }
   const text = message.text.trim();
