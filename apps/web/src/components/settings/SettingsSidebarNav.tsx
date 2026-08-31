@@ -100,6 +100,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const hasResults = results.length > 0;
 
   useEffect(() => {
+    setActiveResultIndex((index) => Math.min(index, Math.max(results.length - 1, 0)));
+  }, [results.length]);
+
+  useEffect(() => {
     const result = results[activeResultIndex];
     if (!result) return;
     document
