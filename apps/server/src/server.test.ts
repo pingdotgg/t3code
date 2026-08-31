@@ -36,6 +36,7 @@ import {
   type ProviderInstallState,
   ProviderSetupError,
   ResolvedKeybindingRule,
+  type ServerLifecycleStreamEvent,
   ThreadId,
   TurnId,
   WS_METHODS,
@@ -6366,6 +6367,98 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(second?.type, "ready");
         assert.equal(second?.sequence, 2);
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeServerLifecycle buffers updates published during snapshot capture", () =>
+    Effect.gen(function* () {
+      const pubsub = yield* PubSub.unbounded<ServerLifecycleStreamEvent>();
+      const streamSubscribed = yield* Deferred.make<void>();
+      const snapshotPublished = yield* Deferred.make<void>();
+      const bootstrapProjectId = ProjectId.make("project-bootstrap");
+      const bootstrapThreadId = ThreadId.make("thread-bootstrap");
+      const snapshotEvent = {
+        version: 1 as const,
+        sequence: 1,
+        type: "welcome" as const,
+        payload: {
+          environment: testEnvironmentDescriptor,
+          cwd: "/tmp/project",
+          projectName: "project",
+          bootstrapStatus: "pending" as const,
+        },
+      };
+      const gapEvent = {
+        version: 1 as const,
+        sequence: 2,
+        type: "welcome" as const,
+        payload: {
+          environment: testEnvironmentDescriptor,
+          cwd: "/tmp/project",
+          projectName: "project",
+          bootstrapStatus: "complete" as const,
+          bootstrapProjectId,
+          bootstrapThreadId,
+          bootstrapProjectCreated: true,
+          bootstrapThreadCreated: true,
+        },
+      };
+      const sentinelEvent = {
+        version: 1 as const,
+        sequence: 3,
+        type: "ready" as const,
+        payload: { at: "2026-01-01T00:00:01.000Z", environment: testEnvironmentDescriptor },
+      };
+      const liveStream = Stream.unwrap(
+        Effect.gen(function* () {
+          const subscription = yield* PubSub.subscribe(pubsub);
+          yield* Deferred.succeed(streamSubscribed, undefined);
+          return Stream.fromSubscription(subscription);
+        }),
+      );
+
+      yield* buildAppUnderTest({
+        layers: {
+          serverLifecycleEvents: {
+            snapshot: PubSub.publish(pubsub, gapEvent).pipe(
+              Effect.andThen(Deferred.succeed(snapshotPublished, undefined)),
+              Effect.as({ sequence: 1, events: [snapshotEvent] }),
+            ),
+            stream: liveStream,
+          },
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        yield* Deferred.await(snapshotPublished);
+        yield* Deferred.await(streamSubscribed);
+        yield* PubSub.publish(pubsub, sentinelEvent);
+      }).pipe(Effect.forkScoped);
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const events = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeServerLifecycle]({}).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      );
+
+      const [first, second] = Array.from(events);
+      assert.equal(first?.type, "welcome");
+      assert.equal(first?.sequence, 1);
+      if (first?.type !== "welcome") {
+        assert.fail("expected the pending bootstrap event");
+      }
+      assert.equal(first.payload.bootstrapStatus, "pending");
+      assert.equal(second?.type, "welcome");
+      assert.equal(second?.sequence, 2);
+      if (second?.type !== "welcome") {
+        assert.fail("expected the bootstrap completion event");
+      }
+      assert.equal(second.payload.bootstrapStatus, "complete");
+      assert.equal(second.payload.bootstrapProjectId, bootstrapProjectId);
+      assert.equal(second.payload.bootstrapThreadId, bootstrapThreadId);
+      assert.equal(second.payload.bootstrapProjectCreated, true);
+      assert.equal(second.payload.bootstrapThreadCreated, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("routes websocket rpc projects.searchEntries", () =>

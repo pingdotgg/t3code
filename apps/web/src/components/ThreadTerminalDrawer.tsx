@@ -247,10 +247,14 @@ export function terminalSelectionLineRange(position: {
 
 export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
 
-/** Post-selection popup: just the two selection actions, always enabled. */
-export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "copy">[] {
+/** Post-selection popup: available selection actions, always enabled. */
+export function terminalSelectionMenuItems(options?: {
+  canAddToChat?: boolean;
+}): ContextMenuItem<"add-to-chat" | "copy">[] {
   return [
-    { id: "add-to-chat", label: "Add to chat" },
+    ...(options?.canAddToChat === false
+      ? []
+      : ([{ id: "add-to-chat", label: "Add to chat" }] satisfies ContextMenuItem<"add-to-chat">[])),
     { id: "copy", label: "Copy" },
   ];
 }
@@ -263,11 +267,13 @@ export function terminalSelectionMenuItems(): ContextMenuItem<"add-to-chat" | "c
  */
 export function terminalContextMenuItems(options: {
   hasSelection: boolean;
+  canAddToChat?: boolean;
 }): ContextMenuItem<TerminalContextMenuAction>[] {
+  const { hasSelection, canAddToChat = true } = options;
   return [
-    ...terminalSelectionMenuItems().map((item) => ({
+    ...terminalSelectionMenuItems({ canAddToChat }).map((item) => ({
       ...item,
-      disabled: !options.hasSelection,
+      disabled: !hasSelection,
     })),
     { id: "paste", label: "Paste" },
   ];
@@ -308,7 +314,7 @@ interface TerminalViewportProps {
   worktreePath?: string | null;
   runtimeEnv?: Record<string, string>;
   onSessionExited: () => void;
-  onAddTerminalContext: (selection: TerminalContextSelection) => void;
+  onAddTerminalContext?: (selection: TerminalContextSelection) => void;
   focusRequestId: number;
   autoFocus: boolean;
   visible: boolean;
@@ -372,8 +378,9 @@ export function TerminalViewport({
     onSessionExited();
   });
   const handleAddTerminalContext = useEffectEvent((selection: TerminalContextSelection) => {
-    onAddTerminalContext(selection);
+    onAddTerminalContext?.(selection);
   });
+  const canAddSelectionToChat = useEffectEvent(() => onAddTerminalContext !== undefined);
   const readTerminalLabel = useEffectEvent(() => terminalLabel);
   const terminalFontFamily = useClientSettings((settings) =>
     resolveTerminalFontPreference({
@@ -650,7 +657,10 @@ export function TerminalViewport({
         let clicked: TerminalContextMenuAction | null;
         try {
           clicked = await localApi.contextMenu.show(
-            terminalContextMenuItems({ hasSelection: selectionAction !== null }),
+            terminalContextMenuItems({
+              hasSelection: selectionAction !== null,
+              canAddToChat: canAddSelectionToChat(),
+            }),
             { x: event.clientX, y: event.clientY },
           );
         } catch (error) {
@@ -663,7 +673,9 @@ export function TerminalViewport({
         }
         switch (clicked) {
           case "add-to-chat":
-            if (selectionAction) addSelectionToChat(selectionAction.selection);
+            if (selectionAction && canAddSelectionToChat()) {
+              addSelectionToChat(selectionAction.selection);
+            }
             return;
           case "copy":
             if (selectionAction) await copySelection(selectionAction.clipboardText, requestId);
@@ -690,7 +702,10 @@ export function TerminalViewport({
         const requestId = ++selectionActionRequestIdRef.current;
         openSelectionMenuRequestIdRef.current = requestId;
         const clicked = await localApi.contextMenu
-          .show(terminalSelectionMenuItems(), nextAction.position)
+          .show(
+            terminalSelectionMenuItems({ canAddToChat: canAddSelectionToChat() }),
+            nextAction.position,
+          )
           .finally(() => {
             if (openSelectionMenuRequestIdRef.current === requestId) {
               openSelectionMenuRequestIdRef.current = null;
@@ -701,7 +716,7 @@ export function TerminalViewport({
         }
         switch (clicked) {
           case "add-to-chat":
-            addSelectionToChat(nextAction.selection);
+            if (canAddSelectionToChat()) addSelectionToChat(nextAction.selection);
             return;
           case "copy":
             await copySelection(nextAction.clipboardText, requestId);

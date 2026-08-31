@@ -46,6 +46,18 @@ interface HostedFirstRunDecisionInput {
   readonly environmentCount: number;
 }
 
+export function isFirstRunWorkspaceProvenanceAuthoritative(input: {
+  readonly projectCount: number;
+  readonly threadCount: number;
+  readonly welcomeReceived: boolean;
+  readonly bootstrapStatus: "pending" | "complete" | null;
+}): boolean {
+  return (
+    (input.projectCount === 0 && input.threadCount === 0) ||
+    (input.welcomeReceived && input.bootstrapStatus !== "pending")
+  );
+}
+
 /** Only a project and thread created by this startup count as a fresh nonempty workspace. */
 export function isFreshFirstRunWorkspace(input: FirstRunWorkspaceInput): boolean {
   if (input.projects.length > 1 || input.threads.length > 1) {

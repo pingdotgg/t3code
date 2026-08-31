@@ -506,6 +506,27 @@ export const make = Effect.gen(function* () {
   const statOption = (target: string) =>
     fileSystem.stat(target).pipe(Effect.map(Option.some), Effect.orElseSucceed(Option.none));
 
+  /** Match directory aliases without assuming the host volume is case-insensitive. */
+  const directoryIdentity = Effect.fn("AgentSessionScanner.directoryIdentity")(function* (
+    target: string,
+    knownStats?: FileSystem.File.Info,
+  ) {
+    const resolved = path.resolve(target);
+    const stats = knownStats === undefined ? yield* statOption(resolved) : Option.some(knownStats);
+    if (
+      Option.isSome(stats) &&
+      Option.isSome(stats.value.ino) &&
+      Number.isSafeInteger(stats.value.ino.value) &&
+      stats.value.ino.value > 0
+    ) {
+      return `inode:${stats.value.dev}:${stats.value.ino.value}`;
+    }
+    const realPath = yield* fileSystem
+      .realPath(resolved)
+      .pipe(Effect.orElseSucceed(() => resolved));
+    return `path:${normalizeProjectPathForComparison(realPath)}`;
+  });
+
   // A large history snapshot can precede session metadata. Read bounded
   // chunks until a complete record names its cwd or the safety budget ends.
   const readCwd = Effect.fn("AgentSessionScanner.readCwd")(function* (filePath: string) {
@@ -783,10 +804,7 @@ export const make = Effect.gen(function* () {
           homePath = layout.sharedHomePath;
         }
 
-        const realHomePath = yield* fileSystem
-          .realPath(homePath)
-          .pipe(Effect.orElseSucceed(() => homePath));
-        const homeKey = `${source}\0${normalizeProjectPathForComparison(realHomePath)}`;
+        const homeKey = `${source}\0${yield* directoryIdentity(homePath)}`;
         if (seenHomes.has(homeKey)) continue;
         seenHomes.add(homeKey);
         homes.push({ homePath, providerInstanceId: instanceId });
@@ -822,8 +840,8 @@ export const make = Effect.gen(function* () {
     const raw = yield* collectCandidates();
     cachedCandidates = raw;
 
-    // Merge by resolved path first so both sources agree on a key, then by
-    // realpath so a symlinked home and its target collapse into one candidate.
+    // Filesystem identity merges symlinks and case aliases without collapsing
+    // distinct case-sensitive directories.
     const merged = new Map<
       string,
       {
@@ -833,28 +851,32 @@ export const make = Effect.gen(function* () {
         lastActiveAtMs: number | null;
       }
     >();
-    const realPathKeys = new Map<string, string>();
+    const directoryKeys = new Map<string, string>();
 
     for (const candidate of raw) {
       const expanded = expandHomePath(candidate.cwd.trim());
       if (!path.isAbsolute(expanded)) continue;
       const resolved = path.resolve(expanded);
       if (isExcludedProjectPath(resolved)) continue;
-      let key = realPathKeys.get(resolved);
+      let key = directoryKeys.get(resolved);
       if (key === undefined) {
         const stats = yield* statOption(resolved);
         // Directories that no longer exist can't be imported.
         if (Option.isNone(stats) || stats.value.type !== "Directory") {
-          realPathKeys.set(resolved, "");
+          directoryKeys.set(resolved, "");
           continue;
         }
-        key = yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved));
+        const realPath = yield* fileSystem
+          .realPath(resolved)
+          .pipe(Effect.orElseSucceed(() => resolved));
         // A symlink can point into the worktrees directory even when its own
         // spelling doesn't; check again with links resolved.
-        if (isExcludedProjectPath(key)) {
+        if (isExcludedProjectPath(realPath)) {
           key = "";
+        } else {
+          key = yield* directoryIdentity(resolved, stats.value);
         }
-        realPathKeys.set(resolved, key);
+        directoryKeys.set(resolved, key);
       }
       if (key === "") continue;
 
@@ -890,20 +912,17 @@ export const make = Effect.gen(function* () {
     const importedProjectsByRoot = new Map<string, (typeof shellSnapshot.projects)[number]>();
     for (const project of shellSnapshot.projects) {
       const projectRoot = path.resolve(expandHomePath(project.workspaceRoot));
-      const realProjectRoot = yield* fileSystem
-        .realPath(projectRoot)
-        .pipe(Effect.orElseSucceed(() => projectRoot));
       importedProjectsByRoot.set(normalizeProjectPathForComparison(projectRoot), project);
-      importedProjectsByRoot.set(normalizeProjectPathForComparison(realProjectRoot), project);
+      importedProjectsByRoot.set(yield* directoryIdentity(projectRoot), project);
     }
 
     const candidates: Array<AgentSessionProjectCandidate> = [];
     for (const [key, entry] of merged.entries()) {
-      // Projects may have been created under either the recorded spelling or
-      // the resolved realpath (e.g. a symlinked home) — check both.
+      // Keep the path key for missing roots and use filesystem identity for
+      // aliases that resolve to the same directory.
       const importedProject =
         importedProjectsByRoot.get(normalizeProjectPathForComparison(entry.path)) ??
-        importedProjectsByRoot.get(normalizeProjectPathForComparison(key));
+        importedProjectsByRoot.get(key);
       const candidatePath = importedProject?.workspaceRoot ?? entry.path;
       candidates.push({
         path: candidatePath,
@@ -939,7 +958,7 @@ export const make = Effect.gen(function* () {
     const root = path.resolve(expandHomePath(workspaceRoot));
     const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
     if (isExcludedProjectPath(root) || isExcludedProjectPath(realRoot)) return Stream.empty;
-    const normalizedRoot = normalizeProjectPathForComparison(realRoot);
+    const rootIdentity = yield* directoryIdentity(root);
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;
 
@@ -954,10 +973,7 @@ export const make = Effect.gen(function* () {
       const expanded = expandHomePath(candidate.cwd.trim());
       if (!path.isAbsolute(expanded)) continue;
       const resolved = path.resolve(expanded);
-      const realCandidate = yield* fileSystem
-        .realPath(resolved)
-        .pipe(Effect.orElseSucceed(() => resolved));
-      if (normalizeProjectPathForComparison(realCandidate) !== normalizedRoot) continue;
+      if ((yield* directoryIdentity(resolved)) !== rootIdentity) continue;
 
       for (const transcript of candidate.transcripts) {
         if (

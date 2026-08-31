@@ -3,9 +3,29 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   shouldClearTerminalSelectionAction,
   shouldHandleTerminalExit,
+  terminalContextMenuItems,
   terminalSelectionLineRange,
+  terminalSelectionMenuItems,
   terminalThemeFromApp,
 } from "./ThreadTerminalDrawer";
+
+describe("terminal selection menus", () => {
+  it("omits Add to chat when the terminal has no chat target", () => {
+    expect(terminalSelectionMenuItems().map(({ id }) => id)).toEqual(["add-to-chat", "copy"]);
+    expect(terminalContextMenuItems({ hasSelection: true }).map(({ id }) => id)).toEqual([
+      "add-to-chat",
+      "copy",
+      "paste",
+    ]);
+
+    expect(terminalSelectionMenuItems({ canAddToChat: false }).map(({ id }) => id)).toEqual([
+      "copy",
+    ]);
+    expect(
+      terminalContextMenuItems({ hasSelection: true, canAddToChat: false }).map(({ id }) => id),
+    ).toEqual(["copy", "paste"]);
+  });
+});
 
 describe("terminalThemeFromApp", () => {
   afterEach(() => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isFirstRunWorkspaceProvenanceAuthoritative,
   isFreshFirstRunWorkspace,
   resolveFirstRunDecision,
   resolveHostedFirstRunDecision,
@@ -145,7 +146,7 @@ describe("resolveFirstRunDecision", () => {
     });
   });
 
-  it("waits for bootstrap provenance before judging a nonempty workspace", () => {
+  it("waits for the completed bootstrap welcome before judging a nonempty workspace", () => {
     expect(
       resolveFirstRunDecision({
         ...freshWorkspace,
@@ -155,6 +156,34 @@ describe("resolveFirstRunDecision", () => {
       decision: "pending",
       persistCompletion: false,
     });
+  });
+
+  it("waits when the initial welcome is pending and opens the wizard after completion", () => {
+    const pendingProvenance = isFirstRunWorkspaceProvenanceAuthoritative({
+      projectCount: 1,
+      threadCount: 1,
+      welcomeReceived: true,
+      bootstrapStatus: "pending",
+    });
+    expect(
+      resolveFirstRunDecision({
+        ...freshWorkspace,
+        workspaceProvenanceAuthoritative: pendingProvenance,
+      }),
+    ).toEqual({ decision: "pending", persistCompletion: false });
+
+    const completedProvenance = isFirstRunWorkspaceProvenanceAuthoritative({
+      projectCount: 1,
+      threadCount: 1,
+      welcomeReceived: true,
+      bootstrapStatus: "complete",
+    });
+    expect(
+      resolveFirstRunDecision({
+        ...freshWorkspace,
+        workspaceProvenanceAuthoritative: completedProvenance,
+      }),
+    ).toEqual({ decision: "wizard", persistCompletion: false });
   });
 
   it("does not wait for server data after onboarding is already complete", () => {

@@ -351,6 +351,98 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("merges case aliases and preserves the persisted project path", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const workspaceAlias = path.join(
+          path.dirname(workspace),
+          path.basename(workspace).toUpperCase(),
+        );
+
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+          contents: claudeSessionLine(workspaceAlias),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: path.join(codexHomePath, "sessions", "2026", "01", "02", "rollout-b.jsonl"),
+          contents: codexRolloutLine(workspace),
+          mtimeMs: Date.parse("2026-01-02T00:00:00.000Z"),
+        });
+
+        const simulatedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          stat: (filePath) => fileSystem.stat(filePath === workspaceAlias ? workspace : filePath),
+        });
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          importedWorkspaceRoots: [workspace],
+        }).pipe(Effect.provideService(FileSystem.FileSystem, simulatedFileSystem));
+
+        expect(result.candidates).toEqual([
+          {
+            path: workspace,
+            title: path.basename(workspace),
+            projectId: ProjectId.make("project-1"),
+            sources: ["claudeAgent", "codex"],
+            threadCount: 2,
+            lastActiveAt: "2026-01-02T00:00:00.000Z",
+            alreadyImported: true,
+          },
+        ]);
+      }),
+    );
+
+    it.effect("keeps case variants distinct when the filesystem identities differ", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const backingUpper = yield* makeTempDir("t3code-backing-upper-");
+        const backingLower = yield* makeTempDir("t3code-backing-lower-");
+        const aliasParent = yield* makeTempDir("t3code-case-aliases-");
+        const upperWorkspace = path.join(aliasParent, "Repo");
+        const lowerWorkspace = path.join(aliasParent, "repo");
+
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-upper", "a.jsonl"),
+          contents: claudeSessionLine(upperWorkspace),
+          mtimeMs: Date.parse("2026-01-02T00:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-lower", "b.jsonl"),
+          contents: claudeSessionLine(lowerWorkspace),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+
+        const simulatedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          stat: (filePath) =>
+            fileSystem.stat(
+              filePath === upperWorkspace
+                ? backingUpper
+                : filePath === lowerWorkspace
+                  ? backingLower
+                  : filePath,
+            ),
+        });
+        const result = yield* runScan({ claudeHomePath, codexHomePath }).pipe(
+          Effect.provideService(FileSystem.FileSystem, simulatedFileSystem),
+        );
+
+        expect(result.candidates.map((candidate) => candidate.path)).toEqual([
+          upperWorkspace,
+          lowerWorkspace,
+        ]);
+      }),
+    );
+
     it.effect("uses explicit provider instance homes instead of overridden legacy homes", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -916,6 +1008,54 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           ["Review this code", "Looks good"],
           ["Fix the project", "Done"],
         ]);
+      }),
+    );
+
+    it.effect("imports history recorded with a case alias", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const workspaceAlias = path.join(
+          path.dirname(workspace),
+          path.basename(workspace).toUpperCase(),
+        );
+
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-alias", "case-session.jsonl"),
+          contents: [
+            encodeTranscriptRecord({
+              type: "user",
+              cwd: workspaceAlias,
+              sessionId: "case-session",
+              timestamp: "2026-08-24T10:00:00.000Z",
+              message: { role: "user", content: "Import case alias history" },
+            }),
+            encodeTranscriptRecord({
+              type: "assistant",
+              sessionId: "case-session",
+              timestamp: "2026-08-24T10:01:00.000Z",
+              message: { role: "assistant", content: "Imported" },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+
+        const simulatedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          stat: (filePath) => fileSystem.stat(filePath === workspaceAlias ? workspace : filePath),
+        });
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, simulatedFileSystem));
+
+        expect(threads.map((thread) => thread.providerSessionId)).toEqual(["case-session"]);
       }),
     );
 

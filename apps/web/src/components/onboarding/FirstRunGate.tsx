@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useClientSettings, useClientSettingsHydrated } from "../../hooks/useSettings";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
+  isFirstRunWorkspaceProvenanceAuthoritative,
   isFreshFirstRunWorkspace,
   resolveFirstRunDecision,
   resolveHostedFirstRunDecision,
@@ -124,8 +125,12 @@ export function FirstRunGate({
         bootstrapped,
         authoritative: primaryShellLive,
         workspaceAuthoritative: workspaceEvidenceLive,
-        workspaceProvenanceAuthoritative:
-          (projects.length === 0 && threads.length === 0) || serverWelcome !== null,
+        workspaceProvenanceAuthoritative: isFirstRunWorkspaceProvenanceAuthoritative({
+          projectCount: projects.length,
+          threadCount: threads.length,
+          welcomeReceived: serverWelcome !== null,
+          bootstrapStatus: serverWelcome?.bootstrapStatus ?? null,
+        }),
         catalogReady: environmentCatalogReady,
         serverConfigAvailable: serverConfig !== null,
         workspaceFresh,

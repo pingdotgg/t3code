@@ -955,7 +955,6 @@ function AgentInstallTerminal({
               : {})}
             advancedTypography={advancedTypography}
             onSessionExited={onClose}
-            onAddTerminalContext={() => undefined}
             focusRequestId={1}
             autoFocus
             resizeEpoch={0}
