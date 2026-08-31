@@ -825,10 +825,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               messages.role = 'user'
               OR (
                 messages.role = 'assistant'
-                AND messages.message_id IN (
-                  SELECT turns.assistant_message_id
+                AND EXISTS (
+                  SELECT 1
                   FROM projection_turns AS turns
-                  WHERE turns.assistant_message_id IS NOT NULL
+                  WHERE turns.assistant_message_id = messages.message_id
                 )
               )
             )
