@@ -140,6 +140,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   getWindowFullscreenState: () =>
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,
+  getWindowBackdropState: () =>
+    ipcRenderer.sendSync(IpcChannels.GET_WINDOW_BACKDROP_STATE_CHANNEL) === true,
   onWindowFullscreenStateChange: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, fullscreen: unknown) => {
       if (typeof fullscreen !== "boolean") return;
@@ -149,6 +151,17 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(IpcChannels.WINDOW_FULLSCREEN_STATE_CHANNEL, wrappedListener);
     return () => {
       ipcRenderer.removeListener(IpcChannels.WINDOW_FULLSCREEN_STATE_CHANNEL, wrappedListener);
+    };
+  },
+  onWindowBackdropStateChange: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, enabled: unknown) => {
+      if (typeof enabled !== "boolean") return;
+      listener(enabled);
+    };
+
+    ipcRenderer.on(IpcChannels.WINDOW_BACKDROP_STATE_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.WINDOW_BACKDROP_STATE_CHANNEL, wrappedListener);
     };
   },
   getUpdateState: () => ipcRenderer.invoke(IpcChannels.UPDATE_GET_STATE_CHANNEL),

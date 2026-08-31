@@ -1490,6 +1490,66 @@ body {
 
 .electron-windows {
   --desktop-window-right-resize-inset: 6px;
+  --desktop-window-canvas: var(--background);
+}
+
+html.electron-windows[data-desktop-backdrop="on"] {
+  --desktop-window-canvas: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+}
+
+/* Electron's Windows Acrylic backdrop is native to the BrowserWindow. The
+   renderer must leave the window and its primary app surfaces translucent so
+   that the native material can reach the entire client area. Reuse the
+   existing glass opacity preference; web, macOS, Linux, and mobile keep their
+   current surface behavior. The explicit canvas marker keeps controls and
+   nested cards on their normal theme surfaces. */
+html.electron-windows[data-desktop-backdrop="on"],
+html.electron-windows[data-desktop-backdrop="on"] body,
+html.electron-windows[data-desktop-backdrop="on"] #root,
+html.electron-windows[data-desktop-backdrop="on"] [data-slot="sidebar-wrapper"] {
+  background-color: transparent !important;
+}
+
+html.electron-windows[data-desktop-backdrop="off"],
+html.electron-windows[data-desktop-backdrop="off"] body,
+html.electron-windows[data-desktop-backdrop="off"] #root,
+html.electron-windows[data-desktop-backdrop="off"] [data-slot="sidebar-wrapper"] {
+  background-color: var(--background) !important;
+}
+
+html.electron-windows [data-slot="sidebar-inset"],
+html.electron-windows .desktop-window-canvas {
+  background-color: var(--desktop-window-canvas) !important;
+}
+
+html.electron-windows [data-app-sidebar] {
+  --desktop-window-sidebar: var(--sidebar);
+}
+
+html.electron-windows[data-desktop-backdrop="on"]
+  [data-app-sidebar]:not([data-slot="sheet-popup"]) {
+  --desktop-window-sidebar: color-mix(in srgb, var(--sidebar) var(--glass-opacity), transparent);
+}
+
+html.electron-windows [data-app-sidebar] {
+  background-color: var(--desktop-window-sidebar) !important;
+}
+
+/* A route can contain several named canvas owners (for example SidebarInset,
+   ChatView, and a terminal drawer). Only the outermost owner should paint the
+   alpha layer; nested owners must let that layer and the native material show
+   through instead of compounding opacity. */
+html.electron-windows .desktop-window-canvas .desktop-window-canvas,
+html.electron-windows [data-app-sidebar] [data-slot="sidebar-inner"] {
+  background-color: transparent !important;
+}
+
+/* Sheets and dialogs are portalled outside the window canvas and paint their
+   own opaque popup surface, so canvas owners inside them must stay solid
+   instead of blending toward the native material. */
+html.electron-windows [data-slot="sheet-popup"],
+html.electron-windows [data-slot="dialog-popup"] {
+  --desktop-window-canvas: var(--background);
 }
 
 /* App-chrome grain. Baked into each surface's own background (behind

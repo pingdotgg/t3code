@@ -81,7 +81,7 @@ export function PreviewPanelShell(props: {
     <div
       ref={hostRef}
       className={cn(
-        "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
+        "desktop-window-canvas relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
         isInline
           ? props.maximized
             ? "flex-1 border-l border-border"

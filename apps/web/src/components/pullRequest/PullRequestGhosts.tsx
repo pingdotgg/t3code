@@ -67,7 +67,7 @@ export function PullRequestDetailGhost() {
     <div
       role="status"
       aria-label="Loading pull request"
-      className="animate-ghost-pulse flex h-full min-h-0 flex-col overflow-hidden bg-background"
+      className="desktop-window-canvas animate-ghost-pulse flex h-full min-h-0 flex-col overflow-hidden bg-background"
     >
       <div className="shrink-0 border-b border-border/60">
         <div className="flex h-7 items-center justify-between gap-3 px-4">

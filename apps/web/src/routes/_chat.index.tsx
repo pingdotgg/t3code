@@ -108,7 +108,7 @@ function NoProjectsHero() {
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+      <div className="desktop-window-canvas flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         <Empty className="flex-1">
           <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
@@ -141,7 +141,7 @@ function HostedStaticOnboardingState() {
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+      <div className="desktop-window-canvas flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         <WorkspacePageHeader className="border-b border-border">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">

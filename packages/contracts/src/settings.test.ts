@@ -102,6 +102,15 @@ describe("ClientSettings glass opacity", () => {
   });
 });
 
+describe("ClientSettings desktop backdrop", () => {
+  it("defaults the Windows desktop blur on and accepts the patch", () => {
+    expect(decodeClientSettings({}).desktopBackdropEnabled).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ desktopBackdropEnabled: false }).desktopBackdropEnabled,
+    ).toBe(false);
+  });
+});
+
 describe("ClientSettings appearance contrast", () => {
   it("defaults to the theme's original contrast", () => {
     expect(decodeClientSettings({}).appearanceContrast).toBe(100);

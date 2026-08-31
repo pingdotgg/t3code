@@ -78,7 +78,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { isMacPlatform } from "../../lib/utils";
+import { isMacPlatform, isWindowsPlatform } from "../../lib/utils";
 import { primaryServerObservabilityAtom, primaryServerProvidersAtom } from "../../state/server";
 import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
@@ -481,6 +481,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Contrast"]
         : []),
       ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
+      ...(settings.desktopBackdropEnabled !== DEFAULT_UNIFIED_SETTINGS.desktopBackdropEnabled
+        ? ["Desktop background blur"]
+        : []),
       ...(settings.environmentIdentificationMode !==
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
         ? ["Environment identification"]
@@ -575,6 +578,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.fontSizePrompt,
       settings.fontSizeTerminal,
       settings.glassOpacity,
+      settings.desktopBackdropEnabled,
       settings.enableLegacyTokenStreaming,
       settings.enableProviderUpdateChecks,
       settings.sidebarAutoSettleAfterDays,
@@ -660,6 +664,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
+      desktopBackdropEnabled: DEFAULT_UNIFIED_SETTINGS.desktopBackdropEnabled,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
@@ -999,6 +1004,8 @@ export function AppearanceSettingsPanel() {
   const environmentStageLabel = useEnvironmentStageLabel();
   const showEnvironmentIdentification =
     resolveEnvironmentIdentificationPillLabel(environmentStageLabel) !== null;
+  const showDesktopBackdropSetting =
+    isElectron && typeof navigator !== "undefined" && isWindowsPlatform(navigator.platform);
   const glassOpacityRatio =
     (settings.glassOpacity - MIN_GLASS_OPACITY) / (MAX_GLASS_OPACITY - MIN_GLASS_OPACITY);
   const glassOpacitySliderStyle = {
@@ -1082,7 +1089,7 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("setting-glass-opacity")}
-          description="Control how transparent glass surfaces are. Higher values make menus, dialogs, and the composer more solid."
+          description="Control how transparent glass surfaces are. On Windows, lower values reveal more of the desktop Acrylic backdrop; higher values make surfaces more solid."
           resetAction={
             settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? (
               <SettingResetButton
@@ -1125,6 +1132,35 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+
+        {showDesktopBackdropSetting ? (
+          <SettingsRow
+            {...searchableSetting("setting-desktop-backdrop")}
+            description="Blur the desktop behind T3 Code using Windows Acrylic. Changes apply immediately; unsupported systems use a solid surface."
+            resetAction={
+              settings.desktopBackdropEnabled !==
+              DEFAULT_UNIFIED_SETTINGS.desktopBackdropEnabled ? (
+                <SettingResetButton
+                  label="desktop background blur"
+                  onClick={() =>
+                    updateSettings({
+                      desktopBackdropEnabled: DEFAULT_UNIFIED_SETTINGS.desktopBackdropEnabled,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.desktopBackdropEnabled}
+                onCheckedChange={(checked) =>
+                  updateSettings({ desktopBackdropEnabled: Boolean(checked) })
+                }
+                aria-label="Desktop background blur"
+              />
+            }
+          />
+        ) : null}
 
         {showEnvironmentIdentification ? (
           <SettingsRow

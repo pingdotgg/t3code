@@ -43,7 +43,11 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
+import {
+  MENU_ACTION_CHANNEL,
+  WINDOW_BACKDROP_STATE_CHANNEL,
+  WINDOW_FULLSCREEN_STATE_CHANNEL,
+} from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -52,6 +56,7 @@ const environmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
   homeDirectory: "/Users/alice",
   platform: "darwin",
+  systemVersion: undefined,
   processArch: "arm64",
   appVersion: "1.2.3",
   appPath: "/repo",
@@ -104,6 +109,7 @@ function makeFakeBrowserWindow() {
     }),
     restore: vi.fn(),
     setBackgroundColor: vi.fn(),
+    setBackgroundMaterial: vi.fn(),
     setAutoHideCursor: vi.fn(),
     setTitle: vi.fn(),
     setTitleBarOverlay: vi.fn(),
@@ -126,6 +132,8 @@ function makeFakeBrowserWindow() {
     send: webContents.send,
     setZoomLevel: webContents.setZoomLevel,
     setBackgroundThrottling: webContents.setBackgroundThrottling,
+    setBackgroundColor: window.setBackgroundColor,
+    setBackgroundMaterial: window.setBackgroundMaterial,
     setAutoHideCursor: window.setAutoHideCursor,
     webContentsListeners,
     windowListeners,
@@ -176,17 +184,23 @@ const electronThemeLayer = Layer.succeed(ElectronTheme.ElectronTheme, {
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
-const desktopEnvironmentLayer = DesktopEnvironment.layer(environmentInput).pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      NodeServices.layer,
-      DesktopConfig.layerTest({
-        T3CODE_PORT: "3773",
-        VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
-      }),
+const makeDesktopEnvironmentLayer = (
+  platform: NodeJS.Platform = environmentInput.platform,
+  systemVersion: string | undefined = environmentInput.systemVersion,
+) =>
+  DesktopEnvironment.layer({ ...environmentInput, platform, systemVersion }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest({
+          T3CODE_PORT: "3773",
+          VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+        }),
+      ),
     ),
-  ),
-);
+  );
+
+const desktopEnvironmentLayer = makeDesktopEnvironmentLayer();
 
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(
   DesktopAppSettings.DesktopWindowBoundsSchema,
@@ -205,6 +219,8 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly platform?: NodeJS.Platform;
+  readonly systemVersion?: string;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -263,7 +279,7 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
-        desktopEnvironmentLayer,
+        makeDesktopEnvironmentLayer(input.platform, input.systemVersion),
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
         desktopServerExposureLayer,
@@ -394,6 +410,93 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
   });
 
 describe("DesktopWindow", () => {
+  it("uses transparent Acrylic-ready window options only on Windows", () => {
+    assert.isTrue(DesktopWindow.isWindowsAcrylicSupported("win32", "10.0.22621"));
+    assert.isTrue(DesktopWindow.isWindowsAcrylicSupported("win32", "10.0.26100"));
+    assert.isFalse(DesktopWindow.isWindowsAcrylicSupported("win32", "10.0.22000"));
+    assert.isFalse(DesktopWindow.isWindowsAcrylicSupported("win32", undefined));
+    assert.isFalse(DesktopWindow.isWindowsAcrylicSupported("darwin", "10.0.22621"));
+
+    assert.deepEqual(DesktopWindow.getWindowBackdropOptions("win32", true, true, true), {
+      backgroundColor: "#00000000",
+      backgroundMaterial: "acrylic",
+      frame: false,
+      roundedCorners: true,
+      thickFrame: true,
+      transparent: true,
+    });
+    assert.deepEqual(DesktopWindow.getWindowBackdropOptions("win32", true, false, true), {
+      backgroundColor: "#0a0a0a",
+      backgroundMaterial: "none",
+      frame: false,
+      roundedCorners: true,
+      thickFrame: true,
+      transparent: true,
+    });
+    assert.deepEqual(DesktopWindow.getWindowBackdropOptions("win32", true, true, false), {
+      backgroundColor: "#0a0a0a",
+      backgroundMaterial: "none",
+      frame: false,
+      roundedCorners: true,
+      thickFrame: true,
+      transparent: true,
+    });
+    assert.deepEqual(DesktopWindow.getWindowBackdropOptions("darwin", true), {
+      backgroundColor: "#0a0a0a",
+    });
+  });
+
+  it.effect("does not apply the Windows backdrop to unowned auxiliary windows", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        platform: "win32",
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.syncAppearance;
+      }).pipe(Effect.provide(layer));
+
+      assert.equal(fakeWindow.setBackgroundMaterial.mock.calls.length, 0);
+      assert.equal(fakeWindow.setBackgroundColor.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("keeps the Windows window opaque when Acrylic is unsupported", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+        platform: "win32",
+        systemVersion: "10.0.22000",
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        assert.equal(createdWindowOptions[0]?.backgroundMaterial, "none");
+        assert.equal(createdWindowOptions[0]?.backgroundColor, "#ffffff");
+        assert.deepEqual(fakeWindow.setBackgroundMaterial.mock.calls, [["none"]]);
+        assert.deepEqual(fakeWindow.setBackgroundColor.mock.calls, [["#ffffff"]]);
+        assert.isFalse(desktopWindow.isBackdropEnabled(fakeWindow.window));
+        assert.deepEqual(fakeWindow.send.mock.calls, [[WINDOW_BACKDROP_STATE_CHANNEL, false]]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it("restores bounds only when the window fits within a connected display", () => {
     const persistedBounds = { x: 2040, y: 80, width: 1320, height: 880 };
     const displays = [

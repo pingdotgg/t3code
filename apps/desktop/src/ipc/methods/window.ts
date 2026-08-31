@@ -33,6 +33,7 @@ import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
@@ -82,6 +83,20 @@ export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const window = yield* electronWindow.currentMainOrFirst;
     return Option.isSome(window) && window.value.isFullScreen();
+  }),
+});
+
+export const getWindowBackdropState = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_WINDOW_BACKDROP_STATE_CHANNEL,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.getWindowBackdropState")(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (environment.platform !== "win32") return false;
+
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const window = yield* electronWindow.currentMainOrFirst;
+    return Option.isSome(window) && desktopWindow.isBackdropEnabled(window.value);
   }),
 });
 

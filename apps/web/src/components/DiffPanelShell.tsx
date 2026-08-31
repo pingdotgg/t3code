@@ -28,7 +28,7 @@ export function DiffPanelShell(props: {
   return (
     <div
       className={cn(
-        "flex h-full min-w-0 flex-col bg-background",
+        "desktop-window-canvas flex h-full min-w-0 flex-col bg-background",
         props.mode === "inline"
           ? "w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border"
           : "w-full",
@@ -88,7 +88,7 @@ function DiffCodeLineSkeleton({ contentClassName }: { contentClassName: string }
 export function DiffPanelLoadingState(props: { label: string }) {
   return (
     <div
-      className="min-h-0 flex-1 overflow-hidden bg-background"
+      className="desktop-window-canvas min-h-0 flex-1 overflow-hidden bg-background"
       role="status"
       aria-live="polite"
       aria-label={props.label}

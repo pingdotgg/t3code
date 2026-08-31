@@ -75,6 +75,7 @@ const desktopEnvironmentLayer = Layer.unwrap(
       dirname: __dirname,
       homeDirectory: NodeOS.homedir(),
       platform,
+      systemVersion: process.getSystemVersion(),
       processArch,
       ...metadata,
     });

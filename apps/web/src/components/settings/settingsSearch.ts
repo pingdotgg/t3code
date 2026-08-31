@@ -1,4 +1,5 @@
 import { isElectron } from "~/env";
+import { isWindowsPlatform } from "~/lib/utils";
 
 export type SettingsPath =
   | "/settings/general"
@@ -18,6 +19,8 @@ export interface SettingsSearchItem {
   // Its row only renders in the desktop app, so a browser result would land on
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
+  // Its row only renders on Windows desktop, where the native backdrop exists.
+  readonly windowsOnly?: boolean;
 }
 
 /**
@@ -68,6 +71,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "setting-glass-opacity",
     title: "Glass opacity",
     to: "/settings/appearance",
+  },
+  {
+    id: "setting-desktop-backdrop",
+    title: "Desktop background blur",
+    to: "/settings/appearance",
+    desktopOnly: true,
+    windowsOnly: true,
   },
   {
     id: "environment-identification",
@@ -301,9 +311,12 @@ export function searchSettings(
   const normalizedQuery = normalizeSearchText(query);
   if (normalizedQuery.length === 0) return [];
 
+  const isWindows = typeof navigator !== "undefined" && isWindowsPlatform(navigator.platform);
+
   return items.filter(
     (item) =>
       (isElectron || item.desktopOnly !== true) &&
+      (item.windowsOnly !== true || (isElectron && isWindows)) &&
       normalizeSearchText(item.title).includes(normalizedQuery),
   );
 }

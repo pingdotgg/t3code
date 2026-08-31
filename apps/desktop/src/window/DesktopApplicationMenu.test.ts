@@ -83,6 +83,7 @@ const makeDesktopWindowLayer = (selectedAction: Deferred.Deferred<string>) =>
     dispatchMenuAction: (action) => Deferred.succeed(selectedAction, action).pipe(Effect.asVoid),
     zoomMain: (direction) =>
       Deferred.succeed(selectedAction, `zoom-${direction}`).pipe(Effect.asVoid),
+    isBackdropEnabled: () => false,
     syncAppearance: Effect.void,
   } satisfies DesktopWindow.DesktopWindow["Service"]);
 

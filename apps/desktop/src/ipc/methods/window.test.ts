@@ -8,10 +8,13 @@ import type * as Electron from "electron";
 
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import {
   getLocalEnvironmentBootstraps,
+  getWindowBackdropState,
   getWindowFullscreenState,
   pickProjectFavicon,
 } from "./window.ts";
@@ -148,6 +151,30 @@ describe("getWindowFullscreenState", () => {
         Layer.mock(ElectronWindow.ElectronWindow)({
           currentMainOrFirst: Effect.succeed(Option.some(window)),
         }),
+      ),
+    );
+  });
+});
+
+describe("getWindowBackdropState", () => {
+  it.effect("returns false when the current platform is not Windows", () => {
+    const window = {} as Electron.BrowserWindow;
+
+    return Effect.gen(function* () {
+      assert.isFalse(yield* getWindowBackdropState.handler());
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+            platform: "darwin",
+          } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          Layer.mock(DesktopWindow.DesktopWindow)({
+            isBackdropEnabled: () => false,
+          }),
+          Layer.mock(ElectronWindow.ElectronWindow)({
+            currentMainOrFirst: Effect.succeed(Option.some(window)),
+          }),
+        ),
       ),
     );
   });
