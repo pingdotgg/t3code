@@ -86,12 +86,12 @@ export const RpcClientId = NonNegativeInt.pipe(Schema.brand("RpcClientId"));
 export type RpcClientId = typeof RpcClientId.Type;
 
 /**
- * Which client app a connection comes from. Unlike
+ * Which client surface a connection or command comes from. Unlike
  * `AuthClientMetadataDeviceType` (a UA-style device class where web and
  * desktop are both "desktop"), this names the actual product surface.
  * Optional everywhere it appears: old clients never send it.
  */
-export const ClientSurface = Schema.Literals(["web", "desktop", "mobile"]);
+export const ClientSurface = Schema.Literals(["web", "desktop", "mobile", "cli"]);
 export type ClientSurface = typeof ClientSurface.Type;
 
 export const ClientOs = Schema.Literals([
