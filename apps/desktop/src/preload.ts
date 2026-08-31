@@ -322,6 +322,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   speech: {
     getStatus: () => ipcRenderer.invoke(IpcChannels.SPEECH_GET_STATUS_CHANNEL),
+    getMicrophones: () => ipcRenderer.invoke(IpcChannels.SPEECH_GET_MICROPHONES_CHANNEL),
+    setMicrophone: (deviceName) =>
+      ipcRenderer.invoke(IpcChannels.SPEECH_SET_MICROPHONE_CHANNEL, deviceName),
     start: () => ipcRenderer.invoke(IpcChannels.SPEECH_START_CHANNEL),
     stop: () => ipcRenderer.invoke(IpcChannels.SPEECH_STOP_CHANNEL),
     cancel: () => ipcRenderer.invoke(IpcChannels.SPEECH_CANCEL_CHANNEL),

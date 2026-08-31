@@ -6,6 +6,7 @@ const FRAME_LENGTH = 512;
 
 export class DesktopMicrophoneCapture {
   private readonly onLevel: (level: number, elapsedMs: number) => void;
+  private readonly deviceName: string;
   private recorder: PvRecorder | undefined;
   private frames: Int16Array[] = [];
   private readLoop: Promise<void> | undefined;
@@ -14,13 +15,20 @@ export class DesktopMicrophoneCapture {
   private startedAt = 0;
   private lastLevelAt = 0;
 
-  constructor(onLevel: (level: number, elapsedMs: number) => void) {
+  constructor(onLevel: (level: number, elapsedMs: number) => void, deviceName = "") {
     this.onLevel = onLevel;
+    this.deviceName = deviceName;
+  }
+
+  static getAvailableDevices(): string[] {
+    return PvRecorder.getAvailableDevices();
   }
 
   start(): void {
     if (this.recorder) throw new Error("microphone capture is already active");
-    const recorder = new PvRecorder(FRAME_LENGTH, -1);
+    const devices = DesktopMicrophoneCapture.getAvailableDevices();
+    const deviceIndex = this.deviceName ? devices.indexOf(this.deviceName) : -1;
+    const recorder = new PvRecorder(FRAME_LENGTH, deviceIndex);
     try {
       if (recorder.sampleRate !== SAMPLE_RATE) {
         throw new Error(

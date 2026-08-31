@@ -19,6 +19,7 @@ export type SettingsPath =
   | "/settings/projects"
   | "/settings/general"
   | "/settings/diagnostics"
+  | "/settings/voice"
   | "/settings/appearance"
   | "/settings/chat"
   | "/settings/diffs"
@@ -89,6 +90,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/diagnostics": "Diagnostics",
   "/settings/projects": "Projects",
   "/settings/general": "General",
+  "/settings/voice": "Voice",
   "/settings/appearance": "Appearance",
   "/settings/chat": "Chat",
   "/settings/diffs": "Diffs & pull requests",
@@ -489,7 +491,13 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "local-voice-input",
     title: "Local voice input",
-    to: "/settings/general",
+    to: "/settings/voice",
+    desktopOnly: true,
+  },
+  {
+    id: "microphone",
+    title: "Microphone",
+    to: "/settings/voice",
     desktopOnly: true,
   },
   {

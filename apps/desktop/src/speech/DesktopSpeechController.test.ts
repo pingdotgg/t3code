@@ -27,7 +27,7 @@ function makeController(maxRecordingMs?: number) {
     modelReady: vi.fn().mockImplementation(async () => modelReady),
     downloadModel,
     removeModel: vi.fn().mockResolvedValue(undefined),
-    createCapture: () => capture,
+    createCapture: async () => capture,
     createBackend: () => backend,
     emit: (event) => events.push(event),
     ...(maxRecordingMs === undefined ? {} : { maxRecordingMs }),

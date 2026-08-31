@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { DesktopSpeechEventSchema, DesktopSpeechStatusSchema } from "./speech.ts";
+import {
+  DesktopMicrophoneSettingsSchema,
+  DesktopSpeechEventSchema,
+  DesktopSpeechStatusSchema,
+} from "./speech.ts";
 
 const decodeStatus = Schema.decodeUnknownSync(DesktopSpeechStatusSchema);
 const decodeEvent = Schema.decodeUnknownSync(DesktopSpeechEventSchema);
@@ -22,5 +26,17 @@ describe("desktop speech contracts", () => {
         total: 10,
       }),
     ).toThrow();
+  });
+
+  it("accepts desktop microphone settings", () => {
+    expect(
+      Schema.decodeUnknownSync(DesktopMicrophoneSettingsSchema)({
+        devices: ["Built-in Microphone", "USB Microphone"],
+        selected: "USB Microphone",
+      }),
+    ).toEqual({
+      devices: ["Built-in Microphone", "USB Microphone"],
+      selected: "USB Microphone",
+    });
   });
 });

@@ -24,6 +24,12 @@ export const DesktopSpeechStatusSchema = Schema.Union([
 ]);
 export type DesktopSpeechStatus = typeof DesktopSpeechStatusSchema.Type;
 
+export const DesktopMicrophoneSettingsSchema = Schema.Struct({
+  devices: Schema.Array(Schema.String),
+  selected: Schema.String,
+});
+export type DesktopMicrophoneSettings = typeof DesktopMicrophoneSettingsSchema.Type;
+
 export const DesktopSpeechEventSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("status"),

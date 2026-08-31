@@ -161,6 +161,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(installCliCommand);
   yield* ipc.handle(uninstallCliCommand);
   yield* ipc.handle(SpeechIpc.getSpeechStatus);
+  yield* ipc.handle(SpeechIpc.getSpeechMicrophones);
+  yield* ipc.handle(SpeechIpc.setSpeechMicrophone);
   yield* ipc.handle(SpeechIpc.startSpeech);
   yield* ipc.handle(SpeechIpc.stopSpeech);
   yield* ipc.handle(SpeechIpc.cancelSpeech);

@@ -6,7 +6,9 @@ Select the microphone button beside Send to begin recording. Select the stop but
 
 The first recording asks before downloading Moonshine Streaming Tiny, a 48 MiB English speech model. T3 Code verifies the model before using it. Speech processing runs on the local computer, and microphone audio is kept in memory only for the current recording.
 
-To remove the downloaded model, open Settings, then General, and select Remove model under Local voice input.
+Open Settings, then Voice to choose a microphone or continue following the system default input. If a selected microphone is disconnected, T3 Code uses the system default until it is available again.
+
+To remove the downloaded model, select Remove model under Local voice input on the same Voice page.
 
 On macOS, grant microphone access to T3 Code when prompted. If access was previously denied, enable it under System Settings, Privacy & Security, Microphone.
 

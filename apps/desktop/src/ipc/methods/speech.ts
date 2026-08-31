@@ -1,4 +1,4 @@
-import { DesktopSpeechStatusSchema } from "@t3tools/contracts";
+import { DesktopMicrophoneSettingsSchema, DesktopSpeechStatusSchema } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -20,6 +20,26 @@ export const getSpeechStatus = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.speech.getStatus")(function* () {
     const speech = yield* DesktopSpeech.DesktopSpeech;
     return yield* speech.getStatus;
+  }),
+});
+
+export const getSpeechMicrophones = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SPEECH_GET_MICROPHONES_CHANNEL,
+  payload: Schema.Void,
+  result: DesktopMicrophoneSettingsSchema,
+  handler: Effect.fn("desktop.ipc.speech.getMicrophones")(function* () {
+    const speech = yield* DesktopSpeech.DesktopSpeech;
+    return yield* speech.getMicrophones;
+  }),
+});
+
+export const setSpeechMicrophone = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SPEECH_SET_MICROPHONE_CHANNEL,
+  payload: Schema.String,
+  result: DesktopMicrophoneSettingsSchema,
+  handler: Effect.fn("desktop.ipc.speech.setMicrophone")(function* (deviceName) {
+    const speech = yield* DesktopSpeech.DesktopSpeech;
+    return yield* speech.setMicrophone(deviceName);
   }),
 });
 

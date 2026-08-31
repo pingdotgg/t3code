@@ -10,7 +10,6 @@ import {
   globalIdleCompaction,
   managedUpdatesDenial,
   managedUpdatesMessage,
-  type DesktopSpeechStatus,
   ProviderDriverKind,
   type ProviderInstanceId,
   type SidebarProjectGroupingMode,
@@ -782,15 +781,6 @@ export function LegacyFeaturesSection() {
 export function GeneralSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  const [speechStatus, setSpeechStatus] = useState<DesktopSpeechStatus | null>(null);
-  useEffect(() => {
-    const speech = window.desktopBridge?.speech;
-    if (!speech) return;
-    void speech.getStatus().then(setSpeechStatus);
-    return speech.onEvent((event) => {
-      if (event.type === "status") setSpeechStatus(event.status);
-    });
-  }, []);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
@@ -813,36 +803,6 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="sidebar" title="Sidebar">
-        {window.desktopBridge?.speech && speechStatus?.supported ? (
-          <SettingsRow
-            {...searchableSetting("local-voice-input")}
-            description={
-              speechStatus.state === "missing-model"
-                ? "Downloads a 48 MiB English model on first use. Audio stays on this device."
-                : "Moonshine Streaming Tiny is stored locally. Microphone audio is not saved."
-            }
-            control={
-              speechStatus.state === "missing-model" ? (
-                <span className="text-xs text-muted-foreground">Download on first use</span>
-              ) : (
-                <Button
-                  variant="destructive-outline"
-                  size="sm"
-                  disabled={
-                    speechStatus.state === "recording" ||
-                    speechStatus.state === "transcribing" ||
-                    speechStatus.state === "downloading"
-                  }
-                  onClick={() =>
-                    void window.desktopBridge?.speech?.removeModel().then(setSpeechStatus)
-                  }
-                >
-                  Remove model
-                </Button>
-              )
-            }
-          />
-        ) : null}
         <SettingsRow
           {...searchableSetting("project-grouping")}
           description="Combine matching repositories across environments."

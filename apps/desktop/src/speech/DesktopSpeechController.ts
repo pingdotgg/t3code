@@ -31,7 +31,7 @@ type ControllerOptions = {
   modelReady(): Promise<boolean>;
   downloadModel(onProgress: (downloaded: number, total: number) => void): Promise<string>;
   removeModel(): Promise<void>;
-  createCapture(): Capture;
+  createCapture(): Promise<Capture>;
   createBackend(modelPath: string): Backend;
   emit(event: DesktopSpeechEvent): void;
   maxRecordingMs?: number;
@@ -86,7 +86,7 @@ export class DesktopSpeechController {
       }
       if (!this.modelPath) throw new Error("speech model path is unavailable");
 
-      const capture = this.options.createCapture();
+      const capture = await this.options.createCapture();
       const backend = this.options.createBackend(this.modelPath);
       this.capture = capture;
       this.backend = backend;
