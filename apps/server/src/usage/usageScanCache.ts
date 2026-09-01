@@ -195,10 +195,17 @@ export function decodeScanCache(document: unknown): ScanCache {
       ] = row as SerializedRecord;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
+      const session = typeof sessionIndex === "number" ? sessions[sessionIndex] : undefined;
+      const cwd = typeof cwdIndex === "number" ? cwds[cwdIndex] : undefined;
       if (
         typeof timestampMs !== "number" ||
         !Number.isFinite(timestampMs) ||
         model === undefined ||
+        !Number.isInteger(modelIndex) ||
+        session === undefined ||
+        !Number.isInteger(sessionIndex) ||
+        cwd === undefined ||
+        !Number.isInteger(cwdIndex) ||
         !Number.isFinite(uncached) ||
         !Number.isFinite(cached) ||
         !Number.isFinite(cacheCreation) ||
@@ -212,8 +219,8 @@ export function decodeScanCache(document: unknown): ScanCache {
         provider,
         timestampMs,
         model,
-        sessionId: (typeof sessionIndex === "number" ? sessions[sessionIndex] : undefined) ?? "",
-        cwd: (typeof cwdIndex === "number" ? cwds[cwdIndex] : undefined) ?? "",
+        sessionId: session,
+        cwd,
         totals: {
           uncachedInputTokens: uncached,
           cachedInputTokens: cached,

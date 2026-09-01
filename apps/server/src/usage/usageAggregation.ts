@@ -12,7 +12,13 @@
  *
  * @module usageAggregation
  */
-import type { UsageBucket, UsageDay, UsageResolution, UsageTokenTotals } from "@t3tools/contracts";
+import type {
+  ProjectId,
+  UsageBucket,
+  UsageDay,
+  UsageResolution,
+  UsageTokenTotals,
+} from "@t3tools/contracts";
 
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
 import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
@@ -47,14 +53,20 @@ export function makeDayFormatter(timeZone: string): (timestampMs: number) => str
 const HOUR_MS = 60 * 60 * 1000;
 
 export interface ProjectRoot {
+  readonly projectId: ProjectId;
   readonly workspaceRoot: string;
   readonly title: string;
   /** Soft-deleted projects still attribute: the spend happened while they existed. */
   readonly deleted: boolean;
 }
 
+export interface ProjectAttribution {
+  readonly projectId: ProjectId;
+  readonly title: string;
+}
+
 /**
- * Builds the cwd → project-title resolver used by {@link AggregateOptions}.
+ * Builds the cwd → project resolver used by {@link AggregateOptions}.
  *
  * Deepest root wins, so a session in a project nested inside another
  * attributes to the inner one. Live projects outrank deleted ones sharing a
@@ -64,9 +76,10 @@ export interface ProjectRoot {
 export function makeProjectResolver(
   projects: readonly ProjectRoot[],
   separator: string,
-): (cwd: string) => string {
+): (cwd: string) => ProjectAttribution | null {
   const roots = projects
     .map((project) => ({
+      projectId: project.projectId,
       root:
         project.workspaceRoot.length > 1 && project.workspaceRoot.endsWith(separator)
           ? project.workspaceRoot.slice(0, -1)
@@ -77,15 +90,17 @@ export function makeProjectResolver(
     .filter((entry) => entry.root.length > 0 && entry.title.length > 0)
     .sort((a, b) => b.root.length - a.root.length || Number(a.deleted) - Number(b.deleted));
 
-  const byCwd = new Map<string, string>();
+  const byCwd = new Map<string, ProjectAttribution | null>();
   return (cwd) => {
-    if (cwd.length === 0) return "";
-    const cached = byCwd.get(cwd);
-    if (cached !== undefined) return cached;
-    let resolved = "";
-    for (const { root, title } of roots) {
-      if (cwd === root || (cwd.startsWith(root) && cwd[root.length] === separator)) {
-        resolved = title;
+    if (cwd.length === 0) return null;
+    if (byCwd.has(cwd)) return byCwd.get(cwd) ?? null;
+    let resolved: ProjectAttribution | null = null;
+    for (const { projectId, root, title } of roots) {
+      if (
+        cwd === root ||
+        (root === separator ? cwd.startsWith(separator) : cwd.startsWith(`${root}${separator}`))
+      ) {
+        resolved = { projectId, title };
         break;
       }
     }
@@ -113,11 +128,10 @@ export interface AggregateOptions {
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
   /**
-   * Maps a record's working directory to the title of the project it ran in,
-   * or `""` when it ran outside every project. Omitting it leaves every bucket
-   * unattributed.
+   * Maps a record's working directory to the project it ran in, or `null` when
+   * it ran outside every project. Omitting it leaves every bucket unattributed.
    */
-  readonly resolveProject?: (cwd: string) => string;
+  readonly resolveProject?: (cwd: string) => ProjectAttribution | null;
 }
 
 export interface AggregateResult {
@@ -199,12 +213,11 @@ export class UsageAggregator {
             this.#hourlyWindow.sinceTimeMs +
               Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS) * HOUR_MS,
           ).toISOString();
-    // The key is parsed back apart on NUL, which project titles must not carry.
-    const project =
-      this.#options.resolveProject === undefined
-        ? ""
-        : this.#options.resolveProject(record.cwd).replaceAll("\u0000", "");
-    const key = `${day}\u0000${hourStart}\u0000${project}\u0000${record.provider}\u0000${record.model}`;
+    // The key is parsed back apart on NUL, which project fields must not carry.
+    const resolvedProject = this.#options.resolveProject?.(record.cwd) ?? null;
+    const projectId = resolvedProject?.projectId.replaceAll("\u0000", "") ?? "";
+    const project = resolvedProject?.title.replaceAll("\u0000", "") ?? "";
+    const key = `${day}\u0000${hourStart}\u0000${projectId}\u0000${project}\u0000${record.provider}\u0000${record.model}`;
     let bucket = this.#buckets.get(key);
     if (bucket === undefined) {
       bucket = {
@@ -239,12 +252,13 @@ export class UsageAggregator {
   finish(): AggregateResult {
     const buckets: UsageBucket[] = [];
     for (const [key, bucket] of this.#buckets) {
-      const [day = "", hourStart = "", project = "", provider = "", model = ""] =
+      const [day = "", hourStart = "", projectId = "", project = "", provider = "", model = ""] =
         key.split("\u0000");
       buckets.push({
         day: day as UsageDay,
         ...(hourStart === "" ? {} : { hourStart }),
         ...(project === "" ? {} : { project }),
+        ...(projectId === "" ? {} : { projectId: projectId as ProjectId }),
         provider: provider as UsageBucket["provider"],
         model,
         totals: bucket.totals,
@@ -262,6 +276,7 @@ export class UsageAggregator {
         a.day.localeCompare(b.day) ||
         (a.hourStart ?? "").localeCompare(b.hourStart ?? "") ||
         (a.project ?? "").localeCompare(b.project ?? "") ||
+        (a.projectId ?? "").localeCompare(b.projectId ?? "") ||
         a.provider.localeCompare(b.provider) ||
         a.model.localeCompare(b.model),
     );

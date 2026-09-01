@@ -1,6 +1,7 @@
 import {
   USAGE_CONTRACT_VERSION,
   USAGE_MERGE_COMPATIBLE_SINCE,
+  ProjectId,
   type EnvironmentId,
   type UsageBucket,
   type UsageDay,
@@ -365,6 +366,36 @@ describe("mergeUsage", () => {
     expect(merged.projects[0]?.costShare).toBeCloseTo(0.8, 9);
   });
 
+  it("keeps projects with the same title distinct and filters by stable id", () => {
+    const firstId = ProjectId.make("project-first");
+    const secondId = ProjectId.make("project-second");
+    const environments = [
+      environment(
+        "env-a",
+        summary(
+          [
+            bucket({ projectId: firstId, project: "App", costUsd: 6 }),
+            bucket({ projectId: secondId, project: "App", costUsd: 2 }),
+          ],
+          [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+        ),
+      ),
+    ];
+
+    const merged = mergeUsage(environments, USAGE_CONTRACT_VERSION);
+    expect(
+      merged.projects.map((project) => [project.projectId, project.project, project.costUsd]),
+    ).toEqual([
+      [firstId, "App", 6],
+      [secondId, "App", 2],
+    ]);
+
+    const secondKey = merged.projects.find((project) => project.projectId === secondId)?.projectKey;
+    if (secondKey === undefined) throw new Error("second project key missing");
+    const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, { projectFilter: secondKey });
+    expect(filtered.costUsd).toBe(2);
+  });
+
   it("filters every figure except the project list when a project is selected", () => {
     const environments = [
       environment(
@@ -382,7 +413,9 @@ describe("mergeUsage", () => {
       ),
     ];
 
-    const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, { projectFilter: "App" });
+    const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, {
+      projectFilter: "title:App",
+    });
     expect(filtered.costUsd).toBe(6);
     expect(filtered.providers.map((provider) => provider.provider)).toEqual(["claude"]);
     // Session counts are per source directory and cannot be split by project.

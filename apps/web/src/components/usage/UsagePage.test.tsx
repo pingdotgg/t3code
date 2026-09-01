@@ -1,4 +1,4 @@
-import { USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import { ProjectId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -7,6 +7,7 @@ const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
   metric: "cost" as "cost" | "tokens",
   breakdown: "time" as "model" | "project" | "time",
+  projectFilter: undefined as string | null | undefined,
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -30,7 +31,9 @@ vi.mock("react", async (importOriginal) => {
           ? testState.metric
           : initial === "model"
             ? testState.breakdown
-            : initial,
+            : initial === undefined
+              ? testState.projectFilter
+              : initial,
       vi.fn(),
     ]),
   };
@@ -106,6 +109,8 @@ const modelTotals = Object.freeze([
 
 const projectTotals = Object.freeze([
   {
+    projectId: ProjectId.make("project-expensive"),
+    projectKey: "id:project-expensive",
     project: "Expensive Project",
     costUsd: 9,
     totalTokens: 200,
@@ -113,6 +118,8 @@ const projectTotals = Object.freeze([
     costShare: 9 / 16,
   },
   {
+    projectId: null,
+    projectKey: null,
     project: null,
     costUsd: 7,
     totalTokens: 900,
@@ -124,6 +131,7 @@ const projectTotals = Object.freeze([
 beforeEach(() => {
   testState.metric = "cost";
   testState.breakdown = "time";
+  testState.projectFilter = undefined;
   testState.useUsage.mockReturnValue({
     merged: {
       ...mergeUsage([], USAGE_CONTRACT_VERSION),
@@ -201,6 +209,17 @@ describe("UsagePage project breakdown", () => {
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/Outside projects.*Expensive Project/);
+  });
+
+  it("shows only the selected project in the project breakdown", () => {
+    testState.breakdown = "project";
+    testState.projectFilter = "id:project-expensive";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    expect(body).toContain("Expensive Project");
+    expect(body).not.toContain("Outside projects");
   });
 });
 

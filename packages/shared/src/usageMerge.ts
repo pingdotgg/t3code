@@ -9,6 +9,7 @@
 import {
   USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
+  type ProjectId,
   type UsageBucket,
   type UsageProviderKind,
   type UsageSourceFingerprint,
@@ -42,6 +43,9 @@ export interface ModelTotals {
 
 /** One project's slice of the window. `project` is null for buckets that ran outside every project. */
 export interface ProjectTotals {
+  readonly projectId: ProjectId | null;
+  /** Stable, namespaced value accepted by `MergeUsageOptions.projectFilter`. */
+  readonly projectKey: string | null;
   readonly project: string | null;
   readonly costUsd: number;
   readonly totalTokens: number;
@@ -220,13 +224,19 @@ const EMPTY_MERGED: MergedUsage = {
 export interface MergeUsageOptions {
   /**
    * Restrict every figure except `projects` to buckets from one project:
-   * a title selects that project, `null` selects buckets that ran outside
-   * every project, and `undefined` applies no filter.
+   * a project's namespaced key selects that project, `null` selects buckets
+   * that ran outside every project, and `undefined` applies no filter.
    *
    * Sessions are counted per source directory, not per project, so a filtered
    * merge reports `sessions` as 0 rather than a number it cannot know.
    */
   readonly projectFilter?: string | null;
+}
+
+function bucketProjectKey(bucket: UsageBucket): string | null {
+  if (bucket.projectId !== undefined) return `id:${bucket.projectId}`;
+  if (bucket.project !== undefined) return `title:${bucket.project}`;
+  return null;
 }
 
 /**
@@ -278,11 +288,18 @@ export function mergeUsage(
     string,
     { provider: UsageProviderKind; costUsd: number; totalTokens: number; records: number }
   >();
-  // Keyed by title, with null (outside every project) under a NUL sentinel no
-  // title can contain. Accumulated before the project filter applies.
+  // Keyed by stable project id where available, with a namespaced title
+  // fallback for pre-v7 summaries. Accumulated before the project filter.
   const projectAccumulator = new Map<
     string,
-    { costUsd: number; totalTokens: number; records: number }
+    {
+      projectId: ProjectId | null;
+      projectKey: string | null;
+      project: string | null;
+      costUsd: number;
+      totalTokens: number;
+      records: number;
+    }
   >();
   let unfilteredCostUsd = 0;
   const dailyAccumulator = new Map<
@@ -330,8 +347,12 @@ export function mergeUsage(
       const tokens = bucketTokens(bucket);
 
       unfilteredCostUsd += bucket.costUsd;
-      const projectKey = bucket.project ?? "\0";
-      const project = projectAccumulator.get(projectKey) ?? {
+      const projectKey = bucketProjectKey(bucket);
+      const accumulatorKey = projectKey ?? "\0";
+      const project = projectAccumulator.get(accumulatorKey) ?? {
+        projectId: bucket.projectId ?? null,
+        projectKey,
+        project: bucket.project ?? null,
         costUsd: 0,
         totalTokens: 0,
         records: 0,
@@ -339,9 +360,9 @@ export function mergeUsage(
       project.costUsd += bucket.costUsd;
       project.totalTokens += tokens;
       project.records += bucket.records;
-      projectAccumulator.set(projectKey, project);
+      projectAccumulator.set(accumulatorKey, project);
 
-      if (projectFilter !== undefined && (bucket.project ?? null) !== projectFilter) continue;
+      if (projectFilter !== undefined && projectKey !== projectFilter) continue;
 
       costUsd += bucket.costUsd;
       cacheSavingsUsd += bucket.cacheSavingsUsd;
@@ -438,8 +459,10 @@ export function mergeUsage(
     .sort((a, b) => b.costUsd - a.costUsd || b.totalTokens - a.totalTokens);
 
   const projects: ProjectTotals[] = [...projectAccumulator.entries()]
-    .map(([key, totals]) => ({
-      project: key === "\0" ? null : key,
+    .map(([, totals]) => ({
+      projectId: totals.projectId,
+      projectKey: totals.projectKey,
+      project: totals.project,
       costUsd: totals.costUsd,
       totalTokens: totals.totalTokens,
       records: totals.records,

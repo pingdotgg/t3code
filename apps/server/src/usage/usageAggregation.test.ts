@@ -1,3 +1,4 @@
+import { ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import { makeProjectResolver, UsageAggregator } from "./usageAggregation.ts";
@@ -96,12 +97,13 @@ describe("UsageAggregator", () => {
   });
 
   it("splits buckets by resolved project and omits the field when unresolved", () => {
+    const projectId = ProjectId.make("project-app");
     const aggregator = new UsageAggregator({
       timeZone: "UTC",
       sinceDay: "2026-08-01",
       untilDay: "2026-08-31",
       rates,
-      resolveProject: (cwd) => (cwd === "/work/app" ? "App" : ""),
+      resolveProject: (cwd) => (cwd === "/work/app" ? { projectId, title: "App" } : null),
     });
     aggregator.add(record({ cwd: "/work/app" }));
     aggregator.add(record({ cwd: "/work/app" }));
@@ -113,6 +115,7 @@ describe("UsageAggregator", () => {
     expect(buckets[0]?.project).toBeUndefined();
     expect(buckets[0]?.records).toBe(1);
     expect(buckets[1]?.project).toBe("App");
+    expect(buckets[1]?.projectId).toBe(projectId);
     expect(buckets[1]?.records).toBe(2);
   });
 
@@ -226,36 +229,74 @@ describe("UsageAggregator", () => {
 });
 
 describe("makeProjectResolver", () => {
+  const appId = ProjectId.make("project-app");
+  const vendoredId = ProjectId.make("project-vendored");
+  const legacyDeletedId = ProjectId.make("project-legacy-deleted");
+  const legacyId = ProjectId.make("project-legacy");
+  const untitledId = ProjectId.make("project-untitled");
   const resolver = makeProjectResolver(
     [
-      { workspaceRoot: "/work/app", title: "App", deleted: false },
-      { workspaceRoot: "/work/app/vendored", title: "Vendored", deleted: false },
-      { workspaceRoot: "/work/legacy", title: "Legacy Was Deleted", deleted: true },
-      { workspaceRoot: "/work/legacy", title: "Legacy", deleted: false },
-      { workspaceRoot: "/work/untitled", title: "   ", deleted: false },
+      { projectId: appId, workspaceRoot: "/work/app", title: "App", deleted: false },
+      {
+        projectId: vendoredId,
+        workspaceRoot: "/work/app/vendored",
+        title: "Vendored",
+        deleted: false,
+      },
+      {
+        projectId: legacyDeletedId,
+        workspaceRoot: "/work/legacy",
+        title: "Legacy Was Deleted",
+        deleted: true,
+      },
+      {
+        projectId: legacyId,
+        workspaceRoot: "/work/legacy",
+        title: "Legacy",
+        deleted: false,
+      },
+      {
+        projectId: untitledId,
+        workspaceRoot: "/work/untitled",
+        title: "   ",
+        deleted: false,
+      },
     ],
     "/",
   );
 
   it("matches the root itself and any path under it", () => {
-    expect(resolver("/work/app")).toBe("App");
-    expect(resolver("/work/app/src/deep")).toBe("App");
+    expect(resolver("/work/app")).toEqual({ projectId: appId, title: "App" });
+    expect(resolver("/work/app/src/deep")).toEqual({ projectId: appId, title: "App" });
   });
 
   it("requires a path-segment boundary, not a bare prefix", () => {
-    expect(resolver("/work/app-sibling")).toBe("");
+    expect(resolver("/work/app-sibling")).toBeNull();
   });
 
   it("prefers the deepest matching root", () => {
-    expect(resolver("/work/app/vendored/lib")).toBe("Vendored");
+    expect(resolver("/work/app/vendored/lib")).toEqual({
+      projectId: vendoredId,
+      title: "Vendored",
+    });
   });
 
   it("prefers a live project over a deleted one sharing the root", () => {
-    expect(resolver("/work/legacy/src")).toBe("Legacy");
+    expect(resolver("/work/legacy/src")).toEqual({ projectId: legacyId, title: "Legacy" });
   });
 
   it("never attributes to a blank title or an empty cwd", () => {
-    expect(resolver("/work/untitled/src")).toBe("");
-    expect(resolver("")).toBe("");
+    expect(resolver("/work/untitled/src")).toBeNull();
+    expect(resolver("")).toBeNull();
+  });
+
+  it("matches descendants when the project root is the filesystem root", () => {
+    const rootId = ProjectId.make("project-root");
+    const rootResolver = makeProjectResolver(
+      [{ projectId: rootId, workspaceRoot: "/", title: "Root", deleted: false }],
+      "/",
+    );
+
+    expect(rootResolver("/work/app")).toEqual({ projectId: rootId, title: "Root" });
   });
 });

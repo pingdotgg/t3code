@@ -73,7 +73,7 @@ export interface UsageView {
 
 export function useUsage(
   input: UsageSummaryInput,
-  /** A project title, `null` for outside-projects buckets, `undefined` for no filter. */
+  /** A namespaced project key, `null` for outside-projects buckets, `undefined` for no filter. */
   projectFilter?: string | null,
 ): UsageView {
   const windowKey = useMemo(

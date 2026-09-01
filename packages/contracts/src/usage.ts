@@ -14,22 +14,22 @@
  */
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
  * Bumped whenever the shape of {@link UsageSummary} changes incompatibly. The
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 6 as const;
+export const USAGE_CONTRACT_VERSION = 7 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v5 only adds `grok` to {@link UsageProviderKind}; v6 only adds the optional
- * bucket `project`. v4 Claude/Codex buckets remain valid, so mixed-version
- * environments keep those totals instead of treating every older server as
- * stale.
+ * v5 only adds `grok` to {@link UsageProviderKind}; v6 adds the optional bucket
+ * `project`; v7 adds its optional stable `projectId`. v4 Claude/Codex buckets
+ * remain valid, so mixed-version environments keep those totals instead of
+ * treating every older server as stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
@@ -101,6 +101,8 @@ export const UsageBucket = Schema.Struct({
    * predating this field).
    */
   project: Schema.optional(TrimmedNonEmptyString),
+  /** Stable identity for `project`; absent on summaries from pre-v7 servers. */
+  projectId: Schema.optional(ProjectId),
   provider: UsageProviderKind,
   model: TrimmedNonEmptyString,
   totals: UsageTokenTotals,

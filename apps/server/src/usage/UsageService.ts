@@ -257,6 +257,7 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
     return makeProjectResolver(
       projects.map((project) => ({
+        projectId: project.projectId,
         workspaceRoot: project.workspaceRoot,
         title: project.title,
         deleted: project.deletedAt !== null,

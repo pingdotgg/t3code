@@ -55,7 +55,7 @@ export function UsagePage() {
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const [breakdown, setBreakdown] = useState<"model" | "project" | "time">("model");
-  // A project title, null for work outside every project, undefined for all.
+  // A namespaced project key, null for work outside every project, undefined for all.
   const [projectFilter, setProjectFilter] = useState<string | null | undefined>(undefined);
   const { days: windowDays, custom: isCustomWindow, window } = windowSelection;
   const isPast24Hours = !isCustomWindow && windowDays === 1;
@@ -92,15 +92,22 @@ export function UsagePage() {
         : merged.models,
     [breakdown, merged.models, metric],
   );
-  const breakdownProjects = useMemo(
-    () =>
-      metric === "tokens"
-        ? merged.projects.toSorted(
-            (left, right) => right.totalTokens - left.totalTokens || right.costUsd - left.costUsd,
-          )
-        : merged.projects,
-    [merged.projects, metric],
-  );
+  const breakdownProjects = useMemo(() => {
+    const scoped =
+      projectFilter === undefined
+        ? merged.projects
+        : merged.projects.filter((project) => project.projectKey === projectFilter);
+    return metric === "tokens"
+      ? scoped.toSorted(
+          (left, right) => right.totalTokens - left.totalTokens || right.costUsd - left.costUsd,
+        )
+      : scoped;
+  }, [merged.projects, metric, projectFilter]);
+  const selectedProjectLabel =
+    projectFilter === undefined
+      ? null
+      : (merged.projects.find((project) => project.projectKey === projectFilter)?.project ??
+        "Outside projects");
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
   // Session figures are per transcript directory; a project filter cannot
@@ -303,7 +310,7 @@ export function UsagePage() {
                         {(() => {
                           const scope = sessionsKnown
                             ? `${formatCount(merged.sessions)} sessions`
-                            : (projectFilter ?? "Outside projects");
+                            : (selectedProjectLabel ?? "Outside projects");
                           return metric === "cost" ? `${scope} · API estimate` : scope;
                         })()}
                       </span>
@@ -459,7 +466,7 @@ export function UsagePage() {
                         ) : (
                           breakdownProjects.map((project) => (
                             <tr
-                              key={project.project ?? "\0"}
+                              key={project.projectKey ?? "\0"}
                               className="border-b border-border/50 transition-colors hover:bg-muted/50"
                             >
                               <td className="py-2">
@@ -667,8 +674,8 @@ function UsageDateRangeInputs({
 
 /**
  * Select values are plain strings, so the three filter states get distinct
- * encodings: sentinels for "all" and "outside", a prefix for titles so a
- * project literally named "all" cannot collide with the sentinel.
+ * encodings: sentinels for "all" and "outside", while attributed projects
+ * already carry a namespaced stable key from the merge layer.
  */
 const ALL_PROJECTS_VALUE = "all";
 const OUTSIDE_PROJECTS_VALUE = "outside";
@@ -696,7 +703,10 @@ function UsageProjectSelect({
   readonly filter: string | null | undefined;
   readonly onChange: (filter: string | null | undefined) => void;
 }) {
-  const label = filter === undefined ? "All projects" : (filter ?? "Outside projects");
+  const label =
+    filter === undefined
+      ? "All projects"
+      : (projects.find((project) => project.projectKey === filter)?.project ?? "Outside projects");
   return (
     <Select
       value={projectFilterValue(filter)}
@@ -720,7 +730,10 @@ function UsageProjectSelect({
               Outside projects
             </SelectItem>
           ) : (
-            <SelectItem key={project.project} value={`${PROJECT_VALUE_PREFIX}${project.project}`}>
+            <SelectItem
+              key={project.projectKey}
+              value={`${PROJECT_VALUE_PREFIX}${project.projectKey}`}
+            >
               {project.project}
             </SelectItem>
           ),
