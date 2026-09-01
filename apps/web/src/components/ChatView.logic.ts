@@ -24,7 +24,11 @@ import {
   type Thread,
   type ThreadShell,
 } from "../types";
-import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import {
+  type ComposerFileAttachment,
+  type ComposerImageAttachment,
+  type DraftThreadState,
+} from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
@@ -386,6 +390,25 @@ export function resolveBackgroundDraftWorkspaceOptions(input: {
   };
 }
 
+/**
+ * Drops a file's server-side upload reference so a recovery snapshot does not
+ * point at an upload that was already released when the turn was accepted. On
+ * restore, a file that still has local bytes re-uploads cleanly, and a byte-less
+ * file (hydrated from persistence, `file: null`) honestly surfaces as
+ * needs-reattach instead of appearing attached and then silently failing the
+ * upload queue's verification against the deleted upload.
+ */
+export function clearComposerFileUploadReference(
+  file: ComposerFileAttachment,
+): ComposerFileAttachment {
+  const {
+    uploadedAttachmentId: _uploadedAttachmentId,
+    uploadEnvironmentId: _uploadEnvironmentId,
+    ...rest
+  } = file;
+  return rest;
+}
+
 export function cloneComposerImageForRetry(
   image: ComposerImageAttachment,
 ): ComposerImageAttachment {
@@ -713,12 +736,16 @@ export function deriveTurnFailureRecoveryAction(input: {
     (input.latestTurnId !== null && input.latestTurnId !== input.preSendTurnId);
   // A steered send folds into the already-running turn, so its turn id does not
   // change; if the accept-then-fail also reuses the pre-send millisecond,
-  // neither `sessionAdvanced` clause fires. The session status crossing into
-  // "error" from a non-error pre-send value is itself proof this send's turn
-  // failed: a stale prior-turn error would already have been "error" at send
-  // time (the case guarded below), so it cannot masquerade as this transition.
-  const failedSincePreSend =
-    input.preSendSessionStatus !== "error" && input.sessionStatus === "error";
+  // neither `sessionAdvanced` clause fires. A crossing into "error" then stands
+  // in as the freshness signal — but only for a steered send, i.e. one made
+  // while a turn was already in progress ("starting"/"running"). A fresh send
+  // mints a new turn, so its failure advances `latestTurnId` and is caught by
+  // `sessionAdvanced` above; restricting this fallback to an in-progress
+  // pre-send state stops a prior turn's error that merely lands during our
+  // awaits (pre-send read as idle/ready) from masquerading as this send's.
+  const preSendTurnWasInProgress =
+    input.preSendSessionStatus === "starting" || input.preSendSessionStatus === "running";
+  const failedSincePreSend = preSendTurnWasInProgress && input.sessionStatus === "error";
   if (input.sessionStatus === "error" && (sessionAdvanced || failedSincePreSend)) {
     // Never clobber text the user has started typing since the send; the
     // failed attempt is still in the transcript for them to copy from.

@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { Thread, ThreadShell } from "../types";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
+import { composerFileNeedsReattach, type ComposerFileAttachment } from "../composerDraftStore";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
@@ -17,6 +18,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  clearComposerFileUploadReference,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   deriveTurnFailureRecoveryAction,
@@ -913,6 +915,24 @@ describe("deriveTurnFailureRecoveryAction", () => {
     ).toBe("wait");
   });
 
+  it("waits when a prior turn's error lands during our awaits and no turn was in progress at send", () => {
+    // The session was idle when the user sent (no turn to steer into), so a
+    // freshly-minted turn's own failure would advance `latestTurnId`. An "error"
+    // that appears with neither the turn id nor the timestamp advancing is a
+    // prior turn's error surfacing during our RPC awaits, not this send's — it
+    // must not masquerade as this send's failure and clobber the composer.
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        preSendTurnId: TurnId.make("turn-1"),
+        latestTurnId: TurnId.make("turn-1"),
+        preSendSessionStatus: "idle",
+        sessionStatus: "error",
+        sessionUpdatedAt: base.preSendSessionUpdatedAt,
+      }),
+    ).toBe("wait");
+  });
+
   it("restores an accept-then-fail landing in the same millisecond via a new turn id", () => {
     // The failing session.set can share the pre-send millisecond timestamp; a
     // freshly advanced turn id is enough to know the failure is this send's.
@@ -985,6 +1005,37 @@ describe("deriveTurnFailureRecoveryAction", () => {
 
   it("keeps waiting while the accepted turn is still running", () => {
     expect(deriveTurnFailureRecoveryAction(base)).toBe("wait");
+  });
+});
+
+describe("clearComposerFileUploadReference", () => {
+  const fileWithBytes: ComposerFileAttachment = {
+    type: "file",
+    id: "file-1",
+    name: "notes.pdf",
+    mimeType: "application/pdf",
+    sizeBytes: 10,
+    file: new File([new Uint8Array([1, 2, 3])], "notes.pdf", { type: "application/pdf" }),
+    uploadedAttachmentId: "pending-upload-1",
+    uploadEnvironmentId: EnvironmentId.make("env-1"),
+  };
+
+  it("drops the released upload reference so a file with bytes re-uploads cleanly", () => {
+    const cleared = clearComposerFileUploadReference(fileWithBytes);
+    expect(cleared.uploadedAttachmentId).toBeUndefined();
+    expect(cleared.uploadEnvironmentId).toBeUndefined();
+    // Bytes survive, so it is not a needs-reattach placeholder.
+    expect(cleared.file).toBe(fileWithBytes.file);
+    expect(composerFileNeedsReattach(cleared)).toBe(false);
+  });
+
+  it("turns a byte-less file into an honest needs-reattach row", () => {
+    // A file hydrated from persistence has no local bytes; once its released
+    // upload id is stripped it must surface as needs-reattach immediately
+    // instead of appearing attached and silently failing verification.
+    const byteless: ComposerFileAttachment = { ...fileWithBytes, file: null };
+    expect(composerFileNeedsReattach(byteless)).toBe(false);
+    expect(composerFileNeedsReattach(clearComposerFileUploadReference(byteless))).toBe(true);
   });
 });
 

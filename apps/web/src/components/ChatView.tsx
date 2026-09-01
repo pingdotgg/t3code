@@ -365,6 +365,7 @@ import {
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
   PullRequestDialogState,
+  clearComposerFileUploadReference,
   cloneComposerImageForRetry,
   deriveLockedProvider,
   readFileAsDataUrl,
@@ -6323,7 +6324,12 @@ function ChatViewContent(props: ChatViewProps) {
           threadId: threadIdForSend,
           prompt: promptForSend,
           images: composerImagesSnapshot,
-          files: composerFilesSnapshot,
+          // The uploads were just released, so the snapshot must not keep their
+          // now-dangling ids: files with bytes re-upload on restore, byte-less
+          // files honestly surface as needs-reattach. Images always carry bytes.
+          files: turnUsesAttachmentUploads
+            ? composerFilesSnapshot.map(clearComposerFileUploadReference)
+            : composerFilesSnapshot,
           terminalContexts: composerTerminalContextsSnapshot,
           elementContexts: composerElementContextsSnapshot,
           previewAnnotations: composerPreviewAnnotationsSnapshot,
