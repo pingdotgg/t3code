@@ -21,11 +21,19 @@ export const HIDDEN_BROWSER_WEBVIEW_OFFSET = -100_000;
 export function resolveHostedBrowserWebviewWrapperStyle(input: {
   readonly active: boolean;
   readonly renderingActive: boolean;
+  readonly keepPaintableWhenInactive?: boolean;
   readonly cornerRadius?: number;
   readonly rect: BrowserSurfaceRect | null;
   readonly hiddenSize: HostedBrowserWebviewSize;
 }): HostedBrowserWebviewWrapperStyle {
-  const { active, cornerRadius = 0, hiddenSize, rect, renderingActive } = input;
+  const {
+    active,
+    cornerRadius = 0,
+    hiddenSize,
+    keepPaintableWhenInactive = false,
+    rect,
+    renderingActive,
+  } = input;
   if (active && rect) {
     return {
       left: rect.x,
@@ -38,6 +46,21 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
     };
   }
 
+  if (renderingActive) {
+    // Electron stops compositing a guest that is fully outside the window, even
+    // when background throttling is disabled. Keep capture-active guests inside
+    // the viewport but behind the app so recordings receive complete frames.
+    return {
+      left: 0,
+      top: 0,
+      width: hiddenSize.width,
+      height: hiddenSize.height,
+      zIndex: -1,
+      pointerEvents: "none",
+      visibility: "visible",
+    };
+  }
+
   return {
     left: HIDDEN_BROWSER_WEBVIEW_OFFSET,
     top: HIDDEN_BROWSER_WEBVIEW_OFFSET,
@@ -45,6 +68,6 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
     height: hiddenSize.height,
     zIndex: -1,
     pointerEvents: "none",
-    visibility: renderingActive ? "visible" : "hidden",
+    visibility: keepPaintableWhenInactive ? "visible" : "hidden",
   };
 }

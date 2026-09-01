@@ -1,8 +1,5 @@
-import type {
-  DesktopPreviewRecordingArtifact,
-  DesktopPreviewRecordingSource,
-  ScopedThreadRef,
-} from "@t3tools/contracts";
+import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
+import type { DesktopPreviewRecordingArtifact, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/unstable/reactivity";
@@ -33,6 +30,17 @@ export class BrowserRecordingConflictError extends Schema.TaggedErrorClass<Brows
 ) {
   override get message(): string {
     return `Cannot record tab ${this.requestedTabId} while tab ${this.activeTabId} is already being recorded.`;
+  }
+}
+
+export class BrowserRecordingStartCancelledError extends Schema.TaggedErrorClass<BrowserRecordingStartCancelledError>()(
+  "BrowserRecordingStartCancelledError",
+  {
+    tabId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Browser recording start was cancelled for tab ${this.tabId}.`;
   }
 }
 
@@ -82,9 +90,21 @@ export class BrowserRecordingOperationError extends Schema.TaggedErrorClass<Brow
 
 const isBrowserRecordingOperationError = Schema.is(BrowserRecordingOperationError);
 const isBrowserRecordingCaptureTimeoutError = Schema.is(BrowserRecordingCaptureTimeoutError);
+export const isBrowserRecordingStartCancelledError = Schema.is(BrowserRecordingStartCancelledError);
+
+interface StartingBrowserRecordingLifecycle {
+  readonly phase: "starting";
+  queuedForGrant: boolean | null;
+  grantStarted: boolean;
+  stopRequestedBeforeGrant: boolean;
+  cancelledBeforeGrant: boolean;
+  readonly cancelledBeforeGrantSignal: Promise<void>;
+  readonly cancelBeforeGrant: () => void;
+  readonly setQueuedForGrant: (queued: boolean) => void;
+}
 
 type BrowserRecordingLifecycle =
-  | { readonly phase: "starting" }
+  | StartingBrowserRecordingLifecycle
   | { readonly phase: "recording" }
   | {
       readonly phase: "stopping";
@@ -124,6 +144,53 @@ export function useActiveBrowserRecordingTabIds(): ReadonlySet<string> {
 }
 
 const activeRecordings = new Map<string, ActiveRecording>();
+let displayMediaGrantTail = Promise.resolve();
+let displayMediaGrantQueueDepth = 0;
+
+const makeStartingBrowserRecordingLifecycle = (): StartingBrowserRecordingLifecycle => {
+  let signalCancellation!: () => void;
+  const cancelledBeforeGrantSignal = new Promise<void>((resolve) => {
+    signalCancellation = resolve;
+  });
+  const lifecycle: StartingBrowserRecordingLifecycle = {
+    phase: "starting",
+    queuedForGrant: null,
+    grantStarted: false,
+    stopRequestedBeforeGrant: false,
+    cancelledBeforeGrant: false,
+    cancelledBeforeGrantSignal,
+    cancelBeforeGrant: () => {
+      // Queue position is unknown during paint/settings warmup. Keep the stop request so a start
+      // that later turns out to be contended can still be cancelled before native capture.
+      lifecycle.stopRequestedBeforeGrant = true;
+      if (lifecycle.queuedForGrant && !lifecycle.grantStarted && !lifecycle.cancelledBeforeGrant) {
+        lifecycle.cancelledBeforeGrant = true;
+        signalCancellation();
+      }
+    },
+    setQueuedForGrant: (queued) => {
+      lifecycle.queuedForGrant = queued;
+      if (queued && lifecycle.stopRequestedBeforeGrant) lifecycle.cancelBeforeGrant();
+    },
+  };
+  return lifecycle;
+};
+
+const queueDisplayMediaGrant = <T>(
+  useGrant: () => Promise<T>,
+): { readonly queued: boolean; readonly result: Promise<T> } => {
+  const queued = displayMediaGrantQueueDepth > 0;
+  displayMediaGrantQueueDepth += 1;
+  const result = displayMediaGrantTail.then(useGrant);
+  const settleGrant = () => {
+    displayMediaGrantQueueDepth -= 1;
+  };
+  displayMediaGrantTail = result.then(
+    () => settleGrant(),
+    () => settleGrant(),
+  );
+  return { queued, result };
+};
 
 const publishActiveRecordingTabIds = (): void => {
   appAtomRegistry.set(activeBrowserRecordingTabIdsAtom, {
@@ -184,23 +251,12 @@ const createMediaRecorder = (stream: MediaStream): MediaRecorder => {
   return mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
 };
 
-const captureTabMediaStream = (
-  source: DesktopPreviewRecordingSource,
-  frameRate: number,
-): Promise<MediaStream> =>
-  navigator.mediaDevices.getUserMedia({
+const captureTabMediaStream = (frameRate: number): Promise<MediaStream> =>
+  // The desktop main process routes this request to the tab that `startScreencast` armed, so the
+  // stream already arrives at that tab's native size and needs no source or dimension constraints.
+  navigator.mediaDevices.getDisplayMedia({
     audio: false,
-    video: {
-      mandatory: {
-        chromeMediaSource: "tab",
-        chromeMediaSourceId: source.sourceId,
-        minWidth: source.width,
-        maxWidth: source.width,
-        minHeight: source.height,
-        maxHeight: source.height,
-        maxFrameRate: frameRate,
-      },
-    } as unknown as MediaTrackConstraints,
+    video: { frameRate: { max: frameRate } },
   });
 
 const stopMediaRecorder = async (recorder: MediaRecorder | null): Promise<void> => {
@@ -216,14 +272,75 @@ const stopMediaStream = (stream: MediaStream | null): void => {
   for (const track of stream?.getTracks() ?? []) track.stop();
 };
 
+interface PendingTabMediaCapture {
+  readonly start: () => void;
+}
+
+const pendingTabMediaCaptures = new Map<string, PendingTabMediaCapture>();
+
+const prepareTabMediaCapture = (tabId: string, frameRate: number) => {
+  let acceptStream = true;
+  let capturedStream: MediaStream | null = null;
+  let resolveCapture!: (stream: MediaStream | PromiseLike<MediaStream>) => void;
+  let rejectCapture!: (cause: unknown) => void;
+  const capturePromise = new Promise<MediaStream>((resolve, reject) => {
+    resolveCapture = resolve;
+    rejectCapture = reject;
+  }).then((stream) => {
+    capturedStream = stream;
+    if (!acceptStream) {
+      stopMediaStream(stream);
+      capturedStream = null;
+    }
+    return stream;
+  });
+  const pending: PendingTabMediaCapture = {
+    start: () => {
+      try {
+        // Electron invokes this callback through executeJavaScript(..., true), so even automated
+        // and delayed queued starts satisfy getDisplayMedia's transient-activation requirement.
+        resolveCapture(captureTabMediaStream(frameRate));
+      } catch (cause) {
+        rejectCapture(cause);
+      }
+    },
+  };
+  pendingTabMediaCaptures.set(tabId, pending);
+  return {
+    capturePromise,
+    cancel: () => {
+      acceptStream = false;
+      if (capturedStream) {
+        stopMediaStream(capturedStream);
+        capturedStream = null;
+      }
+      if (pendingTabMediaCaptures.get(tabId) === pending) pendingTabMediaCaptures.delete(tabId);
+      void capturePromise.catch(() => undefined);
+    },
+  };
+};
+
+const triggerTabMediaCapture = (tabId: unknown): boolean => {
+  if (typeof tabId !== "string") return false;
+  const pending = pendingTabMediaCaptures.get(tabId);
+  if (!pending) return false;
+  pendingTabMediaCaptures.delete(tabId);
+  pending.start();
+  return true;
+};
+
+Object.defineProperty(globalThis, DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER, {
+  configurable: true,
+  value: triggerTabMediaCapture,
+});
+
 const captureTabMediaStreamWithTimeout = async (
   tabId: string,
-  source: DesktopPreviewRecordingSource,
-  frameRate: number,
+  capturePromise: Promise<MediaStream>,
 ): Promise<MediaStream> => {
   let acceptStream = true;
   let timeoutId: number | null = null;
-  const streamPromise = captureTabMediaStream(source, frameRate).then((stream) => {
+  const streamPromise = capturePromise.then((stream) => {
     if (!acceptStream) stopMediaStream(stream);
     return stream;
   });
@@ -382,6 +499,7 @@ export async function startBrowserRecording(
   const startupSettled = new Promise<void>((resolve) => {
     settleStartup = resolve;
   });
+  const startingLifecycle = makeStartingBrowserRecordingLifecycle();
   const releaseSurfaceActivity = acquireBrowserSurfaceActivity(tabId);
   const recording: ActiveRecording = {
     tabId,
@@ -393,7 +511,7 @@ export async function startBrowserRecording(
     releaseSurfaceActivity,
     stream: null,
     recorder: null,
-    lifecycle: { phase: "starting" },
+    lifecycle: startingLifecycle,
   };
   activeRecordings.set(tabId, recording);
   publishActiveRecordingTabIds();
@@ -402,23 +520,9 @@ export async function startBrowserRecording(
       () => getClientSettings().browserRecordingFrameRate,
     );
     const [frameRate] = await Promise.all([frameRatePromise, waitForBrowserRecordingPaint()]);
-    let source: DesktopPreviewRecordingSource;
-    try {
-      source = await bridge.recording.startScreencast(tabId);
-    } catch (cause) {
-      if (!isRecordingStarting(recording)) {
-        throw recordingStartupCancelledError(recording, cause);
-      }
-      clearActiveRecording(recording);
-      throw new BrowserRecordingOperationError({
-        operation: "start-screencast",
-        tabId,
-        cause,
-      });
-    }
     const throwIfStartupCancelled = async (): Promise<void> => {
-      // A stop requested during startup should let startup finish so the
-      // caller receives a real artifact. Only replacement/removal cancels it.
+      // Once a grant starts, a stop lets startup finish so the caller receives an artifact.
+      // Only a contended start can be cancelled before it reaches native capture.
       if (activeRecordings.get(tabId) === recording) return;
       try {
         await bridge.recording.stopScreencast(tabId);
@@ -434,30 +538,67 @@ export async function startBrowserRecording(
       }
       throw recordingStartupCancelledError(recording);
     };
-    await throwIfStartupCancelled();
-    try {
-      recording.stream = await captureTabMediaStreamWithTimeout(tabId, source, frameRate);
-    } catch (cause) {
-      const cleanupCause = await cleanupFailedRecordingStart(bridge, recording);
-      if (isBrowserRecordingCaptureTimeoutError(cause) && cleanupCause === undefined) throw cause;
-      throw new BrowserRecordingOperationError({
-        operation: "capture-media-stream",
-        tabId,
-        cause:
-          cleanupCause === undefined
-            ? cause
-            : new AggregateError(
-                [cause, cleanupCause],
-                `Browser media capture and cleanup failed for tab ${tabId}.`,
-                { cause },
-              ),
-      });
-    }
+    // The desktop process exposes one display-media grant at a time. Keep only the
+    // arm-to-capture handoff exclusive; acquired streams can record concurrently.
+    const grant = queueDisplayMediaGrant(async () => {
+      if (startingLifecycle.cancelledBeforeGrant) {
+        throw new BrowserRecordingStartCancelledError({ tabId });
+      }
+      startingLifecycle.grantStarted = true;
+      await throwIfStartupCancelled();
+      const capture = prepareTabMediaCapture(tabId, frameRate);
+      try {
+        await bridge.recording.startScreencast(tabId);
+      } catch (cause) {
+        capture.cancel();
+        if (!isRecordingStarting(recording)) {
+          throw recordingStartupCancelledError(recording, cause);
+        }
+        clearActiveRecording(recording);
+        throw new BrowserRecordingOperationError({
+          operation: "start-screencast",
+          tabId,
+          cause,
+        });
+      }
+      try {
+        await throwIfStartupCancelled();
+      } catch (cause) {
+        capture.cancel();
+        throw cause;
+      }
+      try {
+        recording.stream = await captureTabMediaStreamWithTimeout(tabId, capture.capturePromise);
+        return recording.stream;
+      } catch (cause) {
+        const cleanupCause = await cleanupFailedRecordingStart(bridge, recording);
+        if (isBrowserRecordingCaptureTimeoutError(cause) && cleanupCause === undefined) throw cause;
+        throw new BrowserRecordingOperationError({
+          operation: "capture-media-stream",
+          tabId,
+          cause:
+            cleanupCause === undefined
+              ? cause
+              : new AggregateError(
+                  [cause, cleanupCause],
+                  `Browser media capture and cleanup failed for tab ${tabId}.`,
+                  { cause },
+                ),
+        });
+      }
+    });
+    startingLifecycle.setQueuedForGrant(grant.queued);
+    const stream = await Promise.race([
+      grant.result,
+      startingLifecycle.cancelledBeforeGrantSignal.then(() => {
+        throw new BrowserRecordingStartCancelledError({ tabId });
+      }),
+    ]);
     await throwIfStartupCancelled();
 
     let recorder: MediaRecorder;
     try {
-      recorder = createMediaRecorder(recording.stream);
+      recorder = createMediaRecorder(stream);
       recording.recorder = recorder;
       recorder.addEventListener("dataavailable", (event) => {
         if (event.data.size > 0) chunks.push(event.data);
@@ -639,6 +780,7 @@ export function stopBrowserRecording(
   const recording = activeRecordings.get(tabId);
   if (!bridge || !recording) return Promise.resolve(null);
   if (recording.lifecycle.phase === "stopping") return recording.lifecycle.stopPromise;
+  if (recording.lifecycle.phase === "starting") recording.lifecycle.cancelBeforeGrant();
 
   const stopPromise = Promise.resolve()
     .then(() => finalizeBrowserRecording(bridge, recording))
