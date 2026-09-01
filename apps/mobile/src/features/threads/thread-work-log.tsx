@@ -260,7 +260,7 @@ const WORK_ROW_HEIGHT = 32; // min-h-8
 const WORK_ROW_GAP = 1; // gap-px
 const WORK_LOG_BOTTOM_MARGIN = 4; // mb-1
 
-export const WORK_GROUP_TOGGLE_HEIGHT = 36; // min-h-8 (32) + mb-1 (4)
+export const WORK_GROUP_TOGGLE_HEIGHT = 32; // min-h-8
 
 export function collapsedWorkLogHeight(activities: ReadonlyArray<ThreadFeedActivity>): number {
   const rows = activities;
@@ -433,7 +433,7 @@ export function ThreadWorkGroupToggle(props: {
   const icon = toolGroupSummarySymbolName(props.summaryKind);
 
   return (
-    <View className="-mx-1 mb-1 px-1 py-0">
+    <View className="-mx-1 px-1 py-0">
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: props.expanded }}

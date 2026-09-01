@@ -70,7 +70,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   FadeIn,
   FadeInUp,
-  FadeOut,
   LinearTransition,
   type SharedValue,
 } from "react-native-reanimated";
@@ -166,10 +165,9 @@ function formatMessageTime(input: string): string {
 // text-sm line at every supported base font size (26px at the 22pt maximum),
 // so its height is a constant; a drifted value costs one correction on
 // measure, not a persistent offset.
-const TURN_FOLD_HEIGHT = 56; // min-h-11 (44) + mb-3 (12)
+const TURN_FOLD_HEIGHT = 48; // min-h-11 (44) + mb-1 (4)
 const THREAD_FEED_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
 const THREAD_FEED_DISCLOSURE_ENTER_TRANSITION = FadeIn.duration(140);
-const THREAD_FEED_DISCLOSURE_EXIT_TRANSITION = FadeOut.duration(120);
 const EMPTY_DISCLOSURE_ENTRY_IDS: ReadonlySet<string> = new Set();
 
 // Entering animations must only play for rows born just now — LegendList
@@ -1351,7 +1349,7 @@ function renderFeedEntry(
         accessibilityState={{ expanded: entry.expanded }}
         onPress={() => props.onToggleTurnFold(entry.turnId)}
         hitSlop={4}
-        className="mb-3 min-h-11 flex-row items-center gap-2 border-b border-adaptive-neutral-200-a80-white-a8 px-2"
+        className="mb-1 min-h-11 flex-row items-center gap-2 border-b border-adaptive-neutral-200-a80-white-a8 px-2"
       >
         <Text className="font-t3-medium text-sm tabular-nums text-foreground-muted">
           {entry.label}
@@ -1484,7 +1482,7 @@ function renderFeedEntry(
     const enterAnimated = isFreshTimestamp(message.createdAt);
     return (
       <Animated.View
-        className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-2 px-1")}
+        className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-1 px-1")}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
         {renderedText.trim().length > 0 ? (
@@ -2428,6 +2426,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [expandedWorkRows],
   );
 
+  // Virtualized rows must disappear immediately: retaining their exiting
+  // text can overlap the rows moving into the same space.
   const renderItem = useCallback(
     (info: { item: ThreadFeedEntry; index: number }) => (
       <Animated.View
@@ -2437,7 +2437,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             ? THREAD_FEED_DISCLOSURE_ENTER_TRANSITION
             : undefined
         }
-        exiting={THREAD_FEED_DISCLOSURE_EXIT_TRANSITION}
       >
         {renderFeedEntry(info, {
           environmentId: props.environmentId,
