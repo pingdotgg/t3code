@@ -34,6 +34,7 @@ interface UpdatesHarnessOptions {
   readonly env?: Record<string, string | undefined>;
   readonly updateRepository?: string | null;
   readonly appPath?: string;
+  readonly appName?: string;
 }
 
 const flushCallbacks = Effect.yieldNow;
@@ -149,6 +150,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     platform: "darwin",
     processArch: "x64",
     appVersion: "1.2.3",
+    ...(options.appName === undefined ? {} : { appName: options.appName }),
     appPath: options.appPath ?? "/repo",
     isPackaged: true,
     resourcesPath: "/missing/resources",
@@ -707,6 +709,50 @@ describe("DesktopUpdates", () => {
 
         const changedState = yield* updates.setChannel("nightly");
         assert.equal(changedState.channel, "nightly");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("allows a macOS update after switching packaged channels", () => {
+    const harness = makeHarness({
+      appName: "T3 Code (Nightly)",
+      appPath: "/Applications/T3 Code (Alpha).app/Contents/Resources/app.asar",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+
+        assert.isTrue(result.accepted);
+        assert.equal(harness.stopBackendCount(), 1);
+        assert.equal(harness.quitAndInstallCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("allows a downstream macOS update after switching packaged channels", () => {
+    const harness = makeHarness({
+      appName: "T3 Code (Fork Nightly)",
+      appPath: "/Applications/T3 Code (Fork Alpha).app/Contents/Resources/app.asar",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+
+        assert.isTrue(result.accepted);
+        assert.equal(harness.stopBackendCount(), 1);
+        assert.equal(harness.quitAndInstallCount(), 1);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

@@ -2168,7 +2168,11 @@ export const resolveDesktopBuildIdentity = Effect.fn("resolveDesktopBuildIdentit
     });
   }
 
-  const distributionSlug = normalizedDistribution.toLowerCase().replaceAll(" ", "-");
+  const readableDistributionSlug = normalizedDistribution.toLowerCase().replaceAll(" ", "-");
+  const exactDistributionSlug = Array.from(normalizedDistribution, (character) =>
+    character.charCodeAt(0).toString(16).padStart(2, "0"),
+  ).join("");
+  const distributionSlug = `${readableDistributionSlug}-${exactDistributionSlug}`;
   const stageLabel = resolveDesktopUpdateChannel(version) === "nightly" ? "Nightly" : "Alpha";
   return {
     appId: `${DESKTOP_APP_ID}.${distributionSlug}`,

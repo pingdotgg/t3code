@@ -261,11 +261,28 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(
         yield* resolveDesktopBuildIdentity("0.0.17-nightly.20260413.42", " Fork "),
         {
-          appId: "com.t3tools.t3code.fork",
-          packageName: "t3code-fork",
+          appId: "com.t3tools.t3code.fork-466f726b",
+          packageName: "t3code-fork-466f726b",
           productName: "T3 Code (Fork Nightly)",
         },
       );
+    }),
+  );
+
+  it.effect("keeps distinct downstream distribution identities isolated", () =>
+    Effect.gen(function* () {
+      const spaced = yield* resolveDesktopBuildIdentity("0.0.17-nightly.20260413.42", "Foo Bar");
+      const hyphenated = yield* resolveDesktopBuildIdentity(
+        "0.0.17-nightly.20260413.42",
+        "Foo-Bar",
+      );
+      const uppercase = yield* resolveDesktopBuildIdentity("0.0.17-nightly.20260413.42", "Fork");
+      const lowercase = yield* resolveDesktopBuildIdentity("0.0.17-nightly.20260413.42", "fork");
+
+      assert.notEqual(spaced.appId, hyphenated.appId);
+      assert.notEqual(spaced.packageName, hyphenated.packageName);
+      assert.notEqual(uppercase.appId, lowercase.appId);
+      assert.notEqual(uppercase.packageName, lowercase.packageName);
     }),
   );
 
@@ -295,7 +312,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         identity,
       );
 
-      assert.equal(config.appId, "com.t3tools.t3code.fork");
+      assert.equal(config.appId, "com.t3tools.t3code.fork-466f726b");
       assert.equal(config.productName, "T3 Code (Fork Nightly)");
       assert.equal(
         (config.dmg as { readonly title: string }).title,
