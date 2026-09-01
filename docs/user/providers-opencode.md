@@ -17,6 +17,15 @@ With a server URL, T3 Code connects to that external server and uses only the pa
 provider settings. It does not send a local `OPENCODE_SERVER_PASSWORD` to an external server.
 OpenCode uses this password for HTTP Basic authentication.
 
+## Stop a turn
+
+When you select **Stop**, T3 Code stops the main OpenCode session and all nested child sessions.
+T3 Code waits for this cleanup before it marks the turn as stopped or sends the next prompt. It
+does not stop unrelated OpenCode sessions.
+
+Stop reports an error if OpenCode cannot list or stop a child session. When T3 Code closes an
+OpenCode session, it also tries to stop the child sessions, but this teardown is best effort.
+
 ## Refresh the model list
 
 T3 Code loads the model list when an enabled OpenCode provider starts and keeps the list in its
