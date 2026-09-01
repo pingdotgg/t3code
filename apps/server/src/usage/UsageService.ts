@@ -822,6 +822,7 @@ export const make = Effect.gen(function* () {
     const folded = foldThreadRows(accumulator.finish(), attribution, {
       cap: THREAD_ROW_CAP,
       ...(input.projectKey === undefined ? {} : { projectFilter: input.projectKey }),
+      ...(input.threadId === undefined ? {} : { threadFilter: input.threadId }),
     });
 
     // Transcript titles only for retained unattributed rows. Grouped remainder

@@ -72,6 +72,7 @@ import {
 } from "../../promptStashStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
+import { ComposerThreadCostIndicator } from "./ThreadCostIndicator";
 import {
   ComposerTasksBadge,
   ComposerTasksContent,
@@ -499,6 +500,12 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
+  threadCost: {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadId;
+    readonly createdAt: string;
+    readonly refreshKey: string | null;
+  } | null;
   activeContextWindow: ContextWindowSnapshot | null;
   activeThreadModelDisplayName: string | null;
   isPreparingWorktree: boolean;
@@ -537,6 +544,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
           compactDisabledReason={props.compactDisabledReason}
         />
       ) : null}
+      {props.threadCost ? <ComposerThreadCostIndicator {...props.threadCost} /> : null}
       <ComposerPrimaryActions
         compact={props.compact}
         pendingAction={props.pendingAction}
@@ -4223,6 +4231,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
+                    threadCost={
+                      activeThread
+                        ? {
+                            environmentId,
+                            threadId: activeThread.id,
+                            createdAt: activeThread.createdAt,
+                            refreshKey: activeContextWindow?.updatedAt ?? null,
+                          }
+                        : null
+                    }
                     activeContextWindow={activeContextWindow}
                     activeThreadModelDisplayName={activeThreadModelDisplayName}
                     pendingAction={pendingPrimaryAction}

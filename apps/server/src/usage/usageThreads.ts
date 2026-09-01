@@ -246,6 +246,8 @@ export interface ThreadAttribution {
 export interface FoldThreadRowsOptions {
   /** A title, `null` for outside-projects sessions, `undefined` for no filter. */
   readonly projectFilter?: string | null | undefined;
+  /** Return only sessions attributed to this T3 thread. */
+  readonly threadFilter?: ThreadId | undefined;
   /** Maximum returned rows, including grouped remainders. */
   readonly cap: number;
 }
@@ -390,6 +392,7 @@ export function foldThreadRows(
       (group.cwd.length > 0
         ? worktreeThreadForCwd(group.cwd, attribution.worktreeToThread)
         : undefined);
+    if (options.threadFilter !== undefined && ref?.threadId !== options.threadFilter) continue;
     const rowKey =
       ref === undefined
         ? JSON.stringify(["session", group.provider, group.projectKey, group.sessionKey])

@@ -178,6 +178,36 @@ describe("ThreadUsageAccumulator", () => {
 });
 
 describe("foldThreadRows", () => {
+  it("keeps only the requested thread before applying the row cap", () => {
+    const targetThreadId = ThreadId.make("thread-target");
+    const groups = accumulate([
+      [
+        record({ sessionId: "expensive", totals: { ...record().totals, outputTokens: 1_000 } }),
+        { sessionKey: "claude:expensive", agentId: null },
+      ],
+      [record({ sessionId: "target" }), { sessionKey: "claude:target", agentId: null }],
+      [
+        record({ sessionId: "other", totals: { ...record().totals, outputTokens: 500 } }),
+        { sessionKey: "claude:other", agentId: null },
+      ],
+    ]);
+    const attribution: ThreadAttribution = {
+      sessionToThread: new Map([
+        ["claude:expensive", { threadId: ThreadId.make("thread-expensive"), title: "Expensive" }],
+        ["claude:target", { threadId: targetThreadId, title: "Target" }],
+        ["claude:other", { threadId: ThreadId.make("thread-other"), title: "Other" }],
+      ]),
+      worktreeToThread: new Map(),
+    };
+
+    const result = foldThreadRows(groups, attribution, { cap: 1, threadFilter: targetThreadId });
+
+    expect(result.truncatedRows).toBe(0);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.threadId).toBe(targetThreadId);
+    expect(result.rows[0]?.costUsd).toBeGreaterThan(0);
+  });
+
   const threadId = ThreadId.make("11111111-1111-4111-8111-111111111111");
 
   it("folds sessions into one row per thread via cursor and worktree matches", () => {

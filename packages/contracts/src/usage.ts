@@ -249,6 +249,12 @@ export const UsageThreadBreakdownInput = Schema.Struct({
   projectKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Providers this environment owns after physical-source de-duplication. */
   providers: Schema.optional(Schema.Array(UsageProviderKind)),
+  /**
+   * Return only rows attributed to this T3 thread. Used by the composer cost
+   * indicator so the active thread cannot disappear behind the drill-down's
+   * lower-cost row cap.
+   */
+  threadId: Schema.optional(ThreadId),
 });
 export type UsageThreadBreakdownInput = typeof UsageThreadBreakdownInput.Type;
 
