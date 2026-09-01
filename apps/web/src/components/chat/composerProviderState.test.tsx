@@ -291,11 +291,12 @@ describe("getComposerProviderState", () => {
   it("validates options for a known model selected through a legacy alias", () => {
     const state = getComposerProviderState({
       provider: ProviderDriverKind.make("claudeAgent"),
-      model: "opus",
+      model: "legacy-test-model",
       models: [
         {
-          slug: "claude-opus-5",
-          name: "Claude Opus 5",
+          slug: "test-model",
+          name: "Test Model",
+          aliases: ["legacy-test-model"],
           isCustom: false,
           capabilities: {
             optionDescriptors: [

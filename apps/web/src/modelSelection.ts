@@ -75,6 +75,8 @@ export interface AppModelOption {
   name: string;
   shortName?: string;
   subProvider?: string;
+  aliases?: ReadonlyArray<string>;
+  badge?: "new";
   isCustom: boolean;
   isDefault?: boolean;
   isLegacy?: boolean;
@@ -109,6 +111,8 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
   };
   if (model.shortName) option.shortName = model.shortName;
   if (model.subProvider) option.subProvider = model.subProvider;
+  if (model.aliases) option.aliases = model.aliases;
+  if (model.badge) option.badge = model.badge;
   if (model.isDefault) option.isDefault = true;
   if (model.isLegacy) option.isLegacy = true;
   return option;
