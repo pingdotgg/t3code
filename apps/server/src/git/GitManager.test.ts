@@ -1909,6 +1909,44 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("status finds a PR pushed under the branch's own name despite a default upstream", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pushed-plain", "origin/main"]);
+      // A plain push (no -u) leaves the upstream on origin/main.
+      yield* runGit(repoDir, ["push", "origin", "feature/pushed-plain"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListByHeadSelector: {
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            "feature/pushed-plain": JSON.stringify([
+              {
+                number: 88,
+                title: "Pushed without -u",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/88",
+                baseRefName: "main",
+                headRefName: "feature/pushed-plain",
+                state: "OPEN",
+                updatedAt: "2026-05-01T10:00:00Z",
+              },
+            ]),
+          },
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+      expect(status.refName).toBe("feature/pushed-plain");
+      expect(status.pr?.number).toBe(88);
+      expect(ghCalls.some((call) => call.includes("--head main"))).toBe(false);
+    }),
+  );
+
   it.effect("status prefers open PR when merged PR has newer updatedAt", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

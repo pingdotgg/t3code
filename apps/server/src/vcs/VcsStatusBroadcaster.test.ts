@@ -228,6 +228,40 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
+  it.effect("re-asks for the pull request only for a loaded cwd without one", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+      // Nobody loaded this cwd yet: no host request is spent.
+      assert.isNull(yield* broadcaster.refreshPullRequestStatus("/repo"));
+      assert.equal(state.remoteStatusCalls, 0);
+
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      assert.equal(state.remoteStatusCalls, 1);
+
+      // Loaded and no PR known: bypass the PR cache and read again.
+      state.currentRemoteStatus = remoteStatusWithPr;
+      const refreshed = yield* broadcaster.refreshPullRequestStatus("/repo");
+      assert.deepStrictEqual(refreshed, remoteStatusWithPr);
+      assert.equal(state.remoteStatusCalls, 2);
+      assert.equal(state.remoteInvalidationCalls, 1);
+
+      // A known PR keeps its slow cache.
+      const cached = yield* broadcaster.refreshPullRequestStatus("/repo");
+      assert.deepStrictEqual(cached, remoteStatusWithPr);
+      assert.equal(state.remoteStatusCalls, 2);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
   it.effect("refreshes the cached snapshot after explicit invalidation", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,

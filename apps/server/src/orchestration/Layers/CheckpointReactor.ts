@@ -553,7 +553,40 @@ const make = Effect.gen(function* () {
         cwd: sessionRuntime.value.cwd,
         local,
       });
+      yield* refreshPullRequestAfterTurn({
+        threadId: event.threadId,
+        cwd: sessionRuntime.value.cwd,
+        local,
+      });
     }
+  });
+
+  // Agents usually push and open the pull request inside one turn. The sidebar
+  // learns about it from the remote status poll, which caches "no PR" for the
+  // branch and often asks just before `gh pr create` finished. Re-ask once at
+  // turn end when the checked-out branch is the thread's own feature branch
+  // and no pull request is known yet. The broadcaster skips cwds nobody has
+  // loaded, so this replaces a poll lookup rather than adding one.
+  const refreshPullRequestAfterTurn = Effect.fn("refreshPullRequestAfterTurn")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly cwd: string;
+    readonly local: VcsStatusLocalResult;
+  }) {
+    const checkedOutBranch = input.local.refName;
+    if (checkedOutBranch === null || input.local.isDefaultRef) return;
+    const thread = yield* projectionSnapshotQuery
+      .getThreadShellById(input.threadId)
+      .pipe(Effect.map(Option.getOrUndefined));
+    if (!thread || thread.branch !== checkedOutBranch) return;
+    yield* vcsStatusBroadcaster.refreshPullRequestStatus(input.cwd).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("failed to refresh pull request status after turn completion", {
+          threadId: input.threadId,
+          cwd: input.cwd,
+          detail: error.message,
+        }),
+      ),
+    );
   });
 
   // A `git checkout` run inside a thread's dedicated worktree (by an agent or

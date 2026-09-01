@@ -99,9 +99,10 @@ once per minute, including when no client is connected. It dispatches the guarde
 `thread.auto-settle` command, which uses the existing settlement event lifecycle. Automatic
 settlement excludes live background work and requires a comparable PR timestamp for immediate PR
 settlement. The command carries the latest activity timestamp and rejects any later event for its
-thread after the reactor's snapshot.
-Clients render the persisted settlement state and do not derive settlement from PR or inactivity
-state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle provider
+thread after the reactor's snapshot. The sweep looks a branch up from the thread's worktree when it
+still exists, so it shares the per-cwd PR cache the sidebar polls instead of spending a second host
+request. Clients render the persisted settlement state and do not derive settlement from PR or
+inactivity state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle provider
 session.
 
 ## Drainable workers

@@ -295,6 +295,7 @@ describe("CheckpointReactor", () => {
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
     readonly gitStatusRefreshCalls?: Array<string>;
+    readonly pullRequestRefreshCalls?: Array<string>;
   }) {
     const cwd = createGitRepository();
     tempDirs.push(cwd);
@@ -333,7 +334,8 @@ describe("CheckpointReactor", () => {
           Effect.as({
             isRepo: true,
             hasPrimaryRemote: false,
-            isDefaultRef: true,
+            isDefaultRef:
+              options?.localStatusRefName === undefined || options.localStatusRefName === "main",
             refName:
               options?.localStatusRefName !== undefined ? options.localStatusRefName : "main",
             hasWorkingTreeChanges: false,
@@ -341,6 +343,10 @@ describe("CheckpointReactor", () => {
           }),
         ),
       refreshStatus: () => Effect.die("refreshStatus should not be called in this test"),
+      refreshPullRequestStatus: (cwd: string) =>
+        Effect.sync(() => {
+          options?.pullRequestRefreshCalls?.push(cwd);
+        }).pipe(Effect.as(null)),
       streamStatus: () => Stream.empty,
     });
 
@@ -559,6 +565,54 @@ describe("CheckpointReactor", () => {
     await harness.drain();
 
     expect(gitStatusRefreshCalls).toEqual([harness.cwd]);
+  });
+
+  it("re-asks for the pull request at turn end when the thread branch is checked out", async () => {
+    const pullRequestRefreshCalls: string[] = [];
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      threadBranch: "t3code/feature",
+      localStatusRefName: "t3code/feature",
+      pullRequestRefreshCalls,
+    });
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-refresh-pr"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-refresh-pr"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+
+    expect(pullRequestRefreshCalls).toEqual([harness.cwd]);
+  });
+
+  it("does not re-ask for the pull request at turn end on the default branch", async () => {
+    const pullRequestRefreshCalls: string[] = [];
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      threadBranch: "main",
+      localStatusRefName: "main",
+      pullRequestRefreshCalls,
+    });
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-no-pr-refresh"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-no-pr-refresh"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+
+    expect(pullRequestRefreshCalls).toEqual([]);
   });
 
   it("adopts a drifted checkout as the thread branch on a dedicated worktree", async () => {

@@ -1018,12 +1018,28 @@ export const make = Effect.gen(function* () {
         // track origin/main. That upstream is the branch's base, not its
         // published PR head. Looking up PRs for it can attach an old reverse
         // merge from main and auto-settle an unrelated feature thread.
+        //
+        // The branch may still have been pushed under its own name by a plain
+        // `git push origin feature` that never moved the upstream. When a
+        // remote-tracking ref for the local name exists, look the PR up by
+        // that name instead of giving up. Without the ref there is nothing to
+        // ask the host about, so no API call is spent.
         if (
           headContext.headBranch !== details.branch &&
           upstreamHeadIsDefault &&
           !headContext.isCrossRepository
         ) {
-          return { latest: null, headContext };
+          const publishedUnderOwnName = yield* hasRemoteTrackingRef(cwd, details.branch);
+          if (!publishedUnderOwnName) {
+            return { latest: null, headContext };
+          }
+          const ownNameContext = yield* resolveBranchHeadContext(cwd, {
+            branch: details.branch,
+            upstreamRef: null,
+            remoteName: headContext.remoteName ?? "origin",
+          });
+          const latest = yield* findLatestPrForHeadContext(cwd, ownNameContext);
+          return { latest, headContext: ownNameContext };
         }
         // Only skip when the branch is untracked as well: anything carrying an
         // upstream keeps the old behaviour.
@@ -1359,6 +1375,24 @@ export const make = Effect.gen(function* () {
    * because then every branch looks unpublished; it, and any failed probe,
    * keeps the lookup.
    */
+  // True when any remote holds a ref named after the local branch.
+  const hasRemoteTrackingRef = Effect.fn("hasRemoteTrackingRef")(function* (
+    cwd: string,
+    branch: string,
+  ) {
+    if (branch.length === 0) return false;
+    return yield* gitCore
+      .execute({
+        operation: "GitManager.hasRemoteTrackingRef",
+        cwd,
+        args: ["for-each-ref", "--count=1", "--format=%(refname)", `refs/remotes/*/${branch}`],
+        timeoutMs: 5_000,
+      })
+      .pipe(
+        Effect.map((result) => result.stdout.trim().length > 0),
+        Effect.orElseSucceed(() => false),
+      );
+  });
   const isUnpublishedBranch = Effect.fn("isUnpublishedBranch")(function* (
     cwd: string,
     headContext: Pick<BranchHeadContext, "headBranch" | "localBranch">,

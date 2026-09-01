@@ -184,6 +184,15 @@ export class VcsStatusBroadcaster extends Context.Service<
       cwd: string,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly refreshStatus: (cwd: string) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+    /**
+     * Re-ask the host for the current branch's pull request, but only when a
+     * client has already loaded remote status for this cwd and no pull request
+     * is known. A known pull request keeps its slow cache; an unwatched cwd is
+     * left alone so this never adds host requests nobody is looking at.
+     */
+    readonly refreshPullRequestStatus: (
+      cwd: string,
+    ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
     readonly streamStatus: (
       input: VcsStatusInput,
       options?: StreamStatusOptions,
@@ -446,6 +455,20 @@ export const make = Effect.gen(function* () {
     return yield* updateCachedStatus(cwd, local, remote, { publish: true });
   });
 
+  const refreshPullRequestStatus: VcsStatusBroadcaster["Service"]["refreshPullRequestStatus"] =
+    Effect.fn("VcsStatusBroadcaster.refreshPullRequestStatus")(function* (rawCwd) {
+      const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+      const cached = yield* getCachedStatus(cwd);
+      if (cached?.remote === null || cached?.remote === undefined) return null;
+      if (cached.remote.value?.pr != null) return cached.remote.value;
+      // invalidateStatus bumps GitManager's PR lookup epoch, so the read below
+      // skips the negative "no PR yet" entry that a poll may have cached
+      // moments before the agent opened the pull request.
+      yield* workflow.invalidateStatus(cwd);
+      const remote = yield* workflow.remoteStatus({ cwd });
+      return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
+    });
+
   const makeRemoteRefreshLoop = (
     cwd: string,
     demandCwdsRef: Ref.Ref<ReadonlyMap<string, number>>,
@@ -657,6 +680,7 @@ export const make = Effect.gen(function* () {
     getStatus,
     refreshLocalStatus,
     refreshStatus,
+    refreshPullRequestStatus,
     streamStatus,
   });
 });
