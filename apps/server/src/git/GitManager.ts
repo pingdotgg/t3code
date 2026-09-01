@@ -946,9 +946,8 @@ export const make = Effect.gen(function* () {
         prLookupEpochByCwd.set(cacheKey, prLookupEpoch(cacheKey) + 1);
       }),
     );
-  // Cache keys are NUL-joined
-  // [cwd, branch, upstreamRef, defaultBranch, localBranchExists, epoch]. None
-  // of the segments can contain a NUL byte, so "" decodes back to a null ref.
+  // Cache keys are NUL-joined. Repository URLs prevent a tracked branch from
+  // reusing a pull request after either its head remote or origin is repointed.
   const prLookupCacheKey = (
     cwd: string,
     details: {
@@ -956,6 +955,9 @@ export const make = Effect.gen(function* () {
       upstreamRef: string | null;
       defaultBranch: string | null;
       localBranchExists?: boolean;
+      remoteName: string | null;
+      headRemoteUrlKey: string | null;
+      targetRemoteUrlKey: string | null;
     },
   ) =>
     [
@@ -964,6 +966,9 @@ export const make = Effect.gen(function* () {
       details.upstreamRef ?? "",
       details.defaultBranch ?? "",
       details.localBranchExists === false ? "0" : "1",
+      details.remoteName ?? "",
+      details.headRemoteUrlKey ?? "",
+      details.targetRemoteUrlKey ?? "",
       String(prLookupEpoch(cwd)),
     ].join("\u0000");
   // Consecutive failures per cache key, so a branch that keeps failing waits
@@ -985,13 +990,20 @@ export const make = Effect.gen(function* () {
   };
   const prLookupCache = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", branch = "", upstreamRef = "", defaultBranch = "", branchExists = "1"] =
-        key.split("\u0000");
+      const [
+        cwd = "",
+        branch = "",
+        upstreamRef = "",
+        defaultBranch = "",
+        branchExists = "1",
+        remoteName = "",
+      ] = key.split("\u0000");
       const details = {
         branch,
         upstreamRef: upstreamRef.length > 0 ? upstreamRef : null,
         defaultBranch: defaultBranch.length > 0 ? defaultBranch : null,
         localBranchExists: branchExists !== "0",
+        ...(remoteName.length > 0 ? { remoteName } : {}),
       };
       return Effect.gen(function* () {
         const headContext = yield* resolveBranchHeadContext(cwd, details);
@@ -1104,7 +1116,11 @@ export const make = Effect.gen(function* () {
     // Keyed by (cwd, branch) only: the upstream ref changing (e.g. a first
     // `push -u`) must not orphan the fallback value for the same branch.
     const branchKey = `${cwd}\u0000${details.branch}`;
-    return yield* Cache.get(prLookupCache, prLookupCacheKey(cwd, details)).pipe(
+    const repositoryIdentity = yield* resolvePrLookupRepositoryIdentity(cwd, details.branch);
+    return yield* Cache.get(
+      prLookupCache,
+      prLookupCacheKey(cwd, { ...details, ...repositoryIdentity }),
+    ).pipe(
       Effect.map(({ latest, headContext }) => {
         if (!latest) return { pr: null, headContext };
         // On the default branch, only surface open PRs.
@@ -1234,11 +1250,33 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const resolvePrLookupRepositoryIdentity = Effect.fn("resolvePrLookupRepositoryIdentity")(
+    function* (cwd: string, branch: string, remoteNameOverride?: string) {
+      const remoteName =
+        remoteNameOverride ?? (yield* readConfigValueNullable(cwd, `branch.${branch}.remote`));
+      const [headRemote, targetRemote] = yield* Effect.all(
+        [
+          resolveRemoteRepositoryContext(cwd, remoteName),
+          resolveRemoteRepositoryContext(cwd, "origin"),
+        ],
+        { concurrency: "unbounded" },
+      );
+      return {
+        remoteName,
+        headRemoteUrlKey:
+          headRemote.remoteUrlKey ?? (remoteName === null ? targetRemote.remoteUrlKey : null),
+        targetRemoteUrlKey: targetRemote.remoteUrlKey,
+      };
+    },
+  );
+
   const resolveBranchHeadContext = Effect.fn("resolveBranchHeadContext")(function* (
     cwd: string,
-    details: { branch: string; upstreamRef: string | null },
+    details: { branch: string; upstreamRef: string | null; remoteName?: string },
   ) {
-    const remoteName = yield* readConfigValueNullable(cwd, `branch.${details.branch}.remote`);
+    const remoteName =
+      details.remoteName ??
+      (yield* readConfigValueNullable(cwd, `branch.${details.branch}.remote`));
     const headBranchFromUpstream = details.upstreamRef
       ? extractBranchNameFromRemoteRef(details.upstreamRef, { remoteName })
       : "";
@@ -1894,7 +1932,11 @@ export const make = Effect.gen(function* () {
       cwd: cacheCwd,
       args: ["remote"],
     });
-    if (remotes.stdout.trim().length === 0) return null;
+    const remoteNames = remotes.stdout
+      .split("\n")
+      .map((remoteName) => remoteName.trim())
+      .filter((remoteName) => remoteName.length > 0);
+    if (remoteNames.length === 0) return null;
     const branchRef = yield* gitCore.execute({
       operation: "GitManager.branchPullRequest.branchRef",
       cwd: cacheCwd,
@@ -1907,8 +1949,9 @@ export const make = Effect.gen(function* () {
     const [refName = "", savedUpstream = ""] = exactBranch?.split("\u0000") ?? [];
     const localBranchExists = refName.length > 0;
     let upstreamRef: string | null = null;
+    let remoteName: string | null = null;
     if (savedUpstream.length > 0) {
-      const remoteName = yield* gitCore.readConfigValue(cacheCwd, `branch.${branch}.remote`);
+      remoteName = yield* gitCore.readConfigValue(cacheCwd, `branch.${branch}.remote`);
       const mergeRef = yield* gitCore.readConfigValue(cacheCwd, `branch.${branch}.merge`);
       if (remoteName === null || mergeRef === null) {
         return yield* new GitManagerError({
@@ -1919,10 +1962,41 @@ export const make = Effect.gen(function* () {
       }
       const upstreamBranch = mergeRef.replace(/^refs\/heads\//, "");
       upstreamRef = `${remoteName}/${upstreamBranch}`;
+    } else if (!localBranchExists) {
+      const trackingRefs = yield* gitCore.execute({
+        operation: "GitManager.branchPullRequest.remoteTrackingRefs",
+        cwd: cacheCwd,
+        args: ["for-each-ref", "--format=%(refname)", "refs/remotes"],
+      });
+      const refNames = new Set(
+        trackingRefs.stdout
+          .split("\n")
+          .map((remoteRef) => remoteRef.trim())
+          .filter((remoteRef) => remoteRef.length > 0),
+      );
+      const matchingRemoteNames = remoteNames.filter((candidate) =>
+        refNames.has(`refs/remotes/${candidate}/${branch}`),
+      );
+      if (matchingRemoteNames.length > 1) {
+        return yield* new GitManagerError({
+          operation: "branchPullRequest",
+          cwd: cacheCwd,
+          detail: `Multiple remotes track ${branch}. Its pull request is ambiguous.`,
+        });
+      }
+      remoteName = matchingRemoteNames[0] ?? null;
+      if (remoteName !== null) {
+        upstreamRef = `${remoteName}/${branch}`;
+      }
     }
     const defaultBranch = yield* gitCore.resolvePrimaryRemoteName(cacheCwd).pipe(
       Effect.flatMap((primaryRemote) => gitCore.resolveDefaultBranchName(cacheCwd, primaryRemote)),
       Effect.orElseSucceed(() => null),
+    );
+    const repositoryIdentity = yield* resolvePrLookupRepositoryIdentity(
+      cacheCwd,
+      branch,
+      remoteName ?? undefined,
     );
     const { latest } = yield* Cache.get(
       prLookupCache,
@@ -1931,6 +2005,7 @@ export const make = Effect.gen(function* () {
         upstreamRef,
         defaultBranch,
         localBranchExists,
+        ...repositoryIdentity,
       }),
     );
     if (latest === null) return null;
