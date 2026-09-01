@@ -54,7 +54,8 @@ export interface OrchestrationEventStoreShape {
   readonly readAll: () => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
 
   /**
-   * Check whether an aggregate has an event of the given type after a sequence.
+   * Check whether an aggregate has an event after a sequence, optionally
+   * restricted to one event type.
    *
    * Used during replay to tell whether a later event supersedes the one being
    * applied, without streaming the rest of the log.
@@ -62,7 +63,7 @@ export interface OrchestrationEventStoreShape {
   readonly hasEventAfter: (input: {
     readonly aggregateKind: OrchestrationEvent["aggregateKind"];
     readonly aggregateId: string;
-    readonly type: OrchestrationEvent["type"];
+    readonly type?: OrchestrationEvent["type"];
     readonly sequenceExclusive: number;
   }) => Effect.Effect<boolean, OrchestrationEventStoreError>;
 }
