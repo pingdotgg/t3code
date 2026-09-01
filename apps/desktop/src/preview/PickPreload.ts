@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off - This isolated Electron preload does not run inside an Effect runtime.
+// @effect-diagnostics globalDate:off globalTimers:off - This isolated Electron preload does not run inside an Effect runtime.
 import { ipcRenderer } from "electron";
 import { getElementContext } from "react-grab/primitives";
 import type {
@@ -30,6 +30,8 @@ const Z_INDEX_OVERLAY = 2147483646;
 const PRIMARY = "var(--t3-primary)";
 const PRIMARY_FILL = "color-mix(in srgb, var(--t3-primary) 10%, transparent)";
 const MAX_MARQUEE_ELEMENTS = 20;
+/** Upper bound on one element's React context lookup during submit. */
+const ELEMENT_CONTEXT_TIMEOUT_MS = 5_000;
 const CONTENT_LAYER_Z_INDEX = 1;
 const CHROME_LAYER_Z_INDEX = 10;
 
@@ -279,9 +281,29 @@ function toStackFrame(frame: {
   };
 }
 
+/**
+ * Resolves to `null` instead of hanging when `promise` outlives `millis`.
+ * `getElementContext` walks the inspected page's React internals, and some
+ * pages leave it pending forever. Without a bound, the whole submit chain
+ * stalls and the overlay sits on "Capturing…".
+ */
+function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), millis);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 async function captureElement(element: Element): Promise<PickedElementPayload | null> {
   try {
-    const context = await getElementContext(element);
+    const context = await withCaptureTimeout(
+      Promise.resolve(getElementContext(element)),
+      ELEMENT_CONTEXT_TIMEOUT_MS,
+    );
+    if (!context) return null;
     const stack = (context.stack ?? []).map(toStackFrame);
     return {
       pageUrl: location.href,
@@ -1238,30 +1260,37 @@ function startAnnotation(): void {
           rect: rectFromDomRect(target.element.getBoundingClientRect()),
         };
       }),
-    ).then((captured) => {
-      const elements = captured.filter((target) => target !== null);
-      const annotation: PreviewAnnotationPayload = {
-        id: nextId("annotation"),
-        pageUrl: location.href,
-        pageTitle: document.title?.trim() || null,
-        comment: comment.value.trim(),
-        elements,
-        regions: [...regions],
-        strokes: [...strokes],
-        styleChanges: Array.from(styleChanges.values()),
-        screenshot: null,
-        createdAt: new Date().toISOString(),
-      };
-      editor.style.display = "none";
-      toolbar.style.display = "none";
-      hoverOutline.style.display = "none";
-      const screenshotRect = unionRects([
-        ...elements.map((target) => target.rect),
-        ...regions.map((region) => region.rect),
-        ...strokes.map((stroke) => stroke.bounds),
-      ]);
-      ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect, submission);
-    });
+    )
+      .then((captured) => {
+        const elements = captured.filter((target) => target !== null);
+        const annotation: PreviewAnnotationPayload = {
+          id: nextId("annotation"),
+          pageUrl: location.href,
+          pageTitle: document.title?.trim() || null,
+          comment: comment.value.trim(),
+          elements,
+          regions: [...regions],
+          strokes: [...strokes],
+          styleChanges: Array.from(styleChanges.values()),
+          screenshot: null,
+          createdAt: new Date().toISOString(),
+        };
+        editor.style.display = "none";
+        toolbar.style.display = "none";
+        hoverOutline.style.display = "none";
+        const screenshotRect = unionRects([
+          ...elements.map((target) => target.rect),
+          ...regions.map((region) => region.rect),
+          ...strokes.map((stroke) => stroke.bounds),
+        ]);
+        ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect, submission);
+      })
+      .catch(() => {
+        // Last resort. Main is waiting on this message, so hand it an empty
+        // pick rather than leaving the button stuck on "Capturing…" and the
+        // renderer's pick promise pending.
+        teardown(true);
+      });
   };
   submit.addEventListener("click", () => submitAnnotation("attach"));
   root.addEventListener("keydown", (event) => {

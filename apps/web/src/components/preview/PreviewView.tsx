@@ -20,7 +20,7 @@ import {
   useThreadRecentHistory,
 } from "~/browserHistoryStore";
 import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
-import { previewAnnotationScreenshotFile } from "~/lib/previewAnnotation";
+import { capturePreviewAnnotationScreenshot } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
 import {
   rememberPreviewUrl,
@@ -581,13 +581,20 @@ export function PreviewView({
         if (!result) return;
         const { annotation, submission } = result;
         addPreviewAnnotation(threadRef, annotation);
-        let screenshotFile: File | null = null;
-        try {
-          screenshotFile = await previewAnnotationScreenshotFile(annotation);
-        } catch {
-          // The structured annotation is still sendable when converting its
-          // optional screenshot into a composer attachment fails.
+        // The structured annotation is still sendable when its optional crop
+        // stalls or fails, so tell the user what they lost and keep going
+        // instead of holding the composer for an attachment that never lands.
+        const capture = await capturePreviewAnnotationScreenshot(annotation);
+        if (capture.status === "failed") {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not capture the picked element",
+              description: "Send again without it.",
+            }),
+          );
         }
+        const screenshotFile = capture.status === "captured" ? capture.file : null;
         const image =
           screenshotFile && annotation.screenshot
             ? ({

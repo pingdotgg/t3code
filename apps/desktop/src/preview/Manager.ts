@@ -306,13 +306,19 @@ const normalizeCaptureRect = (value: unknown): PreviewAnnotationRect | null => {
   };
 };
 
+/** `capturePage` never settles when the guest's compositor is wedged. */
+const ANNOTATION_SCREENSHOT_TIMEOUT = "5 seconds";
+
 const captureAnnotationScreenshot = (
   tabId: string,
   wc: Electron.WebContents,
   cropRect: PreviewAnnotationRect | null,
 ): Effect.Effect<PreviewAnnotationPayload["screenshot"], PreviewManagerError> =>
   Effect.tryPromise({
-    try: () =>
+    // The unused abort signal is what makes this interruptible, and therefore
+    // what lets the timeout below fire. Drop the parameter and a stalled
+    // capture strands the pick session again.
+    try: (_signal) =>
       wc.capturePage(
         cropRect
           ? {
@@ -331,6 +337,18 @@ const captureAnnotationScreenshot = (
         cause,
       }),
   }).pipe(
+    Effect.timeoutOrElse({
+      duration: ANNOTATION_SCREENSHOT_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new PreviewOperationError({
+            operation: "captureAnnotationScreenshot",
+            tabId,
+            webContentsId: wc.id,
+            cause: new Error(`capturePage exceeded ${ANNOTATION_SCREENSHOT_TIMEOUT}`),
+          }),
+        ),
+    }),
     Effect.map((image) => {
       const size = image.getSize();
       return {
@@ -2382,11 +2400,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             }),
           );
         });
+        // Every exit from this session runs through `claimSettle`, so the
+        // renderer's `pickElement` promise resolves exactly once. The previous
+        // identity check let a cancelled or replaced session return without
+        // resuming, which left the composer waiting forever.
+        let settled = false;
+        const claimSettle = (): boolean => {
+          if (settled) return false;
+          settled = true;
+          return true;
+        };
         const settlePick = Effect.fn("PreviewManager.settlePickElement")(function* (
           payload: PreviewAnnotationSubmissionResult | null,
         ) {
-          const active = (yield* Ref.get(pickSessionsRef)).get(tabId);
-          if (!active || active.cancel !== cancel) return;
+          if (!claimSettle()) return;
           yield* cleanup();
           resume(Effect.succeed(payload));
         });
@@ -2394,6 +2421,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           runFork(settlePick(payload));
         };
         const cancelPickSession = Effect.fn("PreviewManager.cancelPickSession")(function* () {
+          if (!claimSettle()) return;
           yield* cleanup();
           const tabs = yield* SynchronizedRef.get(tabsRef);
           const activeTab = tabs.get(tabId);
@@ -2449,6 +2477,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           if (isMainFrame) settle(null);
         };
         const registerPickElement = Effect.fn("PreviewManager.registerPickElement")(function* () {
+          // Two picks on one tab can overlap. Take the slot, settle whoever
+          // held it, and only then claim it, so the session we push out never
+          // leaves its renderer awaiting a pick that no longer exists.
+          const replaced = yield* Ref.modify(pickSessionsRef, (sessions) => [
+            sessions.get(tabId) ?? null,
+            replaceMap(sessions, (copy) => {
+              copy.delete(tabId);
+            }),
+          ]);
+          if (replaced) yield* replaced.cancel;
+          yield* Ref.update(pickSessionsRef, (sessions) =>
+            replaceMap(sessions, (copy) => {
+              copy.set(tabId, { cancel });
+            }),
+          );
           yield* attempt({ operation: "pickElement.register", tabId, webContentsId: wc.id }, () => {
             wc.ipc.on(ELEMENT_PICKED_CHANNEL, onMessage);
             wc.once("destroyed", onDestroyed);
@@ -2456,15 +2499,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             if (!wc.isFocused()) wc.focus();
             wc.send(START_PICK_CHANNEL, annotationTheme);
           });
-          yield* Ref.update(pickSessionsRef, (sessions) =>
-            replaceMap(sessions, (copy) => {
-              copy.set(tabId, { cancel });
-            }),
-          );
         });
         runFork(
           registerPickElement().pipe(
             Effect.catch((error: PreviewManagerError) => {
+              if (!claimSettle()) return Effect.void;
               resume(Effect.fail(error));
               return cleanup();
             }),

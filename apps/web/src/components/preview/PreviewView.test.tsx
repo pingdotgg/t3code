@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => ({
   openPictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
   closePictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
   pickElement: vi.fn(),
-  previewAnnotationScreenshotFile: vi.fn(),
+  capturePreviewAnnotationScreenshot: vi.fn(),
   addPreviewAnnotation: vi.fn(),
   addImage: vi.fn(),
   toggleAnnotation: null as (() => void) | null,
@@ -90,7 +90,7 @@ vi.mock("~/composerDraftStore", () => ({
 }));
 
 vi.mock("~/lib/previewAnnotation", () => ({
-  previewAnnotationScreenshotFile: mocks.previewAnnotationScreenshotFile,
+  capturePreviewAnnotationScreenshot: mocks.capturePreviewAnnotationScreenshot,
 }));
 
 vi.mock("~/localApi", () => ({
@@ -339,7 +339,8 @@ describe("PreviewView navigation", () => {
     mocks.openPictureInPicture.mockClear();
     mocks.closePictureInPicture.mockClear();
     mocks.pickElement.mockReset();
-    mocks.previewAnnotationScreenshotFile.mockReset();
+    mocks.capturePreviewAnnotationScreenshot.mockReset();
+    mocks.capturePreviewAnnotationScreenshot.mockResolvedValue({ status: "none" });
     mocks.addPreviewAnnotation.mockClear();
     mocks.addImage.mockClear();
     mocks.toggleAnnotation = null;
@@ -551,7 +552,7 @@ describe("PreviewView navigation", () => {
     expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, annotation);
   });
 
-  it("still sends when screenshot attachment conversion fails", async () => {
+  it("still sends when the picked element's crop cannot be captured", async () => {
     const annotation = {
       id: "annotation-2",
       pageUrl: "https://example.com/dashboard",
@@ -571,7 +572,7 @@ describe("PreviewView navigation", () => {
     };
     const onSendAnnotation = vi.fn();
     mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
-    mocks.previewAnnotationScreenshotFile.mockRejectedValue(new Error("conversion failed"));
+    mocks.capturePreviewAnnotationScreenshot.mockResolvedValue({ status: "failed" });
 
     renderToStaticMarkup(
       <PreviewView
