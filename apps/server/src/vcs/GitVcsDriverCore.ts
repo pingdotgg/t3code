@@ -480,11 +480,7 @@ const decodeTrace2Record = decodeJsonResult(Trace2Record);
 const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
   input: Pick<GitVcsDriver.ExecuteGitInput, "operation" | "cwd" | "args">,
   progress: GitVcsDriver.ExecuteGitProgress | undefined,
-): Effect.fn.Return<
-  Trace2Monitor,
-  PlatformError.PlatformError,
-  Scope.Scope | FileSystem.FileSystem | Path.Path
-> {
+): Effect.fn.Return<Trace2Monitor, never, Scope.Scope | FileSystem.FileSystem | Path.Path> {
   if (!progress?.onHookStarted && !progress?.onHookFinished) {
     return {
       env: {},
@@ -494,10 +490,27 @@ const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const traceFilePath = yield* fs.makeTempFileScoped({
-    prefix: `t3code-git-trace2-${process.pid}-`,
-    suffix: ".json",
-  });
+  // The monitor only observes; its setup failing must not take down the git command
+  // it observes, so an unwritable temp dir degrades to running without hook reporting.
+  const traceFilePath = yield* fs
+    .makeTempFileScoped({
+      prefix: `t3code-git-trace2-${process.pid}-`,
+      suffix: ".json",
+    })
+    .pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning(
+          `GitVcsDriver.trace2: hook monitoring disabled for ${input.operation} in ${input.cwd}: failed to create the trace file`,
+          cause,
+        ).pipe(Effect.as(null)),
+      ),
+    );
+  if (traceFilePath === null) {
+    return {
+      env: {},
+      flush: Effect.void,
+    };
+  }
   const hookStartByChildKey = new Map<string, { hookName: string; startedAtMs: number }>();
   const traceTailState = yield* Ref.make<TraceTailState>({
     processedChars: 0,
@@ -737,14 +750,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const trace2Monitor = yield* createTrace2Monitor(commandInput, input.progress).pipe(
           Effect.provideService(Path.Path, path),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.mapError(
-            (cause) =>
-              new GitCommandError({
-                ...gitCommandContext(commandInput),
-                detail: "Failed to create Git trace monitor.",
-                cause,
-              }),
-          ),
         );
         const child = yield* commandSpawner
           .spawn(

@@ -167,6 +167,64 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("still runs the git command when the trace file cannot be created", () => {
+  let spawnEnv: NodeJS.ProcessEnv | undefined;
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.sync(() => {
+      if (!ChildProcess.isStandardCommand(command)) {
+        return assert.fail("expected a standard Git command");
+      }
+      spawnEnv = command.options.env;
+      return makeSuccessfulHandle("");
+    }),
+  );
+  const unwritableTempFileSystemLayer = Layer.effect(
+    FileSystem.FileSystem,
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      return {
+        ...fileSystem,
+        makeTempFileScoped: () =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "makeTempFileScoped",
+              description: "Temporary directory is not writable.",
+            }),
+          ),
+      } satisfies FileSystem.FileSystem;
+    }),
+  ).pipe(Layer.provide(NodeServices.layer));
+  const layer = GitVcsDriver.layer.pipe(
+    Layer.provide(ServerConfigLayer),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        NodeServices.layer,
+        unwritableTempFileSystemLayer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const result = yield* driver.execute({
+      operation: "GitVcsDriver.test.commit",
+      cwd: "/repo",
+      args: ["commit", "-m", "message"],
+      timeoutMs: 10_000,
+      progress: {
+        onHookStarted: () => Effect.void,
+        onHookFinished: () => Effect.void,
+      },
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.isUndefined(spawnEnv?.GIT_TRACE2_EVENT);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("invalidates origin remote cache when a driver mutation adds origin", () =>
   Effect.gen(function* () {
     const driver = yield* GitVcsDriver.GitVcsDriver;
