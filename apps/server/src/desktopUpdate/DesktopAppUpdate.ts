@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeCrypto from "node:crypto";
-
 import {
   ServerSelfUpdateError,
   type DesktopUpdateState,
@@ -9,6 +6,7 @@ import {
   type ServerSelfUpdateResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -58,6 +56,7 @@ export class DesktopAppUpdate extends Context.Service<
 
 export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* () {
   const config = yield* ServerConfig;
+  const crypto = yield* Crypto.Crypto;
   const receiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const inFlight = yield* Ref.make(false);
 
@@ -147,7 +146,11 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
 
       return yield* Effect.scoped(
         Effect.gen(function* () {
-          const requestId = NodeCrypto.randomUUID();
+          const requestId = yield* crypto.randomUUIDv4.pipe(
+            Effect.mapError((error) =>
+              failWith("Could not generate a desktop update request id.", error),
+            ),
+          );
           // Subscribe before sending the request so a fast first report
           // cannot be missed.
           const { changes } = yield* receiver.desktopUpdates;

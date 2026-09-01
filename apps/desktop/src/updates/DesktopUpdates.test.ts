@@ -18,7 +18,6 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
-
 describe("DesktopUpdates", () => {
   it("preserves complete causes for update poller and event failures", () => {
     const cause = Cause.combine(
