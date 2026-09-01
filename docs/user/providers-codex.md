@@ -94,8 +94,7 @@ Use these commands in a started Codex thread:
 /goal pause | /goal resume | /goal clear | /goal reset
 ```
 
-`/goal <objective>` creates a Goal. Status and usage stay synchronized with Codex; commands only
-work on Codex threads.
+`/goal <objective>` creates a Goal. Status and usage stay synchronized with Codex on Codex threads.
 
 ## I Want Work And Personal Codex Accounts
 
