@@ -140,7 +140,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               playsInline
               onLoadedMetadata={(event) => prepareVideoFirstFrame(event.currentTarget)}
               onError={() => setFailedVideoSrc(item.src)}
-              className="aspect-video max-h-[86vh] w-[min(92vw,64rem)] rounded-lg border border-border/70 bg-black object-contain shadow-2xl"
+              className="max-h-[86vh] max-w-[92vw] rounded-lg border border-border/70 bg-black object-contain shadow-2xl"
             />
           ) : failedImageSrc === item.src ? (
             <ExpandedMediaFailure>
