@@ -29,7 +29,7 @@ import { OrchestrationCommandReceiptRepositoryLive } from "../src/persistence/La
 import { OrchestrationEventStoreLive } from "../src/persistence/Layers/OrchestrationEventStore.ts";
 import { ProjectionCheckpointRepositoryLive } from "../src/persistence/Layers/ProjectionCheckpoints.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../src/persistence/Layers/ProjectionPendingApprovals.ts";
-import { layer as ProviderSessionRuntimeRepositoryLive } from "../src/persistence/ProviderSessionRuntime.ts";
+import * as ProviderSessionRuntime from "../src/persistence/ProviderSessionRuntime.ts";
 import { makeSqlitePersistenceLive } from "../src/persistence/Layers/Sqlite.ts";
 import { ProjectionCheckpointRepository } from "../src/persistence/Services/ProjectionCheckpoints.ts";
 import { ProjectionPendingApprovalRepository } from "../src/persistence/Services/ProjectionPendingApprovals.ts";
@@ -271,7 +271,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     );
     const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
-      Layer.provide(ProviderSessionRuntimeRepositoryLive),
+      Layer.provide(ProviderSessionRuntime.layer),
     );
     const realCodexRegistry = Layer.effect(
       ProviderAdapterRegistry,
