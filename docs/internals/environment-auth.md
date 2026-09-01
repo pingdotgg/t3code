@@ -28,6 +28,40 @@ managed relay connectivity:
 The desktop bootstrap credential and command-line administrative bootstrap
 credentials additionally grant `access:read access:write relay:write`.
 
+## Media preview access
+
+Clients with `orchestration:read` can request a `media-file` URL through `assets.createUrl` for
+supported images and videos anywhere the environment's server account can read. A thread ID
+supplies the workspace for relative paths; absolute paths refer to the environment host, not the
+client. This follows the environment-wide authorization model rather than introducing per-project
+filesystem permissions.
+
+[`AssetAccess.ts`](../../apps/server/src/assets/AssetAccess.ts) resolves symlinks, requires a regular
+file, and validates the resolved file's literal extension. It opens the file and signs its canonical
+path and device/inode identity for one hour. The token grants access to that exact file, not adjacent
+files or its containing directory. Serving rechecks the canonical path, media type, and opened
+descriptor's identity, then streams full or partial responses from that descriptor. Replacing a
+file atomically requires a freshly signed URL; editing it in place does not. The existing workspace
+boundary still applies to HTML, PDF, and other workspace previews. Uploaded attachments keep their
+separate asset resource.
+
+Signed asset URLs are bearer credentials. Anyone who obtains a URL and can reach the environment
+can fetch that file until it expires. Clients should copy the authored reference, not the temporary
+URL. Responses use `nosniff`; SVG responses retain their restrictive sandbox policy. Video reads
+support byte ranges so playback does not require a complete download first.
+
+Host videos can change in place, so their responses use `private, no-store` and omit `ETag`
+and `Last-Modified`. File metadata cannot prove byte-for-byte identity for `If-Range`; advertising
+those validators would encourage native players to send conditional seeks that require a full
+response. Ordinary range requests receive partial responses. An explicitly supplied `If-Range`
+still falls back to a full response because no strong validator is available. Host image previews
+keep their private cache policy and weak metadata validators.
+
+The server serves media in place without importing it into attachment storage. Deletion makes
+future server reads fail, though an already loaded client or its cache can retain bytes. Native
+viewers may use temporary client-side files for display or explicit sharing; those are not durable
+environment copies.
+
 ## Authentication Flows
 
 ### Browser Session

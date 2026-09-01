@@ -4,6 +4,7 @@ import ImageViewing from "react-native-image-viewing";
 
 import { downloadAndShareAttachment, shareLocalAttachment } from "../lib/attachmentDownload";
 import type { ResolvedFilePreviewSource } from "./FilePreviewModal";
+import { MediaImagePreview } from "./MediaImagePreview";
 
 function PdfPreview(props: {
   readonly source: ResolvedFilePreviewSource;
@@ -39,6 +40,7 @@ export function FilePreview(props: {
   readonly onRequestClose: () => void;
 }) {
   if (props.source.kind === "pdf") return <PdfPreview {...props} />;
+  if (props.source.actionsSource) return <MediaImagePreview {...props} />;
   return (
     <ImageViewing
       images={[{ uri: props.source.uri }]}

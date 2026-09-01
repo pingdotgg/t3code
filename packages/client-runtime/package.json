@@ -19,6 +19,14 @@
       "types": "./src/markdownImages.ts",
       "default": "./src/markdownImages.ts"
     },
+    "./markdown-links": {
+      "types": "./src/markdownLinks.ts",
+      "default": "./src/markdownLinks.ts"
+    },
+    "./media-reference": {
+      "types": "./src/mediaReference.ts",
+      "default": "./src/mediaReference.ts"
+    },
     "./codex-file-citations": {
       "types": "./src/codexFileCitations.ts",
       "default": "./src/codexFileCitations.ts"

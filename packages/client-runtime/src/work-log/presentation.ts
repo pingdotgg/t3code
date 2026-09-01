@@ -99,7 +99,7 @@ export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): strin
 }
 
 export interface ViewedImageAsset {
-  readonly resource: Extract<AssetResource, { readonly _tag: "attachment" | "workspace-file" }>;
+  readonly resource: Extract<AssetResource, { readonly _tag: "attachment" | "media-file" }>;
   readonly alt: string;
   readonly srcFragment: string;
 }
@@ -129,7 +129,7 @@ export function resolveViewedImageAsset(
   return {
     resource: attachmentId
       ? { _tag: "attachment", attachmentId }
-      : { _tag: "workspace-file", threadId: input.threadId, path },
+      : { _tag: "media-file", threadId: input.threadId, path },
     alt: path.split(/[\\/]/).at(-1) ?? "image",
     srcFragment: markdownImageSourceFragment(source),
   };

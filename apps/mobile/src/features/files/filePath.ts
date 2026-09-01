@@ -1,6 +1,7 @@
 import {
   isWorkspaceBrowserPreviewPath,
   isWorkspaceImagePreviewPath,
+  isWorkspaceVideoPreviewPath,
 } from "@t3tools/shared/filePreview";
 
 export interface FileBreadcrumb {
@@ -93,6 +94,10 @@ export function isBrowserPreviewFile(path: string): boolean {
 
 export function isImagePreviewFile(path: string): boolean {
   return isWorkspaceImagePreviewPath(path);
+}
+
+export function isVideoPreviewFile(path: string): boolean {
+  return isWorkspaceVideoPreviewPath(path);
 }
 
 export function isSvgImagePreviewFile(path: string): boolean {

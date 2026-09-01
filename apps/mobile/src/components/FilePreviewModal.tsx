@@ -5,6 +5,7 @@ import { Alert, Keyboard } from "react-native";
 
 import type { DraftComposerFileAttachment } from "../lib/composerImages";
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
+import type { MediaActionsSource } from "../lib/mediaActions";
 import { useAssetUrlState } from "../state/assets";
 import { usePreparedConnection } from "../state/session";
 import { FilePreview } from "./FilePreview";
@@ -14,6 +15,8 @@ export interface ResolvedFilePreviewSource {
   readonly uri: string;
   readonly name?: string;
   readonly sourceIdentifier?: string;
+  readonly srcFragment?: string;
+  readonly actionsSource?: MediaActionsSource;
 }
 
 export type FilePreviewSource = Omit<ResolvedFilePreviewSource, "uri"> &
@@ -40,13 +43,18 @@ function ResolvedFilePreview(props: {
     (connection._tag === "None" || asset._tag === "Failure");
   useEffect(() => Keyboard.dismiss(), []);
   useEffect(() => {
-    if (uri === null && asset._tag === "Success") setUri(asset.url);
-  }, [uri, asset]);
+    if (uri === null && asset._tag === "Success") setUri(asset.url + (source.srcFragment ?? ""));
+  }, [uri, asset, source.srcFragment]);
   useEffect(() => {
     if (!failed) return;
-    Alert.alert("Could not open preview", "Reconnect to this environment and try again.");
+    Alert.alert(
+      "Could not open preview",
+      connection._tag === "None"
+        ? "Reconnect to this environment and try again."
+        : "The file could not be loaded. It may have been moved or deleted.",
+    );
     onRequestClose();
-  }, [failed]);
+  }, [failed, connection._tag]);
   useEffect(() => {
     if (!("attachment" in source)) return;
     const controller = new AbortController();

@@ -51,6 +51,7 @@ export const MARKDOWN_FILE_ICON_SOURCES = {
   text: require("../assets/file-icons/pierre_text.png"),
   tsconfig: require("../assets/file-icons/pierre_tsconfig.png"),
   typescript: require("../assets/file-icons/pierre_typescript.png"),
+  video: require("../assets/file-icons/pierre_video.png"),
   vite: require("../assets/file-icons/pierre_vite.png"),
   vscode: require("../assets/file-icons/pierre_vscode.png"),
   vue: require("../assets/file-icons/pierre_vue.png"),

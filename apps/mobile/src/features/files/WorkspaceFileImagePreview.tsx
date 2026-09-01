@@ -8,14 +8,18 @@ import { EmptyState } from "../../components/EmptyState";
 import { workspaceFileImageAtom } from "./workspace-file-image-cache";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { PresentationSource } from "../../components/NativePresentation";
+import { useMediaActions, type MediaActionsSource } from "../../lib/mediaActions";
+import { MediaActionsMenu } from "../../components/MediaActionsMenu";
 
 function ResolvedWorkspaceFileImagePreview(props: {
   readonly accessibilityLabel: string;
   readonly uri: string;
+  readonly actionsSource?: MediaActionsSource;
 }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const sourceIdentifier = useId();
+  const mediaActions = useMediaActions(props.actionsSource);
   const imageSource = useMemo(
     () => ({ uri: props.uri, cache: "force-cache" as const }),
     [props.uri],
@@ -34,6 +38,7 @@ function ResolvedWorkspaceFileImagePreview(props: {
             uri: props.uri,
             name: props.accessibilityLabel,
             sourceIdentifier,
+            actionsSource: props.actionsSource,
           })
         }
       >
@@ -50,12 +55,15 @@ function ResolvedWorkspaceFileImagePreview(props: {
           />
         </PresentationSource>
       </Pressable>
-
       {loadError !== null ? (
         <View className="absolute inset-0 items-center justify-center bg-card px-6">
           <EmptyState title="Image unavailable" detail={loadError} />
         </View>
       ) : null}
+
+      <View className="absolute right-2 top-2">
+        <MediaActionsMenu media={mediaActions} />
+      </View>
 
       <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
     </View>
@@ -65,6 +73,7 @@ function ResolvedWorkspaceFileImagePreview(props: {
 function CachedWorkspaceFileImagePreview(props: {
   readonly accessibilityLabel: string;
   readonly uri: string;
+  readonly actionsSource?: MediaActionsSource;
 }) {
   const imageAtom = useMemo(() => workspaceFileImageAtom(props.uri), [props.uri]);
   const imageResult = useAtomValue(imageAtom);
@@ -93,6 +102,7 @@ function CachedWorkspaceFileImagePreview(props: {
     <ResolvedWorkspaceFileImagePreview
       accessibilityLabel={props.accessibilityLabel}
       uri={imageResult.value}
+      actionsSource={props.actionsSource}
     />
   );
 }
@@ -100,6 +110,7 @@ function CachedWorkspaceFileImagePreview(props: {
 export function WorkspaceFileImagePreview(props: {
   readonly accessibilityLabel: string;
   readonly uri: string | null;
+  readonly actionsSource?: MediaActionsSource;
 }) {
   if (props.uri === null) {
     return (
@@ -116,6 +127,7 @@ export function WorkspaceFileImagePreview(props: {
     <CachedWorkspaceFileImagePreview
       accessibilityLabel={props.accessibilityLabel}
       uri={props.uri}
+      actionsSource={props.actionsSource}
     />
   );
 }

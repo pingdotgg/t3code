@@ -4,7 +4,10 @@ import type {
   ResolvedKeybindingsConfig,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import {
+  isWorkspaceImagePreviewPath,
+  isWorkspaceVideoPreviewPath,
+} from "@t3tools/shared/filePreview";
 import { VirtualizedFile, type SelectedLineRange } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/editor";
 import { EditProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
@@ -12,13 +15,16 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { ChevronRight, Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
-import { useAssetUrlState } from "~/assets/assetUrls";
+import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
+import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
+import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
@@ -135,41 +141,111 @@ function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly absolutePath: string;
+  readonly workspaceRoot: string;
   readonly alt: string;
   readonly workspaceMutationId: string | null;
 }) {
-  const assetUrl = useAssetUrlState(props.environmentId, {
-    _tag: "workspace-file",
-    threadId: props.threadRef.threadId,
-    path: props.absolutePath,
-  });
+  const resource = useMemo(
+    () => ({
+      _tag: "workspace-file" as const,
+      threadId: props.threadRef.threadId,
+      path: props.absolutePath,
+    }),
+    [props.threadRef.threadId, props.absolutePath],
+  );
+  const assetUrl = useAssetUrlState(props.environmentId, resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const revisionSuffix =
     props.workspaceMutationId === null
       ? ""
       : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId)}`;
   const imageUrl = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
+  const actionsSource: MediaActionSource = {
+    kind: "image",
+    name: props.alt,
+    src: imageUrl,
+    reference: mediaFileReference(props.absolutePath, props.workspaceRoot),
+    asset: { environmentId: props.environmentId, resource },
+  };
 
   if (assetUrl._tag === "Failure" || (imageUrl !== null && failedUrl === imageUrl)) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-        Unable to load workspace image.
-      </div>
+      <MediaActions source={actionsSource}>
+        <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
+          Unable to load workspace image.
+        </div>
+      </MediaActions>
     );
   }
 
   return assetUrl._tag === "Success" && imageUrl !== null ? (
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
-      <img
-        className="max-h-full max-w-full object-contain"
-        src={imageUrl}
-        alt={props.alt}
-        onError={() => setFailedUrl(imageUrl)}
-      />
+      <MediaActions source={actionsSource}>
+        <img
+          className="max-h-full max-w-full object-contain"
+          src={imageUrl}
+          alt={props.alt}
+          onError={() => setFailedUrl(imageUrl)}
+        />
+      </MediaActions>
     </div>
   ) : (
     <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
       <LoaderCircle className="size-5 animate-spin" />
+    </div>
+  );
+}
+
+function WorkspaceVideoPreview(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
+  readonly absolutePath: string;
+  readonly workspaceRoot: string;
+  readonly name: string;
+  readonly workspaceMutationId: string | null;
+}) {
+  const resource = useMemo(
+    () => ({
+      _tag: "media-file" as const,
+      threadId: props.threadRef.threadId,
+      path: props.absolutePath,
+    }),
+    [props.threadRef.threadId, props.absolutePath],
+  );
+  const assetUrl = useAssetUrlState(props.environmentId, resource);
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
+  useWorkspaceMutationRefresh({
+    mutationId: props.workspaceMutationId,
+    resourceKey: JSON.stringify([props.environmentId, resource]),
+    refresh: () => {
+      // Failed refreshes flow through assetUrl and can be retried from the player.
+      void refreshAssetUrl().catch(() => undefined);
+    },
+  });
+  const revisionSuffix =
+    props.workspaceMutationId === null
+      ? ""
+      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId)}`;
+  const latestUrl = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
+
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4">
+      <MediaVideoPlayer
+        src={latestUrl}
+        sourceFailed={assetUrl._tag === "Failure"}
+        label={props.name}
+        revision={props.workspaceMutationId}
+        preload="metadata"
+        className="flex h-full min-h-0 w-full max-w-5xl items-center justify-center"
+        onRetry={refreshAssetUrl}
+        actionsSource={{
+          kind: "video",
+          name: props.name,
+          src: latestUrl,
+          reference: mediaFileReference(props.absolutePath, props.workspaceRoot),
+          asset: { environmentId: props.environmentId, resource },
+        }}
+      />
     </div>
   );
 }
@@ -791,8 +867,10 @@ export default function FilePreviewPanel({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
-  const isImage = relativePath !== null && isWorkspaceImagePreviewPath(relativePath);
-  const file = useProjectFileQuery(environmentId, cwd, relativePath, !isImage);
+  const isVideo = relativePath !== null && isWorkspaceVideoPreviewPath(relativePath);
+  const isImage = relativePath !== null && !isVideo && isWorkspaceImagePreviewPath(relativePath);
+  const isMedia = isImage || isVideo;
+  const file = useProjectFileQuery(environmentId, cwd, relativePath, !isMedia);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   // Reading markdown rendered is a preference, not a property of one file. Keeping
   // it on the panel meant a thread switch dropped it and forced source back.
@@ -816,7 +894,10 @@ export default function FilePreviewPanel({
     (revealLine === null ||
       (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId));
   const canOpenInBrowser =
-    relativePath !== null && isPreviewSupportedInRuntime() && isBrowserPreviewFile(relativePath);
+    relativePath !== null &&
+    !isVideo &&
+    isPreviewSupportedInRuntime() &&
+    isBrowserPreviewFile(relativePath);
   const absolutePath = relativePath ? resolvePathLinkTarget(relativePath, cwd) : null;
   const breadcrumbs = useMemo(
     () => (relativePath ? fileBreadcrumbs(projectName, relativePath) : []),
@@ -824,7 +905,7 @@ export default function FilePreviewPanel({
   );
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
   useWorkspaceMutationRefresh({
-    enabled: relativePath !== null && !isImage && !selectedFilePending,
+    enabled: relativePath !== null && !isMedia && !selectedFilePending,
     mutationId: workspaceMutationId,
     refresh: file.refresh,
     resourceKey: `file:${environmentId}:${cwd}:${relativePath ?? ""}`,
@@ -999,7 +1080,7 @@ export default function FilePreviewPanel({
           </Tooltip>
         </div>
       ) : null}
-      {relativePath && file.data?.truncated ? (
+      {relativePath && !isMedia && file.data?.truncated ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
           Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
         </div>
@@ -1011,12 +1092,23 @@ export default function FilePreviewPanel({
             relativePath ? "flex" : "hidden",
           )}
         >
-          {relativePath && isImage && absolutePath ? (
+          {relativePath && isVideo && absolutePath ? (
+            <WorkspaceVideoPreview
+              key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
+              environmentId={environmentId}
+              threadRef={threadRef}
+              absolutePath={absolutePath}
+              workspaceRoot={cwd}
+              name={relativePath}
+              workspaceMutationId={workspaceMutationId}
+            />
+          ) : relativePath && isImage && absolutePath ? (
             <WorkspaceImagePreview
               key={absolutePath}
               environmentId={environmentId}
               threadRef={threadRef}
               absolutePath={absolutePath}
+              workspaceRoot={cwd}
               alt={relativePath}
               workspaceMutationId={workspaceMutationId}
             />
@@ -1099,7 +1191,7 @@ export default function FilePreviewPanel({
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}
-              {...(relativePath && !isImage ? { onRefreshSelectedFile: file.refresh } : {})}
+              {...(relativePath && !isMedia ? { onRefreshSelectedFile: file.refresh } : {})}
             />
           </aside>
         ) : null}

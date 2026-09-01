@@ -11,6 +11,43 @@ import {
 } from "@t3tools/mobile-markdown-text/markdown";
 
 describe("nativeMarkdownTextRuns", () => {
+  it("links a path-shaped code span without changing the same path in prose", () => {
+    expect(
+      nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          { type: "text", content: "/tmp/frame.png " },
+          { type: "code_inline", content: "/tmp/frame.png" },
+        ],
+      }),
+    ).toEqual([
+      { text: "/tmp/frame.png " },
+      { text: "frame.png", href: "/tmp/frame.png", fileIcon: "image" },
+    ]);
+  });
+
+  it("preserves the destination of a link with a code-formatted label", () => {
+    expect(
+      nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          {
+            type: "link",
+            href: "https://example.com/docs",
+            children: [{ type: "code_inline", content: "src/main.ts" }],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        text: "src/main.ts",
+        code: true,
+        href: "https://example.com/docs",
+        externalHost: "example.com",
+      },
+    ]);
+  });
+
   it("preserves inline emphasis and code styles", () => {
     const node: MarkdownNode = {
       type: "paragraph",
