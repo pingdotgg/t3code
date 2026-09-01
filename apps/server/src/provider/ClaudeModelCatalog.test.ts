@@ -1,0 +1,85 @@
+import { assert, describe, it } from "@effect/vitest";
+import { ProviderInstanceId } from "@t3tools/contracts";
+
+import type { ModelManifestData } from "./ModelManifest.ts";
+import {
+  formatClaudeVersionUpgradeMessage,
+  normalizeClaudeCatalogEffort,
+  resolveClaudeCatalogApiModelId,
+  resolveClaudeModelCatalog,
+  resolveClaudeModelsForVersion,
+  resolveClaudeModelSlug,
+} from "./ClaudeModelCatalog.ts";
+
+const manifest = (): ModelManifestData => ({
+  version: 1,
+  currentModels: {},
+  providers: {
+    claudeAgent: {
+      profiles: {
+        synthetic: {
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "effort",
+                label: "Reasoning",
+                type: "select",
+                options: [{ id: "extreme", label: "Extreme", isDefault: true }],
+              },
+              {
+                id: "contextWindow",
+                label: "Context Window",
+                type: "select",
+                options: [{ id: "large", label: "Large", isDefault: true }],
+              },
+            ],
+          },
+          adapter: {
+            claudeCode: {
+              effortMap: { extreme: "high" },
+              modelSuffixes: { contextWindow: { large: "[large]" } },
+            },
+          },
+        },
+      },
+      models: [
+        {
+          slug: "claude-synthetic-next",
+          name: "Claude Synthetic Next",
+          aliases: ["synthetic"],
+          status: "current",
+          profile: "synthetic",
+          adapter: { claudeCode: { minVersion: "3.2.0" } },
+        },
+      ],
+    },
+  },
+});
+
+describe("Claude model catalog", () => {
+  it("filters models at runtime-version boundaries and derives the upgrade message", () => {
+    const catalog = resolveClaudeModelCatalog(manifest());
+    assert.deepStrictEqual(resolveClaudeModelsForVersion(catalog, "3.1.9"), []);
+    assert.deepStrictEqual(
+      resolveClaudeModelsForVersion(catalog, "3.2.0").map((model) => model.slug),
+      ["claude-synthetic-next"],
+    );
+    assert.strictEqual(
+      formatClaudeVersionUpgradeMessage(catalog, "3.1.9"),
+      "Claude Code v3.1.9 is too old for Claude Synthetic Next. Upgrade to v3.2.0 or newer to access it.",
+    );
+  });
+
+  it("resolves aliases and declarative adapter mappings", () => {
+    const catalog = resolveClaudeModelCatalog(manifest());
+    assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "claude-synthetic-next");
+    assert.strictEqual(normalizeClaudeCatalogEffort(catalog, "extreme", "synthetic"), "high");
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(catalog, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "synthetic",
+      }),
+      "claude-synthetic-next[large]",
+    );
+  });
+});

@@ -148,16 +148,6 @@ describe("descriptor helpers", () => {
   });
 });
 
-describe("model slug normalization", () => {
-  it("preserves exact custom slugs instead of expanding provider aliases", () => {
-    const claude = ProviderDriverKind.make("claudeAgent");
-
-    expect(normalizeModelSlug("fable", claude)).toBe("claude-fable-5-1");
-    expect(normalizeModelSlug("opus", claude)).toBe("claude-opus-5");
-    expect(normalizeCustomModelSlug(" opus ")).toBe("opus");
-  });
-});
-
 describe("applyClaudePromptEffortPrefix", () => {
   it("keeps slash commands intact when ultrathink is selected", () => {
     expect(applyClaudePromptEffortPrefix("/compact", "ultrathink")).toBe("/compact");
