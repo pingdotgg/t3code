@@ -15,6 +15,7 @@ import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -39,6 +40,7 @@ const configLayer = Layer.effect(
 const environmentAuthLayer = EnvironmentAuth.layer.pipe(
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(ServerSecretStore.layer),
+  Layer.provide(ServerEnvironment.identityLayer),
   Layer.provide(configLayer),
 );
 const routesLayer = HttpApiBuilder.layer(AuthTestApi).pipe(
