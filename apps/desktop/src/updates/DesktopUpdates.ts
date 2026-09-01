@@ -77,7 +77,20 @@ export class DesktopUpdateActionInProgressError extends Schema.TaggedErrorClass<
   },
 ) {
   override get message(): string {
-    return `Cannot change the desktop update track to ${this.requestedChannel} while an update ${this.action} action is in progress.`;
+    return `Cannot change the desktop update channel to ${this.requestedChannel} while an update ${this.action} action is in progress.`;
+  }
+}
+
+export class DesktopUpdateRepositoryChangeInProgressError extends Schema.TaggedErrorClass<DesktopUpdateRepositoryChangeInProgressError>()(
+  "DesktopUpdateRepositoryChangeInProgressError",
+  {
+    action: Schema.Literals(["check", "download", "install", "channel", "repository"]),
+    requestedRepository: Schema.NullOr(Schema.String),
+  },
+) {
+  override get message(): string {
+    const repository = this.requestedRepository ?? "the bundled release source";
+    return `Cannot change the desktop update source to ${repository} while an update ${this.action} action is in progress.`;
   }
 }
 
@@ -196,7 +209,7 @@ export class DesktopUpdates extends Context.Service<
       DesktopUpdateState,
       | DesktopUpdateRepositoryError
       | DesktopUpdateRepositoryPersistenceError
-      | DesktopUpdateActionInProgressError
+      | DesktopUpdateRepositoryChangeInProgressError
     >;
     readonly check: (reason: string) => Effect.Effect<DesktopUpdateCheckResult>;
     readonly download: Effect.Effect<DesktopUpdateActionResult>;
@@ -305,6 +318,7 @@ export const make = Effect.gen(function* () {
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
   const updaterConfiguredRef = yield* Ref.make(false);
+  const updaterRuntimeInitializedRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const updateStateRef = yield* Ref.make<DesktopUpdateState>(
     createInitialDesktopUpdateState(
@@ -804,56 +818,16 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  return DesktopUpdates.of({
-    getState: Ref.get(updateStateRef),
-    emitState,
-    disabledReason: resolveDisabledReason,
-    configure: Effect.gen(function* () {
+  const initializeAutoUpdaterRuntime = Effect.fn("desktop.updates.initializeAutoUpdaterRuntime")(
+    function* () {
+      if (yield* Ref.get(updaterRuntimeInitializedRef)) {
+        return;
+      }
+
       const context = yield* Effect.context<never>();
       const runEffect = (effect: Effect.Effect<void>) => {
         void Effect.runPromiseWith(context)(effect);
       };
-
-      const appUpdateYmlConfig = yield* readAppUpdateYml;
-      yield* Ref.set(appUpdateYmlConfigRef, appUpdateYmlConfig);
-
-      if (config.mockUpdates) {
-        yield* electronUpdater.setFeedURL({
-          provider: "generic",
-          url: `http://localhost:${config.mockUpdateServerPort}`,
-        } as ElectronUpdater.ElectronUpdaterFeedUrl);
-      }
-
-      const settings = yield* desktopSettings.get;
-      const enabled = yield* shouldEnableAutoUpdates;
-      yield* setState(
-        createBaseUpdateState(
-          settings.updateChannel,
-          enabled,
-          environment,
-          settings.updateRepository,
-        ),
-      );
-      if (!enabled) {
-        return;
-      }
-      yield* Ref.set(updaterConfiguredRef, true);
-
-      yield* electronUpdater.setAutoDownload(false);
-      yield* electronUpdater.setAutoInstallOnAppQuit(false);
-      if (!config.mockUpdates) {
-        yield* applyAutoUpdaterFeed(settings.updateRepository, settings.updateChannel);
-      }
-      yield* applyAutoUpdaterChannel(settings.updateChannel);
-      yield* electronUpdater.setDisableDifferentialDownload(
-        isArm64HostRunningIntelBuild(environment.runtimeInfo),
-      );
-
-      if (isArm64HostRunningIntelBuild(environment.runtimeInfo)) {
-        yield* logUpdaterInfo(
-          "Apple Silicon host detected while running Intel build; updates will switch to arm64 packages",
-        );
-      }
 
       yield* electronUpdater.on("checking-for-update", () => {
         runEffect(
@@ -878,7 +852,63 @@ export const make = Effect.gen(function* () {
         runEffect(handleUpdateDownloaded(info));
       });
 
+      yield* Ref.set(updaterRuntimeInitializedRef, true);
       yield* startUpdatePollers;
+    },
+  );
+
+  const enableAutoUpdater = Effect.fn("desktop.updates.enableAutoUpdater")(function* (
+    repository: DesktopUpdateRepository,
+    channel: DesktopUpdateChannel,
+  ) {
+    if (config.mockUpdates) {
+      yield* electronUpdater.setFeedURL({
+        provider: "generic",
+        url: `http://localhost:${config.mockUpdateServerPort}`,
+      } as ElectronUpdater.ElectronUpdaterFeedUrl);
+    }
+
+    yield* electronUpdater.setAutoDownload(false);
+    yield* electronUpdater.setAutoInstallOnAppQuit(false);
+    if (!config.mockUpdates) {
+      yield* applyAutoUpdaterFeed(repository, channel);
+    }
+    yield* applyAutoUpdaterChannel(channel);
+    yield* electronUpdater.setDisableDifferentialDownload(
+      isArm64HostRunningIntelBuild(environment.runtimeInfo),
+    );
+    yield* Ref.set(updaterConfiguredRef, true);
+
+    if (isArm64HostRunningIntelBuild(environment.runtimeInfo)) {
+      yield* logUpdaterInfo(
+        "Apple Silicon host detected while running Intel build; updates will switch to arm64 packages",
+      );
+    }
+  });
+
+  return DesktopUpdates.of({
+    getState: Ref.get(updateStateRef),
+    emitState,
+    disabledReason: resolveDisabledReason,
+    configure: Effect.gen(function* () {
+      const appUpdateYmlConfig = yield* readAppUpdateYml;
+      yield* Ref.set(appUpdateYmlConfigRef, appUpdateYmlConfig);
+
+      const settings = yield* desktopSettings.get;
+      const enabled = yield* shouldEnableAutoUpdates;
+      yield* setState(
+        createBaseUpdateState(
+          settings.updateChannel,
+          enabled,
+          environment,
+          settings.updateRepository,
+        ),
+      );
+      yield* initializeAutoUpdaterRuntime();
+      if (!enabled) {
+        return;
+      }
+      yield* enableAutoUpdater(settings.updateRepository, settings.updateChannel);
     }).pipe(Effect.withSpan("desktop.updates.configure")),
     setChannel: Effect.fn("desktop.updates.setChannel")(function* (
       nextChannel: DesktopUpdateChannel,
@@ -939,9 +969,9 @@ export const make = Effect.gen(function* () {
 
       const activeAction = yield* tryStartSettingsChange("repository");
       if (Option.isSome(activeAction)) {
-        return yield* new DesktopUpdateActionInProgressError({
+        return yield* new DesktopUpdateRepositoryChangeInProgressError({
           action: activeAction.value,
-          requestedChannel: (yield* Ref.get(updateStateRef)).channel,
+          requestedRepository: normalizedRepository,
         });
       }
 
@@ -962,11 +992,7 @@ export const make = Effect.gen(function* () {
                 }),
             ),
           );
-        const updaterConfigured = yield* Ref.get(updaterConfiguredRef);
-        const enabled = updaterConfigured ? yield* shouldEnableAutoUpdates : state.enabled;
-        if (updaterConfigured) {
-          yield* Ref.set(updaterConfiguredRef, enabled);
-        }
+        const enabled = yield* shouldEnableAutoUpdates;
         yield* setState(
           createBaseUpdateState(
             state.channel,
@@ -976,12 +1002,13 @@ export const make = Effect.gen(function* () {
           ),
         );
 
-        if (updaterConfigured && enabled) {
-          if (!config.mockUpdates) {
-            yield* applyAutoUpdaterFeed(settingsChange.settings.updateRepository, state.channel);
-          }
-          yield* checkForUpdates("repository-change", "held");
+        if (!enabled) {
+          yield* Ref.set(updaterConfiguredRef, false);
+          return yield* Ref.get(updateStateRef);
         }
+
+        yield* enableAutoUpdater(settingsChange.settings.updateRepository, state.channel);
+        yield* checkForUpdates("repository-change", "held");
         return yield* Ref.get(updateStateRef);
       }).pipe(Effect.ensuring(finishUpdateAction("repository")));
     }),

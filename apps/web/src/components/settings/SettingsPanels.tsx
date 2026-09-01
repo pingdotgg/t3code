@@ -226,7 +226,6 @@ function AboutVersionTitle() {
 function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
-  const [customUpdateRepository, setCustomUpdateRepository] = useState("");
   const [isChangingUpdateRepository, setIsChangingUpdateRepository] = useState(false);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
 
@@ -234,10 +233,6 @@ function AboutVersionSection() {
   const selectedUpdateChannel = updateState?.channel ?? "latest";
   const selectedUpdateRepository = updateState?.repository ?? null;
   const selectedHostedAppChannel = hasDesktopBridge ? null : HOSTED_APP_CHANNEL;
-
-  useEffect(() => {
-    setCustomUpdateRepository(selectedUpdateRepository ?? "");
-  }, [selectedUpdateRepository]);
 
   const handleUpdateChannelChange = useCallback(
     (channel: DesktopUpdateChannel) => {
@@ -269,32 +264,32 @@ function AboutVersionSection() {
     [selectedUpdateChannel],
   );
 
-  const handleUpdateRepositoryChange = useCallback(() => {
-    const bridge = window.desktopBridge;
-    if (!bridge || typeof bridge.setUpdateRepository !== "function") return;
+  const handleUpdateRepositoryChange = useCallback(
+    (value: string) => {
+      const bridge = window.desktopBridge;
+      if (!bridge || typeof bridge.setUpdateRepository !== "function") return;
 
-    const repository: DesktopUpdateRepository = customUpdateRepository.trim() || null;
-    if (repository === selectedUpdateRepository) return;
+      const repository: DesktopUpdateRepository = value.trim() || null;
+      if (repository === selectedUpdateRepository) return;
 
-    setIsChangingUpdateRepository(true);
-    void bridge
-      .setUpdateRepository(repository)
-      .then((state) => {
-        setCustomUpdateRepository(state.repository ?? "");
-      })
-      .catch((error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not change update source",
-            description: error instanceof Error ? error.message : "Update source change failed.",
-          }),
-        );
-      })
-      .finally(() => {
-        setIsChangingUpdateRepository(false);
-      });
-  }, [customUpdateRepository, selectedUpdateRepository]);
+      setIsChangingUpdateRepository(true);
+      void bridge
+        .setUpdateRepository(repository)
+        .catch((error: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not change update source",
+              description: error instanceof Error ? error.message : "Update source change failed.",
+            }),
+          );
+        })
+        .finally(() => {
+          setIsChangingUpdateRepository(false);
+        });
+    },
+    [selectedUpdateRepository],
+  );
 
   const handleButtonClick = useCallback(async () => {
     const bridge = window.desktopBridge;
@@ -460,19 +455,14 @@ function AboutVersionSection() {
             title="Custom release source"
             description="Optional GitHub owner/repository. Leave empty to use the bundled T3 Code release source."
             control={
-              <Input
+              <DraftInput
                 className="w-full sm:w-64"
                 aria-label="Custom release source"
                 placeholder="owner/repository"
-                value={customUpdateRepository}
-                disabled={isChangingUpdateRepository}
-                onChange={(event) => setCustomUpdateRepository(event.target.value)}
-                onBlur={handleUpdateRepositoryChange}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.currentTarget.blur();
-                  }
-                }}
+                spellCheck={false}
+                value={selectedUpdateRepository ?? ""}
+                disabled={isChangingUpdateRepository || isChangingUpdateChannel}
+                onCommit={handleUpdateRepositoryChange}
               />
             }
           />

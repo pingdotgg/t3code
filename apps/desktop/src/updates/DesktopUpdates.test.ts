@@ -342,6 +342,36 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("enables a custom repository after starting without an update feed", () => {
+    const harness = makeHarness({
+      env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+      updateRepository: null,
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        assert.isFalse((yield* updates.getState).enabled);
+        assert.equal(harness.listenerCount(), 6);
+
+        const enabled = yield* updates.setRepository("acme/t3code");
+        assert.isTrue(enabled.enabled);
+        assert.equal(enabled.repository, "acme/t3code");
+        assert.equal(harness.listenerCount(), 6);
+        assert.equal(harness.checkCount(), 1);
+
+        const disabled = yield* updates.setRepository(null);
+        assert.isFalse(disabled.enabled);
+
+        yield* updates.setRepository("acme/other");
+        assert.equal(harness.listenerCount(), 6);
+        assert.equal(harness.checkCount(), 2);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("rejects malformed custom repositories without changing the source", () => {
     const harness = makeHarness({
       env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
@@ -857,6 +887,40 @@ describe("DesktopUpdates", () => {
             assert.equal(error.action, "check");
             assert.equal(error.requestedChannel, "nightly");
           }
+
+          yield* Deferred.succeed(releaseCheck, undefined);
+          yield* Fiber.join(checkFiber);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
+  it.effect("fails repository changes with repository context while a check is in progress", () =>
+    Effect.gen(function* () {
+      const checkStarted = yield* Deferred.make<void>();
+      const releaseCheck = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        checkForUpdates: Deferred.succeed(checkStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseCheck)),
+        ),
+      });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+
+          const checkFiber = yield* updates.check("manual").pipe(Effect.forkScoped);
+          yield* Deferred.await(checkStarted);
+
+          const error = yield* updates.setRepository("acme/t3code").pipe(Effect.flip);
+          assert.instanceOf(error, DesktopUpdates.DesktopUpdateRepositoryChangeInProgressError);
+          assert.equal(error.action, "check");
+          assert.equal(error.requestedRepository, "acme/t3code");
+          assert.equal(
+            error.message,
+            "Cannot change the desktop update source to acme/t3code while an update check action is in progress.",
+          );
 
           yield* Deferred.succeed(releaseCheck, undefined);
           yield* Fiber.join(checkFiber);
