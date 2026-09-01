@@ -704,6 +704,7 @@ const abortOpenCodeDescendants = Effect.fn("abortOpenCodeDescendants")(function*
   context: OpenCodeSessionContext,
 ) {
   const visited = new Set([context.openCodeSessionId]);
+  const requestSemaphore = Semaphore.makeUnsafe(8);
 
   const visit = (
     sessionId: string,
@@ -712,29 +713,37 @@ const abortOpenCodeDescendants = Effect.fn("abortOpenCodeDescendants")(function*
     Effect.gen(function* () {
       let firstFailure: OpenCodeRuntimeError | undefined;
       if (abortSession) {
-        const abortResult = yield* runOpenCodeSdk("session.abort", (signal) =>
-          context.client.session.abort({ sessionID: sessionId }, { signal }),
-        ).pipe(
+        const abortResult = yield* requestSemaphore
+          .withPermit(
+            runOpenCodeSdk("session.abort", (signal) =>
+              context.client.session.abort({ sessionID: sessionId }, { signal }),
+            ),
+          )
+          .pipe(
+            Effect.catchIf(
+              (cause) => isOpenCodeNotFound(cause),
+              () => Effect.void,
+            ),
+            Effect.result,
+          );
+        if (abortResult._tag === "Failure") {
+          firstFailure = abortResult.failure;
+        }
+      }
+
+      const childrenResult = yield* requestSemaphore
+        .withPermit(
+          runOpenCodeSdk("session.children", (signal) =>
+            context.client.session.children({ sessionID: sessionId }, { signal }),
+          ),
+        )
+        .pipe(
           Effect.catchIf(
             (cause) => isOpenCodeNotFound(cause),
             () => Effect.void,
           ),
           Effect.result,
         );
-        if (abortResult._tag === "Failure") {
-          firstFailure = abortResult.failure;
-        }
-      }
-
-      const childrenResult = yield* runOpenCodeSdk("session.children", (signal) =>
-        context.client.session.children({ sessionID: sessionId }, { signal }),
-      ).pipe(
-        Effect.catchIf(
-          (cause) => isOpenCodeNotFound(cause),
-          () => Effect.void,
-        ),
-        Effect.result,
-      );
       if (childrenResult._tag === "Failure") {
         return firstFailure ?? childrenResult.failure;
       }

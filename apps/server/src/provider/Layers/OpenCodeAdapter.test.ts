@@ -71,6 +71,9 @@ const runtimeMock = {
       | null,
     sessionChildrenCalls: [] as string[],
     sessionChildrenById: new Map<string, Array<{ id: string }>>(),
+    sessionChildrenImplementation: null as
+      | ((sessionID: string) => Promise<Array<{ id: string }>>)
+      | null,
     closeCalls: [] as string[],
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
     messageCalls: [] as Array<{ sessionID: string; messageID: string }>,
@@ -120,6 +123,7 @@ const runtimeMock = {
     this.state.abortImplementation = null;
     this.state.sessionChildrenCalls.length = 0;
     this.state.sessionChildrenById.clear();
+    this.state.sessionChildrenImplementation = null;
     this.state.closeCalls.length = 0;
     this.state.revertCalls.length = 0;
     this.state.messageCalls.length = 0;
@@ -258,7 +262,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         },
         children: async ({ sessionID }: { sessionID: string }) => {
           runtimeMock.state.sessionChildrenCalls.push(sessionID);
-          return { data: runtimeMock.state.sessionChildrenById.get(sessionID) ?? [] };
+          return {
+            data: runtimeMock.state.sessionChildrenImplementation
+              ? await runtimeMock.state.sessionChildrenImplementation(sessionID)
+              : (runtimeMock.state.sessionChildrenById.get(sessionID) ?? []),
+          };
         },
         status: async () => {
           runtimeMock.state.sessionStatusCalls += 1;
@@ -3127,6 +3135,79 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(session?.activeTurnId, nextTurn.turnId);
 
       runtimeMock.state.abortImplementation = null;
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("limits SDK requests across the full OpenCode child tree", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-interrupt-child-request-limit");
+      const rootSessionId = "http://127.0.0.1:9999/session";
+      const requestRelease = promiseWithResolvers<void>();
+      const limitReached = promiseWithResolvers<void>();
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const holdRequest = async <T>(result: T): Promise<T> => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        if (inFlight === 8) {
+          limitReached.resolve(undefined);
+        }
+        await requestRelease.promise;
+        inFlight -= 1;
+        return result;
+      };
+
+      const children = Array.from({ length: 8 }, (_, index) => ({ id: `ses_child_${index}` }));
+      runtimeMock.state.sessionChildrenById.set(rootSessionId, children);
+      for (const child of children.slice(1)) {
+        runtimeMock.state.sessionChildrenById.set(
+          child.id,
+          Array.from({ length: 8 }, (_, index) => ({ id: `${child.id}_nested_${index}` })),
+        );
+      }
+      runtimeMock.state.abortImplementation = async (sessionID) => {
+        if (sessionID.includes("_nested_")) {
+          await holdRequest(undefined);
+        }
+      };
+      runtimeMock.state.sessionChildrenImplementation = async (sessionID) => {
+        if (sessionID === "ses_child_0") {
+          return await holdRequest([]);
+        }
+        return runtimeMock.state.sessionChildrenById.get(sessionID) ?? [];
+      };
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Run a nested child tree",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+
+      const interruptFiber = yield* adapter
+        .interruptTurn(threadId, turn.turnId)
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => limitReached.promise);
+      yield* Effect.yieldNow;
+
+      NodeAssert.equal(inFlight, 8);
+      NodeAssert.equal(maxInFlight, 8);
+
+      requestRelease.resolve(undefined);
+      yield* Fiber.join(interruptFiber);
+
+      runtimeMock.state.abortImplementation = null;
+      runtimeMock.state.sessionChildrenImplementation = null;
+      runtimeMock.state.sessionChildrenById.clear();
       yield* adapter.stopSession(threadId);
     }),
   );
