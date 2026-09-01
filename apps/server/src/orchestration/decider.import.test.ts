@@ -388,4 +388,62 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
       expect(error.message).toContain("reserved imported-session namespace");
     }),
   );
+
+  it.effect("rejects live assistant messages in the imported-session namespace", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-08-24T10:00:00.000Z";
+      const threadId = ThreadId.make("thread-live-assistant-message");
+      const readModel = yield* projectEvent(createEmptyReadModel(createdAt), {
+        sequence: 1,
+        eventId: EventId.make("event-live-assistant-thread-created"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.created",
+        occurredAt: createdAt,
+        commandId: CommandId.make("command-live-assistant-thread-created"),
+        causationEventId: null,
+        correlationId: CommandId.make("command-live-assistant-thread-created"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-1"),
+          title: "Live thread",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      for (const commandType of [
+        "thread.message.assistant.delta",
+        "thread.message.assistant.complete",
+      ] as const) {
+        const command =
+          commandType === "thread.message.assistant.delta"
+            ? {
+                type: commandType,
+                commandId: CommandId.make("command-live-assistant-delta-import-id"),
+                threadId,
+                messageId: MessageId.make("import:forged-live-assistant-message"),
+                delta: "Live work",
+                createdAt,
+              }
+            : {
+                type: commandType,
+                commandId: CommandId.make("command-live-assistant-complete-import-id"),
+                threadId,
+                messageId: MessageId.make("import:forged-live-assistant-message"),
+                createdAt,
+              };
+        const error = yield* Effect.flip(decideOrchestrationCommand({ command, readModel }));
+
+        expect(error._tag).toBe("OrchestrationCommandInvariantError");
+        expect(error.message).toContain("reserved imported-session namespace");
+      }
+    }),
+  );
 });

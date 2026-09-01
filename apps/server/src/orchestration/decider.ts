@@ -1280,6 +1280,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.message.assistant.delta": {
+      if (isImportedAgentSessionMessageId(command.messageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message id '${command.messageId}' uses the reserved imported-session namespace.`,
+        });
+      }
       yield* requireThread({
         readModel,
         command,
@@ -1307,6 +1313,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.message.assistant.complete": {
+      if (isImportedAgentSessionMessageId(command.messageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message id '${command.messageId}' uses the reserved imported-session namespace.`,
+        });
+      }
       yield* requireThread({
         readModel,
         command,

@@ -1,11 +1,16 @@
 import {
   BearerConnectionTarget,
   PrimaryConnectionTarget,
+  RelayConnectionTarget,
+  SshConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveOnboardingTargetEnvironment } from "./targetEnvironment.logic";
+import {
+  isOnboardingRelayEnvironment,
+  resolveOnboardingTargetEnvironment,
+} from "./targetEnvironment.logic";
 
 const primaryEnvironment = {
   environmentId: EnvironmentId.make("primary"),
@@ -21,17 +26,28 @@ const primaryEnvironment = {
   label: "This computer",
 } as const;
 
-const olderRemote = {
+const olderRelay = {
   environmentId: EnvironmentId.make("older-remote"),
   connection: { phase: "connected" },
   entry: {
-    target: new BearerConnectionTarget({
+    target: new RelayConnectionTarget({
       environmentId: EnvironmentId.make("older-remote"),
       label: "Older computer",
-      connectionId: "older-remote",
     }),
   },
   label: "Older computer",
+} as const;
+
+const newerRelay = {
+  environmentId: EnvironmentId.make("newer-relay"),
+  connection: { phase: "connected" },
+  entry: {
+    target: new RelayConnectionTarget({
+      environmentId: EnvironmentId.make("newer-relay"),
+      label: "New computer",
+    }),
+  },
+  label: "New computer",
 } as const;
 
 const pairedRemote = {
@@ -40,11 +56,24 @@ const pairedRemote = {
   entry: {
     target: new BearerConnectionTarget({
       environmentId: EnvironmentId.make("paired-remote"),
-      label: "New computer",
+      label: "Direct computer",
       connectionId: "paired-remote",
     }),
   },
-  label: "New computer",
+  label: "Direct computer",
+} as const;
+
+const sshEnvironment = {
+  environmentId: EnvironmentId.make("ssh-remote"),
+  connection: { phase: "connected" },
+  entry: {
+    target: new SshConnectionTarget({
+      environmentId: EnvironmentId.make("ssh-remote"),
+      label: "SSH computer",
+      connectionId: "ssh-remote",
+    }),
+  },
+  label: "SSH computer",
 } as const;
 
 const desktopLocalEnvironment = {
@@ -67,7 +96,7 @@ describe("resolveOnboardingTargetEnvironment", () => {
     expect(
       resolveOnboardingTargetEnvironment({
         mode: "direct",
-        environments: [primaryEnvironment, olderRemote, pendingPairedRemote],
+        environments: [primaryEnvironment, olderRelay, pendingPairedRemote],
         primaryEnvironment,
         pairedEnvironmentId: pairedRemote.environmentId,
       }),
@@ -78,7 +107,7 @@ describe("resolveOnboardingTargetEnvironment", () => {
     expect(
       resolveOnboardingTargetEnvironment({
         mode: "direct",
-        environments: [primaryEnvironment, olderRemote, pairedRemote],
+        environments: [primaryEnvironment, olderRelay, pairedRemote],
         primaryEnvironment,
         pairedEnvironmentId: pairedRemote.environmentId,
       }),
@@ -89,7 +118,7 @@ describe("resolveOnboardingTargetEnvironment", () => {
     expect(
       resolveOnboardingTargetEnvironment({
         mode: "direct",
-        environments: [primaryEnvironment, olderRemote],
+        environments: [primaryEnvironment, olderRelay],
         primaryEnvironment,
         pairedEnvironmentId: pairedRemote.environmentId,
       }),
@@ -100,7 +129,7 @@ describe("resolveOnboardingTargetEnvironment", () => {
     expect(
       resolveOnboardingTargetEnvironment({
         mode: "local",
-        environments: [primaryEnvironment, olderRemote],
+        environments: [primaryEnvironment, olderRelay],
         primaryEnvironment,
         pairedEnvironmentId: null,
       }),
@@ -113,7 +142,7 @@ describe("resolveOnboardingTargetEnvironment", () => {
     expect(
       resolveOnboardingTargetEnvironment({
         mode: "local",
-        environments: [offlinePrimary, olderRemote],
+        environments: [offlinePrimary, olderRelay],
         primaryEnvironment: offlinePrimary,
         pairedEnvironmentId: null,
       }),
@@ -124,29 +153,35 @@ describe("resolveOnboardingTargetEnvironment", () => {
     expect(
       resolveOnboardingTargetEnvironment({
         mode: "connect",
-        environments: [primaryEnvironment, olderRemote, pairedRemote],
+        environments: [primaryEnvironment, olderRelay, newerRelay],
         primaryEnvironment,
         pairedEnvironmentId: null,
       }),
-    ).toBe(pairedRemote);
+    ).toBe(newerRelay);
   });
 
-  it("does not mistake a desktop-managed backend for a remote computer", () => {
+  it("ignores direct, SSH, and desktop-managed connections in Connect mode", () => {
     expect(
       resolveOnboardingTargetEnvironment({
         mode: "connect",
-        environments: [primaryEnvironment, pairedRemote, desktopLocalEnvironment],
+        environments: [
+          primaryEnvironment,
+          olderRelay,
+          pairedRemote,
+          sshEnvironment,
+          desktopLocalEnvironment,
+        ],
         primaryEnvironment,
         pairedEnvironmentId: null,
       }),
-    ).toBe(pairedRemote);
+    ).toBe(olderRelay);
   });
 
-  it("uses the primary computer when the only other connection is desktop-managed", () => {
+  it("uses the primary computer when no relay connection exists", () => {
     expect(
       resolveOnboardingTargetEnvironment({
         mode: "connect",
-        environments: [primaryEnvironment, desktopLocalEnvironment],
+        environments: [primaryEnvironment, pairedRemote, sshEnvironment, desktopLocalEnvironment],
         primaryEnvironment,
         pairedEnvironmentId: null,
       }),
@@ -162,5 +197,15 @@ describe("resolveOnboardingTargetEnvironment", () => {
         pairedEnvironmentId: null,
       }),
     ).toBe(primaryEnvironment);
+  });
+});
+
+describe("isOnboardingRelayEnvironment", () => {
+  it("includes only T3 Connect relay targets", () => {
+    expect(
+      [olderRelay, pairedRemote, sshEnvironment, desktopLocalEnvironment].filter(
+        isOnboardingRelayEnvironment,
+      ),
+    ).toEqual([olderRelay]);
   });
 });

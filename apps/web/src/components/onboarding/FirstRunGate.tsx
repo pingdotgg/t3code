@@ -142,7 +142,7 @@ export function FirstRunGate({
     if (decision === "wizard" || !hydrated) return;
 
     if (persistCompletion && onboardingCompletedAt === null) {
-      void completeOnboarding();
+      void completeOnboarding().catch(() => undefined);
     }
 
     if (

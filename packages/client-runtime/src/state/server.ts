@@ -517,18 +517,30 @@ export const makeEnvironmentServerWelcomeState = Effect.fn("EnvironmentServerWel
       welcome: null,
     });
 
-    yield* SubscriptionRef.changes(supervisor.session).pipe(
-      Stream.runForEach(() =>
-        // Read the latest value so queued notifications cannot move currentSession
-        // backward after a newer session is already active.
+    const updateWithCurrentSession = Effect.fn(
+      "EnvironmentServerWelcomeState.updateWithCurrentSession",
+    )(function* (
+      update: (
+        current: EnvironmentServerWelcomeState,
+        currentSession: RpcSession | null,
+      ) => EnvironmentServerWelcomeState,
+    ) {
+      return yield* SubscriptionRef.modifyEffect(state, (current) =>
         SubscriptionRef.get(supervisor.session).pipe(
-          Effect.flatMap((session) =>
-            SubscriptionRef.update(state, (current) => ({
-              ...current,
-              currentSession: Option.getOrNull(session),
-            })),
+          Effect.map(
+            (latestSession) =>
+              [undefined, update(current, Option.getOrNull(latestSession))] as const,
           ),
         ),
+      );
+    });
+
+    yield* SubscriptionRef.changes(supervisor.session).pipe(
+      Stream.runForEach(() =>
+        updateWithCurrentSession((current, currentSession) => ({
+          ...current,
+          currentSession,
+        })),
       ),
       Effect.forkScoped,
     );
@@ -536,8 +548,7 @@ export const makeEnvironmentServerWelcomeState = Effect.fn("EnvironmentServerWel
     yield* subscribeDynamicWithSession(
       WS_METHODS.subscribeServerLifecycle,
       Effect.fn("EnvironmentServerWelcomeState.makeSubscribeInput")(function* (session) {
-        const currentSession = Option.getOrNull(yield* SubscriptionRef.get(supervisor.session));
-        yield* SubscriptionRef.update(state, (current) =>
+        yield* updateWithCurrentSession((current, currentSession) =>
           currentSession === session
             ? {
                 ...current,
@@ -551,8 +562,15 @@ export const makeEnvironmentServerWelcomeState = Effect.fn("EnvironmentServerWel
       }),
     ).pipe(
       Stream.runForEach(([session, event]) =>
-        SubscriptionRef.update(state, (current) =>
-          applyServerWelcomeEvent(current, session, event),
+        updateWithCurrentSession((current, currentSession) =>
+          applyServerWelcomeEvent(
+            {
+              ...current,
+              currentSession,
+            },
+            session,
+            event,
+          ),
         ),
       ),
       Effect.forkScoped,

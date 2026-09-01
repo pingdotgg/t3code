@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -528,6 +529,119 @@ describe("server state projection", () => {
     expect(afterBufferedOldWelcome).toBe(afterSwitch);
     expect(resolveServerWelcomeState(afterBufferedOldWelcome)).toBeNull();
   });
+
+  it.effect("checks the authoritative session before accepting a buffered welcome", () =>
+    Effect.gen(function* () {
+      const firstEvents = yield* Queue.unbounded<{
+        readonly type: "welcome" | "ready";
+        readonly payload: unknown;
+      }>();
+      const firstSubscribed = yield* Deferred.make<void>();
+      const firstClient = {
+        [WS_METHODS.subscribeServerLifecycle]: () =>
+          Stream.fromEffect(Deferred.succeed(firstSubscribed, undefined)).pipe(
+            Stream.drain,
+            Stream.concat(Stream.fromQueue(firstEvents)),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const firstSession = session(firstClient);
+      const secondSession = session({} as WsRpcProtocolClient);
+      const supervisorSession = yield* SubscriptionRef.make(Option.some(firstSession));
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: supervisorSession,
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const staleWelcome = {
+        environment: {} as ServerLifecycleWelcomePayload["environment"],
+        cwd: "/stale",
+        projectName: "stale",
+      } as ServerLifecycleWelcomePayload;
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* makeEnvironmentServerWelcomeState().pipe(
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          );
+          yield* Deferred.await(firstSubscribed);
+
+          // Model the point after the ref changed but before either subscriber
+          // processed its publication.
+          supervisorSession.value = Option.some(secondSession);
+          const handled = yield* SubscriptionRef.changes(state).pipe(
+            Stream.filter(
+              (value) => value.currentSession === secondSession || value.welcome === staleWelcome,
+            ),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+            Effect.forkChild,
+          );
+          yield* Queue.offer(firstEvents, { type: "welcome", payload: staleWelcome });
+
+          const next = yield* Fiber.join(handled);
+          expect(next.currentSession).toBe(secondSession);
+          expect(resolveServerWelcomeState(next)).toBeNull();
+        }),
+      );
+    }),
+  );
+
+  it.effect("reads the authoritative session after waiting for the welcome state lock", () =>
+    Effect.gen(function* () {
+      const firstSubscribed = yield* Deferred.make<void>();
+      const firstClient = {
+        [WS_METHODS.subscribeServerLifecycle]: () =>
+          Stream.fromEffect(Deferred.succeed(firstSubscribed, undefined)).pipe(Stream.drain),
+      } as unknown as WsRpcProtocolClient;
+      const secondClient = {
+        [WS_METHODS.subscribeServerLifecycle]: () => Stream.never,
+      } as unknown as WsRpcProtocolClient;
+      const firstSession = session(firstClient);
+      const secondSession = session(secondClient);
+      const thirdSession = session({} as WsRpcProtocolClient);
+      const supervisorSession = yield* SubscriptionRef.make(Option.some(firstSession));
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: supervisorSession,
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* makeEnvironmentServerWelcomeState().pipe(
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          );
+          yield* Deferred.await(firstSubscribed);
+          const changed = yield* SubscriptionRef.changes(state).pipe(
+            Stream.filter((value) => value.currentSession !== firstSession),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+            Effect.forkChild,
+          );
+
+          yield* state.semaphore.withPermit(
+            Effect.gen(function* () {
+              yield* SubscriptionRef.set(supervisorSession, Option.some(secondSession));
+              yield* Effect.yieldNow;
+              yield* Effect.yieldNow;
+              yield* Effect.yieldNow;
+              supervisorSession.value = Option.some(thirdSession);
+            }),
+          );
+
+          expect((yield* Fiber.join(changed)).currentSession).toBe(thirdSession);
+        }),
+      );
+    }),
+  );
 
   it.effect("clears a welcome until the reconnected session sends its own", () =>
     Effect.gen(function* () {

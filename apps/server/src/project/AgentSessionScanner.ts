@@ -365,6 +365,7 @@ export function parseAgentSessionTranscript(input: {
         const message = messages[index];
         if (message?.role === "assistant") break;
         if (message?.codexResponseUser === true && message.text.trim() === text.trim()) {
+          if (firstUserMessage === message) firstUserMessage = undefined;
           messages.splice(index, 1);
           break;
         }

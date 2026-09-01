@@ -305,6 +305,29 @@ describe("resolveOnboardingProviderLoginCommand", () => {
     ).toBe("'/opt/Claude Tools/$current/claude' auth login");
   });
 
+  it.each([
+    ["~/my tools/codex", "~/'my tools/codex' login"],
+    ["~/tools/codex's build", `~/'tools/codex'"'"'s build' login`],
+    ["~/tools/codex; echo unsafe", "~/'tools/codex; echo unsafe' login"],
+  ])("keeps the home prefix expandable while quoting %s", (binaryPath, expectedCommand) => {
+    expect(
+      resolveOnboardingProviderLoginCommand(
+        readyCodex,
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          providers: {
+            ...DEFAULT_SERVER_SETTINGS.providers,
+            codex: {
+              ...DEFAULT_SERVER_SETTINGS.providers.codex,
+              binaryPath,
+            },
+          },
+        },
+        "linux",
+      ),
+    ).toBe(expectedCommand);
+  });
+
   it.each(["darwin", "linux"] as const)("quotes backslashes in a Codex path on %s", (platform) => {
     expect(
       resolveOnboardingProviderLoginCommand(

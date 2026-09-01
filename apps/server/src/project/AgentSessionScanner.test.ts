@@ -1822,6 +1822,53 @@ describe("parseAgentSessionTranscript", () => {
     ]);
   });
 
+  it("keeps the canonical first prompt after long Codex transcripts are capped", () => {
+    const canonicalPrompt = "\n  Keep the canonical prompt  \n";
+    const canonicalTimestamp = "2026-08-24T10:01:00.000Z";
+    const laterAssistantMessages = Array.from({ length: 200 }, (_, index) =>
+      encodeTranscriptRecord({
+        type: "response_item",
+        timestamp: `2026-08-24T11:${String(index % 60).padStart(2, "0")}:00.000Z`,
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: `Assistant message ${index}` }],
+        },
+      }),
+    );
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          timestamp: "2026-08-24T10:00:00.000Z",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Keep the canonical prompt" }],
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          timestamp: canonicalTimestamp,
+          payload: { type: "user_message", message: canonicalPrompt },
+        }),
+        ...laterAssistantMessages,
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.messages).toHaveLength(200);
+    expect(thread?.messages[0]).toMatchObject({
+      role: "user",
+      text: canonicalPrompt,
+      createdAt: canonicalTimestamp,
+    });
+  });
+
   it("keeps mixed-format response users when turn IDs repeat after an assistant", () => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [

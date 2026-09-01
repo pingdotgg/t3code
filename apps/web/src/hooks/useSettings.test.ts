@@ -245,3 +245,38 @@ describe("mergeEnvironmentSettings", () => {
     expect(settings.sidebarAutoSettleOnMerge).toBe(false);
   });
 });
+
+describe("onboarding completion persistence", () => {
+  it("keeps onboarding incomplete after a failed save and preserves preferences on retry", async () => {
+    const failure = new Error("disk full");
+    const persist = vi
+      .fn<(settings: typeof DEFAULT_CLIENT_SETTINGS) => Promise<void>>()
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValue(undefined);
+    const existingSettings = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      timestampFormat: "12-hour" as const,
+      favorites: [
+        {
+          provider: ProviderInstanceId.make("codex_work"),
+          model: "gpt-5.6",
+        },
+      ],
+    };
+    __setClientSettingsForTests(existingSettings);
+    const onboardingCompletedAt = "2026-09-01T12:00:00.000Z";
+    const complete = (current: typeof DEFAULT_CLIENT_SETTINGS) => ({
+      ...current,
+      onboardingCompletedAt,
+    });
+
+    await expect(persistClientSettingsUpdate(complete, persist)).rejects.toBe(failure);
+    expect(getClientSettings()).toBe(existingSettings);
+    expect(getClientSettings().onboardingCompletedAt).toBeNull();
+
+    const completedSettings = { ...existingSettings, onboardingCompletedAt };
+    await expect(persistClientSettingsUpdate(complete, persist)).resolves.toEqual(completedSettings);
+    expect(getClientSettings()).toEqual(completedSettings);
+    expect(persist).toHaveBeenLastCalledWith(completedSettings);
+  });
+});

@@ -45,7 +45,10 @@ import {
   resolveOnboardingProviderTerminalEnvironment,
   selectOnboardingProvidersByDriver,
 } from "../../onboarding/providerReadiness.logic";
-import { resolveOnboardingTargetEnvironment } from "../../onboarding/targetEnvironment.logic";
+import {
+  isOnboardingRelayEnvironment,
+  resolveOnboardingTargetEnvironment,
+} from "../../onboarding/targetEnvironment.logic";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { newProjectId, randomUUID } from "../../lib/utils";
 import { resolveDefaultProviderModelSelection } from "../../providerInstances";
@@ -58,7 +61,6 @@ import { serverEnvironment } from "../../state/server";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
-import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { getProviderSummary } from "../settings/providerStatus";
@@ -69,6 +71,7 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Input } from "../ui/input";
+import { toastManager } from "../ui/toast";
 import { cn } from "../../lib/utils";
 
 /**
@@ -128,11 +131,33 @@ export function WelcomeWizard({
   const [step, setStep] = useState<WizardStep>("connection");
   const [mode, setMode] = useState<ConnectionMode>("local");
   const [pairedEnvironmentId, setPairedEnvironmentId] = useState<EnvironmentId | null>(null);
+  const finishingPromiseRef = useRef<Promise<boolean> | null>(null);
   const targetEnvironment = useOnboardingTargetEnvironment(mode, pairedEnvironmentId);
   const stageIndex = step === "agents" ? 1 : step === "import" ? 2 : 0;
   const finish = useCallback(
     (projectRef?: ScopedProjectRef) => {
-      void completeOnboarding().then(() => onDone(projectRef));
+      if (finishingPromiseRef.current !== null) return finishingPromiseRef.current;
+
+      const completion = completeOnboarding()
+        .then(() => {
+          onDone(projectRef);
+          return true;
+        })
+        .catch(() => {
+          toastManager.add({
+            type: "error",
+            title: "Could not finish setup",
+            description: "Your settings could not be saved. Try again.",
+          });
+          return false;
+        })
+        .finally(() => {
+          if (finishingPromiseRef.current === completion) {
+            finishingPromiseRef.current = null;
+          }
+        });
+      finishingPromiseRef.current = completion;
+      return completion;
     },
     [completeOnboarding, onDone],
   );
@@ -387,11 +412,7 @@ function ConnectMachinesStep({
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
-  const savedEnvironments = environments.filter(
-    (environment) =>
-      environment.entry.target._tag !== "PrimaryConnectionTarget" &&
-      !isDesktopLocalConnectionTarget(environment.entry.target),
-  );
+  const savedEnvironments = environments.filter(isOnboardingRelayEnvironment);
   // Only a live connection counts: a saved-but-offline machine must not show
   // the "connected" confirmation (the agents step would find nothing to
   // probe). Its row still renders in the list either way.
@@ -983,7 +1004,7 @@ function ImportStep({
   readonly mode: ConnectionMode;
   readonly pairedEnvironmentId: EnvironmentId | null;
   readonly onBack: () => void;
-  readonly onDone: (projectRef?: ScopedProjectRef) => void;
+  readonly onDone: (projectRef?: ScopedProjectRef) => Promise<boolean>;
 }) {
   const targetEnvironment = useOnboardingTargetEnvironment(mode, pairedEnvironmentId);
   const environmentId = targetEnvironment?.environmentId ?? null;
@@ -1040,7 +1061,9 @@ function ImportStep({
       )
     ) {
       setLandingProject(null);
-      onDone(landingProject);
+      void onDone(landingProject).then((completed) => {
+        if (!completed) setIsImporting(false);
+      });
     }
   }, [landingProject, onDone, projects]);
 
@@ -1055,7 +1078,7 @@ function ImportStep({
       .map((path) => projectRefsRef.current.get(path))
       .find((ref) => ref !== undefined);
     if (projectRef === undefined) {
-      onDone();
+      void onDone();
       return;
     }
     setIsImporting(true);
@@ -1064,7 +1087,7 @@ function ImportStep({
 
   const runImport = async (selection: ReadonlyArray<AgentSessionProjectCandidate>) => {
     if (environmentId === null || selection.length === 0) {
-      onDone();
+      void onDone();
       return;
     }
     setIsImporting(true);
@@ -1185,7 +1208,7 @@ function ImportStep({
         onBack={onBack}
       >
         <div className="mt-6 flex justify-end">
-          <Button variant="ghost-muted" onClick={() => onDone()}>
+          <Button variant="ghost-muted" onClick={() => void onDone()}>
             Skip
           </Button>
         </div>
@@ -1215,7 +1238,7 @@ function ImportStep({
           ) : null}
           <Button
             variant={scan.error !== null ? "ghost-muted" : "default"}
-            onClick={() => onDone()}
+            onClick={() => void onDone()}
           >
             {scan.error !== null ? "Skip" : "Start coding"}
           </Button>
@@ -1268,7 +1291,7 @@ function ImportStep({
           <Button
             variant="ghost-muted"
             disabled={isImporting}
-            onClick={importError ? finishAfterImport : () => onDone()}
+            onClick={importError ? finishAfterImport : () => void onDone()}
           >
             {importError ? "Continue without the rest" : "Skip"}
           </Button>
@@ -1316,7 +1339,7 @@ function ImportStep({
         <Button
           variant="ghost-muted"
           disabled={isImporting}
-          onClick={importError ? finishAfterImport : () => onDone()}
+          onClick={importError ? finishAfterImport : () => void onDone()}
         >
           {importError ? "Continue without the rest" : "Skip"}
         </Button>
