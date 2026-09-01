@@ -322,6 +322,26 @@ describe("ServerSettings worktree defaults", () => {
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
     ).toBe(false);
   });
+
+  it("defaults the worktree branch prefix for legacy configs", () => {
+    expect(decodeServerSettings({}).worktreeBranchPrefix).toBe("t3code");
+  });
+
+  it.each(["", "team", "my-team", "team/backend", "team_1"])(
+    "accepts the worktree branch prefix %j",
+    (worktreeBranchPrefix) => {
+      expect(decodeServerSettingsPatch({ worktreeBranchPrefix }).worktreeBranchPrefix).toBe(
+        worktreeBranchPrefix,
+      );
+    },
+  );
+
+  it.each(["../unsafe", "team//backend", "Team", "-team", "team-", "a".repeat(65)])(
+    "rejects the unsafe worktree branch prefix %j",
+    (worktreeBranchPrefix) => {
+      expect(() => decodeServerSettingsPatch({ worktreeBranchPrefix })).toThrow();
+    },
+  );
 });
 
 describe("ServerSettings.sourceControlWritingStyle", () => {

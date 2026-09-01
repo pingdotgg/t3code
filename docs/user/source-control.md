@@ -13,6 +13,11 @@ T3 Code works with the platforms your team already uses:
 
 ## What You Can Do
 
+### Choose a Worktree Branch Prefix
+
+New worktree branch names start with `t3code/` by default. In **Settings > General > Worktree branch
+prefix**, enter a custom prefix or clear the field to use no prefix.
+
 ### Start Projects from Anywhere
 
 **Clone repositories directly**
