@@ -8,6 +8,7 @@ import {
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   resolveThreadActionProjectRef,
+  hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
   startNewThreadFromContext,
@@ -37,6 +38,22 @@ function createContext(overrides: Partial<ChatThreadActionContext> = {}): ChatTh
 }
 
 describe("chatThreadActions", () => {
+  it("only treats an active stored selection marked explicit as an explicit pick", () => {
+    const draft = {
+      activeProvider: PROJECT_DEFAULT_SELECTION.instanceId,
+      modelSelectionByProvider: {
+        [PROJECT_DEFAULT_SELECTION.instanceId]: PROJECT_DEFAULT_SELECTION,
+      },
+      modelSelectionExplicit: true,
+    };
+
+    expect(hasExplicitComposerModelSelection(draft)).toBe(true);
+    expect(hasExplicitComposerModelSelection({ ...draft, modelSelectionExplicit: false })).toBe(
+      false,
+    );
+    expect(hasExplicitComposerModelSelection({ ...draft, activeProvider: null })).toBe(false);
+  });
+
   it("does not carry a non-explicit model from the destination draft back into itself", () => {
     expect(
       resolveNewThreadModelSelectionOverride({
