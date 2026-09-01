@@ -6,7 +6,10 @@ export interface StateStorage<R = unknown> {
   removeItem: (name: string) => R;
 }
 
-export interface DebouncedStorage<R = unknown> extends StateStorage<R> {
+export interface DeferredStorage<TValue> {
+  getItem: (name: string) => string | null | Promise<string | null>;
+  setItem: (name: string, value: TValue) => void;
+  removeItem: (name: string) => void;
   flush: () => void;
 }
 
@@ -39,14 +42,21 @@ export function resolveStorage(storage: Partial<StateStorage> | null | undefined
   return isStateStorage(storage) ? storage : createMemoryStorage();
 }
 
-export function createDebouncedStorage(
+/**
+ * Debounced storage that also defers serialization: `setItem` only holds the
+ * latest raw value, and `serialize` runs once when the debounce fires (or on
+ * `flush`). This keeps rapid updates — such as composer keystrokes — at
+ * "store a reference" cost instead of serializing the full value every time.
+ */
+export function createDeferredStorage<TValue>(
   baseStorage: Partial<StateStorage> | null | undefined,
+  serialize: (value: TValue) => string,
   debounceMs: number = 300,
-): DebouncedStorage {
+): DeferredStorage<TValue> {
   const resolvedStorage = resolveStorage(baseStorage);
   const debouncedSetItem = new Debouncer(
-    (name: string, value: string) => {
-      resolvedStorage.setItem(name, value);
+    (name: string, value: TValue) => {
+      resolvedStorage.setItem(name, serialize(value));
     },
     { wait: debounceMs },
   );
