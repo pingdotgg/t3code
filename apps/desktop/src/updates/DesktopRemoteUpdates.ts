@@ -129,6 +129,14 @@ export const listen: Effect.Effect<
                 );
                 return false;
               case "install": {
+                // "downloaded" fires from inside the download action, so
+                // install may be refused for the reservation the download
+                // still holds. Wait for it to free up before reporting:
+                // the terminal report below is irrevocable.
+                if (yield* updates.isActionActive) {
+                  yield* retryLater(state);
+                  return false;
+                }
                 // The terminal report must go out BEFORE installing:
                 // install stops the backend server first, so anything
                 // published after this point never reaches the requester.
@@ -145,8 +153,14 @@ export const listen: Effect.Effect<
                   if (yield* Ref.get(desktopState.quitting)) {
                     return true;
                   }
-                  yield* retryLater(result.state);
-                  return false;
+                  // Lost a race for the reservation despite the check
+                  // above. The "installing" report is already out, so
+                  // this cannot be retried without a duplicate terminal.
+                  yield* publishReport(result.state, {
+                    outcome: "failed",
+                    reason: "The desktop app could not start the install.",
+                  });
+                  return true;
                 }
                 if (result.state !== before) {
                   // During an accepted install the only state writes are the

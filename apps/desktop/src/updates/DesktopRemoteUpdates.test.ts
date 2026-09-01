@@ -220,6 +220,37 @@ describe("DesktopRemoteUpdates", () => {
     );
   });
 
+  it.effect("waits for the download reservation before reporting installing", () => {
+    // update-downloaded fires from inside downloadUpdate. If the flow
+    // reported "installing" right then, install would be refused for the
+    // held reservation after the irrevocable terminal already went out.
+    const releaseDownload = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({ downloadUpdate: Deferred.await(releaseDownload) });
+
+    return runRemoteUpdatesTest(harness, ({ reports, requests }) =>
+      Effect.gen(function* () {
+        yield* Queue.offer(requests, request("req-10"));
+        yield* settle;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* settle;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* settle;
+        assert.deepEqual(terminalReports(reports), []);
+        assert.equal(harness.quitAndInstalls(), 0);
+
+        yield* Deferred.succeed(releaseDownload, undefined);
+        yield* settle;
+        yield* TestClock.adjust(Duration.millis(300));
+        yield* settle;
+        assert.deepEqual(
+          terminalReports(reports).map((report) => report.outcome),
+          ["installing"],
+        );
+        assert.equal(harness.quitAndInstalls(), 1);
+      }),
+    );
+  });
+
   it.effect("joins an install that is already tearing the app down", () => {
     const harness = makeHarness();
 
