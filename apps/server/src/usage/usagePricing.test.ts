@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { lookupRate, normalizeModelName, parseRateTable } from "./usagePricing.ts";
+import { cacheWriteUsd, lookupRate, normalizeModelName, parseRateTable } from "./usagePricing.ts";
 
 const rate = (input: number, cacheRead?: number) => ({
   input_cost_per_token: input,
@@ -51,5 +51,49 @@ describe("usage pricing", () => {
     expect(lookupRate(table, "provider-a/example-model")?.inputCostPerToken).toBe(1);
     expect(lookupRate(table, "provider-b/example-model")?.inputCostPerToken).toBe(3);
     expect(lookupRate(table, "example-model")).toBeNull();
+  });
+
+  it("keeps a bare name ambiguous when only the one-hour cache rate differs", () => {
+    const common = {
+      input_cost_per_token: 1,
+      output_cost_per_token: 5,
+      cache_read_input_token_cost: 0.1,
+      cache_creation_input_token_cost: 1.25,
+    };
+    const table = parseRateTable({
+      "provider-a/example-model": {
+        ...common,
+        cache_creation_input_token_cost_above_1hr: 2,
+      },
+      "provider-b/example-model": {
+        ...common,
+        cache_creation_input_token_cost_above_1hr: 3,
+      },
+    });
+
+    expect(lookupRate(table, "example-model")).toBeNull();
+  });
+
+  it("cannot price more TTL-specific tokens than total cache creation", () => {
+    const table = parseRateTable({
+      "example-model": {
+        input_cost_per_token: 1,
+        output_cost_per_token: 5,
+        cache_creation_input_token_cost: 1.25,
+        cache_creation_input_token_cost_above_1hr: 2,
+      },
+    });
+
+    expect(
+      cacheWriteUsd(table, "example-model", {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 10,
+        cacheCreation5mTokens: 20,
+        cacheCreation1hTokens: 20,
+        outputTokens: 0,
+        reasoningTokens: 0,
+      }),
+    ).toBe(20);
   });
 });

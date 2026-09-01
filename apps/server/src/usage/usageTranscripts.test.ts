@@ -4,6 +4,7 @@ import {
   GROK_COST_USD_TICKS_PER_DOLLAR,
   initialCodexScanState,
   parseClaudeLine,
+  parseClaudeLineRecords,
   parseCodexLine,
   parseGrokLine,
   totalTokens,
@@ -15,12 +16,14 @@ function claudeLine(overrides: {
   contentType: string;
   model?: string;
   outputTokens?: number;
+  requestId?: string;
 }): string {
   return JSON.stringify({
     type: "assistant",
     timestamp: "2026-08-07T04:05:13.944Z",
     sessionId: "5a128faa-8253-489e-b935-6c08e8e670c0",
     cwd: "/home/theo/project",
+    ...(overrides.requestId === undefined ? {} : { requestId: overrides.requestId }),
     message: {
       id: overrides.messageId,
       role: "assistant",
@@ -62,6 +65,81 @@ describe("parseClaudeLine", () => {
 
     expect(text?.dedupeKey).toBe(toolUse?.dedupeKey);
     expect(text?.totals).toEqual(toolUse?.totals);
+  });
+
+  it("keeps a shared message id when the request id differs", () => {
+    const first = parseClaudeLine(
+      claudeLine({ messageId: "msg_shared", requestId: "req_1", contentType: "text" }),
+    );
+    const second = parseClaudeLine(
+      claudeLine({ messageId: "msg_shared", requestId: "req_2", contentType: "text" }),
+    );
+
+    expect(first?.dedupeKey).toBe("msg_shared:req_1");
+    expect(second?.dedupeKey).toBe("msg_shared:req_2");
+  });
+
+  it("expands fallback iterations under their own models and TTL counters", () => {
+    const records = parseClaudeLineRecords(
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-08-18T01:13:44.675Z",
+        requestId: "req_fallback",
+        sessionId: "session-fallback",
+        cwd: "/work/app",
+        message: {
+          id: "msg_fallback",
+          model: "claude-opus-5",
+          usage: {
+            output_tokens: 300,
+            output_tokens_details: { thinking_tokens: 125 },
+            iterations: [
+              {
+                type: "message",
+                model: "claude-fable-5",
+                input_tokens: 2,
+                cache_read_input_tokens: 10,
+                cache_creation_input_tokens: 20,
+                cache_creation: {
+                  ephemeral_5m_input_tokens: 20,
+                  ephemeral_1h_input_tokens: 0,
+                },
+                output_tokens: 100,
+              },
+              {
+                type: "fallback_message",
+                model: "claude-opus-5",
+                input_tokens: 3,
+                cache_read_input_tokens: 11,
+                cache_creation_input_tokens: 40,
+                cache_creation: {
+                  ephemeral_5m_input_tokens: 0,
+                  ephemeral_1h_input_tokens: 40,
+                },
+                output_tokens: 300,
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(records).toHaveLength(2);
+    expect(records.map((record) => record.model)).toEqual(["claude-fable-5", "claude-opus-5"]);
+    expect(records[0]?.totals).toMatchObject({
+      cacheCreationTokens: 20,
+      cacheCreation5mTokens: 20,
+      reasoningTokens: 0,
+    });
+    expect(records[1]?.totals).toMatchObject({
+      cacheCreationTokens: 40,
+      cacheCreation1hTokens: 40,
+      reasoningTokens: 125,
+    });
+    expect(records.map((record) => record.dedupeKey)).toEqual([
+      "msg_fallback:req_fallback:0",
+      "msg_fallback:req_fallback:1",
+    ]);
   });
 
   it("ignores records that are not assistant messages", () => {

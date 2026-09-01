@@ -369,7 +369,7 @@ export const make = Effect.gen(function* () {
       ) {
         return cached.tailRecords.length === 0
           ? cached.records
-          : [...cached.records, ...cached.tailRecords];
+          : dedupeWithinFile([...cached.records, ...cached.tailRecords]);
       }
 
       // Only a strictly grown file may resume. Same size with a new mtime, or
@@ -387,13 +387,11 @@ export const make = Effect.gen(function* () {
       if (parsed === null) return [];
 
       // Stored already de-duplicated within the file, which is 99% of all
-      // duplicates. The aggregator still runs the cross-file dedupe pass. One
-      // seen set spans the cached base, the new lines, and the tail so a
-      // resumed parse dedupes exactly like a full one.
+      // duplicates. The final snapshot wins so a resumed Claude parse can
+      // replace an earlier progressive snapshot from the cached base.
       const base = parsed.resumed && cached !== undefined ? cached.records : [];
-      const seen = new Set<string>();
-      const records = dedupeWithinFile([...base, ...parsed.records], seen);
-      const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
+      const records = dedupeWithinFile([...base, ...parsed.records]);
+      const tailRecords = dedupeWithinFile(parsed.tailRecords);
 
       fileCache.set(filePath, {
         size,
@@ -404,7 +402,7 @@ export const make = Effect.gen(function* () {
         position: parsed.position,
       });
       cacheDirty = true;
-      return tailRecords.length === 0 ? records : [...records, ...tailRecords];
+      return tailRecords.length === 0 ? records : dedupeWithinFile([...records, ...tailRecords]);
     });
 
   /** One provider directory's walk and parse, before rates are involved. */
@@ -529,10 +527,6 @@ export const make = Effect.gen(function* () {
       walkedRoots.push(dir);
       let scannedFiles = 0;
       let skippedFiles = 0;
-      // Distinct per directory. Buckets carry per-cell session counts, but a
-      // session spans days and models, so clients total this figure instead.
-      const sessionIds = new Set<string>();
-
       for (const file of files) {
         livePaths.add(file.path);
         if (file.records.length === 0) {
@@ -541,11 +535,7 @@ export const make = Effect.gen(function* () {
         }
         scannedFiles += 1;
         for (const record of file.records) {
-          // Only sessions that contributed in-window count: the mtime slack
-          // admits boundary files whose records fall outside the range.
-          if (aggregator.add(record) && record.sessionId.length > 0) {
-            sessionIds.add(record.sessionId);
-          }
+          aggregator.add(record);
         }
       }
 
@@ -555,7 +545,9 @@ export const make = Effect.gen(function* () {
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
-        distinctSessions: sessionIds.size,
+        // Read from the settled records so a progressive snapshot replacement
+        // cannot leave the source count attached to the superseded session.
+        distinctSessions: aggregator.distinctSessions(provider),
         message: null,
       });
     }

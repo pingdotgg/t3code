@@ -41,6 +41,7 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
+import { UsageCacheWriteCell } from "./UsageCacheWriteCell";
 import { UsageThreadTable } from "./UsageThreadTable";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 
@@ -334,7 +335,9 @@ export function UsagePage() {
                           const scope = sessionsKnown
                             ? `${formatCount(merged.sessions)} sessions`
                             : (selectedProjectLabel ?? "Outside projects");
-                          return metric === "cost" ? `${scope} · API estimate` : scope;
+                          return metric === "cost"
+                            ? `${scope} · local public-list estimate`
+                            : scope;
                         })()}
                       </span>
                     </div>
@@ -429,7 +432,7 @@ export function UsagePage() {
                     />
                     <Metric label="Output" value={formatTokens(merged.outputTokens)} />
                     <Metric
-                      label="Estimated cache writes"
+                      label="Cache writes, estimated"
                       value={
                         merged.costQuality.cacheWriteUsd === null
                           ? "Unavailable"
@@ -437,7 +440,7 @@ export function UsagePage() {
                       }
                       {...(merged.costUsd > 0 && merged.costQuality.cacheWriteUsd !== null
                         ? {
-                            detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of cost`,
+                            detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of estimate · not an expiry measure`,
                           }
                         : {})}
                     />
@@ -550,7 +553,7 @@ export function UsagePage() {
                               <td className="py-2 text-right text-foreground tabular-nums">
                                 {formatUsd(project.costUsd)}
                               </td>
-                              <CacheWriteCell
+                              <UsageCacheWriteCell
                                 cacheWriteTokens={project.cacheWriteTokens}
                                 cacheWriteUsd={project.cacheWriteUsd}
                               />
@@ -611,7 +614,7 @@ export function UsagePage() {
                               <td className="py-2 text-right text-foreground tabular-nums">
                                 {formatUsd(model.costUsd)}
                               </td>
-                              <CacheWriteCell
+                              <UsageCacheWriteCell
                                 cacheWriteTokens={model.cacheWriteTokens}
                                 cacheWriteUsd={model.cacheWriteUsd}
                               />
@@ -860,29 +863,6 @@ function Metric({
 }
 
 /**
- * Cache-write cost cell. Providers that bill no cache writes (Codex) show a
- * dash rather than a misleading $0.00.
- */
-function CacheWriteCell({
-  cacheWriteTokens,
-  cacheWriteUsd,
-}: {
-  readonly cacheWriteTokens: number;
-  readonly cacheWriteUsd: number | null;
-}) {
-  return (
-    <td className="py-2 text-right text-muted-foreground tabular-nums">
-      {formatCacheWriteCost(cacheWriteTokens, cacheWriteUsd)}
-    </td>
-  );
-}
-
-function formatCacheWriteCost(cacheWriteTokens: number, cacheWriteUsd: number | null): string {
-  if (cacheWriteTokens === 0) return "-";
-  return cacheWriteUsd === null ? "Unavailable" : formatUsd(cacheWriteUsd);
-}
-
-/**
  * Says plainly when the totals are incomplete: an environment that failed, or
  * one whose transcripts another environment already reported. Environments
  * that are still answering never reach this notice; the page shows the
@@ -1026,7 +1006,7 @@ function UsageSkeleton() {
             "Cached input",
             "Uncached input",
             "Output",
-            "Estimated cache writes",
+            "Cache writes, estimated",
             "Cache savings",
           ].map((label) => (
             <div key={label} className="flex flex-col gap-0.5">

@@ -21,6 +21,7 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
       uncachedInputTokens: 2,
       cachedInputTokens: 1000,
       cacheCreationTokens: 10,
+      cacheCreation5mTokens: 10,
       outputTokens: 50,
       reasoningTokens: 0,
     },
@@ -197,7 +198,27 @@ describe("scan cache round trip", () => {
       files: {
         "/a.jsonl": {
           ...encoded.files["/a.jsonl"]!,
-          r: [[...row.slice(0, 10), cwdIndex]],
+          r: [[...row.slice(0, 10), cwdIndex, ...row.slice(11)]],
+        },
+      },
+    };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
+  });
+
+  it.each([
+    [20, 0],
+    [-1, 11],
+    [5.5, 4.5],
+  ])("drops an entry with invalid cache TTL counters %s + %s", (fiveMinute, oneHour) => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const row = encoded.files["/a.jsonl"]!.r[0]!;
+    const poisoned = {
+      ...encoded,
+      files: {
+        "/a.jsonl": {
+          ...encoded.files["/a.jsonl"]!,
+          r: [[...row.slice(0, 11), fiveMinute, oneHour]],
         },
       },
     };
@@ -299,7 +320,7 @@ describe("pruneScanCache with an unwalked root", () => {
 });
 
 describe("dedupeWithinFile", () => {
-  it("keeps the first record per dedupe key", () => {
+  it("keeps the final record per dedupe key", () => {
     const kept = dedupeWithinFile([
       record({ totals: { ...record().totals, outputTokens: 1 } }),
       record({ totals: { ...record().totals, outputTokens: 999 } }),
@@ -307,7 +328,7 @@ describe("dedupeWithinFile", () => {
     ]);
 
     expect(kept).toHaveLength(2);
-    expect(kept[0]?.totals.outputTokens).toBe(1);
+    expect(kept[0]?.totals.outputTokens).toBe(999);
   });
 
   it("keeps every record that has no dedupe key", () => {

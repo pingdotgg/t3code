@@ -22,6 +22,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { UsageCacheWriteCell } from "./UsageCacheWriteCell";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 /**
@@ -214,9 +215,10 @@ function ThreadRowGroup({
           </div>
         </td>
         <td className="py-2 text-right text-foreground tabular-nums">{formatUsd(row.costUsd)}</td>
-        <td className="py-2 text-right text-muted-foreground tabular-nums">
-          {formatCacheWriteCost(row.totals.cacheCreationTokens, row.cacheWriteUsd)}
-        </td>
+        <UsageCacheWriteCell
+          cacheWriteTokens={row.totals.cacheCreationTokens}
+          cacheWriteUsd={row.cacheWriteUsd}
+        />
         <td className="py-2 text-right text-muted-foreground tabular-nums">
           {formatPercent(share)}
         </td>
@@ -258,17 +260,13 @@ function ThreadRowGroup({
   );
 }
 
-function formatCacheWriteCost(cacheWriteTokens: number, cacheWriteUsd: number | null): string {
-  if (cacheWriteTokens === 0) return "-";
-  return cacheWriteUsd === null ? "Unavailable" : formatUsd(cacheWriteUsd);
-}
-
 const CHART_WIDTH = 760;
 const CHART_HEIGHT = 96;
 
 /**
- * One thread's daily model-priced cost split into cache writes, cache reads,
- * and fresh input plus output. Static SVG, no animation.
+ * One thread's daily model-priced cost stacked by component: cache writes,
+ * cache reads, and fresh input plus output. Cache writes are a billing
+ * category, not an inferred cause. Static SVG, no animation.
  */
 export function UsageThreadDailyChart({
   daily,
