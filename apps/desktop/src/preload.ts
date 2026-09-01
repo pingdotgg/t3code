@@ -5,7 +5,7 @@ import type {
   DesktopPreviewTabState,
 } from "@t3tools/contracts";
 import { exposeClerkBridge } from "@clerk/electron/preload";
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
 
@@ -39,6 +39,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return result as ReturnType<DesktopBridge["getAppBranding"]>;
   },
   getClientPlatform: () => clientPlatform,
+  getPathForFile: (file: File) => {
+    // Throws for a File that never came from the OS (e.g. built by the page).
+    try {
+      const path = webUtils.getPathForFile(file);
+      return path.length > 0 ? path : null;
+    } catch {
+      return null;
+    }
+  },
   getSystemLocale: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
     return typeof result === "string" ? result : null;

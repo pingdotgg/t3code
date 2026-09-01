@@ -172,6 +172,9 @@ import {
   submitComposerDraft,
 } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
+import { getPrimaryKnownEnvironment } from "~/environments/primary";
+
+import { droppedPathsResolveInEnvironment, formatDroppedFilePaths } from "./droppedFilePaths";
 
 function ComposerVideoThumbnail({ file }: { file: File }) {
   const setVideo = useCallback(
@@ -3147,6 +3150,65 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     void addComposerAttachments(files);
   };
 
+  /**
+   * Insert dropped non-image files as filesystem paths, reporting to a toast
+   * rather than the thread error banner: a mixed drop's images own that banner,
+   * and a path failure there would read as though the whole drop failed. Only
+   * the desktop app can resolve a path from a dropped File, so in a browser tab
+   * this says so instead of silently swallowing the drop. Returns whether text
+   * was actually inserted.
+   */
+  const insertDroppedFilePaths = (files: File[], hadImages: boolean): boolean => {
+    const reportFailure = (description: string) => {
+      toastManager.add({ type: "error", title: "Unable to add to chat", description });
+    };
+    const resolvePath = window.desktopBridge?.getPathForFile;
+    if (!resolvePath) {
+      reportFailure(
+        "Attaching files by path needs the desktop app. Paste an image, or type the path.",
+      );
+      return false;
+    }
+    // The bridge reads a path on THIS machine. Inserting it into a thread whose
+    // agent runs elsewhere hands over a path that host cannot open — so gate on
+    // the thread's environment being the one this desktop app supervises,
+    // rather than on the bridge merely existing.
+    const primaryEnvironment = getPrimaryKnownEnvironment();
+    if (
+      !droppedPathsResolveInEnvironment({
+        primarySource: primaryEnvironment?.source,
+        primaryEnvironmentId: primaryEnvironment?.environmentId,
+        threadEnvironmentId: environmentId,
+      })
+    ) {
+      reportFailure(
+        "This thread runs on another machine, which cannot open a path from this one. Attach the file, or type a path that exists there.",
+      );
+      return false;
+    }
+    const paths = files
+      .map((file) => resolvePath(file))
+      .filter((path): path is string => path !== null);
+    const text = formatDroppedFilePaths(paths);
+    if (text.length === 0) {
+      reportFailure("Could not read the location of the dropped file(s).");
+      return false;
+    }
+    if (!insertComposerTextAtEnd(text, { ensureLeadingBoundary: true })) {
+      // Pending plan questions is the ONLY refusal `addComposerImages` shares
+      // with the insert, so that is the only case a mixed drop has already been
+      // told about. Staying silent for the others — connecting, approval,
+      // project selection — would attach the images and drop the paths without
+      // a word, which is the failure this whole branch exists to avoid.
+      const alreadyReported = hadImages && pendingUserInputs.length > 0;
+      if (!alreadyReported) {
+        reportFailure("The composer is busy; try again once it is ready.");
+      }
+      return false;
+    }
+    return true;
+  };
+
   const insertComposerTextAtEnd = (
     text: string,
     options?: { ensureLeadingBoundary?: boolean },
@@ -3270,8 +3332,30 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         composerEditorRef.current?.focusAt(cursor);
       },
       addDroppedFiles: (files: File[]) => {
-        void addComposerAttachments(files);
-        focusComposer();
+        // The composer attaches what it can render inline — images and video.
+        // Everything else (audio, PDF, archives, …) is handed over as a path so
+        // the agent opens it from disk itself, instead of being rejected as "not
+        // a supported image type" or pushing a 40MB recording across the wire.
+        const attachable = files.filter(
+          (file) =>
+            file.type.startsWith("image/") ||
+            videoMimeType({ name: file.name, mimeType: file.type }) !== undefined,
+        );
+        const byPath = files.filter((file) => !attachable.includes(file));
+        if (attachable.length > 0) {
+          void addComposerAttachments(attachable);
+        }
+        const insertedPath =
+          byPath.length > 0 && insertDroppedFilePaths(byPath, attachable.length > 0);
+        // Focus unless a path just landed. `applyPromptReplacement` focuses on the
+        // next frame, once Lexical has reconciled; focusing synchronously right
+        // after the insert makes the not-yet-reconciled editor sync its stale empty
+        // state back over the text, so the drop looks like it silently did nothing
+        // — the footgun makeComposerMentionDragHandlers documents for the mention
+        // drop. Nothing inserted means nothing to lose, so focus as before.
+        if (!insertedPath) {
+          focusComposer();
+        }
       },
       insertTextAtEnd: insertComposerTextAtEnd,
       openModelPicker: () => {
