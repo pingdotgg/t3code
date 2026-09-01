@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
 
-import { getClientSettings } from "../hooks/useSettings";
 import { isMacPlatform } from "../lib/utils";
 
-// Matches the hold duration in apps/desktop/src/window/QuitHold.ts: the hint
-// from a quick tap lingers for as long as a full hold would have taken.
-const HIDE_AFTER_RELEASE_MS = 1200;
+// A released hold hint lingers for the original hold duration. Double-press
+// hints disappear as soon as their acceptance window closes.
+const HOLD_HINT_LINGER_MS = 1200;
 
 /**
  * The desktop main process intercepts the quit accelerator and pushes
@@ -18,14 +17,19 @@ export function QuitHoldOverlay() {
     const subscribe = window.desktopBridge?.onQuitShortcut;
     if (!subscribe) return;
     let hideTimer: number | undefined;
-    const unsubscribe = subscribe((state) => {
+    let pressedMode: "hold" | "double-click" = "hold";
+    const unsubscribe = subscribe((hint) => {
       window.clearTimeout(hideTimer);
-      if (state === "down") {
-        const mode = getClientSettings().confirmQuit;
-        setVisibleMode(mode === "double-click" ? mode : "hold");
+      if (hint.state === "down") {
+        pressedMode = hint.mode;
+        setVisibleMode(hint.mode);
         return;
       }
-      hideTimer = window.setTimeout(() => setVisibleMode(null), HIDE_AFTER_RELEASE_MS);
+      if (pressedMode === "double-click") {
+        setVisibleMode(null);
+        return;
+      }
+      hideTimer = window.setTimeout(() => setVisibleMode(null), HOLD_HINT_LINGER_MS);
     });
     return () => {
       window.clearTimeout(hideTimer);

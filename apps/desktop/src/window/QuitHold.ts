@@ -1,6 +1,6 @@
 // @effect-diagnostics globalDate:off globalTimers:off -- Synchronous before-input-event handler; key events must be timed and the watchdog scheduled outside any Effect runtime.
 
-import type { QuitConfirmationMode } from "@t3tools/contracts";
+import type { QuitConfirmationMode, QuitShortcutHintEvent } from "@t3tools/contracts";
 
 // The quit accelerator is intercepted in before-input-event, which runs
 // before the native menu accelerator. Quitting from the application menu is
@@ -15,8 +15,6 @@ export const QUIT_DOUBLE_PRESS_MS = 500;
 // auto-repeat disabled fall back to the application menu Quit action.
 export const QUIT_HOLD_RELEASE_GRACE_MS = 600;
 
-export type QuitHoldState = "down" | "up";
-
 export interface QuitHoldKeyInput {
   readonly type: string;
   readonly key: string;
@@ -30,7 +28,7 @@ export interface QuitHoldKeyInput {
 export interface QuitShortcutOptions {
   readonly platform: NodeJS.Platform;
   readonly getMode: () => Promise<QuitConfirmationMode>;
-  readonly notify: (state: QuitHoldState) => void;
+  readonly notify: (event: QuitShortcutHintEvent) => void;
   readonly quit: () => void;
 }
 
@@ -47,9 +45,9 @@ export function makeQuitShortcutHandler(
   let quitOnRelease = false;
   let heldSince = 0;
   let lastPressAt = 0;
-  // Incremented on every new press and every release/quit so a pending
-  // getMode() resolution from a superseded press cannot arm (or quit for)
-  // the current one.
+  // Incremented when a press is superseded or explicitly cancelled. A plain
+  // key release does not invalidate its pending mode read: direct mode and a
+  // completed second press must still be honored after that read settles.
   let generation = 0;
 
   const clearWatchdog = () => {
@@ -59,9 +57,9 @@ export function makeQuitShortcutHandler(
     }
   };
 
-  const release = () => {
+  const release = (cancelPendingMode = true) => {
     if (!holding) return;
-    generation += 1;
+    if (cancelPendingMode) generation += 1;
     holding = false;
     mode = undefined;
     armed = false;
@@ -69,7 +67,7 @@ export function makeQuitShortcutHandler(
     clearWatchdog();
     if (notified) {
       notified = false;
-      options.notify("up");
+      options.notify({ state: "up" });
     }
   };
 
@@ -84,11 +82,11 @@ export function makeQuitShortcutHandler(
     if (input.type === "keyUp") {
       if (key === "q") {
         const shouldQuit = quitOnRelease;
-        release();
+        release(false);
         if (shouldQuit) options.quit();
       } else if (key === modifierKey) {
         if (!quitOnRelease) {
-          release();
+          release(false);
         } else {
           watchdog = setTimeout(quitNow, QUIT_HOLD_RELEASE_GRACE_MS);
         }
@@ -143,7 +141,6 @@ export function makeQuitShortcutHandler(
     void options.getMode().then(
       (resolvedMode) => {
         if (generation !== pressGeneration) return;
-        mode = resolvedMode;
         if (resolvedMode === "direct") {
           quitNow();
           return;
@@ -157,8 +154,14 @@ export function makeQuitShortcutHandler(
           return;
         }
 
+        // The physical press ended while its settings read was pending. Hold
+        // mode has nothing left to arm, while a non-matching double press has
+        // already recorded its timestamp for the next attempt.
+        if (!holding) return;
+
+        mode = resolvedMode;
         notified = true;
-        options.notify("down");
+        options.notify({ state: "down", mode: resolvedMode });
         if (resolvedMode === "double-click") {
           watchdog = setTimeout(release, QUIT_DOUBLE_PRESS_MS);
           return;

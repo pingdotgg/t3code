@@ -565,9 +565,9 @@ export const make = Effect.gen(function* () {
             }),
           ),
         ),
-      notify: (state) => {
+      notify: (hint) => {
         if (!window.isDestroyed()) {
-          window.webContents.send(QUIT_SHORTCUT_CHANNEL, state);
+          window.webContents.send(QUIT_SHORTCUT_CHANNEL, hint);
         }
       },
       quit: () => {
