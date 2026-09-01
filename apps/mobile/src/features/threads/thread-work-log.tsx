@@ -2,7 +2,7 @@ import * as Haptics from "expo-haptics";
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import { MaskedView } from "@expo/ui/community/masked-view";
 import { useIsFocused } from "@react-navigation/native";
-import { useEffect, useId, useState, type ComponentProps } from "react";
+import { useEffect, useId, useLayoutEffect, useState, type ComponentProps } from "react";
 import {
   AccessibilityInfo,
   AppState,
@@ -41,6 +41,44 @@ export const THREAD_DISCLOSURE_TRANSITION_MS = 180;
 const WORK_LOG_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
 const WORK_LOG_DETAIL_ENTER_TRANSITION = FadeIn.duration(140);
 const WORK_LOG_DETAIL_EXIT_TRANSITION = FadeOut.duration(120);
+
+export function ThreadDisclosureChevron(props: {
+  readonly expanded: boolean;
+  readonly collapsedDirection: "right" | "down";
+  readonly size: number;
+  readonly tintColor: ColorValue;
+}) {
+  const expandedAngle = props.collapsedDirection === "right" ? 90 : 180;
+  const rotation = useSharedValue(props.expanded ? expandedAngle : 0);
+
+  useLayoutEffect(() => {
+    rotation.value = withTiming(props.expanded ? expandedAngle : 0, {
+      duration: THREAD_DISCLOSURE_TRANSITION_MS,
+      reduceMotion: ReduceMotion.System,
+    });
+  }, [expandedAngle, props.expanded, rotation]);
+
+  const rotationStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${rotation.value}deg` }],
+  }));
+
+  return (
+    <Animated.View
+      accessible={false}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      pointerEvents="none"
+      style={[{ width: props.size, height: props.size }, rotationStyle]}
+    >
+      <SymbolView
+        name={props.collapsedDirection === "right" ? "chevron.right" : "chevron.down"}
+        size={props.size}
+        tintColor={props.tintColor}
+        type="monochrome"
+      />
+    </Animated.View>
+  );
+}
 
 function ShimmerWorkContent(props: {
   readonly highlighted: boolean;
@@ -370,15 +408,11 @@ export function ThreadWorkLog(props: {
                     ) : null}
                     <View className="h-4 w-4 items-center justify-center">
                       {canExpand ? (
-                        <SymbolView
-                          name={
-                            expanded
-                              ? { ios: "chevron.up", android: "keyboard_arrow_up" }
-                              : { ios: "chevron.down", android: "keyboard_arrow_down" }
-                          }
+                        <ThreadDisclosureChevron
+                          expanded={expanded}
+                          collapsedDirection="down"
                           size={11}
                           tintColor={props.iconSubtleColor}
-                          type="monochrome"
                         />
                       ) : null}
                     </View>
@@ -468,15 +502,11 @@ export function ThreadWorkGroupToggle(props: {
             </Text>
           </>
         )}
-        <SymbolView
-          name={
-            props.expanded
-              ? { ios: "chevron.up", android: "keyboard_arrow_up" }
-              : { ios: "chevron.down", android: "keyboard_arrow_down" }
-          }
+        <ThreadDisclosureChevron
+          expanded={props.expanded}
+          collapsedDirection="down"
           size={11}
           tintColor={props.iconSubtleColor}
-          type="monochrome"
         />
       </Pressable>
     </View>

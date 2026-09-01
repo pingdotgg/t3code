@@ -131,6 +131,7 @@ import {
 } from "./thread-feed-live-follow";
 import {
   collapsedWorkLogHeight,
+  ThreadDisclosureChevron,
   ThreadWorkGroupToggle,
   ThreadWorkLog,
   THREAD_DISCLOSURE_TRANSITION_MS,
@@ -1356,11 +1357,11 @@ function renderFeedEntry(
         <Text className="font-t3-medium text-sm tabular-nums text-foreground-muted">
           {entry.label}
         </Text>
-        <SymbolView
-          name={entry.expanded ? "chevron.down" : "chevron.right"}
+        <ThreadDisclosureChevron
+          expanded={entry.expanded}
+          collapsedDirection="right"
           size={15}
-          tintColorClassName={"accent-icon-subtle"}
-          type="monochrome"
+          tintColor={iconSubtleColor}
         />
       </Pressable>
     );
