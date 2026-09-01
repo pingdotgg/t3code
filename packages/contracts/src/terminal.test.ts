@@ -87,12 +87,14 @@ describe("TerminalOpenInput", () => {
         T3CODE_PROJECT_ROOT: "/tmp/project",
         CUSTOM_FLAG: "1",
       },
+      providerInstanceId: "codex_work",
     });
     expect(parsed.env).toMatchObject({
       T3CODE_PROJECT_ROOT: "/tmp/project",
       CUSTOM_FLAG: "1",
     });
     expect(parsed.worktreePath).toBe("/tmp/project/.t3/worktrees/feature-a");
+    expect(parsed.providerInstanceId).toBe("codex_work");
   });
 
   it("rejects invalid env keys", () => {
@@ -107,6 +109,19 @@ describe("TerminalOpenInput", () => {
         },
       }),
     ).toBe(false);
+  });
+
+  it("rejects invalid provider instance ids", () => {
+    for (const providerInstanceId of ["", "1invalid", "invalid id"]) {
+      expect(
+        decodes(TerminalOpenInput, {
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          cwd: "/tmp/project",
+          providerInstanceId,
+        }),
+      ).toBe(false);
+    }
   });
 });
 

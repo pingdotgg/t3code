@@ -71,37 +71,6 @@ export function selectOnboardingProvidersByDriver(
   return providersByDriver;
 }
 
-/** Give the setup terminal the same account and home as the selected provider instance. */
-export function resolveOnboardingProviderTerminalEnvironment(
-  provider: ServerProvider,
-  settings: ServerSettings,
-): Record<string, string> {
-  const instance = settings.providerInstances[provider.instanceId];
-  const environment = Object.fromEntries(
-    (instance?.environment ?? [])
-      .filter((variable) => variable.valueRedacted !== true)
-      .map((variable) => [variable.name, variable.value]),
-  );
-
-  if (provider.driver === "claudeAgent") {
-    const config = decodeClaudeSettings(
-      instance ? (instance.config ?? {}) : settings.providers.claudeAgent,
-    );
-    const homePath = Option.isSome(config) ? config.value.homePath.trim() : "";
-    if (homePath.length > 0) environment.CLAUDE_CONFIG_DIR = homePath;
-  } else if (provider.driver === "codex") {
-    const config = decodeCodexSettings(
-      instance ? (instance.config ?? {}) : settings.providers.codex,
-    );
-    const homePath = Option.isSome(config)
-      ? config.value.shadowHomePath.trim() || config.value.homePath.trim()
-      : "";
-    if (homePath.length > 0) environment.CODEX_HOME = homePath;
-  }
-
-  return environment;
-}
-
 /** Use the selected provider instance's binary when the setup terminal opens its login flow. */
 export function resolveOnboardingProviderLoginCommand(
   provider: ServerProvider,

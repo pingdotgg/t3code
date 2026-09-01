@@ -400,6 +400,7 @@ export function mountOnboardingTheme(): () => void {
   if (typeof document === "undefined" || typeof window === "undefined") return () => {};
 
   const root = document.documentElement;
+  applyThemePalette("dark", "dark");
   root.dataset.onboardingSurface = "";
   root.classList.add("dark");
   syncBrowserChromeTheme();

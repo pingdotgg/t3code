@@ -1869,6 +1869,75 @@ describe("parseAgentSessionTranscript", () => {
     });
   });
 
+  it("restores the canonical first prompt when a later user message remains", () => {
+    const canonicalPrompt = "\n  Keep the canonical prompt  \n";
+    const canonicalTimestamp = "2026-08-24T10:01:00.000Z";
+    const assistantMessages = Array.from({ length: 198 }, (_, index) =>
+      encodeTranscriptRecord({
+        type: "response_item",
+        timestamp: `2026-08-24T11:${String(index % 60).padStart(2, "0")}:00.000Z`,
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: `Assistant message ${index}` }],
+        },
+      }),
+    );
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          timestamp: "2026-08-24T10:00:00.000Z",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
+            content: [{ type: "input_text", text: "Keep the canonical prompt" }],
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          timestamp: canonicalTimestamp,
+          payload: { type: "user_message", message: canonicalPrompt },
+        }),
+        ...assistantMessages,
+        encodeTranscriptRecord({
+          type: "event_msg",
+          timestamp: "2026-08-24T11:58:30.000Z",
+          payload: { type: "user_message", message: "Keep this later prompt" },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          timestamp: "2026-08-24T11:59:00.000Z",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "Keep this latest response" }],
+          },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.messages).toHaveLength(200);
+    expect(thread?.messages[0]).toMatchObject({
+      role: "user",
+      text: canonicalPrompt,
+      createdAt: canonicalTimestamp,
+    });
+    expect(
+      thread?.messages.filter((message) => message.text.trim() === canonicalPrompt.trim()),
+    ).toHaveLength(1);
+    expect(thread?.messages.some((message) => message.text === "Keep this later prompt")).toBe(
+      true,
+    );
+    expect(thread?.messages.at(-1)?.text).toBe("Keep this latest response");
+  });
+
   it("keeps mixed-format response users when turn IDs repeat after an assistant", () => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [

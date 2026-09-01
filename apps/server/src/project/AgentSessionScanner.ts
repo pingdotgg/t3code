@@ -406,8 +406,9 @@ export function parseAgentSessionTranscript(input: {
     ({ codexResponseUser: _codexResponseUser, ...message }) => message,
   );
   if (providerSessionId.trim().length === 0 || firstUserMessage === undefined) return null;
+  const firstUserMessageRetained = messages.includes(firstUserMessage);
   const { codexResponseUser: _codexResponseUser, ...visibleFirstUserMessage } = firstUserMessage;
-  const retainedMessages = visibleMessages.some((message) => message.role === "user")
+  const retainedMessages = firstUserMessageRetained
     ? visibleMessages
     : [visibleFirstUserMessage, ...visibleMessages.slice(-(MAX_IMPORTED_MESSAGES - 1))];
   const derivedTitle = visibleFirstUserMessage.text.trim().split("\n")[0]?.slice(0, 100).trim();

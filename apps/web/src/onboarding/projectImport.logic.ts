@@ -35,3 +35,20 @@ export function resolveOnboardingProjectId(
   if (currentRootMatch !== undefined) return currentRootMatch.id;
   return null;
 }
+
+/** Prefer a selected project with imported history, then a completed empty import. */
+export function resolveOnboardingLandingProject<T>(
+  selection: ReadonlyArray<string>,
+  projectsWithImportedHistory: ReadonlyMap<string, T>,
+  completedProjects: ReadonlyMap<string, T>,
+): T | undefined {
+  for (const path of selection) {
+    const project = projectsWithImportedHistory.get(path);
+    if (project !== undefined) return project;
+  }
+  for (const path of selection) {
+    const project = completedProjects.get(path);
+    if (project !== undefined) return project;
+  }
+  return undefined;
+}

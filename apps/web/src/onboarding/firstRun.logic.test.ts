@@ -5,6 +5,7 @@ import {
   isFreshFirstRunWorkspace,
   resolveFirstRunDecision,
   resolveHostedFirstRunDecision,
+  transitionFirstRunGateState,
 } from "./firstRun.logic";
 
 const freshWorkspace = {
@@ -160,8 +161,6 @@ describe("resolveFirstRunDecision", () => {
 
   it("waits when the initial welcome is pending and opens the wizard after completion", () => {
     const pendingProvenance = isFirstRunWorkspaceProvenanceAuthoritative({
-      projectCount: 1,
-      threadCount: 1,
       welcomeReceived: true,
       bootstrapStatus: "pending",
     });
@@ -173,8 +172,6 @@ describe("resolveFirstRunDecision", () => {
     ).toEqual({ decision: "pending", persistCompletion: false });
 
     const completedProvenance = isFirstRunWorkspaceProvenanceAuthoritative({
-      projectCount: 1,
-      threadCount: 1,
       welcomeReceived: true,
       bootstrapStatus: "complete",
     });
@@ -199,6 +196,80 @@ describe("resolveFirstRunDecision", () => {
       decision: "app",
       persistCompletion: false,
     });
+  });
+});
+
+describe("isFirstRunWorkspaceProvenanceAuthoritative", () => {
+  it("waits for cwd bootstrap when the initial catalog is empty", () => {
+    expect(
+      isFirstRunWorkspaceProvenanceAuthoritative({
+        welcomeReceived: true,
+        bootstrapStatus: "pending",
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts an empty catalog after cwd bootstrap completes", () => {
+    expect(
+      isFirstRunWorkspaceProvenanceAuthoritative({
+        welcomeReceived: true,
+        bootstrapStatus: "complete",
+      }),
+    ).toBe(true);
+  });
+
+  it("waits for a welcome before treating an empty catalog as final", () => {
+    expect(
+      isFirstRunWorkspaceProvenanceAuthoritative({
+        welcomeReceived: false,
+        bootstrapStatus: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts a legacy welcome without bootstrap status", () => {
+    expect(
+      isFirstRunWorkspaceProvenanceAuthoritative({
+        welcomeReceived: true,
+        bootstrapStatus: null,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("transitionFirstRunGateState", () => {
+  it("shows recovery without mounting the app when evidence stalls", () => {
+    expect(
+      transitionFirstRunGateState({ decision: "pending", stalled: false }, { type: "timeout" }),
+    ).toEqual({ decision: "pending", stalled: true });
+  });
+
+  it.each(["app", "wizard"] as const)(
+    "resolves stalled recovery to %s only after authoritative evidence",
+    (decision) => {
+      expect(
+        transitionFirstRunGateState(
+          { decision: "pending", stalled: true },
+          { type: "evidence", decision },
+        ),
+      ).toEqual({ decision, stalled: false });
+    },
+  );
+
+  it("keeps recovery visible while evidence remains pending", () => {
+    const state = { decision: "pending", stalled: true } as const;
+    expect(transitionFirstRunGateState(state, { type: "evidence", decision: "pending" })).toBe(
+      state,
+    );
+  });
+
+  it("allows authoritative wizard evidence to replace an app decision", () => {
+    expect(
+      transitionFirstRunGateState(
+        { decision: "app", stalled: false },
+        { type: "evidence", decision: "wizard" },
+      ),
+    ).toEqual({ decision: "wizard", stalled: false });
   });
 });
 

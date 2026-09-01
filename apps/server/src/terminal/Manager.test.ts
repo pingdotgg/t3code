@@ -7,6 +7,8 @@ import {
   type TerminalMetadataStreamEvent,
   type TerminalOpenInput,
   type TerminalRestartInput,
+  ProviderInstanceId,
+  TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Data from "effect/Data";
@@ -215,6 +217,10 @@ interface CreateManagerOptions {
   maxRetainedInactiveSessions?: number;
   historyByteLimit?: number;
   ptyAdapter?: FakePtyAdapter;
+  resolveProviderInstanceEnvironment?: (
+    providerInstanceId: string,
+    env: Record<string, string> | undefined,
+  ) => Effect.Effect<Record<string, string>, TerminalProviderInstanceNotFoundError>;
 }
 
 interface ManagerFixture {
@@ -258,6 +264,9 @@ const createManager = (
         processKillGraceMs: options.processKillGraceMs ?? 1,
         ...(options.maxRetainedInactiveSessions !== undefined
           ? { maxRetainedInactiveSessions: options.maxRetainedInactiveSessions }
+          : {}),
+        ...(options.resolveProviderInstanceEnvironment !== undefined
+          ? { resolveProviderInstanceEnvironment: options.resolveProviderInstanceEnvironment }
           : {}),
       });
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
@@ -1839,6 +1848,127 @@ it.layer(
       assert.equal(spawnInput.env.T3CODE_PROJECT_ROOT, "/repo");
       assert.equal(spawnInput.env.T3CODE_WORKTREE_PATH, "/repo/worktree-a");
       assert.equal(spawnInput.env.CUSTOM_FLAG, "1");
+    }),
+  );
+
+  it.effect("resolves a provider instance environment before spawning", () =>
+    Effect.gen(function* () {
+      const providerInstanceId = ProviderInstanceId.make("codex_work");
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { T3CODE_SECRET: "server-only" },
+        resolveProviderInstanceEnvironment: (requestedId, env) =>
+          Effect.succeed({
+            ...env,
+            PROVIDER_SECRET: requestedId === providerInstanceId ? "secret-value" : "wrong",
+            CODEX_HOME: "/accounts/codex-work",
+          }),
+      });
+
+      const snapshot = yield* manager.open(
+        openInput({ providerInstanceId, env: { CLIENT_FLAG: "1" } }),
+      );
+
+      expect(ptyAdapter.spawnInputs[0]?.env.PROVIDER_SECRET).toBe("secret-value");
+      expect(ptyAdapter.spawnInputs[0]?.env.CODEX_HOME).toBe("/accounts/codex-work");
+      expect(ptyAdapter.spawnInputs[0]?.env.CLIENT_FLAG).toBe("1");
+      expect(ptyAdapter.spawnInputs[0]?.env.T3CODE_SECRET).toBeUndefined();
+      expect(snapshot).not.toHaveProperty("env");
+      expect(snapshot).not.toHaveProperty("providerInstanceId");
+    }),
+  );
+
+  it.effect("fails closed when a provider instance is missing", () =>
+    Effect.gen(function* () {
+      const providerInstanceId = ProviderInstanceId.make("deleted_instance");
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        resolveProviderInstanceEnvironment: (requestedId) =>
+          Effect.fail(
+            new TerminalProviderInstanceNotFoundError({
+              providerInstanceId: ProviderInstanceId.make(requestedId),
+            }),
+          ),
+      });
+
+      const error = yield* manager.open(openInput({ providerInstanceId })).pipe(Effect.flip);
+
+      assert.deepStrictEqual(
+        error,
+        new TerminalProviderInstanceNotFoundError({ providerInstanceId }),
+      );
+      expect(ptyAdapter.spawnInputs).toHaveLength(0);
+    }),
+  );
+
+  it.effect("restarts a running terminal when the resolved provider environment changes", () =>
+    Effect.gen(function* () {
+      const providerInstanceId = ProviderInstanceId.make("codex_work");
+      let providerSecret = "first-secret";
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        resolveProviderInstanceEnvironment: () =>
+          Effect.succeed({ PROVIDER_SECRET: providerSecret }),
+      });
+
+      yield* manager.open(openInput({ providerInstanceId }));
+      providerSecret = "second-secret";
+      yield* manager.open(openInput({ providerInstanceId }));
+
+      expect(ptyAdapter.processes[0]?.killed).toBe(true);
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+      expect(ptyAdapter.spawnInputs[1]?.env.PROVIDER_SECRET).toBe("second-secret");
+    }),
+  );
+
+  it.effect("attaches to a running provider terminal without resolving the provider again", () =>
+    Effect.gen(function* () {
+      const providerInstanceId = ProviderInstanceId.make("codex_work");
+      let providerAvailable = true;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        resolveProviderInstanceEnvironment: (requestedId) =>
+          providerAvailable
+            ? Effect.succeed({ PROVIDER_SECRET: "secret-value" })
+            : Effect.fail(
+                new TerminalProviderInstanceNotFoundError({
+                  providerInstanceId: ProviderInstanceId.make(requestedId),
+                }),
+              ),
+      });
+      yield* manager.open(openInput({ providerInstanceId }));
+      providerAvailable = false;
+      const events: TerminalAttachStreamEvent[] = [];
+
+      const unsubscribe = yield* manager.attachStream(
+        { ...openInput({ providerInstanceId }), restartIfNotRunning: true },
+        (event) => Effect.sync(() => events.push(event)),
+      );
+      unsubscribe();
+
+      expect(events[0]?.type).toBe("snapshot");
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(ptyAdapter.processes[0]?.killed).toBe(false);
+    }),
+  );
+
+  it.effect("fails closed when attaching would create a missing provider terminal", () =>
+    Effect.gen(function* () {
+      const providerInstanceId = ProviderInstanceId.make("deleted_instance");
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        resolveProviderInstanceEnvironment: (requestedId) =>
+          Effect.fail(
+            new TerminalProviderInstanceNotFoundError({
+              providerInstanceId: ProviderInstanceId.make(requestedId),
+            }),
+          ),
+      });
+
+      const error = yield* manager
+        .attachStream(openInput({ providerInstanceId }), () => Effect.void)
+        .pipe(Effect.flip);
+
+      assert.deepStrictEqual(
+        error,
+        new TerminalProviderInstanceNotFoundError({ providerInstanceId }),
+      );
+      expect(ptyAdapter.spawnInputs).toHaveLength(0);
     }),
   );
 

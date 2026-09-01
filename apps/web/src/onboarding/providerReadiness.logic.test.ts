@@ -9,7 +9,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   getOnboardingProviderState,
   resolveOnboardingProviderLoginCommand,
-  resolveOnboardingProviderTerminalEnvironment,
   selectOnboardingProvidersByDriver,
 } from "./providerReadiness.logic";
 
@@ -142,77 +141,6 @@ describe("selectOnboardingProvidersByDriver", () => {
     expect(selectOnboardingProvidersByDriver([signedOutDefault, readyCustom]).get("codex")).toBe(
       readyCustom,
     );
-  });
-});
-
-describe("resolveOnboardingProviderTerminalEnvironment", () => {
-  it("uses the selected Codex account instead of the default home", () => {
-    const provider = { ...readyCodex, instanceId: ProviderInstanceId.make("codex_work") };
-
-    expect(
-      resolveOnboardingProviderTerminalEnvironment(provider, {
-        ...DEFAULT_SERVER_SETTINGS,
-        providerInstances: {
-          [provider.instanceId]: {
-            driver: provider.driver,
-            config: { homePath: "~/.codex-work" },
-          },
-        },
-      }),
-    ).toEqual({ CODEX_HOME: "~/.codex-work" });
-  });
-
-  it("uses the account-specific Codex shadow home for sign-in", () => {
-    const provider = { ...readyCodex, instanceId: ProviderInstanceId.make("codex_work") };
-
-    expect(
-      resolveOnboardingProviderTerminalEnvironment(provider, {
-        ...DEFAULT_SERVER_SETTINGS,
-        providerInstances: {
-          [provider.instanceId]: {
-            driver: provider.driver,
-            config: { homePath: "~/.codex", shadowHomePath: "~/.codex-work" },
-          },
-        },
-      }),
-    ).toEqual({ CODEX_HOME: "~/.codex-work" });
-  });
-
-  it("keeps account variables and lets the configured Claude home win", () => {
-    const provider: ServerProvider = {
-      ...readyCodex,
-      driver: ProviderDriverKind.make("claudeAgent"),
-      instanceId: ProviderInstanceId.make("claude_work"),
-    };
-
-    expect(
-      resolveOnboardingProviderTerminalEnvironment(provider, {
-        ...DEFAULT_SERVER_SETTINGS,
-        providerInstances: {
-          [provider.instanceId]: {
-            driver: provider.driver,
-            config: { homePath: "~/.claude-work" },
-            environment: [
-              { name: "CLAUDE_CONFIG_DIR", value: "~/.claude-old", sensitive: false },
-              { name: "CUSTOM_ACCOUNT", value: "work", sensitive: false },
-              { name: "HIDDEN_TOKEN", value: "", sensitive: true, valueRedacted: true },
-            ],
-          },
-        },
-      }),
-    ).toEqual({ CLAUDE_CONFIG_DIR: "~/.claude-work", CUSTOM_ACCOUNT: "work" });
-  });
-
-  it("uses a configured home on the default provider instance", () => {
-    expect(
-      resolveOnboardingProviderTerminalEnvironment(readyCodex, {
-        ...DEFAULT_SERVER_SETTINGS,
-        providers: {
-          ...DEFAULT_SERVER_SETTINGS.providers,
-          codex: { ...DEFAULT_SERVER_SETTINGS.providers.codex, homePath: "~/.codex-default" },
-        },
-      }),
-    ).toEqual({ CODEX_HOME: "~/.codex-default" });
   });
 });
 

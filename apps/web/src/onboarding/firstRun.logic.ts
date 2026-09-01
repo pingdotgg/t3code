@@ -2,6 +2,15 @@ import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 
 export type FirstRunDecision = "pending" | "app" | "wizard";
 
+export interface FirstRunGateState {
+  readonly decision: FirstRunDecision;
+  readonly stalled: boolean;
+}
+
+type FirstRunGateEvent =
+  | { readonly type: "evidence"; readonly decision: FirstRunDecision }
+  | { readonly type: "timeout" };
+
 interface FirstRunWorkspaceInput {
   readonly primaryEnvironmentId: string | null;
   readonly serverCwd: string | null;
@@ -47,15 +56,32 @@ interface HostedFirstRunDecisionInput {
 }
 
 export function isFirstRunWorkspaceProvenanceAuthoritative(input: {
-  readonly projectCount: number;
-  readonly threadCount: number;
   readonly welcomeReceived: boolean;
   readonly bootstrapStatus: "pending" | "complete" | null;
 }): boolean {
-  return (
-    (input.projectCount === 0 && input.threadCount === 0) ||
-    (input.welcomeReceived && input.bootstrapStatus !== "pending")
-  );
+  // An empty catalog is not final while cwd auto-bootstrap is pending. Older
+  // servers omit bootstrapStatus, so a received welcome with null stays valid.
+  return input.welcomeReceived && input.bootstrapStatus !== "pending";
+}
+
+/** Keeps the authenticated app unmounted until workspace evidence settles. */
+export function transitionFirstRunGateState(
+  state: FirstRunGateState,
+  event: FirstRunGateEvent,
+): FirstRunGateState {
+  if (event.type === "timeout") {
+    return state.decision === "pending" && !state.stalled ? { ...state, stalled: true } : state;
+  }
+
+  if (
+    state.decision === "wizard" ||
+    event.decision === "pending" ||
+    (state.decision === "app" && event.decision !== "wizard")
+  ) {
+    return state;
+  }
+
+  return { decision: event.decision, stalled: false };
 }
 
 /** Only a project and thread created by this startup count as a fresh nonempty workspace. */

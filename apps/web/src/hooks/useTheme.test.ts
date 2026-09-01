@@ -206,6 +206,98 @@ describe("theme failure handling", () => {
 });
 
 describe("onboarding theme", () => {
+  it("clears custom palettes and restores the latest selected theme", async () => {
+    const storage = createStorage();
+    const classes = new Set<string>();
+    const styleValues = new Map<string, string>();
+    const root = {
+      classList: {
+        add: (name: string) => classes.add(name),
+        remove: (name: string) => classes.delete(name),
+        toggle: (name: string, force?: boolean) => {
+          const next = force ?? !classes.has(name);
+          if (next) classes.add(name);
+          else classes.delete(name);
+          return next;
+        },
+      },
+      dataset: {} as Record<string, string>,
+      offsetHeight: 0,
+      style: {
+        backgroundColor: "",
+        removeProperty: (name: string) => styleValues.delete(name),
+        setProperty: (name: string, value: string) => styleValues.set(name, value),
+      },
+    };
+    vi.doMock("react", () => ({
+      useCallback: <A>(callback: A) => callback,
+      useEffect: () => undefined,
+      useSyncExternalStore: (
+        subscribe: (listener: () => void) => () => void,
+        getSnapshot: () => unknown,
+      ) => {
+        subscribe(() => undefined);
+        return getSnapshot();
+      },
+    }));
+    vi.stubGlobal("window", {
+      addEventListener: () => undefined,
+      localStorage: storage,
+      matchMedia: () => ({
+        matches: false,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+      removeEventListener: () => undefined,
+    });
+    vi.stubGlobal("document", {
+      body: { style: { backgroundColor: "" } },
+      createElement: () => ({ name: "", setAttribute: () => undefined }),
+      documentElement: root,
+      head: { append: () => undefined },
+      querySelector: () => null,
+      querySelectorAll: () => [],
+    });
+    vi.stubGlobal("getComputedStyle", () => ({
+      backgroundColor: "rgb(0, 0, 0)",
+      getPropertyValue: () => "",
+    }));
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+
+    const { EMBER_THEME, installCustomTheme } = await import("../themePalette");
+    const firstTheme = installCustomTheme({
+      ...EMBER_THEME,
+      id: "first-custom",
+      label: "First Custom",
+    });
+    const secondTheme = installCustomTheme({
+      ...EMBER_THEME,
+      id: "second-custom",
+      label: "Second Custom",
+      colors: { ...EMBER_THEME.colors, error: "#123456" },
+    });
+    storage.setItem("t3code:theme", firstTheme.id);
+
+    const { mountOnboardingTheme, useTheme } = await import("./useTheme");
+    expect(root.dataset.themeId).toBe(firstTheme.id);
+    expect(styleValues.get("--app-theme-error")).toBe(firstTheme.colors.error);
+
+    const cleanup = mountOnboardingTheme();
+    expect(root.dataset.themeId).toBeUndefined();
+    expect(styleValues.size).toBe(0);
+
+    expect(useTheme().setTheme(secondTheme.id)).toBe(true);
+    expect(root.dataset.themeId).toBeUndefined();
+    expect(styleValues.size).toBe(0);
+
+    cleanup();
+    expect(root.dataset.themeId).toBe(secondTheme.id);
+    expect(styleValues.get("--app-theme-error")).toBe(secondTheme.colors.error);
+  });
+
   it("stays dark during storage changes and restores the latest saved theme", async () => {
     const storage = createStorage();
     storage.setItem("t3code:theme", "light");

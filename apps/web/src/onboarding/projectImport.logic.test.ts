@@ -1,7 +1,11 @@
 import { EnvironmentId, ProjectId, type AgentSessionProjectCandidate } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { partitionOnboardingProjects, resolveOnboardingProjectId } from "./projectImport.logic";
+import {
+  partitionOnboardingProjects,
+  resolveOnboardingLandingProject,
+  resolveOnboardingProjectId,
+} from "./projectImport.logic";
 
 const now = Date.parse("2026-08-22T12:00:00.000Z");
 
@@ -150,5 +154,60 @@ describe("resolveOnboardingProjectId", () => {
         "/projects/repo",
       ),
     ).toBeNull();
+  });
+});
+
+describe("resolveOnboardingLandingProject", () => {
+  it("skips a failed first project for a later project with imported history", () => {
+    expect(
+      resolveOnboardingLandingProject(
+        ["/projects/failed", "/projects/imported"],
+        new Map([["/projects/imported", "imported"]]),
+        new Map([["/projects/imported", "imported"]]),
+      ),
+    ).toBe("imported");
+  });
+
+  it("prefers a partial first import that added history", () => {
+    expect(
+      resolveOnboardingLandingProject(
+        ["/projects/partial", "/projects/complete"],
+        new Map([["/projects/partial", "partial"]]),
+        new Map([["/projects/complete", "complete"]]),
+      ),
+    ).toBe("partial");
+  });
+
+  it("uses a completed zero-history project when no import added history", () => {
+    expect(
+      resolveOnboardingLandingProject(
+        ["/projects/empty", "/projects/failed"],
+        new Map(),
+        new Map([["/projects/empty", "empty"]]),
+      ),
+    ).toBe("empty");
+  });
+
+  it("keeps an earlier successful import available on retry", () => {
+    expect(
+      resolveOnboardingLandingProject(
+        ["/projects/imported", "/projects/retry"],
+        new Map([["/projects/imported", "imported"]]),
+        new Map([["/projects/imported", "imported"]]),
+      ),
+    ).toBe("imported");
+  });
+
+  it("ignores cached successes outside the current retry selection", () => {
+    expect(
+      resolveOnboardingLandingProject(
+        ["/projects/current"],
+        new Map([["/projects/previous", "previous"]]),
+        new Map([
+          ["/projects/previous", "previous"],
+          ["/projects/current", "current"],
+        ]),
+      ),
+    ).toBe("current");
   });
 });

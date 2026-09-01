@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { Atom } from "effect/unstable/reactivity";
+import { RotateCcwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useClientSettings, useClientSettingsHydrated } from "../../hooks/useSettings";
@@ -10,7 +11,8 @@ import {
   isFreshFirstRunWorkspace,
   resolveFirstRunDecision,
   resolveHostedFirstRunDecision,
-  type FirstRunDecision,
+  transitionFirstRunGateState,
+  type FirstRunGateState,
 } from "../../onboarding/firstRun.logic";
 import {
   useAllEnvironmentShellsBootstrapped,
@@ -22,6 +24,7 @@ import { environmentProjects } from "../../state/projects";
 import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../../state/server";
 import { environmentShell } from "../../state/shell";
 import { environmentThreadShells } from "../../state/threads";
+import { Button } from "../ui/button";
 
 /**
  * Holds back authenticated and hosted app trees until the first-run decision
@@ -33,8 +36,8 @@ import { environmentThreadShells } from "../../state/threads";
  * settings hydrate (the common case, no server round-trip). A `null` flag also
  * covers installs that predate the field, so it alone is not enough — the gate
  * waits for environment shells to bootstrap and inspects the workspace.
- * Hosted mode instead checks its saved environment catalog. A timeout guards
- * an unreachable primary server; hosted mode does not need that server timer.
+ * Hosted mode instead checks its saved environment catalog. A timeout shows
+ * recovery for an unreachable primary server without mounting the app tree.
  */
 
 const FIRST_RUN_DECISION_TIMEOUT_MS = 4_000;
@@ -86,9 +89,14 @@ export function FirstRunGate({
   const workspaceEvidenceLive = useAtomValue(workspaceEvidenceLiveAtom);
   // Within a session settings stay hydrated, so remounts (e.g. returning from
   // the wizard) resolve synchronously instead of blanking a frame.
-  const [decision, setDecision] = useState<FirstRunDecision>(() =>
-    (!enabled && !hostedStatic) || (hydrated && onboardingCompletedAt !== null) ? "app" : "pending",
-  );
+  const [gateState, setGateState] = useState<FirstRunGateState>(() => ({
+    decision:
+      (!enabled && !hostedStatic) || (hydrated && onboardingCompletedAt !== null)
+        ? "app"
+        : "pending",
+    stalled: false,
+  }));
+  const { decision, stalled } = gateState;
 
   // A workspace still counts as fresh when its only content is the server's
   // own cwd auto-bootstrap: web mode creates a project + thread from cwd at
@@ -126,8 +134,6 @@ export function FirstRunGate({
         authoritative: primaryShellLive,
         workspaceAuthoritative: workspaceEvidenceLive,
         workspaceProvenanceAuthoritative: isFirstRunWorkspaceProvenanceAuthoritative({
-          projectCount: projects.length,
-          threadCount: threads.length,
           welcomeReceived: serverWelcome !== null,
           bootstrapStatus: serverWelcome?.bootstrapStatus ?? null,
         }),
@@ -145,12 +151,9 @@ export function FirstRunGate({
       void completeOnboarding().catch(() => undefined);
     }
 
-    if (
-      (decision === "pending" && nextDecision !== "pending") ||
-      (decision === "app" && nextDecision === "wizard")
-    ) {
-      setDecision(nextDecision);
-    }
+    setGateState((state) =>
+      transitionFirstRunGateState(state, { type: "evidence", decision: nextDecision }),
+    );
   }, [
     completeOnboarding,
     decision,
@@ -160,12 +163,15 @@ export function FirstRunGate({
     persistCompletion,
   ]);
 
-  // The fallback only guards a stalled *server* read. It must not start
-  // before settings hydrate, or slow hydration would resolve to the app
-  // without the decision effect ever seeing `onboardingCompletedAt`.
+  // A stalled server read gets a recovery screen, but never mounts the app.
+  // The timer starts after settings hydrate so slow local hydration does not
+  // show a false connection failure.
   useEffect(() => {
     if (!enabled || decision !== "pending" || !hydrated) return;
-    const timer = window.setTimeout(() => setDecision("app"), FIRST_RUN_DECISION_TIMEOUT_MS);
+    const timer = window.setTimeout(
+      () => setGateState((state) => transitionFirstRunGateState(state, { type: "timeout" })),
+      FIRST_RUN_DECISION_TIMEOUT_MS,
+    );
     return () => window.clearTimeout(timer);
   }, [decision, enabled, hydrated]);
 
@@ -176,7 +182,27 @@ export function FirstRunGate({
   }, [decision, navigate, pathname]);
 
   if (decision !== "app") {
-    return null;
+    return stalled ? <FirstRunConnectionRecovery /> : null;
   }
   return children;
+}
+
+function FirstRunConnectionRecovery() {
+  return (
+    <main className="flex h-dvh min-h-0 items-center justify-center bg-black px-6 text-white">
+      <div className="flex max-w-sm flex-col items-center text-center">
+        <h1 className="text-lg font-semibold">Still connecting</h1>
+        <p className="mt-2 text-sm text-white/64">T3 Code could not confirm this workspace.</p>
+        <Button
+          className="mt-5 border-white/20 bg-black text-white hover:bg-white/10"
+          size="sm"
+          variant="outline"
+          onClick={() => window.location.reload()}
+        >
+          <RotateCcwIcon />
+          Reload
+        </Button>
+      </div>
+    </main>
+  );
 }

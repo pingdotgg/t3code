@@ -37,12 +37,12 @@ import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
   partitionOnboardingProjects,
+  resolveOnboardingLandingProject,
   resolveOnboardingProjectId,
 } from "../../onboarding/projectImport.logic";
 import {
   getOnboardingProviderState,
   resolveOnboardingProviderLoginCommand,
-  resolveOnboardingProviderTerminalEnvironment,
   selectOnboardingProvidersByDriver,
 } from "../../onboarding/providerReadiness.logic";
 import {
@@ -652,7 +652,6 @@ interface AgentTerminalSession {
   readonly providerInstanceId: ServerProvider["instanceId"];
   readonly cwd: string;
   readonly command: string;
-  readonly providerEnvironment: Record<string, string>;
   readonly keybindings: ServerConfig["keybindings"];
 }
 
@@ -762,10 +761,6 @@ function ConnectedAgentsStep({
                       serverConfig.environment.platform.os,
                     )
                   : AGENT_INSTALL_COMMANDS[driver],
-                providerEnvironment: resolveOnboardingProviderTerminalEnvironment(
-                  provider,
-                  serverConfig.settings,
-                ),
                 keybindings: serverConfig.keybindings,
               });
             }}
@@ -872,7 +867,7 @@ function AgentInstallTerminal({
   readonly session: AgentTerminalSession;
   readonly onClose: () => void;
 }) {
-  const { command, cwd, driver, environmentId, keybindings, providerEnvironment } = session;
+  const { command, cwd, driver, environmentId, keybindings, providerInstanceId } = session;
   // Same terminal typography preference the thread drawer honors.
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
@@ -913,7 +908,7 @@ function AgentInstallTerminal({
           threadId: AGENT_ONBOARDING_THREAD_ID,
           terminalId,
           cwd,
-          ...(Object.keys(providerEnvironment).length > 0 ? { env: providerEnvironment } : {}),
+          providerInstanceId,
         },
       });
       if (opened._tag !== "Success") {
@@ -952,7 +947,7 @@ function AgentInstallTerminal({
     cwd,
     environmentId,
     openTerminal,
-    providerEnvironment,
+    providerInstanceId,
     setupAttempt,
     terminalId,
     writeTerminal,
@@ -994,9 +989,7 @@ function AgentInstallTerminal({
             terminalId={terminalId}
             terminalLabel={`Install ${driver}`}
             cwd={cwd}
-            {...(Object.keys(providerEnvironment).length > 0
-              ? { runtimeEnv: providerEnvironment }
-              : {})}
+            providerInstanceId={providerInstanceId}
             advancedTypography={advancedTypography}
             onSessionExited={onClose}
             focusRequestId={1}
@@ -1049,7 +1042,7 @@ function ImportStep({
   const [landingProject, setLandingProject] = useState<ScopedProjectRef | null>(null);
   // Keep project creation attempts separate from completed history imports so both can retry.
   const importedProjectsRef = useRef(new Map<string, ScopedProjectRef>());
-  const projectRefsRef = useRef(new Map<string, ScopedProjectRef>());
+  const projectsWithImportedHistoryRef = useRef(new Map<string, ScopedProjectRef>());
   const lastImportSelectionRef = useRef<ReadonlyArray<string>>([]);
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
@@ -1067,7 +1060,7 @@ function ImportStep({
     setImportError("");
     setLandingProject(null);
     importedProjectsRef.current = new Map();
-    projectRefsRef.current = new Map();
+    projectsWithImportedHistoryRef.current = new Map();
     lastImportSelectionRef.current = [];
     projectAttemptsRef.current = new Map();
     return () => {
@@ -1098,9 +1091,11 @@ function ImportStep({
   const more = candidates.length - recent.length;
 
   const finishAfterImport = () => {
-    const projectRef = lastImportSelectionRef.current
-      .map((path) => projectRefsRef.current.get(path))
-      .find((ref) => ref !== undefined);
+    const projectRef = resolveOnboardingLandingProject(
+      lastImportSelectionRef.current,
+      projectsWithImportedHistoryRef.current,
+      importedProjectsRef.current,
+    );
     if (projectRef === undefined) {
       void onDone();
       return;
@@ -1179,8 +1174,6 @@ function ImportStep({
         }
       }
 
-      projectRefsRef.current.set(candidate.path, scopeProjectRef(environmentId, projectId));
-
       const threadImportResult = await importThreads({
         environmentId,
         input: { projectId },
@@ -1194,6 +1187,12 @@ function ImportStep({
       if (threadImportResult._tag === "Success") {
         importedThreadCount += threadImportResult.value.importedCount;
         skippedThreadCount += threadImportResult.value.skippedCount;
+        if (threadImportResult.value.importedCount > 0) {
+          projectsWithImportedHistoryRef.current.set(
+            candidate.path,
+            scopeProjectRef(environmentId, projectId),
+          );
+        }
         if (threadImportResult.value.skippedCount === 0) {
           importedProjectsCount += 1;
           importedProjects.set(candidate.path, scopeProjectRef(environmentId, projectId));
