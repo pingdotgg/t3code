@@ -22,6 +22,186 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func textSizesApplyImmediatelyAndPersist() async {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+
+        let save = Task {
+            await model.saveTextSizes(
+                textSize: FeatureTextSizeAdjustment(steps: 2),
+                codeSize: FeatureTextSizeAdjustment(steps: -1)
+            )
+        }
+        await Task.yield()
+
+        #expect(model.snapshot.settings.textSize.steps == 2)
+        #expect(model.snapshot.settings.codeSize.steps == -1)
+        #expect(await save.value)
+        #expect(client.savedSettings.last?.textSize.steps == 2)
+        #expect(client.savedSettings.last?.codeSize.steps == -1)
+    }
+
+    @Test
+    func unchangedTextSizesDoNotWrite() async {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+
+        #expect(await model.saveTextSizes(textSize: .standard, codeSize: .standard))
+        #expect(client.savedSettings.isEmpty)
+    }
+
+    @Test
+    func orderedSettingsWritesPreserveNewerValues() async {
+        let gate = FeatureSettingsSaveGate()
+        let client = FeatureClientStub()
+        client.beforeSaveSettings = { await gate.enter() }
+        let model = testRootModel(client: client)
+        var first = model.snapshot.settings
+        first.hapticsEnabled = false
+
+        let firstSave = Task { await model.saveSettings(first) }
+        await gate.waitUntilCallCount(1)
+        let secondSave = Task {
+            await model.saveTextSizes(
+                textSize: FeatureTextSizeAdjustment(steps: 2),
+                codeSize: FeatureTextSizeAdjustment(steps: -1)
+            )
+        }
+        await Task.yield()
+        #expect(model.snapshot.settings.textSize.steps == 2)
+        gate.releaseFirst()
+        await gate.waitUntilCallCount(2)
+
+        #expect(await firstSave.value)
+        #expect(await secondSave.value)
+        #expect(client.savedSettings.count == 2)
+        #expect(client.savedSettings[1].hapticsEnabled == false)
+        #expect(client.savedSettings[1].textSize.steps == 2)
+    }
+
+    @Test
+    func twoFailedWritesRollbackToTheLastDurableSnapshot() async {
+        let gate = FeatureSettingsSaveGate()
+        let client = FeatureClientStub()
+        client.beforeSaveSettings = {
+            await gate.enter()
+            throw URLError(.cannotConnectToHost)
+        }
+        let model = testRootModel(client: client)
+        let persisted = model.snapshot.settings
+        var first = persisted
+        first.hapticsEnabled = false
+
+        let firstSave = Task { await model.saveSettings(first) }
+        await gate.waitUntilCallCount(1)
+        let secondSave = Task {
+            await model.saveTextSizes(
+                textSize: FeatureTextSizeAdjustment(steps: 2),
+                codeSize: FeatureTextSizeAdjustment(steps: -1)
+            )
+        }
+        await Task.yield()
+        #expect(model.snapshot.settings.textSize.steps == 2)
+        gate.releaseFirst()
+        await gate.waitUntilCallCount(2)
+
+        #expect(await firstSave.value == false)
+        #expect(await secondSave.value == false)
+        #expect(model.snapshot.settings == persisted)
+        #expect(client.savedSettings.isEmpty)
+
+        client.beforeSaveSettings = nil
+        #expect(
+            await model.saveTextSizes(
+                textSize: FeatureTextSizeAdjustment(steps: 1),
+                codeSize: FeatureTextSizeAdjustment(steps: -1)
+            )
+        )
+        #expect(model.snapshot.settings.textSize.steps == 1)
+        #expect(client.savedSettings.count == 1)
+    }
+
+    @Test
+    func successfulSuccessorSupersedesFailedPredecessor() async {
+        let gate = FeatureSettingsSaveGate()
+        let client = FeatureClientStub()
+        client.beforeSaveSettings = {
+            await gate.enter()
+            if gate.callCount == 1 { throw URLError(.cannotConnectToHost) }
+        }
+        let model = testRootModel(client: client)
+        var first = model.snapshot.settings
+        first.hapticsEnabled = false
+        let successor = FeatureSettings(
+            textSize: FeatureTextSizeAdjustment(steps: 2),
+            codeSize: FeatureTextSizeAdjustment(steps: -1),
+            hapticsEnabled: false
+        )
+
+        let firstSave = Task { await model.saveSettings(first) }
+        await gate.waitUntilCallCount(1)
+        let secondSave = Task { await model.saveSettings(successor) }
+        await Task.yield()
+        #expect(model.snapshot.settings == successor)
+        gate.releaseFirst()
+        await gate.waitUntilCallCount(2)
+
+        #expect(await firstSave.value == false)
+        #expect(await secondSave.value)
+        #expect(model.snapshot.settings == successor)
+        #expect(client.savedSettings == [successor])
+    }
+
+    @Test
+    func failedSuccessorRollsBackToSuccessfulPredecessor() async {
+        let gate = FeatureSettingsSaveGate()
+        let client = FeatureClientStub()
+        client.beforeSaveSettings = {
+            await gate.enter()
+            if gate.callCount == 2 { throw URLError(.cannotConnectToHost) }
+        }
+        let model = testRootModel(client: client)
+        var predecessor = model.snapshot.settings
+        predecessor.hapticsEnabled = false
+        var successor = predecessor
+        successor.textSize = FeatureTextSizeAdjustment(steps: 2)
+
+        let firstSave = Task { await model.saveSettings(predecessor) }
+        await gate.waitUntilCallCount(1)
+        let secondSave = Task { await model.saveSettings(successor) }
+        await Task.yield()
+        #expect(model.snapshot.settings == successor)
+        gate.releaseFirst()
+        await gate.waitUntilCallCount(2)
+
+        #expect(await firstSave.value)
+        #expect(await secondSave.value == false)
+        #expect(model.snapshot.settings == predecessor)
+        #expect(client.savedSettings == [predecessor])
+    }
+
+    @Test
+    func settlementSettingsInvalidateHomePresentationOnSaveAndRollback() async {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+        var updated = model.snapshot.settings
+        updated.autoSettleOnMerge = false
+        let initialRevision = model.homePresentationRevision
+        client.beforeSaveSettings = {
+            throw URLError(.cannotConnectToHost)
+        }
+
+        #expect(await model.saveSettings(updated) == false)
+        #expect(model.snapshot.settings.autoSettleOnMerge)
+        #expect(model.homePresentationRevision == initialRevision + 2)
+
+        client.beforeSaveSettings = nil
+        #expect(await model.saveSettings(updated))
+        #expect(model.snapshot.settings.autoSettleOnMerge == false)
+        #expect(model.homePresentationRevision == initialRevision + 3)
+    }
+
+    @Test
     func backgroundRefreshUsesTheBoundedClientPath() async {
         let client = FeatureClientStub()
         client.backgroundSnapshotValue = FeatureSnapshot(
@@ -2759,6 +2939,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var removedEnvironmentID: String?
     var beforeStartTask: (() async throws -> Void)?
     var beforeSendMessage: (() throws -> Void)?
+    var beforeSaveSettings: (@MainActor () async throws -> Void)?
     var loadThreadError: (any Error)?
     var loadThreadHandler: ((String) async throws -> FeatureThreadDetail)?
     var beforeLoadThreadReturn: (() async -> Void)?
@@ -2943,6 +3124,35 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         resolvedInputAnswers = answers
     }
     func saveSettings(_ settings: FeatureSettings) async throws {
+        try await beforeSaveSettings?()
         savedSettings.append(settings)
+    }
+}
+
+@MainActor
+private final class FeatureSettingsSaveGate {
+    private var calls = 0
+    private var firstRelease: CheckedContinuation<Void, Never>?
+    private var callWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    var callCount: Int { calls }
+
+    func enter() async {
+        calls += 1
+        let ready = callWaiters.filter { calls >= $0.0 }
+        callWaiters.removeAll { calls >= $0.0 }
+        ready.forEach { $0.1.resume() }
+        guard calls == 1 else { return }
+        await withCheckedContinuation { firstRelease = $0 }
+    }
+
+    func waitUntilCallCount(_ count: Int) async {
+        guard calls < count else { return }
+        await withCheckedContinuation { callWaiters.append((count, $0)) }
+    }
+
+    func releaseFirst() {
+        firstRelease?.resume()
+        firstRelease = nil
     }
 }
