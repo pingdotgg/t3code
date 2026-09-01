@@ -20,7 +20,7 @@ import {
   type AttachmentPreviewFile,
 } from "../lib/attachmentDownload";
 import type { DraftComposerFileAttachment } from "../lib/composerImages";
-import { loadLocalVideoPreview } from "../lib/localVideoPreview";
+import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 import { useAssetUrlState } from "../state/assets";
 import { usePreparedConnection } from "../state/session";
 import { SymbolView } from "./AppSymbol";
@@ -155,7 +155,7 @@ function OpenVideoPreviewModal(props: {
     setFailure(null);
     const loading =
       source.type === "local"
-        ? loadLocalVideoPreview(source.attachment, controller.signal)
+        ? loadLocalAttachmentPreview(source.attachment, controller.signal)
         : downloadAttachmentForPreview({
             url: downloadUrl!,
             attachment: { name: attachment.name, mimeType },

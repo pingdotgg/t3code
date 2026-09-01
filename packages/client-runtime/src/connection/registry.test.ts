@@ -356,6 +356,8 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
           Effect.succeed({
             client: {} as RpcSession.RpcSession["client"],
             initialConfig: Effect.die(new Error("Config is not used by registry tests.")),
+            subscribeServerConfig: () =>
+              Stream.die(new Error("Config is not used by registry tests.")),
             ready: Effect.void,
             probe: Effect.void,
             closed: Deferred.await(closed),

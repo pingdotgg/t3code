@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import type { ImagePickerAsset } from "expo-image-picker";
 
 const mocks = vi.hoisted(() => ({
@@ -9,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   delete: vi.fn(),
   open: vi.fn(),
   size: vi.fn(),
+  readBase64: vi.fn(),
 }));
 
 vi.mock("expo-file-system", () => {
@@ -55,6 +57,10 @@ vi.mock("expo-file-system", () => {
       mocks.copy(this.uri, destination.uri);
     }
 
+    async base64(): Promise<string> {
+      return mocks.readBase64(this.uri);
+    }
+
     delete(): void {
       mocks.delete(this.uri);
     }
@@ -95,7 +101,113 @@ describe("composer file attachments", () => {
     mocks.delete.mockReset();
     mocks.open.mockReset();
     mocks.size.mockReset();
+    mocks.readBase64.mockReset();
     mocks.size.mockImplementation((uri: string) => (uri.startsWith("content:") ? null : 42));
+  });
+
+  describe("photo library image conversion", () => {
+    const jpeg = "/9j/2Q==";
+    const photo: ImagePickerAsset = {
+      uri: "file:///picker/photo.heic",
+      type: "image",
+      fileName: "photo.HEIC",
+      mimeType: "image/heic",
+      fileSize: 20 * 1024 * 1024,
+      base64: jpeg,
+      width: 1,
+      height: 1,
+    };
+
+    it.each(["image/heic", "image/heif", undefined])(
+      "attaches the native JPEG conversion with matching metadata when the source MIME is %s",
+      async (mimeType) => {
+        mocks.pickMedia.mockResolvedValue({
+          canceled: false,
+          assets: [{ ...photo, mimeType }],
+        });
+
+        const result = await pickComposerImages({ existingCount: 0 });
+
+        expect(result).toEqual({
+          images: [
+            {
+              id: "attachment-id",
+              type: "image",
+              name: "photo.jpg",
+              mimeType: "image/jpeg",
+              sizeBytes: 4,
+              dataUrl: `data:image/jpeg;base64,${jpeg}`,
+              previewUri: `data:image/jpeg;base64,${jpeg}`,
+            },
+          ],
+          error: null,
+        });
+      },
+    );
+
+    it.each([
+      { extension: "png", mimeType: "image/png", base64: "iVBORw0KGgo=" },
+      { extension: "gif", mimeType: "image/gif", base64: "R0lGODlh" },
+      { extension: "webp", mimeType: "image/webp", base64: "UklGRgQAAABXRUJQ" },
+    ])("preserves original $extension bytes instead of the picker's JPEG", async (original) => {
+      const name = `photo.${original.extension}`;
+      mocks.pickMedia.mockResolvedValue({
+        canceled: false,
+        assets: [{ ...photo, fileName: name, mimeType: original.mimeType }],
+      });
+      mocks.readBase64.mockResolvedValue(original.base64);
+
+      const result = await pickComposerImages({ existingCount: 0 });
+
+      expect(result.error).toBeNull();
+      expect(result.images).toEqual([
+        expect.objectContaining({
+          name,
+          mimeType: original.mimeType,
+          dataUrl: `data:${original.mimeType};base64,${original.base64}`,
+          sizeBytes: Buffer.from(original.base64, "base64").byteLength,
+        }),
+      ]);
+    });
+
+    it("checks the converted JPEG size even when the HEIC source was smaller", async () => {
+      const oversized =
+        jpeg.slice(0, 4) + "A".repeat(Math.ceil(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 3) * 4);
+      mocks.pickMedia.mockResolvedValue({
+        canceled: false,
+        assets: [{ ...photo, fileSize: 42, base64: oversized }],
+      });
+
+      await expect(pickComposerImages({ existingCount: 0 })).resolves.toEqual({
+        images: [],
+        error: "'photo.HEIC' exceeds the 10 MB attachment limit.",
+      });
+    });
+
+    it("does not relabel unconverted HEIC bytes as JPEG", async () => {
+      mocks.pickMedia.mockResolvedValue({
+        canceled: false,
+        assets: [{ ...photo, base64: "AAAAGGZ0eXBoZWlj" }],
+      });
+
+      const result = await pickComposerImages({ existingCount: 0 });
+
+      expect(result.images).toEqual([]);
+      expect(result.error).toContain("not a supported image type");
+    });
+
+    it("retains a converted photo when another original cannot be read", async () => {
+      mocks.pickMedia.mockResolvedValue({
+        canceled: false,
+        assets: [{ ...photo, fileName: "missing.gif", mimeType: "image/gif" }, photo],
+      });
+      mocks.readBase64.mockRejectedValue(new Error("missing file"));
+
+      const result = await pickComposerImages({ existingCount: 0 });
+
+      expect(result.images).toEqual([expect.objectContaining({ name: "photo.jpg" })]);
+      expect(result.error).toBe("Failed to read 'missing.gif'.");
+    });
   });
 
   describe("photo library videos", () => {

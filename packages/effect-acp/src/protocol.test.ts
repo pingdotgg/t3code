@@ -135,6 +135,41 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       }),
   );
 
+  it.effect("keeps only recent raw notifications after their callbacks run", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const handled = yield* Deferred.make<void>();
+      let handledCount = 0;
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onNotification: () =>
+          Effect.sync(() => ++handledCount).pipe(
+            Effect.flatMap((count) =>
+              count === 64 ? Deferred.succeed(handled, undefined).pipe(Effect.asVoid) : Effect.void,
+            ),
+          ),
+      });
+
+      const messages = Array.from({ length: 64 }, (_, index) =>
+        encodeUnknownJsonString({
+          jsonrpc: "2.0",
+          method: "x/performance",
+          params: { index },
+        }),
+      );
+      yield* Queue.offer(input, encoder.encode(`${messages.join("\n")}\n`));
+      yield* Deferred.await(handled);
+
+      const retained = yield* transport.incoming.pipe(Stream.take(32), Stream.runCollect);
+
+      assert.equal(handledCount, 64);
+      assert.equal(retained.length, 32);
+      assert.deepEqual(retained[0]?.params, { index: 32 });
+      assert.deepEqual(retained[31]?.params, { index: 63 });
+    }),
+  );
+
   it.effect("keeps invalid core notification values only in the schema cause", () =>
     Effect.gen(function* () {
       const secret = "acp-core-notification-secret-sentinel";

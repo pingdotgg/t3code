@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  dedupeProviderSkillsByName,
   formatProviderSkillDisplayName,
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
@@ -26,6 +27,31 @@ describe("formatProviderSkillDisplayName", () => {
   });
 });
 
+describe("dedupeProviderSkillsByName", () => {
+  it("keeps the first resolved skill and preserves unrelated skill order", () => {
+    const firstSkill = {
+      name: "branch-audit",
+      path: "/Users/matt/.codex/skills/branch-audit/SKILL.md",
+      enabled: true,
+    };
+    const otherSkill = {
+      name: "browser",
+      path: "/Users/matt/.agents/skills/browser/SKILL.md",
+      enabled: true,
+    };
+    const duplicateSkill = {
+      name: "Branch-Audit",
+      path: "/Users/matt/.agents/skills/branch-audit/SKILL.md",
+      enabled: true,
+    };
+
+    expect(dedupeProviderSkillsByName([firstSkill, otherSkill, duplicateSkill])).toEqual([
+      firstSkill,
+      otherSkill,
+    ]);
+  });
+});
+
 describe("getProviderSkillsForSlashMenu", () => {
   it("keeps the skill alias when the provider also exposes it as a slash command", () => {
     const askMatt = {
@@ -36,6 +62,49 @@ describe("getProviderSkillsForSlashMenu", () => {
     expect(getProviderSkillsForSlashMenu([askMatt], true).map((skill) => skill.name)).toEqual([
       "ask-matt",
     ]);
+  });
+
+  it("shows one row when enabled skills share a name", () => {
+    const skills = [
+      {
+        name: "babysit-pr",
+        path: "/Users/matt/.codex/skills/babysit-pr/SKILL.md",
+        enabled: true,
+      },
+      {
+        name: "browser",
+        path: "/Users/matt/.agents/skills/browser/SKILL.md",
+        enabled: true,
+      },
+      {
+        name: "babysit-pr",
+        path: "/Users/matt/.agents/skills/babysit-pr/SKILL.md",
+        enabled: true,
+      },
+    ];
+
+    expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.name)).toEqual([
+      "babysit-pr",
+      "browser",
+    ]);
+  });
+
+  it("keeps an enabled skill when a disabled duplicate appears first", () => {
+    const enabledSkill = {
+      name: "babysit-pr",
+      path: "/Users/matt/.agents/skills/babysit-pr/SKILL.md",
+      enabled: true,
+    };
+    const skills = [
+      {
+        name: "babysit-pr",
+        path: "/Users/matt/.codex/skills/babysit-pr/SKILL.md",
+        enabled: false,
+      },
+      enabledSkill,
+    ];
+
+    expect(getProviderSkillsForSlashMenu(skills, true)).toEqual([enabledSkill]);
   });
 });
 

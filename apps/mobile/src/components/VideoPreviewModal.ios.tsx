@@ -4,7 +4,7 @@ import { requireNativeModule } from "expo";
 import { useEffect, useEffectEvent, useId, useState } from "react";
 import { Alert, Keyboard } from "react-native";
 
-import { loadLocalVideoPreview } from "../lib/localVideoPreview";
+import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 import { useAssetUrlState } from "../state/assets";
 import { usePreparedConnection } from "../state/session";
 import type { VideoPreviewSource } from "./VideoPreviewModal";
@@ -67,7 +67,7 @@ function NativeVideoPreview(props: {
     void (async () => {
       const file =
         source.type === "local"
-          ? await loadLocalVideoPreview(source.attachment, controller.signal)
+          ? await loadLocalAttachmentPreview(source.attachment, controller.signal)
           : null;
       if (source.type === "local" && !file) return;
       try {

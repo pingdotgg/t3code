@@ -1,5 +1,8 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
-import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkills";
+import {
+  dedupeProviderSkillsByName,
+  formatProviderSkillDisplayName,
+} from "@t3tools/client-runtime/providerSkills";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
@@ -70,7 +73,7 @@ export function searchProviderSkills(
   query: string,
   limit = Number.POSITIVE_INFINITY,
 ): ServerProviderSkill[] {
-  const enabledSkills = skills.filter((skill) => skill.enabled);
+  const enabledSkills = dedupeProviderSkillsByName(skills.filter((skill) => skill.enabled));
   const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\$+/ });
 
   if (!normalizedQuery) {

@@ -13,14 +13,23 @@ attach videos, text files, PDFs, ZIP archives, and other files. Each file can be
 by the server, capped at 50 MB. Each message can contain up to eight attachments in total. Files
 upload directly to the environment, where your agent can read, copy, or edit them by their file path.
 
-On web and desktop, attachments upload as soon as you add them. The send button becomes available
-after every upload finishes. Failed uploads can be retried or removed. On mobile, tap **+** to open
+Attachments upload as soon as you add them while connected to a server that supports uploads.
+The send button becomes available after every upload finishes. Failed uploads can be retried or
+removed. On mobile, tap **+** to open
 the photo library from either the compact or expanded composer. When the connected server supports
 file uploads, **+** opens a menu beside the button with **Photo Library** and **Choose Files**.
 Videos use the server's file upload limit. You can also share photos, videos, and files into
-T3 Code from other apps through the system share sheet. Mobile uploads happen when the message
-sends, so queued messages keep their files until they deliver. Select a received file on mobile
-to save it or open it in another app through the system share sheet.
+T3 Code from other apps through the system share sheet. Mobile keeps a local copy of each draft
+attachment, so you can still preview it and queue messages while offline. Uploads resume when
+you reconnect. Drafts and queued messages survive app restarts; signing out of T3 Connect keeps
+them on your device until you sign back into the same account. Select a received file on mobile
+to preview it or open the system share options.
+
+Tap an image or PDF before or after sending to open it. On iOS, images zoom from their thumbnail
+into the native viewer. Pinch or double-tap to zoom, and swipe down or tap Close to return.
+Use Share to save a copy or send it to another app. PDFs support page navigation and search.
+PDF links in assistant responses open the same preview. On Android, images open in the image
+viewer and PDFs open the system chooser.
 
 Select a video attachment before or after sending to play it. Web and desktop use the browser's
 built-in controls. On mobile, videos open in a full-screen player with native playback controls.
@@ -36,7 +45,8 @@ On web and desktop, if you reload before a file finishes uploading, the draft ke
 and shows **Attach again** next to it. Attach the file again or remove it, then send.
 
 On web and desktop, HEIC and HEIF photos are automatically converted to JPEG when you drag them into
-the composer or paste them into a message.
+the composer or paste them into a message. On iOS, selecting them from **Photo Library** also
+converts them to JPEG. The 10 MB image limit applies to the converted photo.
 
 On mobile, the model picker shows each OpenCode model's upstream provider, such as Anthropic,
 GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list

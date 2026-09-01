@@ -54,6 +54,15 @@ export interface ProjectionFullThreadDiffContext {
   readonly toCheckpointRef: CheckpointRef | null;
 }
 
+export interface ProjectionThreadDetailQuery {
+  /**
+   * Limit activities before SQLite returns and decodes their payloads.
+   * Any explicit filter omits pinned-request reads. An empty list also skips
+   * the activity query. Omit this option to preserve the full detail response.
+   */
+  readonly activityKinds?: ReadonlyArray<string>;
+}
+
 /**
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
@@ -168,6 +177,7 @@ export interface ProjectionSnapshotQueryShape {
    */
   readonly getThreadDetailById: (
     threadId: ThreadId,
+    query?: ProjectionThreadDetailQuery,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
 
   /**
@@ -181,6 +191,10 @@ export interface ProjectionSnapshotQueryShape {
    * response carries `page` metadata (see `OrchestrationThreadDetailWindow`).
    * Without a window the full thread is returned with no `page` field —
    * pagination is strictly opt-in.
+   *
+   * Activity payloads are projected for clients as they are read in small
+   * sequential batches. Callers still apply the full snapshot projector for
+   * collection-level activity pruning.
    */
   readonly getThreadDetailSnapshot: (
     threadId: ThreadId,

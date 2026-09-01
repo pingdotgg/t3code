@@ -5,8 +5,8 @@ import { resolveOwnedComposerAttachmentFileUri } from "./composerAttachmentFiles
 import { shareLocalAttachment, type AttachmentPreviewFile } from "./attachmentDownload";
 import { retainComposerAttachmentFileForPreview } from "../state/use-composer-drafts";
 
-/** Retains the draft original for playback and gives each outgoing share its own lease. */
-export async function loadLocalVideoPreview(
+/** Retains the draft original for preview and gives each outgoing share its own lease. */
+export async function loadLocalAttachmentPreview(
   attachment: DraftComposerFileAttachment,
   signal: AbortSignal,
 ): Promise<AttachmentPreviewFile | null> {
@@ -54,6 +54,6 @@ export async function loadLocalVideoPreview(
   } catch (cause) {
     release();
     if (signal.aborted) return null;
-    throw new Error("This video is no longer available. Attach the file again.", { cause });
+    throw new Error("This attachment is no longer available. Attach the file again.", { cause });
   }
 }
