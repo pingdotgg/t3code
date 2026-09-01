@@ -451,6 +451,61 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.effect("disconnects a live tunnel without revalidating its saved SendEnv", () => {
+    let resolveCount = 0;
+    let tunnelKillCount = 0;
+    let stopCommandCount = 0;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-G")) {
+          resolveCount += 1;
+          return makeSuccessfulProcess("sendenv TOKEN\n");
+        }
+        if (args.includes("-N")) {
+          return makeRunningProcess(() => {
+            tunnelKillCount += 1;
+          });
+        }
+        if (args.includes("sh") && args.includes("--")) {
+          return makeSuccessfulProcess('{"remotePort":3773}\n');
+        }
+        if (args.includes("sh")) {
+          stopCommandCount += 1;
+          return makeSuccessfulProcess('{"stopped":true}\n');
+        }
+        return makeSuccessfulProcess("\n");
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshPasswordPrompt.disabledLayer,
+      SshEnvironmentManager.layer(),
+    );
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+      environmentVariables: { TOKEN: "forwarded-value" },
+    } as const;
+
+    return Effect.gen(function* () {
+      const manager = yield* SshEnvironmentManager;
+      yield* manager.ensureEnvironment(target);
+
+      assert.equal(resolveCount, 2);
+      yield* manager.disconnectEnvironment(target);
+
+      assert.equal(resolveCount, 2);
+      assert.equal(tunnelKillCount, 1);
+      assert.equal(stopCommandCount, 1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.effect("replaces a live tunnel when its local SSH environment changes", () => {
     const tunnelEnvironments: Array<Readonly<Record<string, string | undefined>> | undefined> = [];
     const remoteLifecycle: Array<"launch" | "stop"> = [];

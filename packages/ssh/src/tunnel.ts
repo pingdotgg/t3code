@@ -1677,6 +1677,39 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     target: DesktopSshEnvironmentTarget,
   ): Effect.fn.Return<void, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
     yield* Effect.logInfo("ssh.environment.disconnect.start", sshTargetLogFields(target));
+    const knownRequestedKey = targetConnectionKey(target);
+    const existingKey = tunnelKeysByTarget.get(knownRequestedKey);
+    if (existingKey !== undefined) {
+      return yield* withTunnelMutationLock(
+        existingKey,
+        Effect.gen(function* () {
+          const entry = tunnels.get(existingKey) ?? null;
+          yield* Effect.logDebug("ssh.environment.disconnect.knownTarget", {
+            ...sshTargetLogFields(target),
+            key: existingKey,
+            hasTunnel: entry !== null,
+            hasPendingTunnel: pendingTunnelEntries.has(existingKey),
+          });
+          if (entry !== null) {
+            yield* closeTunnelEntry(entry);
+          }
+          yield* cancelPendingTunnelEntry(existingKey, target);
+          if (entry === null) {
+            yield* runWithSshAuth({
+              key: existingKey,
+              target,
+              operation: (authOptions) => stopRemoteServer(target, authOptions),
+            });
+          }
+          forgetTunnelTargetKeys(existingKey);
+          authSecrets.delete(existingKey);
+          yield* Effect.logInfo("ssh.environment.disconnect.succeeded", {
+            ...sshTargetLogFields(target),
+            key: existingKey,
+          });
+        }),
+      );
+    }
     const baseResolved = yield* resolveSshTarget(
       target.alias || target.hostname,
       target.environmentVariables,
