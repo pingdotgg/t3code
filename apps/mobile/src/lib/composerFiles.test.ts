@@ -106,21 +106,29 @@ describe("composer file attachments", () => {
   });
 
   describe("photo library image conversion", () => {
-    const jpeg = "/9j/2Q==";
+    const jpegMagic = () => ({
+      readBytes: () => new Uint8Array([0xff, 0xd8, 0xff]),
+      close: vi.fn(),
+    });
+    const otherMagic = () => ({
+      readBytes: () => new Uint8Array([0x00, 0x11, 0x22]),
+      close: vi.fn(),
+    });
     const photo: ImagePickerAsset = {
       uri: "file:///picker/photo.heic",
       type: "image",
       fileName: "photo.HEIC",
       mimeType: "image/heic",
       fileSize: 20 * 1024 * 1024,
-      base64: jpeg,
+      base64: null,
       width: 1,
       height: 1,
     };
 
     it.each(["image/heic", "image/heif", undefined])(
-      "attaches the native JPEG conversion with matching metadata when the source MIME is %s",
+      "records the picker's silent JPEG transcode when the metadata says %s",
       async (mimeType) => {
+        mocks.open.mockImplementation(() => jpegMagic());
         mocks.pickMedia.mockResolvedValue({
           canceled: false,
           assets: [{ ...photo, mimeType }],
@@ -128,6 +136,8 @@ describe("composer file attachments", () => {
 
         const result = await pickComposerImages({ existingCount: 0 });
 
+        expect(mocks.pickMedia).toHaveBeenCalledWith(expect.not.objectContaining({ base64: true }));
+        const fileUri = "file:///documents/t3-composer-attachments/attachment-id-photo.jpg";
         expect(result).toEqual({
           images: [
             {
@@ -135,73 +145,80 @@ describe("composer file attachments", () => {
               type: "image",
               name: "photo.jpg",
               mimeType: "image/jpeg",
-              sizeBytes: 4,
-              dataUrl: `data:image/jpeg;base64,${jpeg}`,
-              previewUri: `data:image/jpeg;base64,${jpeg}`,
+              sizeBytes: 42,
+              fileUri,
+              previewUri: fileUri,
             },
           ],
           error: null,
         });
+        expect(mocks.copy).toHaveBeenCalledWith(photo.uri, fileUri);
       },
     );
 
     it.each([
-      { extension: "png", mimeType: "image/png", base64: "iVBORw0KGgo=" },
-      { extension: "gif", mimeType: "image/gif", base64: "R0lGODlh" },
-      { extension: "webp", mimeType: "image/webp", base64: "UklGRgQAAABXRUJQ" },
-    ])("preserves original $extension bytes instead of the picker's JPEG", async (original) => {
+      { extension: "png", mimeType: "image/png" },
+      { extension: "gif", mimeType: "image/gif" },
+      { extension: "webp", mimeType: "image/webp" },
+    ])("keeps original $extension files the picker did not transcode", async (original) => {
       const name = `photo.${original.extension}`;
+      mocks.open.mockImplementation(() => otherMagic());
       mocks.pickMedia.mockResolvedValue({
         canceled: false,
         assets: [{ ...photo, fileName: name, mimeType: original.mimeType }],
       });
-      mocks.readBase64.mockResolvedValue(original.base64);
 
       const result = await pickComposerImages({ existingCount: 0 });
 
       expect(result.error).toBeNull();
+      const fileUri = `file:///documents/t3-composer-attachments/attachment-id-${name}`;
       expect(result.images).toEqual([
-        expect.objectContaining({
-          name,
-          mimeType: original.mimeType,
-          dataUrl: `data:${original.mimeType};base64,${original.base64}`,
-          sizeBytes: Buffer.from(original.base64, "base64").byteLength,
-        }),
+        expect.objectContaining({ name, mimeType: original.mimeType, fileUri, sizeBytes: 42 }),
       ]);
+      expect(mocks.readBase64).not.toHaveBeenCalled();
     });
 
-    it("checks the converted JPEG size even when the HEIC source was smaller", async () => {
-      const oversized =
-        jpeg.slice(0, 4) + "A".repeat(Math.ceil(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 3) * 4);
-      mocks.pickMedia.mockResolvedValue({
-        canceled: false,
-        assets: [{ ...photo, fileSize: 42, base64: oversized }],
-      });
+    it("rejects an image whose stored copy exceeds the attachment limit", async () => {
+      mocks.open.mockImplementation(() => jpegMagic());
+      mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [{ ...photo, fileSize: 42 }] });
+      mocks.size.mockImplementation((uri: string) =>
+        uri.startsWith("file:///documents/") ? PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1 : 42,
+      );
 
       await expect(pickComposerImages({ existingCount: 0 })).resolves.toEqual({
         images: [],
-        error: "'photo.HEIC' exceeds the 10 MB attachment limit.",
+        error: "'photo.jpg' exceeds the 10 MB attachment limit.",
       });
+      expect(mocks.delete).toHaveBeenCalledWith(
+        "file:///documents/t3-composer-attachments/attachment-id-photo.jpg",
+      );
     });
 
     it("does not relabel unconverted HEIC bytes as JPEG", async () => {
-      mocks.pickMedia.mockResolvedValue({
-        canceled: false,
-        assets: [{ ...photo, base64: "AAAAGGZ0eXBoZWlj" }],
-      });
+      mocks.open.mockImplementation(() => otherMagic());
+      mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [photo] });
 
       const result = await pickComposerImages({ existingCount: 0 });
 
       expect(result.images).toEqual([]);
       expect(result.error).toContain("not a supported image type");
+      expect(mocks.copy).not.toHaveBeenCalled();
     });
 
-    it("retains a converted photo when another original cannot be read", async () => {
-      mocks.pickMedia.mockResolvedValue({
-        canceled: false,
-        assets: [{ ...photo, fileName: "missing.gif", mimeType: "image/gif" }, photo],
+    it("retains a copied photo when another asset cannot be copied", async () => {
+      const failing = {
+        ...photo,
+        uri: "file:///picker/missing.gif",
+        fileName: "missing.gif",
+        mimeType: "image/gif",
+      };
+      mocks.open.mockImplementation((uri: string) =>
+        uri === photo.uri ? jpegMagic() : otherMagic(),
+      );
+      mocks.copy.mockImplementation((uri: string) => {
+        if (uri === failing.uri) throw new Error("Failed to read 'missing.gif'.");
       });
-      mocks.readBase64.mockRejectedValue(new Error("missing file"));
+      mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [failing, photo] });
 
       const result = await pickComposerImages({ existingCount: 0 });
 
@@ -232,9 +249,9 @@ describe("composer file attachments", () => {
       height: 1080,
     };
 
-    it("retains mixed photos and videos, keeping video bytes in durable file storage", async () => {
+    it("retains mixed photos and videos, keeping both in durable file storage", async () => {
       mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [image, video] });
-      mocks.size.mockReturnValue(video.fileSize);
+      mocks.size.mockImplementation((uri: string) => (uri.includes("clip") ? video.fileSize : 3));
 
       const result = await pickComposerMedia({ existingCount: 0, maxVideoBytes: 50 * 1024 * 1024 });
 
@@ -246,7 +263,13 @@ describe("composer file attachments", () => {
       );
       expect(result).toEqual({
         attachments: [
-          expect.objectContaining({ type: "image", dataUrl: "data:image/png;base64,YWJj" }),
+          expect.objectContaining({
+            type: "image",
+            name: "photo.png",
+            sizeBytes: 3,
+            fileUri: "file:///documents/t3-composer-attachments/attachment-id-photo.png",
+            previewUri: "file:///documents/t3-composer-attachments/attachment-id-photo.png",
+          }),
           {
             id: "attachment-id",
             type: "file",
@@ -277,7 +300,10 @@ describe("composer file attachments", () => {
         expect.objectContaining({ type: "image", name: "photo.png" }),
       ]);
       expect(result.error).toBeNull();
-      expect(mocks.copy).not.toHaveBeenCalled();
+      expect(mocks.copy).toHaveBeenCalledExactlyOnceWith(
+        image.uri,
+        "file:///documents/t3-composer-attachments/attachment-id-photo.png",
+      );
     });
 
     it("does not persist videos when the destination lacks file support", async () => {
@@ -287,7 +313,10 @@ describe("composer file attachments", () => {
 
       expect(result.attachments).toEqual([expect.objectContaining({ type: "image" })]);
       expect(result.error).toBe("Video attachments are unavailable here.");
-      expect(mocks.copy).not.toHaveBeenCalled();
+      expect(mocks.copy).toHaveBeenCalledExactlyOnceWith(
+        image.uri,
+        "file:///documents/t3-composer-attachments/attachment-id-photo.png",
+      );
     });
 
     it("uses local video metadata when the picker omits its name, MIME type, or size", async () => {
@@ -345,7 +374,7 @@ describe("composer file attachments", () => {
           canceled: false,
           assets: [{ ...video, fileSize: reported }, image],
         });
-        mocks.size.mockReturnValue(stored);
+        mocks.size.mockImplementation((uri: string) => (uri.includes("clip") ? stored : 3));
 
         const result = await pickComposerMedia({ existingCount: 0, maxVideoBytes: limit });
 
@@ -369,7 +398,10 @@ describe("composer file attachments", () => {
       expect(result.attachments).toEqual([expect.objectContaining({ type: "image" })]);
       expect(result.error).toBe("You can attach up to 8 attachments per message.");
       expect(mocks.pickMedia).toHaveBeenCalledWith(expect.objectContaining({ selectionLimit: 1 }));
-      expect(mocks.copy).not.toHaveBeenCalled();
+      expect(mocks.copy).toHaveBeenCalledExactlyOnceWith(
+        image.uri,
+        "file:///documents/t3-composer-attachments/attachment-id-photo.png",
+      );
     });
 
     it("reports a native video retrieval error and ends the foreground handoff", async () => {

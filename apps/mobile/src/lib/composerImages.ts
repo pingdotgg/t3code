@@ -20,9 +20,17 @@ import {
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
 
-export interface DraftComposerImageAttachment extends UploadChatImageAttachment {
+export interface DraftComposerImageAttachment {
   readonly id: string;
+  readonly type: "image";
+  readonly name: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
   readonly previewUri: string;
+  /** App-owned copy of the image bytes; every newly created attachment has one. */
+  readonly fileUri?: string;
+  /** Inline bytes persisted by app versions that predate file-backed images. */
+  readonly dataUrl?: string;
   readonly uploadedAttachmentId?: string;
   readonly uploadEnvironmentId?: EnvironmentId;
 }
@@ -40,17 +48,51 @@ export interface DraftComposerFileAttachment {
 
 export type DraftComposerAttachment = DraftComposerImageAttachment | DraftComposerFileAttachment;
 
-/** Wire shape for startTurn: pure uploads without client draft id / previewUri. */
-export function toUploadChatImageAttachments(
+/** Any composer attachment whose bytes live in the app-owned attachment directory. */
+export type FileBackedComposerAttachment = DraftComposerAttachment & { readonly fileUri: string };
+
+/** Files always carry a local copy; images do unless they are legacy inline drafts. */
+export function isFileBackedComposerAttachment(
+  attachment: DraftComposerAttachment,
+): attachment is FileBackedComposerAttachment {
+  return attachment.fileUri !== undefined;
+}
+
+/**
+ * Wire shape for startTurn on servers without attachment uploads: pure inline
+ * uploads without client draft id / previewUri. File-backed images read their
+ * base64 from disk lazily, only when this legacy path is actually taken.
+ */
+export async function toUploadChatImageAttachments(
   attachments: ReadonlyArray<DraftComposerImageAttachment>,
-): ReadonlyArray<UploadChatImageAttachment> {
-  return attachments.map((attachment) => ({
-    type: attachment.type,
-    name: attachment.name,
-    mimeType: attachment.mimeType,
-    sizeBytes: attachment.sizeBytes,
-    dataUrl: attachment.dataUrl,
-  }));
+): Promise<ReadonlyArray<UploadChatImageAttachment>> {
+  return Promise.all(
+    attachments.map(async (attachment) => ({
+      type: attachment.type,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      dataUrl: await composerImageAttachmentDataUrl(attachment),
+    })),
+  );
+}
+
+/** Inline bytes for one image: legacy drafts carry them, file-backed ones read them from disk. */
+export async function composerImageAttachmentDataUrl(
+  attachment: DraftComposerImageAttachment,
+): Promise<string> {
+  if (attachment.dataUrl !== undefined) {
+    return attachment.dataUrl;
+  }
+  if (attachment.fileUri === undefined) {
+    throw new Error(`'${attachment.name}' is no longer available. Attach the image again.`);
+  }
+  const { File, Paths } = await import("expo-file-system");
+  const uri =
+    resolveOwnedComposerAttachmentFileUri(attachment.fileUri, Paths.document.uri) ??
+    attachment.fileUri;
+  const base64 = await new File(uri).base64();
+  return `data:${attachment.mimeType};base64,${base64}`;
 }
 
 const OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste";
@@ -144,6 +186,29 @@ export async function persistComposerAttachmentFile(
   return destination.uri;
 }
 
+/** Lands in-memory image bytes (clipboard pastes) in the owned attachment directory. */
+async function persistComposerImageBase64(base64: string, name: string): Promise<string> {
+  const { Directory, File, Paths } = await import("expo-file-system");
+  const directory = new Directory(Paths.document, COMPOSER_ATTACHMENT_DIRECTORY);
+  directory.create({ idempotent: true, intermediates: true });
+  const destination = new File(directory, `${uuidv4()}-${name}`);
+  destination.create();
+  try {
+    await destination.write(base64, { encoding: "base64" });
+  } catch (error) {
+    // A failed write must not leave a partial copy no attachment will release.
+    try {
+      if (destination.exists) {
+        destination.delete();
+      }
+    } catch (cleanupError) {
+      console.warn("[composer-attachments] could not remove a partial write", cleanupError);
+    }
+    throw error;
+  }
+  return destination.uri;
+}
+
 export async function removePersistedComposerAttachmentFile(uri: string): Promise<void> {
   try {
     const { File, Paths } = await import("expo-file-system");
@@ -191,6 +256,60 @@ async function createComposerFileAttachment(input: {
   } catch (error) {
     await removePersistedComposerAttachmentFile(fileUri);
     throw error;
+  }
+}
+
+/** Copies a picked or pasted image into app-owned storage, validating the stored bytes. */
+async function createComposerImageAttachment(input: {
+  readonly uri: string;
+  readonly name: string;
+  readonly mimeType: string;
+}): Promise<DraftComposerImageAttachment> {
+  const { File } = await import("expo-file-system");
+  const fileUri = await persistComposerAttachmentFile(
+    input.uri,
+    input.name,
+    PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  );
+  try {
+    const sizeBytes = new File(fileUri).size ?? 0;
+    if (sizeBytes <= 0) {
+      throw new Error(`'${input.name}' is empty or could not be read.`);
+    }
+    if (sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+      throw new Error(
+        fileAttachmentTooLargeMessage(input.name, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES),
+      );
+    }
+    return {
+      id: uuidv4(),
+      type: "image",
+      name: input.name,
+      mimeType: input.mimeType,
+      sizeBytes,
+      fileUri,
+      previewUri: fileUri,
+    };
+  } catch (error) {
+    await removePersistedComposerAttachmentFile(fileUri);
+    throw error;
+  }
+}
+
+/** Reads only the file's magic number; picker exports can be many megabytes. */
+async function hasJpegMagicBytes(uri: string): Promise<boolean> {
+  try {
+    const { File, FileMode } = await import("expo-file-system");
+    const handle = new File(uri).open(FileMode.ReadOnly);
+    try {
+      const bytes = handle.readBytes(3);
+      return bytes.byteLength === 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    } finally {
+      handle.close();
+    }
+  } catch {
+    // An unreadable file surfaces as a copy failure later; trust the metadata.
+    return false;
   }
 }
 
@@ -325,8 +444,6 @@ export async function pickComposerMedia(input: {
       mediaTypes: input.maxVideoBytes === undefined ? ["images"] : ["images", "videos"],
       allowsMultipleSelection: true,
       selectionLimit: remainingSlots,
-      base64: true,
-      quality: 1,
       shouldDownloadFromNetwork: true,
     });
   } catch (error) {
@@ -382,34 +499,14 @@ export async function pickComposerMedia(input: {
       continue;
     }
 
-    let base64 = asset.base64;
-    if (!base64) {
-      error = `Failed to read '${asset.fileName ?? "image"}'.`;
-      continue;
-    }
-
     let name = asset.fileName?.trim() || "image";
-    // The iOS picker returns JPEG base64 even when its metadata describes HEIC,
-    // PNG, or GIF. Keep supported originals so transparency and animation survive;
-    // use the native JPEG conversion for formats providers cannot accept.
-    if (base64.startsWith("/9j/")) {
-      if (
-        mimeType &&
-        mimeType !== "image/jpeg" &&
-        isProviderSendTurnSupportedImageMimeType(mimeType)
-      ) {
-        try {
-          const { File } = await import("expo-file-system");
-          base64 = await new File(asset.uri).base64();
-        } catch {
-          error = `Failed to read '${name}'.`;
-          continue;
-        }
-      } else {
-        mimeType = "image/jpeg";
-        if (!/\.jpe?g$/i.test(name)) {
-          name = `${name.replace(/\.[^.]+$/, "")}.jpg`;
-        }
+    // The iOS picker can export JPEG bytes while its metadata still describes
+    // the HEIC (or another) original. The file's magic number is the truth:
+    // record JPEG when the picker silently transcoded.
+    if (mimeType !== "image/jpeg" && (await hasJpegMagicBytes(asset.uri))) {
+      mimeType = "image/jpeg";
+      if (!/\.jpe?g$/i.test(name)) {
+        name = `${name.replace(/\.[^.]+$/, "")}.jpg`;
       }
     }
     if (!mimeType || !isProviderSendTurnSupportedImageMimeType(mimeType)) {
@@ -417,22 +514,11 @@ export async function pickComposerMedia(input: {
       continue;
     }
 
-    const sizeBytes = estimateBase64ByteSize(base64);
-    if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-      error = `'${asset.fileName ?? "image"}' exceeds the 10 MB attachment limit.`;
-      continue;
+    try {
+      attachments.push(await createComposerImageAttachment({ uri: asset.uri, name, mimeType }));
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : `Failed to read '${name}'.`;
     }
-
-    const dataUrl = `data:${mimeType};base64,${base64}`;
-    attachments.push({
-      id: uuidv4(),
-      type: "image",
-      name,
-      mimeType,
-      sizeBytes,
-      dataUrl,
-      previewUri: mimeType === asset.mimeType?.toLowerCase() ? asset.uri : dataUrl,
-    });
   }
 
   return {
@@ -486,6 +572,18 @@ export async function pasteComposerClipboard(input: { readonly existingCount: nu
       };
     }
 
+    // The clipboard only yields inline bytes; land them in the owned
+    // attachment directory once so drafts persist a path instead of megabytes.
+    let fileUri: string;
+    try {
+      fileUri = await persistComposerImageBase64(base64, "pasted-image.png");
+    } catch (cause) {
+      return {
+        images: [],
+        text: null,
+        error: cause instanceof Error ? cause.message : "Clipboard image could not be saved.",
+      };
+    }
     return {
       images: [
         {
@@ -494,8 +592,8 @@ export async function pasteComposerClipboard(input: { readonly existingCount: nu
           name: "pasted-image.png",
           mimeType: "image/png",
           sizeBytes,
-          dataUrl: image.data,
-          previewUri: image.data,
+          fileUri,
+          previewUri: fileUri,
         },
       ],
       text: null,
@@ -567,22 +665,14 @@ export async function convertPastedImagesToAttachments(input: {
       if (index >= Math.max(0, remainingSlots)) {
         continue;
       }
-      const file = new File(uri);
-      const base64 = await file.base64();
-      const sizeBytes = estimateBase64ByteSize(base64);
-      if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-        continue;
-      }
       const mimeType = mimeTypeFromUri(uri);
-      results.push({
-        id: uuidv4(),
-        type: "image",
-        name: `pasted-image.${mimeType.split("/")[1] ?? "png"}`,
-        mimeType,
-        sizeBytes,
-        dataUrl: `data:${mimeType};base64,${base64}`,
-        previewUri: ownedTemporaryFile ? `data:${mimeType};base64,${base64}` : uri,
-      });
+      results.push(
+        await createComposerImageAttachment({
+          uri,
+          name: `pasted-image.${mimeType.split("/")[1] ?? "png"}`,
+          mimeType,
+        }),
+      );
     } catch (error) {
       console.warn("Failed to read pasted image", uri, error);
     } finally {

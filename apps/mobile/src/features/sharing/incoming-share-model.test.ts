@@ -36,6 +36,9 @@ describe("incoming native shares", () => {
       originalName: "Screenshot.png",
     };
     const removeOwnedFile = vi.fn(() => Promise.resolve());
+    const readBase64 = vi.fn(async () => "unused");
+    const persistedUri = "file:///documents/t3-composer-attachments/Screenshot.png";
+    const persistFile = vi.fn(async () => persistedUri);
 
     const result = await buildIncomingShareDraft({
       id: "share-1",
@@ -43,7 +46,9 @@ describe("incoming native shares", () => {
       payloads,
       resolvedPayloads: [resolvedImage],
       fileReader: {
-        readBase64: async () => "YWJj",
+        readBase64,
+        persistFile,
+        readSize: async (uri) => (uri === persistedUri ? 3 : null),
         removeOwnedFile,
       },
     });
@@ -60,13 +65,16 @@ describe("incoming native shares", () => {
           name: "Screenshot.png",
           mimeType: "image/png",
           sizeBytes: 3,
-          dataUrl: "data:image/png;base64,YWJj",
-          previewUri: "data:image/png;base64,YWJj",
+          fileUri: persistedUri,
+          previewUri: persistedUri,
         },
       ],
       warnings: [],
     });
+    expect(persistFile).toHaveBeenCalledWith(image.value, "Screenshot.png");
+    expect(readBase64).not.toHaveBeenCalled();
     expect(removeOwnedFile).toHaveBeenCalledWith(image.value);
+    expect(removeOwnedFile).not.toHaveBeenCalledWith(persistedUri);
     expect(hasIncomingShareContent(result)).toBe(true);
   });
 

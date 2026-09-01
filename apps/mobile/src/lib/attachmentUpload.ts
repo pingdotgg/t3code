@@ -187,17 +187,21 @@ async function uploadFileBytes(
 ): Promise<void> {
   const { File, Paths, UploadType } = await import("expo-file-system");
   if (signal.aborted) throw new Error("Upload cancelled.");
+  // Legacy image drafts persisted inline bytes and stage them in a temp cache
+  // file for the native uploader. Everything else uploads its owned copy.
+  const fileUri = attachment.fileUri;
+  const inlineDataUrl = attachment.type === "image" ? attachment.dataUrl : undefined;
+  if (fileUri === undefined && inlineDataUrl === undefined) {
+    throw new Error(`'${attachment.name}' is no longer available. Attach the image again.`);
+  }
   const file =
-    attachment.type === "image"
+    fileUri === undefined
       ? new File(Paths.cache, `t3-upload-${uuidv4()}`)
-      : new File(
-          resolveOwnedComposerAttachmentFileUri(attachment.fileUri, Paths.document.uri) ??
-            attachment.fileUri,
-        );
+      : new File(resolveOwnedComposerAttachmentFileUri(fileUri, Paths.document.uri) ?? fileUri);
   try {
-    if (attachment.type === "image") {
+    if (fileUri === undefined && inlineDataUrl !== undefined) {
       file.create();
-      file.write(attachment.dataUrl.slice(attachment.dataUrl.indexOf(",") + 1), {
+      file.write(inlineDataUrl.slice(inlineDataUrl.indexOf(",") + 1), {
         encoding: "base64",
       });
     }
@@ -218,7 +222,7 @@ async function uploadFileBytes(
       throw new Error(`Upload failed for '${attachment.name}' (${result.status}).`);
     }
   } finally {
-    if (attachment.type === "image" && file.exists) file.delete();
+    if (fileUri === undefined && file.exists) file.delete();
   }
 }
 
@@ -260,7 +264,7 @@ export async function prepareTurnAttachments(input: {
 
   if (input.attachments.length === 0 || (files.length === 0 && !input.supportsImageUploads)) {
     return ready(
-      toUploadChatImageAttachments(
+      await toUploadChatImageAttachments(
         input.attachments.filter((attachment) => attachment.type === "image"),
       ),
       [],
@@ -285,7 +289,7 @@ export async function prepareTurnAttachments(input: {
     for (const attachment of input.attachments) {
       if (controller.signal.aborted) throw new Error("Upload cancelled.");
       if (attachment.type === "image" && !input.supportsImageUploads) {
-        uploadedAttachments.push(...toUploadChatImageAttachments([attachment]));
+        uploadedAttachments.push(...(await toUploadChatImageAttachments([attachment])));
         continue;
       }
 
