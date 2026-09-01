@@ -8,10 +8,12 @@ RightPanel 1.0 RightPanel.qml
 SettingsNav 1.0 SettingsNav.qml
 ShellErrorOverlay 1.0 ShellErrorOverlay.qml
 ShellTextField 1.0 ShellTextField.qml
+ShellWindow 1.0 ShellWindow.qml
 ShellMenuItem 1.0 ShellMenuItem.qml
 ShellMenu 1.0 ShellMenu.qml
 ShellComboBox 1.0 ShellComboBox.qml
 ShellButton 1.0 ShellButton.qml
+ShellCard 1.0 ShellCard.qml
 ShellIcon 1.0 ShellIcon.qml
 ShellSplitButton 1.0 ShellSplitButton.qml
 ShellChevron 1.0 ShellChevron.qml

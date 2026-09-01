@@ -8,23 +8,8 @@ import T3.Bricks
 // file wholesale; it is also the fallback when that file fails to load.
 // Frameless windows get their drag handle and window buttons from the
 // sidebar band and the header strip rather than a separate title bar.
-Window {
+ShellWindow {
     id: root
-
-    readonly property color chromeColor: Theme.color("chrome", "#0b0b0d")
-    // The page owns the collapse state (its Mod+B toggles it); the shell only
-    // animates it. Shell.dispatch("sidebar.toggle") flips it from native chrome.
-    readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
-
-    width: 1280
-    height: 820
-    minimumWidth: 640
-    minimumHeight: 400
-    visible: true
-    title: qsTr("T3 Code")
-    color: Theme.windowTransparent ? "transparent" : chromeColor
-    opacity: Theme.windowOpacity
-    flags: Theme.frameless ? Qt.Window | Qt.FramelessWindowHint : Qt.Window
 
     ColumnLayout {
         anchors.fill: parent
@@ -41,7 +26,7 @@ Window {
                 Layout.fillHeight: true
                 Layout.preferredWidth: root.sidebarCollapsed ? 0 : 256
                 Layout.minimumWidth: 0
-                visible: !settingsNav.active && (!root.sidebarCollapsed || width > 0)
+                visible: !root.settingsActive && (!root.sidebarCollapsed || width > 0)
                 showBrand: true
                 window: root
 
@@ -54,11 +39,9 @@ Window {
             }
 
             SettingsNav {
-                id: settingsNav
-
                 Layout.fillHeight: true
                 Layout.preferredWidth: 256
-                visible: active
+                visible: root.settingsActive
             }
 
             ColumnLayout {
@@ -102,33 +85,5 @@ Window {
         anchors.right: parent.right
         anchors.bottomMargin: 180
         anchors.rightMargin: 16
-    }
-
-    ContextMenuHost {
-        surfaceId: "shell"
-    }
-
-    ShellErrorOverlay {
-        anchors.fill: parent
-    }
-
-    Connections {
-        target: Shell
-        function onWindowCommandRequested(command) {
-            switch (command) {
-            case "minimize":
-                root.showMinimized();
-                break;
-            case "maximize":
-                root.visibility === Window.Maximized ? root.showNormal() : root.showMaximized();
-                break;
-            case "close":
-                root.close();
-                break;
-            case "move":
-                root.startSystemMove();
-                break;
-            }
-        }
     }
 }

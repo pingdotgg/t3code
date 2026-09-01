@@ -17,6 +17,7 @@ qt_add_qml_module(t3bricks
     SettingsNav.qml
     ShellErrorOverlay.qml
     ShellButton.qml
+    ShellCard.qml
     ShellChevron.qml
     ShellComboBox.qml
     ShellIcon.qml
@@ -24,6 +25,7 @@ qt_add_qml_module(t3bricks
     ShellMenu.qml
     ShellMenuItem.qml
     ShellTextField.qml
+    ShellWindow.qml
     Sidebar.qml
     SidebarThreadRow.qml
     TitleBar.qml
