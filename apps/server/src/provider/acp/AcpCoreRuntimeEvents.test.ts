@@ -192,4 +192,83 @@ describe("AcpCoreRuntimeEvents", () => {
       },
     });
   });
+
+  it("classifies ACP Task tool calls as collab agent tool calls", () => {
+    const stamp = { eventId: "event-1" as never, createdAt: "2026-03-27T00:00:00.000Z" };
+    const turnId = TurnId.make("turn-1");
+
+    for (const toolCall of [
+      {
+        toolCallId: "toolu_task_1",
+        kind: "other",
+        status: "completed" as const,
+        title: "Task: Subagent task",
+        data: { toolCallId: "toolu_task_1", kind: "other", rawInput: { _toolName: "task" } },
+      },
+      {
+        toolCallId: "toolu_task_2",
+        kind: "other",
+        status: "completed" as const,
+        title: "task: research the flake layout",
+        data: { toolCallId: "toolu_task_2", kind: "other" },
+      },
+      {
+        toolCallId: "toolu_task_3",
+        kind: "other",
+        status: "inProgress" as const,
+        data: { toolCallId: "toolu_task_3", kind: "other", rawInput: { _toolName: "Task" } },
+      },
+    ]) {
+      expect(
+        makeAcpToolCallEvent({
+          stamp,
+          provider: ProviderDriverKind.make("cursor"),
+          threadId: "thread-1" as never,
+          turnId,
+          toolCall,
+          rawPayload: { sessionId: "session-1" },
+        }),
+      ).toMatchObject({
+        payload: { itemType: "collab_agent_tool_call" },
+      });
+    }
+
+    expect(
+      makeAcpToolCallEvent({
+        stamp,
+        provider: ProviderDriverKind.make("cursor"),
+        threadId: "thread-1" as never,
+        turnId,
+        toolCall: {
+          toolCallId: "toolu_other_1",
+          kind: "other",
+          status: "completed" as const,
+          title: "Custom MCP tool",
+          data: { toolCallId: "toolu_other_1", kind: "other", rawInput: { _toolName: "mcp__x" } },
+        },
+        rawPayload: { sessionId: "session-1" },
+      }),
+    ).toMatchObject({
+      payload: { itemType: "dynamic_tool_call" },
+    });
+
+    expect(
+      makeAcpToolCallEvent({
+        stamp,
+        provider: ProviderDriverKind.make("cursor"),
+        threadId: "thread-1" as never,
+        turnId,
+        toolCall: {
+          toolCallId: "toolu_other_2",
+          kind: "search",
+          status: "completed" as const,
+          title: "Searched files",
+          data: { toolCallId: "toolu_other_2" },
+        },
+        rawPayload: { sessionId: "session-1" },
+      }),
+    ).toMatchObject({
+      payload: { itemType: "web_search" },
+    });
+  });
 });

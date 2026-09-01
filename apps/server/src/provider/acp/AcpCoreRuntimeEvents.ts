@@ -60,6 +60,34 @@ function canonicalItemTypeFromAcpToolKind(kind: string | undefined): ToolLifecyc
   }
 }
 
+/**
+ * Task-tool launches over ACP (Cursor, Grok) currently arrive as anonymous
+ * background tool calls titled "Task: Subagent task" with no agent identity on
+ * the wire. Classifying them as `dynamic_tool_call` renders them as generic
+ * tool rows, which is how a Cursor thread's delegated subagents became
+ * invisible to the timeline. Claude and Codex classify the same work as
+ * `collab_agent_tool_call`, so match them on every recognizable spelling.
+ */
+function isAcpTaskToolCall(toolCall: AcpToolCallState): boolean {
+  const rawInput = toolCall.data.rawInput;
+  if (
+    typeof rawInput === "object" &&
+    rawInput !== null &&
+    "_toolName" in rawInput &&
+    typeof rawInput._toolName === "string"
+  ) {
+    return rawInput._toolName.trim().toLowerCase() === "task";
+  }
+  return typeof toolCall.title === "string" && /^task:/i.test(toolCall.title.trim());
+}
+
+function canonicalItemTypeFromAcpToolCall(toolCall: AcpToolCallState): ToolLifecycleItemType {
+  if (isAcpTaskToolCall(toolCall)) {
+    return "collab_agent_tool_call";
+  }
+  return canonicalItemTypeFromAcpToolKind(toolCall.kind);
+}
+
 function runtimeItemStatusFromAcpToolStatus(
   status: AcpToolCallState["status"],
 ): "inProgress" | "completed" | "failed" | undefined {
@@ -177,7 +205,7 @@ export function makeAcpToolCallEvent(input: {
     turnId: input.turnId,
     itemId: RuntimeItemId.make(input.toolCall.toolCallId),
     payload: {
-      itemType: canonicalItemTypeFromAcpToolKind(input.toolCall.kind),
+      itemType: canonicalItemTypeFromAcpToolCall(input.toolCall),
       ...(runtimeStatus ? { status: runtimeStatus } : {}),
       ...(input.toolCall.title ? { title: input.toolCall.title } : {}),
       ...(input.toolCall.detail ? { detail: input.toolCall.detail } : {}),
