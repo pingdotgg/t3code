@@ -1,8 +1,4 @@
-import {
-  isLiquidGlassSupported,
-  LiquidGlassContainerView,
-  LiquidGlassView,
-} from "@callstack/liquid-glass";
+import { GlassContainer, GlassView } from "expo-glass-effect";
 import { useEffect, useState } from "react";
 import { Text as SystemText, View } from "react-native";
 import Animated, {
@@ -18,6 +14,7 @@ import { withUniwind } from "uniwind";
 
 import { AppText as Text } from "../../components/AppText";
 import { ControlPill } from "../../components/ControlPill";
+import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 
 const CONTROL_HEIGHT = 44;
 const CONTROL_COMPOSER_GAP = 8;
@@ -31,9 +28,15 @@ const CONTROL_TIMING = {
 } as const;
 const CONTROL_SEPARATION = (16 + CONTROL_HEIGHT) / 2;
 
-const UniwindLiquidGlassView = withUniwind(LiquidGlassView);
-const UniwindLiquidGlassContainerView = withUniwind(LiquidGlassContainerView);
-const AnimatedLiquidGlassView = Animated.createAnimatedComponent(UniwindLiquidGlassView);
+// Expo reapplies glass after native layout and window reattachment, when UIKit
+// can otherwise leave the label visible but lose the material behind it.
+const UniwindGlassView = withUniwind(GlassView, {
+  style: { fromClassName: "className" },
+});
+const UniwindGlassContainer = withUniwind(GlassContainer, {
+  style: { fromClassName: "className" },
+});
+const AnimatedGlassView = Animated.createAnimatedComponent(UniwindGlassView);
 
 export const FLOATING_WORKING_CONTROL_COVERAGE = CONTROL_HEIGHT + CONTROL_COMPOSER_GAP;
 
@@ -68,29 +71,29 @@ export function FloatingWorkingControl(props: {
       pointerEvents="box-none"
       className="absolute left-0 right-0 z-20 items-center"
       style={{ top: -FLOATING_WORKING_CONTROL_COVERAGE }}
-      entering={isLiquidGlassSupported ? undefined : CONTROL_ENTERING}
-      exiting={isLiquidGlassSupported ? undefined : CONTROL_EXITING}
+      entering={NATIVE_LIQUID_GLASS_SUPPORTED ? undefined : CONTROL_ENTERING}
+      exiting={NATIVE_LIQUID_GLASS_SUPPORTED ? undefined : CONTROL_EXITING}
     >
-      {props.startedAt !== null && isLiquidGlassSupported ? (
-        <UniwindLiquidGlassContainerView
+      {props.startedAt !== null && NATIVE_LIQUID_GLASS_SUPPORTED ? (
+        <UniwindGlassContainer
           spacing={GLASS_MERGE_SPACING}
           pointerEvents="box-none"
           className="flex-row items-center gap-4"
         >
-          <AnimatedLiquidGlassView
+          <AnimatedGlassView
             colorScheme={props.colorScheme}
-            effect="regular"
+            glassEffectStyle="regular"
             pointerEvents="none"
             className="h-11 justify-center overflow-hidden rounded-full"
             style={timerStyle}
           >
             <WorkingDuration startedAt={props.startedAt} />
-          </AnimatedLiquidGlassView>
+          </AnimatedGlassView>
 
-          <AnimatedLiquidGlassView
+          <AnimatedGlassView
             colorScheme={props.colorScheme}
-            effect="regular"
-            interactive
+            glassEffectStyle="regular"
+            isInteractive
             pointerEvents={props.showScrollToEnd ? "auto" : "none"}
             accessibilityElementsHidden={!props.showScrollToEnd}
             importantForAccessibility={props.showScrollToEnd ? "auto" : "no-hide-descendants"}
@@ -100,8 +103,8 @@ export function FloatingWorkingControl(props: {
             <Animated.View style={arrowContentStyle}>
               <ScrollToEndButton disabled={!props.showScrollToEnd} onPress={props.onScrollToEnd} />
             </Animated.View>
-          </AnimatedLiquidGlassView>
-        </UniwindLiquidGlassContainerView>
+          </AnimatedGlassView>
+        </UniwindGlassContainer>
       ) : props.startedAt !== null ? (
         <View pointerEvents="box-none" className="flex-row items-center gap-4">
           <Animated.View
@@ -128,15 +131,15 @@ export function FloatingWorkingControl(props: {
             />
           </Animated.View>
         </View>
-      ) : isLiquidGlassSupported ? (
-        <UniwindLiquidGlassView
+      ) : NATIVE_LIQUID_GLASS_SUPPORTED ? (
+        <UniwindGlassView
           colorScheme={props.colorScheme}
-          effect="regular"
-          interactive
+          glassEffectStyle="regular"
+          isInteractive
           className="h-11 w-11 items-center justify-center overflow-hidden rounded-full"
         >
           <ScrollToEndButton onPress={props.onScrollToEnd} />
-        </UniwindLiquidGlassView>
+        </UniwindGlassView>
       ) : (
         <ControlPill
           accessibilityLabel="Scroll to end"

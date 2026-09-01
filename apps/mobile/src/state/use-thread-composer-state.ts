@@ -43,6 +43,10 @@ import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { buildThreadFeed } from "../lib/threadActivity";
 import { appAtomRegistry } from "../state/atom-registry";
 import {
+  composerAttachmentUploadBlockReason,
+  composerAttachmentUploadsAtom,
+} from "../state/composer-attachment-uploads";
+import {
   appendComposerDraftAttachments,
   appendComposerDraftText,
   clearComposerDraftContent,
