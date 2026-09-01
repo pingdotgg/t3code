@@ -185,6 +185,19 @@ const REMOTE_CLAUDE_MANIFEST: ModelManifestData = {
   },
 };
 
+const remoteClaudeManifestWithCompatibility = (compatibility: unknown): ModelManifestData => ({
+  ...REMOTE_CLAUDE_MANIFEST,
+  providers: {
+    claudeAgent: {
+      profiles: REMOTE_CLAUDE_MANIFEST.providers!.claudeAgent!.profiles,
+      models: REMOTE_CLAUDE_MANIFEST.providers!.claudeAgent!.models.map((model) => ({
+        ...model,
+        adapter: { claudeCode: compatibility },
+      })),
+    },
+  },
+});
+
 const INVALID_REMOTE_MANIFESTS: ReadonlyArray<ModelManifestData> = [
   {
     ...REMOTE_CLAUDE_MANIFEST,
@@ -235,6 +248,12 @@ const INVALID_REMOTE_MANIFESTS: ReadonlyArray<ModelManifestData> = [
       },
     },
   },
+  remoteClaudeManifestWithCompatibility({ minVersion: "2.x" }),
+  remoteClaudeManifestWithCompatibility({ maxVersionExclusive: "2.x" }),
+  remoteClaudeManifestWithCompatibility({
+    minVersion: "2.2",
+    maxVersionExclusive: "2.1",
+  }),
 ];
 
 const httpClientLayer = (handler: () => Response) =>
