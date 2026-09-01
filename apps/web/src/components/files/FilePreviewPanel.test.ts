@@ -5,7 +5,12 @@ import {
   normalizeFileCommentRange,
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
-import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
+import {
+  binaryFilePreviewDescription,
+  isBinaryFilePreviewError,
+  isMarkdownPreviewFile,
+  setMarkdownTaskChecked,
+} from "./filePreviewMode";
 
 describe("file comment annotations", () => {
   it("normalizes and formats selected line ranges", () => {
@@ -63,6 +68,32 @@ describe("isMarkdownPreviewFile", () => {
   it("does not treat other text files as markdown", () => {
     expect(isMarkdownPreviewFile("docs/guide.txt")).toBe(false);
     expect(isMarkdownPreviewFile("docs/markdown.ts")).toBe(false);
+  });
+});
+
+describe("isBinaryFilePreviewError", () => {
+  it("matches only the binary-file failure the read contract reports", () => {
+    expect(isBinaryFilePreviewError("binary_file")).toBe(true);
+    expect(isBinaryFilePreviewError("operation_failed")).toBe(false);
+    expect(isBinaryFilePreviewError("path_not_file")).toBe(false);
+    expect(isBinaryFilePreviewError(null)).toBe(false);
+  });
+});
+
+describe("binaryFilePreviewDescription", () => {
+  it("names the file instead of repeating the workspace root", () => {
+    expect(binaryFilePreviewDescription("dist/App_1.12.0_x64-setup.exe")).toBe(
+      "App_1.12.0_x64-setup.exe is a binary file, so it can't be shown as text.",
+    );
+  });
+
+  it("handles a bare filename and a trailing separator", () => {
+    expect(binaryFilePreviewDescription("recording.mp4")).toBe(
+      "recording.mp4 is a binary file, so it can't be shown as text.",
+    );
+    expect(binaryFilePreviewDescription("dist/bundle/")).toBe(
+      "bundle is a binary file, so it can't be shown as text.",
+    );
   });
 });
 
