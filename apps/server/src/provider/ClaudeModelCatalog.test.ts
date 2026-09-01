@@ -11,6 +11,13 @@ import {
   resolveClaudeModelSlug,
 } from "./ClaudeModelCatalog.ts";
 
+/**
+ * Test policy: adding or changing a real Claude model in model-manifest.json
+ * must not add or update tests here. These synthetic fixtures cover resolver
+ * behavior once. Add a test only when Claude adapter semantics change, such
+ * as introducing a new compatibility rule or dispatch mapping type.
+ */
+
 const manifest = (): ModelManifestData => ({
   version: 1,
   currentModels: {},

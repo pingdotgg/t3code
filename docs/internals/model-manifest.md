@@ -22,3 +22,18 @@ Claude model entries support:
 - `aliases`, `status`, `badge`, and `profile` for client presentation and selection.
 - `adapter.claudeCode.minVersion` and `maxVersionExclusive` for installed-runtime compatibility.
 - Profile-level effort mappings, model suffixes, and context-window metadata for dispatch.
+
+## Test policy
+
+Changing model data does not require tests. Do not add or update tests for a model slug, display
+name, alias, legacy status, version boundary, badge, or profile assignment. The bundled manifest is
+configuration and is validated by its schema when imported.
+
+Add tests only when implementation behavior changes:
+
+- Fetching, caching, fallback, or schema-version handling changes in the manifest service.
+- Provider-neutral profile resolution gains new semantics.
+- A provider adapter gains a new compatibility or dispatch mapping type.
+
+Resolver tests must use synthetic providers and model names so normal JSON edits never create test
+churn.

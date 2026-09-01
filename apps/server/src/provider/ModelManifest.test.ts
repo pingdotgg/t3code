@@ -15,6 +15,14 @@ import {
   type ModelManifestData,
 } from "./ModelManifest.ts";
 
+/**
+ * Test policy: this file covers manifest machinery, not manifest contents.
+ * Do not add assertions for real model slugs, names, status, aliases, or
+ * profiles when editing model-manifest.json. Add tests only when fetch/cache
+ * behavior or the provider-neutral resolver semantics change, and use
+ * synthetic models for resolver coverage.
+ */
+
 const CODEX = ProviderDriverKind.make("codex");
 const model = (overrides: Partial<ServerProviderModel>): ServerProviderModel => ({
   slug: "gpt-test",
