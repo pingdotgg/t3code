@@ -36,6 +36,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private static let olderThreadPageUserTurnLimit = 20
     private static let projectFaviconRefreshInterval: TimeInterval = 15 * 60
     private static let projectFaviconFallbackMarker = "project-favicon-missing"
+    private static let sourceControlStatusStreamTimeoutSeconds: TimeInterval = 30
 
     private let runtime: EnvironmentRuntime
     let t3ConnectController: T3ConnectController
@@ -2111,6 +2112,85 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
     }
 
+    func sourceControlStatuses(
+        threadID: String
+    ) async throws -> AsyncThrowingStream<FeatureSourceControlStatus, Error> {
+        let route = try threadRoute(for: threadID)
+        let context = try workspaceContext(route: route)
+        let client = route.client
+        let environmentID = route.environmentID
+        let generation = environmentGeneration
+        let events = await client.vcsStatusEvents(cwd: context.cwd)
+        // Each element is a whole status, so only the newest one is ever useful.
+        let (statuses, continuation) = AsyncThrowingStream.makeStream(
+            of: FeatureSourceControlStatus.self,
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        let task = Task { [weak self] in
+            // The server publishes `remoteUpdated` only when the remote
+            // fingerprint changes, and backs off silently when a remote refresh
+            // fails, so the remote half may never arrive. Bound the wait rather
+            // than leaving the screen loading forever, and say so instead of
+            // leaving the status quietly half-known.
+            let deadline = Task {
+                try? await Task.sleep(
+                    for: .seconds(Self.sourceControlStatusStreamTimeoutSeconds)
+                )
+                guard !Task.isCancelled else { return }
+                continuation.finish(throwing: NativeFeatureClientError.remoteStatusUnavailable)
+            }
+            defer { deadline.cancel() }
+
+            var accumulator = NativeSourceControlStatusAccumulator()
+            do {
+                for try await event in events {
+                    // Superseded by cancellation or an environment switch: the
+                    // stream is over, but nothing about it was malformed, so it
+                    // must not run the end-of-stream validation below.
+                    guard !Task.isCancelled else {
+                        continuation.finish()
+                        return
+                    }
+                    guard let self else {
+                        continuation.finish()
+                        return
+                    }
+                    guard self.isKnownClient(
+                        client,
+                        environmentID: environmentID,
+                        generation: generation
+                    ) else {
+                        continuation.finish()
+                        return
+                    }
+                    if let status = accumulator.consume(event) {
+                        continuation.yield(status)
+                    }
+                    if accumulator.isComplete {
+                        continuation.finish()
+                        return
+                    }
+                }
+                if Task.isCancelled {
+                    continuation.finish()
+                } else {
+                    try accumulator.validateEnd()
+                    continuation.finish()
+                }
+            } catch is CancellationError {
+                continuation.finish()
+            } catch {
+                if Task.isCancelled {
+                    continuation.finish()
+                } else {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+        continuation.onTermination = { @Sendable _ in task.cancel() }
+        return statuses
+    }
+
     func sourceControlStatusEvents(threadID: String) -> AsyncStream<FeatureSourceControlStatus> {
         let stream = AsyncStream<FeatureSourceControlStatus>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
@@ -2166,8 +2246,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         monitorID: UUID
     ) async {
         let events = await client.vcsStatusEvents(cwd: key.workingDirectory)
-        var local: VCSLocalStatus?
-        var remote: VCSRemoteStatus?
+        var accumulator = NativeSourceControlStatusAccumulator()
 
         do {
             for try await event in events {
@@ -2176,24 +2255,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     break
                 }
 
-                switch event {
-                case let .snapshot(nextLocal, nextRemote):
-                    local = nextLocal
-                    remote = nextRemote
-                case let .localUpdated(nextLocal):
-                    if local?.refName != nextLocal.refName {
-                        remote = nil
-                    }
-                    local = nextLocal
-                case let .remoteUpdated(nextRemote):
-                    remote = nextRemote
-                }
-
-                guard let local else { continue }
-                let status = NativeWorkspaceMapper.sourceControl(
-                    local: local,
-                    remote: remote
-                )
+                guard let status = accumulator.consume(event) else { continue }
                 guard let monitor = sourceControlMonitors[key],
                       monitor.id == monitorID,
                       monitor.latestStatus != status else {
@@ -6537,6 +6599,7 @@ private enum NativeFeatureClientError: LocalizedError {
     case currentDeviceUnknown
     case missingScope(String)
     case tooManyAttachments
+    case remoteStatusUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -6553,6 +6616,8 @@ private enum NativeFeatureClientError: LocalizedError {
         case .currentDeviceUnknown: "This installation has not registered for device access yet."
         case .missingScope: "This connection does not have permission to manage devices."
         case .tooManyAttachments: "You can attach up to 8 images per message."
+        case .remoteStatusUnavailable:
+            "Couldn't check the remote status. Try reloading."
         }
     }
 }
