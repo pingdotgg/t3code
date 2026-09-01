@@ -322,6 +322,7 @@ function ConnectionStep({
             icon={MonitorIcon}
             title="This computer"
             description={localLabel}
+            truncateDescription
             detail="No account"
             selected={choice === "local"}
             onSelect={() => setChoice("local")}
@@ -360,6 +361,7 @@ function ConnectionOption({
   icon: Icon,
   title,
   description,
+  truncateDescription = false,
   detail,
   selected,
   onSelect,
@@ -367,6 +369,7 @@ function ConnectionOption({
   readonly icon: LucideIcon;
   readonly title: string;
   readonly description: string;
+  readonly truncateDescription?: boolean;
   readonly detail: string;
   readonly selected: boolean;
   readonly onSelect: () => void;
@@ -389,7 +392,14 @@ function ConnectionOption({
       />
       <span className="min-w-0 flex-1">
         <span className="block text-sm font-medium">{title}</span>
-        <span className="mt-1 block truncate text-xs text-muted-foreground">{description}</span>
+        <span
+          className={cn(
+            "mt-1 block text-xs text-muted-foreground",
+            truncateDescription ? "truncate" : "break-words whitespace-normal",
+          )}
+        >
+          {description}
+        </span>
       </span>
       <span className="hidden text-xs text-muted-foreground sm:block">{detail}</span>
       {selected ? (
