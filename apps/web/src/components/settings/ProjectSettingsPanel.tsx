@@ -839,6 +839,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                 <ProjectFavicon
                   environmentId={representative.environmentId}
                   cwd={representative.workspaceRoot}
+                  projectName={group.displayName}
                   faviconPath={faviconPath}
                   className="size-6"
                 />

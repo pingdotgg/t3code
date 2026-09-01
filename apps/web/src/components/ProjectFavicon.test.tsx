@@ -1,6 +1,8 @@
 import type { ComponentType, Dispatch, ReactElement, SetStateAction } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { DatabaseIcon } from "lucide-react";
+import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 
 const testState = vi.hoisted(() => ({
   faviconUrl: "https://environment.test/api/assets/token-a/v1-20-favicon.svg",
@@ -86,6 +88,7 @@ function resolveImageComponent(): {
   const element = ProjectFavicon({
     environmentId: "environment-test" as EnvironmentId,
     cwd: "/workspace-test",
+    projectName: "workspace-test",
   }) as ReactElement<ProjectFaviconImageProps>;
   hooks.reset();
 
@@ -106,6 +109,23 @@ function renderImage(
 describe("ProjectFavicon", () => {
   beforeEach(() => {
     hooks.reset();
+    testState.faviconUrl = "https://environment.test/api/assets/token-a/v1-20-favicon.svg";
+  });
+
+  it("shows a project-name icon when no favicon exists", () => {
+    testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
+
+    const element = ProjectFavicon({
+      environmentId: "environment-test" as EnvironmentId,
+      cwd: "/workspace/analytics-db",
+      projectName: "analytics-db",
+    }) as ReactElement<{
+      readonly colorClassName: string;
+      readonly icon: ComponentType<{ className?: string }>;
+    }>;
+
+    expect(element.props.icon).toBe(DatabaseIcon);
+    expect(element.props.colorClassName).toBe("text-cyan-500");
   });
 
   it("falls back when the displayed favicon fails without discarding a valid older image early", () => {
@@ -134,6 +154,7 @@ describe("ProjectFavicon", () => {
     ProjectFavicon({
       environmentId: "environment-test" as EnvironmentId,
       cwd: "/workspace-test",
+      projectName: "workspace-test",
       faviconPath: "brand/icon.svg",
     });
 
