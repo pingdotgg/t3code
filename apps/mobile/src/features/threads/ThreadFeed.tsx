@@ -2,6 +2,7 @@ import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
 import type {
+  AssetResource,
   ChatAttachment,
   ChatFileAttachment,
   ChatImageAttachment,
@@ -17,7 +18,11 @@ import {
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
+import {
+  classifyMarkdownImageSource,
+  markdownImageSourceFragment,
+} from "@t3tools/client-runtime/markdown-images";
+import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import {
   renderCodexFileCitationsAsMarkdown,
   splitCodexArtifactTemplateMarkdown,
@@ -565,24 +570,24 @@ function ThreadMarkdownImageRequest(props: {
   );
 }
 
-/** Markdown image whose src is a workspace file — loads through a signed asset URL. */
+/** Environment-hosted image that loads through a signed asset URL. */
 function ThreadMarkdownImage(props: {
   readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
-  readonly path: string;
+  readonly resource: Extract<AssetResource, { readonly _tag: "attachment" | "workspace-file" }>;
   readonly alt: string | null;
+  readonly srcFragment?: string;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
-  const assetUrl = useAssetUrlState(props.environmentId, {
-    _tag: "workspace-file",
-    threadId: props.threadId,
-    path: props.path,
-  });
+  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
 
   return (
     <ThreadMarkdownImageView
-      uri={assetUrl._tag === "Success" ? assetUrl.url : null}
-      sourceKey={props.path}
+      uri={assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null}
+      sourceKey={
+        props.resource._tag === "attachment"
+          ? `attachment:${props.resource.attachmentId}`
+          : `workspace:${props.resource.path}`
+      }
       unavailable={assetUrl._tag === "Failure"}
       alt={props.alt}
       onPressPreview={props.onPressPreview}
@@ -1333,6 +1338,7 @@ function renderFeedEntry(
     readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
     readonly onMarkdownLinkPress: (href: string) => void;
     readonly renderMarkdownImage: MarkdownImageRenderer;
+    readonly renderViewedImage: MarkdownImageRenderer;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly userBubbleColor: string | import("react-native").ColorValue;
     readonly markdownStyles: MarkdownStyleSets;
@@ -1545,6 +1551,7 @@ function renderFeedEntry(
       iconSubtleColor={iconSubtleColor}
       onCopyRow={props.onCopyWorkRow}
       onToggleRow={props.onToggleWorkRow}
+      renderImage={props.renderViewedImage}
     />
   );
 }
@@ -1983,12 +1990,34 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return (
         <ThreadMarkdownImage
           environmentId={props.environmentId}
-          threadId={props.threadId}
-          path={imageSource.path}
+          resource={{
+            _tag: "workspace-file",
+            threadId: props.threadId,
+            path: imageSource.path,
+          }}
           alt={image.alt}
+          srcFragment={markdownImageSourceFragment(image.href)}
           onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
         />
       );
+    },
+    [props.environmentId, props.threadId, props.workspaceRoot],
+  );
+  const renderViewedImage = useCallback<MarkdownImageRenderer>(
+    (image) => {
+      const viewedImage = resolveViewedImageAsset(image.href, {
+        threadId: props.threadId,
+        workspaceRoot: props.workspaceRoot,
+      });
+      return viewedImage ? (
+        <ThreadMarkdownImage
+          environmentId={props.environmentId}
+          resource={viewedImage.resource}
+          alt={viewedImage.alt}
+          srcFragment={viewedImage.srcFragment}
+          onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
+        />
+      ) : null;
     },
     [props.environmentId, props.threadId, props.workspaceRoot],
   );
@@ -2443,6 +2472,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           onPressVideo,
           onMarkdownLinkPress,
           renderMarkdownImage,
+          renderViewedImage,
           iconSubtleColor,
           userBubbleColor,
           markdownStyles,
@@ -2477,6 +2507,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.onUseArtifactTemplate,
       props.skills,
       renderMarkdownImage,
+      renderViewedImage,
     ],
   );
 

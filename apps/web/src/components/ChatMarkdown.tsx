@@ -22,6 +22,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type {
+  AssetResource,
   EnvironmentId,
   ScopedThreadRef,
   ServerProviderSkill,
@@ -1218,21 +1219,17 @@ function ChatMarkdownImageFallback(props: {
   );
 }
 
-/** Markdown images whose src is a workspace file path load through a signed asset URL. */
-const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(props: {
-  readonly threadRef: ScopedThreadRef;
-  readonly path: string;
+/** Environment-hosted images load through a signed asset URL. */
+export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props: {
+  readonly environmentId: EnvironmentId;
+  readonly resource: Extract<AssetResource, { readonly _tag: "attachment" | "workspace-file" }>;
   readonly alt: string;
-  readonly copyMarkdown: string;
-  readonly srcFragment: string;
+  readonly copyMarkdown?: string;
+  readonly srcFragment?: string;
   readonly style?: CSSProperties | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
-  const assetUrl = useAssetUrlState(props.threadRef.environmentId, {
-    _tag: "workspace-file",
-    threadId: props.threadRef.threadId,
-    path: props.path,
-  });
+  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
 
   if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
@@ -1253,7 +1250,7 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
       />
     );
   }
-  const src = assetUrl.url + props.srcFragment;
+  const src = assetUrl.url + (props.srcFragment ?? "");
   return (
     <img
       src={src}
@@ -2377,9 +2374,13 @@ function ChatMarkdown({
         }
         if (imageSource._tag === "WorkspaceFile" && threadRef) {
           return (
-            <ChatMarkdownWorkspaceImage
-              threadRef={threadRef}
-              path={imageSource.path}
+            <ChatMarkdownAssetImage
+              environmentId={threadRef.environmentId}
+              resource={{
+                _tag: "workspace-file",
+                threadId: threadRef.threadId,
+                path: imageSource.path,
+              }}
               alt={altText}
               copyMarkdown={copyMarkdown}
               srcFragment={markdownImageSourceFragment(classifiedSrc)}
