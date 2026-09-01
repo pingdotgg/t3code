@@ -7,7 +7,7 @@ orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with five entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with these entries:
 
 | Driver kind   | Driver source                           |
 | ------------- | --------------------------------------- |
@@ -16,6 +16,16 @@ orchestration layer does not know which one is behind a thread.
 | `cursor`      | [`Drivers/CursorDriver.ts`][cursor]     |
 | `grok`        | [`Drivers/GrokDriver.ts`][grok]         |
 | `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode] |
+| `pi`          | [`Drivers/PiDriver.ts`][pi]             |
+
+The Pi driver speaks Pi's stdio JSONL RPC mode (`pi --mode rpc`) and spawns the user's own `pi`
+install, preserving its skills, context files, custom models, auth, extensions, and sessions. Pi
+owns native extension discovery. T3 explicitly injects only its namespaced MCP bridge. The shared
+`delegate_task` tool owns durable child threads, while results from Pi's installed example
+`subagent` extension are projected without synthetic child sessions. Extension UI dialogs surface
+as orchestration runtime requests, and optional Pi session statistics ride on the settled provider
+turn as `tokenUsage`, which feeds the shared context window meter. Pi 0.80.5 is the minimum
+supported protocol version.
 
 Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
 adapter in a child scope. Adapter implementations live beside them in
@@ -166,6 +176,7 @@ when a request opens (approval) or user input is requested, via
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
 [opencode-server-owner]: ../../apps/server/src/provider/OpenCodeServerOwner.ts
+[pi]: ../../apps/server/src/provider/Drivers/PiDriver.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
 [registry]: ../../apps/server/src/provider/Services/ProviderAdapterRegistry.ts

@@ -130,10 +130,37 @@ forking uses portable context when native `session/fork` is unavailable, and
 subagents use orchestrator-owned child threads. Registry agents do not receive
 provider-specific extensions; those remain in flavors such as Grok.
 
+### Pi V2
+
+Pi core has no MCP client. When a provider session credential exists, the
+adapter writes a T3-owned extension into the server cache and spawns
+`pi --mode rpc --extension <cache>/pi-t3-mcp-extension.ts` with:
+
+```text
+T3_MCP_URL=http://127.0.0.1:<port>/mcp
+T3_MCP_BEARER_TOKEN=<provider-session-token>
+```
+
+The extension connects to that HTTP endpoint, lists tools, and registers each
+one with `pi.registerTool` under a `mcp__t3-code__` namespace
+(`mcp__t3-code__delegate_task`, `mcp__t3-code__t3_thread_start`, and the rest).
+The bridge calls the original MCP tool name over HTTP. Follow-up requests send
+`mcp-protocol-version: 2025-06-18`; Effect's MCP transport returns 400
+without it. The first turn of a session also receives the shared T3
+orchestration instructions.
+
+Pi keeps ownership of native extension discovery. T3 does not replace Pi's
+`subagent` tool or reproduce Pi's package and project-trust loader. Durable
+delegation goes through the namespaced T3 MCP `delegate_task` tool and the
+shared orchestration child-thread lifecycle. When Pi's example `subagent`
+extension is installed, the adapter observes its documented `details.results`
+shape and projects task cards with no child thread id. Unknown result shapes
+remain ordinary dynamic tool output.
+
 ### Initial Provider Support
 
-The V2 provider adapters are Codex, Claude Agent SDK, Cursor Agent SDK, and
-Grok plus generic registry agents over ACP.
+The V2 provider adapters are Codex, Claude Agent SDK, Cursor Agent SDK, Grok
+plus generic registry agents over ACP, OpenCode, OpenCode 2, and Pi.
 Capability discovery still reports other registered provider instances, but marks them
 unavailable for orchestration when no V2 adapter exists. This keeps provider
 selection model-visible without allowing a request that cannot run.

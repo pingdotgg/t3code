@@ -1,4 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import {
   NodeId,
   OpenCodeSettings,
@@ -11,6 +13,7 @@ import {
   RunId,
   MessageId,
   ThreadId,
+  type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -19,13 +22,14 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import { ServerConfig } from "../../config.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import type { OpenCodeRuntimeShape } from "../../provider/opencodeRuntime.ts";
-import type { ServerConfig } from "../../config.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
 
 import {
@@ -91,6 +95,8 @@ function asyncEventStream() {
     },
   };
 }
+
+const OPENCODE_TEST_SETTINGS = Schema.decodeUnknownSync(OpenCodeSettings)({});
 
 function runtimePolicy(
   runtimeMode: ProviderAdapterV2RuntimePolicy["runtimeMode"],
@@ -728,6 +734,20 @@ describe("OpenCodeAdapterV2", () => {
     assert.isFalse(admission.admissionPending);
   });
 
+  it("releases admission when an assistant completes under a provider-assigned message id", () => {
+    const admission = {
+      admissionPending: true,
+      admissionAccepted: false,
+      admissionMessageObserved: false,
+      idleDuringAdmission: true,
+    };
+
+    assert.equal(advanceOpenCodePromptAdmission(admission, "assistant-completed"), "release");
+    assert.isTrue(admission.admissionAccepted);
+    assert.isTrue(admission.admissionMessageObserved);
+    assert.isFalse(admission.admissionPending);
+  });
+
   it("invalidates pending admission before aborting a turn", () => {
     const admission = {
       admissionGeneration: 4,
@@ -1028,6 +1048,116 @@ describe("OpenCodeAdapterV2", () => {
       assert.include(serialized, '"method":"session.prompt"');
       assert.include(serialized, '"fieldCount":2');
     }).pipe(Effect.provide(idAllocatorLayer)),
+  );
+
+  it.effect("adopts the handed-over provider thread identity on session create", () =>
+    Effect.gen(function* () {
+      const idAllocator = yield* IdAllocatorV2;
+      const serverConfig = yield* ServerConfig;
+      let createCount = 0;
+      const fakeClient = {
+        event: {
+          subscribe: async (_input?: unknown, options?: { readonly signal?: AbortSignal }) => ({
+            // Emits nothing and ends when the pump's abort signal fires.
+            stream: {
+              [Symbol.asyncIterator]: () => ({
+                next: () =>
+                  new Promise<IteratorResult<never>>((resolve) => {
+                    const done = () => resolve({ done: true, value: undefined });
+                    if (options?.signal?.aborted) return done();
+                    options?.signal?.addEventListener("abort", done, { once: true });
+                  }),
+              }),
+            },
+          }),
+        },
+        session: {
+          create: async () => {
+            createCount += 1;
+            return { data: { id: `ses_native_${createCount}`, time: { created: 1, updated: 1 } } };
+          },
+        },
+      } as unknown as OpencodeClient;
+      const unused = (operation: string) => () => Effect.die(`${operation} is not used`);
+      const runtime: OpenCodeRuntimeShape = {
+        startOpenCodeServerProcess: unused("startOpenCodeServerProcess"),
+        connectToOpenCodeServer: () =>
+          Effect.succeed({
+            url: "test://opencode",
+            version: "test",
+            exitCode: null,
+            external: true,
+          }),
+        runOpenCodeCommand: unused("runOpenCodeCommand"),
+        createOpenCodeSdkClient: () => fakeClient,
+        loadOpenCodeInventory: unused("loadOpenCodeInventory"),
+        loadInventoryFromCli: unused("loadInventoryFromCli"),
+      };
+      const instanceId = ProviderInstanceId.make("opencode");
+      const threadId = ThreadId.make("thread-opencode-adopt");
+      const modelSelection = { instanceId, model: "default" };
+      const adapter = makeOpenCodeAdapterV2({
+        instanceId,
+        settings: OPENCODE_TEST_SETTINGS,
+        environment: {},
+        runtime,
+        idAllocator,
+        serverConfig,
+      });
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-opencode-adopt"),
+        modelSelection,
+        runtimePolicy: runtimePolicy("full-access"),
+      });
+      const now = yield* DateTime.now;
+      // The placeholder row the orchestrator creates for a first run: no
+      // native identity yet. The adapter must bind the created session to
+      // this row instead of minting a second session-keyed row.
+      const placeholder: OrchestrationV2ProviderThread = {
+        id: ProviderThreadId.make("thread:provider:opencode:native-thread:pending:run:adopt:1"),
+        driver: OPENCODE_PROVIDER,
+        providerInstanceId: instanceId,
+        providerSessionId: null,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "not_loaded",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const adopted = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: runtimePolicy("full-access"),
+        existingProviderThread: placeholder,
+      });
+      assert.equal(adopted.id, placeholder.id);
+      assert.equal(adopted.nativeThreadRef?.nativeId, "ses_native_1");
+      // Without a handed-over row the adapter still derives its own id.
+      const minted = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: runtimePolicy("full-access"),
+      });
+      assert.notEqual(minted.id, placeholder.id);
+      assert.equal(minted.nativeThreadRef?.nativeId, "ses_native_2");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          idAllocatorLayer,
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-opencode-v2-adapter-" }).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+      ),
+    ),
   );
 
   it("advertises the identity strengths exposed by the SDK boundary", () => {

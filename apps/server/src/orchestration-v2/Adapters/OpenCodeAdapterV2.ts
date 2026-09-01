@@ -274,7 +274,12 @@ interface ActiveOpenCodeTurn {
   admissionAbortController: AbortController | null;
 }
 
-type OpenCodeAdmissionSignal = "accepted" | "busy" | "idle" | "user-message";
+type OpenCodeAdmissionSignal =
+  | "accepted"
+  | "assistant-completed"
+  | "busy"
+  | "idle"
+  | "user-message";
 type OpenCodeAdmissionAction = "hold" | "reconcile-idle" | "release";
 
 export function advanceOpenCodePromptAdmission(
@@ -285,6 +290,12 @@ export function advanceOpenCodePromptAdmission(
   signal: OpenCodeAdmissionSignal,
 ): OpenCodeAdmissionAction {
   if (!admission.admissionPending) return "release";
+  if (signal === "assistant-completed") {
+    admission.admissionAccepted = true;
+    admission.admissionMessageObserved = true;
+    admission.admissionPending = false;
+    return "release";
+  }
   if (signal === "idle") {
     admission.idleDuringAdmission = true;
     return "hold";
@@ -2324,6 +2335,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           const state = threads.get(message.sessionID);
           const turn = state?.activeTurn;
           if (state === undefined || turn === null || turn === undefined) return;
+          // Some OpenCode versions ignore the client-provided message ID. A
+          // completed assistant message is definitive admission evidence, so
+          // let the following idle event settle the turn without weakening
+          // the stale-user-message guard.
+          advanceOpenCodePromptAdmission(turn, "assistant-completed");
           for (const partId of turn.partIdsByMessage.get(message.id) ?? []) {
             const part = turn.parts.get(partId);
             if (part?.type === "text" || part?.type === "reasoning") {
@@ -2663,7 +2679,9 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
-              if (threadInput.existingProviderThread !== undefined) {
+              // Only a row that already carries a native session can be
+              // resumed; a placeholder without one still needs session.create.
+              if (threadInput.existingProviderThread?.nativeThreadRef != null) {
                 return yield* runtimeSession.resumeThread({
                   providerThread: threadInput.existingProviderThread,
                 });
@@ -2682,7 +2700,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               );
               const nativeSession = unwrapData("session.create", response);
               const createdAt = yield* DateTime.now;
-              const providerThread = makeProviderThread({
+              const created = makeProviderThread({
                 idAllocator,
                 providerInstanceId: options.instanceId,
                 providerSessionId: input.providerSessionId,
@@ -2690,6 +2708,21 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 nativeSession,
                 now: createdAt,
               });
+              const existing = threadInput.existingProviderThread;
+              // Bind the new native session to the caller's row when one was
+              // handed over: a second live row per app thread would make
+              // `activeProviderThreadId` flap between the two on every update.
+              const providerThread =
+                existing === undefined
+                  ? created
+                  : {
+                      ...existing,
+                      providerSessionId: input.providerSessionId,
+                      nativeThreadRef: created.nativeThreadRef,
+                      nativeConversationHeadRef: created.nativeConversationHeadRef,
+                      status: created.status,
+                      updatedAt: created.updatedAt,
+                    };
               registerThread(nativeSession, providerThread, null);
               return providerThread;
             }).pipe(

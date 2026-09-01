@@ -29,6 +29,7 @@ import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
+import { ProviderEventIngestorV2 } from "./ProviderEventIngestor.ts";
 import {
   ProviderAdapterEventStreamError,
   ProviderAdapterV2RuntimePolicy,
@@ -226,6 +227,29 @@ function sessionKey(providerSessionId: ProviderSessionId): string {
   return String(providerSessionId);
 }
 
+/**
+ * Runtime requests with no provider turn belong to the live session itself.
+ * Their node and transcript item are runless too, so they bypass the normal
+ * per-run subscriber and are persisted by the session event pump.
+ */
+function sessionScopedRuntimeRequestThreadId(event: ProviderAdapterV2Event): ThreadId | undefined {
+  switch (event.type) {
+    case "runtime_request.updated":
+      return event.runtimeRequest.providerTurnId === null ? event.threadId : undefined;
+    case "node.updated":
+      return event.node.runId === null && event.node.runtimeRequestId !== null
+        ? event.node.threadId
+        : undefined;
+    case "turn_item.updated":
+      return event.turnItem.runId === null &&
+        (event.turnItem.type === "approval_request" || event.turnItem.type === "user_input_request")
+        ? event.turnItem.threadId
+        : undefined;
+    default:
+      return undefined;
+  }
+}
+
 function providerThreadRuntimeKey(
   providerThread: Parameters<ProviderAdapterV2SessionRuntime["resumeThread"]>[0]["providerThread"],
 ): string {
@@ -258,6 +282,7 @@ export const layerWithOptions = (
   | IdAllocatorV2
   | McpSessionRegistry.McpSessionRegistry
   | ProjectionStoreV2
+  | ProviderEventIngestorV2
   | ProviderAdapterRegistryV2
 > =>
   Layer.effect(
@@ -289,6 +314,7 @@ export const layerWithOptions = (
       });
       const eventSink = yield* EventSinkV2;
       const idAllocator = yield* IdAllocatorV2;
+      const providerEventIngestor = yield* ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStoreV2;
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
@@ -455,6 +481,17 @@ export const layerWithOptions = (
           );
         });
 
+      // Preserve already-published terminal events while ending subscriptions.
+      // Server shutdown intentionally clears them; a provider-announced Stop
+      // must let consumers drain them before the stream completes.
+      const endSubscribers = (entry: LiveSessionEntry) =>
+        Effect.gen(function* () {
+          const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
+          yield* Effect.forEach(subscribers.values(), (queue) => Queue.end(queue), {
+            discard: true,
+          });
+        });
+
       const cancelIdleFiber = (fiber: Fiber.Fiber<void, never> | null) =>
         fiber === null ? Effect.void : Fiber.interrupt(fiber).pipe(Effect.ignore);
 
@@ -614,6 +651,7 @@ export const layerWithOptions = (
         readonly detail?: string;
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
+        readonly gracefulSubscribers?: boolean;
       }) =>
         Effect.acquireUseRelease(
           Ref.modify(sessions, (current) => {
@@ -640,7 +678,9 @@ export const layerWithOptions = (
                   if (input.cancelIdleFiber !== false) {
                     yield* cancelIdleFiber(entry.idleFiber);
                   }
-                  if (input.reason === "server_shutdown") {
+                  if (input.gracefulSubscribers === true) {
+                    yield* endSubscribers(entry);
+                  } else if (input.reason === "server_shutdown") {
                     yield* closeSubscribers(entry);
                   } else {
                     yield* failSubscribers(
@@ -1316,10 +1356,17 @@ export const layerWithOptions = (
           ),
         );
 
-      const startEventPump = (entry: LiveSessionEntry) =>
-        entry.runtime.events.pipe(
-          Stream.runForEach((event) =>
-            observeActivity(
+      const startEventPump = (entry: LiveSessionEntry) => {
+        let stoppedByProvider = false;
+        return entry.runtime.events.pipe(
+          Stream.runForEach((event) => {
+            if (
+              event.type === "provider_session.updated" &&
+              event.providerSession.status === "stopped"
+            ) {
+              stoppedByProvider = true;
+            }
+            return observeActivity(
               entry.runtime.providerSessionId,
               event.type === "turn.terminal"
                 ? markIdle(entry.runtime.providerSessionId)
@@ -1331,10 +1378,37 @@ export const layerWithOptions = (
                   : Effect.void,
               ),
               Effect.andThen(
-                publishToSubscribers(entry.eventSubscribers, { type: "event", event }),
+                Effect.gen(function* () {
+                  // Some providers can block before a run subscriber exists
+                  // (project trust, login, or session-switch hooks). Persist
+                  // their runless request artifacts directly so the normal T3
+                  // request UI can answer them and unblock session setup.
+                  const threadId = sessionScopedRuntimeRequestThreadId(event);
+                  if (threadId !== undefined) {
+                    yield* providerEventIngestor
+                      .ingestNormalized({
+                        providerSessionId: entry.runtime.providerSessionId,
+                        providerInstanceId: entry.runtime.instanceId,
+                        threadId,
+                        event,
+                      })
+                      .pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new ProviderAdapterEventStreamError({
+                              driver: entry.runtime.driver,
+                              providerSessionId: entry.runtime.providerSessionId,
+                              cause,
+                            }),
+                        ),
+                      );
+                    return;
+                  }
+                  yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
+                }),
               ),
-            ),
-          ),
+            );
+          }),
           Effect.exit,
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
@@ -1342,6 +1416,14 @@ export const layerWithOptions = (
                 sessionKey(entry.runtime.providerSessionId),
               );
               if (current?.runtime !== entry.runtime) {
+                return;
+              }
+              if (stoppedByProvider && Exit.isSuccess(exit)) {
+                yield* releaseEntry({
+                  providerSessionId: entry.runtime.providerSessionId,
+                  reason: "manual_shutdown",
+                  gracefulSubscribers: true,
+                }).pipe(Effect.ignore);
                 return;
               }
               const cause = Exit.isFailure(exit)
@@ -1367,6 +1449,7 @@ export const layerWithOptions = (
           ),
           Effect.forkIn(layerScope),
         );
+      };
 
       const shutdown = Effect.gen(function* () {
         const activeSessions = [...(yield* Ref.get(sessions)).values()];

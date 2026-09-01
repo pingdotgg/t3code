@@ -38,11 +38,13 @@ describe("ServerProvider", () => {
         status: "authenticated",
       },
       checkedAt: "2026-04-10T00:00:00.000Z",
+      supportedRuntimeModes: ["approval-required", "future-mode", "full-access"],
       models: [],
     });
 
     expect(parsed.slashCommands).toEqual([]);
     expect(parsed.skills).toEqual([]);
+    expect(parsed.supportedRuntimeModes).toEqual(["approval-required", "full-access"]);
     expect(parsed.versionAdvisory).toBeUndefined();
     expect(parsed.updateState).toBeUndefined();
   });
