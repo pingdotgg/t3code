@@ -2554,7 +2554,7 @@ export default function ChatView(props: ChatViewProps) {
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
   const sessionStatus = activeThread?.session?.status ?? null;
-  const previousSessionStatusRef = useRef(sessionStatus);
+  const settledSessionStatusRef = useRef(sessionStatus);
   const hasActiveCodexGoalSession =
     isServerThread &&
     selectedProvider === "codex" &&
@@ -2562,9 +2562,9 @@ export default function ChatView(props: ChatViewProps) {
     activeThread !== undefined &&
     activeThread.session !== null &&
     sessionStatus !== "stopped" &&
-    !(sessionStatus === "starting" && previousSessionStatusRef.current === "stopped");
+    !(sessionStatus === "starting" && settledSessionStatusRef.current === "stopped");
   useEffect(() => {
-    previousSessionStatusRef.current = sessionStatus;
+    if (sessionStatus !== "starting") settledSessionStatusRef.current = sessionStatus;
   }, [sessionStatus]);
   const codexGoal = useCodexGoal(
     hasActiveCodexGoalSession ? environmentId : null,
