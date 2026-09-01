@@ -9,7 +9,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 /** Auth method advertised by `hermes acp` for pre-configured runtime credentials. */
-export const HERMES_AUTH_METHOD_ID = "custom";
+const HERMES_AUTH_METHOD_ID = "custom";
 
 type HermesAcpRuntimeHermesSettings = Pick<HermesSettings, "binaryPath">;
 

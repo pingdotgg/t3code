@@ -2,11 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import {
-  applyHermesAcpModelSelection,
-  buildHermesAcpSpawnInput,
-  HERMES_AUTH_METHOD_ID,
-} from "./HermesAcpSupport.ts";
+import { applyHermesAcpModelSelection, buildHermesAcpSpawnInput } from "./HermesAcpSupport.ts";
 
 describe("buildHermesAcpSpawnInput", () => {
   it("spawns the configured binary with the acp subcommand", () => {
@@ -41,12 +37,6 @@ describe("buildHermesAcpSpawnInput", () => {
       args: ["acp"],
       cwd: "/tmp/project",
     });
-  });
-});
-
-describe("HERMES_AUTH_METHOD_ID", () => {
-  it("targets the Hermes custom-credentials auth method", () => {
-    expect(HERMES_AUTH_METHOD_ID).toBe("custom");
   });
 });
 

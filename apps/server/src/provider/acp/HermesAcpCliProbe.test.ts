@@ -1,6 +1,7 @@
 /**
  * Optional integration check against a real `hermes acp` install.
  * Enable with: T3_HERMES_ACP_PROBE=1 vp test run HermesAcpCliProbe
+ * Set T3_HERMES_LIVE_TURN=1 to also send a small prompt to the real model.
  *
  * Set T3_HERMES_ACP_PROBE_BINARY to run a hermes binary that is not on
  * PATH (a wrapper script that proxies stdio to a remote install works,
@@ -56,7 +57,7 @@ describe.runIf(process.env.T3_HERMES_ACP_PROBE === "1")("Hermes ACP CLI probe", 
   // Hermes spends a long thinking phase on even trivial prompts, so a real
   // turn regularly exceeds the suite's default test timeout. The probe is
   // env-gated and never runs in CI, so a generous explicit budget is safe.
-  it.effect(
+  it.effect.skipIf(process.env.T3_HERMES_LIVE_TURN !== "1")(
     "finishes a real Hermes turn and streams its answer",
     () =>
       Effect.gen(function* () {
