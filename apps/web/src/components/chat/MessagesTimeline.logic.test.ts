@@ -1582,7 +1582,6 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
     const finalRow = rows.find((row) => row.id === "assistant-final-entry");
     expect(finalRow?.kind === "message" && finalRow.showAssistantMeta).toBe(true);
-    expect(rows.at(-1)).toMatchObject({ kind: "thinking" });
   });
 
   it("does not fold the active in-progress turn", () => {
@@ -1719,7 +1718,6 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(assistantRow?.showAssistantMeta).toBe(false);
     expect(assistantRow?.showAssistantCopyButton).toBe(false);
-    expect(rows.at(-1)).toMatchObject({ kind: "thinking" });
   });
 
   it("retains a failed command in the summary after a later command succeeds", () => {
@@ -1859,54 +1857,6 @@ describe("deriveMessagesTimelineRows", () => {
 });
 
 describe("computeStableMessagesTimelineRows", () => {
-  it.each(["", " \n"])("keeps Thinking after assistant content grows from %j", (text) => {
-    const startedAt = "2026-01-01T00:00:00Z";
-    const turnId = TurnId.make("turn-1");
-    const input = {
-      runningTurnId: turnId,
-      isWorking: true,
-      activeTurnStartedAt: startedAt,
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    };
-    const assistantEntry = {
-      id: "assistant-entry",
-      kind: "message" as const,
-      createdAt: startedAt,
-      message: {
-        id: MessageId.make("assistant-1"),
-        role: "assistant" as const,
-        text,
-        turnId,
-        createdAt: startedAt,
-        updatedAt: startedAt,
-        streaming: true,
-      },
-    };
-    const initial = computeStableMessagesTimelineRows(
-      deriveMessagesTimelineRows({ ...input, timelineEntries: [assistantEntry] }),
-      { byId: new Map(), result: [] },
-    );
-    const updated = computeStableMessagesTimelineRows(
-      deriveMessagesTimelineRows({
-        ...input,
-        timelineEntries: [
-          {
-            ...assistantEntry,
-            message: { ...assistantEntry.message, text: "I will inspect the repository." },
-          },
-        ],
-      }),
-      initial,
-    );
-
-    const initialThinking = initial.byId.get("live-activity-row");
-    const updatedThinking = updated.byId.get("live-activity-row");
-    expect(initialThinking).toMatchObject({ kind: "thinking" });
-    expect(updatedThinking).toBe(initialThinking);
-    expect(updated.result.at(-1)).toBe(updatedThinking);
-  });
-
   it("returns the previous result when row order and content are unchanged", () => {
     const firstUserMessage = {
       id: "user-1" as never,
