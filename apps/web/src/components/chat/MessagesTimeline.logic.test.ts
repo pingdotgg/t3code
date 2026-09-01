@@ -826,7 +826,7 @@ describe("deriveMessagesTimelineRows", () => {
       "assistant-final-entry",
       "user-followup-entry",
       "working-indicator-row",
-      "live-activity-row",
+      "thinking-indicator-row",
     ]);
     const finalRow = rows.find((row) => row.id === "assistant-final-entry");
     expect(finalRow?.kind === "message" && finalRow.showAssistantMeta).toBe(true);
@@ -879,11 +879,11 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.map((row) => row.id)).toEqual([
       "working-indicator-row",
       "assistant-thought-entry",
-      "live-activity-row",
+      "work-live:work-entry-1",
     ]);
   });
 
-  it("keeps an actually running tool in the shared activity row", () => {
+  it("keeps adjacent active tool calls in one replacing row", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
@@ -948,7 +948,6 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.some((row) => row.kind === "thinking")).toBe(false);
     expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
       entry: { id: "running-command" },
-      active: true,
       groupedEntries: [
         { id: "running-command" },
         { id: "completed-edit" },
@@ -1197,54 +1196,40 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
-  it("reuses one activity row for initial thinking and the latest tool", () => {
-    const deriveRows = (toolLifecycleStatus: "inProgress" | "completed" | null) =>
-      deriveMessagesTimelineRows({
-        timelineEntries:
-          toolLifecycleStatus === null
-            ? []
-            : [
-                {
-                  id: "latest-command-entry",
-                  kind: "work",
-                  createdAt: "2026-01-01T00:00:05Z",
-                  entry: {
-                    id: "latest-command",
-                    createdAt: "2026-01-01T00:00:05Z",
-                    turnId: "turn-1" as never,
-                    label: toolLifecycleStatus === "inProgress" ? "Running rg" : "Ran rg",
-                    command: "rg toolCall",
-                    requestKind: "command",
-                    tone: "tool" as const,
-                    toolLifecycleStatus,
-                  },
-                },
-              ],
-        latestTurn: {
-          turnId: "turn-1" as never,
-          state: "running",
-          startedAt: "2026-01-01T00:00:00Z",
-          completedAt: null,
+  it("shows thinking after the latest tool call completes while the turn is running", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "latest-command-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:05Z",
+          entry: {
+            id: "latest-command",
+            createdAt: "2026-01-01T00:00:05Z",
+            turnId: "turn-1" as never,
+            label: "Ran rg",
+            command: "rg toolCall",
+            requestKind: "command",
+            tone: "tool" as const,
+            toolLifecycleStatus: "completed" as const,
+          },
         },
-        isWorking: true,
-        activeTurnStartedAt: "2026-01-01T00:00:00Z",
-        turnDiffSummaryByAssistantMessageId: new Map(),
-        revertTurnCountByUserMessageId: new Map(),
-      });
+      ],
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "running",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
 
-    const initialRows = deriveRows(null);
-    const runningRows = deriveRows("inProgress");
-    const completedRows = deriveRows("completed");
-    const initialActivityRow = initialRows.find((row) => row.id === "live-activity-row");
-    const runningActivityRow = runningRows.find((row) => row.id === "live-activity-row");
-    const completedActivityRow = completedRows.find((row) => row.id === "live-activity-row");
-
-    expect(initialActivityRow).toMatchObject({ kind: "thinking" });
-    expect(runningActivityRow).toMatchObject({ kind: "work-live", active: true });
-    expect(completedActivityRow).toMatchObject({ kind: "work-live", active: false });
-    expect(initialRows.filter((row) => row.id === "live-activity-row")).toHaveLength(1);
-    expect(runningRows.filter((row) => row.id === "live-activity-row")).toHaveLength(1);
-    expect(completedRows.filter((row) => row.id === "live-activity-row")).toHaveLength(1);
+    expect(rows.map((row) => row.kind)).toEqual(["working", "work-live", "thinking"]);
+    expect(rows.find((row) => row.kind === "work-live")).toMatchObject({ active: false });
+    expect(rows.at(-1)).toMatchObject({ kind: "thinking" });
   });
 
   it("does not fold the session's running turn when latestTurn regresses", () => {
@@ -1305,7 +1290,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.filter((row) => row.kind === "turn-fold").map((row) => row.turnId)).toEqual([
       "turn-1",
     ]);
-    expect(rows.map((row) => row.id)).toContain("live-activity-row");
+    expect(rows.map((row) => row.id)).toContain("work-live:running-work-entry");
   });
 
   it("only shows assistant metadata on the terminal assistant message", () => {
@@ -1602,8 +1587,8 @@ describe("computeStableMessagesTimelineRows", () => {
       initial,
     );
 
-    const initialThinking = initial.byId.get("live-activity-row");
-    const updatedThinking = updated.byId.get("live-activity-row");
+    const initialThinking = initial.byId.get("thinking-indicator-row");
+    const updatedThinking = updated.byId.get("thinking-indicator-row");
     expect(initialThinking).toMatchObject({ kind: "thinking" });
     expect(updatedThinking).toBe(initialThinking);
     expect(updated.result.at(-1)).toBe(updatedThinking);
