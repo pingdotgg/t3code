@@ -39,6 +39,27 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
 
+    it.effect("keeps inherited environment values live with a configured Claude home", () =>
+      Effect.gen(function* () {
+        const baseEnvironment: NodeJS.ProcessEnv = {
+          PATH: "before-hydration",
+        };
+        const claudeEnvironment = yield* makeClaudeEnvironment(
+          { homePath: "~/.claude-work" },
+          baseEnvironment,
+        );
+        const configDirectory = claudeEnvironment.CLAUDE_CONFIG_DIR;
+
+        baseEnvironment.PATH = "after-hydration";
+
+        expect(claudeEnvironment.PATH).toBe("after-hydration");
+        expect({ ...claudeEnvironment }).toMatchObject({
+          PATH: "after-hydration",
+          CLAUDE_CONFIG_DIR: configDirectory,
+        });
+      }),
+    );
+
     it.effect("separates capability probes by cwd", () =>
       Effect.gen(function* () {
         const config = { binaryPath: "claude", homePath: "" };

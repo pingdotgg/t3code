@@ -20,6 +20,7 @@ import {
   type ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   ApprovalRequestId,
   type CanonicalItemType,
@@ -60,6 +61,7 @@ import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
   formatClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -77,7 +79,10 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
+import {
+  ClaudeExecutableFileCheck,
+  resolveClaudeSdkExecutablePath,
+} from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
   getClaudeModelCapabilities,
@@ -1689,10 +1694,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
     Effect.provideService(Path.Path, path),
   );
-  const claudeSdkExecutablePath = yield* resolveClaudeSdkExecutablePath(
-    claudeSettings.binaryPath,
-    claudeEnvironment,
-  );
+  const hostPlatform = yield* HostProcessPlatform;
+  const spawnExecutableResolution = yield* SpawnExecutableResolution;
+  const claudeExecutableFileCheck = yield* ClaudeExecutableFileCheck;
+  const resolveExecutablePath = Effect.fn("resolveClaudeExecutablePath")(function* () {
+    return yield* resolveClaudeSdkExecutablePath(claudeSettings.binaryPath, claudeEnvironment).pipe(
+      Effect.provideService(HostProcessPlatform, hostPlatform),
+      Effect.provideService(SpawnExecutableResolution, spawnExecutableResolution),
+      Effect.provideService(ClaudeExecutableFileCheck, claudeExecutableFileCheck),
+    );
+  });
   const nativeEventLogger =
     options?.nativeEventLogger ??
     (options?.nativeEventLogPath !== undefined
@@ -4241,7 +4252,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         callbackOptions,
       ) => runPromise(handleResumeDialog(request, callbackOptions));
 
-      const claudeBinaryPath = claudeSdkExecutablePath;
+      const claudeBinaryPath = yield* resolveExecutablePath();
       const extraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
       const modelSelection =
         input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;

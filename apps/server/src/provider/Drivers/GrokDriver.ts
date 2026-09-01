@@ -1,4 +1,5 @@
 import { GrokSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -90,7 +91,9 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       const serverSettings = yield* ServerSettingsService;
       const { cwd } = yield* ServerConfig;
       const eventLoggers = yield* ProviderEventLoggers;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const platform = yield* HostProcessPlatform;
+      const hostEnvironment = yield* HostProcessEnvironment;
+      const processEnv = mergeProviderInstanceEnvironment(environment, platform, hostEnvironment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -129,10 +132,15 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         initialSnapshot: (settings) =>
           buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
-        enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
+        enrichSnapshot: ({
+          settings,
+          snapshot: currentSnapshot,
+          maintenanceCapabilities: currentMaintenanceCapabilities,
+          publishSnapshot,
+        }) =>
           enrichGrokSnapshot({
             snapshot: currentSnapshot,
-            maintenanceCapabilities,
+            maintenanceCapabilities: currentMaintenanceCapabilities,
             enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
             publishSnapshot,
             httpClient,

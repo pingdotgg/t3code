@@ -12,6 +12,7 @@
  * @module provider/Drivers/CursorDriver
  */
 import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -108,7 +109,9 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const platform = yield* HostProcessPlatform;
+      const hostEnvironment = yield* HostProcessEnvironment;
+      const processEnv = mergeProviderInstanceEnvironment(environment, platform, hostEnvironment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -151,11 +154,16 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         checkProvider,
         // Model catalog and capabilities come exclusively from Cursor's
         // list_available_models extension method during provider checks.
-        enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
+        enrichSnapshot: ({
+          settings,
+          snapshot: currentSnapshot,
+          maintenanceCapabilities: currentMaintenanceCapabilities,
+          publishSnapshot,
+        }) =>
           enrichCursorSnapshot({
             settings: settings.provider,
             snapshot: currentSnapshot,
-            maintenanceCapabilities,
+            maintenanceCapabilities: currentMaintenanceCapabilities,
             enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
             publishSnapshot,
             stampIdentity,

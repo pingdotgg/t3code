@@ -216,7 +216,7 @@ describe("mergePathEntries", () => {
 });
 
 describe("readEnvironmentFromWindowsShell", () => {
-  it("extracts environment variables from a PowerShell command", () => {
+  it("reads no-profile PATH from the current User and Machine scopes", () => {
     const execFile = vi.fn<
       (
         file: string,
@@ -235,6 +235,14 @@ describe("readEnvironmentFromWindowsShell", () => {
       "pwsh.exe",
       expect.arrayContaining(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]),
       { encoding: "utf8", timeout: 5000 },
+    );
+    const command = execFile.mock.calls[0]?.[1]?.at(-1);
+    expect(command).toContain("$userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')");
+    expect(command).toContain(
+      "$machinePath = [Environment]::GetEnvironmentVariable('PATH', 'Machine')",
+    );
+    expect(command).toContain(
+      '$value = if ($userPath -and $machinePath) { "$machinePath;$userPath" } elseif ($userPath) { $userPath } else { $machinePath }',
     );
   });
 
@@ -273,6 +281,10 @@ describe("readEnvironmentFromWindowsShell", () => {
       { encoding: "utf8", timeout: 5000 },
     );
     expect(execFile.mock.calls[0]?.[1]).not.toContain("-NoProfile");
+    const command = execFile.mock.calls[0]?.[1]?.at(-1);
+    expect(command).toContain("$value = [Environment]::GetEnvironmentVariable('PATH')");
+    expect(command).not.toContain("GetEnvironmentVariable('PATH', 'User')");
+    expect(command).not.toContain("GetEnvironmentVariable('PATH', 'Machine')");
   });
 
   it("falls back to Windows PowerShell when pwsh.exe is unavailable", () => {

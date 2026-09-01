@@ -17,6 +17,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 
 interface ProviderSnapshotState {
@@ -27,7 +28,9 @@ interface ProviderSnapshotState {
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
 >(input: {
-  readonly maintenanceCapabilities: ServerProviderShape["maintenanceCapabilities"];
+  readonly maintenanceCapabilities:
+    | ProviderMaintenanceCapabilities
+    | ServerProviderShape["getMaintenanceCapabilities"];
   readonly getSettings: Effect.Effect<Settings, ServerSettingsError>;
   readonly streamSettings: Stream.Stream<Settings>;
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
@@ -36,6 +39,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly enrichSnapshot?: (input: {
     readonly settings: Settings;
     readonly snapshot: ServerProvider;
+    readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
     readonly getSnapshot: Effect.Effect<ServerProvider>;
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   }) => Effect.Effect<void>;
@@ -49,6 +53,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 > {
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const serverSettings = yield* ServerSettingsService;
+  const getMaintenanceCapabilities = Effect.isEffect(input.maintenanceCapabilities)
+    ? input.maintenanceCapabilities
+    : Effect.succeed(input.maintenanceCapabilities);
   const refreshSemaphore = yield* Semaphore.make(1);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ServerProvider>(),
@@ -100,10 +107,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return;
     }
 
+    const maintenanceCapabilities = yield* getMaintenanceCapabilities;
     const fiber = yield* input
       .enrichSnapshot({
         settings,
         snapshot,
+        maintenanceCapabilities,
         getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
         publishSnapshot: (nextSnapshot) => publishEnrichedSnapshot(generation, nextSnapshot),
       })
@@ -238,7 +247,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   );
 
   return {
-    maintenanceCapabilities: input.maintenanceCapabilities,
+    getMaintenanceCapabilities,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
     refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
     get streamChanges() {

@@ -261,7 +261,10 @@ function buildEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
     .join("; ");
 }
 
-function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
+function buildWindowsEnvironmentCaptureCommand(
+  names: ReadonlyArray<string>,
+  options: WindowsEnvironmentProbeOptions,
+): string {
   return [
     "$ErrorActionPreference = 'Stop'",
     ...names.flatMap((name) => {
@@ -269,9 +272,18 @@ function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): st
         throw new Error(`Unsupported environment variable name: ${name}`);
       }
 
+      const valueAssignmentStatements =
+        name === "PATH" && !options.loadProfile
+          ? [
+              "$userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')",
+              "$machinePath = [Environment]::GetEnvironmentVariable('PATH', 'Machine')",
+              '$value = if ($userPath -and $machinePath) { "$machinePath;$userPath" } elseif ($userPath) { $userPath } else { $machinePath }',
+            ]
+          : [`$value = [Environment]::GetEnvironmentVariable('${name}')`];
+
       return [
         `Write-Output '${envCaptureStart(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
+        ...valueAssignmentStatements,
         "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
         `Write-Output '${envCaptureEnd(name)}'`,
       ];
@@ -373,7 +385,7 @@ export function readEnvironmentFromWindowsShell(
     typeof optionsOrExecFile === "function"
       ? optionsOrExecFile
       : (maybeExecFile ?? (NodeChildProcess.execFileSync as ExecFileSyncLike));
-  const command = buildWindowsEnvironmentCaptureCommand(names);
+  const command = buildWindowsEnvironmentCaptureCommand(names, options);
   const args = [
     "-NoLogo",
     ...(options.loadProfile ? ([] as const) : (["-NoProfile"] as const)),

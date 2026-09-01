@@ -21,7 +21,9 @@ import {
   ThreadId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -35,6 +37,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ClaudeExecutableFileCheck } from "../Drivers/ClaudeExecutable.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
@@ -294,6 +297,65 @@ describe("ClaudeAdapterLive", () => {
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("resolves the SDK executable and environment when each session starts", () => {
+    const environment: NodeJS.ProcessEnv = {
+      PATH: "before-hydration",
+    };
+    const resolutionPaths: Array<string | undefined> = [];
+    let createInput:
+      | {
+          readonly prompt: AsyncIterable<SDKUserMessage>;
+          readonly options: ClaudeQueryOptions;
+        }
+      | undefined;
+    const expectedExecutable = "C:\\new-cli\\claude.exe";
+    const layer = Layer.effect(
+      ClaudeAdapter,
+      Effect.gen(function* () {
+        const claudeConfig = decodeClaudeSettings({ homePath: "C:\\claude-work" });
+        return yield* makeClaudeAdapter(claudeConfig, {
+          environment,
+          createQuery: (input) => {
+            createInput = input;
+            return new FakeClaudeQuery();
+          },
+        }).pipe(
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(
+            SpawnExecutableResolution,
+            (_command, _platform, currentEnvironment) => {
+              resolutionPaths.push(currentEnvironment.PATH);
+              return currentEnvironment.PATH === "after-hydration" ? expectedExecutable : undefined;
+            },
+          ),
+          Effect.provideService(ClaudeExecutableFileCheck, () => true),
+        );
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest("C:\\repo", "C:\\t3")),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      environment.PATH = "after-hydration";
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      assert.deepEqual(resolutionPaths, ["after-hydration"]);
+      assert.equal(createInput?.options.pathToClaudeCodeExecutable, expectedExecutable);
+      assert.equal(createInput?.options.env?.PATH, "after-hydration");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
     );
   });
 

@@ -192,6 +192,53 @@ describe("makeManagedServerProvider", () => {
       ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
 
+  it.effect("resolves maintenance capabilities for each snapshot enrichment", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const updateExecutable = yield* Ref.make("npm");
+        const firstEnrichmentDone = yield* Deferred.make<void>();
+        const secondEnrichmentDone = yield* Deferred.make<void>();
+        const enrichmentExecutables: string[] = [];
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities: Ref.get(updateExecutable).pipe(
+            Effect.map((executable) => ({
+              ...maintenanceCapabilities,
+              update: maintenanceCapabilities.update
+                ? {
+                    ...maintenanceCapabilities.update,
+                    command: `${executable} update`,
+                    executable,
+                  }
+                : null,
+            })),
+          ),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.succeed(refreshedSnapshot),
+          enrichSnapshot: ({ maintenanceCapabilities: currentCapabilities }) =>
+            Effect.gen(function* () {
+              enrichmentExecutables.push(currentCapabilities.update?.executable ?? "manual");
+              yield* Deferred.succeed(
+                enrichmentExecutables.length === 1 ? firstEnrichmentDone : secondEnrichmentDone,
+                undefined,
+              );
+            }),
+          refreshInterval: 0,
+        });
+
+        yield* Deferred.await(firstEnrichmentDone);
+        yield* Ref.set(updateExecutable, "bun");
+        yield* provider.refresh;
+        yield* Deferred.await(secondEnrichmentDone);
+
+        assert.deepStrictEqual(enrichmentExecutables, ["npm", "bun"]);
+        assert.strictEqual((yield* provider.getMaintenanceCapabilities).update?.executable, "bun");
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
   it.effect("skips periodic provider refreshes without foreground provider-status demand", () =>
     Effect.scoped(
       Effect.gen(function* () {
