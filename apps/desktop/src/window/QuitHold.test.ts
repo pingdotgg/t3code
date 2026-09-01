@@ -227,6 +227,42 @@ describe("makeQuitShortcutHandler", () => {
     expect(harness.notifications).toEqual([DOUBLE_CLICK_DOWN, UP]);
   });
 
+  it("keeps the double-press hint visible after key release until the window ends", async () => {
+    const harness = makeHarness({ mode: "double-click" });
+    await harness.send(makeInput({}));
+    vi.advanceTimersByTime(100);
+    await harness.send(makeInput({ type: "keyUp" }));
+    expect(harness.notifications).toEqual([DOUBLE_CLICK_DOWN]);
+
+    vi.advanceTimersByTime(QUIT_DOUBLE_PRESS_MS - 101);
+    expect(harness.notifications).toEqual([DOUBLE_CLICK_DOWN]);
+    vi.advanceTimersByTime(1);
+    expect(harness.notifications).toEqual([DOUBLE_CLICK_DOWN, UP]);
+  });
+
+  it("expires a delayed double-press hint from keydown rather than mode resolution", async () => {
+    let resolveMode: ((mode: QuitConfirmationMode) => void) | undefined;
+    const harness = makeHarness({
+      getMode: () =>
+        new Promise((resolve) => {
+          resolveMode = resolve;
+        }),
+    });
+    await harness.send(makeInput({}));
+    vi.advanceTimersByTime(100);
+    await harness.send(makeInput({ type: "keyUp" }));
+    vi.advanceTimersByTime(100);
+    resolveMode?.("double-click");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(harness.notifications).toEqual([DOUBLE_CLICK_DOWN]);
+
+    vi.advanceTimersByTime(QUIT_DOUBLE_PRESS_MS - 201);
+    expect(harness.notifications).toEqual([DOUBLE_CLICK_DOWN]);
+    vi.advanceTimersByTime(1);
+    expect(harness.notifications).toEqual([DOUBLE_CLICK_DOWN, UP]);
+  });
+
   it("treats two slow presses as separate attempts in double-click mode", async () => {
     const harness = makeHarness({ mode: "double-click" });
     await harness.send(makeInput({}));

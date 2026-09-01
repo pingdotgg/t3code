@@ -57,13 +57,16 @@ export function makeQuitShortcutHandler(
     }
   };
 
-  const release = (cancelPendingMode = true) => {
-    if (!holding) return;
+  const release = (cancelPendingMode = true, keepDoublePressHint = false) => {
+    if (!holding && !notified) return;
+    const keepHint = keepDoublePressHint && mode === "double-click" && notified;
     if (cancelPendingMode) generation += 1;
     holding = false;
-    mode = undefined;
     armed = false;
     quitOnRelease = false;
+    if (keepHint) return;
+
+    mode = undefined;
     clearWatchdog();
     if (notified) {
       notified = false;
@@ -82,11 +85,11 @@ export function makeQuitShortcutHandler(
     if (input.type === "keyUp") {
       if (key === "q") {
         const shouldQuit = quitOnRelease;
-        release(false);
+        release(false, true);
         if (shouldQuit) options.quit();
       } else if (key === modifierKey) {
         if (!quitOnRelease) {
-          release(false);
+          release(false, true);
         } else {
           watchdog = setTimeout(quitNow, QUIT_HOLD_RELEASE_GRACE_MS);
         }
@@ -109,7 +112,7 @@ export function makeQuitShortcutHandler(
       // interrupted press also stops counting toward a double press, but only
       // here, not in release(), which runs mid-restart on an unseen-release
       // re-press and must not wipe that press's own tap timestamp.
-      if (holding && !input.isAutoRepeat) {
+      if ((holding || notified) && !input.isAutoRepeat) {
         lastPressAt = 0;
         release();
       }
@@ -130,9 +133,9 @@ export function makeQuitShortcutHandler(
     const now = Date.now();
     const previousPressAt = lastPressAt;
     lastPressAt = now;
-    // A fresh keydown while "holding" means the key came back down after a
-    // release macOS never delivered.
-    if (holding) release();
+    // A fresh keydown supersedes the current physical hold or the hint kept
+    // alive after a detected release.
+    if (holding || notified) release();
 
     generation += 1;
     const pressGeneration = generation;
@@ -154,18 +157,25 @@ export function makeQuitShortcutHandler(
           return;
         }
 
-        // The physical press ended while its settings read was pending. Hold
-        // mode has nothing left to arm, while a non-matching double press has
-        // already recorded its timestamp for the next attempt.
+        if (resolvedMode === "double-click") {
+          const remainingMs = QUIT_DOUBLE_PRESS_MS - (Date.now() - now);
+          if (remainingMs <= 0) {
+            release();
+            return;
+          }
+          mode = resolvedMode;
+          notified = true;
+          options.notify({ state: "down", mode: resolvedMode });
+          watchdog = setTimeout(release, remainingMs);
+          return;
+        }
+
+        // A hold cannot be armed after its physical press has ended.
         if (!holding) return;
 
         mode = resolvedMode;
         notified = true;
         options.notify({ state: "down", mode: resolvedMode });
-        if (resolvedMode === "double-click") {
-          watchdog = setTimeout(release, QUIT_DOUBLE_PRESS_MS);
-          return;
-        }
 
         armed = true;
         // No auto-repeat by then means the key was released (possibly with a
