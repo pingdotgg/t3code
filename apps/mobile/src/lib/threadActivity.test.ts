@@ -234,6 +234,98 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps long Claude commands expandable without repeating them in full detail", () => {
+    const command = `printf 'first line\nsecond line'\n&& printf done`;
+    const thread = makeThread({
+      id: ThreadId.make("thread-long-command"),
+      projectId: ProjectId.make("project-1"),
+      title: "Long command",
+      activities: [
+        makeActivity({
+          id: EventId.make("long-command"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Command run",
+          createdAt: "2026-09-01T00:00:00.000Z",
+          payload: {
+            itemType: "command_execution",
+            title: "Command run",
+            detail: `Bash: ${command}`,
+            data: { toolName: "Bash", command },
+          },
+        }),
+      ],
+    });
+
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    const [row] = group.activities;
+    expect(row).toMatchObject({ detail: command, canExpand: true });
+    expect(row?.getFullDetail()).toBe(command);
+    expect(row?.getCopyText()).toBe(`Command run\n${command}`);
+  });
+
+  it("keeps command output when it equals the displayed command", () => {
+    const command = "printf hello";
+    const thread = makeThread({
+      id: ThreadId.make("thread-matching-command-output"),
+      projectId: ProjectId.make("project-1"),
+      title: "Matching output",
+      activities: [
+        makeActivity({
+          id: EventId.make("matching-command-output"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Command run",
+          createdAt: "2026-09-01T00:00:00.000Z",
+          payload: {
+            itemType: "command_execution",
+            title: "Command run",
+            detail: `Bash: ${command}`,
+            data: { toolName: "Bash", command, rawOutput: { content: command } },
+          },
+        }),
+      ],
+    });
+
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    const [row] = group.activities;
+    expect(row?.detail).toBe(command);
+    expect(row?.getFullDetail()).toBe(`${command}\n\n${command}`);
+    expect(row?.getCopyText()).toBe(`Command run\n${command}\n\n${command}`);
+  });
+
+  it("does not show command output when the command input is missing", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-command-without-input"),
+      projectId: ProjectId.make("project-1"),
+      title: "Missing command input",
+      activities: [
+        makeActivity({
+          id: EventId.make("command-without-input"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Command run",
+          createdAt: "2026-09-01T00:00:00.000Z",
+          payload: {
+            itemType: "command_execution",
+            title: "Command run",
+            data: { rawOutput: { content: "output without command metadata" } },
+          },
+        }),
+      ],
+    });
+
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    expect(group.activities[0]?.detail).toBeNull();
+    expect(group.activities[0]?.getFullDetail()).toBeNull();
+  });
+
   it("keeps setup failures visible without routine setup notices before or after a turn", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-worktree-setup"),

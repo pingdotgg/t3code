@@ -119,7 +119,7 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(acp.payload).length).toBeLessThan(500);
   });
 
-  it("normalizes Claude and OpenCode command inputs before slimming provider data", () => {
+  it("keeps bounded Claude command input and result summaries", () => {
     const claude = projectActivityPayload(
       activity({
         itemType: "command_execution",
@@ -127,7 +127,13 @@ describe("projectActivityPayload", () => {
         data: {
           toolName: "Bash",
           input: { command: "vp test run" },
-          result: { content: "x".repeat(5_000) },
+          result: {
+            type: "tool_result",
+            content: [
+              { type: "text", text: "tests passed" },
+              { type: "text", text: "x".repeat(5_000) },
+            ],
+          },
         },
       }),
     );
@@ -148,13 +154,17 @@ describe("projectActivityPayload", () => {
 
     expect(claude.payload).toMatchObject({
       toolCallId: "claude-call-1",
-      data: { command: "vp test run" },
+      data: {
+        toolName: "Bash",
+        command: "vp test run",
+        rawOutput: { content: "tests passed" },
+      },
     });
     expect(openCode.payload).toMatchObject({
       toolCallId: "opencode-call-1",
       data: { command: "vp lint" },
     });
-    expect(JSON.stringify(claude.payload).length).toBeLessThan(200);
+    expect(JSON.stringify(claude.payload).length).toBeLessThan(250);
     expect(JSON.stringify(openCode.payload).length).toBeLessThan(200);
   });
 

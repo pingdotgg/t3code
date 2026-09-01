@@ -66,6 +66,42 @@ describe("deriveWorkLogEntries command output", () => {
     });
   });
 
+  it("keeps command output that equals the command text", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeCommandActivity("matching-output", {
+        itemType: "command_execution",
+        title: "Ran command",
+        detail: "printf hello",
+        data: {
+          command: "printf hello",
+          rawOutput: { content: "printf hello" },
+        },
+      }),
+    ]);
+
+    expect(entry).toMatchObject({
+      command: "printf hello",
+      detail: "printf hello",
+    });
+  });
+
+  it("drops a Claude tool-name detail when there is no output", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeCommandActivity("claude-no-output", {
+        itemType: "command_execution",
+        title: "Command run",
+        detail: "Bash: printf hello",
+        data: {
+          toolName: "Bash",
+          command: "printf hello",
+        },
+      }),
+    ]);
+
+    expect(entry?.command).toBe("printf hello");
+    expect(entry?.detail).toBeUndefined();
+  });
+
   it("drops duplicated command detail when the command has no output", () => {
     const [entry] = deriveWorkLogEntries([
       makeCommandActivity("empty-command", {

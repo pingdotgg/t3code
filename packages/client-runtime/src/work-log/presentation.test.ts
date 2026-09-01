@@ -2,7 +2,49 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ThreadId } from "@t3tools/contracts";
 
-import { resolveViewedImageAsset, workEntryViewedImagePath } from "./presentation.js";
+import {
+  commandDetailRepeatsCommand,
+  extractCommandOutputText,
+  resolveViewedImageAsset,
+  workEntryViewedImagePath,
+} from "./presentation.js";
+
+describe("command work-log details", () => {
+  it("extracts Claude result blocks and projected output", () => {
+    expect(
+      extractCommandOutputText({
+        result: {
+          content: [
+            { type: "text", text: "first" },
+            { type: "text", text: "second" },
+          ],
+        },
+      }),
+    ).toBe("first\nsecond");
+    expect(extractCommandOutputText({ rawOutput: { content: "projected summary" } })).toBe(
+      "projected summary",
+    );
+  });
+
+  it("only removes a detail with the matching tool-name prefix", () => {
+    expect(
+      commandDetailRepeatsCommand({
+        detail: "Bash: printf hello",
+        command: "printf hello",
+        rawCommand: null,
+        toolName: "Bash",
+      }),
+    ).toBe(true);
+    expect(
+      commandDetailRepeatsCommand({
+        detail: "warning: printf hello",
+        command: "printf hello",
+        rawCommand: null,
+        toolName: "Bash",
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("workEntryViewedImagePath", () => {
   const entry = { label: "Read", tone: "tool" } as const;

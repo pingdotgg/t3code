@@ -2446,7 +2446,8 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   const showFailedIndicator = workEntryDisplayIndicatesToolFailure(workEntry);
   const entryIconName =
     showWarningIndicator || showFailedIndicator ? "circle-alert" : workEntryIconName(workEntry);
-  const displayText = workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
+  const previewText = workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
+  const displayText = expanded && workEntry.command?.trim() ? "Command" : previewText;
   const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
   const viewedImagePath = workEntryViewedImagePath(workEntry);
   const viewedImage =
