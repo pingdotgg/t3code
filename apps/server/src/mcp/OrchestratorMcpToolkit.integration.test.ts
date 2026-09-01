@@ -2395,9 +2395,9 @@ describe("orchestrator MCP toolkit", () => {
               return yield* Effect.die(new Error("Late completion successor delivery missing."));
             }
 
-            // The bounded successor can coalesce a late result only once. A
-            // third terminal after that successor has started remains
-            // inspectable, but cannot recursively create a third parent run.
+            // A sibling that finishes while the follow-up wake is already
+            // running stays pending, then gets its own offer after that wake
+            // settles. There is no two-delivery cap.
             const successorGate = yield* Deferred.make<void>();
             deliveryTerminalGates.set(lateParentThreadId, successorGate);
             yield* orchestrator.dispatch({
@@ -2450,7 +2450,7 @@ describe("orchestrator MCP toolkit", () => {
               commandId: CommandId.make("command:mcp-late-parent:interrupt-third-late-child"),
               threadId: thirdLateTask.childThreadId,
               runId: thirdLateChildRun.id,
-              reason: "Terminalize after the bounded successor started.",
+              reason: "Terminalize while the follow-up wake is already running.",
             });
             yield* waitForProjection(
               orchestrator,
@@ -2460,6 +2460,68 @@ describe("orchestrator MCP toolkit", () => {
                   ?.completionDelivery?.state === "pending",
             );
             yield* Deferred.succeed(successorGate, undefined);
+            const thirdFollowUp = yield* waitForProjection(
+              orchestrator,
+              lateParentThreadId,
+              (projection) => {
+                const delivery = projection.runs.find((run) => run.id === lateParentRun.id)
+                  ?.delegatedCompletion?.delivery;
+                return (
+                  delivery !== undefined &&
+                  delivery !== null &&
+                  delivery.generation === successorDelivery.generation + 1 &&
+                  delivery.taskIds.length === 1 &&
+                  delivery.taskIds[0] === thirdLateTask.id &&
+                  projection.runs.find((run) => run.id === activeSuccessorRun.id)?.status ===
+                    "completed"
+                );
+              },
+            );
+            const thirdFollowUpDelivery = thirdFollowUp.runs.find(
+              (run) => run.id === lateParentRun.id,
+            )?.delegatedCompletion?.delivery;
+            if (thirdFollowUpDelivery === undefined || thirdFollowUpDelivery === null) {
+              return yield* Effect.die(new Error("Third sibling follow-up delivery missing."));
+            }
+            const lateOffersAfterThird = yield* waitForContinuationOffers(3);
+            expect(lateOffersAfterThird).toHaveLength(3);
+
+            const thirdFollowUpGate = yield* Deferred.make<void>();
+            deliveryTerminalGates.set(lateParentThreadId, thirdFollowUpGate);
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "agent",
+              creationSource: "server",
+              commandId: CommandId.make("command:mcp-late-parent:dispatch-third-follow-up"),
+              threadId: lateParentThreadId,
+              messageId: thirdFollowUpDelivery.messageId,
+              text: "Delegated task reached a terminal state.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "queue_after_active" },
+              delegatedCompletion: {
+                parentRunId: lateParentRun.id,
+                generation: thirdFollowUpDelivery.generation,
+                taskIds: thirdFollowUpDelivery.taskIds,
+              },
+            });
+            const activeThirdFollowUp = yield* waitForProjection(
+              orchestrator,
+              lateParentThreadId,
+              (projection) =>
+                projection.runs.some(
+                  (run) =>
+                    run.userMessageId === thirdFollowUpDelivery.messageId &&
+                    run.status === "running",
+                ),
+            );
+            const activeThirdFollowUpRun = activeThirdFollowUp.runs.find(
+              (run) => run.userMessageId === thirdFollowUpDelivery.messageId,
+            );
+            if (activeThirdFollowUpRun === undefined) {
+              return yield* Effect.die(new Error("Third sibling follow-up did not start."));
+            }
+            yield* Deferred.succeed(thirdFollowUpGate, undefined);
             const exhaustedCohort = yield* waitForProjection(
               orchestrator,
               lateParentThreadId,
@@ -2467,24 +2529,29 @@ describe("orchestrator MCP toolkit", () => {
                 const cohort = projection.runs.find(
                   (run) => run.id === lateParentRun.id,
                 )?.delegatedCompletion;
+                const lateDelivery = projection.subagents.find((task) => task.id === lateTask.id)
+                  ?.completionDelivery?.state;
+                const thirdDelivery = projection.subagents.find(
+                  (task) => task.id === thirdLateTask.id,
+                )?.completionDelivery?.state;
                 return (
-                  cohort?.settledDeliveryCount === 2 &&
+                  cohort?.settledDeliveryCount === 3 &&
                   cohort.delivery === null &&
-                  projection.runs.find((run) => run.id === activeSuccessorRun.id)?.status ===
+                  projection.runs.find((run) => run.id === activeThirdFollowUpRun.id)?.status ===
                     "completed" &&
-                  projection.subagents.find((task) => task.id === thirdLateTask.id)
-                    ?.completionDelivery?.state === "pending"
+                  lateDelivery === "delivered" &&
+                  thirdDelivery === "delivered"
                 );
               },
             );
             expect(
               exhaustedCohort.runs.find((run) => run.id === lateParentRun.id)?.delegatedCompletion,
-            ).toMatchObject({ settledDeliveryCount: 2, delivery: null });
-            yield* expectOffersToStay(2);
+            ).toMatchObject({ settledDeliveryCount: 3, delivery: null });
+            yield* expectOffersToStay(3);
 
             // Queue Remove is a durable disposal action, not a local queue
             // edit. Start a fresh parent-run cohort so removing this delivery
-            // cannot interfere with the bounded late-delivery assertions.
+            // cannot interfere with the late-delivery assertions.
             const removeParentGate = yield* Deferred.make<void>();
             parentTerminalGates.set(lateParentThreadId, removeParentGate);
             const removeParentMessageId = MessageId.make("message:mcp-late-parent:remove-start");

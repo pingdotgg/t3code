@@ -546,4 +546,127 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
         );
       }),
   );
+
+  it.effect("re-plans a pending-only cohort after a cancelled wake", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:delegated-delivery-cancel-replan");
+      const projectId = ProjectId.make("project:delegated-delivery-cancel-replan");
+      const parentRunId = RunId.make("run:delegated-delivery-cancel-replan:parent");
+      const deliveryRunId = RunId.make("run:delegated-delivery-cancel-replan:delivery");
+      const parentRootNodeId = NodeId.make("node:delegated-delivery-cancel-replan:parent-root");
+      const deliveryRootNodeId = NodeId.make("node:delegated-delivery-cancel-replan:delivery-root");
+      const taskId = NodeId.make("node:delegated-delivery-cancel-replan:task");
+      const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId: parentRunId,
+        rootNodeId: parentRootNodeId,
+        taskId,
+        deliveryState: "claimed",
+        completionWake: "always",
+        deliveryTaskIds: [taskId],
+        now,
+      });
+      yield* eventSink.write({
+        commandId: CommandId.make("command:delegated-delivery-cancel-replan"),
+        events: [
+          {
+            id: EventId.make("event:delegated-delivery-cancel-replan:message"),
+            type: "message.updated",
+            threadId,
+            runId: deliveryRunId,
+            nodeId: deliveryRootNodeId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              createdBy: "agent",
+              creationSource: "server",
+              id: messageId,
+              threadId,
+              runId: deliveryRunId,
+              nodeId: deliveryRootNodeId,
+              role: "user",
+              text: `Delegated task ${taskId} reached a terminal state.`,
+              attachments: [],
+              streaming: false,
+              createdAt: now,
+              updatedAt: now,
+              delegatedCompletion: {
+                parentRunId,
+                generation: 1,
+                taskIds: [taskId],
+              },
+            },
+          },
+          {
+            id: EventId.make("event:delegated-delivery-cancel-replan:run"),
+            type: "run.updated",
+            threadId,
+            runId: deliveryRunId,
+            nodeId: deliveryRootNodeId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: deliveryRunId,
+              threadId,
+              ordinal: 2,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              providerThreadId: ProviderThreadId.make(
+                `provider-thread:${String(threadId).replace("thread:", "")}`,
+              ),
+              userMessageId: messageId,
+              rootNodeId: deliveryRootNodeId,
+              activeAttemptId: null,
+              status: "cancelled",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+        ],
+      });
+
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+          (candidate) => candidate.id === taskId,
+        );
+        if (task?.completionDelivery?.state === "pending") break;
+        yield* Effect.yieldNow;
+      }
+      const afterCancel = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        afterCancel.subagents.find((candidate) => candidate.id === taskId)?.completionDelivery
+          ?.state,
+        "pending",
+      );
+      assert.equal(
+        afterCancel.runs.find((candidate) => candidate.id === parentRunId)?.delegatedCompletion
+          ?.delivery,
+        null,
+      );
+
+      yield* orchestrator.dispatch({
+        type: "delegated_task.wake-policy",
+        commandId: CommandId.make("command:delegated-delivery-cancel-replan:wake-policy"),
+        parentThreadId: threadId,
+        taskId,
+        completionWake: "settled_only",
+      });
+
+      const afterReplan = yield* orchestrator.getThreadProjection(threadId);
+      const parentRun = afterReplan.runs.find((candidate) => candidate.id === parentRunId);
+      const task = afterReplan.subagents.find((candidate) => candidate.id === taskId);
+      assert.equal(task?.completionDelivery?.state, "claimed");
+      assert.isNotNull(parentRun?.delegatedCompletion?.delivery ?? null);
+      assert.deepEqual(parentRun?.delegatedCompletion?.delivery?.taskIds, [taskId]);
+    }),
+  );
 });
