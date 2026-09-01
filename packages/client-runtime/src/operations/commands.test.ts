@@ -25,6 +25,8 @@ import {
   archiveThread,
   createProject,
   settleThread,
+  viewThread,
+  markThreadUnread,
   stopThreadSession,
   unsettleThread,
 } from "./commands.ts";
@@ -168,6 +170,37 @@ describe("environment commands", () => {
           commandId: "unsettle-command",
           threadId: "thread-1",
           reason: "user",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches thread view-state commands without client timestamps", () =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched);
+
+      yield* viewThread({
+        commandId: CommandId.make("view-command"),
+        threadId: ThreadId.make("thread-1"),
+        viewedThrough: "2026-01-01T00:00:00.000Z",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      yield* markThreadUnread({
+        commandId: CommandId.make("mark-unread-command"),
+        threadId: ThreadId.make("thread-1"),
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(dispatched).toEqual([
+        {
+          type: "thread.view",
+          commandId: "view-command",
+          threadId: "thread-1",
+          viewedThrough: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          type: "thread.mark-unread",
+          commandId: "mark-unread-command",
+          threadId: "thread-1",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

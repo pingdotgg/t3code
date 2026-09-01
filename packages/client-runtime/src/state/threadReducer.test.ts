@@ -350,6 +350,29 @@ describe("applyThreadDetailEvent", () => {
         expect(cleared.thread.linkedPullRequest).toBeNull();
       }
     });
+
+    it("patches viewedAt without changing the thread update time", () => {
+      const viewedAt = "2026-04-01T05:00:00.000Z";
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 5,
+        occurredAt: viewedAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          viewedAt,
+          updatedAt: baseThread.updatedAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.viewedAt).toBe(viewedAt);
+        expect(result.thread.updatedAt).toBe(baseThread.updatedAt);
+      }
+    });
   });
 
   describe("thread.message-sent", () => {

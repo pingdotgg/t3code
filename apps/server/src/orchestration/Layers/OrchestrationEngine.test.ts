@@ -303,6 +303,70 @@ describe("OrchestrationEngine", () => {
       }
     },
   );
+  it("persists thread view state through backward-compatible metadata events", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const viewedAt = "2026-01-01T00:05:00.000Z";
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-view-state-project-create"),
+        projectId: asProjectId("project-view-state"),
+        title: "View state project",
+        workspaceRoot: "/tmp/project-view-state",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-view-state-thread-create"),
+        threadId: ThreadId.make("thread-view-state"),
+        projectId: asProjectId("project-view-state"),
+        title: "View state thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    expect((await system.readModel()).threads[0]?.viewedAt).toBe(createdAt);
+
+    const receipt = await system.run(
+      engine.dispatch({
+        type: "thread.view",
+        commandId: CommandId.make("cmd-view-state-view"),
+        threadId: ThreadId.make("thread-view-state"),
+        viewedThrough: viewedAt,
+      }),
+    );
+    const snapshot = await system.readModel();
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(receipt.sequence - 1, 1)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+
+    expect(snapshot.threads[0]).toMatchObject({ viewedAt, updatedAt: createdAt });
+    expect(events[0]).toMatchObject({
+      type: "thread.meta-updated",
+      payload: { viewedAt, updatedAt: createdAt },
+    });
+
+    await system.dispose();
+  });
 
   it("bootstraps command handling from persisted projections without reading the full snapshot", async () => {
     let nextSequence = 8;

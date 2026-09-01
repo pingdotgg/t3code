@@ -224,6 +224,7 @@ import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations"
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { useThreadActions } from "../hooks/useThreadActions";
+import { useThreadViewState } from "../hooks/useThreadViewState";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
@@ -1462,7 +1463,7 @@ export default function ChatView(props: ChatViewProps) {
       },
     };
   }, [routeKind, routeThreadRef, routeThreadState]);
-  const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
+  const { markViewed } = useThreadViewState();
   const settings = useEnvironmentSettings(environmentId);
   // New-thread defaults live in the primary environment's settings.json (the
   // settings UI never writes to remote environments), so read them from the
@@ -1929,24 +1930,32 @@ export default function ChatView(props: ChatViewProps) {
   const activeRunningTurnId =
     (activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null) ??
     (activeLatestTurn?.state === "running" ? activeLatestTurn.turnId : null);
-  // Reading a finished thread clears the sidebar's Done badge. The visit is
-  // stamped at the turn's completion time — not now/updatedAt — so it clears
+  // Reading a finished thread clears the sidebar's Done badge. The view is
+  // stamped at the turn's completion time, not now/updatedAt, so it clears
   // exactly the completion the user is looking at: a wake or completion that
-  // lands later still gets its signal (markThreadVisited never moves the
-  // timestamp backwards).
+  // lands later still gets its signal (the boundary never moves backwards).
+  // Only a focused, visible document counts as reading; a completion that
+  // lands in a background tab stays unread until the user comes back.
+  const serverThreadEnvironmentId = serverThread?.environmentId;
+  const serverThreadId = serverThread?.id;
+  const serverThreadCompletedAt = serverThread?.latestTurn?.completedAt;
   useEffect(() => {
-    const completedAt = serverThread?.latestTurn?.completedAt;
-    if (!serverThread?.id || !completedAt) return;
-    markThreadVisited(
-      scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      completedAt,
-    );
-  }, [
-    markThreadVisited,
-    serverThread?.environmentId,
-    serverThread?.id,
-    serverThread?.latestTurn?.completedAt,
-  ]);
+    if (!serverThreadEnvironmentId || !serverThreadId || !serverThreadCompletedAt) return;
+    const threadRef = scopeThreadRef(serverThreadEnvironmentId, serverThreadId);
+    const acknowledge = () => {
+      if (document.visibilityState !== "visible" || !document.hasFocus()) return;
+      markViewed(threadRef, serverThreadCompletedAt);
+      window.removeEventListener("focus", acknowledge);
+      document.removeEventListener("visibilitychange", acknowledge);
+    };
+    acknowledge();
+    window.addEventListener("focus", acknowledge);
+    document.addEventListener("visibilitychange", acknowledge);
+    return () => {
+      window.removeEventListener("focus", acknowledge);
+      document.removeEventListener("visibilitychange", acknowledge);
+    };
+  }, [markViewed, serverThreadEnvironmentId, serverThreadId, serverThreadCompletedAt]);
   useEffect(() => {
     setMountedTerminalThreadKeys((currentThreadIds) => {
       const nextThreadIds = reconcileMountedTerminalThreadIds({
@@ -5156,12 +5165,13 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadShell?.snoozedUntil, activeThreadSnoozed, snoozeWakeTick]);
   const acknowledgeActiveThreadWoke = useCallback(() => {
     if (activeThreadRef === null || activeThreadWokeAt === null) return;
-    markThreadVisited(scopedThreadKey(activeThreadRef), activeThreadWokeAt);
-  }, [activeThreadRef, activeThreadWokeAt, markThreadVisited]);
+    markViewed(activeThreadRef, activeThreadWokeAt);
+  }, [activeThreadRef, activeThreadWokeAt, markViewed]);
   // Mirror of the sidebar's Woke pill for the open thread.
-  const activeThreadLastVisitedAt = useUiStateStore((store) =>
+  const activeThreadLocalLastVisitedAt = useUiStateStore((store) =>
     activeThreadKey === null ? undefined : store.threadLastVisitedAtById[activeThreadKey],
   );
+  const activeThreadLastVisitedAt = activeThreadShell?.viewedAt ?? activeThreadLocalLastVisitedAt;
   const activeThreadWokeVisible = useMemo(() => {
     if (activeThreadWokeAt === null) return false;
     if (activeThreadShell?.settledOverride === "settled") return false;

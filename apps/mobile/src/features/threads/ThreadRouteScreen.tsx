@@ -13,7 +13,7 @@ import {
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import { AppState, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
@@ -75,6 +75,7 @@ import {
   ThreadInspectorContentStack,
   type ThreadInspectorMode,
 } from "./thread-inspector-content-stack";
+import { shouldAcknowledgeThreadView } from "./threadViewState";
 
 interface ThreadInspectorSelection {
   readonly routeThreadIdentity: string | null;
@@ -284,6 +285,58 @@ function ThreadRouteContent(
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
+  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+  const supportsThreadViewState = serverConfig?.environment.capabilities.threadViewState === true;
+  const viewThread = useAtomCommand(threadEnvironment.view, { reportFailure: false });
+  const [appState, setAppState] = useState(() => AppState.currentState);
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", setAppState);
+    return () => subscription.remove();
+  }, []);
+  // Reading a finished thread clears its Done indicator on every client.
+  // Files, Review, and Terminal are native pushes that blur this route, so a
+  // completion that lands behind them stays unread until the user comes
+  // back. viewedAt is read through a ref and kept out of the deps: another
+  // client marking the thread unread must not trigger an immediate re-view.
+  const selectedThreadEnvironmentId = selectedThread?.environmentId ?? null;
+  const selectedThreadId = selectedThread?.id ?? null;
+  const selectedThreadCompletedAt = selectedThread?.latestTurn?.completedAt ?? null;
+  const selectedThreadViewedAtRef = useRef(selectedThread?.viewedAt);
+  selectedThreadViewedAtRef.current = selectedThread?.viewedAt;
+  useFocusEffect(
+    useCallback(() => {
+      if (
+        selectedThreadEnvironmentId === null ||
+        selectedThreadId === null ||
+        selectedThreadCompletedAt === null
+      ) {
+        return;
+      }
+      if (
+        !shouldAcknowledgeThreadView({
+          appState,
+          connectionState: routeConnectionState,
+          supported: supportsThreadViewState,
+          completedAt: selectedThreadCompletedAt,
+          viewedAt: selectedThreadViewedAtRef.current,
+        })
+      ) {
+        return;
+      }
+      void viewThread({
+        environmentId: selectedThreadEnvironmentId,
+        input: { threadId: selectedThreadId, viewedThrough: selectedThreadCompletedAt },
+      });
+    }, [
+      appState,
+      routeConnectionState,
+      selectedThreadCompletedAt,
+      selectedThreadEnvironmentId,
+      selectedThreadId,
+      supportsThreadViewState,
+      viewThread,
+    ]),
+  );
   const selectedThreadWithDraftSettings = useMemo(
     () =>
       selectedThread
@@ -759,7 +812,6 @@ function ThreadRouteContent(
     detailDeleted: selectedThreadDetailState.status === "deleted",
     connectionState: routeConnectionState,
   });
-  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
       <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />

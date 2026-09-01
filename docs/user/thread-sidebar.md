@@ -47,6 +47,15 @@ offline environments and older servers keep their previous values. If connected
 environments disagree, **Apply to all** copies your current settings to those named
 in the warning. Changing a rule does not reopen already settled threads.
 
+## Read and unread threads
+
+Open a completed thread to clear its **Done** indicator on every connected device. On web and
+desktop, open the thread's context menu and choose **Mark unread** to bring the indicator back.
+Mobile clears the indicator when you open a thread but does not mark threads unread.
+
+Older servers keep read and unread changes on the current device. Update the server to sync
+them across devices. When you first update, existing threads count as read.
+
 ## Link a pull request
 
 On web and desktop, right-click a pull request link in a thread and choose

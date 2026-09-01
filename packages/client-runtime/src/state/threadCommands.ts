@@ -26,6 +26,8 @@ import {
   type UnarchiveThreadInput,
   type UnpinThreadInput,
   type UnsettleThreadInput,
+  type ViewThreadInput,
+  type MarkThreadUnreadInput,
   type UnsnoozeThreadInput,
   type UpdateThreadMetadataInput,
   archiveThread,
@@ -46,6 +48,8 @@ import {
   unarchiveThread,
   unpinThread,
   unsettleThread,
+  viewThread,
+  markThreadUnread,
   unsnoozeThread,
   updateThreadMetadata,
 } from "../operations/commands.ts";
@@ -70,6 +74,8 @@ export type {
   UnarchiveThreadInput,
   UnpinThreadInput,
   UnsettleThreadInput,
+  ViewThreadInput,
+  MarkThreadUnreadInput,
   UnsnoozeThreadInput,
   UpdateThreadMetadataInput,
 } from "../operations/commands.ts";
@@ -117,6 +123,18 @@ export function createThreadEnvironmentAtoms<R, E>(
     unsettle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unsettle",
       execute: (input: UnsettleThreadInput) => unsettleThread(input),
+      scheduler,
+      concurrency,
+    }),
+    view: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:view",
+      execute: (input: ViewThreadInput) => viewThread(input),
+      scheduler,
+      concurrency,
+    }),
+    markUnread: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:mark-unread",
+      execute: (input: MarkThreadUnreadInput) => markThreadUnread(input),
       scheduler,
       concurrency,
     }),
