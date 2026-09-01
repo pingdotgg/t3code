@@ -3,6 +3,7 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2TurnItemStatus,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import {
@@ -10,6 +11,7 @@ import {
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   workEntryDisplayIndicatesToolFailure,
   type WorkLogEntry,
+  type TimelineEntry,
 } from "../../session-logic";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import type { TurnDiffSummary } from "../../types";
@@ -3412,5 +3414,112 @@ describe("streaming v2 row projection", () => {
         ]),
       ),
     });
+  });
+});
+
+function subagentTimelineEntry(
+  id: string,
+  runId: string | null,
+  status: OrchestrationV2TurnItemStatus,
+  subagentId = id,
+  visibility: "local" | "inherited" = "local",
+  attempt?: NonNullable<TimelineEntry["attempt"]>,
+): TimelineEntry {
+  return {
+    id,
+    kind: "event",
+    createdAt: "2026-08-29T00:00:00Z",
+    ...(attempt === undefined ? {} : { attempt }),
+    projectedItem: {
+      visibility,
+      item: {
+        id,
+        runId,
+        status,
+        type: "subagent",
+        subagentId,
+      },
+    },
+  } as never;
+}
+
+function deriveRows(entries: TimelineEntry[], summarizeSubagents = true) {
+  return deriveMessagesTimelineRows({
+    timelineEntries: entries,
+    summarizeSubagents,
+    isWorking: false,
+    turnDiffSummaryByAssistantMessageId: new Map(),
+    revertTurnCountByUserMessageId: new Map(),
+  });
+}
+
+describe("subagent summary rows", () => {
+  it("groups local agents by run without swallowing inherited or unowned entries", () => {
+    const result = deriveRows([
+      subagentTimelineEntry("agent-a", "run-1", "running"),
+      subagentTimelineEntry("agent-b", "run-1", "completed"),
+      subagentTimelineEntry("agent-c", "run-2", "failed"),
+      subagentTimelineEntry("agent-d", "run-3", "cancelled"),
+      subagentTimelineEntry("orphan-a", null, "running"),
+      subagentTimelineEntry("orphan-b", null, "running"),
+      subagentTimelineEntry("inherited", "run-1", "completed", undefined, "inherited"),
+    ]);
+
+    expect(result).toMatchObject([
+      { kind: "agent-spawn", id: "agent-a", count: 2, working: 1, failed: 0 },
+      { kind: "agent-spawn", id: "agent-c", count: 1, working: 0, failed: 1 },
+      { kind: "agent-spawn", id: "agent-d", count: 1, stopped: 1 },
+      { kind: "agent-spawn", id: "orphan-a", count: 1 },
+      { kind: "agent-spawn", id: "orphan-b", count: 1 },
+      { kind: "event", id: "inherited" },
+    ]);
+  });
+
+  it("keeps ordinary subagent rows when no Agents panel is available", () => {
+    expect(deriveRows([subagentTimelineEntry("agent", "run-1", "running")], false)).toMatchObject([
+      { kind: "event", id: "agent" },
+    ]);
+  });
+
+  it("keeps superseded and replacement attempts in separate rosters", () => {
+    const runId = "run-steered" as never;
+    const supersededAttempt = {
+      id: "attempt-1" as never,
+      runId,
+      attemptOrdinal: 1,
+      rootNodeId: "node-attempt-1" as never,
+      status: "superseded" as const,
+    };
+    const activeAttempt = {
+      id: "attempt-2" as never,
+      runId,
+      attemptOrdinal: 2,
+      rootNodeId: "node-attempt-2" as never,
+      status: "running" as const,
+    };
+    const result = deriveRows([
+      subagentTimelineEntry(
+        "old-agent-a",
+        runId,
+        "completed",
+        undefined,
+        "local",
+        supersededAttempt,
+      ),
+      subagentTimelineEntry(
+        "old-agent-b",
+        runId,
+        "completed",
+        undefined,
+        "local",
+        supersededAttempt,
+      ),
+      subagentTimelineEntry("new-agent", runId, "running", undefined, "local", activeAttempt),
+    ]);
+
+    expect(result).toMatchObject([
+      { kind: "agent-spawn", id: "old-agent-a", count: 2, working: 0 },
+      { kind: "agent-spawn", id: "new-agent", count: 1, working: 1 },
+    ]);
   });
 });
