@@ -13,6 +13,7 @@ import {
   resolveViewedImageAsset,
   workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
+import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import type { AgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   emptyAgentPanelModel,
@@ -1520,15 +1521,15 @@ function ExpandedWorkGroupEntries({
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState();
-    const entry = state && entries[state.start];
-    if (state && entry) {
+    const position = state && resolveWorkGroupScrollAnchor(state);
+    if (position) {
       viewState.scrollPositions.set(anchorKey, {
-        entryId: entry.id,
-        offset: state.scroll - state.positionAtIndex(state.start),
+        entryId: position.rowId,
+        offset: position.offsetWithinRow,
       });
     }
     updateScrollFades();
-  }, [anchorKey, entries, updateScrollFades, viewState]);
+  }, [anchorKey, updateScrollFades, viewState]);
 
   const handleLoad = useCallback(() => {
     const list = listRef.current;

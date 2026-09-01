@@ -40,10 +40,10 @@ describe("tool-group append following", () => {
   const atEnd = {
     previousRows,
     rows: appendedRows,
-    previousContentHeight: 329,
-    contentHeight: 362,
+    previousContentHeight: 289,
+    contentHeight: 318,
     viewportHeight: 256,
-    scrollOffset: 73,
+    scrollOffset: 33,
     detailsChanged: false,
     userScrolling: false,
   };
@@ -56,11 +56,11 @@ describe("tool-group append following", () => {
     expect(
       shouldFollowThreadWorkGroupAppend({
         ...atEnd,
-        previousRows: previousRows.slice(0, 7),
-        rows: previousRows.slice(0, 8),
-        previousContentHeight: 230,
-        contentHeight: 263,
-        viewportHeight: 230,
+        previousRows: previousRows.slice(0, 8),
+        rows: previousRows.slice(0, 9),
+        previousContentHeight: 231,
+        contentHeight: 260,
+        viewportHeight: 231,
         scrollOffset: 0,
       }),
     ).toBe(true);
@@ -71,7 +71,7 @@ describe("tool-group append following", () => {
     { name: "dragging before leaving the edge", changes: { userScrolling: true } },
     { name: "opening detail during an append", changes: { detailsChanged: true } },
     { name: "streaming a result", changes: { rows: previousRows, contentHeight: 600 } },
-    { name: "updating a lifecycle label", changes: { rows: previousRows, contentHeight: 329 } },
+    { name: "updating a lifecycle label", changes: { rows: previousRows, contentHeight: 289 } },
     { name: "prepending old calls", changes: { rows: [{ id: "older" }, ...previousRows] } },
     {
       name: "replacing a call while appending",

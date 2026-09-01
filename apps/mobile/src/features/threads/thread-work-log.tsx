@@ -42,6 +42,7 @@ import {
   type ToolGroupSummaryKind,
   workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
+import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 import Animated, {
   cancelAnimation,
@@ -341,11 +342,11 @@ function isFreshRow(createdAt: string): boolean {
 // accessibility scaling can make the single-line text taller than that minimum.
 const WORK_ROW_HEIGHT = THREAD_WORK_ROW_MIN_HEIGHT;
 const WORK_ROW_GAP = 1; // gap-px
-const WORK_LOG_BOTTOM_MARGIN = 4; // mb-1
+const WORK_LOG_BOTTOM_MARGIN = 3.5; // mb-1 with the mobile 14px rem
 const WORK_GROUP_MAX_HEIGHT = 256;
 const WORK_GROUP_EDGE_FADE_HEIGHT = 12;
 
-export const WORK_GROUP_TOGGLE_HEIGHT = 32; // min-h-8
+export const WORK_GROUP_TOGGLE_HEIGHT = THREAD_WORK_ROW_MIN_HEIGHT;
 
 function workLogRowsHeight(
   activities: ReadonlyArray<ThreadFeedActivity>,
@@ -434,7 +435,6 @@ function ThreadWorkGroupList(props: {
   readonly scrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
   readonly renderRow: (row: ThreadFeedActivity) => ReactNode;
 }) {
-  const rowsHeight = workLogRowsHeight(props.activities);
   const estimatedRowsHeight = workLogRowsHeight(
     props.activities,
     props.rowSizing.estimatedRowHeight,
@@ -461,7 +461,7 @@ function ThreadWorkGroupList(props: {
     rowCount: props.activities.length,
   }));
   const contentHeight = Math.max(
-    rowsHeight,
+    1,
     measuredContent.height +
       Math.max(0, props.activities.length - measuredContent.rowCount) *
         (props.rowSizing.estimatedRowHeight + WORK_ROW_GAP),
@@ -488,15 +488,13 @@ function ThreadWorkGroupList(props: {
   const rememberPosition = useCallback(() => {
     if (!loadedRef.current) return;
     const state = listRef.current?.getState();
-    const row = state ? props.activities[state.start] : undefined;
-    if (!state || !row) return;
+    const position = state && resolveWorkGroupScrollAnchor(state);
+    if (!state || !position) return;
     props.scrollPositions.set(props.groupId, {
-      rowId: row.id,
-      offsetWithinRow: Math.max(0, state.scroll - state.positionAtIndex(state.start)),
-      scrollOffset: Math.max(0, state.scroll),
+      ...position,
       contentHeight: state.contentLength,
     });
-  }, [props.activities, props.groupId, props.scrollPositions]);
+  }, [props.groupId, props.scrollPositions]);
   const finishPendingAppend = useCallback(() => {
     const targetHeight = pendingAppendHeightRef.current;
     const state = listRef.current?.getState();
@@ -528,7 +526,7 @@ function ThreadWorkGroupList(props: {
         });
       previousContent.current = {
         rows: props.activities,
-        height: Math.max(rowsHeight, nextHeight),
+        height: nextHeight,
         expandedRows: props.expandedRows,
       };
       setMeasuredContent((current) =>
@@ -549,14 +547,7 @@ function ThreadWorkGroupList(props: {
       finishPendingAppend();
       rememberPosition();
     },
-    [
-      props.activities,
-      props.expandedRows,
-      rowsHeight,
-      scrollOffset,
-      finishPendingAppend,
-      rememberPosition,
-    ],
+    [props.activities, props.expandedRows, scrollOffset, finishPendingAppend, rememberPosition],
   );
   const getFixedItemSize = useCallback(
     (row: ThreadFeedActivity, index: number) =>
@@ -793,6 +784,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
 });
 
 export function ThreadWorkGroupToggle(props: {
+  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly expanded: boolean;
   readonly hiddenCount: number;
   readonly iconSubtleColor: import("react-native").ColorValue;
@@ -821,9 +813,11 @@ export function ThreadWorkGroupToggle(props: {
           props.onToggle();
         }}
         className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5 py-0 active:bg-subtle"
+        style={{ minHeight: props.rowSizing.estimatedRowHeight }}
       >
         {props.shimmer ? (
           <ShimmeringWorkContent
+            key={props.rowSizing.textSizeKey}
             icon={icon}
             iconSubtleColor={props.iconSubtleColor}
             label={props.summary}
@@ -834,7 +828,11 @@ export function ThreadWorkGroupToggle(props: {
             <View className="h-6 w-6 items-center justify-center">
               <WorkLogIcon icon={icon} color={props.iconSubtleColor} />
             </View>
-            <Text className="min-w-0 flex-1 text-sm text-foreground-muted" numberOfLines={1}>
+            <Text
+              key={props.rowSizing.textSizeKey}
+              className="min-w-0 flex-1 text-sm text-foreground-muted"
+              numberOfLines={1}
+            >
               {props.summary}
             </Text>
           </>

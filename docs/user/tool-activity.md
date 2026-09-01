@@ -5,6 +5,7 @@ select a row to inspect its details. Select the group summary again to collapse 
 
 Long groups scroll inside a bounded area without expanding the whole conversation. Faded edges
 indicate more calls above or below. Short groups use only the space they need.
+Collapsing and reopening a group preserves your reading position and any open call details.
 
 Recognized T3 tools use descriptive labels in both the running summary and individual rows.
 Labels follow the call's state, such as "Clicking" while running and "Clicked" after success.
