@@ -50,6 +50,7 @@ import {
 } from "@t3tools/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
+import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import {
   getTerminalLabel,
   nextTerminalId,
@@ -4593,6 +4594,41 @@ function ChatViewContent(props: ChatViewProps) {
     linkedPullRequest: linkedThreadPullRequest,
     linkedPullRequestStatus,
   });
+  const activeThreadReferenceCopyTarget = useMemo(
+    () =>
+      activeThreadId === null || !isServerThread
+        ? null
+        : resolveThreadReferenceCopyTarget({
+            threadId: activeThreadId,
+            linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
+            detectedPullRequestUrl: activeThreadPr?.url ?? null,
+          }),
+    [activeThreadId, activeThreadPr?.url, isServerThread, linkedThreadPullRequest?.url],
+  );
+  const copyActiveThreadReference = useCallback(() => {
+    const target = activeThreadReferenceCopyTarget;
+    if (target === null) return;
+    void writeTextToClipboard(target.value, target.clipboardTarget).then(
+      (didCopy) => {
+        if (!didCopy) return;
+        toastManager.add({
+          type: "success",
+          title: target.successTitle,
+          description: target.value,
+        });
+      },
+      (error) => {
+        console.error(error);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: target.failureTitle,
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      },
+    );
+  }, [activeThreadReferenceCopyTarget]);
   // The right panel offers the thread's own change request, so it can only offer it once the
   // branch has one; until then the picker says so rather than opening an empty panel.
   const addPullRequestSurface = useCallback(() => {
@@ -5257,6 +5293,13 @@ function ChatViewContent(props: ChatViewProps) {
       });
       if (!command) return;
 
+      if (command === "thread.copyReference") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) copyActiveThreadReference();
+        return;
+      }
+
       if (command === "thread.settle") {
         event.preventDefault();
         event.stopPropagation();
@@ -5426,6 +5469,7 @@ function ChatViewContent(props: ChatViewProps) {
     supportsPinning,
     supportsSettlement,
     confirmAndUnpinThread,
+    copyActiveThreadReference,
     toggleRightPanel,
     toggleRightPanelMaximized,
     toggleTerminalVisibility,

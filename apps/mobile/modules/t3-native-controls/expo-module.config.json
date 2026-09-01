@@ -4,6 +4,9 @@
     "modules": ["T3NativeControlsModule", "T3KeyboardCommandsModule"]
   },
   "android": {
-    "modules": ["expo.modules.t3nativecontrols.T3NativeControlsModule"]
+    "modules": [
+      "expo.modules.t3nativecontrols.T3NativeControlsModule",
+      "expo.modules.t3nativecontrols.T3KeyboardCommandsModule"
+    ]
   }
 }

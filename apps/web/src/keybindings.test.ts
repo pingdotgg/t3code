@@ -143,6 +143,11 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
   {
+    shortcut: modShortcut("c", { shiftKey: true }),
+    command: "thread.copyReference",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
     shortcut: modShortcut("s", { shiftKey: true }),
     command: "thread.settle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
@@ -207,6 +212,32 @@ describe("settle thread shortcut", () => {
     assert.isNull(
       resolveShortcutCommand(event({ key: "s", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
         platform: "Win32",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+});
+
+describe("copy thread reference shortcut", () => {
+  it("resolves Cmd+Shift+C on macOS and Ctrl+Shift+C elsewhere", () => {
+    assert.equal(
+      resolveShortcutCommand(event({ key: "c", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+      "thread.copyReference",
+    );
+    assert.equal(
+      resolveShortcutCommand(event({ key: "c", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+      "thread.copyReference",
+    );
+  });
+
+  it("leaves terminal copy untouched", () => {
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "c", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
         context: { terminalFocus: true },
       }),
     );

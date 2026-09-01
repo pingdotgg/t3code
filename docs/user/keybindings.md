@@ -52,6 +52,10 @@ successful pick; its hover glow and badge preview the element and color family t
 `rightPanel.toggleMaximized` maximizes or restores the open right panel. It has no default shortcut,
 so add one in **Settings** → **Keybindings** if you want to use it.
 
+`thread.copyReference` copies the active thread's pull request link, or its thread ID when no pull
+request is available. Its default shortcut is `mod+shift+c`, and it does not replace terminal copy
+while the terminal has focus.
+
 `thread.settle` settles the active thread or restores it when it is already settled. Its default
 shortcut is `mod+shift+s`, and it does not run while the terminal has focus.
 

@@ -27,19 +27,22 @@ export class CopyTextHapticFeedbackError extends Schema.TaggedErrorClass<CopyTex
   }
 }
 
-export function copyTextWithHaptic(
+interface CopyTextWithHapticOptions {
+  readonly target?: string;
+  readonly feedback?: "light-impact" | "selection";
+}
+
+export async function tryCopyTextWithHaptic(
   value: string,
-  options: {
-    readonly target?: string;
-    readonly feedback?: "light-impact" | "selection";
-  } = {},
-): void {
+  options: CopyTextWithHapticOptions = {},
+): Promise<boolean> {
   const target = options.target ?? "text";
   const feedback = options.feedback ?? "light-impact";
 
-  void (async () => {
+  const clipboardWrite = (async () => {
     try {
       await Clipboard.setStringAsync(value);
+      return true;
     } catch (cause) {
       console.error(
         new CopyTextClipboardWriteError({
@@ -47,6 +50,7 @@ export function copyTextWithHaptic(
           cause,
         }),
       );
+      return false;
     }
   })();
 
@@ -67,4 +71,10 @@ export function copyTextWithHaptic(
       );
     }
   })();
+
+  return await clipboardWrite;
+}
+
+export function copyTextWithHaptic(value: string, options: CopyTextWithHapticOptions = {}): void {
+  void tryCopyTextWithHaptic(value, options);
 }

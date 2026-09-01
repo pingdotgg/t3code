@@ -167,6 +167,10 @@
       "types": "./src/keybindings.ts",
       "import": "./src/keybindings.ts"
     },
+    "./threadReference": {
+      "types": "./src/threadReference.ts",
+      "import": "./src/threadReference.ts"
+    },
     "./composerTrigger": {
       "types": "./src/composerTrigger.ts",
       "import": "./src/composerTrigger.ts"

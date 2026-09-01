@@ -22,6 +22,7 @@ import {
   CopyTextClipboardWriteError,
   CopyTextHapticFeedbackError,
   copyTextWithHaptic,
+  tryCopyTextWithHaptic,
 } from "./copyTextWithHaptic";
 
 describe("copyTextWithHaptic", () => {
@@ -52,6 +53,19 @@ describe("copyTextWithHaptic", () => {
     expect(mocks.setStringAsync).toHaveBeenCalledWith("work output");
     expect(mocks.selectionAsync).toHaveBeenCalledOnce();
     expect(mocks.impactAsync).not.toHaveBeenCalled();
+  });
+
+  it("reports whether the clipboard write succeeded", async () => {
+    mocks.setStringAsync.mockResolvedValueOnce(undefined);
+
+    await expect(tryCopyTextWithHaptic("thread-123")).resolves.toBe(true);
+  });
+
+  it("returns false when the clipboard write fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.setStringAsync.mockRejectedValueOnce(new Error("native clipboard failure"));
+
+    await expect(tryCopyTextWithHaptic("thread-123")).resolves.toBe(false);
   });
 
   it("reports structured failures without including clipboard contents", async () => {
