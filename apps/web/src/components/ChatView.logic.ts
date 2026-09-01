@@ -65,6 +65,11 @@ export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.
  */
 export function isProviderAuthError(message: string | null | undefined): boolean {
   if (!message) return false;
+  // An API-key problem is not fixed by the OAuth `claude auth login` flow this
+  // action runs, so reject api-key wording first — otherwise a message like
+  // "Authentication failed: API key is invalid" would match the positive
+  // expression below on "authentication failed" and offer a login that can't help.
+  if (/\bapi[- ]?key\b/i.test(message)) return false;
   return /(?:re-?authenticate|\breauth\b|failed to authenticate|not (?:logged in|authenticated)|unauthenticated|authentication (?:failed|error|required)|invalid authentication|access token (?:has )?expired|expired[\w ]*token|invalid[\w ]*(?:credential|access token|token)|please (?:log ?in|sign ?in)|(?:log|sign) ?in again)/i.test(
     message,
   );

@@ -1068,8 +1068,11 @@ describe("isProviderAuthError", () => {
     expect(isProviderAuthError("Configured OAuth provider settings")).toBe(false);
     expect(isProviderAuthError("Set your api key in settings")).toBe(false);
     // API-key auth problems are not fixed by the OAuth `setup-token` flow, so
-    // they must not trigger the re-authenticate action.
+    // they must not trigger the re-authenticate action — even when the message
+    // also carries otherwise-matching "authentication failed" wording.
     expect(isProviderAuthError("API Error: 401 Invalid API key")).toBe(false);
+    expect(isProviderAuthError("Authentication failed: API key is invalid")).toBe(false);
+    expect(isProviderAuthError("Failed to authenticate. Your API key is invalid.")).toBe(false);
   });
 });
 
