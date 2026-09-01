@@ -112,8 +112,10 @@ was opened outside a shell and did not inherit the variable. Each saved name
 must match `SendEnv` for that host, and the SSH server must allow it with
 `AcceptEnv`. Values are kept in protected desktop connection storage. Use
 **Edit SSH env** on a saved environment to update or clear them and reconnect.
-Accepted values remain in process memory; T3 Code does not write a remote
-environment file.
+Saving restarts a remote T3 server managed by Desktop. If Desktop attached to a
+server started independently, restart that server yourself so it can inherit
+the new values. Accepted values remain in process memory; T3 Code does not write
+a remote environment file.
 
 The remote host needs a compatible [Node.js installation](./install.md#requirements)
 and [provider setup](./install.md#providers). If launch cannot find Node or reports

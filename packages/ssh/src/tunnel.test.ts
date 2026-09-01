@@ -453,6 +453,7 @@ describe("ssh tunnel scripts", () => {
 
   it.effect("replaces a live tunnel when its local SSH environment changes", () => {
     const tunnelEnvironments: Array<Readonly<Record<string, string | undefined>> | undefined> = [];
+    const remoteLifecycle: Array<"launch" | "stop"> = [];
     let tunnelKillCount = 0;
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.sync(() => {
@@ -467,9 +468,11 @@ describe("ssh tunnel scripts", () => {
           });
         }
         if (args.includes("sh") && args.includes("--")) {
+          remoteLifecycle.push("launch");
           return makeSuccessfulProcess('{"remotePort":3773}\n');
         }
         if (args.includes("sh")) {
+          remoteLifecycle.push("stop");
           return makeSuccessfulProcess('{"stopped":true}\n');
         }
         return makeSuccessfulProcess("\n");
@@ -505,6 +508,7 @@ describe("ssh tunnel scripts", () => {
       assert.equal(tunnelEnvironments[0]?.TOKEN, "old-value");
       assert.equal(tunnelEnvironments[1]?.TOKEN, "new-value");
       assert.equal(tunnelKillCount, 1);
+      assert.deepEqual(remoteLifecycle, ["launch", "stop", "launch"]);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 

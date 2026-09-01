@@ -198,7 +198,7 @@ function SshEnvironmentVariableEditor({
         {rows.map((entry, index) => (
           <div
             key={entry.id}
-            className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_2rem] gap-2"
+            className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_2rem] items-center gap-2"
           >
             <Input
               value={entry.name}
@@ -214,6 +214,7 @@ function SshEnvironmentVariableEditor({
               aria-label={`SSH environment variable ${index + 1} name`}
               disabled={disabled}
               autoCapitalize="none"
+              autoComplete="off"
               autoCorrect="off"
               spellCheck={false}
               maxLength={128}
@@ -233,6 +234,7 @@ function SshEnvironmentVariableEditor({
               aria-label={`SSH environment variable ${index + 1} value`}
               disabled={disabled}
               autoCapitalize="none"
+              autoComplete="off"
               autoCorrect="off"
               spellCheck={false}
               maxLength={8_192}
