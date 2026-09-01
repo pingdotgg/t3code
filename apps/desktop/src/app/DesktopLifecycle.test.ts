@@ -80,6 +80,8 @@ function makeDesktopWindowLayer(
   input: {
     readonly activate?: Effect.Effect<void>;
     readonly flushMainWindowBounds?: Effect.Effect<void>;
+    readonly backgroundModeEnabled?: boolean;
+    readonly prepareForQuit?: () => void;
   } = {},
 ) {
   return Layer.succeed(DesktopWindow.DesktopWindow, {
@@ -92,6 +94,10 @@ function makeDesktopWindowLayer(
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: input.flushMainWindowBounds ?? Effect.void,
+    setBackgroundModeEnabled: () => undefined,
+    isBackgroundModeEnabled: () => input.backgroundModeEnabled ?? false,
+    prepareForQuit: input.prepareForQuit ?? (() => undefined),
+    resetQuitPreparation: () => undefined,
     dispatchMenuAction: () => Effect.void,
     zoomMain: () => Effect.void,
     syncAppearance: Effect.void,
@@ -102,6 +108,13 @@ describe("DesktopLifecycle", () => {
   for (const platform of ["darwin", "win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>) {
     it.effect(`lets the updater's quit event proceed on ${platform}`, () => {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      let quitPrepared = false;
+      const desktopWindowLayer = makeDesktopWindowLayer({
+        prepareForQuit: () => {
+          quitPrepared = true;
+        },
+      });
+
       const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
         platform,
         isDevelopment: false,
@@ -111,9 +124,17 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(makeElectronAppLayer(appListeners)),
         Layer.provideMerge(electronThemeLayer),
         Layer.provideMerge(makeElectronWindowLayer()),
-        Layer.provideMerge(makeDesktopWindowLayer()),
+        Layer.provideMerge(desktopWindowLayer),
         Layer.provideMerge(environmentLayer),
-        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(
+          Layer.succeed(DesktopShutdown.DesktopShutdown, {
+            request: Effect.void,
+            awaitRequest: Effect.void,
+            markComplete: Effect.void,
+            awaitComplete: Effect.void,
+            isComplete: Effect.succeed(true),
+          }),
+        ),
         Layer.provideMerge(DesktopState.layer),
       );
 
@@ -136,9 +157,19 @@ describe("DesktopLifecycle", () => {
             prevented,
             "cancelling this event prevents the updater from completing its relaunch",
           );
+          assert.isTrue(quitPrepared);
 
           const state = yield* DesktopState.DesktopState;
           assert.isTrue(yield* Ref.get(state.quitting));
+
+          yield* Ref.set(state.quitting, false);
+          let recoveryPrevented = false;
+          appListeners.get("before-quit")?.({
+            preventDefault: () => {
+              recoveryPrevented = true;
+            },
+          } as Electron.Event);
+          assert.isTrue(recoveryPrevented, "updater quit permission must be consumed once");
         }),
       ).pipe(Effect.provide(layer));
     });
@@ -238,6 +269,45 @@ describe("DesktopLifecycle", () => {
           appListeners.get("activate")?.();
 
           assert.equal(activationCount, 0);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("keeps the Windows host running without windows in tray background mode", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      let quitCount = 0;
+      const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "win32",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          makeElectronAppLayer(
+            appListeners,
+            Effect.sync(() => {
+              quitCount += 1;
+            }),
+          ),
+        ),
+        Layer.provideMerge(electronThemeLayer),
+        Layer.provideMerge(makeElectronWindowLayer()),
+        Layer.provideMerge(makeDesktopWindowLayer({ backgroundModeEnabled: true })),
+        Layer.provideMerge(environmentLayer),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          yield* lifecycle.register;
+
+          appListeners.get("window-all-closed")?.();
+          yield* Effect.yieldNow;
+
+          assert.equal(quitCount, 0);
         }),
       ).pipe(Effect.provide(layer));
     }),

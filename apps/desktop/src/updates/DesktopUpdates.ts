@@ -27,6 +27,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import {
@@ -255,10 +256,14 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
   const updaterConfiguredRef = yield* Ref.make(false);
+  const installRecoveryInstancesRef = yield* Ref.make<
+    readonly DesktopBackendPool.DesktopBackendInstance[]
+  >([]);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const updateStateRef = yield* Ref.make<DesktopUpdateState>(
     createInitialDesktopUpdateState(
@@ -458,9 +463,49 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
 
   const resetInstallAction = Effect.all(
-    [finishUpdateAction("install"), Ref.set(desktopState.quitting, false)],
+    [
+      finishUpdateAction("install"),
+      Ref.set(installRecoveryInstancesRef, []),
+      Ref.set(desktopState.quitting, false),
+      Effect.sync(desktopWindow.resetQuitPreparation),
+    ],
     { discard: true },
   );
+
+  const recoverInstallAction = Effect.gen(function* () {
+    const instances = yield* Ref.getAndSet(installRecoveryInstancesRef, []);
+
+    yield* Effect.forEach(instances, (instance) => instance.start, {
+      concurrency: "unbounded",
+      discard: true,
+    }).pipe(
+      Effect.catchCause((cause) => {
+        const error = new DesktopUpdateUnexpectedActionError({ action: "install", cause });
+        return logUpdaterWarning(error.message, {
+          errorTag: error._tag,
+          action: error.action,
+          stage: "backend-restart",
+        });
+      }),
+    );
+
+    const primary = instances.find(
+      (instance) => instance.id === DesktopBackendPool.PRIMARY_INSTANCE_ID,
+    );
+    if (primary !== undefined) {
+      yield* primary.waitForReady(Duration.seconds(60));
+    }
+    yield* desktopWindow.activate.pipe(
+      Effect.catchCause((cause) => {
+        const error = new DesktopUpdateUnexpectedActionError({ action: "install", cause });
+        return logUpdaterWarning(error.message, {
+          errorTag: error._tag,
+          action: error.action,
+          stage: "window-activation",
+        });
+      }),
+    );
+  }).pipe(Effect.ensuring(resetInstallAction));
 
   const installDownloadedUpdate = Effect.gen(function* () {
     const state = yield* Ref.get(updateStateRef);
@@ -492,6 +537,12 @@ export const make = Effect.gen(function* () {
       // SIGTERM + grace. Stops run concurrently with the same 5s
       // budget the primary had on its own.
       const instances = yield* pool.list;
+      const runningInstances = yield* Effect.filter(
+        instances,
+        (instance) => instance.snapshot.pipe(Effect.map((snapshot) => snapshot.desiredRunning)),
+        { concurrency: "unbounded" },
+      );
+      yield* Ref.set(installRecoveryInstancesRef, runningInstances);
       yield* Effect.forEach(
         instances,
         (instance) => instance.stop({ timeout: Duration.seconds(5) }),
@@ -504,10 +555,11 @@ export const make = Effect.gen(function* () {
       });
       return { accepted: true, completed: false };
     }).pipe(
+      Effect.onInterrupt(() => resetInstallAction),
       Effect.catchTags({
         ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
           function* (error) {
-            yield* resetInstallAction;
+            yield* recoverInstallAction;
             yield* updateState((current) =>
               reduceDesktopUpdateStateOnInstallFailure(current, error.message),
             );
@@ -521,13 +573,16 @@ export const make = Effect.gen(function* () {
           },
         ),
       }),
-      Effect.onInterrupt(() => resetInstallAction),
       Effect.catchCause((cause) =>
         Effect.gen(function* () {
           if (Cause.hasInterruptsOnly(cause)) {
+            const activeAction = yield* activeUpdateAction;
+            if (Option.isSome(activeAction) && activeAction.value === "install") {
+              yield* resetInstallAction;
+            }
             return yield* Effect.failCause(cause);
           }
-          yield* resetInstallAction;
+          yield* recoverInstallAction;
           const error = new DesktopUpdateUnexpectedActionError({ action: "install", cause });
           yield* updateState((current) =>
             reduceDesktopUpdateStateOnInstallFailure(current, error.message),
@@ -634,8 +689,7 @@ export const make = Effect.gen(function* () {
       cause,
     });
     if (Option.isSome(activeAction) && activeAction.value === "install") {
-      yield* finishUpdateAction("install");
-      yield* Ref.set(desktopState.quitting, false);
+      yield* recoverInstallAction;
       yield* updateState((current) =>
         reduceDesktopUpdateStateOnInstallFailure(current, error.message),
       );

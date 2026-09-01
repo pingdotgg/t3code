@@ -99,10 +99,12 @@ function handleBeforeQuit(
   runEffect: <A, E>(
     effect: Effect.Effect<A, E, DesktopLifecycleRegistrationServices>,
   ) => Promise<A>,
-  allowQuit: () => boolean,
+  allowQuit: boolean,
   markQuitAllowed: () => void,
+  prepareForQuit: () => void,
 ): void {
-  if (allowQuit()) {
+  prepareForQuit();
+  if (allowQuit) {
     void runEffect(
       Effect.gen(function* () {
         const state = yield* DesktopState.DesktopState;
@@ -213,13 +215,16 @@ export const make = DesktopLifecycle.of({
       );
     });
     yield* electronApp.on("before-quit", (event: Electron.Event) => {
+      const allowQuit = quitAllowed || updaterQuitAllowed;
+      updaterQuitAllowed = false;
       handleBeforeQuit(
         event,
         runEffect,
-        () => quitAllowed || updaterQuitAllowed,
+        allowQuit,
         () => {
           quitAllowed = true;
         },
+        desktopWindow.prepareForQuit,
       );
     });
     yield* electronApp.on("activate", () => {
@@ -236,7 +241,11 @@ export const make = DesktopLifecycle.of({
         Effect.gen(function* () {
           const app = yield* ElectronApp.ElectronApp;
           const state = yield* DesktopState.DesktopState;
-          if (environment.platform !== "darwin" && !(yield* Ref.get(state.quitting))) {
+          if (
+            environment.platform !== "darwin" &&
+            !desktopWindow.isBackgroundModeEnabled() &&
+            !(yield* Ref.get(state.quitting))
+          ) {
             yield* app.quit;
           }
         }).pipe(Effect.withSpan("desktop.lifecycle.windowAllClosed")),

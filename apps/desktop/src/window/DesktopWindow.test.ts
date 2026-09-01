@@ -86,6 +86,7 @@ function makeFakeBrowserWindow() {
 
   const window = {
     close: vi.fn(),
+    destroy: vi.fn(),
     focus: vi.fn(),
     getBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
     getNormalBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
@@ -103,6 +104,7 @@ function makeFakeBrowserWindow() {
       windowListeners.set(eventName, listener);
     }),
     restore: vi.fn(),
+    hide: vi.fn(),
     setBackgroundColor: vi.fn(),
     setAutoHideCursor: vi.fn(),
     setTitle: vi.fn(),
@@ -115,6 +117,7 @@ function makeFakeBrowserWindow() {
     window: window as unknown as Electron.BrowserWindow,
     getBounds: window.getBounds,
     getNormalBounds: window.getNormalBounds,
+    hide: window.hide,
     isDestroyed: window.isDestroyed,
     isFullScreen: window.isFullScreen,
     isMaximized: window.isMaximized,
@@ -197,14 +200,17 @@ function makeTestLayer(input: {
   readonly createCount: Ref.Ref<number>;
   readonly mainWindow: Ref.Ref<Option.Option<Electron.BrowserWindow>>;
   readonly createdWindowOptions?: Electron.BrowserWindowConstructorOptions[];
+  readonly beforeWindowCreate?: Effect.Effect<void>;
   readonly desktopSettings?: DesktopAppSettings.DesktopSettings;
   readonly mainWindowBoundsUpdates?: DesktopAppSettings.DesktopWindowBounds[];
   readonly mainWindowMaximizedUpdates?: boolean[];
+  readonly revealedWindows?: Electron.BrowserWindow[];
   readonly beforeMainWindowBoundsUpdate?: (
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly platform?: NodeJS.Platform;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -242,28 +248,48 @@ function makeTestLayer(input: {
 
   const electronWindowLayer = Layer.succeed(ElectronWindow.ElectronWindow, {
     create: (options) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         input.createdWindowOptions?.push(options);
-      }).pipe(
-        Effect.andThen(Ref.update(input.createCount, (count) => count + 1)),
-        Effect.as(input.window),
-      ),
+        if (input.beforeWindowCreate) {
+          yield* input.beforeWindowCreate;
+        }
+        yield* Ref.update(input.createCount, (count) => count + 1);
+        return input.window;
+      }),
     main: Ref.get(input.mainWindow),
     currentMainOrFirst: Ref.get(input.mainWindow),
     focusedMainOrFirst: Ref.get(input.mainWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
-    reveal: () => Effect.void,
+    reveal: (window) =>
+      Effect.sync(() => {
+        input.revealedWindows?.push(window);
+      }),
     sendAll: () => Effect.void,
     destroyAll: Effect.void,
     syncAllAppearance: (sync) => sync(input.window),
   } satisfies ElectronWindow.ElectronWindow["Service"]);
 
+  const environmentLayer =
+    input.platform === undefined
+      ? desktopEnvironmentLayer
+      : DesktopEnvironment.layer({ ...environmentInput, platform: input.platform }).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              DesktopConfig.layerTest({
+                T3CODE_PORT: "3773",
+                VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+              }),
+            ),
+          ),
+        );
+
   return DesktopWindow.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
-        desktopEnvironmentLayer,
+        environmentLayer,
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
         desktopServerExposureLayer,
@@ -465,6 +491,42 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("creates one main window when backend readiness and activation race", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createStarted = yield* Deferred.make<void>();
+      const allowCreate = yield* Deferred.make<void>();
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        beforeWindowCreate: Deferred.succeed(createStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowCreate)),
+        ),
+      });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          const readyFiber = yield* desktopWindow
+            .handleBackendReady(new URL("http://127.0.0.1:3773"))
+            .pipe(Effect.forkScoped);
+          yield* Deferred.await(createStarted);
+
+          const activationFiber = yield* desktopWindow.activate.pipe(Effect.forkScoped);
+          yield* Effect.yieldNow;
+          yield* Deferred.succeed(allowCreate, undefined);
+          yield* Fiber.join(readyFiber);
+          yield* Fiber.join(activationFiber);
+
+          assert.equal(yield* Ref.get(createCount), 1);
+        }).pipe(Effect.provide(layer)),
+      );
+    }),
+  );
+
   it.effect("blocks only repeated Cmd+W input before it reaches the native window menu", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
@@ -506,6 +568,95 @@ describe("DesktopWindow", () => {
         prevented = false;
         beforeInput(event, { ...input, meta: false });
         assert.isFalse(prevented);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("hides a Windows window while background mode is active and closes it for Quit", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        platform: "win32",
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.isFalse(desktopWindow.isBackgroundModeEnabled());
+        desktopWindow.setBackgroundModeEnabled(true);
+        assert.isTrue(desktopWindow.isBackgroundModeEnabled());
+
+        const close = fakeWindow.windowListeners.get("close");
+        if (!close) {
+          return yield* Effect.die("window close listener was not registered");
+        }
+
+        const backgroundClose = { preventDefault: vi.fn() };
+        close(backgroundClose);
+        assert.equal(backgroundClose.preventDefault.mock.calls.length, 1);
+        assert.equal(fakeWindow.hide.mock.calls.length, 1);
+
+        desktopWindow.prepareForQuit();
+        const quitClose = { preventDefault: vi.fn() };
+        close(quitClose);
+        assert.equal(quitClose.preventDefault.mock.calls.length, 0);
+        assert.equal(fakeWindow.hide.mock.calls.length, 1);
+
+        desktopWindow.resetQuitPreparation();
+        const recoveredClose = { preventDefault: vi.fn() };
+        close(recoveredClose);
+        assert.equal(recoveredClose.preventDefault.mock.calls.length, 1);
+        assert.equal(fakeWindow.hide.mock.calls.length, 2);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("hides the Windows connecting splash and reveals it again on activation", () =>
+    Effect.gen(function* () {
+      const splash = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const revealedWindows: Electron.BrowserWindow[] = [];
+      const layer = makeTestLayer({
+        window: splash.window,
+        createCount,
+        mainWindow,
+        platform: "win32",
+        revealedWindows,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        desktopWindow.setBackgroundModeEnabled(true);
+        yield* desktopWindow.showConnectingSplash;
+
+        const close = splash.windowListeners.get("close");
+        if (!close) {
+          return yield* Effect.die("connecting splash close listener was not registered");
+        }
+
+        const closeEvent = { preventDefault: vi.fn() };
+        close(closeEvent);
+
+        assert.equal(closeEvent.preventDefault.mock.calls.length, 1);
+        assert.equal(splash.hide.mock.calls.length, 1);
+
+        yield* desktopWindow.activate;
+
+        assert.equal(yield* Ref.get(createCount), 1);
+        assert.deepEqual(revealedWindows, [splash.window]);
+
+        desktopWindow.prepareForQuit();
+        const quitCloseEvent = { preventDefault: vi.fn() };
+        close(quitCloseEvent);
+
+        assert.equal(quitCloseEvent.preventDefault.mock.calls.length, 0);
+        assert.equal(splash.hide.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
   );
