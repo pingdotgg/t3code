@@ -444,6 +444,83 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("reads repository root settings from a nested workspace", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const repo = path.join(tempDir, "repo");
+      const workspace = path.join(repo, "packages", "app");
+
+      for (const name of ["root-off", "root-off-cwd-on", "cwd-off-root-on"]) {
+        yield* writeSkill(
+          path.join(configDir, "skills"),
+          name,
+          ["---", `name: ${name}`, "---", "", "# Body"].join("\n"),
+        );
+      }
+      yield* fs.makeDirectory(path.join(repo, ".git"), { recursive: true });
+      yield* fs.makeDirectory(path.join(repo, ".claude"), { recursive: true });
+      yield* fs.makeDirectory(path.join(workspace, ".claude"), { recursive: true });
+      // The CLI ignores the root's plain settings.json from a nested cwd.
+      yield* fs.writeFileString(
+        path.join(repo, ".claude", "settings.json"),
+        '{ "skillOverrides": { "cwd-off-root-on": "off" } }',
+      );
+      // The root local file outranks the workspace local file, as in the CLI.
+      yield* fs.writeFileString(
+        path.join(repo, ".claude", "settings.local.json"),
+        '{ "skillOverrides": { "root-off": "off", "root-off-cwd-on": "off", "cwd-off-root-on": "on" } }',
+      );
+      yield* fs.writeFileString(
+        path.join(workspace, ".claude", "settings.local.json"),
+        '{ "skillOverrides": { "root-off-cwd-on": "on", "cwd-off-root-on": "off" } }',
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.enabled]),
+        [
+          ["cwd-off-root-on", true],
+          ["root-off", false],
+          ["root-off-cwd-on", false],
+        ],
+      );
+    }),
+  );
+
+  it.effect("ignores ancestor settings outside a repository", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const parent = path.join(tempDir, "not-a-repo");
+      const workspace = path.join(parent, "workspace");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "kept",
+        ["---", "name: kept", "---", "", "# Body"].join("\n"),
+      );
+      yield* fs.makeDirectory(path.join(parent, ".claude"), { recursive: true });
+      yield* fs.makeDirectory(workspace, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(parent, ".claude", "settings.local.json"),
+        '{ "skillOverrides": { "kept": "off" } }',
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.enabled]),
+        [["kept", true]],
+      );
+    }),
+  );
+
   it.effect("lets the administrator's managed policy outrank every other settings file", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -470,6 +547,36 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       assert.deepEqual(skillOverrideSettingsPaths(path, "/home/.claude", undefined, "win32", {}), [
         "/home/.claude/settings.json",
       ]);
+
+      // Only the repository root's local file joins in, after the
+      // workspace's own local file so it wins.
+      assert.deepEqual(
+        skillOverrideSettingsPaths(
+          path,
+          "/home/.claude",
+          "/repo/packages/app",
+          "linux",
+          {},
+          "/repo",
+        ),
+        [
+          "/home/.claude/settings.json",
+          "/repo/packages/app/.claude/settings.json",
+          "/repo/packages/app/.claude/settings.local.json",
+          "/repo/.claude/settings.local.json",
+          "/etc/claude-code/managed-settings.json",
+        ],
+      );
+      // A workspace that is the root itself is not read twice.
+      assert.deepEqual(
+        skillOverrideSettingsPaths(path, "/home/.claude", "/repo", "linux", {}, "/repo"),
+        [
+          "/home/.claude/settings.json",
+          "/repo/.claude/settings.json",
+          "/repo/.claude/settings.local.json",
+          "/etc/claude-code/managed-settings.json",
+        ],
+      );
     }),
   );
 

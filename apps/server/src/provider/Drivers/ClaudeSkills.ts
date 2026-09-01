@@ -121,9 +121,14 @@ export function claudeManagedSettingsPath(
 /**
  * Settings files Claude Code merges for `skillOverrides`, in increasing
  * precedence: user, project, project-local, then the administrator's managed
- * policy, which wins outright. A skill the user switched off is reported
- * disabled rather than dropped, so the picker can grey it out instead of
- * silently losing it.
+ * policy, which wins outright. When the workspace sits inside a git
+ * repository, the repository root's `settings.local.json` is read too and
+ * outranks the workspace's own local file. Verified against the CLI from a
+ * nested cwd: a root local file switching a skill off wins over a cwd one
+ * switching it on, the root's plain `settings.json` is not consulted, and
+ * without a `.git` above the cwd no root file is read. A skill the user
+ * switched off is reported disabled rather than dropped, so the picker can
+ * grey it out instead of silently losing it.
  */
 export function skillOverrideSettingsPaths(
   path: Path.Path,
@@ -131,8 +136,10 @@ export function skillOverrideSettingsPaths(
   cwd: string | undefined,
   platform: NodeJS.Platform,
   environment: NodeJS.ProcessEnv,
+  repositoryRoot?: string,
 ): ReadonlyArray<string> {
   const managedPath = claudeManagedSettingsPath(path, platform, environment);
+  const root = repositoryRoot !== undefined && repositoryRoot !== cwd ? repositoryRoot : undefined;
   return [
     path.join(configDirPath, "settings.json"),
     ...(cwd
@@ -141,9 +148,36 @@ export function skillOverrideSettingsPaths(
           path.join(cwd, ".claude", "settings.local.json"),
         ]
       : []),
+    ...(root ? [path.join(root, ".claude", "settings.local.json")] : []),
     ...(managedPath ? [managedPath] : []),
   ];
 }
+
+/**
+ * Nearest ancestor of `cwd` (inclusive) holding a `.git` entry, which is the
+ * boundary Claude Code walks up to for project settings. `undefined` outside
+ * a repository.
+ */
+const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
+  cwd: string,
+): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  let current = path.resolve(cwd);
+  while (true) {
+    const isRoot = yield* fileSystem
+      .exists(path.join(current, ".git"))
+      .pipe(Effect.orElseSucceed(() => false));
+    if (isRoot) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return undefined;
+    }
+    current = parent;
+  }
+});
 
 // Lenient because these settings files are hand-edited and Claude Code itself
 // tolerates comments and trailing commas in them.
@@ -185,6 +219,7 @@ const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
   const overridesByName = new Map<string, SkillOverride>();
+  const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
 
   for (const settingsPath of skillOverrideSettingsPaths(
     path,
@@ -192,6 +227,7 @@ const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
     cwd,
     platform,
     environment,
+    repositoryRoot,
   )) {
     const contents = yield* fileSystem
       .readFileString(settingsPath)
