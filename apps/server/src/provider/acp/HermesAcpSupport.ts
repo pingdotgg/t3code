@@ -58,3 +58,27 @@ export const makeHermesAcpRuntime = (
       Effect.provide(acpContext),
     );
   });
+
+export interface HermesAcpModelSelectionErrorContext {
+  readonly cause: EffectAcpErrors.AcpError;
+}
+
+interface HermesAcpModelSelectionRuntime {
+  readonly setModel: (model: string) => Effect.Effect<unknown, EffectAcpErrors.AcpError>;
+}
+
+/**
+ * Applies a model selection to a live Hermes ACP session. Hermes model ids
+ * (e.g. `anthropic:claude-fable-5`) go to `session/set_model` verbatim —
+ * there is no trait suffix to strip and no config-option fanout.
+ */
+export function applyHermesAcpModelSelection<E>(input: {
+  readonly runtime: HermesAcpModelSelectionRuntime;
+  readonly model: string;
+  readonly mapError: (context: HermesAcpModelSelectionErrorContext) => E;
+}): Effect.Effect<void, E> {
+  return input.runtime.setModel(input.model).pipe(
+    Effect.asVoid,
+    Effect.mapError((cause) => input.mapError({ cause })),
+  );
+}

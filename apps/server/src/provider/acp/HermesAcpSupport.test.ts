@@ -1,6 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as EffectAcpErrors from "effect-acp/errors";
 
-import { buildHermesAcpSpawnInput, HERMES_AUTH_METHOD_ID } from "./HermesAcpSupport.ts";
+import {
+  applyHermesAcpModelSelection,
+  buildHermesAcpSpawnInput,
+  HERMES_AUTH_METHOD_ID,
+} from "./HermesAcpSupport.ts";
 
 describe("buildHermesAcpSpawnInput", () => {
   it("spawns the configured binary with the acp subcommand", () => {
@@ -42,4 +48,48 @@ describe("HERMES_AUTH_METHOD_ID", () => {
   it("targets the Hermes custom-credentials auth method", () => {
     expect(HERMES_AUTH_METHOD_ID).toBe("custom");
   });
+});
+
+describe("applyHermesAcpModelSelection", () => {
+  it.effect("passes the model id to session/set_model verbatim", () =>
+    Effect.gen(function* () {
+      const modelCalls: Array<string> = [];
+      const runtime = {
+        setModel: (model: string) =>
+          Effect.sync(() => {
+            modelCalls.push(model);
+          }),
+      };
+
+      yield* applyHermesAcpModelSelection({
+        runtime,
+        model: "anthropic:claude-fable-5",
+        mapError: ({ cause }) => `failed to set model: ${cause.message}`,
+      });
+
+      expect(modelCalls).toEqual(["anthropic:claude-fable-5"]);
+    }),
+  );
+
+  it.effect("maps set_model failures through mapError", () =>
+    Effect.gen(function* () {
+      const acpFailure = new EffectAcpErrors.AcpTransportError({
+        detail: "set_model exploded",
+        cause: new Error("set_model exploded"),
+      });
+      const runtime = {
+        setModel: () => Effect.fail(acpFailure),
+      };
+
+      const failure = yield* Effect.flip(
+        applyHermesAcpModelSelection({
+          runtime,
+          model: "anthropic:claude-fable-5",
+          mapError: ({ cause }) => ({ mapped: true as const, cause }),
+        }),
+      );
+
+      expect(failure).toEqual({ mapped: true, cause: acpFailure });
+    }),
+  );
 });
