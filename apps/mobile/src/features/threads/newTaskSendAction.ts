@@ -18,8 +18,16 @@ export function resolveNewTaskSendAction(input: {
   readonly resolvedBranch: string | null;
   readonly workspaceModeSettled: boolean;
 }): NewTaskSendAction {
+  // While the mode is unsettled the resolved value is provisional and could flip
+  // once the project file loads, so sending either way risks a silent misroute
+  // (a provisional local that resolves to worktree, or vice versa). Route the
+  // tap to the picker so the user settles the workspace first; the always-shown
+  // workspace toggle also settles it, so this never dead-ends.
+  if (!input.workspaceModeSettled) {
+    return "pick-branch";
+  }
   if (input.workspaceMode !== "worktree") {
     return "send";
   }
-  return input.resolvedBranch === null || !input.workspaceModeSettled ? "pick-branch" : "send";
+  return input.resolvedBranch === null ? "pick-branch" : "send";
 }

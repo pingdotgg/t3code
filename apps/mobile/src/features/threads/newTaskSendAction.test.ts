@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveNewTaskSendAction } from "./newTaskSendAction";
 
 describe("resolveNewTaskSendAction", () => {
-  it("sends a local task without needing a base branch, settled or not", () => {
+  it("sends a settled local task without needing a base branch", () => {
     expect(
       resolveNewTaskSendAction({
         workspaceMode: "local",
@@ -11,13 +11,18 @@ describe("resolveNewTaskSendAction", () => {
         workspaceModeSettled: true,
       }),
     ).toBe("send");
+  });
+
+  it("routes a provisional local task to the picker until the mode settles", () => {
+    // An unsettled "local" could resolve to "worktree" once t3.json loads, so
+    // never auto-send it — that would silently misroute the task.
     expect(
       resolveNewTaskSendAction({
         workspaceMode: "local",
         resolvedBranch: null,
         workspaceModeSettled: false,
       }),
-    ).toBe("send");
+    ).toBe("pick-branch");
   });
 
   it("sends a local task even when a branch happens to be resolved", () => {
