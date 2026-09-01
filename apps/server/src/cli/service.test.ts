@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 
-import { formatServiceStatus } from "./service.ts";
+import * as BootService from "../cloud/bootService.ts";
+import { formatServiceStatus, reconcileService } from "./service.ts";
 
 const status = {
   supported: true,
@@ -35,3 +37,36 @@ it("explains where the service is supported", () => {
     "Supported on: Linux with systemd, macOS with launchd",
   );
 });
+
+it.effect("restarts an already-current service during reconciliation", () =>
+  Effect.gen(function* () {
+    let installCount = 0;
+    const plan = {
+      nodePath: "/usr/bin/node",
+      launcherPath: "/home/me/.t3/runtime/service-launcher.mjs",
+      baseDir: "/home/me/.t3",
+      logPath: status.logPath,
+      unitPath: status.unitPath,
+    };
+    const service = BootService.BootService.of({
+      status: Effect.succeed(status),
+      install: Effect.sync(() => {
+        installCount += 1;
+        return plan;
+      }),
+      uninstall: Effect.succeed(false),
+    });
+
+    const result = yield* reconcileService().pipe(
+      Effect.provideService(BootService.BootService, service),
+    );
+
+    assert.equal(installCount, 1);
+    assert.deepEqual(result, {
+      changed: true,
+      previouslyInstalled: true,
+      previouslyCurrent: true,
+      plan,
+    });
+  }),
+);
