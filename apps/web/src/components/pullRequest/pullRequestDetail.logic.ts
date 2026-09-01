@@ -16,6 +16,22 @@ import type {
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 
+interface PullRequestOwnershipIdentity {
+  readonly projectId: string | null;
+  readonly repository: string | null;
+  readonly number: number | null;
+}
+
+/** Prefer the persisted link even while its live host detail is unavailable. */
+export function pullRequestOwnershipCandidate(input: {
+  readonly linked: PullRequestOwnershipIdentity | null;
+  readonly inferred: PullRequestOwnershipIdentity;
+}): PullRequestOwnershipIdentity & { readonly explicitlyLinked: boolean } {
+  return input.linked
+    ? { ...input.linked, explicitlyLinked: true }
+    : { ...input.inferred, explicitlyLinked: false };
+}
+
 /** Activity changes only when the same host resource reports a newer revision. */
 export function shouldRefreshPullRequestActivity(
   previous: { readonly key: string; readonly updatedAt: string } | null,
@@ -55,6 +71,8 @@ export function isThreadOwnPullRequest(
     readonly projectId: string | null;
     readonly repository: string | null;
     readonly number: number | null;
+    /** An explicit thread link owns this PR even if its project was recreated or remapped. */
+    readonly explicitlyLinked?: boolean;
   },
   surface: {
     readonly projectId: string;
@@ -63,9 +81,9 @@ export function isThreadOwnPullRequest(
   },
 ): boolean {
   return (
-    thread.projectId === surface.projectId &&
     thread.repository === surface.repository &&
-    thread.number === surface.number
+    thread.number === surface.number &&
+    (thread.explicitlyLinked === true || thread.projectId === surface.projectId)
   );
 }
 

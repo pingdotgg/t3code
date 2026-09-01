@@ -168,7 +168,10 @@ import {
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
-import { isThreadOwnPullRequest } from "./pullRequest/pullRequestDetail.logic";
+import {
+  isThreadOwnPullRequest,
+  pullRequestOwnershipCandidate,
+} from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
@@ -7074,11 +7077,14 @@ function ChatViewContent(props: ChatViewProps) {
         }}
         context={
           isThreadOwnPullRequest(
-            {
-              projectId: linkedThreadPullRequest?.projectId ?? activeProject?.id ?? null,
-              repository: threadRepository,
-              number: activeThreadPr?.number ?? null,
-            },
+            pullRequestOwnershipCandidate({
+              linked: linkedThreadPullRequest,
+              inferred: {
+                projectId: activeProject?.id ?? null,
+                repository: activeProjectRepository,
+                number: activeThreadPr?.number ?? null,
+              },
+            }),
             {
               projectId: activeRightPanelSurface.projectId,
               repository: activeRightPanelSurface.repository,
