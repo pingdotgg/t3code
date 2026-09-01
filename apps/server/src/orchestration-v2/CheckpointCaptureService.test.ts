@@ -196,6 +196,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
             archivedAt: null,
             settledOverride: null,
             settledAt: null,
+            settledOverrideAt: null,
             lastVisitedAt: null,
             deletedAt: null,
           },

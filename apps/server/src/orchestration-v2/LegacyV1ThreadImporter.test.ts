@@ -235,6 +235,7 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
               archivedAt: renamedAt,
               settledOverride: "settled",
               settledAt: renamedAt,
+              settledOverrideAt: null,
               updatedAt: renamedAt,
             },
           },

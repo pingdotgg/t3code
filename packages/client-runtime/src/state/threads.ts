@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ThreadStreamItem,
   type ThreadId as ThreadIdType,
 } from "@t3tools/contracts";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -47,6 +48,21 @@ import {
   type EnvironmentThreadState,
   type EnvironmentThreadStatus,
 } from "./threadState.ts";
+
+const WAITING_PROJECTION_RESYNC_INTERVAL = "5 minutes";
+
+function threadHasPendingBackgroundWork(thread: OrchestrationV2ThreadProjection): boolean {
+  const latestRun = thread.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
+  return (
+    derivePendingBackgroundWork({
+      latestRun,
+      providerThreads: thread.providerThreads,
+      turnItems: thread.turnItems,
+      activeProviderThreadId: thread.thread.activeProviderThreadId,
+      runs: thread.runs,
+    }).length > 0
+  );
+}
 
 function statusWithoutLiveData(
   data: Option.Option<OrchestrationV2ThreadProjection>,
@@ -157,6 +173,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     Option.match(cached, { onNone: () => 0, onSome: (snapshot) => snapshot.snapshotSequence }),
   );
   const awaitingCompletion = yield* Ref.make(false);
+  const forceAuthoritativeRefresh = yield* Ref.make(false);
   const persistence = yield* Queue.sliding<OrchestrationV2ThreadDetailSnapshot>(1);
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
@@ -556,6 +573,17 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     onSome: (service) =>
       service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
   });
+  const waitingResubscriptions = Stream.tick(WAITING_PROJECTION_RESYNC_INTERVAL).pipe(
+    // Stream.tick emits immediately. A refresh is periodic recovery, not an
+    // attach-time reload, so wait one full interval before the first attempt.
+    Stream.drop(1),
+    Stream.mapEffect(() => SubscriptionRef.get(state)),
+    Stream.filter(
+      (current) =>
+        Option.isSome(current.data) && threadHasPendingBackgroundWork(current.data.value),
+    ),
+    Stream.tap(() => Ref.set(forceAuthoritativeRefresh, true)),
+  );
 
   yield* setSynchronizing;
   yield* Effect.forkScoped(
@@ -563,6 +591,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
         let current = yield* SubscriptionRef.get(state);
+        const forceRefresh = yield* Ref.get(forceAuthoritativeRefresh);
         // A prior definitive miss (or delete event) already cleared this thread.
         // Park the subscription attempt without opening the socket so we do not
         // retry forever against a known-missing id.
@@ -577,7 +606,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* setSynchronizing;
 
-        if (Option.isNone(current.data)) {
+        if (Option.isNone(current.data) || forceRefresh) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -614,6 +643,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                     }
                   : EMPTY_THREAD_HISTORY_META;
               yield* setThread(httpResult.snapshot.projection, { history });
+              yield* Ref.set(forceAuthoritativeRefresh, false);
               current = yield* SubscriptionRef.get(state);
               break;
             }
@@ -621,6 +651,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               // Definitive HTTP 404: clear any stale cache and do not open or
               // retry a socket subscription for this attempt.
               yield* setDeleted();
+              yield* Ref.set(forceAuthoritativeRefresh, false);
               return yield* Effect.never;
             }
             case "unavailable": {
@@ -649,7 +680,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       {
         onExpectedFailure: setStreamError,
         retryExpectedFailureAfter: "250 millis",
-        resubscribe: foregroundResubscriptions,
+        resubscribe: Stream.merge(foregroundResubscriptions, waitingResubscriptions),
       },
     ).pipe(Stream.runForEach(applyItem)),
   );

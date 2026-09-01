@@ -24,7 +24,11 @@ import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
-import { applyShellStreamEvent, mergeShellSnapshotProjects } from "./shellReducer.ts";
+import {
+  applyShellStreamEvent,
+  mergeShellSnapshotProjects,
+  normalizeShellThreadMembership,
+} from "./shellReducer.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
@@ -49,6 +53,7 @@ function shellStatusForSnapshot(
 }
 
 const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
+const WAITING_PROJECTION_RESYNC_INTERVAL = "5 minutes";
 
 export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")(function* () {
   const supervisor = yield* EnvironmentSupervisor;
@@ -73,6 +78,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     error: Option.none(),
   });
   const awaitingCompletion = yield* Ref.make(false);
+  const forceAuthoritativeRefresh = yield* Ref.make(false);
   const lastAuthoritativeSession = yield* Ref.make<RpcSession | null>(null);
   const activeSubscriptionSession = yield* Ref.make<RpcSession | null>(null);
   const latestLiveSnapshot = yield* Ref.make<Option.Option<OrchestrationV2ShellSnapshot>>(
@@ -179,14 +185,16 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     const current = yield* SubscriptionRef.get(state);
     const nextSnapshot =
       item.kind === "snapshot"
-        ? mergeShellSnapshotProjects(
-            Option.getOrNull(current.snapshot),
-            item.snapshot,
-            item.resolvedRepositoryIdentityRoots === undefined
-              ? undefined
-              : {
-                  resolvedRepositoryIdentityRoots: item.resolvedRepositoryIdentityRoots,
-                },
+        ? normalizeShellThreadMembership(
+            mergeShellSnapshotProjects(
+              Option.getOrNull(current.snapshot),
+              item.snapshot,
+              item.resolvedRepositoryIdentityRoots === undefined
+                ? undefined
+                : {
+                    resolvedRepositoryIdentityRoots: item.resolvedRepositoryIdentityRoots,
+                  },
+            ),
           )
         : Option.match(current.snapshot, {
             onNone: () => null,
@@ -220,6 +228,20 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     onSome: (service) =>
       service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
   });
+  const waitingResubscriptions = Stream.tick(WAITING_PROJECTION_RESYNC_INTERVAL).pipe(
+    // Stream.tick emits immediately. A refresh is periodic recovery, not an
+    // attach-time reload, so wait one full interval before the first attempt.
+    Stream.drop(1),
+    Stream.mapEffect(() => SubscriptionRef.get(state)),
+    Stream.filter(
+      (current) =>
+        Option.isSome(current.snapshot) &&
+        [...current.snapshot.value.threads, ...current.snapshot.value.archivedThreads].some(
+          (thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+        ),
+    ),
+    Stream.tap(() => Ref.set(forceAuthoritativeRefresh, true)),
+  );
 
   yield* setSynchronizing;
   yield* Effect.forkScoped(
@@ -227,6 +249,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
         yield* Ref.set(activeSubscriptionSession, session);
+        const forceRefresh = yield* Ref.get(forceAuthoritativeRefresh);
         const supportsCompletionMarker = yield* session.initialConfig.pipe(
           Effect.map((config) => config.shellResumeCompletionMarker === true),
           Effect.orElseSucceed(() => false),
@@ -240,7 +263,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         const hasAuthoritativeSnapshot = (yield* Ref.get(lastAuthoritativeSession)) === session;
         let canResume = hasAuthoritativeSnapshot;
         let current = yield* SubscriptionRef.get(state);
-        if (!hasAuthoritativeSnapshot || Option.isNone(current.snapshot)) {
+        if (forceRefresh || !hasAuthoritativeSnapshot || Option.isNone(current.snapshot)) {
+          canResume = false;
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -258,6 +282,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           const httpSnapshot = yield* snapshotLoader.load(prepared);
           if (Option.isSome(httpSnapshot)) {
             yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
+            yield* Ref.set(forceAuthoritativeRefresh, false);
             canResume = true;
             current = yield* SubscriptionRef.get(state);
           }
@@ -285,7 +310,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       {
         onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),
         retryExpectedFailureAfter: "250 millis",
-        resubscribe: foregroundResubscriptions,
+        resubscribe: Stream.merge(foregroundResubscriptions, waitingResubscriptions),
       },
     ).pipe(Stream.runForEach(applyItem)),
   );

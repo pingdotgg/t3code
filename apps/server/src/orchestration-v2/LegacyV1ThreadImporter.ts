@@ -205,6 +205,7 @@ function importedThread(row: LegacyThreadRow): OrchestrationV2AppThread {
     snoozedAt: nullableDateTime(row.snoozed_at),
     pinnedAt: nullableDateTime(row.pinned_at),
     pinOrderKey: row.pin_order_key?.trim() || null,
+    settledOverrideAt: null,
     lastVisitedAt: null,
     deletedAt: nullableDateTime(row.deleted_at),
   };

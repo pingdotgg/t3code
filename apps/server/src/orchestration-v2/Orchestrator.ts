@@ -30,6 +30,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -228,9 +229,9 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "thread.create":
     case "thread.archive":
     case "thread.unarchive":
-    case "thread.delete":
     case "thread.settle":
     case "thread.unsettle":
+
     case "thread.snooze":
     case "thread.unsnooze":
     case "thread.pin":
@@ -238,6 +239,7 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "thread.pin.reorder":
     case "thread.visit":
     case "thread.mark-unread":
+    case "thread.delete":
     case "thread.metadata.update":
     case "thread.title.regeneration.complete":
     case "thread.runtime-mode.set":
@@ -324,6 +326,16 @@ function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]
     status === "cancelled" ||
     status === "interrupted"
   );
+}
+
+/**
+ * Settle-only guard: queued work is as blocked-on-progress as a live run for
+ * the settle action (mirrors client canSettle / hasQueuedTurnStart), but other
+ * callers of isBlockingRun intentionally leave queue slots free so the next
+ * queued run can start.
+ */
+function isSettleBlockingRun(run: OrchestrationV2Run): boolean {
+  return isBlockingRun(run) || run.status === "queued";
 }
 
 function delegatedTaskTerminalStatus(
@@ -1356,6 +1368,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       archivedAt: null,
       settledOverride: null,
       settledAt: null,
+      settledOverrideAt: null,
       snoozedUntil: null,
       snoozedAt: null,
       lastVisitedAt: null,
@@ -1378,7 +1391,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly type:
           | "thread.archive"
           | "thread.unarchive"
-          | "thread.delete"
           | "thread.settle"
           | "thread.unsettle"
           | "thread.snooze"
@@ -1388,6 +1400,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.pin.reorder"
           | "thread.visit"
           | "thread.mark-unread"
+          | "thread.delete"
           | "thread.metadata.update"
           | "thread.title.regeneration.complete"
           | "thread.runtime-mode.set"
@@ -1427,6 +1440,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} worktree changed before the metadata update could be applied.`,
       });
     }
+    if (
+      thread.archivedAt !== null &&
+      (command.type === "thread.settle" || command.type === "thread.unsettle")
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is archived.`,
+      });
+    }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -1441,6 +1464,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is not archived.`,
       });
     }
+
     if (
       (command.type === "thread.settle" ||
         command.type === "thread.unsettle" ||
@@ -1467,18 +1491,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is not pinned and cannot be reordered.`,
       });
     }
-    if (
-      command.type === "thread.settle" &&
-      (projection.runs.some((run) =>
-        ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
-      ) ||
-        projection.runtimeRequests.some((request) => request.status === "pending"))
-    ) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: `Thread ${command.threadId} has active or blocked work and cannot be settled.`,
+    if (command.type === "thread.settle") {
+      const activeRun = projection.runs.find(isSettleBlockingRun);
+      if (activeRun !== undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            activeRun.status === "queued"
+              ? `Thread ${command.threadId} has a queued run and cannot be settled.`
+              : `Thread ${command.threadId} has an active run and cannot be settled.`,
+        });
+      }
+      const pendingRequest = projection.runtimeRequests.find(
+        (request) => request.status === "pending",
+      );
+      if (pendingRequest !== undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has a pending request and cannot be settled.`,
+        });
+      }
+      // Waiting on provider background tasks (a background shell/subagent that
+      // outlived its turn) is live work: the provider wakes the session when
+      // the task finishes, so settling now would hide it.
+      const pendingBackgroundTasks = derivePendingBackgroundWork({
+        latestRun: projection.runs.at(-1) ?? null,
+        providerThreads: projection.providerThreads,
+        turnItems: projection.turnItems,
+        activeProviderThreadId: projection.thread.activeProviderThreadId,
+        runs: projection.runs,
       });
+      if (pendingBackgroundTasks.length > 0) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is waiting on background tasks and cannot be settled.`,
+        });
+      }
     }
 
     const providerSwitchPlan =
@@ -1578,9 +1629,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             thread.settledOverride === "settled" && thread.settledAt !== null && !wasPinned;
           return {
             ...thread,
-            settledOverride: "settled",
+            settledOverride: "settled" as const,
             settledAt: alreadySettled ? thread.settledAt : now,
             unsettledAt: null,
+            // Freeze establishment time so renames cannot advance the pin floor.
+            settledOverrideAt: alreadySettled
+              ? (thread.settledOverrideAt ?? thread.settledAt)
+              : now,
             pinnedAt: null,
             pinOrderKey: null,
             updatedAt: alreadySettled ? thread.updatedAt : now,
@@ -1590,9 +1645,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const alreadyPinnedActive = thread.settledOverride === "active";
           return {
             ...thread,
-            settledOverride: "active",
+            settledOverride: "active" as const,
             settledAt: null,
             unsettledAt: alreadyPinnedActive ? (thread.unsettledAt ?? null) : now,
+            settledOverrideAt: alreadyPinnedActive
+              ? (thread.settledOverrideAt ?? thread.updatedAt)
+              : now,
             updatedAt: alreadyPinnedActive ? thread.updatedAt : now,
           };
         }
@@ -1624,6 +1682,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // snooze's return ticket is spent (the thread is on top NOW).
           const alreadyPinned = thread.pinnedAt != null;
           const promotes = thread.settledOverride === "settled" || thread.snoozedUntil != null;
+          // Settled → keep-active is a new active pin; stamp establishment now.
+          // An existing keep-active pin keeps its floor. Clearing to null only
+          // when there is no override left after pin.
+          const nextOverride =
+            thread.settledOverride === "settled" ? ("active" as const) : thread.settledOverride;
           return {
             ...thread,
             pinnedAt: alreadyPinned ? thread.pinnedAt : now,
@@ -1633,9 +1696,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(alreadyPinned || command.orderKey === undefined
               ? {}
               : { pinOrderKey: command.orderKey }),
-            settledOverride:
-              thread.settledOverride === "settled" ? "active" : thread.settledOverride,
+            settledOverride: nextOverride,
             settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
+            settledOverrideAt:
+              nextOverride === null
+                ? null
+                : thread.settledOverride === "settled"
+                  ? now
+                  : (thread.settledOverrideAt ?? thread.updatedAt),
             snoozedUntil: null,
             snoozedAt: null,
             updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
@@ -1720,8 +1788,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.archived" as const;
         case "thread.unarchive":
           return "thread.unarchived" as const;
-        case "thread.delete":
-          return "thread.deleted" as const;
         case "thread.settle":
           return "thread.settled" as const;
         case "thread.unsettle":
@@ -1740,6 +1806,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.visited" as const;
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
+        case "thread.delete":
+          return "thread.deleted" as const;
         case "thread.metadata.update":
         case "thread.title.regeneration.complete":
           return "thread.metadata-updated" as const;
@@ -2860,6 +2928,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
     });
 
+  const clearSettledOverrideForActivity = (
+    command: OrchestrationV2Command & { readonly threadId: ThreadId },
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    thread: OrchestrationV2AppThread,
+    occurredAt: DateTime.Utc,
+  ) =>
+    thread.settledOverride === null
+      ? Effect.void
+      : emit(
+          events,
+          command,
+        )({
+          type: "thread.unsettled",
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt,
+          payload: {
+            ...thread,
+            settledOverride: null,
+            settledAt: null,
+            settledOverrideAt: null,
+            updatedAt: occurredAt,
+          },
+        });
+
   const dispatchMessage = (
     command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -2867,30 +2960,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
-      if (projection.thread.settledOverride !== null) {
-        const now = yield* DateTime.now;
-        const thread: OrchestrationV2AppThread = {
-          ...projection.thread,
-          settledOverride: null,
-          settledAt: null,
-          unsettledAt:
-            projection.thread.settledOverride === "active"
-              ? (projection.thread.unsettledAt ?? null)
-              : now,
-          updatedAt: now,
-        };
-        yield* emit(
-          events,
-          command,
-        )({
-          type: "thread.unsettled",
-          threadId: command.threadId,
-          providerInstanceId: thread.providerInstanceId,
-          occurredAt: now,
-          payload: thread,
-        });
-        projection = yield* getProjectionWithPendingEvents(command.threadId, events);
-      }
+      // Real activity clears settle pins and wakes snoozed threads.
+      yield* clearSettledOverrideForActivity(
+        command,
+        events,
+        projection.thread,
+        yield* DateTime.now,
+      );
+      projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       if (projection.thread.snoozedUntil != null) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
@@ -6782,9 +6859,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.archive":
       case "thread.unarchive":
-      case "thread.delete":
       case "thread.settle":
       case "thread.unsettle":
+
       case "thread.snooze":
       case "thread.unsnooze":
       case "thread.pin":
@@ -6792,6 +6869,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pin.reorder":
       case "thread.visit":
       case "thread.mark-unread":
+      case "thread.delete":
       case "thread.metadata.update":
       case "thread.title.regeneration.complete":
       case "thread.runtime-mode.set":

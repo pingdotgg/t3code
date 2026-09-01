@@ -2347,7 +2347,16 @@ export function makeClaudeAdapterV2(
         const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
         const interruptedTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
-        const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
+        // Steers awaiting a handoff result, counted per provider turn: each
+        // accepted steer ends one native turn, so each one swallows exactly one
+        // result before the turn can terminalize again.
+        const steeredTurns = yield* Ref.make(new Map<OrchestrationV2ProviderTurn["id"], number>());
+        // Frames seen per provider turn, so a swallowed handoff can tell "the
+        // steered turn started" from "the CLI went silent".
+        const turnFrameCounts = yield* Ref.make(
+          new Map<OrchestrationV2ProviderTurn["id"], number>(),
+        );
+        const finalizingTurnIds = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
         const itemOrdinals = yield* Ref.make(new Map<string, number>());
@@ -3705,203 +3714,292 @@ export function makeClaudeAdapterV2(
           readonly failure?: OrchestrationV2ProviderFailure;
           readonly threadDisposition?: "reusable" | "broken";
         }) {
-          for (const toolCall of input.context.toolCalls.values()) {
-            const artifacts = buildToolCallArtifacts({
-              context: input.context,
-              nativeItemId: toolCall.nativeItemId,
-              toolName: toolCall.toolName,
-              classification: toolCall.classification,
-              toolInput: toolCall.input,
-              threadId: toolCall.threadId,
-              runId: toolCall.runId,
-              rootNodeId: toolCall.rootNodeId,
-              parentNodeId: toolCall.parentNodeId,
-              ordinal: toolCall.ordinal,
-              output: NO_CLAUDE_NATIVE_TOOL_OUTPUT,
-              status: "failed",
-              startedAt: toolCall.startedAt,
-              updatedAt: input.completedAt,
-            });
-            yield* emitToolCallArtifacts(artifacts);
+          // Claim the turn before emitting anything. The handoff bound runs on
+          // its own fiber, so without this a frame handler and the bound can
+          // both finalize the same turn and emit two terminals for it.
+          const claimed = yield* Ref.modify(activeTurn, (current) => {
+            if (current?.providerTurnId !== input.context.providerTurnId) {
+              return [false, current] as const;
+            }
+            return [true, null] as const;
+          });
+          if (!claimed) {
+            return;
           }
-          input.context.toolCalls.clear();
+          yield* Ref.update(finalizingTurnIds, (current) => {
+            const next = new Set(current);
+            next.add(input.context.providerTurnId);
+            return next;
+          });
 
-          if (
-            input.context.assistant.emittedNativeItemIds.size === 0 &&
-            input.context.assistant.fallbackText.length > 0
-          ) {
-            const ordinal = yield* resolveItemOrdinal(
-              input.context,
-              input.context.assistant.fallbackNativeItemId,
-            );
-            const artifacts = buildAssistantArtifacts({
-              idAllocator,
-              turnInput: input.context.input,
-              providerTurnId: input.context.providerTurnId,
-              nativeItemId: input.context.assistant.fallbackNativeItemId,
-              text: input.context.assistant.fallbackText,
-              ordinal,
-              startedAt: input.context.startedAt,
-              completedAt: input.completedAt,
+          yield* Effect.gen(function* () {
+            for (const toolCall of input.context.toolCalls.values()) {
+              if (toolCall.runId === null) {
+                continue;
+              }
+              const artifacts = buildToolCallArtifacts({
+                context: input.context,
+                nativeItemId: toolCall.nativeItemId,
+                toolName: toolCall.toolName,
+                classification: toolCall.classification,
+                toolInput: toolCall.input,
+                threadId: toolCall.threadId,
+                runId: toolCall.runId,
+                rootNodeId: toolCall.rootNodeId,
+                parentNodeId: toolCall.parentNodeId,
+                ordinal: toolCall.ordinal,
+                output: NO_CLAUDE_NATIVE_TOOL_OUTPUT,
+                status: "failed",
+                startedAt: toolCall.startedAt,
+                updatedAt: input.completedAt,
+              });
+              yield* emitToolCallArtifacts(artifacts);
+            }
+            input.context.toolCalls.clear();
+
+            if (
+              input.context.assistant.emittedNativeItemIds.size === 0 &&
+              input.context.assistant.fallbackText.length > 0
+            ) {
+              const ordinal = yield* resolveItemOrdinal(
+                input.context,
+                input.context.assistant.fallbackNativeItemId,
+              );
+              const artifacts = buildAssistantArtifacts({
+                idAllocator,
+                turnInput: input.context.input,
+                providerTurnId: input.context.providerTurnId,
+                nativeItemId: input.context.assistant.fallbackNativeItemId,
+                text: input.context.assistant.fallbackText,
+                ordinal,
+                startedAt: input.context.startedAt,
+                completedAt: input.completedAt,
+              });
+              yield* Effect.all(
+                [
+                  emitProviderEvent({
+                    type: "node.updated",
+                    driver: CLAUDE_PROVIDER,
+                    node: artifacts.node,
+                  }),
+                  emitProviderEvent({
+                    type: "message.updated",
+                    driver: CLAUDE_PROVIDER,
+                    message: artifacts.message,
+                  }),
+                  emitProviderEvent({
+                    type: "turn_item.updated",
+                    driver: CLAUDE_PROVIDER,
+                    turnItem: artifacts.turnItem,
+                  }),
+                ],
+                { concurrency: 1 },
+              );
+            }
+
+            const providerRetry = yield* Ref.modify(providerRetries, (current) => {
+              const retry = current.get(input.context.providerTurnId);
+              if (retry === undefined) {
+                return [undefined, current] as const;
+              }
+              const updated = new Map(current);
+              updated.delete(input.context.providerTurnId);
+              return [retry, updated] as const;
             });
+            if (providerRetry !== undefined && input.status !== "failed") {
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: makeProviderRetryTurnItem({
+                  idAllocator,
+                  driver: CLAUDE_PROVIDER,
+                  threadId: input.context.input.threadId,
+                  runId: input.context.input.runId,
+                  nodeId: input.context.input.rootNodeId,
+                  providerThreadId: input.context.input.providerThread.id,
+                  providerTurnId: input.context.providerTurnId,
+                  itemOrdinal: providerRetry.itemOrdinal,
+                  failure: providerRetry.failure,
+                  retry: providerRetry.retry,
+                  status: input.status,
+                  startedAt: providerRetry.startedAt,
+                  updatedAt: input.completedAt,
+                }),
+              });
+            }
+
+            const threadDisposition = input.threadDisposition ?? "reusable";
+            const terminalEvent: ProviderAdapterV2Event =
+              input.status === "failed"
+                ? {
+                    type: "turn.terminal",
+                    driver: CLAUDE_PROVIDER,
+                    providerThreadId: input.context.input.providerThread.id,
+                    providerTurnId: input.context.providerTurnId,
+                    runOrdinal: input.context.input.runOrdinal,
+                    failureItemOrdinal: yield* resolveItemOrdinal(
+                      input.context,
+                      `terminal-failure:${input.context.providerTurnId}`,
+                    ),
+                    status: input.status,
+                    failure: input.failure ?? makeProviderFailure({ class: "provider_error" }),
+                    ...(providerRetry === undefined
+                      ? {}
+                      : {
+                          retry: providerRetry.retry,
+                          retryStartedAt: providerRetry.startedAt,
+                        }),
+                    threadDisposition,
+                  }
+                : {
+                    type: "turn.terminal",
+                    driver: CLAUDE_PROVIDER,
+                    providerThreadId: input.context.input.providerThread.id,
+                    providerTurnId: input.context.providerTurnId,
+                    runOrdinal: input.context.input.runOrdinal,
+                    status: input.status,
+                    failure: null,
+                    threadDisposition,
+                  };
             yield* Effect.all(
               [
                 emitProviderEvent({
-                  type: "node.updated",
+                  type: "provider_turn.updated",
                   driver: CLAUDE_PROVIDER,
-                  node: artifacts.node,
+                  providerTurn: providerTurnPayload({
+                    context: input.context,
+                    status: input.status,
+                    completedAt: input.completedAt,
+                  }),
                 }),
-                emitProviderEvent({
-                  type: "message.updated",
-                  driver: CLAUDE_PROVIDER,
-                  message: artifacts.message,
+                // Surface this native thread's roster before the root turn
+                // terminals so writeFinalRunEvents preserves it. Failed or
+                // interrupted turns drop only this thread's roster so sibling
+                // native threads keep their Waiting state.
+                Effect.gen(function* () {
+                  const nativeThreadId =
+                    input.context.input.providerThread.nativeThreadRef?.nativeId ?? null;
+                  if (nativeThreadId !== null) {
+                    if (input.status !== "completed") {
+                      yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
+                      yield* clearNativeThreadTaskIdSet(
+                        wakeEligibleBackgroundTasksByNativeThread,
+                        nativeThreadId,
+                      );
+                      yield* clearNativeThreadTaskIdSet(
+                        opaqueBackgroundTaskReplayTombstonesByNativeThread,
+                        nativeThreadId,
+                      );
+                    }
+                  }
+                  const roster =
+                    nativeThreadId === null
+                      ? new Map<string, OrchestrationV2PendingBackgroundTask>()
+                      : rosterForNativeThread(
+                          yield* Ref.get(pendingBackgroundTasksByNativeThread),
+                          nativeThreadId,
+                        );
+                  const clearConversationHead =
+                    input.status === "completed" &&
+                    input.context.input.providerThread.nativeConversationHeadRef !== null;
+                  const providerThread: OrchestrationV2ProviderThread = {
+                    ...input.context.input.providerThread,
+                    providerSessionId: session.id,
+                    ...(clearConversationHead ? { nativeConversationHeadRef: null } : {}),
+                    firstRunOrdinal:
+                      input.context.input.providerThread.firstRunOrdinal ??
+                      input.context.input.runOrdinal,
+                    lastRunOrdinal: input.context.input.runOrdinal,
+                    pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster),
+                    status: input.status === "completed" ? "active" : "idle",
+                    updatedAt: input.completedAt,
+                  };
+                  yield* rememberProviderThread(providerThread);
+                  yield* emitProviderEvent({
+                    type: "provider_thread.updated" as const,
+                    driver: CLAUDE_PROVIDER,
+                    providerThread,
+                  });
                 }),
-                emitProviderEvent({
-                  type: "turn_item.updated",
-                  driver: CLAUDE_PROVIDER,
-                  turnItem: artifacts.turnItem,
-                }),
+                emitProviderEvent(terminalEvent),
               ],
               { concurrency: 1 },
             );
-          }
+            yield* Ref.update(interruptedTurns, (current) => {
+              const next = new Set(current);
+              next.delete(input.context.providerTurnId);
+              return next;
+            });
+            yield* Ref.update(steeredTurns, (current) => {
+              const next = new Map(current);
+              next.delete(input.context.providerTurnId);
+              return next;
+            });
+            yield* Ref.update(turnFrameCounts, (current) => {
+              const next = new Map(current);
+              next.delete(input.context.providerTurnId);
+              return next;
+            });
+          }).pipe(
+            Effect.ensuring(
+              Ref.update(finalizingTurnIds, (current) => {
+                const next = new Set(current);
+                next.delete(input.context.providerTurnId);
+                return next;
+              }),
+            ),
+          );
+        });
 
-          const providerRetry = yield* Ref.modify(providerRetries, (current) => {
-            const retry = current.get(input.context.providerTurnId);
-            if (retry === undefined) {
-              return [undefined, current] as const;
+        // A steer handoff keeps the T3 turn alive so the steered work still
+        // attaches to it, which leaves the turn depending on a native turn that
+        // the CLI has not opened yet. Bound that wait: if no further frame
+        // reaches this turn, settle it rather than leaving the run running.
+        const boundSteeringHandoff = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+        ) {
+          const framesAtHandoff =
+            (yield* Ref.get(turnFrameCounts)).get(context.providerTurnId) ?? 0;
+          yield* Effect.gen(function* () {
+            yield* Effect.sleep(CLAUDE_STEERING_HANDOFF_TIMEOUT);
+            const current = yield* Ref.get(activeTurn);
+            if (current?.providerTurnId !== context.providerTurnId) {
+              return;
             }
-            const updated = new Map(current);
-            updated.delete(input.context.providerTurnId);
-            return [retry, updated] as const;
-          });
-          if (providerRetry !== undefined && input.status !== "failed") {
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver: CLAUDE_PROVIDER,
-              turnItem: makeProviderRetryTurnItem({
-                idAllocator,
-                driver: CLAUDE_PROVIDER,
-                threadId: input.context.input.threadId,
-                runId: input.context.input.runId,
-                nodeId: input.context.input.rootNodeId,
-                providerThreadId: input.context.input.providerThread.id,
-                providerTurnId: input.context.providerTurnId,
-                itemOrdinal: providerRetry.itemOrdinal,
-                failure: providerRetry.failure,
-                retry: providerRetry.retry,
-                status: input.status,
-                startedAt: providerRetry.startedAt,
-                updatedAt: input.completedAt,
+            // Claim the settle in one update, so overlapping bounds from
+            // several steers on the same turn cannot both finalize it.
+            const claimed = yield* Ref.modify(turnFrameCounts, (counts) => {
+              const framesNow = counts.get(context.providerTurnId) ?? 0;
+              if (framesNow !== framesAtHandoff) {
+                return [false, counts] as const;
+              }
+              const next = new Map(counts);
+              next.delete(context.providerTurnId);
+              return [true, next] as const;
+            });
+            if (!claimed) {
+              return;
+            }
+            yield* Effect.logWarning("orchestration-v2.claude-steer-handoff-timeout", {
+              providerSessionId: input.providerSessionId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+            });
+            // Settle as a failure, not a quiet completion. The steer was
+            // accepted and never answered, which is the silence this whole
+            // path exists to stop the user from having to guess at.
+            const completedAt = yield* DateTime.now;
+            yield* finalizeActiveTurn({
+              context,
+              status: "failed",
+              completedAt,
+              failure: makeProviderFailure({
+                message: "Claude accepted the steer but never opened a turn to answer it.",
+                code: "steer_handoff_timeout",
+                class: "transport_error",
               }),
             });
-          }
-
-          const threadDisposition = input.threadDisposition ?? "reusable";
-          const terminalEvent: ProviderAdapterV2Event =
-            input.status === "failed"
-              ? {
-                  type: "turn.terminal",
-                  driver: CLAUDE_PROVIDER,
-                  providerThreadId: input.context.input.providerThread.id,
-                  providerTurnId: input.context.providerTurnId,
-                  runOrdinal: input.context.input.runOrdinal,
-                  failureItemOrdinal: yield* resolveItemOrdinal(
-                    input.context,
-                    `terminal-failure:${input.context.providerTurnId}`,
-                  ),
-                  status: input.status,
-                  failure: input.failure ?? makeProviderFailure({ class: "provider_error" }),
-                  ...(providerRetry === undefined
-                    ? {}
-                    : {
-                        retry: providerRetry.retry,
-                        retryStartedAt: providerRetry.startedAt,
-                      }),
-                  threadDisposition,
-                }
-              : {
-                  type: "turn.terminal",
-                  driver: CLAUDE_PROVIDER,
-                  providerThreadId: input.context.input.providerThread.id,
-                  providerTurnId: input.context.providerTurnId,
-                  runOrdinal: input.context.input.runOrdinal,
-                  status: input.status,
-                  failure: null,
-                  threadDisposition,
-                };
-          yield* Effect.all(
-            [
-              emitProviderEvent({
-                type: "provider_turn.updated",
-                driver: CLAUDE_PROVIDER,
-                providerTurn: providerTurnPayload({
-                  context: input.context,
-                  status: input.status,
-                  completedAt: input.completedAt,
-                }),
-              }),
-              // Surface this native thread's roster before the root turn
-              // terminals so writeFinalRunEvents preserves it. Failed or
-              // interrupted turns drop only this thread's roster so sibling
-              // native threads keep their Waiting state.
-              Effect.gen(function* () {
-                const nativeThreadId =
-                  input.context.input.providerThread.nativeThreadRef?.nativeId ?? null;
-                if (nativeThreadId !== null) {
-                  if (input.status !== "completed") {
-                    yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
-                    yield* clearNativeThreadTaskIdSet(
-                      wakeEligibleBackgroundTasksByNativeThread,
-                      nativeThreadId,
-                    );
-                    yield* clearNativeThreadTaskIdSet(
-                      opaqueBackgroundTaskReplayTombstonesByNativeThread,
-                      nativeThreadId,
-                    );
-                  }
-                }
-                const roster =
-                  nativeThreadId === null
-                    ? new Map<string, OrchestrationV2PendingBackgroundTask>()
-                    : rosterForNativeThread(
-                        yield* Ref.get(pendingBackgroundTasksByNativeThread),
-                        nativeThreadId,
-                      );
-                const clearConversationHead =
-                  input.status === "completed" &&
-                  input.context.input.providerThread.nativeConversationHeadRef !== null;
-                const providerThread: OrchestrationV2ProviderThread = {
-                  ...input.context.input.providerThread,
-                  providerSessionId: session.id,
-                  ...(clearConversationHead ? { nativeConversationHeadRef: null } : {}),
-                  firstRunOrdinal:
-                    input.context.input.providerThread.firstRunOrdinal ??
-                    input.context.input.runOrdinal,
-                  lastRunOrdinal: input.context.input.runOrdinal,
-                  pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster),
-                  status: input.status === "completed" ? "active" : "idle",
-                  updatedAt: input.completedAt,
-                };
-                yield* rememberProviderThread(providerThread);
-                yield* emitProviderEvent({
-                  type: "provider_thread.updated" as const,
-                  driver: CLAUDE_PROVIDER,
-                  providerThread,
-                });
-              }),
-              emitProviderEvent(terminalEvent),
-            ],
-            { concurrency: 1 },
-          );
-          yield* Ref.update(activeTurn, (current) =>
-            current?.providerTurnId === input.context.providerTurnId ? null : current,
-          );
-          yield* Ref.update(interruptedTurns, (current) => {
-            const next = new Set(current);
-            next.delete(input.context.providerTurnId);
-            return next;
-          });
+          }).pipe(Effect.forkIn(sessionScope));
         });
 
         const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
@@ -4245,6 +4343,14 @@ export function makeClaudeAdapterV2(
             return;
           }
 
+          if (message.type === "assistant" || message.type === "result") {
+            yield* Ref.update(turnFrameCounts, (current) => {
+              const updated = new Map(current);
+              updated.set(context.providerTurnId, (updated.get(context.providerTurnId) ?? 0) + 1);
+              return updated;
+            });
+          }
+
           if (message.type === "assistant") {
             context.nativeMessageCursor = message.uuid;
           }
@@ -4583,6 +4689,49 @@ export function makeClaudeAdapterV2(
               createdBy: context.input.message.createdBy,
               creationSource: context.input.message.creationSource,
             });
+          }
+
+          // Decide the steer handoff before anything reads this result: a
+          // handoff belongs to the native turn that was cut short, so it must
+          // not seed this turn's fallback assistant text either.
+          if (message.type === "result") {
+            const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
+            const pendingSteers = (yield* Ref.get(steeredTurns)).get(context.providerTurnId) ?? 0;
+            if (!interrupted && pendingSteers > 0 && isClaudeSteeringHandoffResult(message)) {
+              yield* Ref.update(steeredTurns, (current) => {
+                const next = new Map(current);
+                const currentPendingSteers = current.get(context.providerTurnId) ?? 0;
+                if (currentPendingSteers <= 1) {
+                  next.delete(context.providerTurnId);
+                } else {
+                  next.set(context.providerTurnId, currentPendingSteers - 1);
+                }
+                return next;
+              });
+              const handoffCompletedAt = yield* DateTime.now;
+              for (const toolCall of context.toolCalls.values()) {
+                const artifacts = buildToolCallArtifacts({
+                  context,
+                  nativeItemId: toolCall.nativeItemId,
+                  toolName: toolCall.toolName,
+                  classification: toolCall.classification,
+                  toolInput: toolCall.input,
+                  threadId: toolCall.threadId,
+                  runId: toolCall.runId,
+                  rootNodeId: toolCall.rootNodeId,
+                  parentNodeId: toolCall.parentNodeId,
+                  ordinal: toolCall.ordinal,
+                  output: NO_CLAUDE_NATIVE_TOOL_OUTPUT,
+                  status: "interrupted",
+                  startedAt: toolCall.startedAt,
+                  updatedAt: handoffCompletedAt,
+                });
+                yield* emitToolCallArtifacts(artifacts);
+              }
+              context.toolCalls.clear();
+              yield* boundSteeringHandoff(context);
+              return;
+            }
           }
 
           // An is_error result's text is the error message; it belongs on the
@@ -5051,6 +5200,13 @@ export function makeClaudeAdapterV2(
               return yield* new ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,
                 detail: `Claude provider turn ${currentTurn.providerTurnId} is still active.`,
+              });
+            }
+            const finalizing = yield* Ref.get(finalizingTurnIds);
+            if (finalizing.size > 0) {
+              return yield* new ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: "Claude provider turn is still finalizing.",
               });
             }
             yield* Ref.update(lastTurnRouteByNativeThread, (current) => {

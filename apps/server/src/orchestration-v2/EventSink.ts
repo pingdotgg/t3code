@@ -130,7 +130,9 @@ export interface EventSinkV2Shape {
     readonly cancelUnsettledEffects?: {
       readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
       readonly reason: string;
+      readonly updatedBefore?: DateTime.Utc;
     };
+    readonly expectedThreadUpdatedAt?: DateTime.Utc;
   }) => Effect.Effect<
     {
       readonly receipt: CommandReceiptV2;
@@ -396,6 +398,40 @@ const baseLayer: Layer.Layer<
     ) {
       const result = yield* sql.withTransaction(
         Effect.gen(function* () {
+          if (input.expectedThreadUpdatedAt !== undefined) {
+            const existing = yield* commandReceipts.getByCommandId(input.commandId);
+            if (Option.isSome(existing)) {
+              const result = yield* existingCommandResult(input.commandId);
+              return {
+                ...result,
+                committed: false as const,
+                cancelledEffectIds: [] as ReadonlyArray<string>,
+              };
+            }
+            const expectedThreadUpdatedAt = DateTime.formatIso(input.expectedThreadUpdatedAt);
+            const current = yield* sql<{ readonly updated_at: string }>`
+              SELECT updated_at
+              FROM orchestration_v2_projection_threads
+              WHERE thread_id = ${input.threadId}
+              LIMIT 1
+            `;
+            if (current[0]?.updated_at !== expectedThreadUpdatedAt) {
+              return {
+                receipt: {
+                  commandId: input.commandId,
+                  threadId: input.threadId,
+                  commandType: input.commandType,
+                  acceptedAt: input.acceptedAt,
+                  resultSequence: 0,
+                  status: "accepted" as const,
+                  error: null,
+                },
+                storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
+                committed: false as const,
+                cancelledEffectIds: [] as ReadonlyArray<string>,
+              };
+            }
+          }
           const reserved = yield* commandReceipts.insertIfAbsent({
             commandId: input.commandId,
             threadId: input.threadId,

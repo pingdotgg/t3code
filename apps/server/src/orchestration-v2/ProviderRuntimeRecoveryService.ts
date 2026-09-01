@@ -128,7 +128,11 @@ export const make = Effect.gen(function* () {
   const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
-    function* (projection: OrchestrationV2ThreadProjection, trigger: "startup" | "shutdown") {
+    function* (
+      projection: OrchestrationV2ThreadProjection,
+      trigger: "startup" | "shutdown",
+      recoveryStartedAt?: DateTime.Utc,
+    ) {
       const now = yield* DateTime.now;
       const runs = [] as Array<OrchestrationV2ThreadProjection["runs"][number]>;
       for (const run of nonterminalRuns(projection)) {
@@ -419,6 +423,7 @@ export const make = Effect.gen(function* () {
             threadId: projection.thread.id,
             effectTypes: EffectOutbox.PROCESS_BOUND_EFFECT_TYPES,
             reason: detail,
+            ...(recoveryStartedAt === undefined ? {} : { updatedBefore: recoveryStartedAt }),
           })
           .pipe(
             Effect.mapError(
@@ -444,7 +449,11 @@ export const make = Effect.gen(function* () {
             cancelUnsettledEffects: {
               effectTypes: EffectOutbox.PROCESS_BOUND_EFFECT_TYPES,
               reason: detail,
+              ...(recoveryStartedAt === undefined ? {} : { updatedBefore: recoveryStartedAt }),
             },
+            ...(recoveryStartedAt === undefined
+              ? {}
+              : { expectedThreadUpdatedAt: projection.updatedAt }),
           })
           .pipe(
             Effect.mapError(
@@ -456,6 +465,14 @@ export const make = Effect.gen(function* () {
                 }),
             ),
           );
+        if (!result.committed) {
+          return {
+            terminalizedRuns: 0,
+            stoppedSessions: 0,
+            closedRequests: 0,
+            retiredEffects: 0,
+          };
+        }
         retiredEffects = result.cancelledEffectCount;
       }
       return {
@@ -467,7 +484,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const reconcile = (trigger: "startup" | "shutdown") =>
+  const reconcile = (trigger: "startup" | "shutdown", recoveryStartedAt?: DateTime.Utc) =>
     Effect.gen(function* () {
       const shell = yield* projections
         .getShellSnapshot()
@@ -491,13 +508,23 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
-        const result = yield* reconcileProjection(projection, trigger);
+        if (
+          recoveryStartedAt !== undefined &&
+          DateTime.toEpochMillis(projection.updatedAt) >= DateTime.toEpochMillis(recoveryStartedAt)
+        ) {
+          continue;
+        }
+        const result = yield* reconcileProjection(projection, trigger, recoveryStartedAt);
         terminalizedRuns += result.terminalizedRuns;
         stoppedSessions += result.stoppedSessions;
         closedRequests += result.closedRequests;
         retiredEffects += result.retiredEffects;
       }
-      const outboxReconciliation = yield* outbox.reconcileAfterProcessLoss.pipe(
+      const outboxReconciliation = yield* (
+        recoveryStartedAt === undefined
+          ? outbox.reconcileAfterProcessLoss
+          : outbox.reconcileAfterProcessLossBefore(recoveryStartedAt)
+      ).pipe(
         Effect.mapError(
           (cause) => new ProviderRuntimeRecoveryError({ operation: "drain-outbox", cause }),
         ),
@@ -512,7 +539,8 @@ export const make = Effect.gen(function* () {
     });
 
   const recover = Effect.gen(function* () {
-    const reconciliation = yield* reconcile("startup");
+    const startedBefore = yield* DateTime.now;
+    const reconciliation = yield* reconcile("startup", startedBefore);
     let executedEffects = 0;
     while (
       yield* worker.runOnce.pipe(

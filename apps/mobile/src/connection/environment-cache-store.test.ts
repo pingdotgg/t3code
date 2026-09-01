@@ -73,6 +73,7 @@ const SHELL_SNAPSHOT: OrchestrationV2ShellSnapshot = {
       updatedAt: NOW,
       archivedAt: null,
       settledOverride: null,
+      settledOverrideAt: null,
       settledAt: NOW,
       lastVisitedAt: null,
       titleRegeneration: {
@@ -113,6 +114,7 @@ const THREAD_SNAPSHOT: OrchestrationV2ThreadDetailSnapshot = {
       updatedAt: NOW,
       archivedAt: null,
       settledOverride: null,
+      settledOverrideAt: null,
       settledAt: NOW,
       lastVisitedAt: null,
       deletedAt: null,

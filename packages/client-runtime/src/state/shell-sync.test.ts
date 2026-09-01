@@ -15,6 +15,7 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -158,6 +159,10 @@ describe("environment shell synchronization", () => {
       const cachedSnapshot: OrchestrationV2ShellSnapshot = {
         ...v2ShellSnapshot,
         snapshotSequence: 5,
+        threads: v2ShellSnapshot.threads.map((thread) => ({
+          ...thread,
+          pendingBackgroundTasks: [{ taskId: "stale-task" }],
+        })),
       };
       const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
       const capturedAfterSequence = yield* SubscriptionRef.make<number | undefined>(undefined);
@@ -166,6 +171,10 @@ describe("environment shell synchronization", () => {
       const httpSnapshot: OrchestrationV2ShellSnapshot = {
         ...v2ShellSnapshot,
         snapshotSequence: 9,
+        threads: v2ShellSnapshot.threads.map((thread) => ({
+          ...thread,
+          pendingBackgroundTasks: [{ taskId: "stale-task" }],
+        })),
       };
       const client = {
         [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input: {
@@ -236,6 +245,17 @@ describe("environment shell synchronization", () => {
         Stream.filter((value) => value.status === "live"),
         Stream.runHead,
       );
+
+      yield* TestClock.adjust(299_000);
+      yield* Effect.yieldNow;
+      expect(yield* SubscriptionRef.get(loaderCalls)).toBe(1);
+
+      yield* TestClock.adjust(1_000);
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* SubscriptionRef.get(loaderCalls)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+      expect(yield* SubscriptionRef.get(loaderCalls)).toBe(2);
     }),
   );
 
@@ -287,7 +307,9 @@ describe("environment shell synchronization", () => {
         load: () =>
           Ref.updateAndGet(loaderCalls, (count) => count + 1).pipe(
             Effect.map((count) =>
-              Option.some({ ...LIVE_SHELL_SNAPSHOT, snapshotSequence: count * 10 }),
+              count === 3
+                ? Option.none()
+                : Option.some({ ...LIVE_SHELL_SNAPSHOT, snapshotSequence: count * 10 }),
             ),
           ),
       });
@@ -355,6 +377,42 @@ describe("environment shell synchronization", () => {
       }
       expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 20]);
       expect(yield* Ref.get(loaderCalls)).toBe(2);
+
+      yield* Queue.offer(events, {
+        kind: "snapshot",
+        snapshot: {
+          ...LIVE_SHELL_SNAPSHOT,
+          snapshotSequence: 50,
+          threads: LIVE_SHELL_SNAPSHOT.threads.map((thread) => ({
+            ...thread,
+            pendingBackgroundTasks: [{ taskId: "stale-task" }],
+          })),
+        },
+      });
+      yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter(
+          (value) => Option.isSome(value.snapshot) && value.snapshot.value.snapshotSequence === 50,
+        ),
+        Stream.runHead,
+      );
+
+      yield* TestClock.adjust("5 minutes");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(capturedAfterSequences)).length >= 5) break;
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 20, undefined]);
+      expect(yield* Ref.get(loaderCalls)).toBe(3);
+      yield* Queue.offer(events, { kind: "snapshot", snapshot: LIVE_SHELL_SNAPSHOT });
+      yield* Queue.offer(events, { kind: "synchronized" });
+      yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter((value) => value.status === "live"),
+        Stream.runHead,
+      );
+      const refreshed = Option.getOrThrow((yield* SubscriptionRef.get(shellState)).snapshot);
+      expect(
+        refreshed.threads.every((thread) => (thread.pendingBackgroundTasks?.length ?? 0) === 0),
+      ).toBe(true);
     }),
   );
 

@@ -15,6 +15,7 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
@@ -49,6 +50,7 @@ it.effect("drains durable effects before reporting recovery complete", () =>
           }),
           Layer.mock(EffectOutbox.EffectOutboxV2)({
             reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+            reconcileAfterProcessLossBefore: () => Effect.succeed({ requeued: 0, cancelled: 0 }),
           }),
         ),
       ),
@@ -79,6 +81,7 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
     },
   );
   const projection = {
+    updatedAt: DateTime.makeUnsafe("1900-01-01T00:00:00.000Z"),
     thread: { id: threadId },
     runtimeRequests: [
       {
@@ -111,6 +114,7 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
         Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({ runOnce: Effect.succeed(false) }),
         Layer.mock(EffectOutbox.EffectOutboxV2)({
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          reconcileAfterProcessLossBefore: () => Effect.succeed({ requeued: 0, cancelled: 0 }),
         }),
       ),
     ),
@@ -125,6 +129,57 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
       assert.equal(command.events[0].payload.status, "expired");
       assert.equal(command.events[0].payload.responseCapability.type, "not_resumable");
     }
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("does not reconcile work that started after startup recovery began", () => {
+  const threadId = ThreadId.make("thread_recovery_started_during_startup");
+  const commitCommand = vi.fn(() => Effect.succeed({ committed: true } as never));
+  const reconcileAfterProcessLossBefore = vi.fn(() =>
+    Effect.succeed({ requeued: 0, cancelled: 0 }),
+  );
+  const projection = {
+    updatedAt: DateTime.makeUnsafe("2099-01-01T00:00:00.000Z"),
+    thread: { id: threadId },
+    runtimeRequests: [],
+    providerSessions: [],
+    providerThreads: [],
+    providerTurns: [],
+    runs: [{ id: RunId.make("run_started_during_recovery"), status: "running" }],
+    attempts: [],
+    nodes: [],
+    subagents: [],
+    messages: [],
+    turnItems: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+  const layer = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getShellSnapshot: () =>
+            Effect.succeed({
+              schemaVersion: 2,
+              snapshotSequence: 0,
+              threads: [{ id: threadId }],
+              archivedThreads: [],
+            } as never),
+          getThreadProjection: () => Effect.succeed(projection),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({ commitCommand }),
+        IdAllocator.layer,
+        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({ runOnce: Effect.succeed(false) }),
+        Layer.mock(EffectOutbox.EffectOutboxV2)({
+          reconcileAfterProcessLossBefore,
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const summary = yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).recover;
+    assert.equal(summary.terminalizedRuns, 0);
+    assert.equal(commitCommand.mock.calls.length, 0);
+    assert.equal(reconcileAfterProcessLossBefore.mock.calls.length, 1);
   }).pipe(Effect.provide(layer));
 });
 
@@ -203,6 +258,7 @@ it.effect(
     let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
       null;
     const projection = {
+      updatedAt: DateTime.makeUnsafe("2020-01-01T00:00:00.000Z"),
       thread: { id: threadId },
       runtimeRequests: [],
       providerSessions: [],
@@ -464,6 +520,7 @@ it.effect(
     let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
       null;
     const projection = {
+      updatedAt: DateTime.makeUnsafe("1900-01-01T00:00:00.000Z"),
       thread: { id: threadId },
       runtimeRequests: [],
       providerSessions: [
@@ -541,6 +598,7 @@ it.effect(
           Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({ runOnce: Effect.succeed(false) }),
           Layer.mock(EffectOutbox.EffectOutboxV2)({
             reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+            reconcileAfterProcessLossBefore: () => Effect.succeed({ requeued: 0, cancelled: 0 }),
           }),
         ),
       ),
@@ -552,6 +610,8 @@ it.effect(
       assert.equal(summary.terminalizedRuns, 1);
       assert.equal(summary.stoppedSessions, 1);
       assert.equal(summary.retiredEffects, 2);
+      assert.deepEqual(committedInput?.expectedThreadUpdatedAt, projection.updatedAt);
+      assert.isDefined(committedInput?.cancelUnsettledEffects?.updatedBefore);
       assert.deepEqual(committedInput?.cancelUnsettledEffects?.effectTypes, [
         "provider-turn.start",
         "provider-turn.interrupt",

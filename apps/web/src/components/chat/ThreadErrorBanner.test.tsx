@@ -37,6 +37,25 @@ describe("ThreadErrorBanner", () => {
     ).toBe(true);
   });
 
+  it("reappears when the same message has a later occurrence key", () => {
+    dismissThreadErrorBannerForSession(
+      getThreadErrorBannerKey("env:thread-f", '["2026-08-11T12:00:00Z","Aborted"]'),
+    );
+    const laterOccurrenceKey = getThreadErrorBannerKey(
+      "env:thread-f",
+      '["2026-08-11T12:05:00Z","Aborted"]',
+    );
+
+    expect(isThreadErrorBannerDismissedForSession(laterOccurrenceKey)).toBe(false);
+    expect(
+      shouldShowThreadErrorBanner(
+        "env:thread-f",
+        "Aborted",
+        isThreadErrorBannerDismissedForSession(laterOccurrenceKey),
+      ),
+    ).toBe(true);
+  });
+
   it("scopes dismissals to the thread that dismissed them", () => {
     dismissThreadErrorBannerForSession(getThreadErrorBannerKey("env:thread-c", "Aborted"));
     const otherThreadKey = getThreadErrorBannerKey("env:other-thread", "Aborted");
