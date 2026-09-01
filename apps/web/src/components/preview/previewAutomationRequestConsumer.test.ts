@@ -10,6 +10,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  PreviewAutomationDesktopFailureError,
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationTargetUnavailableError,
   PreviewAutomationViewportTimeoutError,
@@ -348,6 +349,169 @@ describe("previewAutomationRequestConsumer", () => {
       },
     });
     expect(JSON.stringify(response)).not.toContain("preview-secret");
+  });
+
+  it.each(["UnknownVizError", "AbortError"])(
+    "preserves a filtered %s snapshot failure from Electron",
+    (nativeName) => {
+      const cause = new PreviewAutomationDesktopFailureError({
+        nativeName,
+        safeMessage: "surface capture was aborted",
+      });
+      const response = serializePreviewAutomationError(cause, {
+        requestId: "request-native-error",
+        operation: "snapshot",
+        environmentId,
+        threadId,
+        tabId,
+      });
+
+      expect(response).toMatchObject({
+        _tag: "PreviewAutomationExecutionError",
+        detail: {
+          cause: { name: nativeName, message: "surface capture was aborted" },
+        },
+      });
+    },
+  );
+
+  it("replaces native error text containing a URL", () => {
+    const cause = new Error("capture failed at https://preview.example/secret");
+    cause.name = "UnknownVizError";
+    const response = serializePreviewAutomationError(cause, {
+      requestId: "request-native-url",
+      operation: "snapshot",
+      environmentId,
+      threadId,
+      tabId,
+    });
+
+    expect(response).toMatchObject({
+      detail: {
+        cause: { name: "UnknownVizError", message: "Preview capture failed." },
+      },
+    });
+    expect(JSON.stringify(response)).not.toContain("preview.example");
+  });
+
+  it("preserves the owned timeout stage from a flattened IPC error", () => {
+    const response = serializePreviewAutomationError(
+      new Error(
+        "Error invoking remote method: Preview snapshot capture timed out during capture-page after 2500ms in tab tab-1",
+      ),
+      {
+        requestId: "request-capture-timeout",
+        operation: "snapshot",
+        environmentId,
+        threadId,
+        tabId,
+      },
+    );
+
+    expect(response).toMatchObject({
+      detail: {
+        cause: {
+          name: "PreviewAutomationTimeoutError",
+          stage: "capture-page",
+        },
+      },
+    });
+  });
+
+  it("bounds timeout tags and stages from raw failures", () => {
+    const context = {
+      requestId: "request-unbounded-timeout",
+      operation: "snapshot" as const,
+      environmentId,
+      threadId,
+      tabId,
+    };
+    const boundedTag = serializePreviewAutomationError(
+      {
+        _tag: "PreviewAutomationCaptureTimeoutError",
+        message: "capture timed out",
+        stage: "s".repeat(65),
+      },
+      context,
+    );
+    const unboundedTag = serializePreviewAutomationError(
+      {
+        _tag: `${"A".repeat(65)}TimeoutError`,
+        message: "capture timed out",
+        stage: "capture-page",
+      },
+      context,
+    );
+
+    const message =
+      "Preview automation snapshot request request-unbounded-timeout failed on environment environment-1 thread thread-1 (tab tab-1).";
+    expect(boundedTag).toEqual({
+      _tag: "PreviewAutomationExecutionError",
+      message,
+      detail: {
+        requestId: "request-unbounded-timeout",
+        operation: "snapshot",
+        environmentId: "environment-1",
+        threadId: "thread-1",
+        tabId: "tab-1",
+        cause: {
+          name: "PreviewAutomationCaptureTimeoutError",
+          message: "Preview automation timed out.",
+        },
+      },
+    });
+    expect(unboundedTag).toEqual({
+      _tag: "PreviewAutomationExecutionError",
+      message,
+      detail: {
+        requestId: "request-unbounded-timeout",
+        operation: "snapshot",
+        environmentId: "environment-1",
+        threadId: "thread-1",
+        tabId: "tab-1",
+      },
+    });
+  });
+
+  it("responds with the host execution deadline before a stuck handler settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const requestsAtom = Atom.make<AsyncResult.AsyncResult<PreviewAutomationStreamEvent, Error>>(
+        AsyncResult.initial<PreviewAutomationStreamEvent, Error>(false),
+      );
+      const respond = vi.fn(async (_response: PreviewAutomationResponse) => undefined);
+      const state = consumerState(() => new Promise(() => {}));
+      const consumerAtom = createPreviewAutomationRequestConsumerAtom({
+        requestsAtom,
+        clientId,
+        connectionAtom: state.connectionAtom,
+        environmentId,
+        requestHandlerAtom: state.requestHandlerAtom,
+        respond,
+        label: "test:preview-automation-host-deadline",
+      });
+      const registry = AtomRegistry.make();
+      registry.mount(consumerAtom);
+      registry.set(
+        requestsAtom,
+        AsyncResult.success(requestEvent("request-host-deadline", { timeoutMs: 250 })),
+      );
+
+      await vi.advanceTimersByTimeAsync(250);
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestId: "request-host-deadline",
+          ok: false,
+          error: expect.objectContaining({
+            _tag: "PreviewAutomationTimeoutError",
+            detail: expect.objectContaining({ stage: "host-execution", timeoutMs: 250 }),
+          }),
+        }),
+      );
+      registry.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("sanitizes unexpected handler failures at the response boundary", async () => {

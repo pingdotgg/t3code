@@ -1,33 +1,39 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const { clientSettings, events, getUserMedia, registrySet, save, startScreencast, stopScreencast } =
-  vi.hoisted(() => {
-    const events: string[] = [];
-    return {
-      clientSettings: { browserRecordingFrameRate: 30 as 30 | 60 },
-      events,
-      getUserMedia: vi.fn(),
-      registrySet: vi.fn((_atom: unknown, value: { readonly tabIds: ReadonlySet<string> }) => {
-        events.push(
-          value.tabIds.size === 0 ? "clear" : `publish:${Array.from(value.tabIds).join(",")}`,
-        );
-      }),
-      save: vi.fn(async (tabId: string) => ({
-        id: "recording-test",
-        tabId,
-        path: "/tmp/recording-test.webm",
-        mimeType: "video/webm" as const,
-        sizeBytes: 0,
-        createdAt: "2026-06-26T00:00:00.000Z",
-      })),
-      startScreencast: vi.fn(async (tabId: string) => {
-        events.push("start-screencast");
-        return { sourceId: `source:${tabId}`, width: 1000, height: 620 };
-      }),
-      stopScreencast: vi.fn(async () => undefined),
-    };
-  });
+const {
+  clientSettings,
+  events,
+  getDisplayMedia,
+  registrySet,
+  save,
+  startScreencast,
+  stopScreencast,
+} = vi.hoisted(() => {
+  const events: string[] = [];
+  return {
+    clientSettings: { browserRecordingFrameRate: 30 as 30 | 60 },
+    events,
+    getDisplayMedia: vi.fn(),
+    registrySet: vi.fn((_atom: unknown, value: { readonly tabIds: ReadonlySet<string> }) => {
+      events.push(
+        value.tabIds.size === 0 ? "clear" : `publish:${Array.from(value.tabIds).join(",")}`,
+      );
+    }),
+    save: vi.fn(async (tabId: string) => ({
+      id: "recording-test",
+      tabId,
+      path: "/tmp/recording-test.webm",
+      mimeType: "video/webm" as const,
+      sizeBytes: 0,
+      createdAt: "2026-06-26T00:00:00.000Z",
+    })),
+    startScreencast: vi.fn(async (_tabId: string) => {
+      events.push("start-screencast");
+    }),
+    stopScreencast: vi.fn(async () => undefined),
+  };
+});
 
 vi.mock("~/components/preview/previewBridge", () => ({
   previewBridge: {
@@ -122,10 +128,10 @@ describe("browser recording", () => {
     });
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
     vi.stubGlobal("MediaRecorder", FakeMediaRecorder as unknown as typeof MediaRecorder);
-    getUserMedia.mockResolvedValue({
+    getDisplayMedia.mockResolvedValue({
       getTracks: () => [{ stop: vi.fn() }],
     });
-    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+    vi.stubGlobal("navigator", { mediaDevices: { getDisplayMedia } });
     useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
   });
 
@@ -146,9 +152,8 @@ describe("browser recording", () => {
     startScreencast.mockImplementationOnce(async (tabId: string) => {
       expect(animationFrameCount).toBe(2);
       expect(useBrowserSurfaceStore.getState().activityByTabId[tabId]).toBe(1);
-      return { sourceId: `source:${tabId}`, width: 1000, height: 620 };
     });
-    getUserMedia.mockImplementationOnce(async () => {
+    getDisplayMedia.mockImplementationOnce(async () => {
       expect(animationFrameCount).toBe(2);
       expect(useBrowserSurfaceStore.getState().activityByTabId["background-tab"]).toBe(1);
       return { getTracks: () => [{ stop: vi.fn() }] };
@@ -178,26 +183,16 @@ describe("browser recording", () => {
     await stopBrowserRecording("hidden-window-tab");
   });
 
-  it("records the native tab stream at the preview's current dimensions", async () => {
+  it("records the native tab stream armed by the main process", async () => {
     const stopTrack = vi.fn();
     const stream = { getTracks: () => [{ stop: stopTrack }] } as unknown as MediaStream;
-    getUserMedia.mockResolvedValueOnce(stream);
+    getDisplayMedia.mockResolvedValueOnce(stream);
 
     await startBrowserRecording("recording-tab");
 
-    expect(getUserMedia).toHaveBeenCalledWith({
+    expect(getDisplayMedia).toHaveBeenCalledWith({
       audio: false,
-      video: {
-        mandatory: {
-          chromeMediaSource: "tab",
-          chromeMediaSourceId: "source:recording-tab",
-          minWidth: 1000,
-          maxWidth: 1000,
-          minHeight: 620,
-          maxHeight: 620,
-          maxFrameRate: 30,
-        },
-      },
+      video: { frameRate: { max: 30 } },
     });
     expect(FakeMediaRecorder.instances[0]?.stream).toBe(stream);
 
@@ -210,18 +205,16 @@ describe("browser recording", () => {
 
     await startBrowserRecording("recording-tab");
 
-    expect(getUserMedia).toHaveBeenCalledWith({
+    expect(getDisplayMedia).toHaveBeenCalledWith({
       audio: false,
-      video: {
-        mandatory: expect.objectContaining({ maxFrameRate: 60 }),
-      },
+      video: { frameRate: { max: 60 } },
     });
     await stopBrowserRecording("recording-tab");
   });
 
   it("stops the native stream when MediaRecorder cleanup fails", async () => {
     const stopTrack = vi.fn();
-    getUserMedia.mockResolvedValueOnce({
+    getDisplayMedia.mockResolvedValueOnce({
       getTracks: () => [{ stop: stopTrack }],
     });
 
@@ -285,7 +278,7 @@ describe("browser recording", () => {
   });
 
   it("releases the native capture lease when stream acquisition fails", async () => {
-    getUserMedia.mockRejectedValueOnce(new Error("capture failed"));
+    getDisplayMedia.mockRejectedValueOnce(new Error("capture failed"));
 
     await expect(startBrowserRecording("recording-tab")).rejects.toMatchObject({
       operation: "capture-media-stream",
@@ -300,7 +293,7 @@ describe("browser recording", () => {
     vi.useFakeTimers();
     let finishCapture!: (stream: MediaStream) => void;
     const stopTrack = vi.fn();
-    getUserMedia.mockImplementationOnce(
+    getDisplayMedia.mockImplementationOnce(
       () =>
         new Promise<MediaStream>((resolve) => {
           finishCapture = resolve;
@@ -308,7 +301,7 @@ describe("browser recording", () => {
     );
 
     const startPromise = startBrowserRecording("recording-tab");
-    await vi.waitFor(() => expect(getUserMedia).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(getDisplayMedia).toHaveBeenCalledOnce());
     const rejection = expect(startPromise).rejects.toMatchObject({
       _tag: "BrowserRecordingCaptureTimeoutError",
       tabId: "recording-tab",
@@ -387,7 +380,6 @@ describe("browser recording", () => {
       await new Promise<void>((resolve) => {
         finishStartingScreencast = resolve;
       });
-      return { sourceId: "source:recording-tab", width: 1000, height: 620 };
     });
 
     const firstStart = startBrowserRecording("recording-tab");
@@ -452,7 +444,6 @@ describe("browser recording", () => {
       await new Promise<void>((resolve) => {
         finishStartingScreencast = resolve;
       });
-      return { sourceId: "source:recording-tab", width: 1000, height: 620 };
     });
 
     const startPromise = startBrowserRecording("recording-tab");
@@ -476,7 +467,6 @@ describe("browser recording", () => {
       await new Promise<void>((resolve) => {
         finishStartingScreencast = resolve;
       });
-      return { sourceId: "source:recording-tab", width: 1000, height: 620 };
     });
 
     const firstStart = startBrowserRecording("recording-tab");
@@ -503,7 +493,6 @@ describe("browser recording", () => {
       await new Promise<void>((resolve) => {
         finishStartingScreencast = resolve;
       });
-      return { sourceId: "source:recording-tab", width: 1000, height: 620 };
     });
     stopScreencast.mockRejectedValueOnce(new Error("initial stop failed"));
 
@@ -537,7 +526,6 @@ describe("browser recording", () => {
       await new Promise<void>((resolve) => {
         finishStartingScreencast = resolve;
       });
-      return { sourceId: "source:recording-tab", width: 1000, height: 620 };
     });
 
     const startPromise = startBrowserRecording("recording-tab");

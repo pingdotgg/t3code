@@ -725,6 +725,29 @@ export interface DesktopPreviewRecordingFrame {
   receivedAt: string;
 }
 
+export interface DesktopPreviewCaptureRecovery {
+  tabId: string;
+  webContentsId: number;
+}
+
+export const DesktopPreviewAutomationFailureSchema = Schema.Struct({
+  name: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(128)),
+  message: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(512)),
+  stage: Schema.optional(Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(64))),
+});
+export type DesktopPreviewAutomationFailure = typeof DesktopPreviewAutomationFailureSchema.Type;
+
+export const DesktopPreviewAutomationSnapshotResultSchema = Schema.Union([
+  Schema.TaggedStruct("Success", {
+    snapshot: PreviewAutomationSnapshot,
+  }),
+  Schema.TaggedStruct("Failure", {
+    error: DesktopPreviewAutomationFailureSchema,
+  }),
+]);
+export type DesktopPreviewAutomationSnapshotResult =
+  typeof DesktopPreviewAutomationSnapshotResultSchema.Type;
+
 export const DesktopPreviewRecordingFrameSchema: Schema.Codec<DesktopPreviewRecordingFrame> =
   Schema.Struct({
     tabId: DesktopPreviewTabIdSchema,
@@ -732,19 +755,6 @@ export const DesktopPreviewRecordingFrameSchema: Schema.Codec<DesktopPreviewReco
     width: Schema.Number,
     height: Schema.Number,
     receivedAt: Schema.String,
-  });
-
-export interface DesktopPreviewRecordingSource {
-  sourceId: string;
-  width: number;
-  height: number;
-}
-
-export const DesktopPreviewRecordingSourceSchema: Schema.Codec<DesktopPreviewRecordingSource> =
-  Schema.Struct({
-    sourceId: Schema.String,
-    width: Schema.Int.check(Schema.isGreaterThan(0)),
-    height: Schema.Int.check(Schema.isGreaterThan(0)),
   });
 
 export interface DesktopPreviewRecordingArtifact {
@@ -1177,6 +1187,7 @@ export interface DesktopPreviewBridge {
   createTab: (tabId: string, defaults?: DesktopPreviewTabDefaults) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
   registerWebview: (tabId: string, webContentsId: number) => Promise<void>;
+  prepareWebviewRemoval?: (tabId: string, webContentsId: number) => Promise<void>;
   navigate: (tabId: string, url: string) => Promise<void>;
   goBack: (tabId: string) => Promise<void>;
   goForward: (tabId: string) => Promise<void>;
@@ -1228,7 +1239,7 @@ export interface DesktopPreviewBridge {
     close: (tabId: string) => Promise<void>;
   };
   recording: {
-    startScreencast: (tabId: string) => Promise<DesktopPreviewRecordingSource>;
+    startScreencast: (tabId: string) => Promise<void>;
     stopScreencast: (tabId: string) => Promise<void>;
     save: (
       tabId: string,
@@ -1239,7 +1250,7 @@ export interface DesktopPreviewBridge {
   };
   automation: {
     status: (tabId: string) => Promise<DesktopPreviewAutomationStatus>;
-    snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;
+    snapshot: (tabId: string) => Promise<DesktopPreviewAutomationSnapshotResult>;
     click: (tabId: string, input: PreviewAutomationClickInput) => Promise<void>;
     type: (tabId: string, input: PreviewAutomationTypeInput) => Promise<void>;
     press: (tabId: string, input: PreviewAutomationPressInput) => Promise<void>;
@@ -1249,6 +1260,7 @@ export interface DesktopPreviewBridge {
   };
   onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => () => void;
   onPointerEvent: (listener: (event: DesktopPreviewPointerEvent) => void) => () => void;
+  onCaptureRecovery?: (listener: (event: DesktopPreviewCaptureRecovery) => void) => () => void;
 }
 
 export type ConfirmDialogVariant = "default" | "destructive";

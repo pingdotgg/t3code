@@ -61,7 +61,7 @@ describe("resolveHostedBrowserWebviewWrapperStyle", () => {
     });
   });
 
-  it("keeps an active background task paintable offscreen", () => {
+  it("keeps an active background task inside the compositor viewport", () => {
     const style = resolveHostedBrowserWebviewWrapperStyle({
       active: false,
       renderingActive: true,
@@ -70,8 +70,8 @@ describe("resolveHostedBrowserWebviewWrapperStyle", () => {
     });
 
     expect(style).toEqual({
-      left: HIDDEN_BROWSER_WEBVIEW_OFFSET,
-      top: HIDDEN_BROWSER_WEBVIEW_OFFSET,
+      left: 0,
+      top: 0,
       width: 1280,
       height: 800,
       zIndex: -1,

@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopPreviewCaptureRecovery,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
@@ -178,6 +179,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     closeTab: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_CLOSE_TAB_CHANNEL, { tabId }),
     registerWebview: (tabId, webContentsId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_REGISTER_WEBVIEW_CHANNEL, { tabId, webContentsId }),
+    prepareWebviewRemoval: (tabId, webContentsId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_PREPARE_WEBVIEW_REMOVAL_CHANNEL, {
+        tabId,
+        webContentsId,
+      }),
     navigate: (tabId, url) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_NAVIGATE_CHANNEL, { tabId, url }),
     goBack: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_GO_BACK_CHANNEL, { tabId }),
@@ -274,6 +280,24 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.on(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
+    },
+    onCaptureRecovery: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, recovery: unknown) => {
+        if (typeof recovery !== "object" || recovery === null) return;
+        const value = recovery as Partial<DesktopPreviewCaptureRecovery>;
+        if (
+          typeof value.tabId !== "string" ||
+          typeof value.webContentsId !== "number" ||
+          !Number.isInteger(value.webContentsId) ||
+          value.webContentsId <= 0
+        ) {
+          return;
+        }
+        listener(value as DesktopPreviewCaptureRecovery);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_CAPTURE_RECOVERY_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_CAPTURE_RECOVERY_CHANNEL, wrappedListener);
     },
   },
 } satisfies DesktopBridge);

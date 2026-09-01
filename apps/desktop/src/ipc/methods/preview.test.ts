@@ -79,6 +79,57 @@ describe("preview IPC methods", () => {
     }),
   );
 
+  effectIt.effect("returns filtered native snapshot failure detail", () =>
+    Effect.gen(function* () {
+      const safeCause = new Error("software compositor copy failed");
+      safeCause.name = "UnknownVizError";
+      const unsafeCause = new Error("capture failed at https://preview.example/secret");
+      unsafeCause.name = "UnknownVizError";
+      const failures: PreviewManager.PreviewManagerError[] = [safeCause, unsafeCause].map(
+        (cause) =>
+          new PreviewManager.PreviewOperationError({
+            operation: "automationSnapshot.capturePage",
+            tabId: "tab-1",
+            webContentsId: 42,
+            cause,
+          }),
+      );
+      failures.push(
+        new PreviewManager.PreviewAutomationCaptureTimeoutError({
+          tabId: "tab-1",
+          webContentsId: 42,
+          stage: "capture-page",
+          timeoutMs: 2_500,
+        }),
+      );
+      let attempt = 0;
+      const manager = PreviewManager.PreviewManager.of({
+        automationSnapshot: () => Effect.fail(failures[attempt++]!),
+      } as unknown as PreviewManager.PreviewManager["Service"]);
+
+      const run = () =>
+        PreviewIpc.automationSnapshot
+          .handler({ tabId: "tab-1" })
+          .pipe(Effect.provideService(PreviewManager.PreviewManager, manager));
+      expect(yield* run()).toEqual({
+        _tag: "Failure",
+        error: { name: "UnknownVizError", message: safeCause.message },
+      });
+      expect(yield* run()).toEqual({
+        _tag: "Failure",
+        error: { name: "UnknownVizError", message: "Preview capture failed." },
+      });
+      expect(yield* run()).toEqual({
+        _tag: "Failure",
+        error: {
+          name: "PreviewAutomationCaptureTimeoutError",
+          message: "Desktop preview snapshot failed during capture-page.",
+          stage: "capture-page",
+        },
+      });
+    }),
+  );
+
   it("keeps the public automation status tab id limit", () => {
     const encode = Schema.encodeUnknownSync(PreviewAutomationStatus);
     const tabId = "t".repeat(129);

@@ -113,6 +113,17 @@ interface BrokerState {
   readonly focusSequence: number;
 }
 
+export const PREVIEW_AUTOMATION_RESPONSE_HEADROOM_MS = 500;
+
+export const previewAutomationHostTimeoutMs = (callerTimeoutMs: number): number => {
+  if (callerTimeoutMs <= 1) return 1;
+  const responseHeadroomMs = Math.max(
+    1,
+    Math.min(PREVIEW_AUTOMATION_RESPONSE_HEADROOM_MS, Math.floor(callerTimeoutMs / 4)),
+  );
+  return callerTimeoutMs - responseHeadroomMs;
+};
+
 const removeConnectionFromState = (
   current: BrokerState,
   clientId: string,
@@ -427,6 +438,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     input: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0],
   ): Effect.fn.Return<A, PreviewAutomationError> {
     const timeoutMs = input.timeoutMs ?? 15_000;
+    const hostTimeoutMs = previewAutomationHostTimeoutMs(timeoutMs);
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
     const route = yield* SynchronizedRef.modify(state, (current) => {
       const assignments = new Map(
@@ -534,7 +546,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           tabIdExplicit: input.tabId !== undefined,
           operation: input.operation,
           input: input.input,
-          timeoutMs,
+          timeoutMs: hostTimeoutMs,
         },
       });
       if (!offered) {

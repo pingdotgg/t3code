@@ -113,6 +113,7 @@ function makeFakeBrowserWindow() {
 
   return {
     window: window as unknown as Electron.BrowserWindow,
+    close: window.close,
     getBounds: window.getBounds,
     getNormalBounds: window.getNormalBounds,
     isDestroyed: window.isDestroyed,
@@ -205,6 +206,7 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly preparePreviewTeardown?: Effect.Effect<void, PreviewManager.PreviewManagerError>;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -285,6 +287,7 @@ function makeTestLayer(input: {
           setMainWindow: () => Effect.void,
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
           getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
+          prepareForWindowTeardown: input.preparePreviewTeardown ?? Effect.void,
           reapplyZoom: () =>
             Effect.sync(() => {
               input.previewZoomReapplies?.push(input.window.webContents.getZoomLevel());
@@ -700,7 +703,7 @@ describe("DesktopWindow", () => {
         if (!close) {
           return yield* Effect.die("window close listener was not registered");
         }
-        close();
+        close({ preventDefault: vi.fn() });
         yield* Effect.promise(() => Promise.resolve());
 
         assert.deepEqual(mainWindowBoundsUpdates, [{ x: 220, y: 140, width: 1380, height: 920 }]);
@@ -806,7 +809,7 @@ describe("DesktopWindow", () => {
           return yield* Effect.die("window lifecycle listeners were not registered");
         }
 
-        close();
+        close({ preventDefault: vi.fn() });
         yield* Effect.promise(() => Promise.resolve());
         assert.deepEqual(mainWindowBoundsUpdates, []);
 
@@ -969,7 +972,7 @@ describe("DesktopWindow", () => {
         if (!close) {
           return yield* Effect.die("window close listener was not registered");
         }
-        close();
+        close({ preventDefault: vi.fn() });
         yield* Deferred.await(writeStarted);
         fakeWindow.isDestroyed.mockReturnValue(true);
 
@@ -995,6 +998,160 @@ describe("DesktopWindow", () => {
       }).pipe(Effect.provide(layer));
     }),
   );
+
+  it.effect("waits for preview teardown before allowing the native window close", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const allowTeardown = yield* Deferred.make<void>();
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        preparePreviewTeardown: Deferred.await(allowTeardown),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const close = fakeWindow.windowListeners.get("close");
+        if (!close) return yield* Effect.die("window close listener was not registered");
+        const preventDefault = vi.fn();
+
+        close({ preventDefault });
+        assert.equal(preventDefault.mock.calls.length, 1);
+        assert.equal(fakeWindow.close.mock.calls.length, 0);
+
+        yield* Deferred.succeed(allowTeardown, undefined);
+        yield* Effect.promise(() =>
+          vi.waitFor(() => assert.equal(fakeWindow.close.mock.calls.length, 1)),
+        );
+        assert.equal(fakeWindow.close.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("logs typed preview teardown failures without exposing raw causes", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const failure = new PreviewManager.PreviewAutomationDebuggerDrainTimeoutError({
+        webContentsId: 42,
+        pendingCommands: 3,
+        stage: "debugger-drain",
+        timeoutMs: 2_500,
+      });
+      const loggedAnnotations: Array<Record<string, unknown>> = [];
+      const logger = Logger.make(({ fiber }) => {
+        const annotations = fiber.getRef(References.CurrentLogAnnotations);
+        if (annotations.errorTag === failure._tag) {
+          loggedAnnotations.push({ ...annotations });
+        }
+      });
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        preparePreviewTeardown: Effect.fail(failure),
+      }).pipe(Layer.provideMerge(Logger.layer([logger], { mergeWithExisting: false })));
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const close = fakeWindow.windowListeners.get("close");
+        if (!close) return yield* Effect.die("window close listener was not registered");
+
+        close({ preventDefault: vi.fn() });
+        yield* Effect.promise(() => vi.waitFor(() => assert.equal(loggedAnnotations.length, 1)));
+
+        assert.deepEqual(loggedAnnotations[0], {
+          component: "desktop-window",
+          errorTag: failure._tag,
+          message: failure.message,
+          pendingCommands: 3,
+          stage: "debugger-drain",
+          timeoutMs: 2_500,
+          webContentsId: 42,
+        });
+        assert.equal(fakeWindow.close.mock.calls.length, 0);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("allows another window close after a preview teardown defect", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const unsafeCause = new Error("https://example.com/private?token=secret");
+      const loggedAnnotations: Array<Record<string, unknown>> = [];
+      const logger = Logger.make(({ fiber }) => {
+        const annotations = fiber.getRef(References.CurrentLogAnnotations);
+        if (annotations.errorTag === "PreviewTeardownDefect") {
+          loggedAnnotations.push({ ...annotations });
+        }
+      });
+      let teardownAttempts = 0;
+      const preparePreviewTeardown = Effect.suspend(() => {
+        teardownAttempts += 1;
+        return teardownAttempts === 1 ? Effect.die(unsafeCause) : Effect.void;
+      });
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        preparePreviewTeardown,
+      }).pipe(Layer.provideMerge(Logger.layer([logger], { mergeWithExisting: false })));
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const close = fakeWindow.windowListeners.get("close");
+        if (!close) return yield* Effect.die("window close listener was not registered");
+        const preventDefault = vi.fn();
+
+        close({ preventDefault });
+        yield* Effect.promise(() => vi.waitFor(() => assert.equal(loggedAnnotations.length, 1)));
+        close({ preventDefault });
+        yield* Effect.promise(() =>
+          vi.waitFor(() => assert.equal(fakeWindow.close.mock.calls.length, 1)),
+        );
+
+        assert.equal(preventDefault.mock.calls.length, 2);
+        assert.deepEqual(loggedAnnotations[0], {
+          component: "desktop-window",
+          errorTag: "PreviewTeardownDefect",
+          message: "Preview teardown failed unexpectedly.",
+        });
+        assert.notInclude(
+          Object.values(loggedAnnotations[0] ?? {})
+            .map(String)
+            .join(" "),
+          unsafeCause.message,
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it("bounds teardown messages and excludes operation causes", () => {
+    const secret = `https://user:password@example.com/${"s".repeat(600)}`;
+    const error = new PreviewManager.PreviewOperationError({
+      operation: "stopRecording",
+      tabId: "t".repeat(600),
+      webContentsId: 42,
+      cause: new Error(secret),
+    });
+
+    const annotations = DesktopWindow.previewTeardownErrorLogAnnotations(error);
+
+    assert.equal(annotations.errorTag, error._tag);
+    assert.equal(annotations.message, error.message.slice(0, 512));
+    assert.lengthOf(String(annotations.message), 512);
+    assert.notProperty(annotations, "cause");
+    assert.notInclude(Object.values(annotations).map(String).join(" "), secret);
+  });
 
   it.effect("publishes native macOS fullscreen changes to the renderer", () =>
     Effect.gen(function* () {

@@ -13,6 +13,7 @@ import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 
@@ -84,10 +85,15 @@ function addScopedListener<Args extends ReadonlyArray<unknown>>(
 const requestDesktopShutdownAndWait = Effect.fn("desktop.lifecycle.requestShutdownAndWait")(
   function* (
     afterBoundsFlush: Effect.Effect<void> = Effect.void,
-  ): Effect.fn.Return<void, never, DesktopShutdown.DesktopShutdown | DesktopWindow.DesktopWindow> {
+  ): Effect.fn.Return<
+    void,
+    PreviewManager.PreviewManagerError,
+    DesktopShutdown.DesktopShutdown | DesktopWindow.DesktopWindow
+  > {
     const shutdown = yield* DesktopShutdown.DesktopShutdown;
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
     yield* desktopWindow.flushMainWindowBounds;
+    yield* desktopWindow.preparePreviewTeardown;
     yield* afterBoundsFlush;
     yield* shutdown.request;
     yield* shutdown.awaitComplete;
@@ -114,7 +120,7 @@ function handleBeforeQuit(
   }
 
   event.preventDefault();
-  void runEffect(
+  const quit = runEffect(
     Effect.gen(function* () {
       const state = yield* DesktopState.DesktopState;
       const electronWindow = yield* ElectronWindow.ElectronWindow;
@@ -127,16 +133,32 @@ function handleBeforeQuit(
           ),
         ),
       );
-    }).pipe(Effect.withSpan("desktop.lifecycle.beforeQuit")),
-  ).finally(() => {
-    markQuitAllowed();
-    void runEffect(
-      Effect.gen(function* () {
-        const electronApp = yield* ElectronApp.ElectronApp;
-        yield* electronApp.quit;
-      }).pipe(Effect.withSpan("desktop.lifecycle.quitAfterShutdown")),
-    );
-  });
+    }).pipe(
+      Effect.onError((cause) =>
+        Effect.gen(function* () {
+          const state = yield* DesktopState.DesktopState;
+          yield* Ref.set(state.quitting, false);
+          yield* logLifecycleError(
+            "preview teardown blocked desktop shutdown",
+            DesktopWindow.previewTeardownCauseLogAnnotations(cause),
+          );
+        }).pipe(Effect.withSpan("desktop.lifecycle.quitBlocked")),
+      ),
+      Effect.withSpan("desktop.lifecycle.beforeQuit"),
+    ),
+  );
+  void quit.then(
+    () => {
+      markQuitAllowed();
+      void runEffect(
+        Effect.gen(function* () {
+          const electronApp = yield* ElectronApp.ElectronApp;
+          yield* electronApp.quit;
+        }).pipe(Effect.withSpan("desktop.lifecycle.quitAfterShutdown")),
+      );
+    },
+    () => undefined,
+  );
 }
 
 function quitFromSignal(
@@ -145,7 +167,7 @@ function quitFromSignal(
     effect: Effect.Effect<A, E, DesktopLifecycleRegistrationServices>,
   ) => Promise<A>,
 ): void {
-  void runEffect(
+  const quit = runEffect(
     Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({ signal });
       const electronApp = yield* ElectronApp.ElectronApp;
@@ -155,8 +177,21 @@ function quitFromSignal(
       yield* logLifecycleInfo("process signal received", { signal });
       yield* requestDesktopShutdownAndWait();
       yield* electronApp.quit;
-    }).pipe(Effect.withSpan("desktop.lifecycle.processSignal")),
+    }).pipe(
+      Effect.onError((cause) =>
+        Effect.gen(function* () {
+          const state = yield* DesktopState.DesktopState;
+          yield* Ref.set(state.quitting, false);
+          yield* logLifecycleError("preview teardown blocked process signal shutdown", {
+            ...DesktopWindow.previewTeardownCauseLogAnnotations(cause),
+            signal,
+          });
+        }).pipe(Effect.withSpan("desktop.lifecycle.processSignalBlocked")),
+      ),
+      Effect.withSpan("desktop.lifecycle.processSignal"),
+    ),
   );
+  void quit.catch(() => undefined);
 }
 
 export const make = DesktopLifecycle.of({
@@ -179,10 +214,13 @@ export const make = DesktopLifecycle.of({
       });
       yield* electronApp.exit(0);
     }).pipe(
-      Effect.catchCause((cause) => {
-        const error = new DesktopLifecycleRelaunchError({ reason, cause });
-        return logLifecycleError(error.message, { error });
-      }),
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          yield* Ref.set(state.quitting, false);
+          const error = new DesktopLifecycleRelaunchError({ reason, cause });
+          yield* logLifecycleError(error.message, { errorTag: error._tag, reason });
+        }),
+      ),
       Effect.forkDetach,
       Effect.asVoid,
     );

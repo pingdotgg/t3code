@@ -1,4 +1,5 @@
 import * as Clock from "effect/Clock";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -99,6 +100,7 @@ export class DesktopWindow extends Context.Service<
     // produce a stranded window pointing at nothing.
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
+    readonly preparePreviewTeardown: Effect.Effect<void, PreviewManager.PreviewManagerError>;
     readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
     // Zooms the main window's own webContents. The Electron `zoomIn`/`zoomOut`
     // menu roles act on whichever webContents has keyboard focus, so with an
@@ -112,6 +114,43 @@ export class DesktopWindow extends Context.Service<
 
 const { logInfo: logWindowInfo, logWarning: logWindowWarning } =
   makeComponentLogger("desktop-window");
+
+const PREVIEW_TEARDOWN_ERROR_MESSAGE_MAX_LENGTH = 512;
+
+export function previewTeardownErrorLogAnnotations(
+  error: PreviewManager.PreviewManagerError,
+): Record<string, string | number> {
+  const message = error.message.replace(/\s+/g, " ").trim();
+  return {
+    errorTag: error._tag,
+    message: message.slice(0, PREVIEW_TEARDOWN_ERROR_MESSAGE_MAX_LENGTH),
+    ...("stage" in error && typeof error.stage === "string" ? { stage: error.stage } : {}),
+    ...("timeoutMs" in error && typeof error.timeoutMs === "number"
+      ? { timeoutMs: error.timeoutMs }
+      : {}),
+    ...("pendingCommands" in error && typeof error.pendingCommands === "number"
+      ? { pendingCommands: error.pendingCommands }
+      : {}),
+    ...("pendingCaptures" in error && typeof error.pendingCaptures === "number"
+      ? { pendingCaptures: error.pendingCaptures }
+      : {}),
+    ...("webContentsId" in error && typeof error.webContentsId === "number"
+      ? { webContentsId: error.webContentsId }
+      : {}),
+  };
+}
+
+export function previewTeardownCauseLogAnnotations(
+  cause: Cause.Cause<PreviewManager.PreviewManagerError>,
+): Record<string, string | number> {
+  return Option.match(Cause.findErrorOption(cause), {
+    onNone: () => ({
+      errorTag: "PreviewTeardownDefect",
+      message: "Preview teardown failed unexpectedly.",
+    }),
+    onSome: previewTeardownErrorLogAnnotations,
+  });
+}
 
 function getIconOption(
   iconPaths: DesktopAssets.DesktopIconPaths,
@@ -592,8 +631,35 @@ export const make = Effect.gen(function* () {
     window.on("move", scheduleBoundsPersist);
     window.on("maximize", scheduleBoundsPersist);
     window.on("unmaximize", scheduleBoundsPersist);
-    window.on("close", () => {
+    let closePrepared = false;
+    let closePreparationRunning = false;
+    window.on("close", (event) => {
       runFork(flushBoundsPersist);
+      if (closePrepared || closePreparationRunning) {
+        if (!closePrepared) event.preventDefault();
+        return;
+      }
+      event.preventDefault();
+      closePreparationRunning = true;
+      void runPromise(
+        previewManager.prepareForWindowTeardown.pipe(
+          Effect.matchCauseEffect({
+            onSuccess: () =>
+              Effect.sync(() => {
+                closePrepared = true;
+                if (!window.isDestroyed()) window.close();
+              }),
+            onFailure: (cause) =>
+              Effect.gen(function* () {
+                closePreparationRunning = false;
+                yield* logWindowWarning(
+                  "preview teardown blocked main window close",
+                  previewTeardownCauseLogAnnotations(cause),
+                );
+              }),
+          }),
+        ),
+      );
     });
 
     if (environment.platform === "darwin") {
@@ -871,6 +937,7 @@ export const make = Effect.gen(function* () {
     flushMainWindowBounds: Effect.suspend(() => flushMainWindowBounds).pipe(
       Effect.withSpan("desktop.window.flushMainWindowBounds"),
     ),
+    preparePreviewTeardown: previewManager.prepareForWindowTeardown,
     dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action) {
       yield* Effect.annotateCurrentSpan({ action });
       const existingWindow = yield* focusedMainWindow;

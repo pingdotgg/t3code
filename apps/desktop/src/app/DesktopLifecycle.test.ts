@@ -2,13 +2,17 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Ref from "effect/Ref";
+import * as References from "effect/References";
 
 import type * as Electron from "electron";
+import { vi } from "vite-plus/test";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
@@ -80,6 +84,7 @@ function makeDesktopWindowLayer(
   input: {
     readonly activate?: Effect.Effect<void>;
     readonly flushMainWindowBounds?: Effect.Effect<void>;
+    readonly preparePreviewTeardown?: Effect.Effect<void, PreviewManager.PreviewManagerError>;
   } = {},
 ) {
   return Layer.succeed(DesktopWindow.DesktopWindow, {
@@ -92,6 +97,7 @@ function makeDesktopWindowLayer(
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: input.flushMainWindowBounds ?? Effect.void,
+    preparePreviewTeardown: input.preparePreviewTeardown ?? Effect.void,
     dispatchMenuAction: () => Effect.void,
     zoomMain: () => Effect.void,
     syncAppearance: Effect.void,
@@ -204,6 +210,184 @@ describe("DesktopLifecycle", () => {
           assert.deepEqual(events, ["flush", "destroy", "request", "quit"]);
         }),
       ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("logs typed teardown failures before rejecting an app quit", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      const failure = new PreviewManager.PreviewAutomationCaptureDrainTimeoutError({
+        pendingCaptures: 2,
+        stage: "capture-drain",
+        timeoutMs: 2_500,
+      });
+      const loggedAnnotations: Array<Record<string, unknown>> = [];
+      const logger = Logger.make(({ fiber }) => {
+        const annotations = fiber.getRef(References.CurrentLogAnnotations);
+        if (annotations.errorTag === failure._tag) {
+          loggedAnnotations.push({ ...annotations });
+        }
+      });
+      let quitCount = 0;
+      const quit = Effect.sync(() => {
+        quitCount += 1;
+      });
+      const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "darwin",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(makeElectronAppLayer(appListeners, quit)),
+        Layer.provideMerge(electronThemeLayer),
+        Layer.provideMerge(makeElectronWindowLayer()),
+        Layer.provideMerge(
+          makeDesktopWindowLayer({ preparePreviewTeardown: Effect.fail(failure) }),
+        ),
+        Layer.provideMerge(environmentLayer),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(Logger.layer([logger], { mergeWithExisting: false })),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          const state = yield* DesktopState.DesktopState;
+          yield* lifecycle.register;
+          let prevented = false;
+          appListeners.get("before-quit")?.({
+            preventDefault: () => {
+              prevented = true;
+            },
+          } as Electron.Event);
+
+          yield* Effect.promise(() => vi.waitFor(() => assert.equal(loggedAnnotations.length, 1)));
+
+          assert.isTrue(prevented);
+          assert.isFalse(yield* Ref.get(state.quitting));
+          assert.equal(quitCount, 0);
+          assert.deepEqual(loggedAnnotations[0], {
+            component: "desktop-lifecycle",
+            errorTag: failure._tag,
+            message: failure.message,
+            pendingCaptures: 2,
+            stage: "capture-drain",
+            timeoutMs: 2_500,
+          });
+          assert.notProperty(loggedAnnotations[0]!, "error");
+          assert.notProperty(loggedAnnotations[0]!, "cause");
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("resets quitting after a preview teardown defect", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      const unsafeCause = new Error("https://example.com/private?token=secret");
+      const loggedAnnotations: Array<Record<string, unknown>> = [];
+      const logger = Logger.make(({ fiber }) => {
+        const annotations = fiber.getRef(References.CurrentLogAnnotations);
+        if (annotations.errorTag === "PreviewTeardownDefect") {
+          loggedAnnotations.push({ ...annotations });
+        }
+      });
+      const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "darwin",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(makeElectronAppLayer(appListeners)),
+        Layer.provideMerge(electronThemeLayer),
+        Layer.provideMerge(makeElectronWindowLayer()),
+        Layer.provideMerge(
+          makeDesktopWindowLayer({ preparePreviewTeardown: Effect.die(unsafeCause) }),
+        ),
+        Layer.provideMerge(environmentLayer),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(Logger.layer([logger], { mergeWithExisting: false })),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          const state = yield* DesktopState.DesktopState;
+          yield* lifecycle.register;
+          const preventDefault = vi.fn();
+
+          appListeners.get("before-quit")?.({ preventDefault } as unknown as Electron.Event);
+          yield* Effect.promise(() => vi.waitFor(() => assert.equal(loggedAnnotations.length, 1)));
+          assert.isFalse(yield* Ref.get(state.quitting));
+
+          appListeners.get("before-quit")?.({ preventDefault } as unknown as Electron.Event);
+          yield* Effect.promise(() => vi.waitFor(() => assert.equal(loggedAnnotations.length, 2)));
+          assert.isFalse(yield* Ref.get(state.quitting));
+          assert.equal(preventDefault.mock.calls.length, 2);
+          assert.deepEqual(loggedAnnotations[0], {
+            component: "desktop-lifecycle",
+            errorTag: "PreviewTeardownDefect",
+            message: "Preview teardown failed unexpectedly.",
+          });
+          assert.notInclude(
+            Object.values(loggedAnnotations[0] ?? {})
+              .map(String)
+              .join(" "),
+            unsafeCause.message,
+          );
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("keeps relaunch failure causes out of log annotations", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      const unsafeCause = new Error("https://example.com/private?token=secret");
+      const failure = new PreviewManager.PreviewOperationError({
+        operation: "prepareForWindowTeardown",
+        cause: unsafeCause,
+      });
+      const loggedAnnotations: Array<Record<string, unknown>> = [];
+      const logger = Logger.make(({ fiber }) => {
+        const annotations = fiber.getRef(References.CurrentLogAnnotations);
+        if (annotations.errorTag === "DesktopLifecycleRelaunchError") {
+          loggedAnnotations.push({ ...annotations });
+        }
+      });
+      const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "darwin",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(makeElectronAppLayer(appListeners)),
+        Layer.provideMerge(electronThemeLayer),
+        Layer.provideMerge(
+          makeDesktopWindowLayer({ preparePreviewTeardown: Effect.fail(failure) }),
+        ),
+        Layer.provideMerge(environmentLayer),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(Logger.layer([logger], { mergeWithExisting: false })),
+      );
+
+      yield* Effect.gen(function* () {
+        const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+        yield* lifecycle.relaunch("update");
+        yield* Effect.promise(() => vi.waitFor(() => assert.equal(loggedAnnotations.length, 1)));
+
+        assert.deepEqual(loggedAnnotations[0], {
+          component: "desktop-lifecycle",
+          errorTag: "DesktopLifecycleRelaunchError",
+          reason: "update",
+        });
+        assert.notInclude(
+          Object.values(loggedAnnotations[0] ?? {})
+            .map(String)
+            .join(" "),
+          unsafeCause.message,
+        );
+      }).pipe(Effect.provide(layer));
     }),
   );
 

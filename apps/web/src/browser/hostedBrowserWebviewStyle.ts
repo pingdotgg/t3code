@@ -38,6 +38,18 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
     };
   }
 
+  if (renderingActive) {
+    return {
+      left: 0,
+      top: 0,
+      width: hiddenSize.width,
+      height: hiddenSize.height,
+      zIndex: -1,
+      pointerEvents: "none",
+      visibility: "visible",
+    };
+  }
+
   return {
     left: HIDDEN_BROWSER_WEBVIEW_OFFSET,
     top: HIDDEN_BROWSER_WEBVIEW_OFFSET,
@@ -45,6 +57,6 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
     height: hiddenSize.height,
     zIndex: -1,
     pointerEvents: "none",
-    visibility: renderingActive ? "visible" : "hidden",
+    visibility: "hidden",
   };
 }

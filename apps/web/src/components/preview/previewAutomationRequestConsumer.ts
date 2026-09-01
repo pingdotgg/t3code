@@ -7,10 +7,40 @@ import type {
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import {
+  PreviewAutomationHostDeadlineError,
   PreviewAutomationOperationError,
   type PreviewAutomationOperationContext,
   serializePreviewAutomationHostError,
 } from "./previewAutomationErrors";
+
+const handleRequestBeforeDeadline = (
+  request: PreviewAutomationRequest,
+  handle: (request: PreviewAutomationRequest) => Promise<unknown>,
+  context: Pick<PreviewAutomationOperationContext, "environmentId">,
+): Promise<unknown> => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const handled = Promise.resolve().then(() => handle(request));
+  const timedOut = new Promise<never>((_, reject) => {
+    timeoutId = globalThis.setTimeout(
+      () =>
+        reject(
+          new PreviewAutomationHostDeadlineError({
+            requestId: request.requestId,
+            operation: request.operation,
+            environmentId: context.environmentId,
+            threadId: request.threadId,
+            tabId: request.tabId ?? null,
+            stage: "host-execution",
+            timeoutMs: request.timeoutMs,
+          }),
+        ),
+      request.timeoutMs,
+    );
+  });
+  return Promise.race([handled, timedOut]).finally(() => {
+    if (timeoutId !== null) globalThis.clearTimeout(timeoutId);
+  });
+};
 
 type AutomationStreamResult<E> = AsyncResult.AsyncResult<PreviewAutomationStreamEvent, E>;
 
@@ -63,33 +93,33 @@ export function createPreviewAutomationRequestConsumerAtom<E>(options: {
         return;
       }
       const request = event.request;
-      void get
-        .once(options.requestHandlerAtom)
-        .handle(request)
-        .then(
-          (value) =>
-            options.respond({
-              clientId: options.clientId,
-              connectionId: event.connectionId,
+      const handler = get.once(options.requestHandlerAtom);
+      void handleRequestBeforeDeadline(request, handler.handle, {
+        environmentId: options.environmentId,
+      }).then(
+        (value) =>
+          options.respond({
+            clientId: options.clientId,
+            connectionId: event.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            ...(value === undefined ? {} : { result: value }),
+          }),
+        (error) =>
+          options.respond({
+            clientId: options.clientId,
+            connectionId: event.connectionId,
+            requestId: request.requestId,
+            ok: false,
+            error: serializePreviewAutomationError(error, {
               requestId: request.requestId,
-              ok: true,
-              ...(value === undefined ? {} : { result: value }),
+              operation: request.operation,
+              environmentId: options.environmentId,
+              threadId: request.threadId,
+              tabId: request.tabId ?? null,
             }),
-          (error) =>
-            options.respond({
-              clientId: options.clientId,
-              connectionId: event.connectionId,
-              requestId: request.requestId,
-              ok: false,
-              error: serializePreviewAutomationError(error, {
-                requestId: request.requestId,
-                operation: request.operation,
-                environmentId: options.environmentId,
-                threadId: request.threadId,
-                tabId: request.tabId ?? null,
-              }),
-            }),
-        );
+          }),
+      );
     };
 
     get.addFinalizer(() => {

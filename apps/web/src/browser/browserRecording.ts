@@ -1,8 +1,4 @@
-import type {
-  DesktopPreviewRecordingArtifact,
-  DesktopPreviewRecordingSource,
-  ScopedThreadRef,
-} from "@t3tools/contracts";
+import type { DesktopPreviewRecordingArtifact, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/unstable/reactivity";
@@ -184,23 +180,10 @@ const createMediaRecorder = (stream: MediaStream): MediaRecorder => {
   return mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
 };
 
-const captureTabMediaStream = (
-  source: DesktopPreviewRecordingSource,
-  frameRate: number,
-): Promise<MediaStream> =>
-  navigator.mediaDevices.getUserMedia({
+const captureTabMediaStream = (frameRate: number): Promise<MediaStream> =>
+  navigator.mediaDevices.getDisplayMedia({
     audio: false,
-    video: {
-      mandatory: {
-        chromeMediaSource: "tab",
-        chromeMediaSourceId: source.sourceId,
-        minWidth: source.width,
-        maxWidth: source.width,
-        minHeight: source.height,
-        maxHeight: source.height,
-        maxFrameRate: frameRate,
-      },
-    } as unknown as MediaTrackConstraints,
+    video: { frameRate: { max: frameRate } },
   });
 
 const stopMediaRecorder = async (recorder: MediaRecorder | null): Promise<void> => {
@@ -218,12 +201,11 @@ const stopMediaStream = (stream: MediaStream | null): void => {
 
 const captureTabMediaStreamWithTimeout = async (
   tabId: string,
-  source: DesktopPreviewRecordingSource,
   frameRate: number,
 ): Promise<MediaStream> => {
   let acceptStream = true;
   let timeoutId: number | null = null;
-  const streamPromise = captureTabMediaStream(source, frameRate).then((stream) => {
+  const streamPromise = captureTabMediaStream(frameRate).then((stream) => {
     if (!acceptStream) stopMediaStream(stream);
     return stream;
   });
@@ -402,9 +384,8 @@ export async function startBrowserRecording(
       () => getClientSettings().browserRecordingFrameRate,
     );
     const [frameRate] = await Promise.all([frameRatePromise, waitForBrowserRecordingPaint()]);
-    let source: DesktopPreviewRecordingSource;
     try {
-      source = await bridge.recording.startScreencast(tabId);
+      await bridge.recording.startScreencast(tabId);
     } catch (cause) {
       if (!isRecordingStarting(recording)) {
         throw recordingStartupCancelledError(recording, cause);
@@ -436,7 +417,7 @@ export async function startBrowserRecording(
     };
     await throwIfStartupCancelled();
     try {
-      recording.stream = await captureTabMediaStreamWithTimeout(tabId, source, frameRate);
+      recording.stream = await captureTabMediaStreamWithTimeout(tabId, frameRate);
     } catch (cause) {
       const cleanupCause = await cleanupFailedRecordingStart(bridge, recording);
       if (isBrowserRecordingCaptureTimeoutError(cause) && cleanupCause === undefined) throw cause;

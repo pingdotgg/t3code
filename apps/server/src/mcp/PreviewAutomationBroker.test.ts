@@ -39,6 +39,13 @@ const makeHost = (overrides: Partial<PreviewAutomationHost> = {}): PreviewAutoma
   ...overrides,
 });
 
+it("reserves broker response headroom inside the caller deadline", () => {
+  expect(PreviewAutomationBroker.previewAutomationHostTimeoutMs(30_000)).toBe(29_500);
+  expect(PreviewAutomationBroker.previewAutomationHostTimeoutMs(1_000)).toBe(750);
+  expect(PreviewAutomationBroker.previewAutomationHostTimeoutMs(3)).toBe(2);
+  expect(PreviewAutomationBroker.previewAutomationHostTimeoutMs(1)).toBe(1);
+});
+
 type RoutedRequest = PreviewAutomationRequest & {
   readonly connectionId: PreviewAutomationStreamEvent["connectionId"];
 };
@@ -301,6 +308,7 @@ it.effect("announces a live replacement stream before delivering requests", () =
 it.effect("preserves bounded request and remote selector diagnostics", () => {
   const locator = "role=button[name='request-secret']";
   const remoteMessage = "Unexpected token near remote-secret.";
+  let routedTimeoutMs: number | undefined;
   const remoteError = {
     _tag: "PreviewAutomationInvalidSelectorError",
     message: remoteMessage,
@@ -311,15 +319,16 @@ it.effect("preserves bounded request and remote selector diagnostics", () => {
     Effect.gen(function* () {
       const broker = yield* makeBroker;
       const requests = requestsFrom(yield* broker.connect(makeHost()));
-      yield* Stream.runForEach(requests, (request) =>
-        broker.respond({
+      yield* Stream.runForEach(requests, (request) => {
+        routedTimeoutMs = request.timeoutMs;
+        return broker.respond({
           clientId: "client-1",
           connectionId: request.connectionId,
           requestId: request.requestId,
           ok: false,
           error: remoteError,
-        }),
-      ).pipe(Effect.forkScoped);
+        });
+      }).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
 
       const error = yield* broker
@@ -353,6 +362,7 @@ it.effect("preserves bounded request and remote selector diagnostics", () => {
         `Preview automation click received an invalid locator (${locator.length} characters).`,
       );
       expect(error.message).not.toContain("secret");
+      expect(routedTimeoutMs).toBe(PreviewAutomationBroker.previewAutomationHostTimeoutMs(1_234));
       expect(error.cause).toBe(remoteError);
       expect("selector" in error).toBe(false);
       expect("remoteMessage" in error).toBe(false);

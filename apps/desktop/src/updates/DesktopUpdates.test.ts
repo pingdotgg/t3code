@@ -20,6 +20,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 
 interface UpdatesHarnessOptions {
@@ -112,6 +113,21 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     destroyAll: Effect.void,
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindow["Service"]);
+  const desktopWindowLayer = Layer.succeed(DesktopWindow.DesktopWindow, {
+    createMain: Effect.die("unexpected window create"),
+    ensureMain: Effect.die("unexpected window ensure"),
+    revealOrCreateMain: Effect.die("unexpected window reveal"),
+    activate: Effect.die("unexpected window activate"),
+    createMainIfBackendReady: Effect.die("unexpected window create"),
+    showConnectingSplash: Effect.void,
+    handleBackendReady: () => Effect.void,
+    handleBackendNotReady: Effect.void,
+    flushMainWindowBounds: Effect.void,
+    preparePreviewTeardown: Effect.void,
+    dispatchMenuAction: () => Effect.die("unexpected menu action"),
+    zoomMain: () => Effect.die("unexpected zoom"),
+    syncAppearance: Effect.void,
+  } satisfies DesktopWindow.DesktopWindow["Service"]);
 
   const stubBackendInstance: DesktopBackendPool.DesktopBackendInstance = {
     id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
@@ -193,6 +209,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   const layer = DesktopUpdates.layer.pipe(
     Layer.provideMerge(updaterLayer),
     Layer.provideMerge(windowLayer),
+    Layer.provideMerge(desktopWindowLayer),
     Layer.provideMerge(backendLayer),
     Layer.provideMerge(DesktopState.layer),
     Layer.provideMerge(settingsLayer),

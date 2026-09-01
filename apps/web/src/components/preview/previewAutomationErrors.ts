@@ -22,8 +22,11 @@ export class PreviewAutomationOverlayTimeoutError extends Schema.TaggedErrorClas
   "PreviewAutomationOverlayTimeoutError",
   {
     requestId: TrimmedNonEmptyString,
+    operation: PreviewAutomationOperation,
     environmentId: EnvironmentId,
     threadId: ThreadId,
+    tabId: PreviewTabId,
+    stage: Schema.Literal("overlay-readiness"),
     timeoutMs: Schema.Int,
   },
 ) {
@@ -32,7 +35,43 @@ export class PreviewAutomationOverlayTimeoutError extends Schema.TaggedErrorClas
   }
 
   override get message(): string {
-    return `Preview webview for request ${this.requestId} on environment ${this.environmentId} thread ${this.threadId} did not register within ${this.timeoutMs}ms.`;
+    return `Preview webview for ${this.operation} request ${this.requestId} on environment ${this.environmentId} thread ${this.threadId} tab ${this.tabId} did not become compositing-ready within ${this.timeoutMs}ms.`;
+  }
+}
+
+export class PreviewAutomationHostDeadlineError extends Schema.TaggedErrorClass<PreviewAutomationHostDeadlineError>()(
+  "PreviewAutomationHostDeadlineError",
+  {
+    requestId: TrimmedNonEmptyString,
+    operation: PreviewAutomationOperation,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    tabId: Schema.NullOr(PreviewTabId),
+    stage: Schema.Literal("host-execution"),
+    timeoutMs: Schema.Int,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationTimeoutError" as const;
+  }
+
+  override get message(): string {
+    return `Preview automation ${this.operation} request ${this.requestId} exceeded its ${this.timeoutMs}ms host execution deadline.`;
+  }
+}
+
+export class PreviewAutomationDesktopFailureError extends Schema.TaggedErrorClass<PreviewAutomationDesktopFailureError>()(
+  "PreviewAutomationDesktopFailureError",
+  {
+    nativeName: TrimmedNonEmptyString,
+    safeMessage: TrimmedNonEmptyString,
+    stage: Schema.optional(TrimmedNonEmptyString),
+  },
+) {
+  override get message(): string {
+    return this.stage === undefined
+      ? `Desktop preview failed with ${this.nativeName}.`
+      : `Desktop preview failed with ${this.nativeName} during ${this.stage}.`;
   }
 }
 
@@ -207,6 +246,7 @@ export class PreviewAutomationOperationError extends Schema.TaggedErrorClass<Pre
 
 export const PreviewAutomationHostError = Schema.Union([
   PreviewAutomationOverlayTimeoutError,
+  PreviewAutomationHostDeadlineError,
   PreviewAutomationNavigationTimeoutError,
   PreviewAutomationViewportTimeoutError,
   PreviewAutomationTargetUnavailableError,
@@ -218,6 +258,62 @@ export type PreviewAutomationHostError = typeof PreviewAutomationHostError.Type;
 
 export const isPreviewAutomationHostError = Schema.is(PreviewAutomationHostError);
 
+const SAFE_NATIVE_ERROR_NAMES = new Set(["AbortError", "UnknownVizError"]);
+const SAFE_ERROR_STAGE_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+const SAFE_ERROR_TAG_PATTERN = /^[A-Za-z][A-Za-z0-9]{0,63}$/;
+const isPreviewAutomationDesktopFailureError = Schema.is(PreviewAutomationDesktopFailureError);
+
+const timeoutMessage = (stage?: string): string =>
+  stage === undefined
+    ? "Preview automation timed out."
+    : `Preview automation timed out during ${stage}.`;
+
+const safeErrorCause = (
+  cause: unknown,
+): { readonly name: string; readonly message: string; readonly stage?: string } | null => {
+  if (isPreviewAutomationDesktopFailureError(cause)) {
+    return {
+      name: cause.nativeName,
+      message: cause.safeMessage,
+      ...(cause.stage === undefined ? {} : { stage: cause.stage }),
+    };
+  }
+  if (typeof cause !== "object" || cause === null) return null;
+  const record = cause as Record<string, unknown>;
+  const name = typeof record["name"] === "string" ? record["name"] : "";
+  const message = typeof record["message"] === "string" ? record["message"] : "";
+  const rawStage = typeof record["stage"] === "string" ? record["stage"] : undefined;
+  const stage =
+    rawStage !== undefined && SAFE_ERROR_STAGE_PATTERN.test(rawStage) ? rawStage : undefined;
+  if (SAFE_NATIVE_ERROR_NAMES.has(name)) {
+    return {
+      name,
+      message: "Preview capture failed.",
+      ...(stage === undefined ? {} : { stage }),
+    };
+  }
+  const flattenedOwnedTimeout = message.match(
+    /\bPreview[^\n]{0,160}?timed out during ([a-z][a-z0-9-]{0,63}) after \d+ms/,
+  );
+  if (flattenedOwnedTimeout?.[1]) {
+    return {
+      name: "PreviewAutomationTimeoutError",
+      message: timeoutMessage(flattenedOwnedTimeout[1]),
+      stage: flattenedOwnedTimeout[1],
+    };
+  }
+  const rawTag = typeof record["_tag"] === "string" ? record["_tag"] : "";
+  const tag = SAFE_ERROR_TAG_PATTERN.test(rawTag) ? rawTag : "";
+  if (tag.endsWith("TimeoutError") && message.length > 0) {
+    return {
+      name: tag,
+      message: timeoutMessage(stage),
+      ...(stage === undefined ? {} : { stage }),
+    };
+  }
+  return null;
+};
+
 export function serializePreviewAutomationHostError(
   error: PreviewAutomationHostError,
 ): NonNullable<PreviewAutomationResponse["error"]> {
@@ -227,9 +323,12 @@ export function serializePreviewAutomationHostError(
         key !== "_tag" && key !== "cause" && key !== "name" && key !== "message" && key !== "stack",
     ),
   );
+  const cause = "cause" in error ? safeErrorCause(error.cause) : null;
   return {
     _tag: error.responseTag,
     message: error.message,
-    ...(Object.keys(detail).length === 0 ? {} : { detail }),
+    ...(Object.keys(detail).length === 0 && cause === null
+      ? {}
+      : { detail: { ...detail, ...(cause === null ? {} : { cause }) } }),
   };
 }
