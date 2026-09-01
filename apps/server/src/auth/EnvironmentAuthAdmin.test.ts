@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -35,6 +36,7 @@ const makeEnvironmentAuthLayer = (
   EnvironmentAuth.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provide(ServerEnvironment.identityLayer),
     Layer.provide(makeServerConfigLayer(overrides)),
   );
 
