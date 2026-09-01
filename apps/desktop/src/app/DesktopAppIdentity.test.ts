@@ -195,7 +195,7 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         yield* identity.configure;
 
-        assert.deepEqual(calls.setName, ["T3 Code (Alpha)"]);
+        assert.deepEqual(calls.setName, ["t3code"]);
         assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 Code (Alpha)");
         assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
         assert.equal(calls.setAboutPanelOptions[0]?.version, "0123456789ab");
@@ -211,6 +211,31 @@ describe("DesktopAppIdentity", () => {
           },
         },
         pngIconPath: Option.some("/icon.png"),
+      },
+    );
+  });
+
+  it.effect("keeps downstream builds on the shared secure-storage identity", () => {
+    const calls: ElectronAppCalls = {
+      setAboutPanelOptions: [],
+      setDockIcon: [],
+      setName: [],
+    };
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        yield* identity.configure;
+
+        assert.deepEqual(calls.setName, ["t3code"]);
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 Code (Fork Nightly)");
+      }),
+      {
+        calls,
+        environment: {
+          appName: "T3 Code (Fork Nightly)",
+          appVersion: "0.0.38-nightly.20260901.1243",
+        },
       },
     );
   });

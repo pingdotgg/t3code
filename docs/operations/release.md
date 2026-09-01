@@ -234,6 +234,9 @@ downstream build manually. Do not rename the `.app` bundle after installing it. 
 that its bundle path is canonical for the same distribution and either packaged channel before it
 stops backends or asks the native updater to quit.
 
+Downstream branding does not change Electron's internal app name. Packaged builds keep `t3code`
+so macOS safe storage can read connection credentials created by an upstream T3 Code build.
+
 - Required release assets for updater:
   - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
   - channel metadata: `latest*.yml` for stable releases, `nightly*.yml` for nightly releases

@@ -119,7 +119,10 @@ export const make = Effect.gen(function* () {
 
   const configure = Effect.gen(function* () {
     const commitHash = yield* resolveAboutCommitHash;
-    yield* electronApp.setName(environment.displayName);
+    // Electron derives its macOS safeStorage Keychain service from the internal
+    // app name. Keep that name stable across branded downstream builds so they
+    // can read the connection catalog encrypted by the upstream app.
+    yield* electronApp.setName(environment.userDataDirName);
     yield* electronApp.setAboutPanelOptions({
       applicationName: environment.displayName,
       applicationVersion: environment.appVersion,
