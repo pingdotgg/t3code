@@ -230,3 +230,12 @@ export function makeWindow(
     resolution,
   };
 }
+
+/** The current calendar month through today in the viewer's own time zone. */
+export function makeMonthToDateWindow(now = new Date()): UsageSummaryInput {
+  const window = makeWindow(1, now);
+  return {
+    ...window,
+    sinceDay: UsageDay.make(`${window.untilDay.slice(0, 7)}-01`),
+  };
+}
