@@ -4954,14 +4954,19 @@ function ChatViewContent(props: ChatViewProps) {
       return null;
     }
     const isSnoozed = activeThreadSnoozed;
+    const parkedThreadDescription = isSnoozed
+      ? "Sending a message wakes it and moves it back to Active in the sidebar."
+      : "Send a message to unsettle";
     return {
       id: `thread-${isSnoozed ? "snoozed" : "settled"}:${activeThread?.id ?? "unknown"}`,
       variant: "info",
       icon: isSnoozed ? <AlarmClockIcon /> : <CheckCircle2Icon />,
-      title: `This thread is ${isSnoozed ? "snoozed" : "settled"}`,
-      description: isSnoozed
-        ? "Sending a message wakes it and moves it back to Active in the sidebar."
-        : "Sending a message moves it back to Active in the sidebar.",
+      title: (
+        <>
+          <span>This thread is {isSnoozed ? "snoozed" : "settled"}</span>{" "}
+          <span className="font-normal text-muted-foreground">{parkedThreadDescription}</span>
+        </>
+      ),
       actions: (
         <Button
           size="xs"
