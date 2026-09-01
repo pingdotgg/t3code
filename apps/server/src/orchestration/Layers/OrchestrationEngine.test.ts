@@ -60,7 +60,7 @@ function makeOrchestrationLayer() {
     ),
     OrchestrationProjectionSnapshotQueryLive,
   ).pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provideMerge(OrchestrationCommandReceiptRepositoryLive),
@@ -224,6 +224,7 @@ describe("OrchestrationEngine", () => {
         } satisfies OrchestrationProjectionPipelineShape),
       ),
       Layer.provide(Layer.succeed(OrchestrationEventStore, eventStore)),
+      Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
       Layer.provideMerge(NodeServices.layer),
@@ -322,15 +323,17 @@ describe("OrchestrationEngine", () => {
   );
 
   effectIt.effect(
-    "rejects same-millisecond thread changes without blocking on unrelated threads",
+    "rejects persisted changes and live background work without blocking unrelated threads",
     () =>
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(now()));
         const engine = yield* OrchestrationEngineService;
         const snapshots = yield* ProjectionSnapshotQuery;
+        const backgroundLiveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
         const projectId = ProjectId.make("project-auto-settle-guard");
         const guardedThreadId = ThreadId.make("thread-auto-settle-guarded");
         const unrelatedThreadId = ThreadId.make("thread-auto-settle-unrelated");
+        const liveThreadId = ThreadId.make("thread-auto-settle-live");
 
         yield* engine.dispatch({
           type: "project.create",
@@ -340,7 +343,7 @@ describe("OrchestrationEngine", () => {
           workspaceRoot: "/tmp/project-auto-settle-guard",
           createdAt: now(),
         });
-        for (const threadId of [guardedThreadId, unrelatedThreadId]) {
+        for (const threadId of [guardedThreadId, unrelatedThreadId, liveThreadId]) {
           yield* engine.dispatch({
             type: "thread.create",
             commandId: CommandId.make(`cmd-create-${threadId}`),
@@ -385,6 +388,43 @@ describe("OrchestrationEngine", () => {
           .pipe(Effect.flip);
         expect(staleError._tag).toBe("OrchestrationCommandInvariantError");
 
+        const livenessSnapshotSequence = yield* engine.latestSequence;
+        for (const [taskType, expectedLiveness] of [
+          ["subagent", "working"],
+          ["local_bash", "monitoring"],
+        ] as const) {
+          backgroundLiveness.recordTaskLiveness({
+            threadId: liveThreadId,
+            taskId: `task-${expectedLiveness}`,
+            taskType,
+            status: undefined,
+            kind: "started",
+          });
+          expect(backgroundLiveness.getThreadBackgroundLiveness(liveThreadId)).toBe(
+            expectedLiveness,
+          );
+          expect(yield* engine.latestSequence).toBe(livenessSnapshotSequence);
+
+          const livenessError = yield* engine
+            .dispatch({
+              type: "thread.auto-settle",
+              commandId: CommandId.make(`cmd-auto-settle-${expectedLiveness}`),
+              threadId: liveThreadId,
+              snapshotSequence: livenessSnapshotSequence,
+            })
+            .pipe(Effect.flip);
+          expect(livenessError._tag).toBe("OrchestrationCommandInvariantError");
+          expect(yield* engine.latestSequence).toBe(livenessSnapshotSequence);
+          backgroundLiveness.clearThreadLiveness(liveThreadId);
+        }
+
+        yield* engine.dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("cmd-auto-settle-after-liveness-cleared"),
+          threadId: liveThreadId,
+          snapshotSequence: livenessSnapshotSequence,
+        });
+
         const freshSnapshotSequence = yield* engine.latestSequence;
         yield* engine.dispatch({
           type: "thread.meta.update",
@@ -403,6 +443,9 @@ describe("OrchestrationEngine", () => {
         expect(
           settled.threads.find((thread) => thread.id === guardedThreadId)?.settledOverride,
         ).toBe("settled");
+        expect(settled.threads.find((thread) => thread.id === liveThreadId)?.settledOverride).toBe(
+          "settled",
+        );
       }).pipe(Effect.provide(makeOrchestrationLayer())),
   );
 
