@@ -188,6 +188,8 @@ export type TimelineLatestTurn = Pick<
   "turnId" | "state" | "startedAt" | "completedAt"
 >;
 
+const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
+
 export type MessagesTimelineRow =
   | {
       kind: "work";
@@ -598,17 +600,16 @@ export function deriveMessagesTimelineRows(input: {
   const latestRunningToolEntry = visibleActiveToolEntries.findLast((entry) =>
     workEntryIsActiveTurnActivity(entry.entry),
   );
-  const displayedToolEntry = latestRunningToolEntry ?? latestVisibleToolEntry;
   const activeWorkPlacementEntryId = latestVisibleToolEntry?.id;
   const activeWorkRow =
-    activeWorkAnchor && displayedToolEntry
+    activeWorkAnchor && latestVisibleToolEntry
       ? (() => {
           const groupId = workGroupId(activeWorkAnchor.id, activeWorkAnchor.entry);
           return {
             kind: "work-live" as const,
-            id: `work-live:${workGroupIdentity(activeWorkAnchor.id, activeWorkAnchor.entry)}`,
+            id: LIVE_ACTIVITY_ROW_ID,
             createdAt: activeWorkAnchor.createdAt,
-            entry: displayedToolEntry.entry,
+            entry: (latestRunningToolEntry ?? latestVisibleToolEntry).entry,
             groupedEntries: visibleActiveToolEntries.map((entry) => entry.entry),
             groupId,
             expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
@@ -626,11 +627,11 @@ export function deriveMessagesTimelineRows(input: {
       createdAt: input.activeTurnStartedAt,
     });
   };
-  let hasLiveWorkRow = false;
+  let hasActivityRow = false;
   const appendActiveWorkRows = () => {
     if (activeWorkRow === null) return;
     nextRows.push(activeWorkRow);
-    hasLiveWorkRow ||= activeWorkRow.active;
+    hasActivityRow = true;
     if (!activeWorkRow.expanded) return;
     for (const [entryIndex, workEntry] of activeWorkRow.groupedEntries.entries()) {
       nextRows.push({
@@ -730,7 +731,7 @@ export function deriveMessagesTimelineRows(input: {
             expanded,
             active: true,
           });
-          hasLiveWorkRow = true;
+          hasActivityRow = true;
           if (expanded) {
             for (const [entryIndex, workEntry] of visibleGroupedEntries.entries()) {
               nextRows.push({
@@ -832,10 +833,10 @@ export function deriveMessagesTimelineRows(input: {
   if (input.isWorking && activeTurnHeaderIndex === input.timelineEntries.length) {
     appendWorkingRow();
   }
-  if (input.isWorking && !hasLiveWorkRow) {
+  if (input.isWorking && !hasActivityRow) {
     nextRows.push({
       kind: "thinking",
-      id: "thinking-indicator-row",
+      id: LIVE_ACTIVITY_ROW_ID,
       createdAt: input.activeTurnStartedAt,
     });
   }
