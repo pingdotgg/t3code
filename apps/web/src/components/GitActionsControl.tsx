@@ -17,7 +17,7 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent } from "react";
 import { flushSync } from "react-dom";
 import {
   CheckIcon,
@@ -1442,7 +1442,7 @@ export default function GitActionsControl({
       const toastCta = actionResult.toast.cta;
       let toastActionProps: {
         children: string;
-        onClick: () => void;
+        onClick: (event?: MouseEvent<HTMLButtonElement>) => void;
       } | null = null;
       if (toastCta.kind === "run_action") {
         toastActionProps = {
@@ -1457,11 +1457,21 @@ export default function GitActionsControl({
       } else if (toastCta.kind === "open_pr") {
         toastActionProps = {
           children: toastCta.label,
-          onClick: () => {
+          onClick: (event) => {
+            const shouldExternal = event?.metaKey || event?.ctrlKey;
+            if (!shouldExternal && onOpenPullRequest) {
+              const match = /\/pull\/(\d+)(?:\/|$)/.exec(toastCta.url);
+              const num = match ? Number(match[1]) : NaN;
+              if (Number.isSafeInteger(num) && num > 0) {
+                onOpenPullRequest(num);
+                closeResultToast();
+                return;
+              }
+            }
             const api = readLocalApi();
             if (!api) return;
             closeResultToast();
-            void api.shell.openExternal(toastCta.url);
+            void openPullRequestLink(api.shell, toastCta.url);
           },
         };
       }
