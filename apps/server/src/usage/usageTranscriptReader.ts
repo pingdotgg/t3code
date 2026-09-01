@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - streaming and hashing multi-gigabyte local transcripts requires Node filesystem primitives.
 /**
  * Raw filesystem access for transcript scanning.
  *
@@ -18,6 +18,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
 
@@ -35,7 +36,12 @@ export interface TranscriptFile {
   readonly path: string;
   readonly size: number;
   readonly mtimeMs: number;
+  readonly mtimeNs: string;
+  readonly device: string;
+  readonly inode: string;
 }
+
+const FINGERPRINT_CHUNK_BYTES = 64 * 1024;
 
 /**
  * Where a parse stopped, with enough state to continue from there.
@@ -125,9 +131,17 @@ export async function listTranscriptFiles(
         continue;
       }
       try {
-        const stats = await NodeFSP.stat(child);
-        if (stats.mtimeMs >= sinceMs) {
-          found.push({ path: child, size: stats.size, mtimeMs: stats.mtimeMs });
+        const stats = await NodeFSP.stat(child, { bigint: true });
+        const mtimeMs = Number(stats.mtimeNs) / 1_000_000;
+        if (mtimeMs >= sinceMs) {
+          found.push({
+            path: child,
+            size: Number(stats.size),
+            mtimeMs,
+            mtimeNs: String(stats.mtimeNs),
+            device: String(stats.dev),
+            inode: String(stats.ino),
+          });
         }
       } catch {
         // Vanished between readdir and stat.
@@ -136,7 +150,41 @@ export async function listTranscriptFiles(
   };
 
   await walk(root);
-  return found;
+  return found.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
+ * SHA-256 of every byte in the observed snapshot. Metadata remains part of
+ * cache identity, while the full content hash catches same-size rewrites even
+ * when a filesystem timestamp is preserved.
+ */
+export async function readTranscriptFingerprint(
+  filePath: string,
+  observedSize: number,
+): Promise<string | null> {
+  let handle: NodeFSP.FileHandle | null = null;
+  try {
+    handle = await NodeFSP.open(filePath, "r");
+    const hash = NodeCrypto.createHash("sha256");
+    hash.update(String(observedSize));
+    hash.update("\0");
+
+    const chunk = Buffer.allocUnsafe(Math.min(observedSize, FINGERPRINT_CHUNK_BYTES));
+    let offset = 0;
+    while (offset < observedSize) {
+      const length = Math.min(chunk.length, observedSize - offset);
+      const read = await handle.read(chunk, 0, length, offset);
+      if (read.bytesRead === 0) return null;
+      hash.update(chunk.subarray(0, read.bytesRead));
+      offset += read.bytesRead;
+    }
+
+    return hash.digest("hex");
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
 }
 
 /**
@@ -180,7 +228,7 @@ async function guardMatches(
  *
  * The distinction matters to the caller's cache: a genuinely empty transcript
  * is a stable fact worth memoising, while a transient read failure memoised
- * under the same `(size, mtime)` key would silently drop that file's usage
+ * under the same content fingerprint would silently drop that file's usage
  * until the file next changes.
  *
  * With `resumeFrom`, parsing continues from that position when its guard bytes
@@ -195,6 +243,7 @@ export async function readTranscriptRecords(
   filePath: string,
   provider: UsageProviderKind,
   resumeFrom?: TranscriptParsePosition,
+  observedSize?: number,
 ): Promise<TranscriptParseResult | null> {
   let handle: NodeFSP.FileHandle;
   try {
@@ -216,6 +265,20 @@ export async function readTranscriptRecords(
       if (resumeFrom.codexState !== null) codexState = { ...resumeFrom.codexState };
       start = resumeFrom.resumeOffset;
       resumed = true;
+    }
+
+    if (observedSize !== undefined && observedSize <= start) {
+      return {
+        records: [],
+        tailRecords: [],
+        position: {
+          resumeOffset: start,
+          guardLength: resumeFrom?.guardLength ?? 0,
+          guardHash: resumeFrom?.guardHash ?? 0,
+          codexState: provider === "codex" ? codexState : null,
+        },
+        resumed,
+      };
     }
 
     const parseLine = (line: string, state: CodexScanState, out: UsageRecord[]): void => {
@@ -256,6 +319,7 @@ export async function readTranscriptRecords(
     let pendingChunks: Buffer[] = [];
     const stream = handle.createReadStream({
       start,
+      ...(observedSize === undefined ? {} : { end: observedSize - 1 }),
       autoClose: false,
     }) as AsyncIterable<Buffer>;
     for await (const chunk of stream) {

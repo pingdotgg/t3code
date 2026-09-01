@@ -1,13 +1,19 @@
 // @effect-diagnostics nodeBuiltinImport:off - resume coverage writes, appends
 // to, and truncates real transcript files byte-exactly, mirroring the reader's
 // own deliberate node:fs usage.
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
+import { afterEach, assert, beforeEach, describe, expect, it } from "@effect/vitest";
 
-import { readTranscriptRecords, readTranscriptTitle } from "./usageTranscriptReader.ts";
+import {
+  listTranscriptFiles,
+  readTranscriptFingerprint,
+  readTranscriptRecords,
+  readTranscriptTitle,
+} from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -294,5 +300,47 @@ describe("readTranscriptTitle", () => {
 
   it("returns null when the title stream cannot be read", async () => {
     assert.isNull(await readTranscriptTitle(NodePath.join(dir, "missing.jsonl"), "claude"));
+  });
+});
+
+describe("listTranscriptFiles", () => {
+  it("returns stable path ordering and exact file identity", async () => {
+    NodeFS.writeFileSync(NodePath.join(dir, "z.jsonl"), "z\n");
+    NodeFS.writeFileSync(NodePath.join(dir, "a.jsonl"), "a\n");
+
+    const files = await listTranscriptFiles(dir, 0);
+
+    expect(files.map((file) => NodePath.basename(file.path))).toEqual(["a.jsonl", "z.jsonl"]);
+    expect(files.every((file) => file.mtimeNs.length > 0)).toBe(true);
+    expect(files.every((file) => file.device.length > 0 && file.inode.length > 0)).toBe(true);
+  });
+});
+
+describe("transcript snapshots", () => {
+  it("changes the fingerprint for a same-size rewrite with restored mtime", async () => {
+    const filePath = NodePath.join(dir, "session.jsonl");
+    NodeFS.writeFileSync(filePath, "a".repeat(10_000));
+    const originalStats = NodeFS.statSync(filePath);
+    const first = await readTranscriptFingerprint(filePath, 10_000);
+
+    NodeFS.writeFileSync(filePath, `${"a".repeat(5_000)}b${"a".repeat(4_999)}`);
+    NodeFS.utimesSync(filePath, originalStats.atime, originalStats.mtime);
+    const second = await readTranscriptFingerprint(filePath, 10_000);
+
+    expect(NodeFS.statSync(filePath).size).toBe(originalStats.size);
+    expect(first).not.toBeNull();
+    expect(second).not.toBe(first);
+  });
+
+  it("does not read bytes appended after the observed size", async () => {
+    const filePath = NodePath.join(dir, "session.jsonl");
+    const firstLine = claudeLine(1, 10);
+    NodeFS.writeFileSync(filePath, firstLine);
+    const observedSize = NodeFS.statSync(filePath).size;
+    NodeFS.appendFileSync(filePath, claudeLine(2, 20));
+
+    const parsed = await readTranscriptRecords(filePath, "claude", undefined, observedSize);
+
+    expect(parsed?.records.map((record) => record.totals.outputTokens)).toEqual([10]);
   });
 });

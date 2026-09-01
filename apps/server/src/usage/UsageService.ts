@@ -5,10 +5,10 @@
  * Grok Build) rather than T3 Code's orchestration projections, so usage covers
  * turns driven outside T3 Code too. This is the approach `ccusage` takes.
  *
- * Transcripts are append-only, so parsed records are memoised per file by
- * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
- * scans only reparse files that changed, and a file that merely grew resumes
- * from its cached parse position so only the appended bytes are read.
+ * Parsed records are memoised per file by a full SHA-256 fingerprint. Every
+ * refresh hashes the observed bytes, so even same-size rewrites with preserved
+ * metadata invalidate the parse cache. When a file only grows, the old prefix
+ * hash must match before parsing resumes from the cached byte position.
  *
  * @module UsageService
  */
@@ -39,6 +39,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { ServerConfig } from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
@@ -52,8 +53,11 @@ import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
+  readTranscriptFingerprint,
   readTranscriptRecords,
   readTranscriptTitle,
+  type TranscriptFile,
+  type TranscriptParsePosition,
 } from "./usageTranscriptReader.ts";
 import { foldThreadRows, ThreadUsageAccumulator, type ThreadRef } from "./usageThreads.ts";
 import {
@@ -86,7 +90,8 @@ const CACHE_RETENTION_DAYS = 90;
  * window can hold thousands of sessions, so lower-cost rows fold together.
  */
 const THREAD_ROW_CAP = 40;
-
+/** Bounded disk parallelism for hashing and parsing sorted transcript files. */
+const SCAN_FILE_CONCURRENCY = 8;
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
   fetchedAtMs: Schema.Number,
@@ -168,6 +173,7 @@ export const make = Effect.gen(function* () {
   let cacheRevision = 0;
   let persistedCacheRevision = 0;
   const cachePersistSemaphore = yield* Semaphore.make(1);
+  const scanSemaphore = yield* Semaphore.make(1);
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
@@ -336,7 +342,12 @@ export const make = Effect.gen(function* () {
     if (cacheRevision === persistedCacheRevision) return;
     const revision = cacheRevision;
     yield* encodeScanCacheFile(encodeScanCache(fileCache)).pipe(
-      Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
+      Effect.flatMap((serialized) =>
+        writeFileStringAtomically({ filePath: scanCachePath, contents: serialized }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      ),
       Effect.map(() => {
         persistedCacheRevision = revision;
       }),
@@ -346,82 +357,105 @@ export const make = Effect.gen(function* () {
   });
   const persistScanCache = () => cachePersistSemaphore.withPermits(1)(persistScanCacheUnlocked());
 
-  /**
-   * Parses one transcript, reusing the cached result when it is unchanged.
-   *
-   * A file that only grew re-parses from the cached position, so an actively
-   * written multi-hundred-megabyte rollout costs its appended bytes per scan
-   * rather than a full re-read. The reader verifies the position's guard bytes
-   * and silently restarts from byte 0 when they no longer match.
-   */
+  /** Parses one transcript after proving its observed content identity. */
   const readFileRecords = (
-    filePath: string,
-    size: number,
-    mtimeMs: number,
+    file: TranscriptFile,
     provider: UsageProviderKind,
   ): Effect.Effect<readonly UsageRecord[]> =>
     Effect.gen(function* () {
-      const cached = fileCache.get(filePath);
-      // Provider is part of the identity: if both providers were ever pointed
-      // at one directory, a hit parsed by the other parser must not be reused.
-      if (
-        cached &&
-        cached.size === size &&
-        cached.mtimeMs === mtimeMs &&
-        cached.provider === provider
-      ) {
+      const cached = fileCache.get(file.path);
+      let fingerprint = yield* Effect.promise(() =>
+        readTranscriptFingerprint(file.path, file.size),
+      );
+      if (fingerprint === null) return [];
+
+      // A touch, rename replacement, or timestamp normalization can change
+      // metadata without changing content. Reuse the parsed records after the
+      // full hash proves the observed snapshot is identical.
+      if (cached && cached.fingerprint === fingerprint && cached.provider === provider) {
+        if (
+          cached.size !== file.size ||
+          cached.mtimeMs !== file.mtimeMs ||
+          cached.mtimeNs !== file.mtimeNs ||
+          cached.device !== file.device ||
+          cached.inode !== file.inode
+        ) {
+          fileCache.set(file.path, {
+            ...cached,
+            size: file.size,
+            mtimeMs: file.mtimeMs,
+            mtimeNs: file.mtimeNs,
+            device: file.device,
+            inode: file.inode,
+          });
+          cacheRevision += 1;
+        }
         return cached.tailRecords.length === 0
           ? cached.records
           : dedupeWithinFile([...cached.records, ...cached.tailRecords]);
       }
 
-      // Only a strictly grown file may resume. Same size with a new mtime, or
-      // a shrunken file, means rewritten content; re-parse it whole.
-      const resumeFrom =
-        cached !== undefined && cached.provider === provider && size > cached.size
-          ? cached.position
-          : undefined;
+      // Hash and parse are separate streaming passes. Re-check the full hash so
+      // an in-place rewrite between them cannot cache records under the wrong
+      // identity. A grown file resumes only after its complete old prefix also
+      // matches the cached hash. Retry one moving snapshot, then defer it.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        let resumeFrom: TranscriptParsePosition | undefined;
+        if (cached !== undefined && cached.provider === provider && file.size > cached.size) {
+          const prefixFingerprint = yield* Effect.promise(() =>
+            readTranscriptFingerprint(file.path, cached.size),
+          );
+          if (prefixFingerprint === cached.fingerprint) resumeFrom = cached.position;
+        }
+        const parsed = yield* Effect.promise(() =>
+          readTranscriptRecords(file.path, provider, resumeFrom, file.size),
+        );
+        // A read failure is not an empty transcript: caching it would silently
+        // drop the file's usage until its next content change.
+        if (parsed === null) return [];
+        const verifiedFingerprint = yield* Effect.promise(() =>
+          readTranscriptFingerprint(file.path, file.size),
+        );
+        if (verifiedFingerprint === null) return [];
+        if (verifiedFingerprint !== fingerprint) {
+          fingerprint = verifiedFingerprint;
+          continue;
+        }
 
-      const parsed = yield* Effect.promise(() =>
-        readTranscriptRecords(filePath, provider, resumeFrom),
-      );
-      // A read failure is not an empty transcript: caching it under this
-      // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null) return [];
-
-      // Stored already de-duplicated within the file, which is 99% of all
-      // duplicates. The final snapshot wins so a resumed Claude parse can
-      // replace an earlier progressive snapshot from the cached base.
-      const base = parsed.resumed && cached !== undefined ? cached.records : [];
-      const records = dedupeWithinFile([...base, ...parsed.records]);
-      const tailRecords = dedupeWithinFile(parsed.tailRecords);
-
-      fileCache.set(filePath, {
-        size,
-        mtimeMs,
-        provider,
-        records,
-        tailRecords,
-        position: parsed.position,
-      });
-      cacheRevision += 1;
-      return tailRecords.length === 0 ? records : dedupeWithinFile([...records, ...tailRecords]);
+        // Final-wins replacement lets an appended complete Claude snapshot
+        // supersede an earlier progressive snapshot from the cached prefix.
+        const base = parsed.resumed && cached !== undefined ? cached.records : [];
+        const records = dedupeWithinFile([...base, ...parsed.records]);
+        const tailRecords = dedupeWithinFile(parsed.tailRecords);
+        fileCache.set(file.path, {
+          size: file.size,
+          mtimeMs: file.mtimeMs,
+          mtimeNs: file.mtimeNs,
+          device: file.device,
+          inode: file.inode,
+          fingerprint,
+          provider,
+          records,
+          tailRecords,
+          position: parsed.position,
+        });
+        cacheRevision += 1;
+        return tailRecords.length === 0 ? records : dedupeWithinFile([...records, ...tailRecords]);
+      }
+      return [];
     });
 
-  /** One provider directory's walk and parse, before rates are involved. */
+  /** One provider directory's deterministic walk and bounded concurrent parse. */
   interface ScannedDir {
     readonly provider: UsageProviderKind;
     readonly dir: string;
     readonly volumeId: string;
-    /** Parsed records per file, or `null` when the directory does not exist. */
     readonly files:
       | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
       | null;
   }
 
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (windowStartMs: number) {
-    // The home resolvers ask for `Path` themselves; satisfy them from the
-    // instance we already hold so the scan stays context-free.
     const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
     const scanned: ScannedDir[] = [];
     for (const { provider, dir, fileName } of dirs) {
@@ -436,11 +470,14 @@ export const make = Effect.gen(function* () {
       const files = yield* Effect.promise(() =>
         listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
       );
-      const parsedFiles: { path: string; records: readonly UsageRecord[] }[] = [];
-      for (const file of files) {
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
-        parsedFiles.push({ path: file.path, records });
-      }
+      const parsedFiles = yield* Effect.forEach(
+        files,
+        (file) =>
+          readFileRecords(file, provider).pipe(
+            Effect.map((records) => ({ path: file.path, records })),
+          ),
+        { concurrency: SCAN_FILE_CONCURRENCY },
+      );
       scanned.push({ provider, dir, volumeId, files: parsedFiles });
     }
     return scanned;
@@ -505,6 +542,7 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
+      cutoffTimeMs: startedAtMs,
       rates,
       resolveProject: yield* resolveProjects(),
     });
@@ -565,12 +603,11 @@ export const make = Effect.gen(function* () {
     yield* persistScanCache();
 
     const aggregated = aggregator.finish();
-    const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
 
     return {
       contractVersion: USAGE_CONTRACT_VERSION,
-      readAt: DateTime.formatIso(readAt),
+      readAt: DateTime.formatIso(DateTime.makeUnsafe(startedAtMs)),
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
@@ -619,14 +656,16 @@ export const make = Effect.gen(function* () {
         inflightScans.set(key, created);
         // Detached so one departing client cannot tear the scan out from under
         // the fibers awaiting it; a finished scan warms the cache either way.
-        yield* scanSummary(input).pipe(
-          Effect.onExit((exit) =>
-            Effect.sync(() => inflightScans.delete(key)).pipe(
-              Effect.andThen(Deferred.done(created, exit)),
+        yield* scanSemaphore
+          .withPermits(1)(scanSummary(input))
+          .pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => inflightScans.delete(key)).pipe(
+                Effect.andThen(Deferred.done(created, exit)),
+              ),
             ),
-          ),
-          Effect.forkDetach,
-        );
+            Effect.forkDetach,
+          );
         return created;
       }),
     );
@@ -698,7 +737,7 @@ export const make = Effect.gen(function* () {
     return { sessionToThread, worktreeToThread };
   });
 
-  const readThreadBreakdown = Effect.fn("UsageService.readThreadBreakdown")(function* (
+  const readThreadBreakdownUnlocked = Effect.fn("UsageService.readThreadBreakdown")(function* (
     input: UsageThreadBreakdownInput,
   ) {
     if (input.sinceDay > input.untilDay) {
@@ -758,6 +797,7 @@ export const make = Effect.gen(function* () {
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
       ...exactWindow,
+      cutoffTimeMs: startedAtMs,
       rates,
       resolveProject: yield* resolveProjects(),
     });
@@ -782,9 +822,14 @@ export const make = Effect.gen(function* () {
       const files = yield* Effect.promise(() =>
         listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
       );
-      for (const file of files) {
-        livePaths.add(file.path);
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+      for (const file of files) livePaths.add(file.path);
+      const fileRecords = yield* Effect.forEach(
+        files,
+        (file) =>
+          readFileRecords(file, provider).pipe(Effect.map((records) => ({ file, records }))),
+        { concurrency: SCAN_FILE_CONCURRENCY },
+      );
+      for (const { file, records } of fileRecords) {
         if (records.length === 0) continue;
         const isSubagent =
           provider === "claude" && path.basename(path.dirname(file.path)) === "subagents";
@@ -838,11 +883,10 @@ export const make = Effect.gen(function* () {
       { concurrency: 8 },
     );
 
-    const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
     return {
       contractVersion: USAGE_CONTRACT_VERSION,
-      readAt: DateTime.formatIso(readAt),
+      readAt: DateTime.formatIso(DateTime.makeUnsafe(startedAtMs)),
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
       rows,
@@ -850,6 +894,12 @@ export const make = Effect.gen(function* () {
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
     } satisfies UsageThreadBreakdown;
   });
+
+  // Summary and thread scans share one mutable per-file cache. Serialising them
+  // also folds a burst of page requests into warm follow-up reads rather than
+  // racing two cold parses and two cache writes.
+  const readThreadBreakdown = (input: UsageThreadBreakdownInput) =>
+    scanSemaphore.withPermits(1)(readThreadBreakdownUnlocked(input));
 
   return { readSummary, readThreadBreakdown } as const;
 });

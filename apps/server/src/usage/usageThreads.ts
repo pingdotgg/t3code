@@ -85,6 +85,8 @@ export interface ThreadUsageOptions {
   readonly untilDay: string;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
+  /** Request-start ceiling. Records written later wait for the next refresh. */
+  readonly cutoffTimeMs?: number;
   readonly rates: RateTable;
   /** Same stable project resolver the summary uses. */
   readonly resolveProject?: (cwd: string) => ProjectAttribution | null;
@@ -132,6 +134,12 @@ export class ThreadUsageAccumulator {
     if (
       !Number.isFinite(record.timestampMs) ||
       Math.abs(record.timestampMs) > MAX_DATE_TIMESTAMP_MS
+    ) {
+      return false;
+    }
+    if (
+      this.#options.cutoffTimeMs !== undefined &&
+      record.timestampMs > this.#options.cutoffTimeMs
     ) {
       return false;
     }

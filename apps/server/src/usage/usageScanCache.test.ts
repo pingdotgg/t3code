@@ -45,8 +45,12 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
   const cache: ScanCache = new Map();
   for (const [path, mtimeMs, records] of entries) {
     cache.set(path, {
-      size: records.length * 10,
+      size: 200 + records.length * 10,
       mtimeMs,
+      mtimeNs: `${mtimeMs}000000`,
+      device: "1",
+      inode: path,
+      fingerprint: `sha256:${path}`,
       provider: "claude",
       records,
       tailRecords: [],
@@ -65,6 +69,10 @@ describe("scan cache round trip", () => {
     original.set("/grok.jsonl", {
       size: 40,
       mtimeMs: 300,
+      mtimeNs: "300000000",
+      device: "1",
+      inode: "grok",
+      fingerprint: "sha256:grok",
       provider: "grok",
       records: [
         record({ provider: "grok", model: "grok-4.5-build", dedupeKey: "s:p:grok-4.5-build" }),
@@ -73,8 +81,12 @@ describe("scan cache round trip", () => {
       position: position({ resumeOffset: 30, guardLength: 30, guardHash: 123 }),
     });
     original.set("/codex.jsonl", {
-      size: 80,
+      size: 200,
       mtimeMs: 400,
+      mtimeNs: "400000000",
+      device: "1",
+      inode: "codex",
+      fingerprint: "sha256:codex",
       provider: "codex",
       records: [record({ provider: "codex", model: "gpt-5.2-codex", dedupeKey: null })],
       tailRecords: [],

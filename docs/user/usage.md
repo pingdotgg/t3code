@@ -17,6 +17,13 @@ Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. 
 **30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
 headline and chart, and refreshing rescans every connected environment.
 
+Opening the page starts a refresh, and a page left open refreshes every 30 minutes. Each refresh
+hashes every observed transcript byte with bounded disk parallelism so same-size rewrites cannot
+hide behind unchanged file metadata. It reuses cached parsed records for matching hashes and
+for a grown file verifies the old prefix hash before parsing only its appended bytes. Rewritten
+files are parsed from the beginning. Summary and thread scans are serialized against the same cache
+and use request-start cutoffs, so one refresh represents one stable observed window.
+
 Any daily chart zooms: drag across it to make the selection the new date window, and double-click
 to return to the preset. The date fields beside the presets accept custom ranges up to 90 days.
 

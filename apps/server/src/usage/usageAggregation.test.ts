@@ -77,7 +77,7 @@ describe("UsageAggregator", () => {
     ).toThrow("requires exact time bounds");
   });
 
-  it("keeps only the first record for a repeated dedupe key", () => {
+  it("counts only one record for a repeated dedupe key", () => {
     const result = aggregate([
       record({ dedupeKey: "msg_1:" }),
       record({ dedupeKey: "msg_1:" }),
@@ -104,6 +104,23 @@ describe("UsageAggregator", () => {
 
     expect(result.buckets[0]?.records).toBe(1);
     expect(result.buckets[0]?.totals.outputTokens).toBe(310);
+  });
+
+  it("holds records newer than the request-start cutoff for the next refresh", () => {
+    const cutoffTimeMs = Date.parse("2026-08-07T04:05:14.000Z");
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      cutoffTimeMs,
+      rates,
+    });
+    aggregator.add(record({ timestampMs: cutoffTimeMs }));
+    aggregator.add(record({ timestampMs: cutoffTimeMs + 1 }));
+
+    const result = aggregator.finish();
+    expect(result.buckets[0]?.records).toBe(1);
+    expect(result.outOfWindow).toBe(1);
   });
 
   it("still sums records that carry no dedupe key", () => {

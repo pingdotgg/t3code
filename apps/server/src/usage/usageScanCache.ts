@@ -1,10 +1,10 @@
 /**
  * Durable per-file scan cache.
  *
- * Transcripts are append-only and a file that has not changed can never yield
- * different usage, so parsed records are keyed by `(size, mtime)` and reused.
- * Without this every server restart re-parses the whole window: roughly 3.5s
- * for a 30-day scan here, against ~11ms to reload this cache.
+ * Every refresh hashes each observed file. Parsed records are reused only when
+ * the full SHA-256 fingerprint is unchanged, including for same-size rewrites
+ * that preserve filesystem metadata. A warm refresh still reads every observed
+ * byte once for hashing, but avoids JSONL parsing for unchanged fingerprints.
  *
  * Caching *per file* rather than per day is deliberate. It is timezone
  * independent, so changing the reporting zone does not invalidate anything, and
@@ -14,7 +14,7 @@
  *
  * @module usageScanCache
  */
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - path-boundary checks use the host platform's separator.
 import * as NodePath from "node:path";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
@@ -29,11 +29,16 @@ import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
 // v4: records carry the session's cwd for project attribution; v3 entries
 // would pin every cached file to "no project" forever.
 // v5: Claude records retain cache TTLs and expanded fallback iterations.
-export const USAGE_SCAN_CACHE_VERSION = 5 as const;
+// v6: cache hits require a full content hash and retain exact file metadata.
+export const USAGE_SCAN_CACHE_VERSION = 6 as const;
 
 export interface CachedFile {
   readonly size: number;
   readonly mtimeMs: number;
+  readonly mtimeNs: string;
+  readonly device: string;
+  readonly inode: string;
+  readonly fingerprint: string;
   readonly provider: UsageProviderKind;
   /** Records from newline-terminated lines, up to `position.resumeOffset`. */
   readonly records: readonly UsageRecord[];
@@ -72,6 +77,10 @@ type SerializedRecord = readonly [
 interface SerializedFile {
   readonly s: number;
   readonly m: number;
+  readonly n: string;
+  readonly d: string;
+  readonly i: string;
+  readonly h: string;
   readonly p: UsageProviderKind;
   readonly r: readonly SerializedRecord[];
   /** Tail records; see `CachedFile.tailRecords`. */
@@ -140,6 +149,10 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
     files[path] = {
       s: entry.size,
       m: entry.mtimeMs,
+      n: entry.mtimeNs,
+      d: entry.device,
+      i: entry.inode,
+      h: entry.fingerprint,
       p: entry.provider,
       r: entry.records.map(serializeRecord),
       t: entry.tailRecords.map(serializeRecord),
@@ -189,7 +202,7 @@ export function decodeScanCache(document: unknown): ScanCache {
   const cwds = root.cwds as readonly string[];
 
   // Any corrupt row disqualifies the whole entry. Keeping the survivors
-  // under the original (size, mtime) would read as a valid warm hit and the
+  // under the original fingerprint would read as a valid warm hit and the
   // file would never be re-parsed, silently losing the dropped rows' usage.
   const decodeRecords = (
     rows: readonly unknown[],
@@ -263,7 +276,20 @@ export function decodeScanCache(document: unknown): ScanCache {
   for (const [path, raw] of Object.entries(root.files)) {
     if (typeof raw !== "object" || raw === null) continue;
     const entry = raw as Partial<SerializedFile>;
-    if (typeof entry.s !== "number" || typeof entry.m !== "number") continue;
+    if (
+      typeof entry.s !== "number" ||
+      !Number.isSafeInteger(entry.s) ||
+      entry.s < 0 ||
+      typeof entry.m !== "number" ||
+      !Number.isFinite(entry.m) ||
+      typeof entry.n !== "string" ||
+      typeof entry.d !== "string" ||
+      typeof entry.i !== "string" ||
+      typeof entry.h !== "string" ||
+      entry.h.length === 0
+    ) {
+      continue;
+    }
     if (entry.p !== "claude" && entry.p !== "codex" && entry.p !== "grok") continue;
     if (!isRecordArray(entry.r) || !isRecordArray(entry.t)) continue;
     // Position fields feed byte offsets and a Buffer allocation in the reader,
@@ -274,6 +300,7 @@ export function decodeScanCache(document: unknown): ScanCache {
       typeof entry.o !== "number" ||
       !Number.isSafeInteger(entry.o) ||
       entry.o < 0 ||
+      entry.o > entry.s ||
       typeof entry.gl !== "number" ||
       !Number.isSafeInteger(entry.gl) ||
       entry.gl < 0 ||
@@ -295,6 +322,10 @@ export function decodeScanCache(document: unknown): ScanCache {
     cache.set(path, {
       size: entry.s,
       mtimeMs: entry.m,
+      mtimeNs: entry.n,
+      device: entry.d,
+      inode: entry.i,
+      fingerprint: entry.h,
       provider,
       records,
       tailRecords,

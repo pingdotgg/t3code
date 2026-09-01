@@ -208,6 +208,22 @@ describe("ThreadUsageAccumulator", () => {
         .toSorted(),
     ).toEqual(["id:project-one", "id:project-two"]);
   });
+
+  it("holds records newer than the request-start cutoff for the next refresh", () => {
+    const cutoffTimeMs = Date.parse("2026-08-07T04:05:14.000Z");
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      cutoffTimeMs,
+      rates,
+    });
+    const context = { sessionKey: "claude:session-a", agentId: null };
+    accumulator.add(record({ timestampMs: cutoffTimeMs }), context);
+    accumulator.add(record({ timestampMs: cutoffTimeMs + 1 }), context);
+
+    expect(accumulator.finish()[0]?.totals.outputTokens).toBe(50);
+  });
 });
 
 describe("foldThreadRows", () => {

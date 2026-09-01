@@ -129,6 +129,8 @@ export interface AggregateOptions {
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
+  /** Request-start ceiling. Records written later wait for the next refresh. */
+  readonly cutoffTimeMs?: number;
   /**
    * Maps a record's working directory to the project it ran in, or `null` when
    * it ran outside every project. Omitting it leaves every bucket unattributed.
@@ -194,6 +196,12 @@ export class UsageAggregator {
   }
 
   #isInWindow(record: UsageRecord): boolean {
+    if (
+      this.#options.cutoffTimeMs !== undefined &&
+      record.timestampMs > this.#options.cutoffTimeMs
+    ) {
+      return false;
+    }
     if (
       this.#hourlyWindow !== null &&
       (record.timestampMs < this.#hourlyWindow.sinceTimeMs ||

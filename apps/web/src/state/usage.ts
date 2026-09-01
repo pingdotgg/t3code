@@ -20,7 +20,7 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import {
   mergeUsage,
@@ -29,6 +29,7 @@ import {
   type EnvironmentUsage,
   type MergedUsage,
 } from "@t3tools/shared/usageMerge";
+import { startUsageAutoRefresh } from "@t3tools/shared/usageRefresh";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
@@ -170,6 +171,10 @@ export function useUsage(
       }
     }
   }, [environments, merged.providerContributions, projectFilter, refreshThreads, windowKey]);
+
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+  useEffect(() => startUsageAutoRefresh(() => refreshRef.current()), []);
 
   const relevantEnvironments = filterUsageEnvironmentsForProject(environments, projectFilter);
   const answeredCount = relevantEnvironments.filter(

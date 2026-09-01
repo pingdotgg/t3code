@@ -231,6 +231,10 @@
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
     },
+    "./usageRefresh": {
+      "types": "./src/usageRefresh.ts",
+      "import": "./src/usageRefresh.ts"
+    },
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",
       "import": "./src/claudeCompaction.ts"
