@@ -8,7 +8,16 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
-import { type ReactNode, useEffect, useRef } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { runtime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -50,18 +59,27 @@ export function activateCloudRelayAccount(
   });
 }
 
-function CloudAuthBridge(props: { readonly children: ReactNode }) {
+type CloudRelayAccountProvider = {
+  readonly userId: string;
+  readonly provider: () => Promise<string | null>;
+};
+
+function CloudAuthBridge(props: {
+  readonly children: ReactNode;
+  readonly previousTokenProviderRef: { current: CloudRelayAccountProvider | null };
+  readonly observedAccountRef: { current: string | null | undefined };
+  readonly accountTransitionRef: { current: Promise<void> | null };
+  readonly cleanupEpochRef: { current: number };
+}) {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const removeRelayEnvironments = useAtomCommand(removeCloudEnvironments, {
     reportFailure: false,
     reportDefect: false,
   });
-  const previousTokenProviderRef = useRef<{
-    readonly userId: string;
-    readonly provider: () => Promise<string | null>;
-  } | null>(null);
-  const observedAccountRef = useRef<string | null | undefined>(undefined);
-  const accountTransitionRef = useRef<Promise<void> | null>(null);
+  const previousTokenProviderRef = props.previousTokenProviderRef;
+  const observedAccountRef = props.observedAccountRef;
+  const accountTransitionRef = props.accountTransitionRef;
+  const cleanupEpochRef = props.cleanupEpochRef;
 
   useEffect(() => {
     let cancelled = false;
@@ -113,10 +131,16 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
       }
     };
     const queueAccountCleanup = (previous: typeof previousTokenProviderRef.current) => {
+      const epoch = cleanupEpochRef.current;
       const previousTransition = accountTransitionRef.current ?? Promise.resolve();
       accountTransitionRef.current = previousTransition
         .catch(() => {})
-        .then(() => cleanUpAccount(previous, previousObservedAccount ?? null));
+        .then(() => {
+          if (cleanupEpochRef.current !== epoch) {
+            return;
+          }
+          return cleanUpAccount(previous, previousObservedAccount ?? null);
+        });
       return accountTransitionRef.current;
     };
 
@@ -182,12 +206,10 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
 
   useEffect(
     () => () => {
-      previousTokenProviderRef.current = null;
-      // Unmounting is not a sign-out: the user is usually still signed in, so
-      // detach the provider without ending lock-screen activities or wiping the
-      // persisted registration (a remount reuses both).
+      // Unmounting is not a sign-out. Keep the account-transition refs on the
+      // parent so a Clerk remount does not discard in-flight cleanup or look like
+      // a cold start. Sign-out still goes through deactivateCloudRelayAccount.
       releaseAgentAwarenessRelayTokenProvider();
-      setManagedRelaySession(appAtomRegistry, null);
     },
     [],
   );
@@ -195,10 +217,29 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
   return props.children;
 }
 
+export interface CloudAuthLoadState {
+  readonly remount: () => void;
+}
+
+const idleCloudAuthLoadState: CloudAuthLoadState = {
+  remount: () => undefined,
+};
+
+const CloudAuthLoadContext = createContext<CloudAuthLoadState>(idleCloudAuthLoadState);
+
+export function useCloudAuthLoadState(): CloudAuthLoadState {
+  return useContext(CloudAuthLoadContext);
+}
+
 export function CloudAuthProvider(props: { readonly children: ReactNode }) {
   const config = resolveCloudPublicConfig();
   const publishableKey = config.clerk.publishableKey;
   const relayUrl = config.relay.url;
+  const [generation, setGeneration] = useState(0);
+  const previousTokenProviderRef = useRef<CloudRelayAccountProvider | null>(null);
+  const observedAccountRef = useRef<string | null | undefined>(undefined);
+  const accountTransitionRef = useRef<Promise<void> | null>(null);
+  const cleanupEpochRef = useRef(0);
 
   useEffect(() => {
     if (!publishableKey || !relayUrl) {
@@ -206,13 +247,40 @@ export function CloudAuthProvider(props: { readonly children: ReactNode }) {
     }
   }, [publishableKey, relayUrl]);
 
+  useEffect(
+    () => () => {
+      cleanupEpochRef.current += 1;
+    },
+    [],
+  );
+
+  const remount = useCallback(() => {
+    setGeneration((current) => current + 1);
+  }, []);
+
+  const loadState = useMemo(
+    () => ({
+      remount,
+    }),
+    [remount],
+  );
+
   if (!publishableKey || !relayUrl) {
     return props.children;
   }
 
   return (
-    <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
-      <CloudAuthBridge>{props.children}</CloudAuthBridge>
-    </ClerkProvider>
+    <CloudAuthLoadContext.Provider value={loadState}>
+      <ClerkProvider key={generation} publishableKey={publishableKey} tokenCache={tokenCache}>
+        <CloudAuthBridge
+          previousTokenProviderRef={previousTokenProviderRef}
+          observedAccountRef={observedAccountRef}
+          accountTransitionRef={accountTransitionRef}
+          cleanupEpochRef={cleanupEpochRef}
+        >
+          {props.children}
+        </CloudAuthBridge>
+      </ClerkProvider>
+    </CloudAuthLoadContext.Provider>
   );
 }

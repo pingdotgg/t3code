@@ -17,6 +17,7 @@ import {
   AppearancePreferencesProvider,
   useAppearancePreferences,
 } from "./features/settings/appearance/AppearancePreferencesProvider";
+import { readRememberedNavigationState, rememberNavigationState } from "./navigationPersistence";
 import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/OverlayPortal";
@@ -91,7 +92,12 @@ function AppContent() {
             {/* Blur target for Android dropdown backdrops — see appBlurTarget.ts. */}
             <BlurTargetView ref={appBlurTargetRef} style={{ flex: 1 }}>
               <IncomingShareProvider>
-                <Navigation linking={appLinking} theme={navigationTheme} />
+                <Navigation
+                  initialState={readRememberedNavigationState()}
+                  linking={appLinking}
+                  onStateChange={rememberNavigationState}
+                  theme={navigationTheme}
+                />
               </IncomingShareProvider>
               <ConfirmDialogHost />
             </BlurTargetView>

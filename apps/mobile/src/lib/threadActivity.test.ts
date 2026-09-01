@@ -16,6 +16,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildThreadFeed,
+  computeStableThreadFeedEntries,
   deriveThreadFeedPresentation,
   threadFeedActivityIsVisible,
   threadFeedRunIsUnsettled,
@@ -746,6 +747,85 @@ describe("buildThreadFeed", () => {
         hasFailure: false,
       },
     ]);
+  });
+});
+
+describe("computeStableThreadFeedEntries", () => {
+  it("reuses equivalent rows and the result array across rebuilt projections", () => {
+    const build = () =>
+      buildThreadFeed([
+        projected(userMessage(), 0),
+        projected(command(), 1),
+        projected(assistantMessage(), 2),
+      ]);
+    const initial = computeStableThreadFeedEntries(build(), {
+      byId: new Map(),
+      result: [],
+    });
+    const repeated = computeStableThreadFeedEntries(build(), initial);
+
+    expect(repeated).toBe(initial);
+    expect(repeated.result).toBe(initial.result);
+  });
+
+  it("replaces only the streaming message whose content changed", () => {
+    const initialFeed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(command(), 1),
+      projected(assistantMessage(), 2),
+    ]);
+    const initial = computeStableThreadFeedEntries(initialFeed, {
+      byId: new Map(),
+      result: [],
+    });
+    const updatedAssistant = {
+      ...assistantMessage("2026-06-20T00:00:04.000Z"),
+      text: "Done now",
+      streaming: true,
+    };
+    const next = computeStableThreadFeedEntries(
+      buildThreadFeed([
+        projected(userMessage(), 0),
+        projected(command(), 1),
+        projected(updatedAssistant, 2),
+      ]),
+      initial,
+    );
+
+    expect(next).not.toBe(initial);
+    expect(next.result[0]).toBe(initial.result[0]);
+    expect(next.result[1]).toBe(initial.result[1]);
+    expect(next.result[2]).not.toBe(initial.result[2]);
+  });
+
+  it("replaces a message when its projected source identity changes", () => {
+    const initialRow = projected(assistantMessage(), 0);
+    const initial = computeStableThreadFeedEntries(buildThreadFeed([initialRow]), {
+      byId: new Map(),
+      result: [],
+    });
+    const changedSource = {
+      ...initialRow,
+      sourceItemId: TurnItemId.make("item-assistant-reprojected"),
+    };
+    const next = computeStableThreadFeedEntries(buildThreadFeed([changedSource]), initial);
+
+    expect(next.result[0]).not.toBe(initial.result[0]);
+  });
+
+  it("replaces a message when its projected status changes", () => {
+    const initialRow = projected(assistantMessage(), 0);
+    const initial = computeStableThreadFeedEntries(buildThreadFeed([initialRow]), {
+      byId: new Map(),
+      result: [],
+    });
+    const changedStatus = {
+      ...initialRow,
+      item: { ...initialRow.item, status: "running" as const },
+    };
+    const next = computeStableThreadFeedEntries(buildThreadFeed([changedStatus]), initial);
+
+    expect(next.result[0]).not.toBe(initial.result[0]);
   });
 });
 

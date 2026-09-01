@@ -6,6 +6,7 @@ import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import {
   applyHistoryPageMeta,
   clearActiveHistoryLoading,
+  isActiveHistoryRequest,
   isActiveHistoryRequestCursor,
   mergeOlderHistoryIntoProjection,
   shouldShowLoadEarlierControl,
@@ -132,6 +133,18 @@ describe("threadHistoryMerge", () => {
     expect(isActiveHistoryRequestCursor("cursor-a", { historyCursor: "cursor-a" })).toBe(true);
     expect(isActiveHistoryRequestCursor("cursor-a", { historyCursor: "cursor-b" })).toBe(false);
     expect(isActiveHistoryRequestCursor("cursor-a", { historyCursor: null })).toBe(false);
+  });
+
+  it("only applies history responses while the matching request is loading", () => {
+    expect(isActiveHistoryRequest("cursor-a", { historyCursor: "cursor-a", loading: true })).toBe(
+      true,
+    );
+    expect(isActiveHistoryRequest("cursor-a", { historyCursor: "cursor-a", loading: false })).toBe(
+      false,
+    );
+    expect(isActiveHistoryRequest("cursor-a", { historyCursor: "cursor-b", loading: true })).toBe(
+      false,
+    );
   });
 
   it("clears loading on interrupt only for the active request cursor", () => {

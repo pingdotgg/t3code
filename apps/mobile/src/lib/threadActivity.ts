@@ -142,6 +142,128 @@ export type ThreadFeedEntry =
       readonly expanded: boolean;
     };
 
+export interface StableThreadFeedEntriesState {
+  readonly byId: Map<string, ThreadFeedEntry>;
+  readonly result: ThreadFeedEntry[];
+}
+
+export function computeStableThreadFeedEntries(
+  entries: ThreadFeedEntry[],
+  previous: StableThreadFeedEntriesState,
+): StableThreadFeedEntriesState {
+  const next = new Map<string, ThreadFeedEntry>();
+  let anyChanged = entries.length !== previous.result.length;
+  const result = entries.map((entry, index) => {
+    const previousEntry = previous.byId.get(entry.id);
+    const stableEntry =
+      previousEntry && threadFeedEntryIsUnchanged(previousEntry, entry) ? previousEntry : entry;
+    next.set(entry.id, stableEntry);
+    if (!anyChanged && previous.result[index] !== stableEntry) {
+      anyChanged = true;
+    }
+    return stableEntry;
+  });
+  return anyChanged ? { byId: next, result } : previous;
+}
+
+function threadFeedEntryIsUnchanged(a: ThreadFeedEntry, b: ThreadFeedEntry): boolean {
+  if (a.type !== b.type || a.id !== b.id || a.createdAt !== b.createdAt) return false;
+
+  switch (a.type) {
+    case "working":
+      return true;
+    case "run-fold": {
+      const next = b as typeof a;
+      return a.runId === next.runId && a.label === next.label && a.expanded === next.expanded;
+    }
+    case "work-toggle": {
+      const next = b as typeof a;
+      return (
+        a.runId === next.runId &&
+        a.groupId === next.groupId &&
+        a.hiddenCount === next.hiddenCount &&
+        a.expanded === next.expanded &&
+        a.onlyToolActivities === next.onlyToolActivities
+      );
+    }
+    case "activity-group": {
+      const next = b as typeof a;
+      return (
+        a.runId === next.runId && threadFeedActivitiesAreUnchanged(a.activities, next.activities)
+      );
+    }
+    case "message": {
+      const next = b as typeof a;
+      const currentMessage = a.message;
+      const nextMessage = next.message;
+      return (
+        currentMessage.id === nextMessage.id &&
+        currentMessage.role === nextMessage.role &&
+        currentMessage.text === nextMessage.text &&
+        currentMessage.runId === nextMessage.runId &&
+        currentMessage.streaming === nextMessage.streaming &&
+        currentMessage.inputIntent === nextMessage.inputIntent &&
+        currentMessage.createdBy === nextMessage.createdBy &&
+        currentMessage.creationSource === nextMessage.creationSource &&
+        currentMessage.visibility === nextMessage.visibility &&
+        currentMessage.sourceThreadId === nextMessage.sourceThreadId &&
+        currentMessage.projectedItem.sourceItemId === nextMessage.projectedItem.sourceItemId &&
+        currentMessage.projectedItem.item.status === nextMessage.projectedItem.item.status &&
+        currentMessage.createdAt === nextMessage.createdAt &&
+        currentMessage.updatedAt === nextMessage.updatedAt &&
+        chatAttachmentsAreUnchanged(currentMessage.attachments, nextMessage.attachments)
+      );
+    }
+  }
+}
+
+function threadFeedActivitiesAreUnchanged(
+  current: ReadonlyArray<ThreadFeedActivity>,
+  next: ReadonlyArray<ThreadFeedActivity>,
+): boolean {
+  if (current.length !== next.length) return false;
+  return current.every((activity, index) => {
+    const nextActivity = next[index];
+    if (!nextActivity) return false;
+    return (
+      activity.id === nextActivity.id &&
+      activity.createdAt === nextActivity.createdAt &&
+      activity.runId === nextActivity.runId &&
+      activity.summary === nextActivity.summary &&
+      activity.detail === nextActivity.detail &&
+      activity.canExpand === nextActivity.canExpand &&
+      activity.icon === nextActivity.icon &&
+      activity.logo === nextActivity.logo &&
+      activity.toolLike === nextActivity.toolLike &&
+      activity.prominent === nextActivity.prominent &&
+      activity.status === nextActivity.status &&
+      activity.projectedItem.sourceThreadId === nextActivity.projectedItem.sourceThreadId &&
+      activity.projectedItem.sourceItemId === nextActivity.projectedItem.sourceItemId &&
+      activity.projectedItem.visibility === nextActivity.projectedItem.visibility &&
+      DateTime.toEpochMillis(activity.projectedItem.item.updatedAt) ===
+        DateTime.toEpochMillis(nextActivity.projectedItem.item.updatedAt)
+    );
+  });
+}
+
+function chatAttachmentsAreUnchanged(
+  current: ReadonlyArray<ChatAttachment>,
+  next: ReadonlyArray<ChatAttachment>,
+): boolean {
+  if (current.length !== next.length) return false;
+  return current.every((attachment, index) => {
+    const nextAttachment = next[index];
+    return (
+      nextAttachment !== undefined &&
+      attachment.type === nextAttachment.type &&
+      attachment.id === nextAttachment.id &&
+      attachment.name === nextAttachment.name &&
+      attachment.mimeType === nextAttachment.mimeType &&
+      attachment.sizeBytes === nextAttachment.sizeBytes
+    );
+  });
+}
+
 export interface ThreadFeedLatestRun {
   readonly runId: RunId;
   readonly status: OrchestrationV2RunStatus;

@@ -36,6 +36,14 @@ export function isActiveHistoryRequestCursor(
   return history.historyCursor === requestCursor;
 }
 
+/** Whether a history-page response still owns the active loading request. */
+export function isActiveHistoryRequest(
+  requestCursor: string,
+  history: Pick<ThreadHistoryMeta, "historyCursor" | "loading">,
+): boolean {
+  return history.loading && isActiveHistoryRequestCursor(requestCursor, history);
+}
+
 /**
  * Clear history loading after an interrupted load-earlier only when the
  * request cursor is still active. Does not touch stream/status/error.
@@ -44,7 +52,7 @@ export function clearActiveHistoryLoading(
   requestCursor: string,
   history: ThreadHistoryMeta,
 ): ThreadHistoryMeta {
-  if (!isActiveHistoryRequestCursor(requestCursor, history) || !history.loading) {
+  if (!isActiveHistoryRequest(requestCursor, history)) {
     return history;
   }
   return { ...history, loading: false };

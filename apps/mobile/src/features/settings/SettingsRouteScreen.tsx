@@ -28,6 +28,7 @@ import {
   refreshAgentAwarenessRegistration,
   subscribeAgentAwarenessRegistrationStatus,
 } from "../agent-awareness/remoteRegistration";
+import { clerkAccountRowLabel } from "../cloud/clerkLoadRecovery";
 import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
@@ -159,11 +160,15 @@ function ConfiguredSettingsRouteScreen() {
 
   const connections = useMemo(() => Object.values(savedConnectionsById), [savedConnectionsById]);
   const environmentCount = connections.length;
-  const accountLabel = useMemo(() => {
-    if (!isLoaded) return "Checking";
-    if (!isSignedIn) return "Sign in";
-    return user?.primaryEmailAddress?.emailAddress ?? "Signed in";
-  }, [isLoaded, isSignedIn, user?.primaryEmailAddress?.emailAddress]);
+  const accountLabel = useMemo(
+    () =>
+      clerkAccountRowLabel({
+        email: user?.primaryEmailAddress?.emailAddress,
+        isLoaded,
+        isSignedIn: Boolean(isSignedIn),
+      }),
+    [isLoaded, isSignedIn, user?.primaryEmailAddress?.emailAddress],
+  );
 
   const refreshNotifications = useCallback(async () => {
     if (process.env.EXPO_OS !== "ios") {
@@ -434,9 +439,8 @@ function ConfiguredSettingsRouteScreen() {
   );
 
   const openAccount = useCallback(() => {
-    if (!isLoaded) return;
     navigation.navigate("SettingsSheet", { screen: "SettingsAuth" });
-  }, [isLoaded, navigation]);
+  }, [navigation]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
