@@ -9,6 +9,8 @@ export const DraftComposerImageAttachmentSchema = Schema.Struct({
   mimeType: Schema.String,
   sizeBytes: Schema.Number,
   dataUrl: Schema.String,
+  uploadedAttachmentId: Schema.optional(Schema.String),
+  uploadEnvironmentId: Schema.optional(EnvironmentId),
 });
 
 export const DraftComposerFileAttachmentSchema = Schema.Struct({

@@ -23,6 +23,8 @@ import { uuidv4 } from "./uuid";
 export interface DraftComposerImageAttachment extends UploadChatImageAttachment {
   readonly id: string;
   readonly previewUri: string;
+  readonly uploadedAttachmentId?: string;
+  readonly uploadEnvironmentId?: EnvironmentId;
 }
 
 export interface DraftComposerFileAttachment {

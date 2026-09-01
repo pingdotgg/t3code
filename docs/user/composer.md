@@ -13,13 +13,16 @@ attach videos, text files, PDFs, ZIP archives, and other files. Each file can be
 by the server, capped at 50 MB. Each message can contain up to eight attachments in total. Files
 upload directly to the environment, where your agent can read, copy, or edit them by their file path.
 
-On web and desktop, attachments upload as soon as you add them. The send button becomes available
-after every upload finishes. Failed uploads can be retried or removed. On mobile, tap **+** to open
+Attachments upload as soon as you add them while connected to a server that supports uploads.
+The send button becomes available after every upload finishes. Failed uploads can be retried or
+removed. On mobile, tap **+** to open
 the photo library from either the compact or expanded composer. When the connected server supports
 file uploads, **+** opens a menu beside the button with **Photo Library** and **Choose Files**.
 Videos use the server's file upload limit. You can also share photos, videos, and files into
-T3 Code from other apps through the system share sheet. Mobile uploads happen when the message
-sends, so queued messages keep their files until they deliver. Select a received file on mobile
+T3 Code from other apps through the system share sheet. Mobile keeps a local copy of each draft
+attachment, so you can still preview it and queue messages while offline. Uploads resume when
+you reconnect. Drafts and queued messages survive app restarts; signing out of T3 Connect keeps
+them on your device until you sign back into the same account. Select a received file on mobile
 to preview it or open the system share options.
 
 Tap an image or PDF before or after sending to open it. On iOS, images zoom from their thumbnail

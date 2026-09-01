@@ -85,6 +85,9 @@ export function useCreateProjectThread() {
         prepared = await prepareTurnAttachments({
           environmentId: input.project.environmentId,
           attachments: input.initialAttachments,
+          supportsImageUploads:
+            appAtomRegistry.get(serverEnvironment.configValueAtom(input.project.environmentId))
+              ?.environment.capabilities.attachmentUploads === true,
           persistUploadedReferences: async (draftAttachments) => {
             await input.onAttachmentsUploaded(draftAttachments);
             return "persisted";
