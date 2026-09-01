@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
-import QtQuick.Shapes
 import T3.Shell
 import T3.Bricks
 
@@ -10,13 +9,9 @@ import T3.Bricks
 // page. The Dashboard tab pulls a widget drawer over the page: today and the
 // calendar, the open workspace and its git state, thread meters, and the
 // agent behind the composer.
-Window {
+ShellWindow {
     id: root
 
-    readonly property var layoutState: Shell.state.layout ?? null
-    readonly property bool sidebarCollapsed: layoutState ? layoutState.sidebarCollapsed : false
-    readonly property var settingsState: Shell.state.settings ?? null
-    readonly property bool settingsActive: settingsState ? settingsState.active : false
     readonly property var sidebarState: Shell.state.sidebar ?? null
     readonly property var projects: sidebarState ? sidebarState.projects : []
     readonly property var scopeKey: sidebarState ? sidebarState.scopeProjectKey : null
@@ -50,47 +45,13 @@ Window {
     readonly property color accentDeep: Theme.color("accentSurfaceForeground", "#7c2f27")
     readonly property color warm: Theme.color("warning", "#c48a3f")
     readonly property color leaf: Theme.color("update", "#6f9a6a")
-    readonly property string uiFont: pickFont(Theme.fontUi)
-    readonly property string monoFont: pickFont(Theme.fontMono)
 
     // Sheet-style deceleration for surfaces that slide into place.
     readonly property var sheetCurve: [0.32, 0.72, 0, 1, 1, 1]
 
-    // 16x16 stroke icons, one path each.
-    readonly property var glyphs: ({
-            "grid": "M2.5 2.5h4.5v4.5H2.5z M9 2.5h4.5v4.5H9z M2.5 9h4.5v4.5H2.5z M9 9h4.5v4.5H9z",
-            "chat": "M3 3h10a1.5 1.5 0 0 1 1.5 1.5v5A1.5 1.5 0 0 1 13 11H7.5L4.5 13.5V11H3a1.5 1.5 0 0 1-1.5-1.5v-5A1.5 1.5 0 0 1 3 3z",
-            "changes": "M8 2v6 M5 5h6 M5 12h6",
-            "settings": "M8 5.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5 M8 1.5v2 M8 12.5v2 M1.5 8h2 M12.5 8h2 M3.4 3.4l1.4 1.4 M11.2 11.2l1.4 1.4 M12.6 3.4l-1.4 1.4 M4.8 11.2l-1.4 1.4",
-            "pr": "M4 5.5a1.5 1.5 0 1 0 0-3a1.5 1.5 0 0 0 0 3z M4 5.5v8 M12 10.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 0 0 0-3z M12 10.5V6a2 2 0 0 0-2-2H7.5 M9 2.5L7.5 4L9 5.5",
-            "usage": "M2.5 11.5a6 6 0 1 1 11 0 M8 8.5l3-3",
-            "palette": "M2.5 3.5L6.5 7.5L2.5 11.5 M8.5 12.5h5",
-            "folder": "M2 4h4l1.5 1.5H14v7.5H2z M8 7.5v4 M6 9.5h4",
-            "plus": "M8 3v10 M3 8h10",
-            "stop": "M4.5 4.5h7v7h-7z",
-            "editor": "M5 3.5L1.5 8L5 12.5 M11 3.5L14.5 8L11 12.5",
-            "branch": "M4.5 2v12 M11.5 3v2c0 3-7 2-7 5",
-            "star": "M8 2l1.8 3.8L14 6.4l-3 2.9.7 4.2L8 11.5l-3.7 2 .7-4.2-3-2.9 4.2-.6z"
-        })
-
     width: 1400
     height: 880
-    visible: true
-    title: qsTr("T3 Code")
     color: canvas
-    opacity: Theme.windowOpacity
-    flags: Qt.Window | Qt.FramelessWindowHint
-
-    function pickFont(stack) {
-        const installed = Qt.fontFamilies();
-        for (const family of stack.split(",")) {
-            const name = family.trim();
-            if (installed.indexOf(name) >= 0) {
-                return name;
-            }
-        }
-        return Qt.application.font.family;
-    }
 
     function isoWeek(date) {
         const utc = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -145,47 +106,6 @@ Window {
         onActivated: root.drawerOpen = false
     }
 
-    component Card: Rectangle {
-        default property alias content: inner.data
-
-        radius: Theme.radius
-        color: root.card
-        border.color: root.line
-        border.width: 1
-
-        Item {
-            id: inner
-
-            anchors.fill: parent
-            anchors.margins: 1
-        }
-    }
-
-    component Glyph: Shape {
-        id: glyph
-
-        property string kind
-        property color tint: root.ink
-        property real stroke: 1.5
-
-        width: 16
-        height: 16
-        preferredRendererType: Shape.CurveRenderer
-        Accessible.ignored: true
-
-        ShapePath {
-            strokeColor: glyph.tint
-            strokeWidth: glyph.stroke
-            fillColor: "transparent"
-            capStyle: ShapePath.RoundCap
-            joinStyle: ShapePath.RoundJoin
-
-            PathSvg {
-                path: root.glyphs[glyph.kind] ?? ""
-            }
-        }
-    }
-
     // A round rail button: press sinks it, hover tints it, active fills it.
     component RailButton: AbstractButton {
         id: button
@@ -221,11 +141,11 @@ Window {
         }
 
         contentItem: Item {
-            Glyph {
+            ShellIcon {
                 anchors.centerIn: parent
-                kind: button.kind
+                name: button.kind
                 visible: button.kind.length > 0
-                tint: button.active ? root.accentInk : root.accentDeep
+                color: button.active ? root.accentInk : root.accentDeep
             }
 
             Text {
@@ -233,7 +153,7 @@ Window {
                 visible: button.kind.length === 0
                 text: root.initialOf(button.text)
                 color: button.active ? root.accentInk : root.accentDeep
-                font.family: root.uiFont
+                font.family: Theme.fontUi
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
             }
@@ -258,13 +178,13 @@ Window {
         Accessible.name: text
 
         contentItem: Item {
-            Glyph {
+            ShellIcon {
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: 7
-                kind: tab.kind
-                tint: tab.active ? root.accent : tab.hovered ? root.accentDeep : root.muted
+                name: tab.kind
+                color: tab.active ? root.accent : tab.hovered ? root.accentDeep : root.muted
 
-                Behavior on tint {
+                Behavior on color {
                     ColorAnimation {
                         duration: 140
                     }
@@ -276,7 +196,7 @@ Window {
                 y: 26
                 text: tab.text
                 color: tab.active ? root.accentDeep : tab.hovered ? root.ink : root.muted
-                font.family: root.uiFont
+                font.family: Theme.fontUi
                 font.pixelSize: 11
                 font.weight: tab.active ? Font.DemiBold : Font.Medium
 
@@ -291,16 +211,13 @@ Window {
 
     // A drawer widget. Cards arrive a beat apart when the drawer opens and
     // leave together with it.
-    component DashCard: Rectangle {
+    component DashCard: ShellCard {
         id: dash
 
         property int order: 0
         default property alias content: dashInner.data
 
         radius: 18
-        color: root.card
-        border.color: root.line
-        border.width: 1
 
         transform: Translate {
             y: root.drawerOpen ? 0 : 22
@@ -323,7 +240,7 @@ Window {
             id: dashInner
 
             anchors.fill: parent
-            anchors.margins: 14
+            anchors.margins: 13
         }
     }
 
@@ -331,7 +248,7 @@ Window {
         id: chip
 
         property alias text: chipText.text
-        property alias kind: chipGlyph.kind
+        property alias kind: chipGlyph.name
         property color tint: root.accentDeep
 
         implicitWidth: chipRow.implicitWidth + 16
@@ -345,15 +262,13 @@ Window {
             anchors.centerIn: parent
             spacing: 5
 
-            Glyph {
+            ShellIcon {
                 id: chipGlyph
 
                 anchors.verticalCenter: parent.verticalCenter
-                width: 12
-                height: 12
-                scale: 0.75
-                visible: kind.length > 0
-                tint: chip.tint
+                size: 12
+                visible: name.length > 0
+                color: chip.tint
             }
 
             Text {
@@ -361,7 +276,7 @@ Window {
 
                 anchors.verticalCenter: parent.verticalCenter
                 color: chip.tint
-                font.family: root.uiFont
+                font.family: Theme.fontUi
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
             }
@@ -416,7 +331,7 @@ Window {
             Layout.alignment: Qt.AlignHCenter
             text: meter.value
             color: root.ink
-            font.family: root.uiFont
+            font.family: Theme.fontUi
             font.pixelSize: 12
             font.weight: Font.DemiBold
         }
@@ -427,7 +342,7 @@ Window {
             color: root.muted
             elide: Text.ElideRight
             horizontalAlignment: Text.AlignHCenter
-            font.family: root.uiFont
+            font.family: Theme.fontUi
             font.pixelSize: 9
             font.letterSpacing: 0.4
             font.capitalization: Font.AllUppercase
@@ -463,7 +378,7 @@ Window {
             Layout.preferredHeight: 44
             spacing: 12
 
-            Card {
+            ShellCard {
                 Layout.preferredWidth: Math.max(208, 64 + root.sidebarSlot)
                 Layout.fillHeight: true
 
@@ -474,7 +389,7 @@ Window {
                 }
             }
 
-            Card {
+            ShellCard {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
 
@@ -494,7 +409,7 @@ Window {
             spacing: 12
 
             // The rail: dashboard toggle, project scope, and the app's places.
-            Card {
+            ShellCard {
                 Layout.preferredWidth: 52
                 Layout.fillHeight: true
 
@@ -506,7 +421,7 @@ Window {
 
                     RailButton {
                         Layout.alignment: Qt.AlignHCenter
-                        kind: "grid"
+                        kind: "layout-grid"
                         text: qsTr("Dashboard")
                         active: root.drawerOpen
                         onClicked: root.drawerOpen = !root.drawerOpen
@@ -565,35 +480,35 @@ Window {
 
                     RailButton {
                         Layout.alignment: Qt.AlignHCenter
-                        kind: "pr"
+                        kind: "git-pull-request"
                         text: qsTr("Pull requests")
                         onClicked: Shell.dispatch("pullRequests.open")
                     }
 
                     RailButton {
                         Layout.alignment: Qt.AlignHCenter
-                        kind: "usage"
+                        kind: "chart-no-axes-column"
                         text: qsTr("Usage")
                         onClicked: Shell.dispatch("usage.open")
                     }
 
                     RailButton {
                         Layout.alignment: Qt.AlignHCenter
-                        kind: "palette"
+                        kind: "command"
                         text: qsTr("Command palette")
                         onClicked: Shell.dispatch("palette.open")
                     }
 
                     RailButton {
                         Layout.alignment: Qt.AlignHCenter
-                        kind: "folder"
+                        kind: "folder-plus"
                         text: qsTr("Add project")
                         onClicked: Shell.dispatch("project.add")
                     }
                 }
             }
 
-            Card {
+            ShellCard {
                 Layout.preferredWidth: root.sidebarSlot
                 Layout.minimumWidth: 0
                 Layout.fillHeight: true
@@ -621,7 +536,7 @@ Window {
                 spacing: 12
 
                 // The page, with a band at the top for the notch to hang from.
-                Card {
+                ShellCard {
                     id: surfaceCard
 
                     Layout.fillWidth: true
@@ -733,7 +648,7 @@ Window {
                                             text: root.workspace && root.workspace.projectTitle ? root.workspace.projectTitle : qsTr("No thread open")
                                             color: root.ink
                                             elide: Text.ElideRight
-                                            font.family: root.uiFont
+                                            font.family: Theme.fontUi
                                             font.pixelSize: 14
                                             font.weight: Font.Bold
                                         }
@@ -743,7 +658,7 @@ Window {
                                             text: root.workspace ? root.workspace.threadTitle : qsTr("Pick one in the sidebar")
                                             color: root.muted
                                             elide: Text.ElideRight
-                                            font.family: root.uiFont
+                                            font.family: Theme.fontUi
                                             font.pixelSize: 11
                                         }
 
@@ -757,7 +672,7 @@ Window {
 
                                             Chip {
                                                 visible: root.workspace !== null && root.workspace.branch !== null
-                                                kind: "branch"
+                                                kind: "git-branch"
                                                 text: root.workspace && root.workspace.branch ? root.workspace.branch : ""
                                             }
 
@@ -769,14 +684,14 @@ Window {
 
                                             Chip {
                                                 visible: root.git !== null && root.git.hasWorkingTreeChanges
-                                                kind: "changes"
+                                                kind: "file-diff"
                                                 text: qsTr("Edits")
                                                 tint: root.leaf
                                             }
 
                                             Chip {
                                                 visible: root.git !== null && root.git.pullRequest !== null
-                                                kind: "pr"
+                                                kind: "git-pull-request"
                                                 text: root.git && root.git.pullRequest ? "#" + root.git.pullRequest.number : ""
                                             }
                                         }
@@ -797,7 +712,7 @@ Window {
                                             Layout.alignment: Qt.AlignHCenter
                                             text: Qt.formatDate(root.now, "dd")
                                             color: root.accentDeep
-                                            font.family: root.uiFont
+                                            font.family: Theme.fontUi
                                             font.pixelSize: 44
                                             font.weight: Font.Bold
                                             font.letterSpacing: -1
@@ -824,7 +739,7 @@ Window {
                                             Layout.alignment: Qt.AlignHCenter
                                             text: Qt.formatDate(root.now, "MM")
                                             color: root.accentDeep
-                                            font.family: root.uiFont
+                                            font.family: Theme.fontUi
                                             font.pixelSize: 44
                                             font.weight: Font.Bold
                                             font.letterSpacing: -1
@@ -836,7 +751,7 @@ Window {
                                             Layout.topMargin: 6
                                             text: qsTr("%1, wk %2").arg(Qt.formatDate(root.now, "ddd")).arg(root.isoWeek(root.now))
                                             color: root.muted
-                                            font.family: root.uiFont
+                                            font.family: Theme.fontUi
                                             font.pixelSize: 11
                                             font.weight: Font.Medium
                                         }
@@ -846,7 +761,7 @@ Window {
                                             Layout.topMargin: 2
                                             text: Qt.formatTime(root.now, "HH:mm")
                                             color: root.ink
-                                            font.family: root.monoFont
+                                            font.family: Theme.fontMono
                                             font.pixelSize: 12
                                         }
                                     }
@@ -867,7 +782,7 @@ Window {
                                         Layout.alignment: Qt.AlignHCenter
                                         text: Qt.formatDate(root.now, "MMMM yyyy")
                                         color: root.accentDeep
-                                        font.family: root.uiFont
+                                        font.family: Theme.fontUi
                                         font.pixelSize: 12
                                         font.weight: Font.Bold
                                         font.letterSpacing: 0.4
@@ -890,7 +805,7 @@ Window {
                                                 text: Qt.locale().dayName(index === 6 ? 7 : index + 1, Locale.ShortFormat)
                                                 color: root.accentDeep
                                                 horizontalAlignment: Text.AlignHCenter
-                                                font.family: root.uiFont
+                                                font.family: Theme.fontUi
                                                 font.pixelSize: 10
                                                 font.weight: Font.DemiBold
                                             }
@@ -918,7 +833,7 @@ Window {
                                                     anchors.centerIn: parent
                                                     text: parent.modelData.day
                                                     color: parent.modelData.today ? root.accentInk : parent.modelData.inMonth ? root.ink : root.line
-                                                    font.family: root.uiFont
+                                                    font.family: Theme.fontUi
                                                     font.pixelSize: 11
                                                     font.weight: parent.modelData.today ? Font.Bold : Font.Medium
                                                 }
@@ -1010,7 +925,7 @@ Window {
                                                 anchors.centerIn: parent
                                                 text: root.instance ? root.initialOf(root.instance.displayName) : "T3"
                                                 color: root.accentDeep
-                                                font.family: root.uiFont
+                                                font.family: Theme.fontUi
                                                 font.pixelSize: 30
                                                 font.weight: Font.Bold
                                             }
@@ -1049,7 +964,7 @@ Window {
                                         color: root.accent
                                         horizontalAlignment: Text.AlignHCenter
                                         elide: Text.ElideMiddle
-                                        font.family: root.uiFont
+                                        font.family: Theme.fontUi
                                         font.pixelSize: 13
                                         font.weight: Font.Bold
                                     }
@@ -1060,7 +975,7 @@ Window {
                                         color: root.ink
                                         horizontalAlignment: Text.AlignHCenter
                                         elide: Text.ElideRight
-                                        font.family: root.uiFont
+                                        font.family: Theme.fontUi
                                         font.pixelSize: 11
                                     }
 
@@ -1081,7 +996,7 @@ Window {
                                         color: root.attentionCount > 0 ? root.warm : root.muted
                                         horizontalAlignment: Text.AlignHCenter
                                         elide: Text.ElideRight
-                                        font.family: root.uiFont
+                                        font.family: Theme.fontUi
                                         font.pixelSize: 11
                                         font.weight: Font.Medium
                                     }
@@ -1108,7 +1023,7 @@ Window {
 
                                         RailButton {
                                             round: true
-                                            kind: "stop"
+                                            kind: "square"
                                             text: qsTr("Stop the agent")
                                             active: true
                                             enabled: root.composerReady && root.composerState.isRunning
@@ -1118,7 +1033,7 @@ Window {
 
                                         RailButton {
                                             round: true
-                                            kind: "editor"
+                                            kind: "code"
                                             text: qsTr("Open in editor")
                                             enabled: root.workspace !== null && root.workspace.editors.length > 0
                                             opacity: enabled ? 1 : 0.4
@@ -1168,14 +1083,14 @@ Window {
                             anchors.verticalCenter: parent.verticalCenter
 
                             NotchTab {
-                                kind: "grid"
+                                kind: "layout-grid"
                                 text: qsTr("Dashboard")
                                 active: root.tabIndex === 0
                                 onClicked: root.drawerOpen = !root.drawerOpen
                             }
 
                             NotchTab {
-                                kind: "chat"
+                                kind: "message-square"
                                 text: qsTr("Chat")
                                 active: root.tabIndex === 1
                                 onClicked: {
@@ -1187,7 +1102,7 @@ Window {
                             }
 
                             NotchTab {
-                                kind: "changes"
+                                kind: "file-diff"
                                 text: qsTr("Changes")
                                 active: root.tabIndex === 2
                                 onClicked: {
@@ -1209,7 +1124,7 @@ Window {
                     }
                 }
 
-                Card {
+                ShellCard {
                     Layout.fillWidth: true
                     Layout.preferredHeight: composer.implicitHeight
                     visible: composer.ready
@@ -1223,7 +1138,7 @@ Window {
                 }
             }
 
-            Card {
+            ShellCard {
                 Layout.preferredWidth: panel.implicitWidth
                 Layout.fillHeight: true
                 visible: panel.available && panel.open
@@ -1242,13 +1157,5 @@ Window {
         anchors.bottom: parent.bottom
         anchors.right: parent.right
         anchors.margins: 24
-    }
-
-    ContextMenuHost {
-        surfaceId: "shell"
-    }
-
-    ShellErrorOverlay {
-        anchors.fill: parent
     }
 }
