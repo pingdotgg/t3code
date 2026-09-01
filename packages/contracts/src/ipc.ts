@@ -198,12 +198,6 @@ export interface DesktopRuntimeInfo {
   runningUnderArm64Translation: boolean;
 }
 
-export const DesktopRuntimeInfoSchema = Schema.Struct({
-  hostArch: DesktopRuntimeArchSchema,
-  appArch: DesktopRuntimeArchSchema,
-  runningUnderArm64Translation: Schema.Boolean,
-});
-
 export interface DesktopUpdateState {
   enabled: boolean;
   status: DesktopUpdateStatus;
@@ -350,14 +344,6 @@ export interface DesktopSshPasswordPromptRequest {
   prompt: string;
   expiresAt: string;
 }
-
-export const DesktopSshPasswordPromptRequestSchema = Schema.Struct({
-  requestId: Schema.String,
-  destination: Schema.String,
-  username: Schema.NullOr(Schema.String),
-  prompt: Schema.String,
-  expiresAt: Schema.String,
-});
 
 export const DesktopSshPasswordPromptCancelledType = "ssh-password-prompt-cancelled" as const;
 
@@ -619,22 +605,6 @@ export const DesktopPreviewNavStatusSchema = Schema.Union([
   }),
 ]);
 
-export const DesktopPreviewTabStateSchema: Schema.Codec<DesktopPreviewTabState> = Schema.Struct({
-  tabId: DesktopPreviewTabIdSchema,
-  webContentsId: Schema.NullOr(Schema.Int),
-  navStatus: DesktopPreviewNavStatusSchema,
-  canGoBack: Schema.Boolean,
-  canGoForward: Schema.Boolean,
-  zoomFactor: Schema.Number,
-  pictureInPicture: Schema.Boolean,
-  colorScheme: DesktopPreviewColorSchemeSchema,
-  audioMuted: Schema.Boolean,
-  audible: Schema.Boolean,
-  controller: Schema.Literals(["human", "agent", "none"]),
-  favicon: Schema.optionalKey(DesktopPreviewFaviconSchema),
-  updatedAt: Schema.String,
-});
-
 export interface DesktopPreviewPointerEvent {
   tabId: string;
   phase: "move" | "click";
@@ -643,16 +613,6 @@ export interface DesktopPreviewPointerEvent {
   sequence: number;
   createdAt: string;
 }
-
-export const DesktopPreviewPointerEventSchema: Schema.Codec<DesktopPreviewPointerEvent> =
-  Schema.Struct({
-    tabId: DesktopPreviewTabIdSchema,
-    phase: Schema.Literals(["move", "click"]),
-    x: Schema.Number,
-    y: Schema.Number,
-    sequence: Schema.Int,
-    createdAt: Schema.String,
-  });
 
 /**
  * Static config a renderer needs to mount a preview `<webview>`. Returned
@@ -732,15 +692,6 @@ export interface DesktopPreviewRecordingFrame {
   height: number;
   receivedAt: string;
 }
-
-export const DesktopPreviewRecordingFrameSchema: Schema.Codec<DesktopPreviewRecordingFrame> =
-  Schema.Struct({
-    tabId: DesktopPreviewTabIdSchema,
-    data: Schema.String,
-    width: Schema.Number,
-    height: Schema.Number,
-    receivedAt: Schema.String,
-  });
 
 export interface DesktopPreviewRecordingArtifact {
   id: string;

@@ -1,5 +1,4 @@
 import {
-  type ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
   ServerProvider as ServerProviderSchema,
@@ -97,23 +96,6 @@ export const resolveProviderStatusCachePath = Effect.fn("resolveProviderStatusCa
     return path.join(input.cacheDir, `${input.instanceId}.json`);
   },
 );
-
-/**
- * Legacy kind-keyed path resolver retained for callers that still think in
- * terms of `ProviderDriverKind`. Prefer `resolveProviderStatusCachePath` with an
- * `instanceId`; new code should route through the instance registry.
- *
- * @deprecated use `resolveProviderStatusCachePath` with an instance id.
- */
-export const resolveLegacyProviderStatusCachePath = Effect.fn(
-  "resolveLegacyProviderStatusCachePath",
-)(function* (input: {
-  readonly cacheDir: string;
-  readonly provider: ProviderDriverKind;
-}): Effect.fn.Return<string, never, Path.Path> {
-  const path = yield* Path.Path;
-  return path.join(input.cacheDir, `${input.provider}.json`);
-});
 
 export const readProviderStatusCache = (filePath: string) =>
   Effect.gen(function* () {

@@ -270,14 +270,6 @@ export function resolveServerUpdateProgressResult<E>(
   return Effect.fail(new ServerUpdateProgressIncompleteError({ targetVersion }));
 }
 
-export function projectServerConfig(
-  current: Option.Option<ServerConfigProjection>,
-  event: ServerConfigStreamEvent,
-): readonly [Option.Option<ServerConfigProjection>, ReadonlyArray<ServerConfigProjection>] {
-  const next = applyServerConfigProjection(current, event);
-  return [next, Option.toArray(next)];
-}
-
 const cachedConfigSnapshotEvent = (config: ServerConfig): ServerConfigStreamEvent => ({
   version: 1,
   type: "snapshot",

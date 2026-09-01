@@ -1,8 +1,4 @@
-import {
-  isWorkspaceBrowserPreviewPath,
-  isWorkspaceImagePreviewPath,
-  isWorkspaceVideoPreviewPath,
-} from "@t3tools/shared/filePreview";
+import { isWorkspaceVideoPreviewPath } from "@t3tools/shared/filePreview";
 
 export interface FileBreadcrumb {
   readonly label: string;
@@ -86,14 +82,6 @@ export function resolveWorkspaceRelativeFilePath(
   }
 
   return normalizeRelativePath(normalizedTarget.slice(normalizedRoot.length + 1));
-}
-
-export function isBrowserPreviewFile(path: string): boolean {
-  return isWorkspaceBrowserPreviewPath(path);
-}
-
-export function isImagePreviewFile(path: string): boolean {
-  return isWorkspaceImagePreviewPath(path);
 }
 
 export function isVideoPreviewFile(path: string): boolean {
