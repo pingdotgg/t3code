@@ -17,6 +17,9 @@ import type {
 /** Set by SelectableMarkdownText so images anywhere in the block tree can use it. */
 export const MarkdownImageRendererContext = createContext<MarkdownImageRenderer | null>(null);
 
+/** Remote/data URIs the fallback Image can load. Workspace paths must go through renderImage. */
+const DIRECT_MARKDOWN_IMAGE_HREF_PATTERN = /^(?:https?:|data:|blob:|\/\/)/i;
+
 type HighlightedCode = ReadonlyArray<ReadonlyArray<MarkdownHighlightedToken>>;
 
 const highlightedCodeCache = new Map<string, HighlightedCode>();
@@ -382,8 +385,10 @@ function NativeMarkdownImage(props: {
   readonly skills: ReadonlyArray<SelectableMarkdownSkill>;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly onLinkPress?: (href: string) => void;
+  readonly renderImage?: MarkdownImageRenderer | null;
 }) {
-  const renderImage = useContext(MarkdownImageRendererContext);
+  const contextRenderer = useContext(MarkdownImageRendererContext);
+  const renderImage = props.renderImage ?? contextRenderer;
   const href = props.node.href;
   if (!href) {
     return (
@@ -407,12 +412,57 @@ function NativeMarkdownImage(props: {
     }
   }
 
+  const alt = props.node.alt ?? props.node.title;
+  const caption = props.node.alt ? (
+    <Text
+      selectable
+      style={{
+        color: props.textStyle.mutedColor,
+        fontFamily: props.textStyle.fontFamily,
+        fontSize: 12,
+        lineHeight: 16,
+      }}
+    >
+      {props.node.alt}
+    </Text>
+  ) : null;
+
+  if (!DIRECT_MARKDOWN_IMAGE_HREF_PATTERN.test(href.trim())) {
+    return (
+      <View style={{ gap: 6 }}>
+        <View
+          accessibilityLabel={alt ?? "Image unavailable"}
+          style={{
+            width: "100%",
+            aspectRatio: 16 / 9,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: props.textStyle.codeBackgroundColor,
+            borderRadius: 10,
+          }}
+        >
+          <Text
+            style={{
+              color: props.textStyle.mutedColor,
+              fontFamily: props.textStyle.fontFamily,
+              fontSize: 12,
+              lineHeight: 16,
+            }}
+          >
+            Image unavailable
+          </Text>
+        </View>
+        {caption}
+      </View>
+    );
+  }
+
   return (
     <View style={{ gap: 6 }}>
       <Image
         source={{ uri: href }}
         resizeMode="contain"
-        accessibilityLabel={props.node.alt ?? props.node.title}
+        accessibilityLabel={alt}
         style={{
           width: "100%",
           aspectRatio: 16 / 9,
@@ -420,19 +470,7 @@ function NativeMarkdownImage(props: {
           borderRadius: 10,
         }}
       />
-      {props.node.alt ? (
-        <Text
-          selectable
-          style={{
-            color: props.textStyle.mutedColor,
-            fontFamily: props.textStyle.fontFamily,
-            fontSize: 12,
-            lineHeight: 16,
-          }}
-        >
-          {props.node.alt}
-        </Text>
-      ) : null}
+      {caption}
     </View>
   );
 }
@@ -465,6 +503,7 @@ function NativeMixedParagraph(props: {
   readonly skills: ReadonlyArray<SelectableMarkdownSkill>;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly onLinkPress?: (href: string) => void;
+  readonly renderImage?: MarkdownImageRenderer | null;
 }) {
   return (
     <View style={{ gap: 8 }}>
@@ -476,6 +515,7 @@ function NativeMixedParagraph(props: {
             skills={props.skills}
             textStyle={props.textStyle}
             onLinkPress={props.onLinkPress}
+            renderImage={props.renderImage}
           />
         ) : (
           <SelectableNode
@@ -497,6 +537,7 @@ function NativeList(props: {
   readonly textStyle: NativeMarkdownTextStyle;
   readonly highlightCode: MarkdownCodeHighlighter;
   readonly onLinkPress?: (href: string) => void;
+  readonly renderImage?: MarkdownImageRenderer | null;
   readonly depth: number;
 }) {
   const ordered = props.node.ordered ?? false;
@@ -559,6 +600,7 @@ function NativeList(props: {
                   textStyle={props.textStyle}
                   highlightCode={props.highlightCode}
                   onLinkPress={props.onLinkPress}
+                  renderImage={props.renderImage}
                   depth={props.depth + 1}
                   compact
                 />
@@ -577,6 +619,7 @@ export function NativeMarkdownBlock(props: {
   readonly textStyle: NativeMarkdownTextStyle;
   readonly highlightCode: MarkdownCodeHighlighter;
   readonly onLinkPress?: (href: string) => void;
+  readonly renderImage?: MarkdownImageRenderer | null;
   readonly depth?: number;
   readonly compact?: boolean;
 }) {
@@ -593,6 +636,7 @@ export function NativeMarkdownBlock(props: {
               textStyle={props.textStyle}
               highlightCode={props.highlightCode}
               onLinkPress={props.onLinkPress}
+              renderImage={props.renderImage}
               depth={depth}
             />
           ))}
@@ -623,6 +667,7 @@ export function NativeMarkdownBlock(props: {
           skills={props.skills}
           textStyle={props.textStyle}
           onLinkPress={props.onLinkPress}
+          renderImage={props.renderImage}
         />
       );
     case "horizontal_rule":
@@ -654,6 +699,7 @@ export function NativeMarkdownBlock(props: {
               textStyle={props.textStyle}
               highlightCode={props.highlightCode}
               onLinkPress={props.onLinkPress}
+              renderImage={props.renderImage}
               depth={depth}
               compact
             />
@@ -668,6 +714,7 @@ export function NativeMarkdownBlock(props: {
           textStyle={props.textStyle}
           highlightCode={props.highlightCode}
           onLinkPress={props.onLinkPress}
+          renderImage={props.renderImage}
           depth={depth}
         />
       );
@@ -678,6 +725,7 @@ export function NativeMarkdownBlock(props: {
           skills={props.skills}
           textStyle={props.textStyle}
           onLinkPress={props.onLinkPress}
+          renderImage={props.renderImage}
         />
       ) : (
         <SelectableNode
@@ -725,6 +773,7 @@ export function NativeMarkdownBlock(props: {
               textStyle={props.textStyle}
               highlightCode={props.highlightCode}
               onLinkPress={props.onLinkPress}
+              renderImage={props.renderImage}
               depth={depth}
               compact
             />

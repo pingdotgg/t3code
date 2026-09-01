@@ -764,6 +764,36 @@ describe("nativeMarkdownDocumentChunks", () => {
     });
   });
 
+  it("keeps workspace markdown images in a rich chunk so the host can render them", () => {
+    const imageParagraph: MarkdownNode = {
+      type: "paragraph",
+      children: [
+        {
+          type: "image",
+          href: "media/shots/poster.png",
+          alt: "Poster — the identity lockup in the real studio",
+        },
+      ],
+    };
+
+    const chunks = nativeMarkdownDocumentChunks({
+      type: "document",
+      children: [
+        {
+          type: "paragraph",
+          children: [{ type: "text", content: "The piece." }],
+        },
+        imageParagraph,
+      ],
+    });
+
+    expect(chunks.map((chunk) => chunk.kind)).toEqual(["selectable", "rich"]);
+    expect(chunks[1]).toMatchObject({
+      kind: "rich",
+      node: imageParagraph,
+    });
+  });
+
   it("keeps a plain list in one selectable native text container", () => {
     const list: MarkdownNode = {
       type: "list",

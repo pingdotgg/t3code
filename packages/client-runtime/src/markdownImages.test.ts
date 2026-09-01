@@ -18,6 +18,7 @@ describe("classifyMarkdownImageSource", () => {
 
   it.each([
     ["images/result.png", "/workspace/project", "/workspace/project/images/result.png"],
+    ["media/shots/poster.png", "/workspace/project", "/workspace/project/media/shots/poster.png"],
     ["./images/result.png", "/workspace/project", "/workspace/project/./images/result.png"],
     [
       "images/result.png",
@@ -50,6 +51,7 @@ describe("classifyMarkdownImageSource", () => {
     "#image",
     "?image=1",
     "image.png",
+    "media/shots/poster.png",
     "~/image.png",
     "javascript:alert(1)",
     "ftp://example.com/image.png",
