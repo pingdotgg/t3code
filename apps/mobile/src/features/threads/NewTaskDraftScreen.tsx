@@ -893,7 +893,13 @@ export function NewTaskDraftScreen(props: {
     // enqueue branch so an offline worktree without a branch prompts rather than
     // queuing a task that could never drain.
     const resolvedBranch = selectedBranchName ?? availableCurrentBranchName;
-    if (resolveNewTaskSendAction({ workspaceMode, resolvedBranch }) === "pick-branch") {
+    if (
+      resolveNewTaskSendAction({
+        workspaceMode,
+        resolvedBranch,
+        workspaceModeSettled: flow.defaultWorkspaceModeSettled,
+      }) === "pick-branch"
+    ) {
       openContextPicker("NewTaskBranch");
       return;
     }
