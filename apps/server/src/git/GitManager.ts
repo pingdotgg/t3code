@@ -1930,7 +1930,8 @@ export const make = Effect.gen(function* () {
       .split("\n")
       .map((remoteName) => remoteName.trim())
       .filter((remoteName) => remoteName.length > 0);
-    if (remoteNames.length === 0) return null;
+    const [firstRemoteName] = remoteNames;
+    if (firstRemoteName === undefined) return null;
     const branchRef = yield* gitCore.execute({
       operation: "GitManager.branchPullRequest.branchRef",
       cwd: cacheCwd,
@@ -1987,8 +1988,9 @@ export const make = Effect.gen(function* () {
         upstreamRef = `${remoteName}/${branch}`;
       }
     }
+    const defaultRemoteName = remoteNames.includes("origin") ? "origin" : firstRemoteName;
     const defaultBranch = yield* gitCore
-      .resolveDefaultBranchName(cacheCwd, "origin")
+      .resolveDefaultBranchName(cacheCwd, defaultRemoteName)
       .pipe(Effect.orElseSucceed(() => null));
     const cacheKey = prLookupCacheKey(cacheCwd, {
       branch,

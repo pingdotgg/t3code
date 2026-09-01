@@ -1075,6 +1075,47 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("branch PR lookup uses the default branch from a non-origin remote", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "upstream", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "upstream", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "develop"]);
+      yield* runGit(repoDir, ["push", "-u", "upstream", "develop"]);
+      yield* runGit(remoteDir, ["symbolic-ref", "HEAD", "refs/heads/develop"]);
+      yield* runGit(repoDir, ["remote", "set-head", "upstream", "develop"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 221,
+                title: "Merged main PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/221",
+                baseRefName: "develop",
+                headRefName: "main",
+                state: "MERGED",
+                updatedAt: "2026-04-08T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const pullRequest = yield* manager.branchPullRequest({ cwd: repoDir, branch: "main" });
+
+      expect(pullRequest).toEqual({
+        state: "merged",
+        updatedAt: "2026-04-08T15:00:00.000Z",
+      });
+    }),
+  );
+
   it.effect("branch PR lookup uses the saved name after the local branch is deleted", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
