@@ -240,6 +240,20 @@ describe("makeQuitShortcutHandler", () => {
     expect(harness.notifications).toEqual([DOUBLE_CLICK_DOWN, UP]);
   });
 
+  it("accepts a second full shortcut after the modifier is released and pressed again", async () => {
+    const harness = makeHarness({ mode: "double-click" });
+    await harness.send(makeInput({}));
+    await harness.send(makeInput({ type: "keyUp" }));
+    await harness.send(makeInput({ type: "keyUp", key: "Meta", meta: false }));
+    vi.advanceTimersByTime(100);
+
+    await harness.send(makeInput({ key: "Meta" }));
+    await harness.send(makeInput({}));
+
+    expect(harness.quit).toHaveBeenCalledTimes(1);
+    expect(harness.notifications).toEqual([DOUBLE_CLICK_DOWN, UP]);
+  });
+
   it("expires a delayed double-press hint from keydown rather than mode resolution", async () => {
     let resolveMode: ((mode: QuitConfirmationMode) => void) | undefined;
     const harness = makeHarness({

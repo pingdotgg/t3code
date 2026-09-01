@@ -106,6 +106,10 @@ export function makeQuitShortcutHandler(
 
     const modifierDown = options.platform === "darwin" ? input.meta : input.control;
     if (!modifierDown || input.alt || input.shift || key !== "q") {
+      // Re-pressing the platform modifier is the first half of a second full
+      // quit shortcut, so it must not cancel an active double-press window.
+      if (key === modifierKey && !input.alt && !input.shift) return;
+
       // Any other key (or an extra modifier) pressed mid-hold breaks the
       // gesture; without this the hold timer keeps running through the
       // interruption and the next qualifying repeat would quit early. The
