@@ -158,6 +158,33 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(openCode.payload).length).toBeLessThan(200);
   });
 
+  it("keeps full Claude Read image paths through repeated projection", () => {
+    const imagePath = `/workspace/${"nested folder/".repeat(16)}reference image.webp`;
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "dynamic_tool_call",
+        detail: 'Read: {"file_path":"truncated..."}',
+        data: {
+          toolName: "Read",
+          input: { file_path: imagePath },
+          result: { content: "Image Size: 1280x720." },
+        },
+      }),
+    );
+    const projectedAgain = projectActivityPayload(projected);
+
+    expect(projected.payload).toMatchObject({ data: { imagePath } });
+    expect(projectedAgain.payload).toMatchObject({ data: { imagePath } });
+
+    const textRead = projectActivityPayload(
+      activity({
+        itemType: "dynamic_tool_call",
+        data: { toolName: "Read", input: { file_path: "/workspace/src/index.ts" } },
+      }),
+    );
+    expect(textRead.payload).not.toMatchObject({ data: { imagePath: expect.anything() } });
+  });
+
   it("slims Codex-shaped mcp_tool_call items to rendered fields plus a result summary", () => {
     const projected = projectActivityPayload(
       activity({

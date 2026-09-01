@@ -19,6 +19,14 @@ describe("workEntryViewedImagePath", () => {
         detail: "C:\\workspace\\a.webp",
       }),
     ).toBe("C:\\workspace\\a.webp");
+    expect(
+      workEntryViewedImagePath({
+        ...entry,
+        itemType: "dynamic_tool_call",
+        detail: 'Read: {"file_path":"truncated..."}',
+        viewedImagePath: " /workspace/reference image.webp ",
+      }),
+    ).toBe("/workspace/reference image.webp");
   });
 
   it("rejects non-image, multi-line, and non-read details", () => {

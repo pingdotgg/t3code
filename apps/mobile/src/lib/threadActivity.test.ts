@@ -504,6 +504,61 @@ describe("buildThreadFeed", () => {
     );
   });
 
+  it("keeps viewed image metadata while collapsing a streamed Claude Read", () => {
+    const turnId = TurnId.make("turn-image-read");
+    const imagePath = `/workspace/${"nested folder/".repeat(16)}reference image.webp`;
+    const thread = makeThread({
+      id: ThreadId.make("thread-image-read"),
+      projectId: ProjectId.make("project-1"),
+      title: "Image read",
+      activities: [
+        makeActivity({
+          id: EventId.make("image-read-update"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Image view",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId,
+          payload: {
+            toolCallId: "tool-read-image",
+            itemType: "image_view",
+            status: "inProgress",
+            detail: `${imagePath.slice(0, 177)}...`,
+            data: { imagePath },
+          },
+        }),
+        makeActivity({
+          id: EventId.make("image-read-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Image view",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: {
+            toolCallId: "tool-read-image",
+            itemType: "image_view",
+            status: "completed",
+            detail: `${imagePath.slice(0, 177)}...`,
+            data: {},
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({
+      type: "activity-group",
+      activities: [
+        {
+          workEntry: {
+            itemType: "image_view",
+            viewedImagePath: imagePath,
+          },
+        },
+      ],
+    });
+  });
+
   it("keeps MCP inputs available to expanded mobile work rows", () => {
     const turnId = TurnId.make("turn-mcp");
     const thread = makeThread({
