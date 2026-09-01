@@ -558,14 +558,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   );
   const sessionStatus = props.selectedThread.session?.status ?? null;
   const settledSessionStatusRef = useRef(sessionStatus);
+  if (sessionStatus !== "starting") settledSessionStatusRef.current = sessionStatus;
   const hasActiveCodexGoalSession =
     selectedProvider?.driver === "codex" &&
     props.selectedThread.session !== null &&
     sessionStatus !== "stopped" &&
     !(sessionStatus === "starting" && settledSessionStatusRef.current === "stopped");
-  useEffect(() => {
-    if (sessionStatus !== "starting") settledSessionStatusRef.current = sessionStatus;
-  }, [sessionStatus]);
   const codexGoal = useCodexGoal(
     hasActiveCodexGoalSession ? props.environmentId : null,
     hasActiveCodexGoalSession ? props.selectedThread.id : null,

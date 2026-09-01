@@ -2553,8 +2553,9 @@ export default function ChatView(props: ChatViewProps) {
   const supportsConversationRollback =
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
+  const settledSessionStatusRef = useRef(activeThread?.session?.status ?? null);
   const sessionStatus = activeThread?.session?.status ?? null;
-  const settledSessionStatusRef = useRef(sessionStatus);
+  if (sessionStatus !== "starting") settledSessionStatusRef.current = sessionStatus;
   const hasActiveCodexGoalSession =
     isServerThread &&
     selectedProvider === "codex" &&
@@ -2563,9 +2564,6 @@ export default function ChatView(props: ChatViewProps) {
     activeThread.session !== null &&
     sessionStatus !== "stopped" &&
     !(sessionStatus === "starting" && settledSessionStatusRef.current === "stopped");
-  useEffect(() => {
-    if (sessionStatus !== "starting") settledSessionStatusRef.current = sessionStatus;
-  }, [sessionStatus]);
   const codexGoal = useCodexGoal(
     hasActiveCodexGoalSession ? environmentId : null,
     hasActiveCodexGoalSession ? activeThreadId : null,
@@ -5482,13 +5480,6 @@ export default function ChatView(props: ChatViewProps) {
       onDismiss: acknowledgeActiveThreadWoke,
     };
   }, [acknowledgeActiveThreadWoke, activeThread?.id, activeThreadWokeVisible]);
-  // The stack renders items[0] front-most and tucks the rest behind hover, so
-  // ordering is priority: urgent system banners (error/warning variants plus
-  // calm-styled live states flagged `urgent`, like update progress), then
-  // background liveness — its Stop button is the only stop affordance for
-  // settled turns, so a passive "update available" notice must not cover it —
-  // then calm system banners, the woke and branch-mismatch notices, the parked
-  // banner, and the passive Goal banner last — it must never cover another.
   const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThreadSnoozed && !activeThreadSettled) {
       return null;
