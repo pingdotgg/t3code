@@ -319,6 +319,7 @@ const NOT_TITLE_PREFIXES = [
   "<command-message>",
   "<command-name>",
   "<local-command-caveat>",
+  "<user_shell_command>",
   "<environment_context>",
   "<INSTRUCTIONS>",
   "# AGENTS.md instructions",
@@ -334,8 +335,9 @@ function cleanTitle(text: unknown): string | null {
   const collapsed = text.split(/\s+/).join(" ").trim();
   if (collapsed.length === 0) return null;
   if (NOT_TITLE_PREFIXES.some((prefix) => collapsed.startsWith(prefix))) return null;
-  return collapsed.length > TITLE_MAX_LENGTH
-    ? `${collapsed.slice(0, TITLE_MAX_LENGTH - 1)}\u2026`
+  const characters = Array.from(collapsed);
+  return characters.length > TITLE_MAX_LENGTH
+    ? `${characters.slice(0, TITLE_MAX_LENGTH - 1).join("")}\u2026`
     : collapsed;
 }
 
@@ -364,7 +366,9 @@ function claudeTitleFromLine(line: string): string | null {
   return null;
 }
 
-function codexTitleFromLine(line: string): string | null {
+function codexTitleFromLine(
+  line: string,
+): { readonly title: string; readonly timestampMs: number | null } | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);
@@ -378,10 +382,13 @@ function codexTitleFromLine(line: string): string | null {
   if (record["type"] !== "message" || record["role"] !== "user") return null;
   const content = record["content"];
   if (!Array.isArray(content)) return null;
+  const timestamp = (parsed as Record<string, unknown>)["timestamp"];
+  const parsedTimestamp = typeof timestamp === "string" ? Date.parse(timestamp) : Number.NaN;
+  const timestampMs = Number.isNaN(parsedTimestamp) ? null : parsedTimestamp;
   for (const block of content) {
     if (typeof block !== "object" || block === null) continue;
     const title = cleanTitle((block as Record<string, unknown>)["text"]);
-    if (title !== null) return title;
+    if (title !== null) return { title, timestampMs };
   }
   return null;
 }
@@ -399,7 +406,7 @@ export async function readTranscriptTitle(
   provider: UsageProviderKind,
 ): Promise<string | null> {
   if (provider === "grok") return null;
-  const titleFromLine = provider === "claude" ? claudeTitleFromLine : codexTitleFromLine;
+  const codexState = provider === "codex" ? initialCodexScanState() : null;
   let stream: NodeFS.ReadStream | null = null;
   try {
     stream = NodeFS.createReadStream(filePath, { encoding: "utf8" });
@@ -417,14 +424,34 @@ export async function readTranscriptTitle(
         pending = pending.slice(newline + 1);
         seen += 1;
         if (seen > TITLE_MAX_LINES) return null;
-        const gate = provider === "claude" ? '"user"' : '"message"';
-        if (!line.includes(gate)) continue;
-        const title = titleFromLine(line);
-        if (title !== null) return title;
+        if (provider === "claude") {
+          if (!line.includes('"user"')) continue;
+          const title = claudeTitleFromLine(line);
+          if (title !== null) return title;
+          continue;
+        }
+        const title = codexTitleFromLine(line);
+        parseCodexLine(line, codexState!);
+        if (title === null) continue;
+        if (!codexState!.suppressingForkCopies) return title.title;
+        if (title.timestampMs !== null) {
+          if (title.timestampMs - codexState!.forkCopyAnchorMs >= 1000) return title.title;
+          codexState!.forkCopyAnchorMs = title.timestampMs;
+        }
       }
       if (bytesRead >= TITLE_MAX_BYTES) return null;
     }
-    if (pending.length > 0 && seen < TITLE_MAX_LINES) return titleFromLine(pending);
+    if (pending.length > 0 && seen < TITLE_MAX_LINES) {
+      if (provider === "claude") return claudeTitleFromLine(pending);
+      const title = codexTitleFromLine(pending);
+      parseCodexLine(pending, codexState!);
+      if (title === null) return null;
+      if (!codexState!.suppressingForkCopies) return title.title;
+      if (title.timestampMs === null) return null;
+      if (title.timestampMs - codexState!.forkCopyAnchorMs >= 1000) return title.title;
+      codexState!.forkCopyAnchorMs = title.timestampMs;
+      return null;
+    }
   } catch {
     return null;
   } finally {

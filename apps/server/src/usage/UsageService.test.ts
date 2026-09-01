@@ -235,6 +235,33 @@ describe("UsageService", () => {
       );
     }).pipe(Effect.scoped),
   );
+
+  it.live("rejects exact thread windows longer than 24 hours", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-thread-window-test", home, settings }),
+        ),
+      );
+      const reason = yield* service
+        .readThreadBreakdown({
+          timeZone: "UTC",
+          sinceDay: UsageDay.make("2026-08-01"),
+          untilDay: UsageDay.make("2026-08-02"),
+          sinceTime: "2026-08-01T00:00:00.000Z",
+          untilTime: "2026-08-02T01:00:00.000Z",
+        })
+        .pipe(
+          Effect.match({
+            onFailure: (error) => error.reason,
+            onSuccess: () => "success" as const,
+          }),
+        );
+
+      assert.strictEqual(reason, "invalidWindow");
+    }).pipe(Effect.scoped),
+  );
 });
 
 describe("isValidUsageDay", () => {

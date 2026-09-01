@@ -16,6 +16,8 @@ import {
 import type { EnvironmentProviderContribution } from "@t3tools/shared/usageMerge";
 
 import { useUsageThreads, type UsageThreadRowWithEnvironment } from "../../state/usage";
+import { Badge } from "../ui/badge";
+import { Skeleton } from "../ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
@@ -26,14 +28,17 @@ import { PROVIDER_PRESENTATION } from "./usageProviders";
 export function UsageThreadTable({
   input,
   providerContributions,
+  summaryFailedEnvironments,
 }: {
   readonly input: UsageThreadBreakdownInput;
   readonly providerContributions: readonly EnvironmentProviderContribution[];
+  readonly summaryFailedEnvironments: number;
 }) {
   const { rows, truncatedRows, isPending, failedEnvironments } = useUsageThreads(
     input,
     providerContributions,
   );
+  const unavailableEnvironments = failedEnvironments + summaryFailedEnvironments;
   const [openRows, setOpenRows] = useState<ReadonlySet<string>>(new Set());
   const totalCostUsd = useMemo(() => rows.reduce((sum, row) => sum + row.costUsd, 0), [rows]);
 
@@ -50,7 +55,7 @@ export function UsageThreadTable({
     return (
       <div className="flex flex-col gap-2 py-1">
         {[56, 42, 68, 35].map((width) => (
-          <div key={width} className="h-6 rounded-sm bg-muted/50" style={{ width: `${width}%` }} />
+          <Skeleton key={width} className="h-6" style={{ width: `${width}%` }} />
         ))}
       </div>
     );
@@ -76,7 +81,7 @@ export function UsageThreadTable({
         {rows.length === 0 ? (
           <tr>
             <td colSpan={4} className="py-6 text-center text-muted-foreground">
-              {failedEnvironments > 0
+              {unavailableEnvironments > 0
                 ? "Thread activity could not be loaded for this window."
                 : "No activity in this window."}
             </td>
@@ -113,12 +118,12 @@ export function UsageThreadTable({
             </td>
           </tr>
         ) : null}
-        {failedEnvironments > 0 && rows.length > 0 ? (
+        {unavailableEnvironments > 0 && rows.length > 0 ? (
           <tr>
             <td colSpan={4} className="py-2 text-xs text-muted-foreground">
-              {failedEnvironments === 1
+              {unavailableEnvironments === 1
                 ? "1 environment could not report threads."
-                : `${failedEnvironments} environments could not report threads.`}
+                : `${unavailableEnvironments} environments could not report threads.`}
             </td>
           </tr>
         ) : null}
@@ -164,9 +169,13 @@ function ThreadRowGroup({
               <ProviderMark provider={row.provider} />
               <span className="truncate">{row.title}</span>
               {row.agents.length > 0 ? (
-                <span className="shrink-0 rounded border border-border px-1 text-[10px] text-muted-foreground">
+                <Badge
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 font-normal text-muted-foreground"
+                >
                   {row.agents.length === 1 ? "1 subagent" : `${row.agents.length} subagents`}
-                </span>
+                </Badge>
               ) : null}
             </TooltipTrigger>
             <TooltipPopup side="top">{row.title}</TooltipPopup>
@@ -196,9 +205,9 @@ function ThreadRowGroup({
                   className="flex items-baseline justify-between gap-4 py-1 text-xs text-muted-foreground"
                 >
                   <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="shrink-0 rounded border border-border px-1 text-[10px]">
+                    <Badge variant="outline" size="sm" className="shrink-0 font-normal">
                       agent
-                    </span>
+                    </Badge>
                     <span className="truncate">{agent.agentId}</span>
                   </span>
                   <span className="shrink-0 tabular-nums">
@@ -262,7 +271,7 @@ export function UsageThreadDailyChart({
           if (entry === undefined) return null;
           const x = index * bandWidth + (bandWidth - barWidth) / 2;
           const height = (entry.costUsd / peak) * (CHART_HEIGHT - 4);
-          const renderedHeight = Math.max(height, 0.75);
+          const renderedHeight = height === 0 ? 0 : Math.max(height, 0.75);
           return (
             <g key={day}>
               <title>{`${formatDayShort(day)}: ${formatUsd(entry.costUsd)}`}</title>
@@ -272,7 +281,7 @@ export function UsageThreadDailyChart({
                 width={barWidth}
                 height={renderedHeight}
                 fill="currentColor"
-                className="text-emerald-500"
+                className="text-success"
               />
             </g>
           );

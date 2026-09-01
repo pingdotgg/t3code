@@ -2,7 +2,12 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
-import type { DailyTotals, HourlyTotals, ProjectTotals } from "@t3tools/shared/usageMerge";
+import {
+  projectFilterForEnvironment,
+  type DailyTotals,
+  type HourlyTotals,
+  type ProjectTotals,
+} from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
 import { useCommitOnBlur } from "../../hooks/useCommitOnBlur";
@@ -60,7 +65,11 @@ export function UsagePage() {
   const [projectFilter, setProjectFilter] = useState<string | null | undefined>(undefined);
   const { days: windowDays, custom: isCustomWindow, window } = windowSelection;
   const isPast24Hours = !isCustomWindow && windowDays === 1;
-  const { merged, environments, isPending, isPartial, refresh } = useUsage(window, projectFilter);
+  const { merged, environments, isPending, isPartial, refresh } = useUsage(
+    window,
+    projectFilter,
+    breakdown === "thread",
+  );
 
   // Hold the content until every environment is terminal. Rendering merged
   // totals while devices are still answering makes every number on the page
@@ -471,6 +480,17 @@ export function UsagePage() {
                         ...(projectFilter === undefined ? {} : { projectKey: projectFilter }),
                       }}
                       providerContributions={merged.providerContributions}
+                      summaryFailedEnvironments={
+                        environments.filter(
+                          (environment) =>
+                            (environment.error !== null ||
+                              merged.staleEnvironments.includes(environment.environmentId)) &&
+                            projectFilterForEnvironment(
+                              projectFilter,
+                              environment.environmentId,
+                            ) !== "environment-mismatch:",
+                        ).length
+                      }
                     />
                   ) : breakdown === "project" ? (
                     <table className="w-full table-fixed text-sm">

@@ -102,6 +102,12 @@ describe("ThreadUsageAccumulator", () => {
     expect(groups).toHaveLength(0);
   });
 
+  it("drops timestamps outside the JavaScript date range", () => {
+    const context = { sessionKey: "grok:session-a", agentId: null };
+    expect(() => accumulate([[record({ timestampMs: 1e20 }), context]])).not.toThrow();
+    expect(accumulate([[record({ timestampMs: 1e20 }), context]])).toEqual([]);
+  });
+
   it("applies exact time bounds inside a shared calendar day", () => {
     const accumulator = new ThreadUsageAccumulator({
       timeZone: "UTC",
@@ -115,6 +121,24 @@ describe("ThreadUsageAccumulator", () => {
     accumulator.add(record({ timestampMs: Date.parse("2026-08-07T03:59:59Z") }), context);
     accumulator.add(record({ timestampMs: Date.parse("2026-08-07T04:30:00Z") }), context);
     accumulator.add(record({ timestampMs: Date.parse("2026-08-07T05:00:00Z") }), context);
+
+    expect(accumulator.finish()[0]?.totals.outputTokens).toBe(50);
+  });
+
+  it("uses exact bounds without applying a second calendar-day filter", () => {
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-07",
+      untilDay: "2026-08-07",
+      sinceTimeMs: Date.parse("2026-08-08T04:00:00Z"),
+      untilTimeMs: Date.parse("2026-08-08T05:00:00Z"),
+      rates,
+    });
+
+    accumulator.add(record({ timestampMs: Date.parse("2026-08-08T04:30:00Z") }), {
+      sessionKey: "claude:exact-window",
+      agentId: null,
+    });
 
     expect(accumulator.finish()[0]?.totals.outputTokens).toBe(50);
   });
@@ -170,6 +194,28 @@ describe("foldThreadRows", () => {
     // Standalone rows leave the title to the caller's transcript read.
     expect(standalone?.title).toBeNull();
     expect(standalone?.key).toContain("claude:session-c");
+  });
+
+  it("uses the deepest worktree ancestor for sessions run in subdirectories", () => {
+    const nestedThreadId = ThreadId.make("22222222-2222-4222-8222-222222222222");
+    const groups = accumulate([
+      [
+        record({ sessionId: "nested", cwd: "/work/app/.wt/thread-1/packages/web" }),
+        { sessionKey: "claude:nested", agentId: null },
+      ],
+    ]);
+    const attribution: ThreadAttribution = {
+      sessionToThread: new Map(),
+      worktreeToThread: new Map([
+        ["/work/app", { threadId, title: "Shared root" }],
+        ["/work/app/.wt/thread-1", { threadId: nestedThreadId, title: "Nested worktree" }],
+      ]),
+    };
+
+    const { rows } = foldThreadRows(groups, attribution, { cap: 40 });
+
+    expect(rows[0]?.threadId).toBe(nestedThreadId);
+    expect(rows[0]?.title).toBe("Nested worktree");
   });
 
   it("scopes one T3 thread by provider and project", () => {
@@ -258,6 +304,30 @@ describe("foldThreadRows", () => {
     const { rows } = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 1 });
     const remainder = rows.find((row) => row.key.startsWith("remainder:"));
     expect(remainder?.agents.map((agent) => agent.agentId)).toEqual(["agent-cheaper"]);
+  });
+
+  it("bounds and reconciles subagents folded into a remainder", () => {
+    const groups = accumulate([
+      [
+        record({ sessionId: "expensive", totals: { ...record().totals, outputTokens: 100 } }),
+        { sessionKey: "claude:expensive", agentId: null },
+      ],
+      ...Array.from(
+        { length: 5 },
+        (_, index) =>
+          [
+            record({ sessionId: `cheaper-${index}` }),
+            { sessionKey: `claude:cheaper-${index}`, agentId: `agent-${index}` },
+          ] as const,
+      ),
+    ]);
+
+    const { rows } = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 2 });
+    const remainder = rows.find((row) => row.key.startsWith("remainder:"));
+
+    expect(remainder?.agents).toHaveLength(2);
+    expect(remainder?.agents.some((agent) => agent.agentId === "Other subagents (4)")).toBe(true);
+    expect(remainder?.agents.reduce((sum, agent) => sum + agent.totals.outputTokens, 0)).toBe(250);
   });
 
   it("collapses overflow project scopes without exceeding the response cap", () => {

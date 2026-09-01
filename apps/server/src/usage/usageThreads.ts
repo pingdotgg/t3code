@@ -24,6 +24,8 @@ import { makeDayFormatter, type ProjectAttribution } from "./usageAggregation.ts
 import { priceUsage, type RateTable } from "./usagePricing.ts";
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
 
+const MAX_DATE_TIMESTAMP_MS = 8_640_000_000_000_000;
+
 /** How the caller identifies the transcript a record came from. */
 export interface ThreadRecordContext {
   /** `provider:sessionId`, or a file-derived fallback when the id is empty. */
@@ -100,7 +102,12 @@ export class ThreadUsageAccumulator {
       this.#seen.add(record.dedupeKey);
     }
 
-    const day = this.#toDay(record.timestampMs);
+    if (
+      !Number.isFinite(record.timestampMs) ||
+      Math.abs(record.timestampMs) > MAX_DATE_TIMESTAMP_MS
+    ) {
+      return false;
+    }
     if (
       this.#options.sinceTimeMs !== undefined &&
       this.#options.untilTimeMs !== undefined &&
@@ -109,7 +116,12 @@ export class ThreadUsageAccumulator {
     ) {
       return false;
     }
-    if (day < this.#options.sinceDay || day > this.#options.untilDay) return false;
+    const day = this.#toDay(record.timestampMs);
+    if (
+      (this.#options.sinceTimeMs === undefined || this.#options.untilTimeMs === undefined) &&
+      (day < this.#options.sinceDay || day > this.#options.untilDay)
+    )
+      return false;
 
     const resolvedProject = this.#options.resolveProject?.(record.cwd) ?? null;
     const projectKey =
@@ -228,6 +240,75 @@ function addDailyCosts(target: Map<string, number>, source: ReadonlyMap<string, 
   }
 }
 
+function worktreeThreadForCwd(
+  cwd: string,
+  worktreeToThread: ReadonlyMap<string, ThreadRef>,
+): ThreadRef | undefined {
+  const normalizedCwd = normalizePath(cwd);
+  let deepest: { readonly pathLength: number; readonly ref: ThreadRef } | undefined;
+  for (const [worktree, ref] of worktreeToThread) {
+    const normalizedWorktree = normalizePath(worktree);
+    const prefix = normalizedWorktree.endsWith("/") ? normalizedWorktree : `${normalizedWorktree}/`;
+    if (normalizedCwd !== normalizedWorktree && !normalizedCwd.startsWith(prefix)) continue;
+    if (deepest === undefined || normalizedWorktree.length > deepest.pathLength) {
+      deepest = { pathLength: normalizedWorktree.length, ref };
+    }
+  }
+  return deepest?.ref;
+}
+
+function normalizePath(value: string): string {
+  const slashPath = value.replaceAll("\\", "/");
+  const rooted = slashPath.startsWith("/");
+  const segments: string[] = [];
+  for (const segment of slashPath.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (segments.length > 0 && segments.at(-1) !== "..") segments.pop();
+      else if (!rooted) segments.push(segment);
+      continue;
+    }
+    segments.push(segment);
+  }
+  const normalized = `${rooted ? "/" : ""}${segments.join("/")}`;
+  return normalized === "" ? (rooted ? "/" : ".") : normalized;
+}
+
+function toAgentRow([agentId, slice]: readonly [string, MutableAgentSlice]): UsageAgentRow {
+  return {
+    agentId,
+    totals: slice.totals,
+    costUsd: slice.costUsd,
+  };
+}
+
+function boundedAgentRows(
+  agents: ReadonlyMap<string, MutableAgentSlice>,
+  cap: number,
+): readonly UsageAgentRow[] {
+  const sorted = [...agents.entries()].sort(
+    (a, b) =>
+      b[1].costUsd - a[1].costUsd ||
+      totalOf(b[1].totals) - totalOf(a[1].totals) ||
+      a[0].localeCompare(b[0]),
+  );
+  if (sorted.length <= cap) return sorted.map(toAgentRow);
+
+  const kept = sorted.slice(0, Math.max(0, cap - 1));
+  const omitted = sorted.slice(kept.length);
+  const overflow = omitted.reduce<MutableAgentSlice>(
+    (combined, [, slice]) => ({
+      totals: addTotals(combined.totals, slice.totals),
+      costUsd: combined.costUsd + slice.costUsd,
+    }),
+    {
+      totals: EMPTY_TOTALS,
+      costUsd: 0,
+    },
+  );
+  return [...kept.map(toAgentRow), toAgentRow([`Other subagents (${omitted.length})`, overflow])];
+}
+
 /**
  * Groups sessions into thread rows: resume-cursor matches first, then unique
  * worktrees, else one row per session. Rows sort by cost. Rows beyond the cap
@@ -247,7 +328,9 @@ export function foldThreadRows(
 
     const ref =
       attribution.sessionToThread.get(group.sessionKey) ??
-      (group.cwd.length > 0 ? attribution.worktreeToThread.get(group.cwd) : undefined);
+      (group.cwd.length > 0
+        ? worktreeThreadForCwd(group.cwd, attribution.worktreeToThread)
+        : undefined);
     const rowKey =
       ref === undefined
         ? JSON.stringify(["session", group.provider, group.projectKey, group.sessionKey])
@@ -386,13 +469,7 @@ export function foldThreadRows(
       costUsd: row.costUsd,
       sessions: row.sessionKeys.size,
       ...(row.groupedRows === 0 ? {} : { groupedRows: row.groupedRows }),
-      agents: [...row.agents.entries()]
-        .map(([agentId, slice]) => ({
-          agentId,
-          totals: slice.totals,
-          costUsd: slice.costUsd,
-        }))
-        .sort((a, b) => b.costUsd - a.costUsd) satisfies UsageAgentRow[],
+      agents: boundedAgentRows(row.agents, options.cap),
       daily: [...row.daily.entries()]
         .map(([day, costUsd]) => ({
           day: day as UsageDay,

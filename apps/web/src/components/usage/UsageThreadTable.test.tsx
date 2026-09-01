@@ -40,16 +40,31 @@ beforeEach(() => {
 });
 
 describe("UsageThreadTable", () => {
+  it("uses the shared skeleton treatment while thread data is pending", () => {
+    testState.useUsageThreads.mockReturnValue({
+      rows: [],
+      truncatedRows: 0,
+      isPending: true,
+      failedEnvironments: 0,
+    });
+
+    const markup = renderToStaticMarkup(
+      <UsageThreadTable input={input} providerContributions={[]} summaryFailedEnvironments={0} />,
+    );
+
+    expect(markup).toContain("after:animate-skeleton");
+  });
+
   it("reports an unavailable breakdown when every query failed", () => {
     testState.useUsageThreads.mockReturnValue({
       rows: [],
       truncatedRows: 0,
       isPending: false,
-      failedEnvironments: 2,
+      failedEnvironments: 0,
     });
 
     const markup = renderToStaticMarkup(
-      <UsageThreadTable input={input} providerContributions={[]} />,
+      <UsageThreadTable input={input} providerContributions={[]} summaryFailedEnvironments={2} />,
     );
 
     expect(markup).toContain("Thread activity could not be loaded");
@@ -74,7 +89,19 @@ describe("UsageThreadTable", () => {
           },
           costUsd: 1,
           sessions: 1,
-          agents: [],
+          agents: [
+            {
+              agentId: "agent-one",
+              totals: {
+                uncachedInputTokens: 1,
+                cachedInputTokens: 0,
+                cacheCreationTokens: 0,
+                outputTokens: 1,
+                reasoningTokens: 0,
+              },
+              costUsd: 0.1,
+            },
+          ],
           daily: [],
         },
       ],
@@ -84,10 +111,12 @@ describe("UsageThreadTable", () => {
     });
 
     const markup = renderToStaticMarkup(
-      <UsageThreadTable input={input} providerContributions={[]} />,
+      <UsageThreadTable input={input} providerContributions={[]} summaryFailedEnvironments={0} />,
     );
 
     expect(markup).toContain('<button type="button" aria-expanded="false"');
+    expect(markup).toContain('data-slot="badge"');
+    expect(markup).toContain("1 subagent");
     expect(markup).not.toContain('title="Fix the flaky test"');
   });
 });

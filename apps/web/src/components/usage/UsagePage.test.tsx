@@ -170,6 +170,7 @@ describe("UsagePage hourly breakdown", () => {
 
     expect(markup.match(/aria-label="From day"/g)).toHaveLength(2);
     expect(markup.match(/aria-label="To day"/g)).toHaveLength(2);
+    expect(testState.useUsage).toHaveBeenLastCalledWith(expect.anything(), undefined, false);
   });
 
   it("keeps recent activity visible first without empty hourly rows", () => {
@@ -276,6 +277,11 @@ describe("UsagePage thread breakdown", () => {
       },
       providerContributions: [],
     });
+    expect(testState.useUsage).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "id:project-expensive",
+      true,
+    );
   });
 });
 

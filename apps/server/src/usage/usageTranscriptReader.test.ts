@@ -238,6 +238,60 @@ describe("readTranscriptTitle", () => {
     assert.strictEqual(await readTranscriptTitle(file, "claude"), "Fix the real bug");
   });
 
+  it("skips a user shell command wrapper", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      [
+        {
+          type: "user",
+          message: { content: "<user_shell_command>git status</user_shell_command>" },
+        },
+        { type: "user", message: { content: "Explain the failing check" } },
+      ]
+        .map((line) => JSON.stringify(line))
+        .join("\n"),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "claude"), "Explain the failing check");
+  });
+
+  it("uses the child prompt instead of copied parent history for a forked Codex rollout", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    const message = (timestamp: string, text: string) => ({
+      type: "event_msg",
+      timestamp,
+      payload: { type: "message", role: "user", content: [{ type: "input_text", text }] },
+    });
+    await NodeFSP.writeFile(
+      file,
+      [
+        {
+          type: "session_meta",
+          timestamp: "2026-08-01T05:00:00.000Z",
+          payload: { type: "session_meta", id: "child", forked_from_id: "parent" },
+        },
+        message("2026-08-01T05:00:00.600Z", "First copied parent prompt"),
+        message("2026-08-01T05:00:01.100Z", "Second copied parent prompt"),
+        message("2026-08-01T05:00:02.500Z", "Investigate the child task"),
+      ]
+        .map((line) => JSON.stringify(line))
+        .join("\n"),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "codex"), "Investigate the child task");
+  });
+
+  it("truncates titles without splitting a Unicode code point", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      JSON.stringify({ type: "user", message: { content: `${"a".repeat(78)}🙂more` } }),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "claude"), `${"a".repeat(78)}🙂…`);
+  });
+
   it("returns null when the title stream cannot be read", async () => {
     assert.isNull(await readTranscriptTitle(NodePath.join(dir, "missing.jsonl"), "claude"));
   });

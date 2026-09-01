@@ -18,10 +18,10 @@ to return to the preset. The date fields beside the presets accept custom ranges
 The breakdown's **Thread** view drills into where the spend went: sessions group into the T3 Code
 thread they belong to, with sessions that never ran through T3 Code listed under the first thing
 you asked in them. Grok Build has no trusted prompt title, so its rows use a short session label.
-Expanding a row shows its daily estimated cost, along with any Claude subagents the thread spawned
-and their share. The view returns at most 40 rows, reserving room to group lower-cost rows under
-**Other threads** by provider and project. Those grouped rows stay in the totals, so the thread
-view still adds up to the selected project or full summary.
+Expanding a row shows its daily estimated cost, along with any Claude subagents the thread spawned.
+Each connected environment contributes at most 40 rows, reserving room to group
+lower-cost rows under **Other threads** by provider and project. Those grouped rows stay in the
+totals, so the thread view still adds up to the selected project or full summary.
 
 Usage is attributed to the project whose folder a session ran in, including sessions driven
 outside T3 Code. The breakdown's **Project** view ranks projects by spend, and the project picker
