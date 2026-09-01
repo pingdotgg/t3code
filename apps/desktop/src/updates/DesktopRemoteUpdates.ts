@@ -14,6 +14,7 @@ import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublish
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import {
   nextRemoteDesktopUpdateStep,
+  normalizeRemoteUpdateReason,
   type RemoteDesktopUpdateAttempts,
 } from "./remoteUpdateFlow.ts";
 
@@ -39,19 +40,21 @@ export const listen: Effect.Effect<
   const publishReport = (
     state: DesktopUpdateState,
     terminal?: { readonly outcome: DesktopUpdateRemoteOutcome; readonly reason?: string },
-  ): Effect.Effect<void> =>
-    Ref.get(activeRequestIdRef).pipe(
+  ): Effect.Effect<void> => {
+    const reason = normalizeRemoteUpdateReason(terminal?.reason);
+    return Ref.get(activeRequestIdRef).pipe(
       Effect.flatMap((requestId) =>
         publisher.publishUpdateReport({
           version: 1,
           type: "desktopUpdateStatus",
           ...(Option.isSome(requestId) ? { requestId: requestId.value } : {}),
           ...(terminal === undefined ? {} : { outcome: terminal.outcome }),
-          ...(terminal?.reason === undefined ? {} : { reason: terminal.reason }),
+          ...(reason ? { reason } : {}),
           state,
         }),
       ),
     );
+  };
 
   yield* Effect.scoped(
     Effect.gen(function* () {

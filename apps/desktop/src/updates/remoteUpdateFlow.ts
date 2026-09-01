@@ -102,3 +102,14 @@ export function nextRemoteDesktopUpdateStep(
   }
   return { action: "check" };
 }
+
+/**
+ * Normalizes an updater message for the `reason` wire field, which is a
+ * TrimmedNonEmptyString. Updater messages are plain strings and may be blank;
+ * a blank reason would fail encoding and silently drop the terminal report,
+ * leaving the server to wait for its timeout.
+ */
+export function normalizeRemoteUpdateReason(reason: string | undefined): string | undefined {
+  const trimmed = reason?.trim();
+  return trimmed ? trimmed : undefined;
+}
