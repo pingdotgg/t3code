@@ -201,4 +201,16 @@ describe("UsageAggregator", () => {
 
     expect(result.buckets).toHaveLength(3);
   });
+
+  it("keeps independently persisted sources in separate buckets", () => {
+    const result = aggregate([
+      record({ provider: "opencode", sourcePath: "/data/opencode.db" }),
+      record({ provider: "opencode", sourcePath: "/work/opencode.db" }),
+    ]);
+
+    expect(result.buckets.map((bucket) => bucket.sourcePath)).toEqual([
+      "/data/opencode.db",
+      "/work/opencode.db",
+    ]);
+  });
 });

@@ -1,13 +1,15 @@
 /**
  * UsageService - scans provider transcripts and returns priced usage buckets.
  *
- * The scan reads the provider CLIs' own session files (Claude Code, Codex, and
- * Grok Build) rather than T3 Code's orchestration projections, so usage covers
- * turns driven outside T3 Code too. This is the approach `ccusage` takes.
+ * The scan reads the provider CLIs' own session stores (Claude Code, Codex,
+ * Grok Build, and OpenCode) rather than T3 Code's orchestration projections,
+ * so usage covers turns driven outside T3 Code too. This is the approach
+ * `ccusage` takes.
  *
- * Transcripts are append-only, so parsed records are memoised per file by
- * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
- * scans only reparse files that changed.
+ * JSONL transcripts are append-only, so parsed records are memoised per file
+ * by `(size, mtime)`. OpenCode's windowed SQLite query is read fresh. A cold
+ * 30-day JSONL scan of ~1.4 GB lands around 2-3 seconds; warm scans only reparse
+ * files that changed.
  *
  * @module UsageService
  */
@@ -15,7 +17,6 @@ import * as NodeOS from "node:os";
 
 import {
   USAGE_CONTRACT_VERSION,
-  type UsageProviderKind,
   type UsageSource,
   type UsageSummary,
   type UsageSummaryInput,
@@ -36,6 +37,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
+import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
@@ -46,6 +48,7 @@ import {
   readDirectoryVolumeId,
   readTranscriptRecords,
 } from "./usageTranscriptReader.ts";
+import { readOpenCodeUsage, resolveOpenCodeDatabasePaths } from "./usageOpenCode.ts";
 import {
   decodeScanCache,
   dedupeWithinFile,
@@ -53,7 +56,7 @@ import {
   pruneScanCache,
   type ScanCache,
 } from "./usageScanCache.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
+import type { UsageRecord, UsageTranscriptProviderKind } from "./usageTranscripts.ts";
 
 const LITELLM_RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -200,7 +203,7 @@ export const make = Effect.gen(function* () {
       return nestedExists ? nested : path.join(homePath, "projects");
     });
 
-  /** Resolves the transcript directory for each provider. */
+  /** Resolves transcript directories and every OpenCode instance environment. */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
     // A settings failure must surface as an error: swallowing it here would
     // present "zero usage from every provider" as a valid answer.
@@ -229,15 +232,53 @@ export const make = Effect.gen(function* () {
         ? path.resolve(expandHomePath(grokHomeEnv))
         : path.join(NodeOS.homedir(), ".grok");
 
-    return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
-      {
-        provider: "grok" as const,
-        dir: path.join(grokHome, "sessions"),
-        fileName: "updates.jsonl",
-      },
-    ];
+    return {
+      dirs: [
+        { provider: "claude" as const, dir: claudeDir },
+        { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+        {
+          provider: "grok" as const,
+          dir: path.join(grokHome, "sessions"),
+          fileName: "updates.jsonl",
+        },
+      ],
+      openCodeEnvironments: [
+        hostEnvironment,
+        ...Object.values(settings.providerInstances)
+          .filter((instance) => instance.driver === "opencode")
+          .map((instance) =>
+            mergeProviderInstanceEnvironment(instance.environment, hostEnvironment),
+          ),
+      ],
+    };
+  });
+
+  /** Resolves every persisted database the installed OpenCode instances can use. */
+  const resolveOpenCodeDatabases = Effect.fn("UsageService.resolveOpenCodeDatabases")(function* (
+    environments: readonly NodeJS.ProcessEnv[],
+  ) {
+    const resolved = yield* Effect.forEach(environments, (environment) =>
+      Effect.gen(function* () {
+        const xdgDataHome = environment["XDG_DATA_HOME"]?.trim() ?? "";
+        const dataRoot =
+          xdgDataHome.length > 0
+            ? path.resolve(expandHomePath(xdgDataHome))
+            : path.join(NodeOS.homedir(), ".local", "share");
+        const dataDirectory = path.join(dataRoot, "opencode");
+        const directoryEntries = yield* fileSystem
+          .readDirectory(dataDirectory)
+          .pipe(Effect.catchCause(() => Effect.succeed([] as const)));
+        return resolveOpenCodeDatabasePaths({
+          dataDirectory,
+          databaseOverride: environment["OPENCODE_DB"],
+          disableChannelDatabase: environment["OPENCODE_DISABLE_CHANNEL_DB"],
+          directoryEntries,
+          path,
+        });
+      }),
+    );
+
+    return [...new Set(resolved.flat())].sort((left, right) => left.localeCompare(right));
   });
 
   /**
@@ -277,7 +318,7 @@ export const make = Effect.gen(function* () {
     filePath: string,
     size: number,
     mtimeMs: number,
-    provider: UsageProviderKind,
+    provider: UsageTranscriptProviderKind,
   ): Effect.Effect<readonly UsageRecord[]> =>
     Effect.gen(function* () {
       const cached = fileCache.get(filePath);
@@ -344,7 +385,13 @@ export const make = Effect.gen(function* () {
     const hostId = NodeOS.hostname();
     // The home resolvers ask for `Path` themselves; satisfy them from the
     // instance we already hold so `readSummary` stays context-free.
-    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    const resolvedSources = yield* resolveTranscriptDirs().pipe(
+      Effect.provideService(Path.Path, path),
+    );
+    const dirs = resolvedSources.dirs;
+    const openCodeDatabasePaths = yield* resolveOpenCodeDatabases(
+      resolvedSources.openCodeEnvironments,
+    );
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
     if (Option.isNone(windowStart)) {
       return yield* new UsageReadError({
@@ -422,6 +469,51 @@ export const make = Effect.gen(function* () {
         malformedRecords: 0,
         distinctSessions: sessionIds.size,
         message: null,
+      });
+    }
+
+    for (const databasePath of openCodeDatabasePaths) {
+      const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(databasePath));
+      const sessionIds = new Set<string>();
+      const exists = yield* fileSystem
+        .exists(databasePath)
+        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+      const result = exists
+        ? yield* Effect.promise(() => readOpenCodeUsage(databasePath, windowStartMs))
+        : null;
+      const failed = exists && result === null;
+      const malformedRecords = result?.malformedRecords ?? 0;
+
+      if (result !== null) {
+        for (const record of result.records) {
+          if (
+            aggregator.add({ ...record, sourcePath: databasePath }) &&
+            record.sessionId.length > 0
+          ) {
+            sessionIds.add(record.sessionId);
+          }
+        }
+      }
+
+      sources.push({
+        fingerprint: {
+          hostId,
+          provider: "opencode",
+          resolvedHomePath: databasePath,
+          volumeId,
+        },
+        status: !exists ? "missing" : failed ? "failed" : malformedRecords > 0 ? "partial" : "ok",
+        scannedFiles: result === null ? 0 : 1,
+        skippedFiles: failed ? 1 : 0,
+        malformedRecords,
+        distinctSessions: sessionIds.size,
+        message: !exists
+          ? "No usage database on this environment."
+          : failed
+            ? "The usage database could not be read."
+            : malformedRecords > 0
+              ? "Some OpenCode usage rows were skipped."
+              : null,
       });
     }
 

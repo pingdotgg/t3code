@@ -8,8 +8,12 @@
  */
 import type { UsageProviderKind, UsageTokenTotals } from "@t3tools/contracts";
 
+export type UsageTranscriptProviderKind = Exclude<UsageProviderKind, "opencode">;
+
 export interface UsageRecord {
   readonly provider: UsageProviderKind;
+  /** Source provenance for providers that can read several independent stores. */
+  readonly sourcePath?: string;
   readonly timestampMs: number;
   readonly model: string;
   readonly sessionId: string;
@@ -67,7 +71,7 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * a 30-day window this skips roughly half the lines outright and is worth about
  * an order of magnitude.
  */
-export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
+export function mightCarryUsage(line: string, provider: UsageTranscriptProviderKind): boolean {
   if (provider === "claude") return line.includes('"usage"');
   if (provider === "grok") return line.includes('"turn_completed"');
   return line.includes('"token_count"');

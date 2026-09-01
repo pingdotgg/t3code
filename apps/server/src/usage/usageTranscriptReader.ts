@@ -15,8 +15,6 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
 
-import type { UsageProviderKind } from "@t3tools/contracts";
-
 import {
   initialCodexScanState,
   mightCarryUsage,
@@ -24,6 +22,7 @@ import {
   parseCodexLine,
   parseGrokLine,
   type UsageRecord,
+  type UsageTranscriptProviderKind,
 } from "./usageTranscripts.ts";
 
 export interface TranscriptFile {
@@ -85,9 +84,9 @@ export async function listTranscriptFiles(
 }
 
 /**
- * Filesystem identity of a directory, as `device:inode`.
+ * Filesystem identity of a source path, as `device:inode`.
  *
- * Used to tell "two servers reading the same transcript directory" apart from
+ * Used to tell "two servers reading the same transcript source" apart from
  * "two machines whose hostname and home path happen to match". Returns an empty
  * string when the directory cannot be stat'd.
  */
@@ -115,7 +114,7 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
  */
 export async function readTranscriptRecords(
   filePath: string,
-  provider: UsageProviderKind,
+  provider: UsageTranscriptProviderKind,
 ): Promise<readonly UsageRecord[] | null> {
   const records: UsageRecord[] = [];
   const codexState = initialCodexScanState();
