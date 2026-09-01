@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { getClientSettings } from "../hooks/useSettings";
 import { isMacPlatform } from "../lib/utils";
 
 // Matches the hold duration in apps/desktop/src/window/QuitHold.ts: the hint
@@ -7,12 +8,11 @@ import { isMacPlatform } from "../lib/utils";
 const HIDE_AFTER_RELEASE_MS = 1200;
 
 /**
- * Chrome-style "Hold ⌘Q to Quit" hint. The desktop main process intercepts
- * the quit accelerator and pushes press/release states; a quick tap shows
- * this pill while a full hold quits the app.
+ * The desktop main process intercepts the quit accelerator and pushes
+ * press/release states while it waits for a hold or second press.
  */
 export function QuitHoldOverlay() {
-  const [visible, setVisible] = useState(false);
+  const [visibleMode, setVisibleMode] = useState<"hold" | "double-click" | null>(null);
 
   useEffect(() => {
     const subscribe = window.desktopBridge?.onQuitShortcut;
@@ -21,10 +21,11 @@ export function QuitHoldOverlay() {
     const unsubscribe = subscribe((state) => {
       window.clearTimeout(hideTimer);
       if (state === "down") {
-        setVisible(true);
+        const mode = getClientSettings().confirmQuit;
+        setVisibleMode(mode === "double-click" ? mode : "hold");
         return;
       }
-      hideTimer = window.setTimeout(() => setVisible(false), HIDE_AFTER_RELEASE_MS);
+      hideTimer = window.setTimeout(() => setVisibleMode(null), HIDE_AFTER_RELEASE_MS);
     });
     return () => {
       window.clearTimeout(hideTimer);
@@ -32,15 +33,17 @@ export function QuitHoldOverlay() {
     };
   }, []);
 
-  if (!visible) return null;
+  if (!visibleMode) return null;
   const shortcut = isMacPlatform(navigator.platform) ? "⌘Q" : "Ctrl+Q";
+  const message =
+    visibleMode === "hold" ? `Hold ${shortcut} to Quit` : `Press ${shortcut} again to Quit`;
   return (
     <div
       role="status"
       className="pointer-events-none fixed inset-x-0 top-[22%] z-100 flex justify-center"
     >
       <div className="rounded-full bg-neutral-700/95 px-8 py-4 text-2xl font-bold text-white shadow-xl">
-        Hold {shortcut} to Quit
+        {message}
       </div>
     </div>
   );

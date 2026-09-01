@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  makeQuitHoldHandler,
-  QUIT_DOUBLE_TAP_MS,
+  makeQuitShortcutHandler,
+  QUIT_DOUBLE_PRESS_MS,
   QUIT_HOLD_DURATION_MS,
   QUIT_HOLD_RELEASE_GRACE_MS,
 } from "./QuitHold.ts";
 import type { QuitHoldKeyInput, QuitHoldState } from "./QuitHold.ts";
+import type { QuitConfirmationMode } from "@t3tools/contracts";
 
 function makeInput(overrides: Partial<QuitHoldKeyInput>): QuitHoldKeyInput {
   return {
@@ -22,22 +23,22 @@ function makeInput(overrides: Partial<QuitHoldKeyInput>): QuitHoldKeyInput {
 }
 
 function makeHarness(options?: {
-  enabled?: boolean;
+  mode?: QuitConfirmationMode;
   platform?: NodeJS.Platform;
-  isEnabled?: () => Promise<boolean>;
+  getMode?: () => Promise<QuitConfirmationMode>;
 }) {
   const notifications: Array<QuitHoldState> = [];
   const quit = vi.fn();
-  const handler = makeQuitHoldHandler({
+  const handler = makeQuitShortcutHandler({
     platform: options?.platform ?? "darwin",
-    isEnabled: options?.isEnabled ?? (() => Promise.resolve(options?.enabled ?? true)),
+    getMode: options?.getMode ?? (() => Promise.resolve(options?.mode ?? "hold")),
     notify: (state) => notifications.push(state),
     quit,
   });
   const preventDefault = vi.fn();
   const send = async (input: QuitHoldKeyInput) => {
     handler({ preventDefault }, input);
-    // Let the isEnabled promise settle.
+    // Let the getMode promise settle.
     await Promise.resolve();
     await Promise.resolve();
   };
@@ -55,7 +56,7 @@ function makeHarness(options?: {
   return { notifications, quit, preventDefault, send, holdFor };
 }
 
-describe("makeQuitHoldHandler", () => {
+describe("makeQuitShortcutHandler", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -122,53 +123,64 @@ describe("makeQuitHoldHandler", () => {
     expect(harness.quit).not.toHaveBeenCalled();
   });
 
-  it("quits without showing a hint when hold-to-quit is disabled", async () => {
-    const harness = makeHarness({ enabled: false });
+  it("quits without showing a hint in direct mode", async () => {
+    const harness = makeHarness({ mode: "direct" });
     await harness.send(makeInput({}));
     expect(harness.quit).toHaveBeenCalledTimes(1);
     expect(harness.notifications).toEqual([]);
   });
 
-  it("discards a stale isEnabled resolution from a superseded press", async () => {
-    // Press #1's isEnabled is still pending when the user releases and
+  it("discards a stale mode resolution from a superseded press", async () => {
+    // Press #1's mode is still pending when the user releases and
     // presses again; its late resolution must not act for press #2.
-    const resolvers: Array<(enabled: boolean) => void> = [];
+    const resolvers: Array<(mode: QuitConfirmationMode) => void> = [];
     const harness = makeHarness({
-      isEnabled: () => new Promise((resolve) => resolvers.push(resolve)),
+      getMode: () => new Promise((resolve) => resolvers.push(resolve)),
     });
     await harness.send(makeInput({}));
     await harness.send(makeInput({ type: "keyUp" }));
-    // Outside the double-tap window, so the second press starts a new hold.
-    vi.advanceTimersByTime(QUIT_DOUBLE_TAP_MS + 100);
+    // Outside the double-press window, so the second press starts a new hold.
+    vi.advanceTimersByTime(QUIT_DOUBLE_PRESS_MS + 100);
     await harness.send(makeInput({}));
     expect(resolvers).toHaveLength(2);
 
-    // Press #1 resolves late with "disabled" — it must not quit press #2.
-    resolvers[0]?.(false);
+    // Press #1 resolves late with "direct". It must not quit press #2.
+    resolvers[0]?.("direct");
     await Promise.resolve();
     await Promise.resolve();
     expect(harness.quit).not.toHaveBeenCalled();
 
-    // Press #2 resolves enabled and completes a full hold.
-    resolvers[1]?.(true);
+    // Press #2 resolves to hold and completes the gesture.
+    resolvers[1]?.("hold");
     await harness.holdFor(QUIT_HOLD_DURATION_MS + 200);
     await harness.send(makeInput({ type: "keyUp" }));
     expect(harness.quit).toHaveBeenCalledTimes(1);
   });
 
-  it("quits on a quick double tap, even when the first release was never seen", async () => {
-    const harness = makeHarness();
+  it("quits on a quick double press in double-click mode when the first release is unseen", async () => {
+    const harness = makeHarness({ mode: "double-click" });
     await harness.send(makeInput({}));
-    vi.advanceTimersByTime(QUIT_DOUBLE_TAP_MS - 100);
+    vi.advanceTimersByTime(QUIT_DOUBLE_PRESS_MS - 100);
     await harness.send(makeInput({}));
     expect(harness.quit).toHaveBeenCalledTimes(1);
+    expect(harness.notifications).toEqual(["down", "up"]);
   });
 
-  it("treats two slow taps as separate presses", async () => {
+  it("treats two slow presses as separate attempts in double-click mode", async () => {
+    const harness = makeHarness({ mode: "double-click" });
+    await harness.send(makeInput({}));
+    await harness.send(makeInput({ type: "keyUp" }));
+    vi.advanceTimersByTime(QUIT_DOUBLE_PRESS_MS + 100);
+    await harness.send(makeInput({}));
+    expect(harness.quit).not.toHaveBeenCalled();
+    expect(harness.notifications).toEqual(["down", "up", "down"]);
+  });
+
+  it("does not treat two quick presses as a quit in hold mode", async () => {
     const harness = makeHarness();
     await harness.send(makeInput({}));
     await harness.send(makeInput({ type: "keyUp" }));
-    vi.advanceTimersByTime(QUIT_DOUBLE_TAP_MS + 100);
+    vi.advanceTimersByTime(QUIT_DOUBLE_PRESS_MS - 100);
     await harness.send(makeInput({}));
     expect(harness.quit).not.toHaveBeenCalled();
     expect(harness.notifications).toEqual(["down", "up", "down"]);
@@ -186,12 +198,11 @@ describe("makeQuitHoldHandler", () => {
     expect(harness.quit).not.toHaveBeenCalled();
   });
 
-  it("does not count an interrupted press toward a double tap", async () => {
-    const harness = makeHarness();
+  it("does not count an interrupted press toward a double press", async () => {
+    const harness = makeHarness({ mode: "double-click" });
     await harness.send(makeInput({}));
     await harness.send(makeInput({ shift: true }));
-    // A fresh press right after the interruption starts a new hold, not a
-    // double-tap quit.
+    // A fresh press right after the interruption starts a new attempt.
     await harness.send(makeInput({}));
     expect(harness.quit).not.toHaveBeenCalled();
     expect(harness.notifications).toEqual(["down", "up", "down"]);
