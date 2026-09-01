@@ -1760,6 +1760,10 @@ function ComposerPromptEditorInner({
               data-testid="composer-editor"
               aria-placeholder={placeholder}
               placeholder={<span />}
+              // The app has no UI-language concept, so Chromium only ever has
+              // the OS locale's dictionary and underlines every other language
+              // as misspelled. Every other input here opts out too.
+              spellCheck={false}
               onPaste={onPaste}
             />
           }
