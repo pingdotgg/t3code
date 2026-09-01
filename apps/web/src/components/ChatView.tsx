@@ -522,7 +522,7 @@ const TYPE_TO_FOCUS_INTERACTIVE_SELECTOR = [
   "button",
   "a[href]",
   "summary",
-  '[role="button"]',
+  '[role="button"]:not([data-thread-row])',
   '[role="checkbox"]',
   '[role="menuitem"]',
   '[role="option"]',
@@ -563,6 +563,7 @@ function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.key.length !== 1) return false;
 
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
+  if (event.key === " " && eventPathContainsSelector(event, "[data-thread-row]")) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
 
@@ -4449,6 +4450,15 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(() => {
     if (!activeThread?.id || terminalUiState.terminalOpen) return;
     const frame = window.requestAnimationFrame(() => {
+      const activeElement = document.activeElement;
+      if (
+        activeElement instanceof HTMLElement &&
+        activeElement.isConnected &&
+        activeElement.matches(":focus-visible") &&
+        activeElement.closest("[data-thread-item]") !== null
+      ) {
+        return;
+      }
       focusComposer();
     });
     return () => {
