@@ -38,6 +38,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
+  type CSSProperties,
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
@@ -485,6 +486,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     );
     return config ? { ...config, onReady: handleAnchorReady } : undefined;
   }, [anchorMessageId, handleAnchorReady, rows]);
+  const timelineViewportStyle =
+    contentInsetEndAdjustment === 0
+      ? undefined
+      : ({
+          "--timeline-composer-overlay-height": `min(${contentInsetEndAdjustment}px, 60%)`,
+        } as CSSProperties);
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
@@ -622,7 +629,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   return (
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
-        <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
+        <div
+          ref={setTimelineViewportElement}
+          className="relative h-full min-h-0"
+          style={timelineViewportStyle}
+        >
           <LegendList<MessagesTimelineRow>
             ref={listRef}
             data={rows}
@@ -642,7 +653,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             onScroll={handleScroll}
             className={cn(
               "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
-              topFadeEnabled && "topbar-scroll-fade",
+              contentInsetEndAdjustment > 0 && "virtualized-scroll-fade",
+              contentInsetEndAdjustment > 0 &&
+                (topFadeEnabled ? "timeline-scroll-combined-fade" : "timeline-scroll-bottom-fade"),
+              contentInsetEndAdjustment === 0 && topFadeEnabled && "topbar-scroll-fade",
             )}
             ListHeaderComponent={
               loadEarlier !== null ? (

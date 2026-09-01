@@ -411,6 +411,48 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     var(--app-scrollbar-width) 100%;
 }
 
+@utility timeline-scroll-bottom-fade {
+  --virtualized-scroll-fade-mask: linear-gradient(
+    to bottom,
+    black 0,
+    black calc(100% - var(--timeline-composer-overlay-height) - 1.5rem),
+    transparent calc(100% - var(--timeline-composer-overlay-height)),
+    transparent 100%
+  );
+}
+
+@utility timeline-scroll-combined-fade {
+  --virtualized-scroll-fade-mask: linear-gradient(
+    to bottom,
+    transparent 0,
+    rgb(0 0 0 / 10%) 0.25rem,
+    rgb(0 0 0 / 30%) 0.6rem,
+    rgb(0 0 0 / 58%) 1.05rem,
+    rgb(0 0 0 / 82%) 1.55rem,
+    rgb(0 0 0 / 96%) 2.05rem,
+    black 2.5rem,
+    black calc(100% - var(--timeline-composer-overlay-height) - 1.5rem),
+    transparent calc(100% - var(--timeline-composer-overlay-height)),
+    transparent 100%
+  );
+
+  @variant sm {
+    --virtualized-scroll-fade-mask: linear-gradient(
+      to bottom,
+      transparent 0,
+      rgb(0 0 0 / 10%) 0.3rem,
+      rgb(0 0 0 / 30%) 0.72rem,
+      rgb(0 0 0 / 58%) 1.26rem,
+      rgb(0 0 0 / 82%) 1.86rem,
+      rgb(0 0 0 / 96%) 2.46rem,
+      black 3rem,
+      black calc(100% - var(--timeline-composer-overlay-height) - 1.5rem),
+      transparent calc(100% - var(--timeline-composer-overlay-height)),
+      transparent 100%
+    );
+  }
+}
+
 /* Stage-channel art needs a mask and pseudo-element gradient, so keep the
    behavior composable without tying it to the global components layer. */
 @utility sidebar-stage-backdrop {
