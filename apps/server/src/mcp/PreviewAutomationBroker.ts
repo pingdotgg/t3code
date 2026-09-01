@@ -14,6 +14,7 @@ import {
   PreviewAutomationTimeoutError,
   PreviewAutomationUnsupportedClientError,
   PreviewTabId,
+  isPreviewGatewayFailureReason,
   type PreviewAutomationError,
   type PreviewAutomationOperation,
   type PreviewAutomationHost,
@@ -277,6 +278,29 @@ const classifyResponseError = (
         ...context,
         ...remoteDiagnostics,
       });
+    case "PreviewAutomationExecutionError": {
+      const detail =
+        typeof error.detail === "object" && error.detail !== null ? error.detail : undefined;
+      const gatewayReason =
+        detail && "gatewayReason" in detail && isPreviewGatewayFailureReason(detail.gatewayReason)
+          ? detail.gatewayReason
+          : undefined;
+      const gatewayPort =
+        detail &&
+        "gatewayPort" in detail &&
+        typeof detail.gatewayPort === "number" &&
+        Number.isInteger(detail.gatewayPort) &&
+        detail.gatewayPort > 0 &&
+        detail.gatewayPort < 65_536
+          ? detail.gatewayPort
+          : undefined;
+      return new PreviewAutomationExecutionError({
+        ...context,
+        ...remoteDiagnostics,
+        ...(gatewayReason === undefined ? {} : { gatewayReason }),
+        ...(gatewayPort === undefined ? {} : { gatewayPort }),
+      });
+    }
     default:
       return new PreviewAutomationExecutionError({
         ...context,

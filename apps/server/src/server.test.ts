@@ -4717,6 +4717,50 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("issues scoped preview gateway tickets through websocket rpc", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.previewIssueGatewayTicket]({ port: 5173 }),
+        ),
+      );
+      const now = yield* DateTime.now;
+      const remainingMs = response.expiresAt.epochMilliseconds - now.epochMilliseconds;
+
+      assert.isTrue(response.ticket.length > 0);
+      assert.equal(response.port, 5173);
+      assert.isAtLeast(remainingMs, Duration.toMillis(Duration.minutes(4)));
+      assert.isAtMost(remainingMs, Duration.toMillis(Duration.minutes(5)) + 1_000);
+
+      const { response: exchangeResponse, body: tokenBody } = yield* exchangeAccessToken(
+        defaultDesktopBootstrapToken,
+        { scope: "orchestration:read" },
+      );
+      assert.equal(exchangeResponse.status, 200);
+
+      const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${tokenBody.access_token ?? ""}` },
+      });
+      const wsTicketBody = (yield* wsTicketResponse.json) as { readonly ticket: string };
+      const readOnlyWsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
+      const error = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(readOnlyWsUrl, (client) =>
+            client[WS_METHODS.previewIssueGatewayTicket]({ port: 5173 }),
+          ),
+        ),
+      );
+
+      assert.equal(error._tag, "EnvironmentAuthorizationError");
+      if (error._tag === "EnvironmentAuthorizationError") {
+        assert.equal(error.requiredScope, "orchestration:operate");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("uploads image bytes through a signed URL issued by websocket rpc", () =>
     Effect.gen(function* () {
       const config = yield* buildAppUnderTest();

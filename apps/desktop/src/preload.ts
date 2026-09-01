@@ -197,6 +197,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     clearCache: () => ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL),
     getPreviewConfig: (environmentId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, { environmentId }),
+    configureGateway: (input) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_CONFIGURE_GATEWAY_CHANNEL, input),
+    clearGateway: (environmentId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_GATEWAY_CHANNEL, { environmentId }),
     setAnnotationTheme: (theme) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, { theme }),
     pickElement: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL, { tabId }),

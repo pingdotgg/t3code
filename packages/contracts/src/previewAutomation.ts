@@ -681,6 +681,38 @@ const PreviewAutomationOptionalRemoteDiagnosticFields = {
   cause: Schema.optional(Schema.Defect()),
 };
 
+export const PreviewGatewayFailureReason = Schema.Literals([
+  "server-update-required",
+  "configuration-failed",
+  "upstream-unreachable",
+  "authentication-expired",
+  "unsupported-protocol",
+  "authorization-insufficient",
+]);
+export type PreviewGatewayFailureReason = typeof PreviewGatewayFailureReason.Type;
+export const isPreviewGatewayFailureReason = Schema.is(PreviewGatewayFailureReason);
+
+export const previewGatewayFailureMessage = (
+  reason: PreviewGatewayFailureReason,
+  port?: number,
+): string => {
+  const target = port === undefined ? "the requested environment port" : `port ${port}`;
+  switch (reason) {
+    case "server-update-required":
+      return `Previewing ${target} through this remote environment requires a newer T3 server.`;
+    case "unsupported-protocol":
+      return `Remote environment preview supports HTTP and WebSocket traffic, but the HTTPS target on ${target} is unsupported.`;
+    case "authorization-insufficient":
+      return `The current environment session is not authorized to preview ${target}. Reconnect with orchestration operate access.`;
+    case "authentication-expired":
+      return `The secure preview gateway credential for ${target} expired. Navigate again to reconnect.`;
+    case "upstream-unreachable":
+      return `The remote environment could not reach a dev server on ${target}.`;
+    case "configuration-failed":
+      return `The native preview could not configure its secure gateway for ${target}.`;
+  }
+};
+
 export class PreviewAutomationNoAvailableHostError extends Schema.TaggedErrorClass<PreviewAutomationNoAvailableHostError>()(
   "PreviewAutomationNoAvailableHostError",
   {
@@ -756,9 +788,16 @@ export class PreviewAutomationExecutionError extends Schema.TaggedErrorClass<Pre
   {
     ...PreviewAutomationRequestErrorFields,
     ...PreviewAutomationRemoteDiagnosticFields,
+    gatewayReason: Schema.optional(PreviewGatewayFailureReason),
+    gatewayPort: Schema.optional(
+      Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65_536)),
+    ),
   },
 ) {
   override get message(): string {
+    if (this.gatewayReason !== undefined) {
+      return previewGatewayFailureMessage(this.gatewayReason, this.gatewayPort);
+    }
     return `Preview automation ${this.operation} failed on client ${this.clientId}.`;
   }
 }
@@ -877,7 +916,7 @@ export type PreviewAutomationError = typeof PreviewAutomationError.Type;
 export const PreviewUrlResolution = Schema.Struct({
   requestedUrl: Schema.String,
   resolvedUrl: Schema.String,
-  resolutionKind: Schema.Literals(["direct", "direct-private-network"]),
+  resolutionKind: Schema.Literals(["direct", "direct-private-network", "environment-gateway"]),
   environmentId: EnvironmentId,
 });
 export type PreviewUrlResolution = typeof PreviewUrlResolution.Type;

@@ -5,10 +5,15 @@ import { useShallow } from "zustand/react/shallow";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
+import { previewGatewayFailureToast } from "~/components/preview/previewAutomationErrors";
+import { usePreparePreviewGatewayNavigation } from "~/components/preview/usePreparePreviewGatewayNavigation";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
+import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
+import { usePreparedConnection } from "~/state/session";
 
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
+import { resolveBrowserNavigationTarget } from "./browserTargetResolver";
 import { useActiveBrowserRecordingTabIds } from "./browserRecording";
 import {
   browserViewportSettingKey,
@@ -54,7 +59,16 @@ export function HostedBrowserWebview(props: {
   const { threadRef, tabId, runtimeTabId, initialUrl, viewport, pictureInPicture, zoomFactor } =
     props;
   const config = usePreviewWebviewConfig(threadRef.environmentId);
-  const [initialSrc] = useState(() => initialUrl ?? "about:blank");
+  const preparedConnection = usePreparedConnection(threadRef.environmentId);
+  const environmentHttpBaseUrl =
+    preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null;
+  const [initialSrc, setInitialSrc] = useState(() => initialUrl ?? "about:blank");
+  const [gatewayReady, setGatewayReady] = useState(initialUrl === null);
+  const [webviewGeneration, setWebviewGeneration] = useState(0);
+  const [recoverySrc, setRecoverySrc] = useState(initialSrc);
+  const latestUrlRef = useRef(initialUrl);
+  const initialPreparationCompleteRef = useRef(initialUrl === null);
+  const prepareGatewayNavigation = usePreparePreviewGatewayNavigation();
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const webviewRef = useRef<ElectronWebview | null>(null);
@@ -80,6 +94,51 @@ export function HostedBrowserWebview(props: {
   usePreviewBridge({ threadRef, tabId, runtimeTabId });
 
   useEffect(() => {
+    if (!initialUrl) {
+      setGatewayReady(true);
+      return;
+    }
+    let disposed = false;
+    let refreshTimeout: ReturnType<typeof setTimeout> | undefined;
+    const prepare = async () => {
+      try {
+        const expiresAt = await prepareGatewayNavigation(
+          resolveBrowserNavigationTarget(threadRef.environmentId, {
+            kind: "url",
+            url: initialUrl,
+          }),
+        );
+        if (disposed) return;
+        initialPreparationCompleteRef.current = true;
+        if (latestUrlRef.current === null) {
+          setInitialSrc(initialUrl);
+          setRecoverySrc(initialUrl);
+          latestUrlRef.current = initialUrl;
+        }
+        setGatewayReady(true);
+        if (expiresAt !== null) {
+          refreshTimeout = setTimeout(prepare, Math.max(1_000, expiresAt - Date.now() - 30_000));
+        }
+      } catch (error) {
+        if (disposed) return;
+        if (!initialPreparationCompleteRef.current) {
+          initialPreparationCompleteRef.current = true;
+          setInitialSrc("about:blank");
+          setRecoverySrc("about:blank");
+          latestUrlRef.current = null;
+        }
+        setGatewayReady(true);
+        toastManager.add(previewGatewayFailureToast(error));
+      }
+    };
+    void prepare();
+    return () => {
+      disposed = true;
+      if (refreshTimeout !== undefined) clearTimeout(refreshTimeout);
+    };
+  }, [environmentHttpBaseUrl, initialUrl, prepareGatewayNavigation, threadRef.environmentId]);
+
+  useEffect(() => {
     crashRecoveryRef.current = INITIAL_WEBVIEW_CRASH_RECOVERY_STATE;
     const lease = acquireDesktopTab(runtimeTabId);
     tabLeaseRef.current = lease;
@@ -88,10 +147,6 @@ export function HostedBrowserWebview(props: {
       lease.release();
     };
   }, [runtimeTabId]);
-
-  const [webviewGeneration, setWebviewGeneration] = useState(0);
-  const [recoverySrc, setRecoverySrc] = useState(initialSrc);
-  const latestUrlRef = useRef(initialUrl);
 
   useEffect(() => {
     latestUrlRef.current = initialUrl;
@@ -235,7 +290,7 @@ export function HostedBrowserWebview(props: {
     wrapper.scrollTo({ left: 0, top: 0 });
   }, [runtimeTabId, viewport._tag, viewportHeight, viewportWidth]);
 
-  if (!config) return null;
+  if (!config || !gatewayReady) return null;
 
   const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({

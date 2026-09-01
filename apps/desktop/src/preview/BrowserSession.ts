@@ -9,6 +9,12 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
+import {
+  type PreviewGatewayProxy,
+  type PreviewGatewayProxyConfiguration,
+  startPreviewGatewayProxy,
+} from "./PreviewGatewayProxy.ts";
+
 const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
 
 // Permissions granted to preview web content. `clipboard-sanitized-write` is the
@@ -78,6 +84,30 @@ export class BrowserSessionCacheClearError extends Schema.TaggedErrorClass<Brows
   }
 }
 
+export class BrowserSessionGatewayConfigurationError extends Schema.TaggedErrorClass<BrowserSessionGatewayConfigurationError>()(
+  "BrowserSessionGatewayConfigurationError",
+  {
+    scope: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to configure the desktop preview gateway for scope ${this.scope}.`;
+  }
+}
+
+export class BrowserSessionGatewayClearError extends Schema.TaggedErrorClass<BrowserSessionGatewayClearError>()(
+  "BrowserSessionGatewayClearError",
+  {
+    scope: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to restore direct desktop preview traffic for scope ${this.scope}.`;
+  }
+}
+
 export const BrowserSessionGetSessionError = Schema.Union([
   BrowserSessionPartitionDerivationError,
   BrowserSessionCreationError,
@@ -90,6 +120,8 @@ export const BrowserSessionError = Schema.Union([
   BrowserSessionCreationError,
   BrowserSessionStorageClearError,
   BrowserSessionCacheClearError,
+  BrowserSessionGatewayConfigurationError,
+  BrowserSessionGatewayClearError,
 ]);
 export type BrowserSessionError = typeof BrowserSessionError.Type;
 export const isBrowserSessionError = Schema.is(BrowserSessionError);
@@ -104,12 +136,35 @@ export class BrowserSession extends Context.Service<
     readonly getSession: (scope?: string) => Effect.Effect<Session, BrowserSessionGetSessionError>;
     readonly clearCookies: () => Effect.Effect<void, BrowserSessionStorageClearError>;
     readonly clearCache: () => Effect.Effect<void, BrowserSessionCacheClearError>;
+    readonly configureGateway: (
+      scope: string,
+      configuration: PreviewGatewayProxyConfiguration,
+    ) => Effect.Effect<
+      void,
+      BrowserSessionGetSessionError | BrowserSessionGatewayConfigurationError
+    >;
+    readonly clearGateway: (
+      scope: string,
+    ) => Effect.Effect<void, BrowserSessionGetSessionError | BrowserSessionGatewayClearError>;
   }
 >()("@t3tools/desktop/preview/BrowserSession") {}
 
 export const make = Effect.gen(function* BrowserSessionMake() {
   const crypto = yield* Crypto.Crypto;
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
+  const proxiesRef = yield* SynchronizedRef.make<ReadonlyMap<string, PreviewGatewayProxy>>(
+    new Map(),
+  );
+
+  yield* Effect.addFinalizer(() =>
+    SynchronizedRef.get(proxiesRef).pipe(
+      Effect.flatMap((proxies) =>
+        Effect.promise(async () => {
+          await Promise.allSettled([...proxies.values()].map((proxy) => proxy.close()));
+        }),
+      ),
+    ),
+  );
 
   const getPartition = Effect.fn("BrowserSession.getPartition")(function* (scope = "shared") {
     const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(scope)).pipe(
@@ -161,6 +216,62 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     getPartition,
     isPartition: (partition) => partition.startsWith(PREVIEW_PARTITION_PREFIX),
     getSession,
+    configureGateway: Effect.fn("BrowserSession.configureGateway")(
+      function* (scope, configuration) {
+        const browserSession = yield* getSession(scope);
+        yield* SynchronizedRef.modifyEffect(proxiesRef, (proxies) => {
+          const existing = proxies.get(scope);
+          if (existing) {
+            existing.configure(configuration);
+            return Effect.succeed([undefined, proxies] as const);
+          }
+
+          return Effect.tryPromise({
+            try: () => startPreviewGatewayProxy(configuration),
+            catch: (cause) => new BrowserSessionGatewayConfigurationError({ scope, cause }),
+          }).pipe(
+            Effect.flatMap((proxy) =>
+              Effect.tryPromise({
+                try: () =>
+                  browserSession.setProxy({
+                    mode: "fixed_servers",
+                    proxyRules: `http=http://127.0.0.1:${proxy.port};https=direct://;socks=http://127.0.0.1:${proxy.port}`,
+                    // Chromium implicitly bypasses loopback even when a PAC script
+                    // selects a proxy. Manual rules can subtract only that bypass;
+                    // the leading wildcard keeps every non-loopback host direct.
+                    proxyBypassRules: "*;<-loopback>;169.254.0.0/16;fe80::/10;loopback",
+                  }),
+                catch: (cause) => new BrowserSessionGatewayConfigurationError({ scope, cause }),
+              }).pipe(
+                Effect.tapError(() => Effect.promise(() => proxy.close())),
+                Effect.map(() => {
+                  const next = new Map(proxies);
+                  next.set(scope, proxy);
+                  return [undefined, next] as const;
+                }),
+              ),
+            ),
+          );
+        });
+      },
+    ),
+    clearGateway: Effect.fn("BrowserSession.clearGateway")(function* (scope) {
+      yield* SynchronizedRef.modifyEffect(proxiesRef, (proxies) =>
+        Effect.gen(function* () {
+          const existing = proxies.get(scope);
+          if (!existing) return [undefined, proxies] as const;
+          const browserSession = yield* getSession(scope);
+          yield* Effect.tryPromise({
+            try: () => browserSession.setProxy({ mode: "direct" }),
+            catch: (cause) => new BrowserSessionGatewayClearError({ scope, cause }),
+          });
+          yield* Effect.promise(() => existing.close()).pipe(Effect.ignore);
+          const next = new Map(proxies);
+          next.delete(scope);
+          return [undefined, next] as const;
+        }),
+      );
+    }),
     clearCookies: Effect.fn("BrowserSession.clearCookies")(function* () {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
       yield* Effect.all(

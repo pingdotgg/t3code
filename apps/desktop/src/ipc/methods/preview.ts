@@ -9,6 +9,7 @@ import {
   DesktopPreviewAutomationTypeInputSchema,
   DesktopPreviewAutomationWaitForInputSchema,
   DesktopPreviewConfigInputSchema,
+  DesktopPreviewGatewayConfigSchema,
   DesktopPreviewNavigateInputSchema,
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingSourceSchema,
@@ -234,6 +235,37 @@ export const getPreviewConfig = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const configureGateway = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_CONFIGURE_GATEWAY_CHANNEL,
+  payload: DesktopPreviewGatewayConfigSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.configureGateway")(function* ({
+    environmentId,
+    httpBaseUrl,
+    ticket,
+    port,
+    expiresAtEpochMilliseconds,
+  }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.configureGateway(environmentId, {
+      httpBaseUrl,
+      ticket,
+      port,
+      expiresAtEpochMilliseconds,
+    });
+  }),
+});
+
+export const clearGateway = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_CLEAR_GATEWAY_CHANNEL,
+  payload: DesktopPreviewConfigInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.clearGateway")(function* ({ environmentId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.clearGateway(environmentId);
+  }),
+});
+
 export const setAnnotationTheme = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL,
   payload: DesktopPreviewAnnotationThemeInputSchema,
@@ -392,6 +424,8 @@ export const methods = [
   clearCookies,
   clearCache,
   getPreviewConfig,
+  configureGateway,
+  clearGateway,
   setAnnotationTheme,
   pickElement,
   cancelPickElement,

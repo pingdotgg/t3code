@@ -108,21 +108,21 @@ describe("browser target resolver", () => {
     });
   });
 
-  it("refuses public relay hosts until the authenticated gateway exists", async () => {
+  it("keeps environment-port URLs local for a public relay gateway", async () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://relay.example.com" });
     const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(() =>
+    expect(
       resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
         kind: "environment-port",
         port: 5173,
+        path: "//evil.example/app?mode=test#results",
       }),
-    ).toThrow(/authenticated preview gateway/);
-    expect(() =>
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "url",
-        url: "http://localhost:5173",
-      }),
-    ).toThrow(/authenticated preview gateway/);
+    ).toEqual({
+      requestedUrl: "http://localhost:5173//evil.example/app?mode=test#results",
+      resolvedUrl: "http://localhost:5173//evil.example/app?mode=test#results",
+      resolutionKind: "environment-gateway",
+      environmentId: "environment-1",
+    });
   });
 
   it("normalizes schemeless localhost server-picker values", async () => {

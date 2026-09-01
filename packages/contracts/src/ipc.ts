@@ -676,6 +676,22 @@ export const DesktopPreviewWebviewConfigSchema: Schema.Codec<DesktopPreviewWebvi
     preloadUrl: Schema.NullOr(Schema.String),
   });
 
+export interface DesktopPreviewGatewayConfig {
+  environmentId: EnvironmentId;
+  httpBaseUrl: string;
+  ticket: string;
+  port: number;
+  expiresAtEpochMilliseconds: number;
+}
+
+export const DesktopPreviewGatewayConfigSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  httpBaseUrl: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
+  ticket: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
+  port: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65_535 })),
+  expiresAtEpochMilliseconds: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+
 export interface DesktopPreviewAnnotationTheme {
   colorScheme: "light" | "dark";
   radius: string;
@@ -1203,6 +1219,10 @@ export interface DesktopPreviewBridge {
   clearCookies: () => Promise<void>;
   /** Drop the HTTP cache for the preview partition (all tabs). */
   clearCache: () => Promise<void>;
+  /** Route loopback HTTP and WebSocket preview traffic through its owning environment. */
+  configureGateway: (input: DesktopPreviewGatewayConfig) => Promise<void>;
+  /** Restore direct loopback navigation after an environment reconnects locally. */
+  clearGateway: (environmentId: EnvironmentId) => Promise<void>;
   /**
    * One-shot config for mounting a preview `<webview>`. Replaces three
    * earlier round-trip calls (`getBrowserPartition`, `getWebviewPreferences`,

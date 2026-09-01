@@ -148,6 +148,8 @@ import {
   PreviewCloseInput,
   PreviewError,
   PreviewEvent,
+  PreviewGatewayTicket,
+  PreviewGatewayTicketInput,
   PreviewListInput,
   PreviewListResult,
   PreviewNavigateInput,
@@ -265,6 +267,7 @@ export const WS_METHODS = {
   previewClose: "preview.close",
   previewList: "preview.list",
   previewReportStatus: "preview.reportStatus",
+  previewIssueGatewayTicket: "preview.issueGatewayTicket",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
@@ -867,6 +870,12 @@ export const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus,
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
+export const WsPreviewIssueGatewayTicketRpc = Rpc.make(WS_METHODS.previewIssueGatewayTicket, {
+  payload: PreviewGatewayTicketInput,
+  success: PreviewGatewayTicket,
+  error: EnvironmentAuthorizationError,
+});
+
 export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
   payload: PreviewAutomationHost,
   success: PreviewAutomationStreamEvent,
@@ -1111,6 +1120,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewCloseRpc,
   WsPreviewListRpc,
   WsPreviewReportStatusRpc,
+  WsPreviewIssueGatewayTicketRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,

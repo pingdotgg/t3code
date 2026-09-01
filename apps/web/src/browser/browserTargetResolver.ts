@@ -170,13 +170,23 @@ const resolveEnvironmentPortTarget = (
   requestedUrl?: string,
   sourceUrl?: URL,
 ): PreviewUrlResolution => {
-  if (!isPrivateNetworkHost(environmentUrl.hostname)) {
-    throw new Error(
-      "This environment port needs the planned authenticated preview gateway; its server address is not directly private-network reachable.",
-    );
-  }
   const protocol = target.protocol ?? "http";
   const path = target.path?.startsWith("/") ? target.path : `/${target.path ?? ""}`;
+  if (!isPrivateNetworkHost(environmentUrl.hostname)) {
+    const resolved = sourceUrl
+      ? new URL(sourceUrl)
+      : new URL(`${protocol}://localhost:${target.port}${path}`);
+    if (sourceUrl) {
+      resolved.hostname = "localhost";
+      resolved.port = String(target.port);
+    }
+    return {
+      requestedUrl: requestedUrl ?? `${protocol}://localhost:${target.port}${path}`,
+      resolvedUrl: resolved.toString(),
+      resolutionKind: "environment-gateway",
+      environmentId,
+    };
+  }
   const normalizedEnvironmentHost = environmentUrl.hostname.replace(/^\[|\]$/g, "");
   // Local loopback environments should advertise `localhost` so Chromium
   // dual-stack lookup can reach a Vite server bound only to ::1 or 127.0.0.1.
@@ -187,7 +197,7 @@ const resolveEnvironmentPortTarget = (
       : normalizedEnvironmentHost;
   const resolved = sourceUrl
     ? new URL(sourceUrl)
-    : new URL(path, `${protocol}://${resolvedHost}:${target.port}`);
+    : new URL(`${protocol}://${resolvedHost}:${target.port}${path}`);
   if (sourceUrl) {
     resolved.hostname = resolvedHost;
     resolved.port = String(target.port);

@@ -2,6 +2,8 @@ import {
   EnvironmentId,
   type PreviewAutomationHost,
   PreviewAutomationOperation,
+  PreviewGatewayFailureReason,
+  previewGatewayFailureMessage,
   type PreviewAutomationRequest,
   type PreviewAutomationResponse,
   PreviewTabId,
@@ -17,6 +19,35 @@ export interface PreviewAutomationOperationContext {
   readonly threadId: PreviewAutomationRequest["threadId"];
   readonly tabId: Exclude<PreviewAutomationRequest["tabId"], undefined> | null;
 }
+
+export class PreviewGatewayNavigationError extends Schema.TaggedErrorClass<PreviewGatewayNavigationError>()(
+  "PreviewGatewayNavigationError",
+  {
+    reason: PreviewGatewayFailureReason,
+    port: Schema.optional(
+      Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65_536)),
+    ),
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return previewGatewayFailureMessage(this.reason, this.port);
+  }
+}
+
+export const isPreviewGatewayNavigationError = Schema.is(PreviewGatewayNavigationError);
+
+export const previewGatewayFailureToast = (error: unknown) => ({
+  type: "error" as const,
+  title: isPreviewGatewayNavigationError(error)
+    ? "Unable to open remote preview"
+    : "Unable to open preview",
+  description: isPreviewGatewayNavigationError(error)
+    ? error.message
+    : error instanceof Error
+      ? `${error.message} Reconnect the environment and retry.`
+      : "Reconnect the environment and retry.",
+});
 
 export class PreviewAutomationOverlayTimeoutError extends Schema.TaggedErrorClass<PreviewAutomationOverlayTimeoutError>()(
   "PreviewAutomationOverlayTimeoutError",
@@ -177,12 +208,24 @@ export class PreviewAutomationOperationError extends Schema.TaggedErrorClass<Pre
     threadId: ThreadId,
     tabId: Schema.NullOr(PreviewTabId),
     cause: Schema.Defect(),
+    gatewayReason: Schema.optional(PreviewGatewayFailureReason),
+    gatewayPort: Schema.optional(
+      Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65_536)),
+    ),
   },
 ) {
   static fromCause(
     input: PreviewAutomationOperationContext & { readonly cause: unknown },
   ): PreviewAutomationHostError {
     if (isPreviewAutomationHostError(input.cause)) return input.cause;
+    if (isPreviewGatewayNavigationError(input.cause)) {
+      const gatewayPort = input.cause.port;
+      return new PreviewAutomationOperationError({
+        ...input,
+        gatewayReason: input.cause.reason,
+        ...(gatewayPort === undefined ? {} : { gatewayPort }),
+      });
+    }
     const diagnostics = targetNotEditableDiagnostics(input.cause);
     return diagnostics
       ? new PreviewAutomationTargetNotEditableHostError({
@@ -201,6 +244,9 @@ export class PreviewAutomationOperationError extends Schema.TaggedErrorClass<Pre
   }
 
   override get message(): string {
+    if (this.gatewayReason !== undefined) {
+      return previewGatewayFailureMessage(this.gatewayReason, this.gatewayPort);
+    }
     return `Preview automation ${this.operation} request ${this.requestId} failed on environment ${this.environmentId} thread ${this.threadId} (tab ${this.tabId ?? "unassigned"}).`;
   }
 }

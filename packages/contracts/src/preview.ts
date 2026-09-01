@@ -9,12 +9,30 @@
  * @module Preview
  */
 import { Schema } from "effect";
-import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  NonNegativeInt,
+  PortSchema,
+  PositiveInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 export const PREVIEW_URL_MAX_LENGTH = 2_048;
 export const CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS = 32;
 
 const Url = TrimmedNonEmptyString.check(Schema.isMaxLength(PREVIEW_URL_MAX_LENGTH));
+
+export const PreviewGatewayTicketInput = Schema.Struct({
+  port: PortSchema,
+});
+export type PreviewGatewayTicketInput = typeof PreviewGatewayTicketInput.Type;
+
+export const PreviewGatewayTicket = Schema.Struct({
+  ticket: TrimmedNonEmptyString,
+  expiresAt: Schema.DateTimeUtc,
+  port: PortSchema,
+});
+export type PreviewGatewayTicket = typeof PreviewGatewayTicket.Type;
 
 export const ConfiguredLocalServerUrls = Schema.Array(Url).check(
   Schema.isMaxLength(CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS),

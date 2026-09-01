@@ -153,6 +153,26 @@ relay Worker only brokers credentials and a managed endpoint; application traffi
 the provisioned Cloudflare tunnel hostname for the life of the connection, not through the relay
 Worker itself. See [t3-connect.md](./t3-connect.md).
 
+#### Native preview gateway
+
+Desktop preview sessions keep environment-port navigation on a loopback origin such as
+`http://localhost:5173`. For a public relay endpoint, the renderer requests a five-minute gateway
+port-bound ticket over the authenticated environment RPC connection and configures that environment's isolated
+Electron preview session. A loopback-only desktop proxy forwards matching HTTP requests and
+WebSocket upgrades to the server's preview-gateway routes through the already selected environment
+endpoint. The server then dials its own loopback port.
+
+Keeping the browser-facing origin intact preserves root-relative assets, redirects, cookies, and
+Vite HMR. The gateway accepts only HTTP and WebSocket targets with valid loopback ports, verifies a
+server-signed ticket for the selected port, strips gateway and hop-by-hop headers, and normalizes
+every accepted hostname to local loopback before dialing. Issuing a ticket requires orchestration
+operate scope. A ticket from another environment fails verification because each server owns its
+signing key. The `previewGateway` capability prevents newer clients from probing older servers.
+
+Direct localhost, LAN, SSH-forwarded, and private-network preview resolution remains unchanged. The
+hosted web app has no integrated browser host, and mobile has no collaborative browser surface, so
+neither installs the desktop proxy. Their ordinary environment connection behavior is unaffected.
+
 ### Tailscale access
 
 A T3-managed `tailscale serve` mapping exposes the server on the tailnet over HTTPS, and the

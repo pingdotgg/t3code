@@ -26,7 +26,7 @@ import {
   updatePreviewServerSnapshot,
   useThreadPreviewState,
 } from "~/previewStateStore";
-import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -46,6 +46,8 @@ import {
 import { browserResponsiveViewportForToggle, useBrowserDefaults } from "~/browser/browserDefaults";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { PreviewUnreachable } from "./PreviewUnreachable";
+import { previewGatewayFailureToast } from "./previewAutomationErrors";
+import { usePreparePreviewGatewayNavigation } from "./usePreparePreviewGatewayNavigation";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
@@ -143,6 +145,7 @@ export function PreviewView({
   const controller = desktopOverlay?.controller ?? "none";
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
+  const prepareGatewayNavigation = usePreparePreviewGatewayNavigation();
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
@@ -176,28 +179,41 @@ export function PreviewView({
     async (next: string) => {
       try {
         const normalized = normalizePreviewUrl(next);
-        if (await navigateToResolvedUrl(normalized)) {
+        const resolution = resolveBrowserNavigationTarget(threadRef.environmentId, {
+          kind: "url",
+          url: normalized,
+        });
+        const navigation =
+          resolution.resolutionKind === "environment-gateway"
+            ? resolution
+            : { ...resolution, resolvedUrl: normalized, resolutionKind: "direct" as const };
+        await prepareGatewayNavigation(navigation);
+        if (await navigateToResolvedUrl(navigation.resolvedUrl)) {
           recordVisitForThread(threadRef, normalized);
         }
-      } catch {
-        // Server-side `failed` event renders the unreachable view.
+      } catch (error) {
+        toastManager.add(previewGatewayFailureToast(error));
       }
     },
-    [navigateToResolvedUrl, threadRef],
+    [navigateToResolvedUrl, prepareGatewayNavigation, threadRef],
   );
 
   const handleOpenServerUrl = useCallback(
     async (next: string) => {
       try {
-        const resolved = resolveDiscoveredServerUrl(threadRef.environmentId, next);
-        if (await navigateToResolvedUrl(resolved)) {
+        const resolution = resolveBrowserNavigationTarget(threadRef.environmentId, {
+          kind: "url",
+          url: normalizePreviewUrl(next),
+        });
+        await prepareGatewayNavigation(resolution);
+        if (await navigateToResolvedUrl(resolution.resolvedUrl)) {
           recordVisitForThread(threadRef, next);
         }
-      } catch {
-        // Server-side `failed` event renders the unreachable view.
+      } catch (error) {
+        toastManager.add(previewGatewayFailureToast(error));
       }
     },
-    [navigateToResolvedUrl, threadRef],
+    [navigateToResolvedUrl, prepareGatewayNavigation, threadRef],
   );
 
   const handleRefresh = useCallback(() => {

@@ -199,6 +199,10 @@
       "types": "./src/previewViewport.ts",
       "import": "./src/previewViewport.ts"
     },
+    "./previewGateway": {
+      "types": "./src/previewGateway.ts",
+      "import": "./src/previewGateway.ts"
+    },
     "./filePreview": {
       "types": "./src/filePreview.ts",
       "import": "./src/filePreview.ts"

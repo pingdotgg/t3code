@@ -103,6 +103,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import { issuePreviewGatewayTicket } from "./preview/GatewayTicket.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -2314,6 +2315,19 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.previewIssueGatewayTicket]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewIssueGatewayTicket,
+            issuePreviewGatewayTicket(input.port).pipe(
+              Effect.orDie,
+              Effect.map(({ ticket, expiresAt, port }) => ({
+                ticket,
+                expiresAt: DateTime.toUtc(expiresAt),
+                port,
+              })),
+            ),
+            { "rpc.aggregate": "preview" },
+          ),
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(
             WS_METHODS.previewAutomationConnect,

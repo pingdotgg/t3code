@@ -1,3 +1,4 @@
+// @effect-diagnostics globalFetchInEffect:off - fetch proves the native listener is closed.
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Crypto from "effect/Crypto";
@@ -16,6 +17,7 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
       readonly getUserAgent: ReturnType<typeof vi.fn>;
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
+      readonly setProxy: ReturnType<typeof vi.fn>;
       readonly setUserAgent: ReturnType<typeof vi.fn>;
     }
   >(),
@@ -30,6 +32,7 @@ vi.mock("electron", () => ({
 import * as BrowserSession from "./BrowserSession.ts";
 
 const layer = BrowserSession.layer.pipe(Layer.provide(NodeServices.layer));
+const gatewayExpiry = Number.MAX_SAFE_INTEGER;
 
 describe("BrowserSession", () => {
   beforeEach(() => {
@@ -42,6 +45,7 @@ describe("BrowserSession", () => {
         getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/0.0.27"),
         setPermissionRequestHandler: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
+        setProxy: vi.fn(() => Promise.resolve()),
         setUserAgent: vi.fn(),
       };
       sessions.set(partition, browserSession);
@@ -60,6 +64,78 @@ describe("BrowserSession", () => {
       assert.strictEqual(partition, "persist:t3code-preview-f051bb2c68cb7b2fe969");
       assert.strictEqual(first, second);
       assert.strictEqual(fromPartition.mock.calls.length, 1);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("isolates, reuses, clears, and reconnects environment proxies", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      yield* browserSessions.configureGateway("environment-a", {
+        httpBaseUrl: "https://connect.example.test/a",
+        ticket: "ticket-a",
+        port: 3000,
+        expiresAtEpochMilliseconds: gatewayExpiry,
+      });
+      yield* browserSessions.configureGateway("environment-b", {
+        httpBaseUrl: "https://connect.example.test/b",
+        ticket: "ticket-b",
+        port: 5173,
+        expiresAtEpochMilliseconds: gatewayExpiry,
+      });
+
+      const partitionA = yield* browserSessions.getPartition("environment-a");
+      const partitionB = yield* browserSessions.getPartition("environment-b");
+      const sessionA = sessions.get(partitionA);
+      const sessionB = sessions.get(partitionB);
+      assert.isDefined(sessionA);
+      assert.isDefined(sessionB);
+      assert.strictEqual(sessionA.setProxy.mock.calls.length, 1);
+      assert.strictEqual(sessionB.setProxy.mock.calls.length, 1);
+
+      const proxyConfigA = sessionA.setProxy.mock.calls[0]?.[0] as {
+        readonly mode: string;
+        readonly proxyRules: string;
+        readonly proxyBypassRules: string;
+      };
+      const proxyConfigB = sessionB.setProxy.mock.calls[0]?.[0] as {
+        readonly mode: string;
+        readonly proxyRules: string;
+        readonly proxyBypassRules: string;
+      };
+      assert.equal(proxyConfigA.mode, "fixed_servers");
+      assert.equal(proxyConfigB.mode, "fixed_servers");
+      assert.equal(
+        proxyConfigA.proxyBypassRules,
+        "*;<-loopback>;169.254.0.0/16;fe80::/10;loopback",
+      );
+      const portA = proxyConfigA.proxyRules.match(/http:\/\/127\.0\.0\.1:(\d+)/)?.[1];
+      const portB = proxyConfigB.proxyRules.match(/http:\/\/127\.0\.0\.1:(\d+)/)?.[1];
+      assert.isDefined(portA);
+      assert.isDefined(portB);
+      assert.notEqual(portA, portB);
+
+      yield* browserSessions.configureGateway("environment-a", {
+        httpBaseUrl: "https://connect.example.test/a-new",
+        ticket: "ticket-a-new",
+        port: 8080,
+        expiresAtEpochMilliseconds: gatewayExpiry,
+      });
+      assert.strictEqual(sessionA.setProxy.mock.calls.length, 1);
+      yield* browserSessions.clearGateway("environment-a");
+      assert.deepEqual(sessionA.setProxy.mock.calls[1], [{ mode: "direct" }]);
+      const closeError = yield* Effect.tryPromise(() => fetch(`http://127.0.0.1:${portA}/`)).pipe(
+        Effect.flip,
+      );
+      assert.instanceOf(closeError, Error);
+
+      yield* browserSessions.configureGateway("environment-a", {
+        httpBaseUrl: "https://connect.example.test/a-reconnected",
+        ticket: "ticket-a-reconnected",
+        port: 3000,
+        expiresAtEpochMilliseconds: gatewayExpiry,
+      });
+      assert.strictEqual(sessionA.setProxy.mock.calls.length, 3);
+      assert.equal(sessionA.setProxy.mock.calls[2]?.[0]?.mode, "fixed_servers");
     }).pipe(Effect.provide(layer)),
   );
 

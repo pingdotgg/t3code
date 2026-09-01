@@ -49,6 +49,10 @@ vi.mock("~/state/session", () => ({
   readPreparedConnection: mocks.readPreparedConnection,
 }));
 
+vi.mock("~/state/entities", () => ({
+  readEnvironmentSupportsPreviewGateway: () => true,
+}));
+
 // Stubbed at the direct dependency rather than letting the real module pull in
 // `useSettings` -> `state/server`, which would drag the whole settings and
 // connection graph into a test that only cares about the browser chrome.

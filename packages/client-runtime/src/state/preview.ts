@@ -93,6 +93,10 @@ export function createPreviewEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.threadId, input.tabId]),
       },
     }),
+    issueGatewayTicket: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:issue-gateway-ticket",
+      tag: WS_METHODS.previewIssueGatewayTicket,
+    }),
     respondToAutomation: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:automation-respond",
       tag: WS_METHODS.previewAutomationRespond,

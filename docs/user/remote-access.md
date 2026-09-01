@@ -122,6 +122,22 @@ npx t3 serve --tailscale-serve --tailscale-serve-port 8443
 Once paired, add projects normally: open the Command Palette and choose **Add Project**, then pick
 the environment the project lives on. Every saved environment is offered, not only the local one.
 
+### Remote dev-server previews
+
+The desktop app's integrated browser can open an HTTP dev server that listens only on a remote
+environment's loopback interface. This works through the environment's existing T3 Connect
+connection, including WebSocket traffic used by Vite HMR. It does not publish the dev-server port or
+require a second tunnel.
+
+Use an environment-port preview from an agent, or choose a discovered server in the preview panel.
+The address bar remains a `localhost` URL so paths, redirects, cookies, and root-relative assets keep
+their normal dev-server behavior. Remote HTTPS dev-server targets are not supported; use HTTP for the
+loopback server. A version warning means the remote T3 server must be updated before it can provide
+the authenticated preview gateway.
+
+The integrated browser is currently a desktop feature. The hosted web app and mobile app can connect
+to the same remote environment, but neither currently provides this collaborative browser surface.
+
 ### Option 3: Desktop-Managed SSH Launch
 
 Use this when you want the desktop app to start or reuse T3 Code on another machine over SSH.
