@@ -124,7 +124,7 @@ ShellWindow {
         background: Rectangle {
             radius: button.round ? 18 : 12
             color: button.active ? root.accent : button.hovered || button.visualFocus ? root.accentSoft : button.round ? root.raised : "transparent"
-            scale: button.down ? 0.96 : 1
+            scale: button.down ? 0.97 : 1
 
             Behavior on color {
                 ColorAnimation {
@@ -220,12 +220,12 @@ ShellWindow {
         radius: 18
 
         transform: Translate {
-            y: root.drawerOpen ? 0 : 22
+            y: root.drawerOpen ? 0 : 18
 
             Behavior on y {
                 SequentialAnimation {
                     PauseAnimation {
-                        duration: root.drawerOpen ? dash.order * 40 : 0
+                        duration: root.drawerOpen ? dash.order * 35 : 0
                     }
 
                     NumberAnimation {
@@ -288,8 +288,13 @@ ShellWindow {
 
         property int value: 0
         property int peak: 1
+        property int order: 0
         property color tint: root.accent
         property string label
+
+        // Bars rise once their card has landed, one after another, and drop
+        // back with the drawer so the next opening rises again.
+        readonly property real fill: root.drawerOpen ? value / Math.max(1, peak) : 0
 
         spacing: 6
 
@@ -308,14 +313,20 @@ ShellWindow {
                 anchors.bottom: parent.bottom
                 anchors.left: parent.left
                 anchors.right: parent.right
-                height: Math.max(12, parent.height * meter.value / Math.max(1, meter.peak))
+                height: Math.max(12, parent.height * meter.fill)
                 radius: 6
                 color: meter.value > 0 ? meter.tint : root.line
 
                 Behavior on height {
-                    NumberAnimation {
-                        duration: 300
-                        easing.type: Easing.OutQuint
+                    SequentialAnimation {
+                        PauseAnimation {
+                            duration: root.drawerOpen ? 160 + meter.order * 50 : 0
+                        }
+
+                        NumberAnimation {
+                            duration: root.drawerOpen ? 460 : 160
+                            easing.type: Easing.OutQuint
+                        }
                     }
                 }
 
@@ -549,10 +560,23 @@ ShellWindow {
                         url: Shell.pageUrl
                     }
 
-                    MouseArea {
+                    // The page dims under the drawer; clicking it closes the drawer.
+                    Rectangle {
                         anchors.fill: parent
-                        visible: root.drawerOpen
-                        onClicked: root.drawerOpen = false
+                        visible: opacity > 0
+                        opacity: root.drawerOpen ? 1 : 0
+                        color: Qt.rgba(root.canvas.r, root.canvas.g, root.canvas.b, 0.55)
+
+                        Behavior on opacity {
+                            OpacityAnimator {
+                                duration: root.drawerOpen ? 200 : 140
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: root.drawerOpen = false
+                        }
                     }
 
                     // The drawer settles in from just above its resting spot
@@ -563,7 +587,7 @@ ShellWindow {
                         anchors.top: parent.top
                         anchors.topMargin: 58
                         anchors.horizontalCenter: parent.horizontalCenter
-                        width: Math.min(parent.width - 24, 980)
+                        width: Math.min(parent.width - 24, 1040)
                         height: 336
                         visible: opacity > 0
                         opacity: root.drawerOpen ? 1 : 0
@@ -590,7 +614,7 @@ ShellWindow {
                                 }
                             },
                             Translate {
-                                y: root.drawerOpen ? 0 : -12
+                                y: root.drawerOpen ? 0 : -20
 
                                 Behavior on y {
                                     NumberAnimation {
@@ -770,7 +794,7 @@ ShellWindow {
 
                             // The month, today circled.
                             DashCard {
-                                Layout.preferredWidth: 292
+                                Layout.preferredWidth: 280
                                 Layout.fillHeight: true
                                 order: 2
 
@@ -845,7 +869,7 @@ ShellWindow {
 
                             // Thread meters: what is moving, what is waiting on you.
                             DashCard {
-                                Layout.preferredWidth: 224
+                                Layout.preferredWidth: 208
                                 Layout.fillHeight: true
                                 order: 3
 
@@ -858,6 +882,7 @@ ShellWindow {
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
                                         label: qsTr("Active")
+                                        order: 0
                                         value: root.threadCount
                                         peak: root.meterPeak
                                         tint: root.accent
@@ -867,6 +892,7 @@ ShellWindow {
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
                                         label: qsTr("Waiting")
+                                        order: 1
                                         value: root.attentionCount
                                         peak: Math.max(1, root.attentionCount)
                                         tint: root.warm
@@ -876,6 +902,7 @@ ShellWindow {
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
                                         label: qsTr("Snoozed")
+                                        order: 2
                                         value: root.sidebarState ? root.sidebarState.snoozed.length : 0
                                         peak: root.meterPeak
                                         tint: root.muted
@@ -885,6 +912,7 @@ ShellWindow {
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
                                         label: qsTr("Settled")
+                                        order: 3
                                         value: root.sidebarState ? root.sidebarState.settledTotal : 0
                                         peak: root.meterPeak
                                         tint: root.leaf
@@ -904,30 +932,48 @@ ShellWindow {
                                     anchors.fill: parent
                                     spacing: 6
 
+                                    // The cat at play while the drawer is up; the agent's
+                                    // initial when Qt Lottie is not installed.
                                     Item {
-                                        Layout.alignment: Qt.AlignHCenter
-                                        Layout.preferredWidth: 88
-                                        Layout.preferredHeight: 88
+                                        id: mascot
 
-                                        Rectangle {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: cat.status === Loader.Ready ? cat.item.implicitHeight : 84
+
+                                        Loader {
+                                            id: cat
+
                                             anchors.fill: parent
-                                            radius: 44
-                                            color: root.accentSoft
+                                            active: drawer.visible
+                                            source: "CatPlaying.qml"
                                         }
 
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            anchors.margins: 5
-                                            radius: 39
-                                            color: root.raised
+                                        Item {
+                                            anchors.centerIn: parent
+                                            width: 84
+                                            height: 84
+                                            visible: cat.status !== Loader.Ready
 
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: root.instance ? root.initialOf(root.instance.displayName) : "T3"
-                                                color: root.accentDeep
-                                                font.family: Theme.fontUi
-                                                font.pixelSize: 30
-                                                font.weight: Font.Bold
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                radius: 42
+                                                color: root.accentSoft
+                                            }
+
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                anchors.margins: 5
+                                                radius: 37
+                                                color: root.raised
+
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: root.instance ? root.initialOf(root.instance.displayName) : "T3"
+                                                    color: root.accentDeep
+                                                    font.family: Theme.fontUi
+                                                    font.pixelSize: 30
+                                                    font.weight: Font.Bold
+                                                }
                                             }
                                         }
 
@@ -1069,6 +1115,13 @@ ShellWindow {
                             color: root.card
 
                             Behavior on x {
+                                NumberAnimation {
+                                    duration: 260
+                                    easing.type: Easing.OutQuint
+                                }
+                            }
+
+                            Behavior on width {
                                 NumberAnimation {
                                     duration: 260
                                     easing.type: Easing.OutQuint
