@@ -10,7 +10,7 @@ function localDate(year: number, month: number, day: number, hour: number, minut
 describe("resolveSnoozePresets", () => {
   it("offers one hour, three hours, evening, tomorrow, and next week in the morning", () => {
     // Wednesday 2026-04-08 10:00 local.
-    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), "locale");
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), "locale", "en-GB");
     expect(presets.map((preset) => preset.id)).toEqual([
       "hour",
       "three-hours",
@@ -33,7 +33,7 @@ describe("resolveSnoozePresets", () => {
   });
 
   it("whenLabel complements the label instead of repeating it", () => {
-    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), "locale");
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), "locale", "en-GB");
     for (const preset of presets) {
       // Day words live in the label column; the time column is time-only
       // (plus a weekday for next week, which names a different day).
@@ -47,16 +47,18 @@ describe("resolveSnoozePresets", () => {
 
   it("drops the evening preset once evening is near or past", () => {
     expect(
-      resolveSnoozePresets(localDate(2026, 4, 8, 17, 30), "locale").map((preset) => preset.id),
+      resolveSnoozePresets(localDate(2026, 4, 8, 17, 30), "locale", "en-GB").map(
+        (preset) => preset.id,
+      ),
     ).toEqual(["hour", "three-hours", "tomorrow", "next-week"]);
     expect(
-      resolveSnoozePresets(localDate(2026, 4, 8, 21), "locale").map((preset) => preset.id),
+      resolveSnoozePresets(localDate(2026, 4, 8, 21), "locale", "en-GB").map((preset) => preset.id),
     ).toEqual(["hour", "three-hours", "tomorrow", "next-week"]);
   });
 
   it("puts next week a full week out when today is Monday", () => {
     // Monday 2026-04-06.
-    const presets = resolveSnoozePresets(localDate(2026, 4, 6, 10), "locale");
+    const presets = resolveSnoozePresets(localDate(2026, 4, 6, 10), "locale", "en-GB");
     const nextWeek = new Date(presets.find((preset) => preset.id === "next-week")!.snoozedUntil);
     expect(nextWeek.getDay()).toBe(1);
     expect(nextWeek.getDate()).toBe(13);
