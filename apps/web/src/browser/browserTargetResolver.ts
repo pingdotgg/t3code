@@ -239,6 +239,17 @@ export function resolveBrowserNavigationTarget(
           parsed,
         );
       }
+      // 0.0.0.0 is a bind wildcard, not a loadable client host, so aim the
+      // client-local pass-through at the client's loopback instead.
+      if (parsed.hostname === "0.0.0.0") {
+        parsed.hostname = "localhost";
+        return {
+          requestedUrl: target.url,
+          resolvedUrl: parsed.toString(),
+          resolutionKind: "direct",
+          environmentId,
+        };
+      }
     }
     return {
       requestedUrl: target.url,

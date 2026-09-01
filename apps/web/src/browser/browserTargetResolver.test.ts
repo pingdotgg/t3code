@@ -135,6 +135,22 @@ describe("browser target resolver", () => {
     });
   });
 
+  it("aims wildcard bind hosts at the client loopback on public relay hosts", async () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://relay.example.com" });
+    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
+    expect(
+      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
+        kind: "url",
+        url: "http://0.0.0.0:5173/app",
+      }),
+    ).toEqual({
+      requestedUrl: "http://0.0.0.0:5173/app",
+      resolvedUrl: "http://localhost:5173/app",
+      resolutionKind: "direct",
+      environmentId: "environment-1",
+    });
+  });
+
   it("normalizes schemeless localhost server-picker values", async () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://localhost:3773" });
     const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
