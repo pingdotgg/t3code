@@ -2,6 +2,7 @@ import {
   type ClaudeSettings,
   type ModelCapabilities,
   type ModelSelection,
+  type SelectProviderOptionDescriptor,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
@@ -11,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   createModelCapabilities,
@@ -40,12 +42,15 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
-import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { makeClaudeEnvironment, resolveClaudeHomePath } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
+const decodeClaudeHarnessSettings = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Unknown),
+);
 
 const CLAUDE_PRESENTATION = {
   displayName: "Claude",
@@ -325,6 +330,159 @@ const CLAUDE_MODEL_CATALOG: ReadonlyArray<ServerProviderModel> = [
 // so the catalog itself carries no `isLegacy` flags.
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = CLAUDE_MODEL_CATALOG;
 
+/** Model capabilities discovered from a Clauded modelPicker configuration. */
+const CLAUDED_MODEL_CAPABILITIES = new Map<string, ModelCapabilities>();
+const CLAUDED_MODEL_SUFFIX = /--effort-[a-z0-9-]+$/iu;
+const CLAUDED_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
+const CLAUDED_EFFORT_RANK = new Map([
+  ["minimal", 0],
+  ["low", 1],
+  ["medium", 2],
+  ["high", 3],
+  ["xhigh", 4],
+  ["max", 5],
+]);
+
+function titleCaseEffort(value: string): string {
+  return value.length === 0 ? value : `${value[0]!.toUpperCase()}${value.slice(1)}`;
+}
+
+function parseClaudeHarnessEfforts(description: string | undefined): ReadonlyArray<string> {
+  const match = description?.match(/^\s*Effort:\s*(.+)$/iu);
+  if (!match) return [];
+  return [
+    ...new Set(
+      match[1]!
+        .split(",")
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => CLAUDED_EFFORTS.has(value)),
+    ),
+  ];
+}
+
+function highestClaudeHarnessEffort(
+  descriptor: SelectProviderOptionDescriptor,
+): string | undefined {
+  return descriptor.options
+    .map((option) => option.id)
+    .filter((value) => value !== "ultracode")
+    .toSorted(
+      (left, right) =>
+        (CLAUDED_EFFORT_RANK.get(right) ?? -1) - (CLAUDED_EFFORT_RANK.get(left) ?? -1),
+    )[0];
+}
+
+function isClaudeHarnessModelAlias(value: string): boolean {
+  return value.startsWith("claude-") && value.includes("--") && !value.includes("[1m]");
+}
+
+/**
+ * Parse the replacement model picker written by the Clauded wrapper. The
+ * canonical row is the model; effort variants remain traits on that row. A
+ * pinned `--effort-*` row is deliberately ignored so T3 never renders one
+ * model entry per reasoning level.
+ */
+export function parseClaudeHarnessModelPicker(input: unknown): ReadonlyArray<ServerProviderModel> {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return [];
+  const options = (input as { readonly options?: unknown }).options;
+  if (!Array.isArray(options)) return [];
+
+  const models: ServerProviderModel[] = [];
+  const seen = new Set<string>();
+  for (const rawOption of options) {
+    if (rawOption === null || typeof rawOption !== "object" || Array.isArray(rawOption)) continue;
+    const option = rawOption as {
+      readonly model?: unknown;
+      readonly label?: unknown;
+      readonly description?: unknown;
+    };
+    if (typeof option.model !== "string") continue;
+    const slug = option.model.trim();
+    if (!isClaudeHarnessModelAlias(slug) || CLAUDED_MODEL_SUFFIX.test(slug) || seen.has(slug)) {
+      continue;
+    }
+    const efforts = parseClaudeHarnessEfforts(
+      typeof option.description === "string" ? option.description : undefined,
+    );
+    const effortOptions = efforts.length
+      ? [
+          ...efforts,
+          {
+            value: "ultracode",
+            label: "Ultracode",
+            description:
+              "Use this model's highest available reasoning level with workflow orchestration",
+          },
+        ]
+      : [];
+    const capabilities = effortOptions.length
+      ? createModelCapabilities({
+          optionDescriptors: [
+            buildSelectOptionDescriptor({
+              id: "effort",
+              label: "Reasoning",
+              options: effortOptions.map((effort) =>
+                typeof effort === "string"
+                  ? {
+                      value: effort,
+                      label: titleCaseEffort(effort),
+                      ...(effort === (efforts.includes("medium") ? "medium" : efforts.at(-1))
+                        ? { isDefault: true }
+                        : {}),
+                    }
+                  : effort,
+              ),
+            }),
+          ],
+        })
+      : DEFAULT_CLAUDE_MODEL_CAPABILITIES;
+    CLAUDED_MODEL_CAPABILITIES.set(slug, capabilities);
+    seen.add(slug);
+    models.push({
+      slug,
+      name: typeof option.label === "string" && option.label.trim() ? option.label.trim() : slug,
+      isCustom: false,
+      capabilities,
+    });
+  }
+  return models;
+}
+
+/** Load a Clauded model picker from its isolated config directory. */
+export const readClaudeHarnessModelCatalog = (
+  settings: ClaudeSettings,
+): Effect.Effect<
+  ReadonlyArray<ServerProviderModel> | undefined,
+  never,
+  FileSystem.FileSystem | Path.Path
+> =>
+  Effect.gen(function* () {
+    const binaryPath = settings.binaryPath.trim();
+    if (binaryPath !== "clauded" && !binaryPath.endsWith("/clauded")) {
+      return undefined;
+    }
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const homePath = yield* resolveClaudeHomePath(settings);
+    const raw = yield* fileSystem
+      .readFileString(path.join(homePath, "settings.json"))
+      .pipe(Effect.orElseSucceed(() => ""));
+    if (!raw.trim()) return undefined;
+    const parsed = yield* decodeClaudeHarnessSettings(raw).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    const settingsObject =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as { readonly model?: unknown; readonly modelPicker?: unknown })
+        : undefined;
+    const models = parseClaudeHarnessModelPicker(settingsObject?.modelPicker);
+    const defaultModel =
+      typeof settingsObject?.model === "string" ? settingsObject.model.trim() : "";
+    return models.length > 0
+      ? models.map((model) => (model.slug === defaultModel ? { ...model, isDefault: true } : model))
+      : undefined;
+  });
+
 function supportsClaudeOpus5(version: string | null | undefined): boolean {
   return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_5_VERSION) >= 0 : false;
 }
@@ -384,6 +542,7 @@ function formatClaudeOpus47UpgradeMessage(version: string | null): string {
 export function getClaudeModelCapabilities(model: string | null | undefined): ModelCapabilities {
   const slug = model?.trim();
   return (
+    (slug ? CLAUDED_MODEL_CAPABILITIES.get(slug) : undefined) ??
     BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
     DEFAULT_CLAUDE_MODEL_CAPABILITIES
   );
@@ -419,8 +578,37 @@ export function normalizeClaudeCliEffort(
   if (!effort || effort === "ultrathink") {
     return undefined;
   }
+  const dynamicEfforts = (
+    model ? CLAUDED_MODEL_CAPABILITIES.get(model) : undefined
+  )?.optionDescriptors?.find(
+    (descriptor) => descriptor.id === "effort" && descriptor.type === "select",
+  );
   if (effort === "ultracode") {
-    return "xhigh";
+    return dynamicEfforts?.type === "select" ? highestClaudeHarnessEffort(dynamicEfforts) : "xhigh";
+  }
+  if (
+    dynamicEfforts?.type === "select" &&
+    dynamicEfforts.options.some((option) => option.id === effort)
+  ) {
+    return effort;
+  }
+  if (dynamicEfforts?.type === "select") {
+    const requestedRank = CLAUDED_EFFORT_RANK.get(effort);
+    const available = dynamicEfforts.options
+      .map((option) => option.id)
+      .filter((value) => value !== "ultracode");
+    if (available.length > 0) {
+      const sorted = available.toSorted(
+        (left, right) =>
+          (CLAUDED_EFFORT_RANK.get(right) ?? -1) - (CLAUDED_EFFORT_RANK.get(left) ?? -1),
+      );
+      return (
+        sorted.find(
+          (value) =>
+            requestedRank !== undefined && (CLAUDED_EFFORT_RANK.get(value) ?? -1) <= requestedRank,
+        ) ?? sorted.at(-1)
+      );
+    }
   }
   if (
     effort === "xhigh" &&
@@ -811,6 +999,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
+  harnessModelCatalog?: ReadonlyArray<ServerProviderModel>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -818,8 +1007,14 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  const configuredModels =
+    harnessModelCatalog ??
+    (yield* readClaudeHarnessModelCatalog(claudeSettings).pipe(
+      Effect.orElseSucceed(() => undefined),
+    )) ??
+    BUILT_IN_MODELS;
   const allModels = providerModelsFromSettings(
-    BUILT_IN_MODELS,
+    configuredModels,
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
@@ -909,19 +1104,25 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   const models = providerModelsFromSettings(
-    getBuiltInClaudeModelsForVersion(parsedVersion),
+    harnessModelCatalog ??
+      (yield* readClaudeHarnessModelCatalog(claudeSettings).pipe(
+        Effect.orElseSucceed(() => undefined),
+      )) ??
+      getBuiltInClaudeModelsForVersion(parsedVersion),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
-  const versionUpgradeMessage = supportsClaudeOpus5(parsedVersion)
+  const versionUpgradeMessage = harnessModelCatalog
     ? undefined
-    : supportsClaudeFable5(parsedVersion)
-      ? formatClaudeOpus5UpgradeMessage(parsedVersion)
-      : supportsClaudeOpus48(parsedVersion)
-        ? formatClaudeFable5UpgradeMessage(parsedVersion)
-        : supportsClaudeOpus47(parsedVersion)
-          ? formatClaudeOpus48UpgradeMessage(parsedVersion)
-          : formatClaudeOpus47UpgradeMessage(parsedVersion);
+    : supportsClaudeOpus5(parsedVersion)
+      ? undefined
+      : supportsClaudeFable5(parsedVersion)
+        ? formatClaudeOpus5UpgradeMessage(parsedVersion)
+        : supportsClaudeOpus48(parsedVersion)
+          ? formatClaudeFable5UpgradeMessage(parsedVersion)
+          : supportsClaudeOpus47(parsedVersion)
+            ? formatClaudeOpus48UpgradeMessage(parsedVersion)
+            : formatClaudeOpus47UpgradeMessage(parsedVersion);
 
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
@@ -984,11 +1185,12 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 export const makePendingClaudeProvider = (
   claudeSettings: ClaudeSettings,
+  harnessModelCatalog?: ReadonlyArray<ServerProviderModel>,
 ): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
     const models = providerModelsFromSettings(
-      BUILT_IN_MODELS,
+      harnessModelCatalog ?? BUILT_IN_MODELS,
       claudeSettings.customModels,
       DEFAULT_CLAUDE_MODEL_CAPABILITIES,
     );

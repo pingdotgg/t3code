@@ -132,6 +132,39 @@ export const ProviderInstanceConfig = Schema.Struct({
 export type ProviderInstanceConfig = typeof ProviderInstanceConfig.Type;
 
 /**
+ * First-party alternate CLI instances that ship with the local harness plane.
+ *
+ * These are intentionally instances of the existing Claude/Codex drivers,
+ * rather than new driver kinds. That keeps the native model picker, traits
+ * (reasoning/effort), commands, skills, MCP, approvals, and continuation
+ * behaviour identical to Claude Code and Codex while the wrapper binaries
+ * provide their independent model/provider catalogs.
+ */
+export const BUILT_IN_HARNESS_PROVIDER_INSTANCES: Readonly<Record<string, ProviderInstanceConfig>> =
+  {
+    clauded: {
+      driver: ProviderDriverKind.make("claudeAgent"),
+      displayName: "Clauded",
+      config: {
+        binaryPath: "clauded",
+        homePath: "~/.clauded",
+      },
+    },
+    dodex: {
+      driver: ProviderDriverKind.make("codex"),
+      displayName: "Dodex",
+      config: {
+        binaryPath: "dodex",
+        homePath: "~/.dodex",
+      },
+    },
+  };
+
+/** Alias ids are stable routing keys, so saved threads continue to resolve. */
+export const isBuiltInHarnessProviderInstance = (instanceId: string): boolean =>
+  Object.hasOwn(BUILT_IN_HARNESS_PROVIDER_INSTANCES, instanceId);
+
+/**
  * Map shape for `ServerSettings.providerInstances`. Keyed by
  * `ProviderInstanceId`, values are envelopes the registry feeds to drivers.
  */

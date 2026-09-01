@@ -6,7 +6,9 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  BUILT_IN_HARNESS_PROVIDER_INSTANCES,
   defaultInstanceIdForDriver,
+  isBuiltInHarnessProviderInstance,
   type EnvironmentId,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
@@ -577,6 +579,7 @@ export function EnvironmentProviderSettings({
     readonly instance: ProviderInstanceConfig;
     readonly driver: ProviderDriverKind;
     readonly isDefault: boolean;
+    readonly isHarnessAlias?: boolean;
     readonly isDirty?: boolean;
   }
 
@@ -589,6 +592,19 @@ export function EnvironmentProviderSettings({
     const list = instancesByDriver.get(driver) ?? [];
     list.push([rawId as ProviderInstanceId, instance]);
     instancesByDriver.set(driver, list);
+  }
+
+  // The server hydrates these aliases from the built-in catalog, so an older
+  // settings file can still render them before the first edit persists an
+  // explicit `providerInstances` entry. Only add them when the connected
+  // server advertises the corresponding snapshot (remote servers may predate
+  // this feature).
+  for (const [rawId, instance] of Object.entries(BUILT_IN_HARNESS_PROVIDER_INSTANCES)) {
+    if (settings.providerInstances?.[rawId as ProviderInstanceId] !== undefined) continue;
+    if (!serverProviders.some((provider) => provider.instanceId === rawId)) continue;
+    const list = instancesByDriver.get(instance.driver) ?? [];
+    list.push([rawId as ProviderInstanceId, instance]);
+    instancesByDriver.set(instance.driver, list);
   }
 
   const defaultSlotIdsBySource = new Set<string>(
@@ -649,7 +665,13 @@ export function EnvironmentProviderSettings({
     }
     for (const [id, instance] of instancesByDriver.get(providerSettings.provider) ?? []) {
       if (id === defaultInstanceId) continue;
-      rows.push({ instanceId: id, instance, driver: instance.driver, isDefault: false });
+      rows.push({
+        instanceId: id,
+        instance,
+        driver: instance.driver,
+        isDefault: false,
+        isHarnessAlias: isBuiltInHarnessProviderInstance(String(id)),
+      });
     }
   }
   for (const [driver, list] of instancesByDriver) {
@@ -660,6 +682,7 @@ export function EnvironmentProviderSettings({
         instance,
         driver: instance.driver,
         isDefault: defaultSlotIdsBySource.has(String(id)),
+        isHarnessAlias: isBuiltInHarnessProviderInstance(String(id)),
       });
     }
   }
@@ -813,7 +836,7 @@ export function EnvironmentProviderSettings({
           );
         }}
         onDelete={
-          mode === "editor" && !row.isDefault
+          mode === "editor" && !row.isDefault && !row.isHarnessAlias
             ? () => deleteProviderInstance(row.instanceId)
             : undefined
         }

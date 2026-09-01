@@ -80,6 +80,12 @@ export class ServerConfig extends Context.Service<
     readonly devAllowedOrigins: ReadonlyArray<string>;
     readonly noBrowser: boolean;
     readonly startupPresentation: StartupPresentation;
+    /**
+     * Load the first-party Clauded/Dodex alternate CLI instances. Production
+     * configs default this on; test configs turn it off to keep provider
+     * fixtures hermetic.
+     */
+    readonly enableHarnessProviderAliases?: boolean | undefined;
     readonly desktopBootstrapToken: string | undefined;
     readonly desktopTelemetryFd?: number | undefined;
     readonly desktopTelemetryControlFd?: number | undefined;
@@ -211,6 +217,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     devAllowedOrigins: [],
     noBrowser: false,
     startupPresentation: "browser",
+    enableHarnessProviderAliases: false,
   });
 });
 

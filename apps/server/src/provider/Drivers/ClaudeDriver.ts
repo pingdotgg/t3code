@@ -32,6 +32,7 @@ import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
 import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
+  readClaudeHarnessModelCatalog,
   probeClaudeCapabilities,
 } from "../Layers/ClaudeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
@@ -60,6 +61,11 @@ const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
+
+function isClaudeHarnessBinary(binaryPath: string): boolean {
+  const normalized = normalizeCommandPath(binaryPath);
+  return normalized === "clauded" || normalized.endsWith("/clauded");
+}
 
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
@@ -134,6 +140,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         instanceId,
       });
       const effectiveConfig = { ...config, enabled } satisfies ClaudeSettings;
+      // Clauded writes a replacement model picker in its isolated config.
+      // Load it once per instance so T3 can expose one model row with the
+      // model's effort levels as traits (never one row per effort alias).
+      const harnessModelCatalog = yield* readClaudeHarnessModelCatalog(effectiveConfig).pipe(
+        Effect.orElseSucceed(() => undefined),
+      );
+      // The harness launcher refreshes its OpenCode catalog before every
+      // invocation. T3's periodic health probe must stay lightweight, so use
+      // the native Claude executable against the already-synced isolated
+      // CLAUDE_CONFIG_DIR for probes while keeping the harness binary for all
+      // real sessions and text generation.
+      const healthConfig = isClaudeHarnessBinary(effectiveConfig.binaryPath)
+        ? { ...effectiveConfig, binaryPath: "claude" }
+        : effectiveConfig;
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -160,23 +180,29 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         capacity: 1,
         timeToLive: CAPABILITIES_PROBE_TTL,
         lookup: () =>
-          probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
+          probeClaudeCapabilities(healthConfig, processEnv, cwd).pipe(
             Effect.provideService(Path.Path, path),
           ),
       });
-      const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
+      const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(healthConfig, cwd);
 
       // Kick the TTL-gated manifest refresh in the background and classify
       // with the in-memory manifest, so a slow or hung fetch never delays the
       // provider check. A refresh that lands mid-probe applies on the next one.
       const checkProvider = modelManifest.refreshInBackground.pipe(
         Effect.andThen(
+          readClaudeHarnessModelCatalog(effectiveConfig).pipe(
+            Effect.orElseSucceed(() => harnessModelCatalog),
+          ),
+        ),
+        Effect.flatMap((latestHarnessModelCatalog) =>
           Effect.zipWith(
             checkClaudeProviderStatus(
-              effectiveConfig,
+              healthConfig,
               () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
               processEnv,
               cwd,
+              latestHarnessModelCatalog,
             ),
             modelManifest.current,
             (draft, manifest) =>
@@ -197,7 +223,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
           Effect.zipWith(
-            makePendingClaudeProvider(settings.provider),
+            makePendingClaudeProvider(settings.provider, harnessModelCatalog),
             modelManifest.current,
             (draft, manifest) =>
               stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),

@@ -9,10 +9,68 @@ import * as Schema from "effect/Schema";
 import {
   buildClaudeCapabilitiesProbeQueryOptions,
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
+  normalizeClaudeCliEffort,
+  parseClaudeHarnessModelPicker,
   probeClaudeCapabilities,
 } from "./ClaudeProvider.ts";
 
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+
+it("collapses Clauded effort aliases into one T3 model row", () => {
+  const models = parseClaudeHarnessModelPicker({
+    options: [
+      {
+        model: "claude-opus-4-7-oc-zen--muse-free",
+        label: "OpenCode Zen · Muse Free",
+        description: "Effort: minimal, low, medium, high, xhigh",
+      },
+      {
+        model: "claude-opus-4-7-oc-zen--muse-free--effort-minimal",
+        label: "OpenCode Zen · Muse Free · Minimal",
+        description: "Pinned to OpenCode's minimal effort",
+      },
+      {
+        model: "claude-sonnet-4-6-oc-zen--ling-free",
+        label: "OpenCode Zen · Ling Free",
+        description: "Effort: low, medium, high",
+      },
+      {
+        model: "claude-haiku-4-5-cc-commandcode--laguna-free",
+        label: "Command Code · Laguna Free",
+        description: "No reasoning-effort variants",
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    models.map((model) => model.slug),
+    [
+      "claude-opus-4-7-oc-zen--muse-free",
+      "claude-sonnet-4-6-oc-zen--ling-free",
+      "claude-haiku-4-5-cc-commandcode--laguna-free",
+    ],
+  );
+  const muse = models[0];
+  assert.ok(muse);
+  assert.ok(muse.capabilities);
+  const museEffort = muse.capabilities.optionDescriptors?.[0];
+  assert.equal(museEffort?.type, "select");
+  if (museEffort?.type === "select") {
+    assert.deepEqual(
+      museEffort.options.map((option) => option.id),
+      ["minimal", "low", "medium", "high", "xhigh", "ultracode"],
+    );
+  }
+  const ling = models[1];
+  assert.ok(ling);
+  const commandCode = models[2];
+  assert.ok(commandCode);
+  assert.ok(commandCode.capabilities);
+  assert.equal(normalizeClaudeCliEffort("ultracode", muse.slug), "xhigh");
+  assert.equal(normalizeClaudeCliEffort("ultracode", ling.slug), "high");
+  assert.equal(normalizeClaudeCliEffort("xhigh", ling.slug), "high");
+  assert.equal(commandCode.capabilities.optionDescriptors?.length, 0);
+});
 
 it("isolates Claude capability probes without dropping workspace setting sources", () => {
   const abortController = new AbortController();
