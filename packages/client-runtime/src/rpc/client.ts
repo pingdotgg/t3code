@@ -177,7 +177,12 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
 
 export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
   tag: TTag,
-  makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
+  // Input construction may fail with the method's own error domain: those
+  // Fail reasons join the stream's resilience envelope instead of killing
+  // the subscription fiber.
+  makeInput: (
+    session: RpcSession,
+  ) => Effect.Effect<EnvironmentRpcInput<TTag>, EnvironmentRpcStreamFailure<TTag>>,
   options?: SubscriptionOptions<TTag>,
 ): Stream.Stream<
   EnvironmentRpcStreamValue<TTag>,
@@ -222,50 +227,49 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
                         method: tag,
                         input,
                       });
-                      return method(input).pipe(
-                        Stream.ensuring(completeObservation),
-                        Stream.catchCause((cause) => {
-                          const hasOnlyExpectedFailures =
-                            cause.reasons.length > 0 &&
-                            cause.reasons.every((reason) => reason._tag === "Fail");
-                          const isTransportFailure =
-                            hasOnlyExpectedFailures &&
-                            cause.reasons.every(
-                              (reason) => reason._tag === "Fail" && isRpcClientError(reason.error),
-                            );
-                          if (isTransportFailure) {
-                            return Stream.fromEffect(
-                              Effect.logWarning(
-                                "Durable RPC subscription lost its transport; waiting for the next session.",
-                                {
-                                  cause: Cause.pretty(cause),
-                                  method: tag,
-                                  environmentId: supervisor.target.environmentId,
-                                },
-                              ),
-                            ).pipe(Stream.drain);
-                          }
-                          if (hasOnlyExpectedFailures && options?.onExpectedFailure !== undefined) {
-                            const handled = Stream.fromEffect(
-                              options.onExpectedFailure(cause),
-                            ).pipe(Stream.drain);
-                            if (options.retryExpectedFailureAfter === undefined) {
-                              return handled;
-                            }
-                            return handled.pipe(
-                              Stream.concat(
-                                Stream.fromEffect(
-                                  Effect.sleep(options.retryExpectedFailureAfter),
-                                ).pipe(Stream.drain),
-                              ),
-                              Stream.concat(subscribeToSession()),
-                            );
-                          }
-                          return Stream.failCause(cause);
-                        }),
-                      );
+                      return method(input).pipe(Stream.ensuring(completeObservation));
                     }),
                   ),
+                ).pipe(
+                  Stream.catchCause((cause) => {
+                    const hasOnlyExpectedFailures =
+                      cause.reasons.length > 0 &&
+                      cause.reasons.every((reason) => reason._tag === "Fail");
+                    const isTransportFailure =
+                      hasOnlyExpectedFailures &&
+                      cause.reasons.every(
+                        (reason) => reason._tag === "Fail" && isRpcClientError(reason.error),
+                      );
+                    if (isTransportFailure) {
+                      return Stream.fromEffect(
+                        Effect.logWarning(
+                          "Durable RPC subscription lost its transport; waiting for the next session.",
+                          {
+                            cause: Cause.pretty(cause),
+                            method: tag,
+                            environmentId: supervisor.target.environmentId,
+                          },
+                        ),
+                      ).pipe(Stream.drain);
+                    }
+                    if (hasOnlyExpectedFailures && options?.onExpectedFailure !== undefined) {
+                      const handled = Stream.fromEffect(options.onExpectedFailure(cause)).pipe(
+                        Stream.drain,
+                      );
+                      if (options.retryExpectedFailureAfter === undefined) {
+                        return handled;
+                      }
+                      return handled.pipe(
+                        Stream.concat(
+                          Stream.fromEffect(Effect.sleep(options.retryExpectedFailureAfter)).pipe(
+                            Stream.drain,
+                          ),
+                        ),
+                        Stream.concat(subscribeToSession()),
+                      );
+                    }
+                    return Stream.failCause(cause);
+                  }),
                 );
               return subscribeToSession();
             },

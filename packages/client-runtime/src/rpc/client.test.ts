@@ -1,5 +1,7 @@
 import {
+  EnvironmentAuthorizationError,
   EnvironmentId,
+  AuthTerminalOperateScope,
   type RelayClientInstallProgressEvent,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -25,7 +27,13 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { EnvironmentRpcRequestObserver, request, runStream, subscribe } from "./client.ts";
+import {
+  EnvironmentRpcRequestObserver,
+  request,
+  runStream,
+  subscribe,
+  subscribeDynamic,
+} from "./client.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -352,6 +360,66 @@ describe("environment RPC", () => {
 
       expect(yield* Ref.get(subscriptionCount)).toBe(2);
       expect(yield* Ref.get(expectedFailureCount)).toBe(1);
+    }),
+  );
+
+  it.effect("keeps retrying and recovers when input construction fails", () =>
+    Effect.gen(function* () {
+      const inputFailure = new EnvironmentAuthorizationError({
+        message: "http snapshot load failed",
+        requiredScope: AuthTerminalOperateScope,
+      });
+      let failInput = true;
+      const observedFailures: unknown[] = [];
+      const subscriptionCount = yield* Ref.make(0);
+      const client = {
+        [WS_METHODS.subscribeTerminalEvents]: () =>
+          Stream.unwrap(
+            Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
+              Effect.map(() => Stream.never),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const subscriptionFiber = yield* subscribeDynamic(
+        WS_METHODS.subscribeTerminalEvents,
+        () => Effect.suspend(() => (failInput ? Effect.fail(inputFailure) : Effect.succeed({}))),
+        {
+          onExpectedFailure: (cause) =>
+            Effect.sync(() => {
+              observedFailures.push(Cause.squash(cause));
+            }),
+          retryExpectedFailureAfter: "100 millis",
+        },
+      ).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      for (let attempt = 0; attempt < 100 && observedFailures.length < 1; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+
+      // The failure surfaced and the RPC was never issued.
+      expect(observedFailures).toEqual([inputFailure]);
+      expect(yield* Ref.get(subscriptionCount)).toBe(0);
+
+      // The next attempt constructs input successfully and subscribes: the
+      // fiber survived the input failure.
+      failInput = false;
+      yield* TestClock.adjust("100 millis");
+      for (
+        let attempt = 0;
+        attempt < 100 && (yield* Ref.get(subscriptionCount)) < 1;
+        attempt += 1
+      ) {
+        yield* Effect.yieldNow;
+      }
+      yield* Fiber.interrupt(subscriptionFiber);
+
+      expect(yield* Ref.get(subscriptionCount)).toBe(1);
     }),
   );
 
