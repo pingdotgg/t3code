@@ -1446,7 +1446,7 @@ export default function GitActionsControl({
       const toastCta = actionResult.toast.cta;
       let toastActionProps: {
         children: string;
-        onClick: (event?: MouseEvent<HTMLButtonElement>) => void;
+        onClick: (event: MouseEvent<HTMLButtonElement>) => void;
       } | null = null;
       if (toastCta.kind === "run_action") {
         toastActionProps = {
@@ -1480,6 +1480,7 @@ export default function GitActionsControl({
                   type: "error",
                   title: "Unable to open pull request link",
                   description: err instanceof Error ? err.message : "An error occurred.",
+                  ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
                 }),
               );
             });
