@@ -2482,8 +2482,8 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         : "text-foreground/80";
   const showEntryIcon = !isExpandedToolGroupEntry || showWarningIndicator || showFailedIndicator;
   const accessibleDisplayText = showFailedIndicator
-    ? `${displayText}, tool call failed`
-    : displayText;
+    ? `${previewText}, tool call failed`
+    : previewText;
   const rowToggleProps = canExpand
     ? {
         role: "button" as const,

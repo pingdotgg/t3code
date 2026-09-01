@@ -298,6 +298,68 @@ describe("buildThreadFeed", () => {
     expect(row?.getCopyText()).toBe(`Command run\n${command}\n\n${command}`);
   });
 
+  it("keeps OpenCode detail-only output when it equals the command", () => {
+    const command = "printf hello";
+    const thread = makeThread({
+      id: ThreadId.make("thread-opencode-detail-output"),
+      projectId: ProjectId.make("project-1"),
+      title: "OpenCode detail output",
+      activities: [
+        makeActivity({
+          id: EventId.make("opencode-detail-output"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "bash",
+          createdAt: "2026-09-01T00:00:00.000Z",
+          payload: {
+            itemType: "command_execution",
+            title: "bash",
+            detail: command,
+            data: { command },
+          },
+        }),
+      ],
+    });
+
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    const [row] = group.activities;
+    expect(row?.workEntry.detail).toBe(command);
+    expect(row?.getFullDetail()).toBe(`${command}\n\n${command}`);
+  });
+
+  it("drops ACP command metadata when detail only repeats the command", () => {
+    const command = "printf hello";
+    const thread = makeThread({
+      id: ThreadId.make("thread-acp-command-detail"),
+      projectId: ProjectId.make("project-1"),
+      title: "ACP command detail",
+      activities: [
+        makeActivity({
+          id: EventId.make("acp-command-detail"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Terminal",
+          createdAt: "2026-09-01T00:00:00.000Z",
+          payload: {
+            itemType: "command_execution",
+            title: "Terminal",
+            detail: command,
+            data: { kind: "execute", command },
+          },
+        }),
+      ],
+    });
+
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    const [row] = group.activities;
+    expect(row?.workEntry.detail).toBeUndefined();
+    expect(row?.getFullDetail()).toBe(command);
+  });
+
   it("does not show command output when the command input is missing", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-command-without-input"),

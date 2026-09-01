@@ -449,15 +449,13 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     const data = asRecord(payload.data);
     const repeatsCommand =
       detail !== null &&
-      ([commandPreview.command, commandPreview.rawCommand].some(
-        (command) => command?.trim() === detail.trim(),
-      ) ||
-        commandDetailRepeatsCommand({
-          detail,
-          command: commandPreview.command,
-          rawCommand: commandPreview.rawCommand,
-          toolName: data?.toolName,
-        }));
+      commandDetailRepeatsCommand({
+        detail,
+        command: commandPreview.command,
+        rawCommand: commandPreview.rawCommand,
+        toolName: data?.toolName,
+        data,
+      });
     if (detail && !repeatsCommand) entry.detail = detail;
   }
   if (commandPreview.command) {

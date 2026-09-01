@@ -85,6 +85,22 @@ describe("deriveWorkLogEntries command output", () => {
     });
   });
 
+  it("keeps OpenCode detail-only output when it equals the command", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeCommandActivity("opencode-detail-output", {
+        itemType: "command_execution",
+        title: "bash",
+        detail: "printf hello",
+        data: { command: "printf hello" },
+      }),
+    ]);
+
+    expect(entry).toMatchObject({
+      command: "printf hello",
+      detail: "printf hello",
+    });
+  });
+
   it("drops a Claude tool-name detail when there is no output", () => {
     const [entry] = deriveWorkLogEntries([
       makeCommandActivity("claude-no-output", {

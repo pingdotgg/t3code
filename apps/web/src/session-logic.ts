@@ -1541,8 +1541,6 @@ function extractToolDetail(
     ? extractToolCommand(payload)
     : { command: null, rawCommand: null };
   const command = commandPreview.command;
-  const normalizedCommand = normalizePreviewForComparison(command);
-  const normalizedRawCommand = normalizePreviewForComparison(commandPreview.rawCommand);
 
   if (commandTool && command) {
     const output = extractToolOutput(payload);
@@ -1557,16 +1555,10 @@ function extractToolDetail(
       command,
       rawCommand: commandPreview.rawCommand,
       toolName: data?.toolName,
+      data,
     });
 
-  if (
-    detail &&
-    normalizedHeading !== normalizedDetail &&
-    (!commandTool ||
-      (normalizedCommand !== normalizedDetail &&
-        normalizedRawCommand !== normalizedDetail &&
-        !repeatsCommand))
-  ) {
+  if (detail && normalizedHeading !== normalizedDetail && (!commandTool || !repeatsCommand)) {
     return detail;
   }
 

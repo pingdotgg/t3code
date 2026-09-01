@@ -33,6 +33,7 @@ describe("command work-log details", () => {
         command: "printf hello",
         rawCommand: null,
         toolName: "Bash",
+        data: { toolName: "Bash", command: "printf hello" },
       }),
     ).toBe(true);
     expect(
@@ -41,6 +42,7 @@ describe("command work-log details", () => {
         command: "printf hello",
         rawCommand: null,
         toolName: "Bash",
+        data: { toolName: "Bash", command: "printf hello" },
       }),
     ).toBe(false);
   });

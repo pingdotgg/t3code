@@ -122,15 +122,40 @@ export function commandDetailRepeatsCommand(input: {
   readonly command: string | null;
   readonly rawCommand: string | null;
   readonly toolName: unknown;
+  readonly data: unknown;
 }): boolean {
   const toolName = nonEmptyString(input.toolName)?.trim();
-  if (!toolName) return false;
-
-  const prefix = `${toolName}:`;
   const detail = input.detail.trim();
-  if (!detail.toLowerCase().startsWith(prefix.toLowerCase())) return false;
-  const unprefixed = detail.slice(prefix.length).trim();
-  return [input.command, input.rawCommand].some((command) => command?.trim() === unprefixed);
+  const commands = [input.command, input.rawCommand];
+  if (toolName) {
+    const prefix = `${toolName}:`;
+    if (detail.toLowerCase().startsWith(prefix.toLowerCase())) {
+      const unprefixed = detail.slice(prefix.length).trim();
+      if (commands.some((command) => command?.trim() === unprefixed)) return true;
+    }
+  }
+
+  if (!commands.some((command) => command?.trim() === detail)) return false;
+
+  const data = asRecord(input.data);
+  const item = asRecord(data?.item);
+  const itemInput = asRecord(item?.input);
+  const itemResult = asRecord(item?.result);
+  const hasStructuredCommand = [
+    item?.command,
+    itemInput?.command,
+    itemResult?.command,
+    data?.command,
+  ].some((value) =>
+    Array.isArray(value)
+      ? value.some((part) => nonEmptyString(part) !== null)
+      : nonEmptyString(value) !== null,
+  );
+  return (
+    !hasStructuredCommand ||
+    item !== null ||
+    nonEmptyString(data?.kind)?.toLowerCase() === "execute"
+  );
 }
 
 function workLogEntryIsToolLike(entry: WorkLogPresentationEntry): boolean {
