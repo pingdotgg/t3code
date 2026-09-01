@@ -3,13 +3,17 @@ import type {
   DesktopTelemetryRequestDesktopUpdate,
   DesktopUpdateStatusReport,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopRemoteUpdates from "./DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
@@ -36,7 +40,7 @@ function runRemoteUpdatesTest(
   body: (context: {
     readonly reports: DesktopUpdateStatusReport[];
     readonly requests: Queue.Queue<DesktopTelemetryRequestDesktopUpdate>;
-  }) => Effect.Effect<void, never, DesktopUpdates.DesktopUpdates>,
+  }) => Effect.Effect<void, never, DesktopUpdates.DesktopUpdates | DesktopState.DesktopState>,
 ) {
   return Effect.scoped(
     Effect.gen(function* () {
@@ -176,6 +180,67 @@ describe("DesktopRemoteUpdates", () => {
           ["installing"],
         );
         assert.equal(harness.quitAndInstalls(), 2);
+      }),
+    );
+  });
+
+  it.effect("retries a download refused while the check still holds the reservation", () => {
+    // electron-updater emits update-available from inside checkForUpdates,
+    // before the check action releases its reservation. The download the
+    // remote flow forks in response is refused and must be retried once the
+    // reservation frees up, without burning a download attempt.
+    const releaseCheck = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({ checkForUpdates: Deferred.await(releaseCheck) });
+
+    return runRemoteUpdatesTest(harness, ({ reports, requests }) =>
+      Effect.gen(function* () {
+        yield* Queue.offer(requests, request("req-8"));
+        yield* settle;
+        assert.equal(harness.checkCount(), 1);
+
+        // Fire "available" while the check reservation is still held.
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* settle;
+        assert.equal(harness.downloadCount(), 0);
+
+        yield* Deferred.succeed(releaseCheck, undefined);
+        yield* settle;
+        yield* TestClock.adjust(Duration.millis(300));
+        yield* settle;
+        assert.equal(harness.downloadCount(), 1);
+
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* settle;
+        assert.deepEqual(
+          terminalReports(reports).map((report) => report.outcome),
+          ["installing"],
+        );
+        assert.equal(harness.quitAndInstalls(), 1);
+      }),
+    );
+  });
+
+  it.effect("joins an install that is already tearing the app down", () => {
+    const harness = makeHarness();
+
+    return runRemoteUpdatesTest(harness, ({ reports, requests }) =>
+      Effect.gen(function* () {
+        const desktopState = yield* DesktopState.DesktopState;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* settle;
+        // Another install already owns the shutdown.
+        yield* Ref.set(desktopState.quitting, true);
+
+        yield* Queue.offer(requests, request("req-9"));
+        yield* settle;
+
+        // Report "installing" once, no "failed" after the refusal: that
+        // install will relaunch the app and this request rides along.
+        assert.deepEqual(
+          terminalReports(reports).map((report) => report.outcome),
+          ["installing"],
+        );
+        assert.equal(harness.quitAndInstalls(), 0);
       }),
     );
   });
