@@ -1090,6 +1090,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         )
     }
 
+    static func dismantleUIView(_ collectionView: UICollectionView, coordinator: Coordinator) {
+        coordinator.disconnect(from: collectionView)
+    }
+
     private static func makeLayout() -> UICollectionViewLayout {
         UICollectionViewCompositionalLayout { _, environment in
             let width = environment.container.effectiveContentSize.width
@@ -1116,7 +1120,9 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, UICollectionViewDataSourcePrefetching, UICollectionViewDelegate {
+    final class Coordinator: NSObject, UICollectionViewDataSourcePrefetching,
+        UICollectionViewDelegate, UIGestureRecognizerDelegate
+    {
         private struct MarkdownPrefetch {
             let revision: MarkdownContentRevision
             let task: Task<Void, Never>
@@ -1138,20 +1144,40 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var markdownPrefetches: [String: MarkdownPrefetch] = [:]
         private var onLoadEarlier: (() -> Void)?
         private var onDismissKeyboard: (() -> Void)?
+        private let timestampReveal = FeatureTimestampRevealState()
+        private weak var collectionView: UICollectionView?
+        private var visibleTimestampAnchorYs: [String: CGFloat]?
+        private lazy var timestampPanGesture = UIPanGestureRecognizer(
+            target: self,
+            action: #selector(handleTimestampPan(_:))
+        )
 
         deinit {
             markdownPrefetches.values.forEach { $0.task.cancel() }
         }
 
         func connect(to collectionView: UICollectionView) {
+            self.collectionView = collectionView
+            timestampPanGesture.cancelsTouchesInView = false
+            timestampPanGesture.maximumNumberOfTouches = 1
+            timestampPanGesture.delegate = self
+            collectionView.addGestureRecognizer(timestampPanGesture)
+            collectionView.panGestureRecognizer.require(toFail: timestampPanGesture)
+
             let registration = UICollectionView.CellRegistration<UICollectionViewCell, String> {
                 [weak self] cell, _, messageID in
                 if messageID == FeatureTranscriptCollectionView.loadEarlierID {
+                    guard let reveal = self?.timestampReveal else {
+                        cell.contentConfiguration = nil
+                        return
+                    }
                     cell.contentConfiguration = UIHostingConfiguration {
-                        FeatureLoadEarlierTurnsButton(
-                            isLoading: self?.currentIsLoadingEarlier == true,
-                            onLoad: { self?.onLoadEarlier?() }
-                        )
+                        FeatureTimestampRevealViewportRow(reveal: reveal) {
+                            FeatureLoadEarlierTurnsButton(
+                                isLoading: self?.currentIsLoadingEarlier == true,
+                                onLoad: { [weak self] in self?.onLoadEarlier?() }
+                            )
+                        }
                     }
                     .margins(.all, 0)
                     cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
@@ -1159,25 +1185,35 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                     return
                 }
                 if messageID == FeatureTranscriptCollectionView.workingIndicatorID {
+                    guard let reveal = self?.timestampReveal else {
+                        cell.contentConfiguration = nil
+                        return
+                    }
                     cell.contentConfiguration = UIHostingConfiguration {
-                        FeatureThreadWorkingIndicator(
-                            activeSubagentCount: self?.currentActiveSubagentCount ?? 0,
-                            backgroundWorkIsActive: self?.currentBackgroundWorkIsActive == true,
-                            isMonitoring: self?.currentIsMonitoring == true
-                        )
+                        FeatureTimestampRevealViewportRow(reveal: reveal) {
+                            FeatureThreadWorkingIndicator(
+                                activeSubagentCount: self?.currentActiveSubagentCount ?? 0,
+                                backgroundWorkIsActive: self?.currentBackgroundWorkIsActive == true,
+                                isMonitoring: self?.currentIsMonitoring == true
+                            )
+                        }
                     }
                     .margins(.all, 0)
                     cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
                     cell.accessibilityIdentifier = "thread-working-indicator"
                     return
                 }
-                guard let message = self?.messagesByID[messageID] else {
+                guard let self, let message = messagesByID[messageID] else {
                     cell.contentConfiguration = nil
                     return
                 }
 
                 cell.contentConfiguration = UIHostingConfiguration {
-                    FeatureMessageView(message: message, imageContext: self?.currentImageContext)
+                    FeatureTimestampRevealMessageView(
+                        message: message,
+                        imageContext: self.currentImageContext,
+                        reveal: self.timestampReveal
+                    )
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .margins(.all, 0)
@@ -1196,6 +1232,89 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             }
             collectionView.prefetchDataSource = self
             collectionView.delegate = self
+        }
+
+        func disconnect(from collectionView: UICollectionView) {
+            timestampReveal.reset()
+            visibleTimestampAnchorYs = nil
+            (collectionView as? BottomAnchoredTranscriptCollectionView)?
+                .isTimestampRevealActive = false
+            timestampPanGesture.delegate = nil
+            collectionView.removeGestureRecognizer(timestampPanGesture)
+            collectionView.prefetchDataSource = nil
+            collectionView.delegate = nil
+            self.collectionView = nil
+        }
+
+        @objc private func handleTimestampPan(_ gesture: UIPanGestureRecognizer) {
+            switch gesture.state {
+            case .began:
+                guard let visibleTimestampAnchorYs else { return }
+                (collectionView as? BottomAnchoredTranscriptCollectionView)?
+                    .isTimestampRevealActive = true
+                timestampReveal.begin(anchorYsByMessageID: visibleTimestampAnchorYs)
+            case .changed:
+                timestampReveal.update(translationX: gesture.translation(in: gesture.view).x)
+            case .ended, .cancelled, .failed:
+                visibleTimestampAnchorYs = nil
+                timestampReveal.release(reduceMotion: UIAccessibility.isReduceMotionEnabled) {
+                    [weak self] in
+                    (self?.collectionView as? BottomAnchoredTranscriptCollectionView)?
+                        .isTimestampRevealActive = false
+                }
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer === timestampPanGesture,
+                  let collectionView = gestureRecognizer.view as? UICollectionView,
+                  let pan = gestureRecognizer as? UIPanGestureRecognizer else {
+                return true
+            }
+            visibleTimestampAnchorYs = nil
+            let velocity = pan.velocity(in: collectionView)
+            guard TranscriptTimestampRevealGeometry.shouldBegin(
+                velocityX: velocity.x,
+                velocityY: velocity.y
+            ) else { return false }
+
+            let location = pan.location(in: collectionView)
+            guard !TranscriptTimestampGestureOwnership.descendantOwnsHorizontalInteraction(
+                from: collectionView.hitTest(location, with: nil),
+                host: collectionView
+            ),
+                  let indexPath = collectionView.indexPathForItem(at: location),
+                  let messageID = dataSource?.itemIdentifier(for: indexPath),
+                  let message = messagesByID[messageID],
+                  FeatureMessageTimestampMetadata.isEligible(message) else {
+                return false
+            }
+            let anchorYs = visibleTimestampAnchors(in: collectionView)
+            guard !anchorYs.isEmpty else { return false }
+            visibleTimestampAnchorYs = anchorYs
+            return true
+        }
+
+        private func visibleTimestampAnchors(
+            in collectionView: UICollectionView
+        ) -> [String: CGFloat] {
+            var anchors: [String: CGFloat] = [:]
+            for indexPath in collectionView.indexPathsForVisibleItems {
+                guard let messageID = dataSource?.itemIdentifier(for: indexPath),
+                      let message = messagesByID[messageID],
+                      let cell = collectionView.cellForItem(at: indexPath),
+                      FeatureMessageTimestampMetadata.isEligible(message),
+                      let anchorY = TranscriptTimestampRevealGeometry.visibleAnchorCenterY(
+                          rowFrame: cell.frame,
+                          viewportBounds: collectionView.bounds
+                      ) else {
+                    continue
+                }
+                anchors[messageID] = anchorY
+            }
+            return anchors
         }
 
         func update(
@@ -1219,6 +1338,12 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             self.onDismissKeyboard = onDismissKeyboard
 
             let threadChanged = currentThreadID != threadID
+            if threadChanged {
+                timestampReveal.reset()
+                visibleTimestampAnchorYs = nil
+                (collectionView as? BottomAnchoredTranscriptCollectionView)?
+                    .isTimestampRevealActive = false
+            }
             let imageContextChanged = currentImageContext != imageContext
             let typeSizeChanged = currentDynamicTypeSize != dynamicTypeSize
             let revisionChanged = currentDetailRevision != renderUpdate?.revision
@@ -1281,8 +1406,21 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 messagesByID = replacementMessagesByID
             }
             orderedIDs = newIDs
-            (collectionView as? BottomAnchoredTranscriptCollectionView)?.maintainsBottomAnchor =
-                isInitialLoad || wasNearBottom
+            timestampReveal.resetIfNoEligibleMessagesRemain(in: messagesByID)
+            if let anchoredCollectionView = collectionView
+                as? BottomAnchoredTranscriptCollectionView {
+                // A reset above can settle the reveal without the dismissal
+                // animation's completion, so mirror the model here rather than
+                // waiting for it.
+                anchoredCollectionView.isTimestampRevealActive = timestampReveal.isActive
+                anchoredCollectionView.maintainsBottomAnchor =
+                    TranscriptViewportGeometry.shouldMaintainBottomAnchor(
+                        isInitialLoad: isInitialLoad,
+                        wasNearBottom: wasNearBottom,
+                        isTimestampRevealActive: timestampReveal.isActive,
+                        wasMaintainingBottomAnchor: anchoredCollectionView.maintainsBottomAnchor
+                    )
+            }
 
             var snapshot: NSDiffableDataSourceSnapshot<Section, String>
             if threadChanged || loadEarlierChanged {
@@ -1341,6 +1479,29 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 [weak self, weak collectionView] in
                 guard let self, let collectionView else { return }
                 DispatchQueue.main.async {
+                    if self.timestampReveal.isActive {
+                        if let prependAnchor {
+                            self.restore(
+                                prependAnchor,
+                                in: collectionView,
+                                dataSource: dataSource
+                            )
+                        }
+                        collectionView.layoutIfNeeded()
+                        if shouldFollowBottom {
+                            self.scrollToBottom(
+                                collectionView,
+                                animated: false
+                            )
+                        }
+                        collectionView.layoutIfNeeded()
+                        self.timestampReveal.refresh(
+                            anchorYsByMessageID: self.visibleTimestampAnchors(
+                                in: collectionView
+                            )
+                        )
+                        return
+                    }
                     if shouldFollowBottom {
                         self.scrollToBottom(
                             collectionView,
@@ -1586,6 +1747,294 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     }
 }
 
+enum TranscriptTimestampRevealGeometry {
+    static let maximumWidth: CGFloat = 76
+    static let minimumAnchorInset: CGFloat = 18
+    private static let horizontalDominance: CGFloat = 1.25
+
+    static func shouldBegin(velocityX: CGFloat, velocityY: CGFloat) -> Bool {
+        velocityX < 0 && abs(velocityX) > abs(velocityY) * horizontalDominance
+    }
+
+    static func width(translationX: CGFloat) -> CGFloat {
+        min(maximumWidth, max(0, -translationX))
+    }
+
+    static func anchorCenterY(requestedY: CGFloat, rowHeight: CGFloat) -> CGFloat {
+        guard rowHeight > minimumAnchorInset * 2 else {
+            return max(0, rowHeight / 2)
+        }
+        return min(rowHeight - minimumAnchorInset, max(minimumAnchorInset, requestedY))
+    }
+
+    static func resolvedAnchorCenterY(
+        requestedY: CGFloat?,
+        rowHeight: CGFloat
+    ) -> CGFloat {
+        guard let requestedY else {
+            return anchorCenterY(requestedY: rowHeight / 2, rowHeight: rowHeight)
+        }
+        return min(max(0, rowHeight), max(0, requestedY))
+    }
+
+    static func visibleAnchorCenterY(
+        rowFrame: CGRect,
+        viewportBounds: CGRect
+    ) -> CGFloat? {
+        let visibleFrame = rowFrame.intersection(viewportBounds)
+        guard !visibleFrame.isEmpty else { return nil }
+        let visibleMinimumY = visibleFrame.minY - rowFrame.minY
+        let visibleMaximumY = visibleFrame.maxY - rowFrame.minY
+        guard visibleFrame.height > minimumAnchorInset * 2 else {
+            return (visibleMinimumY + visibleMaximumY) / 2
+        }
+        return min(
+            visibleMaximumY - minimumAnchorInset,
+            max(visibleMinimumY + minimumAnchorInset, visibleFrame.midY - rowFrame.minY)
+        )
+    }
+}
+
+enum TranscriptTimestampGestureOwnership {
+    @MainActor
+    static func descendantOwnsHorizontalInteraction(
+        from touchedView: UIView?,
+        host: UIView
+    ) -> Bool {
+        var candidate = touchedView
+        while let view = candidate, view !== host {
+            if let scrollView = view as? UIScrollView,
+               !(scrollView is UITextView),
+               (scrollView.alwaysBounceHorizontal
+                || scrollView.contentSize.width > scrollView.bounds.width + 1) {
+                return true
+            }
+            candidate = view.superview
+        }
+        return false
+    }
+}
+
+struct TranscriptTimestampRevealModel: Equatable {
+    private(set) var width: CGFloat = 0
+    private(set) var anchorYsByMessageID: [String: CGFloat] = [:]
+
+    var isActive: Bool {
+        !anchorYsByMessageID.isEmpty
+    }
+
+    mutating func begin(anchorYsByMessageID: [String: CGFloat]) {
+        guard !anchorYsByMessageID.isEmpty else { return }
+        self.anchorYsByMessageID = anchorYsByMessageID
+        width = 0
+    }
+
+    mutating func update(translationX: CGFloat) {
+        guard isActive else { return }
+        width = TranscriptTimestampRevealGeometry.width(translationX: translationX)
+    }
+
+    mutating func refresh(anchorYsByMessageID: [String: CGFloat]) {
+        guard isActive, !anchorYsByMessageID.isEmpty else { return }
+        self.anchorYsByMessageID = anchorYsByMessageID
+    }
+
+    /// Starts the slide back to rest while a reveal is still active, so every
+    /// timestamp holds its anchor while it fades out instead of drifting to
+    /// its row midpoint. `finish()` drops the anchors once the animation lands.
+    mutating func beginDismissal() {
+        width = 0
+    }
+
+    mutating func finish() {
+        width = 0
+        anchorYsByMessageID = [:]
+    }
+
+    func anchorY(for messageID: String) -> CGFloat? {
+        anchorYsByMessageID[messageID]
+    }
+
+    func hasAnchor(where predicate: (String) -> Bool) -> Bool {
+        anchorYsByMessageID.keys.contains(where: predicate)
+    }
+}
+
+enum FeatureMessageTimestampMetadata {
+    static func isEligible(_ message: FeatureMessage) -> Bool {
+        isEligible(
+            role: message.role,
+            state: message.state,
+            createdAt: message.createdAt
+        )
+    }
+
+    static func isEligible(
+        role: FeatureMessageRole,
+        state: FeatureMessageState,
+        createdAt: Date
+    ) -> Bool {
+        guard state == .complete, createdAt != .distantPast else { return false }
+        return role == .user || role == .assistant
+    }
+
+    static func accessibilityLabel(for role: FeatureMessageRole) -> String? {
+        switch role {
+        case .user: "Sent"
+        case .assistant: "Received"
+        case .tool, .system: nil
+        }
+    }
+
+    /// Empty while the message is still streaming or has no known send time, so
+    /// VoiceOver has nothing to announce for it.
+    static func accessibilityValue(for message: FeatureMessage) -> String {
+        guard isEligible(message) else { return "" }
+        return message.createdAt.formatted(date: .omitted, time: .shortened)
+    }
+}
+
+@MainActor
+final class FeatureTimestampRevealState: ObservableObject {
+    @Published private var model = TranscriptTimestampRevealModel()
+    // A release still animating must not settle the anchors of a newer gesture.
+    private var releaseGeneration = 0
+
+    var width: CGFloat {
+        model.width
+    }
+
+    var isActive: Bool {
+        model.isActive
+    }
+
+    func anchorY(for messageID: String) -> CGFloat? {
+        model.anchorY(for: messageID)
+    }
+
+    func begin(anchorYsByMessageID: [String: CGFloat]) {
+        releaseGeneration += 1
+        updateWithoutAnimation { $0.begin(anchorYsByMessageID: anchorYsByMessageID) }
+    }
+
+    func update(translationX: CGFloat) {
+        updateWithoutAnimation { $0.update(translationX: translationX) }
+    }
+
+    func refresh(anchorYsByMessageID: [String: CGFloat]) {
+        updateWithoutAnimation { $0.refresh(anchorYsByMessageID: anchorYsByMessageID) }
+    }
+
+    /// Animates the sheet back to rest. The anchors outlive the animation so
+    /// timestamps fade out in place, and the reveal stays active for layout,
+    /// until `onSettled` reports the slide-back has landed.
+    func release(reduceMotion: Bool, onSettled: @escaping () -> Void) {
+        guard model.isActive else {
+            onSettled()
+            return
+        }
+        var dismissing = model
+        dismissing.beginDismissal()
+        guard let animation: Animation = reduceMotion ? nil : .easeOut(duration: 0.2) else {
+            updateWithoutAnimation { $0.finish() }
+            onSettled()
+            return
+        }
+        releaseGeneration += 1
+        let generation = releaseGeneration
+        withAnimation(animation) {
+            model = dismissing
+        } completion: {
+            self.settle(generation: generation, onSettled: onSettled)
+        }
+    }
+
+    func reset() {
+        updateWithoutAnimation { $0.finish() }
+    }
+
+    func resetIfNoEligibleMessagesRemain(in messagesByID: [String: FeatureMessage]) {
+        guard model.isActive else { return }
+        let hasEligibleMessage = model.hasAnchor { messageID in
+            messagesByID[messageID].map(FeatureMessageTimestampMetadata.isEligible) == true
+        }
+        if !hasEligibleMessage { reset() }
+    }
+
+    private func settle(generation: Int, onSettled: () -> Void) {
+        guard generation == releaseGeneration else { return }
+        updateWithoutAnimation { $0.finish() }
+        onSettled()
+    }
+
+    private func updateWithoutAnimation(
+        _ update: (inout TranscriptTimestampRevealModel) -> Void
+    ) {
+        var next = model
+        update(&next)
+        guard next != model else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            model = next
+        }
+    }
+}
+
+struct FeatureTimestampRevealMessageView: View {
+    let message: FeatureMessage
+    let imageContext: MarkdownImageContext?
+    @ObservedObject var reveal: FeatureTimestampRevealState
+
+    var body: some View {
+        let revealWidth = reveal.width
+        // The message view stays at one fixed structural position. Branching it
+        // on eligibility would recreate it when a streamed message completes,
+        // dropping MarkdownMessageView's state and its streaming -> complete
+        // promote path, so only the timestamp overlay is conditional.
+        FeatureMessageView(message: message, imageContext: imageContext)
+            .overlay {
+                if FeatureMessageTimestampMetadata.isEligible(message) {
+                    let requestedAnchorY = reveal.anchorY(for: message.id)
+                    GeometryReader { geometry in
+                        Text(message.createdAt, format: .dateTime.hour().minute())
+                            .font(T3Typography.supporting.monospacedDigit())
+                            .foregroundStyle(T3Colors.textTertiary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .dynamicTypeSize(.small ... .accessibility1)
+                            .frame(
+                                width: TranscriptTimestampRevealGeometry.maximumWidth,
+                                alignment: .trailing
+                            )
+                            .position(
+                                x: geometry.size.width
+                                    + TranscriptTimestampRevealGeometry.maximumWidth / 2,
+                                y: TranscriptTimestampRevealGeometry.resolvedAnchorCenterY(
+                                    requestedY: requestedAnchorY,
+                                    rowHeight: geometry.size.height
+                                )
+                            )
+                            .opacity(revealWidth > 0 ? 1 : 0)
+                            .accessibilityHidden(true)
+                    }
+                    .allowsHitTesting(false)
+                }
+            }
+            .offset(x: -revealWidth)
+    }
+}
+
+private struct FeatureTimestampRevealViewportRow<Content: View>: View {
+    @ObservedObject var reveal: FeatureTimestampRevealState
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .offset(x: -reveal.width)
+    }
+}
+
 private struct FeatureLoadEarlierTurnsButton: View {
     let isLoading: Bool
     let onLoad: () -> Void
@@ -1665,6 +2114,16 @@ struct TranscriptViewportGeometry: Equatable {
 
     var bottomOffset: CGFloat {
         max(-topInset, contentHeight - viewportHeight + bottomInset)
+    }
+
+    static func shouldMaintainBottomAnchor(
+        isInitialLoad: Bool,
+        wasNearBottom: Bool,
+        isTimestampRevealActive: Bool,
+        wasMaintainingBottomAnchor: Bool
+    ) -> Bool {
+        isInitialLoad || wasNearBottom
+            || (isTimestampRevealActive && wasMaintainingBottomAnchor)
     }
 
     func restoredBottomOffset(
@@ -1930,6 +2389,7 @@ private struct ThreadBackSwipeGestureView: UIViewRepresentable {
 /// Preserve the visual bottom only while the reader is already following the latest turn.
 private final class BottomAnchoredTranscriptCollectionView: UICollectionView {
     var maintainsBottomAnchor = false
+    var isTimestampRevealActive = false
 
     private var lastLaidOutGeometry: TranscriptViewportGeometry?
     private var isRestoringBottomAnchor = false
@@ -1949,6 +2409,7 @@ private final class BottomAnchoredTranscriptCollectionView: UICollectionView {
             after: lastLaidOutGeometry,
             maintainsBottomAnchor: maintainsBottomAnchor,
             isInteracting: isDragging || isDecelerating || isRestoringBottomAnchor
+                || isTimestampRevealActive
         ) else {
             return
         }
@@ -2177,6 +2638,7 @@ struct FeatureMessageView: View {
             .accessibilityLabel("You")
             .accessibilityValue(accessibilityValue)
             .accessibilityIdentifier("message-\(message.id)")
+            .modifier(FeatureMessageTimestampAccessibilityModifier(message: message))
         case .assistant:
             VStack(alignment: .leading, spacing: 10) {
                 if message.state == .streaming {
@@ -2199,6 +2661,7 @@ struct FeatureMessageView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("message-\(message.id)")
+            .modifier(FeatureMessageTimestampAccessibilityModifier(message: message))
         case .tool:
             FeatureWorkLogView(message: message)
                 .id(message.id)
@@ -2263,6 +2726,29 @@ private struct FeatureWorkLogView: View {
         .transaction { transaction in
             transaction.animation = nil
             transaction.disablesAnimations = true
+        }
+    }
+}
+
+private struct FeatureMessageTimestampAccessibilityModifier: ViewModifier {
+    let message: FeatureMessage
+
+    // The branch depends only on the role, which never changes for a message.
+    // Branching on eligibility instead would move the content between the two
+    // conditional branches when a stream completes, rebuilding the message
+    // subtree and discarding the markdown state its streaming -> complete
+    // promote path relies on. Eligibility only decides whether there is a
+    // value worth announcing.
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let label = FeatureMessageTimestampMetadata.accessibilityLabel(for: message.role) {
+            content.accessibilityCustomContent(
+                Text(label),
+                Text(FeatureMessageTimestampMetadata.accessibilityValue(for: message)),
+                importance: .high
+            )
+        } else {
+            content
         }
     }
 }
