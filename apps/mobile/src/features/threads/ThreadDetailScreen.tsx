@@ -652,6 +652,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const handleSendMessage = useCallback(async () => {
     const draftGoalCommand =
       props.draftAttachments.length === 0 ? parseCodexGoalCommand(props.draftMessage) : null;
+    if (draftGoalCommand !== null && selectedProvider === undefined) {
+      Alert.alert("Provider still loading", "Wait for the provider list to finish loading.");
+      return null;
+    }
     const goalCommand = selectedProvider?.driver === "codex" ? draftGoalCommand : null;
     if (goalCommand !== null) {
       if (goalCommand.action === "invalid") {
