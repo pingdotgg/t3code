@@ -19,6 +19,7 @@ import {
 } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
+import { loadUserProjectScripts } from "../project/UserProjectScripts.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export const canonicalizeClientCommandTimestamps = (
@@ -116,6 +117,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
           canonicalCommand.createWorkspaceRootIfMissing,
         ),
         createWorkspaceRootIfMissing: canonicalCommand.createWorkspaceRootIfMissing === true,
+        scripts: yield* loadUserProjectScripts(serverConfig.stateDir),
       } satisfies OrchestrationCommand;
     }
 

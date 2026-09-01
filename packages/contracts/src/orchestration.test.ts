@@ -151,6 +151,15 @@ it.effect("trims branded ids and command string fields at decode boundaries", ()
         provider: "codex",
         model: " gpt-5.2 ",
       },
+      scripts: [
+        {
+          id: " handoff ",
+          name: " Handoff ",
+          command: " t3-handoff action ",
+          icon: "play",
+          runOnWorktreeCreate: false,
+        },
+      ],
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.commandId, "cmd-1");
@@ -162,6 +171,15 @@ it.effect("trims branded ids and command string fields at decode boundaries", ()
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5.2",
     });
+    assert.deepStrictEqual(parsed.scripts, [
+      {
+        id: "handoff",
+        name: "Handoff",
+        command: "t3-handoff action",
+        icon: "play",
+        runOnWorktreeCreate: false,
+      },
+    ]);
   }),
 );
 

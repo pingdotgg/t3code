@@ -132,6 +132,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
     const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
       Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
+        stateDir: "/tmp/t3code-server-startup-user-actions-missing",
         autoBootstrapProjectFromCwd: true,
       } as never),
       Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
@@ -189,6 +190,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
     const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
       Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
+        stateDir: "/tmp/t3code-server-startup-user-actions-missing",
         autoBootstrapProjectFromCwd: true,
       } as never),
       Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {

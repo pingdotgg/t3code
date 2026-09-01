@@ -42,6 +42,38 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     }),
   );
 
+  it.effect("propagates seeded scripts on project.create", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const scripts = [
+        {
+          id: "handoff",
+          name: "Handoff",
+          command: "t3-handoff action",
+          icon: "play" as const,
+          runOnWorktreeCreate: false,
+        },
+      ];
+
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-create-seeded-scripts"),
+          projectId: asProjectId("project-seeded-scripts"),
+          title: "Scripts",
+          workspaceRoot: "/tmp/seeded-scripts",
+          scripts,
+          createdAt: now,
+        },
+        readModel: createEmptyReadModel(now),
+      });
+
+      const event = Array.isArray(result) ? result[0] : result;
+      expect(event.type).toBe("project.created");
+      expect((event.payload as { scripts: unknown[] }).scripts).toEqual(scripts);
+    }),
+  );
+
   it.effect("propagates scripts in project.meta.update payload", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";
