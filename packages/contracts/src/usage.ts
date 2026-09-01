@@ -228,11 +228,18 @@ export const UsageThreadBreakdownInput = Schema.Struct({
   /** Inclusive last day of the window, in `timeZone`. */
   untilDay: UsageDay,
   timeZone: TrimmedNonEmptyString,
+  /** Inclusive UTC instant for a rolling window such as Past 24h. */
+  sinceTime: Schema.optional(TrimmedNonEmptyString),
+  /** Exclusive UTC instant for a rolling window such as Past 24h. */
+  untilTime: Schema.optional(TrimmedNonEmptyString),
   /**
-   * Restrict to one project's sessions: a title selects that project, `null`
-   * selects sessions outside every project, absent applies no filter.
+   * Restrict to one project's records: a namespaced stable key selects that
+   * project, `null` selects records outside every project, absent applies no
+   * filter.
    */
-  project: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  projectKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** Providers this environment owns after physical-source de-duplication. */
+  providers: Schema.optional(Schema.Array(UsageProviderKind)),
 });
 export type UsageThreadBreakdownInput = typeof UsageThreadBreakdownInput.Type;
 
@@ -268,6 +275,7 @@ export const UsageThreadRow = Schema.Struct({
   threadId: Schema.NullOr(ThreadId),
   title: TrimmedNonEmptyString,
   provider: UsageProviderKind,
+  projectId: Schema.optional(ProjectId),
   project: Schema.optional(TrimmedNonEmptyString),
   totals: UsageTokenTotals,
   costUsd: Schema.Number,

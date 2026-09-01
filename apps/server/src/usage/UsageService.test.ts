@@ -232,3 +232,20 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 });
+
+describe("isValidUsageDay", () => {
+  it("rejects impossible start and end dates instead of normalising them", () => {
+    assert.isTrue(UsageService.isValidUsageDay("2026-02-28"));
+    assert.isFalse(UsageService.isValidUsageDay("2026-02-29"));
+    assert.isFalse(UsageService.isValidUsageDay("2026-13-01"));
+  });
+});
+
+describe("shortSessionLabel", () => {
+  it("never exposes a file-derived path", () => {
+    assert.strictEqual(
+      UsageService.shortSessionLabel("claude:file:session-dir:updates"),
+      "Untitled session",
+    );
+  });
+});

@@ -466,7 +466,9 @@ export function UsagePage() {
                         sinceDay: window.sinceDay,
                         untilDay: window.untilDay,
                         timeZone: window.timeZone,
-                        ...(projectFilter === undefined ? {} : { project: projectFilter }),
+                        ...(window.sinceTime === undefined ? {} : { sinceTime: window.sinceTime }),
+                        ...(window.untilTime === undefined ? {} : { untilTime: window.untilTime }),
+                        ...(projectFilter === undefined ? {} : { projectKey: projectFilter }),
                       }}
                       providerContributions={merged.providerContributions}
                     />

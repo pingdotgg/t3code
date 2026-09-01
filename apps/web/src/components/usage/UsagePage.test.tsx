@@ -270,7 +270,9 @@ describe("UsagePage thread breakdown", () => {
         sinceDay: "2026-08-10",
         untilDay: "2026-08-11",
         timeZone: "UTC",
-        project: "id:project-expensive",
+        sinceTime: "2026-08-10T12:37:00.000Z",
+        untilTime: "2026-08-11T12:37:00.000Z",
+        projectKey: "id:project-expensive",
       },
       providerContributions: [],
     });

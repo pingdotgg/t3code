@@ -313,7 +313,16 @@ export async function readTranscriptRecords(
 }
 
 /** Prefixes that mark an injected preamble, not something the user typed. */
-const NOT_TITLE_PREFIXES = ["<", "# AGENTS.md instructions", "Caveat: the messages below"];
+const NOT_TITLE_PREFIXES = [
+  "<system-reminder>",
+  "<command-message>",
+  "<command-name>",
+  "<local-command-caveat>",
+  "<environment_context>",
+  "<INSTRUCTIONS>",
+  "# AGENTS.md instructions",
+  "Caveat: the messages below",
+];
 
 const TITLE_MAX_LENGTH = 80;
 const TITLE_MAX_LINES = 400;
@@ -389,21 +398,24 @@ export async function readTranscriptTitle(
 ): Promise<string | null> {
   if (provider === "grok") return null;
   try {
+    const stream = NodeFS.createReadStream(filePath, { encoding: "utf8" });
     const lines = NodeReadline.createInterface({
-      input: NodeFS.createReadStream(filePath, { encoding: "utf8" }),
+      input: stream,
       crlfDelay: Infinity,
     });
-    let seen = 0;
-    for await (const line of lines) {
-      seen += 1;
-      if (seen > TITLE_MAX_LINES) break;
-      const gate = provider === "claude" ? '"user"' : '"message"';
-      if (!line.includes(gate)) continue;
-      const title = provider === "claude" ? claudeTitleFromLine(line) : codexTitleFromLine(line);
-      if (title !== null) {
-        lines.close();
-        return title;
+    try {
+      let seen = 0;
+      for await (const line of lines) {
+        seen += 1;
+        if (seen > TITLE_MAX_LINES) break;
+        const gate = provider === "claude" ? '"user"' : '"message"';
+        if (!line.includes(gate)) continue;
+        const title = provider === "claude" ? claudeTitleFromLine(line) : codexTitleFromLine(line);
+        if (title !== null) return title;
       }
+    } finally {
+      lines.close();
+      stream.destroy();
     }
   } catch {
     return null;

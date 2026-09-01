@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import { UsageAggregator } from "./usageAggregation.ts";
@@ -17,6 +17,9 @@ const rates: RateTable = new Map([
     },
   ],
 ]);
+
+const PROJECT_ONE = { projectId: ProjectId.make("project-one"), title: "Project one" };
+const PROJECT_TWO = { projectId: ProjectId.make("project-two"), title: "Project two" };
 
 function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
   return {
@@ -98,6 +101,43 @@ describe("ThreadUsageAccumulator", () => {
 
     expect(groups).toHaveLength(0);
   });
+
+  it("applies exact time bounds inside a shared calendar day", () => {
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-07",
+      untilDay: "2026-08-07",
+      sinceTimeMs: Date.parse("2026-08-07T04:00:00Z"),
+      untilTimeMs: Date.parse("2026-08-07T05:00:00Z"),
+      rates,
+    });
+    const context = { sessionKey: "claude:session-a", agentId: null };
+    accumulator.add(record({ timestampMs: Date.parse("2026-08-07T03:59:59Z") }), context);
+    accumulator.add(record({ timestampMs: Date.parse("2026-08-07T04:30:00Z") }), context);
+    accumulator.add(record({ timestampMs: Date.parse("2026-08-07T05:00:00Z") }), context);
+
+    expect(accumulator.finish()[0]?.totals.outputTokens).toBe(50);
+  });
+
+  it("keeps separate cwd slices when one session crosses projects", () => {
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      resolveProject: (cwd) => (cwd.endsWith("one") ? PROJECT_ONE : PROJECT_TWO),
+    });
+    const context = { sessionKey: "claude:session-a", agentId: null };
+    accumulator.add(record({ cwd: "/work/one" }), context);
+    accumulator.add(record({ cwd: "/work/two" }), context);
+
+    expect(
+      accumulator
+        .finish()
+        .map((group) => group.projectKey)
+        .toSorted(),
+    ).toEqual(["id:project-one", "id:project-two"]);
+  });
 });
 
 describe("foldThreadRows", () => {
@@ -129,7 +169,7 @@ describe("foldThreadRows", () => {
     const standalone = rows.find((row) => row.threadId === null);
     // Standalone rows leave the title to the caller's transcript read.
     expect(standalone?.title).toBeNull();
-    expect(standalone?.key).toBe("session:claude:session-c");
+    expect(standalone?.key).toContain("claude:session-c");
   });
 
   it("scopes one T3 thread by provider and project", () => {
@@ -138,7 +178,7 @@ describe("foldThreadRows", () => {
       sinceDay: "2026-08-01",
       untilDay: "2026-08-31",
       rates,
-      resolveProject: (cwd) => (cwd.endsWith("one") ? "Project one" : "Project two"),
+      resolveProject: (cwd) => (cwd.endsWith("one") ? PROJECT_ONE : PROJECT_TWO),
     });
     const entries = [
       [record({ sessionId: "claude-one", cwd: "/work/one" }), "claude:claude-one"],
@@ -178,7 +218,7 @@ describe("foldThreadRows", () => {
 
     const projectOne = foldThreadRows(accumulator.finish(), attribution, {
       cap: 40,
-      projectFilter: "Project one",
+      projectFilter: "id:project-one",
     });
     expect(projectOne.rows.map((row) => [row.provider, row.project]).toSorted()).toEqual([
       ["claude", "Project one"],
@@ -196,15 +236,56 @@ describe("foldThreadRows", () => {
 
     const { rows, truncatedRows } = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 3 });
 
-    expect(rows).toHaveLength(4);
-    expect(truncatedRows).toBe(2);
-    expect(rows.find((row) => row.key.startsWith("remainder:"))?.title).toBe("Other threads (2)");
-    expect(rows.find((row) => row.key.startsWith("remainder:"))?.groupedRows).toBe(2);
+    expect(rows).toHaveLength(3);
+    expect(truncatedRows).toBe(3);
+    expect(rows.find((row) => row.key.startsWith("remainder:"))?.title).toBe("Other threads (3)");
+    expect(rows.find((row) => row.key.startsWith("remainder:"))?.groupedRows).toBe(3);
     expect(rows.reduce((sum, row) => sum + row.totals.outputTokens, 0)).toBe(250);
   });
 
+  it("keeps subagent slices when lower-cost rows fold into a remainder", () => {
+    const groups = accumulate([
+      [
+        record({ sessionId: "expensive", totals: { ...record().totals, outputTokens: 100 } }),
+        { sessionKey: "claude:expensive", agentId: null },
+      ],
+      [
+        record({ sessionId: "cheaper" }),
+        { sessionKey: "claude:cheaper", agentId: "agent-cheaper" },
+      ],
+    ]);
+
+    const { rows } = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 1 });
+    const remainder = rows.find((row) => row.key.startsWith("remainder:"));
+    expect(remainder?.agents.map((agent) => agent.agentId)).toEqual(["agent-cheaper"]);
+  });
+
+  it("collapses overflow project scopes without exceeding the response cap", () => {
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      resolveProject: (cwd) => ({
+        projectId: ProjectId.make(`project-${cwd.slice(-1)}`),
+        title: `Project ${cwd.slice(-1)}`,
+      }),
+    });
+    for (let index = 0; index < 6; index += 1) {
+      accumulator.add(record({ sessionId: `session-${index}`, cwd: `/work/${index}` }), {
+        sessionKey: `claude:session-${index}`,
+        agentId: null,
+      });
+    }
+
+    const { rows } = foldThreadRows(accumulator.finish(), NO_ATTRIBUTION, { cap: 3 });
+
+    expect(rows.length).toBeLessThanOrEqual(3);
+    expect(rows.reduce((sum, row) => sum + row.totals.outputTokens, 0)).toBe(300);
+  });
+
   it("reconciles every provider and project after lower-cost rows are grouped", () => {
-    const resolveProject = (cwd: string) => (cwd.endsWith("one") ? "Project one" : "Project two");
+    const resolveProject = (cwd: string) => (cwd.endsWith("one") ? PROJECT_ONE : PROJECT_TWO);
     const accumulator = new ThreadUsageAccumulator({
       timeZone: "UTC",
       sinceDay: "2026-08-01",
@@ -238,7 +319,8 @@ describe("foldThreadRows", () => {
     }
     const groups = accumulator.finish();
 
-    const { rows } = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 1 });
+    const { rows } = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 4 });
+    expect(rows.length).toBeLessThanOrEqual(4);
     const expected = new Map<string, number>();
     for (const bucket of summary.finish().buckets) {
       const key = `${bucket.provider}:${bucket.project ?? ""}`;
@@ -259,7 +341,7 @@ describe("foldThreadRows", () => {
       sinceDay: "2026-08-01",
       untilDay: "2026-08-31",
       rates,
-      resolveProject: (cwd) => (cwd === "/work/app" ? "App" : ""),
+      resolveProject: (cwd) => (cwd === "/work/app" ? PROJECT_ONE : null),
     });
     accumulator.add(record(), { sessionKey: "claude:session-a", agentId: null });
     accumulator.add(record({ sessionId: "session-b", cwd: "/elsewhere" }), {
@@ -268,10 +350,15 @@ describe("foldThreadRows", () => {
     });
     const groups = accumulator.finish();
 
-    const app = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 40, projectFilter: "App" });
-    expect(app.rows.map((row) => row.key)).toEqual(["session:claude:session-a"]);
+    const app = foldThreadRows(groups, NO_ATTRIBUTION, {
+      cap: 40,
+      projectFilter: "id:project-one",
+    });
+    expect(app.rows.map((row) => row.key)).toHaveLength(1);
+    expect(app.rows[0]?.key).toContain("claude:session-a");
 
     const outside = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 40, projectFilter: null });
-    expect(outside.rows.map((row) => row.key)).toEqual(["session:claude:session-b"]);
+    expect(outside.rows.map((row) => row.key)).toHaveLength(1);
+    expect(outside.rows[0]?.key).toContain("claude:session-b");
   });
 });

@@ -12,6 +12,7 @@ import {
   type EnvironmentId,
   type UsageSummary,
   type UsageSummaryInput,
+  type UsageProviderKind,
   type UsageThreadBreakdown,
   type UsageThreadBreakdownInput,
   type UsageThreadRow,
@@ -106,18 +107,6 @@ export function useUsage(
   const atom = usageByWindowAtom(windowKey);
   const environments = useAtomValue(atom);
 
-  // Refreshing only the derived atom would re-read the per-environment SWR
-  // queries within their stale window and change nothing. Refresh each
-  // environment's query so the button always rescans.
-  const refresh = useCallback(() => {
-    const input = JSON.parse(windowKey) as UsageSummaryInput;
-    for (const environment of environments) {
-      appAtomRegistry.refresh(
-        serverEnvironment.usageSummary({ environmentId: environment.environmentId, input }),
-      );
-    }
-  }, [environments, windowKey]);
-
   const merged = useMemo(() => {
     const answered: EnvironmentUsage[] = environments.flatMap((environment) =>
       environment.summary === null
@@ -136,6 +125,26 @@ export function useUsage(
       projectFilter === undefined ? undefined : { projectFilter },
     );
   }, [environments, projectFilter]);
+
+  // Refresh the source queries, not just their derived atoms. When the thread
+  // table is mounted, refresh its provider-owned query at the same time so the
+  // two views cannot show different scans.
+  const refresh = useCallback(() => {
+    const input = JSON.parse(windowKey) as UsageSummaryInput;
+    for (const environment of environments) {
+      appAtomRegistry.refresh(
+        serverEnvironment.usageSummary({ environmentId: environment.environmentId, input }),
+      );
+    }
+    for (const contribution of merged.providerContributions) {
+      appAtomRegistry.refresh(
+        serverEnvironment.usageThreadBreakdown({
+          environmentId: contribution.environmentId,
+          input: makeThreadBreakdownInput(input, projectFilter, contribution.providers),
+        }),
+      );
+    }
+  }, [environments, merged.providerContributions, projectFilter, windowKey]);
 
   const answeredCount = environments.filter((environment) => environment.summary !== null).length;
   const stillReporting = environments.filter(
@@ -166,6 +175,29 @@ export interface UsageThreadsView {
 export interface EnvironmentUsageThreadBreakdown {
   readonly environmentId: EnvironmentId;
   readonly breakdown: UsageThreadBreakdown;
+}
+
+export function makeThreadBreakdownInput(
+  input: UsageSummaryInput,
+  projectFilter: string | null | undefined,
+  providers: readonly UsageProviderKind[],
+): UsageThreadBreakdownInput {
+  return {
+    sinceDay: input.sinceDay,
+    untilDay: input.untilDay,
+    timeZone: input.timeZone,
+    ...(input.sinceTime === undefined ? {} : { sinceTime: input.sinceTime }),
+    ...(input.untilTime === undefined ? {} : { untilTime: input.untilTime }),
+    ...(projectFilter === undefined ? {} : { projectKey: projectFilter }),
+    providers: [...providers],
+  };
+}
+
+function withOwnedProviders(
+  input: UsageThreadBreakdownInput,
+  providers: readonly UsageProviderKind[],
+): UsageThreadBreakdownInput {
+  return { ...input, providers: [...providers] };
 }
 
 /** Applies the summary's physical-source ownership to thread rows. */
@@ -202,8 +234,14 @@ const usageThreadsAtom = Atom.family((requestKey: string) =>
     const breakdowns: EnvironmentUsageThreadBreakdown[] = [];
     let pending = 0;
     let failed = 0;
-    for (const { environmentId } of providerContributions) {
-      const result = get(serverEnvironment.usageThreadBreakdown({ environmentId, input }));
+    for (const contribution of providerContributions) {
+      const { environmentId } = contribution;
+      const result = get(
+        serverEnvironment.usageThreadBreakdown({
+          environmentId,
+          input: withOwnedProviders(input, contribution.providers),
+        }),
+      );
       if (result.waiting) pending += 1;
       if (result._tag === "Failure") failed += 1;
       const breakdown = Option.getOrNull(AsyncResult.value(result));

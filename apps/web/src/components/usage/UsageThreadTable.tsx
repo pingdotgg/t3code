@@ -9,12 +9,14 @@ import { useMemo, useState } from "react";
 import {
   enumerateDays,
   formatDayShort,
+  formatPercent,
   formatTokens,
   formatUsd,
 } from "@t3tools/shared/usageFormat";
 import type { EnvironmentProviderContribution } from "@t3tools/shared/usageMerge";
 
 import { useUsageThreads, type UsageThreadRowWithEnvironment } from "../../state/usage";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 /**
@@ -74,7 +76,9 @@ export function UsageThreadTable({
         {rows.length === 0 ? (
           <tr>
             <td colSpan={4} className="py-6 text-center text-muted-foreground">
-              No activity in this window.
+              {failedEnvironments > 0
+                ? "Thread activity could not be loaded for this window."
+                : "No activity in this window."}
             </td>
           </tr>
         ) : (
@@ -109,7 +113,7 @@ export function UsageThreadTable({
             </td>
           </tr>
         ) : null}
-        {failedEnvironments > 0 ? (
+        {failedEnvironments > 0 && rows.length > 0 ? (
           <tr>
             <td colSpan={4} className="py-2 text-xs text-muted-foreground">
               {failedEnvironments === 1
@@ -143,28 +147,34 @@ function ThreadRowGroup({
   const Chevron = open ? ChevronDownIcon : ChevronRightIcon;
   return (
     <>
-      <tr
-        className="cursor-pointer border-b border-border/50 transition-colors hover:bg-muted/50"
-        onClick={onToggle}
-        aria-expanded={open}
-      >
+      <tr className="border-b border-border/50 transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50">
         <td className="py-2 text-foreground">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <Chevron className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-            <ProviderMark provider={row.provider} />
-            <span className="truncate" title={row.title}>
-              {row.title}
-            </span>
-            {row.agents.length > 0 ? (
-              <span className="shrink-0 rounded border border-border px-1 text-[10px] text-muted-foreground">
-                {row.agents.length === 1 ? "1 subagent" : `${row.agents.length} subagents`}
-              </span>
-            ) : null}
-          </span>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={onToggle}
+                  aria-expanded={open}
+                  className="flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              }
+            >
+              <Chevron className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <ProviderMark provider={row.provider} />
+              <span className="truncate">{row.title}</span>
+              {row.agents.length > 0 ? (
+                <span className="shrink-0 rounded border border-border px-1 text-[10px] text-muted-foreground">
+                  {row.agents.length === 1 ? "1 subagent" : `${row.agents.length} subagents`}
+                </span>
+              ) : null}
+            </TooltipTrigger>
+            <TooltipPopup side="top">{row.title}</TooltipPopup>
+          </Tooltip>
         </td>
         <td className="py-2 text-right text-foreground tabular-nums">{formatUsd(row.costUsd)}</td>
         <td className="py-2 text-right text-muted-foreground tabular-nums">
-          {`${(share * 100).toFixed(1)}%`}
+          {formatPercent(share)}
         </td>
         <td className="py-2 text-right text-muted-foreground tabular-nums">
           {formatTokens(tokens)}
@@ -231,7 +241,7 @@ export function UsageThreadDailyChart({
   }
 
   const bandWidth = CHART_WIDTH / days.length;
-  const barWidth = Math.max(1, bandWidth - (days.length > 120 ? 0.5 : 2));
+  const barWidth = bandWidth * 0.8;
 
   return (
     <div className="flex max-w-3xl flex-col gap-1 pb-2">
@@ -250,16 +260,17 @@ export function UsageThreadDailyChart({
         {days.map((day, index) => {
           const entry = byDay.get(day);
           if (entry === undefined) return null;
-          const x = index * bandWidth;
+          const x = index * bandWidth + (bandWidth - barWidth) / 2;
           const height = (entry.costUsd / peak) * (CHART_HEIGHT - 4);
+          const renderedHeight = Math.max(height, 0.75);
           return (
             <g key={day}>
               <title>{`${formatDayShort(day)}: ${formatUsd(entry.costUsd)}`}</title>
               <rect
                 x={x}
-                y={CHART_HEIGHT - height}
+                y={CHART_HEIGHT - renderedHeight}
                 width={barWidth}
-                height={Math.max(height - 0.75, 0.75)}
+                height={renderedHeight}
                 fill="currentColor"
                 className="text-emerald-500"
               />

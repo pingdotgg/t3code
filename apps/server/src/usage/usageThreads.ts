@@ -10,6 +10,7 @@
  * @module usageThreads
  */
 import type {
+  ProjectId,
   ThreadId,
   UsageAgentRow,
   UsageProviderKind,
@@ -19,7 +20,7 @@ import type {
 } from "@t3tools/contracts";
 import { UsageDay } from "@t3tools/contracts";
 
-import { makeDayFormatter } from "./usageAggregation.ts";
+import { makeDayFormatter, type ProjectAttribution } from "./usageAggregation.ts";
 import { priceUsage, type RateTable } from "./usagePricing.ts";
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
 
@@ -41,6 +42,8 @@ export interface SessionUsageGroup {
   readonly provider: UsageProviderKind;
   readonly sessionId: string;
   readonly cwd: string;
+  readonly projectId: ProjectId | null;
+  readonly projectKey: string | null;
   readonly project: string;
   readonly totals: UsageTokenTotals;
   readonly costUsd: number;
@@ -49,9 +52,13 @@ export interface SessionUsageGroup {
 }
 
 interface MutableSessionGroup {
+  sessionKey: string;
   provider: UsageProviderKind;
   sessionId: string;
   cwd: string;
+  projectId: ProjectId | null;
+  projectKey: string | null;
+  project: string;
   totals: UsageTokenTotals;
   costUsd: number;
   daily: Map<string, number>;
@@ -62,9 +69,11 @@ export interface ThreadUsageOptions {
   readonly timeZone: string;
   readonly sinceDay: string;
   readonly untilDay: string;
+  readonly sinceTimeMs?: number;
+  readonly untilTimeMs?: number;
   readonly rates: RateTable;
-  /** Same resolver the summary uses; `""` means outside every project. */
-  readonly resolveProject?: (cwd: string) => string;
+  /** Same stable project resolver the summary uses. */
+  readonly resolveProject?: (cwd: string) => ProjectAttribution | null;
 }
 
 /**
@@ -92,23 +101,37 @@ export class ThreadUsageAccumulator {
     }
 
     const day = this.#toDay(record.timestampMs);
+    if (
+      this.#options.sinceTimeMs !== undefined &&
+      this.#options.untilTimeMs !== undefined &&
+      (record.timestampMs < this.#options.sinceTimeMs ||
+        record.timestampMs >= this.#options.untilTimeMs)
+    ) {
+      return false;
+    }
     if (day < this.#options.sinceDay || day > this.#options.untilDay) return false;
 
-    let group = this.#groups.get(context.sessionKey);
+    const resolvedProject = this.#options.resolveProject?.(record.cwd) ?? null;
+    const projectKey =
+      resolvedProject === null ? null : `id:${resolvedProject.projectId.replaceAll("\u0000", "")}`;
+    const groupKey = JSON.stringify([context.sessionKey, record.cwd]);
+    let group = this.#groups.get(groupKey);
     if (group === undefined) {
       group = {
+        sessionKey: context.sessionKey,
         provider: record.provider,
         sessionId: record.sessionId,
-        cwd: "",
+        cwd: record.cwd,
+        projectId: resolvedProject?.projectId ?? null,
+        projectKey,
+        project: resolvedProject?.title ?? "",
         totals: EMPTY_TOTALS,
         costUsd: 0,
         daily: new Map(),
         agents: new Map(),
       };
-      this.#groups.set(context.sessionKey, group);
+      this.#groups.set(groupKey, group);
     }
-
-    if (group.cwd.length === 0 && record.cwd.length > 0) group.cwd = record.cwd;
 
     const priced = priceUsage(
       this.#options.rates,
@@ -133,13 +156,14 @@ export class ThreadUsageAccumulator {
   }
 
   finish(): readonly SessionUsageGroup[] {
-    const resolve = this.#options.resolveProject;
-    return [...this.#groups.entries()].map(([sessionKey, group]) => ({
-      sessionKey,
+    return [...this.#groups.values()].map((group) => ({
+      sessionKey: group.sessionKey,
       provider: group.provider,
       sessionId: group.sessionId,
       cwd: group.cwd,
-      project: resolve === undefined ? "" : resolve(group.cwd),
+      projectId: group.projectId,
+      projectKey: group.projectKey,
+      project: group.project,
       totals: group.totals,
       costUsd: group.costUsd,
       daily: group.daily,
@@ -168,7 +192,7 @@ export interface ThreadAttribution {
 export interface FoldThreadRowsOptions {
   /** A title, `null` for outside-projects sessions, `undefined` for no filter. */
   readonly projectFilter?: string | null | undefined;
-  /** Rows kept after sorting by cost; the rest are counted, not sent. */
+  /** Maximum returned rows, including grouped remainders. */
   readonly cap: number;
 }
 
@@ -177,10 +201,12 @@ interface MutableThreadRow {
   title: string | null;
   provider: UsageProviderKind;
   project: string;
+  projectId: ProjectId | null;
+  projectKey: string | null;
   cwd: string;
   totals: UsageTokenTotals;
   costUsd: number;
-  sessions: number;
+  sessionKeys: Set<string>;
   groupedRows: number;
   daily: Map<string, number>;
   agents: Map<string, MutableAgentSlice>;
@@ -217,18 +243,15 @@ export function foldThreadRows(
   const byKey = new Map<string, MutableThreadRow>();
 
   for (const group of groups) {
-    if (options.projectFilter !== undefined) {
-      const project = group.project.length === 0 ? null : group.project;
-      if (project !== options.projectFilter) continue;
-    }
+    if (options.projectFilter !== undefined && group.projectKey !== options.projectFilter) continue;
 
     const ref =
       attribution.sessionToThread.get(group.sessionKey) ??
       (group.cwd.length > 0 ? attribution.worktreeToThread.get(group.cwd) : undefined);
     const rowKey =
       ref === undefined
-        ? `session:${group.sessionKey}`
-        : JSON.stringify(["thread", group.provider, group.project, ref.threadId]);
+        ? JSON.stringify(["session", group.provider, group.projectKey, group.sessionKey])
+        : JSON.stringify(["thread", group.provider, group.projectKey, ref.threadId]);
 
     let row = byKey.get(rowKey);
     if (row === undefined) {
@@ -237,10 +260,12 @@ export function foldThreadRows(
         title: ref?.title ?? null,
         provider: group.provider,
         project: group.project,
+        projectId: group.projectId,
+        projectKey: group.projectKey,
         cwd: group.cwd,
         totals: EMPTY_TOTALS,
         costUsd: 0,
-        sessions: 0,
+        sessionKeys: new Set(),
         groupedRows: 0,
         daily: new Map(),
         agents: new Map(),
@@ -251,7 +276,7 @@ export function foldThreadRows(
 
     row.totals = addTotals(row.totals, group.totals);
     row.costUsd += group.costUsd;
-    row.sessions += 1;
+    row.sessionKeys.add(group.sessionKey);
     addDailyCosts(row.daily, group.daily);
     for (const [agentId, slice] of group.agents) {
       let agent = row.agents.get(agentId);
@@ -270,11 +295,34 @@ export function foldThreadRows(
       totalOf(b[1].totals) - totalOf(a[1].totals) ||
       a[0].localeCompare(b[0]),
   );
-  const kept = sorted.slice(0, options.cap);
-  const omitted = sorted.slice(options.cap);
+  let keptCount = Math.min(sorted.length, options.cap);
+  const projectScopeCount = (rows: typeof sorted): number =>
+    new Set(rows.map(([, row]) => JSON.stringify([row.provider, row.projectKey]))).size;
+  while (keptCount > 0 && keptCount + projectScopeCount(sorted.slice(keptCount)) > options.cap) {
+    keptCount -= 1;
+  }
+
+  let kept = sorted.slice(0, keptCount);
+  let omitted = sorted.slice(keptCount);
+  let remainderScope: "project" | "provider" = "project";
+  if (projectScopeCount(omitted) > options.cap) {
+    // More project scopes than the response can represent. Collapse all named
+    // rows and preserve provider totals in provider-wide overflow rows.
+    kept = [];
+    omitted = sorted;
+    remainderScope = "provider";
+    const providerCount = new Set(omitted.map(([, row]) => row.provider)).size;
+    if (providerCount > options.cap) {
+      throw new RangeError("Thread row cap must fit one remainder per provider");
+    }
+  }
+
   const remainders = new Map<string, MutableThreadRow>();
   for (const [, omittedRow] of omitted) {
-    const scopeKey = JSON.stringify([omittedRow.provider, omittedRow.project]);
+    const scopeKey = JSON.stringify([
+      omittedRow.provider,
+      remainderScope === "project" ? omittedRow.projectKey : null,
+    ]);
     let remainder = remainders.get(scopeKey);
     if (remainder === undefined) {
       const key = `remainder:${scopeKey}`;
@@ -282,11 +330,13 @@ export function foldThreadRows(
         threadId: null,
         title: null,
         provider: omittedRow.provider,
-        project: omittedRow.project,
+        project: remainderScope === "project" ? omittedRow.project : "",
+        projectId: remainderScope === "project" ? omittedRow.projectId : null,
+        projectKey: remainderScope === "project" ? omittedRow.projectKey : null,
         cwd: "",
         totals: EMPTY_TOTALS,
         costUsd: 0,
-        sessions: 0,
+        sessionKeys: new Set(),
         groupedRows: 0,
         daily: new Map(),
         agents: new Map(),
@@ -297,8 +347,17 @@ export function foldThreadRows(
     remainder.groupedRows += 1;
     remainder.totals = addTotals(remainder.totals, omittedRow.totals);
     remainder.costUsd += omittedRow.costUsd;
-    remainder.sessions += omittedRow.sessions;
+    for (const sessionKey of omittedRow.sessionKeys) remainder.sessionKeys.add(sessionKey);
     addDailyCosts(remainder.daily, omittedRow.daily);
+    for (const [agentId, slice] of omittedRow.agents) {
+      let agent = remainder.agents.get(agentId);
+      if (agent === undefined) {
+        agent = { totals: EMPTY_TOTALS, costUsd: 0 };
+        remainder.agents.set(agentId, agent);
+      }
+      agent.totals = addTotals(agent.totals, slice.totals);
+      agent.costUsd += slice.costUsd;
+    }
   }
 
   const displayed = [
@@ -321,10 +380,11 @@ export function foldThreadRows(
       title: row.title,
       titleSessionKey: row.titleSessionKey,
       provider: row.provider,
+      ...(row.projectId === null ? {} : { projectId: row.projectId }),
       ...(row.project === "" ? {} : { project: row.project }),
       totals: row.totals,
       costUsd: row.costUsd,
-      sessions: row.sessions,
+      sessions: row.sessionKeys.size,
       ...(row.groupedRows === 0 ? {} : { groupedRows: row.groupedRows }),
       agents: [...row.agents.entries()]
         .map(([agentId, slice]) => ({

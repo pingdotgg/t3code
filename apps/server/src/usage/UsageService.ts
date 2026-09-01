@@ -16,7 +16,6 @@ import * as NodeOS from "node:os";
 
 import {
   USAGE_CONTRACT_VERSION,
-  type ThreadId,
   type UsageProviderKind,
   type UsageSource,
   type UsageSummary,
@@ -43,7 +42,7 @@ import { ServerConfig } from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import { ProjectionThreadRepository } from "../persistence/Services/ProjectionThreads.ts";
-import { ProviderSessionRuntimeRepository } from "../persistence/ProviderSessionRuntime.ts";
+import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
@@ -82,8 +81,8 @@ const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const CACHE_RETENTION_DAYS = 90;
 
 /**
- * Named thread rows sent per breakdown request. A window can hold thousands
- * of sessions; lower-cost rows fold into provider/project remainders.
+ * Maximum rows sent per breakdown request, including grouped remainders. A
+ * window can hold thousands of sessions, so lower-cost rows fold together.
  */
 const THREAD_ROW_CAP = 40;
 
@@ -103,6 +102,11 @@ const encodeRatesCache = Schema.encodeEffect(
 const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
+
+export function isValidUsageDay(day: string): boolean {
+  const parsed = DateTime.make(`${day}T00:00:00Z`);
+  return Option.isSome(parsed) && DateTime.formatIso(parsed.value).slice(0, 10) === day;
+}
 
 export class UsageService extends Context.Service<
   UsageService,
@@ -157,7 +161,7 @@ export const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcessEnvironment;
   const projectRepository = yield* ProjectionProjectRepository;
   const threadRepository = yield* ProjectionThreadRepository;
-  const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+  const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
@@ -696,11 +700,40 @@ export const make = Effect.gen(function* () {
       });
     }
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
-    if (Option.isNone(windowStart)) {
+    const windowEnd = DateTime.make(`${input.untilDay}T00:00:00Z`);
+    if (
+      Option.isNone(windowStart) ||
+      Option.isNone(windowEnd) ||
+      !isValidUsageDay(input.sinceDay) ||
+      !isValidUsageDay(input.untilDay)
+    ) {
       return yield* new UsageReadError({
         reason: "invalidWindow",
-        detail: `sinceDay '${input.sinceDay}' is not a valid date`,
+        detail: "Thread usage requires valid sinceDay and untilDay dates",
       });
+    }
+
+    let exactWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null = null;
+    if (input.sinceTime !== undefined || input.untilTime !== undefined) {
+      const sinceTime =
+        input.sinceTime === undefined ? Option.none() : DateTime.make(input.sinceTime);
+      const untilTime =
+        input.untilTime === undefined ? Option.none() : DateTime.make(input.untilTime);
+      if (Option.isNone(sinceTime) || Option.isNone(untilTime)) {
+        return yield* new UsageReadError({
+          reason: "invalidWindow",
+          detail: "Thread usage requires both valid sinceTime and untilTime instants",
+        });
+      }
+      const sinceTimeMs = DateTime.toEpochMillis(sinceTime.value);
+      const untilTimeMs = DateTime.toEpochMillis(untilTime.value);
+      if (untilTimeMs <= sinceTimeMs) {
+        return yield* new UsageReadError({
+          reason: "invalidWindow",
+          detail: "Thread usage untilTime must be after sinceTime",
+        });
+      }
+      exactWindow = { sinceTimeMs, untilTimeMs };
     }
 
     const startedAtMs = yield* Clock.currentTimeMillis;
@@ -708,12 +741,14 @@ export const make = Effect.gen(function* () {
     yield* ensureScanCacheLoaded;
 
     const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
-    const windowStartMs = DateTime.toEpochMillis(windowStart.value) - MTIME_SLACK_MS;
+    const windowStartMs =
+      (exactWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
 
     const accumulator = new ThreadUsageAccumulator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
+      ...exactWindow,
       rates,
       resolveProject: yield* resolveProjects(),
     });
@@ -726,6 +761,7 @@ export const make = Effect.gen(function* () {
     >();
 
     for (const { provider, dir, fileName } of dirs) {
+      if (input.providers !== undefined && !input.providers.includes(provider)) continue;
       const exists = yield* fileSystem
         .exists(dir)
         .pipe(Effect.catchCause(() => Effect.succeed(false)));
@@ -744,11 +780,10 @@ export const make = Effect.gen(function* () {
           const sessionKey =
             record.sessionId.length > 0
               ? `${provider}:${record.sessionId}`
-              : `${provider}:file:${file.path}`;
-          if (accumulator.add(record, { sessionKey, agentId }) && !isSubagent) {
-            if (!titleFiles.has(sessionKey)) {
-              titleFiles.set(sessionKey, { path: file.path, provider });
-            }
+              : `${provider}:file:${path.basename(path.dirname(file.path))}:${path.basename(file.path, ".jsonl")}`;
+          accumulator.add(record, { sessionKey, agentId });
+          if (!isSubagent && !titleFiles.has(sessionKey)) {
+            titleFiles.set(sessionKey, { path: file.path, provider });
           }
         }
       }
@@ -757,7 +792,7 @@ export const make = Effect.gen(function* () {
     const attribution = yield* loadThreadAttribution();
     const folded = foldThreadRows(accumulator.finish(), attribution, {
       cap: THREAD_ROW_CAP,
-      ...(input.project === undefined ? {} : { projectFilter: input.project }),
+      ...(input.projectKey === undefined ? {} : { projectFilter: input.projectKey }),
     });
 
     // Transcript titles only for retained unattributed rows. Grouped remainder
@@ -771,7 +806,9 @@ export const make = Effect.gen(function* () {
           source === undefined
             ? null
             : yield* Effect.promise(() => readTranscriptTitle(source.path, source.provider));
-        const fallback = row.key.startsWith("session:") ? shortSessionLabel(row.key) : row.key;
+        const fallback = row.key.startsWith("remainder:")
+          ? row.key
+          : shortSessionLabel(titleSessionKey);
         return { ...row, title: transcriptTitle ?? fallback };
       }),
       { concurrency: 8 },
@@ -793,9 +830,10 @@ export const make = Effect.gen(function* () {
   return { readSummary, readThreadBreakdown } as const;
 });
 
-/** `session:claude:8f14e45f-...` reads as `Session 8f14e45f`. */
-function shortSessionLabel(rowKey: string): string {
-  const sessionId = rowKey.slice(rowKey.lastIndexOf(":") + 1);
+/** `claude:8f14e45f-...` reads as `Session 8f14e45f`. */
+export function shortSessionLabel(sessionKey: string): string {
+  if (sessionKey.includes(":file:")) return "Untitled session";
+  const sessionId = sessionKey.slice(sessionKey.lastIndexOf(":") + 1);
   return sessionId.length > 8 ? `Session ${sessionId.slice(0, 8)}` : `Session ${sessionId}`;
 }
 
