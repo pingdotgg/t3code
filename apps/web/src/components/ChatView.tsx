@@ -4614,7 +4614,7 @@ function ChatViewContent(props: ChatViewProps) {
         sidebarPrRefreshKeyRef.current = null;
         return;
       }
-      const refreshKey = `${source}:${status.repository}#${status.number}:${status.state}`;
+      const refreshKey = `${activeThreadKey}:${source}:${status.repository}#${status.number}:${status.state}`;
       if (sidebarPrRefreshKeyRef.current === refreshKey) return;
       sidebarPrRefreshKeyRef.current = refreshKey;
 
@@ -4643,6 +4643,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
     },
     [
+      activeThreadKey,
       activeThreadPr?.number,
       activeThreadPr?.state,
       activeThreadRef,
