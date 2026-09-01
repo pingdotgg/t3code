@@ -1980,6 +1980,65 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("keeps buffered assistant items separate within one turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-buffered-multiple-items");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-buffered-multiple-items"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.activeTurnId === turnId,
+    );
+
+    for (const [itemId, delta] of [
+      ["item-buffered-first", "first item"],
+      ["item-buffered-second", "second item"],
+    ] as const) {
+      harness.emit({
+        type: "content.delta",
+        eventId: asEventId(`evt-${itemId}`),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        turnId,
+        itemId: asItemId(itemId),
+        payload: { streamKind: "assistant_text", delta },
+      });
+    }
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-buffered-multiple-items"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: { state: "completed" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.messages.some((message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-buffered-second" && !message.streaming,
+        ),
+    );
+    expect(thread.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "assistant:item-buffered-first", text: "first item" }),
+        expect.objectContaining({ id: "assistant:item-buffered-second", text: "second item" }),
+      ]),
+    );
+  });
+
   it("flushes and completes buffered assistant text when an approval request opens", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

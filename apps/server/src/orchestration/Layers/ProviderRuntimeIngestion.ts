@@ -1071,18 +1071,16 @@ const make = Effect.gen(function* () {
         return assistantSegmentMessageId(assistantSegmentBaseKeyFromEvent(input.event), 0);
       }
 
-      const activeMessageId = yield* getActiveAssistantMessageIdForTurn(
-        input.threadId,
-        input.turnId,
-      );
-      if (Option.isSome(activeMessageId)) {
-        return activeMessageId.value;
+      const baseKey = assistantSegmentBaseKeyFromEvent(input.event);
+      const segmentState = yield* getAssistantSegmentStateForTurn(input.threadId, input.turnId);
+      if (Option.isSome(segmentState) && segmentState.value.baseKey === baseKey) {
+        return segmentState.value.activeMessageId!;
       }
 
       return yield* startAssistantSegmentForTurn({
         threadId: input.threadId,
         turnId: input.turnId,
-        baseKey: assistantSegmentBaseKeyFromEvent(input.event),
+        baseKey,
       });
     });
 
