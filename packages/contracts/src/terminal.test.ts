@@ -7,12 +7,15 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalError,
   TerminalOpenInput,
+  TerminalProviderEnvironmentError,
   TerminalResizeInput,
   TerminalSessionSnapshot,
   TerminalThreadInput,
   TerminalWriteInput,
 } from "./terminal.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 function decodeSync<S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> {
   return Schema.decodeUnknownSync(schema as never)(input) as Schema.Schema.Type<S>;
@@ -26,6 +29,28 @@ function decodes<S extends Schema.Top>(schema: S, input: unknown): boolean {
     return false;
   }
 }
+
+describe("TerminalProviderEnvironmentError", () => {
+  it("round-trips its required cause without exposing it in the message", () => {
+    const cause = { operation: "read-secret", detail: "secret backend unavailable" };
+    const error = new TerminalProviderEnvironmentError({
+      providerInstanceId: ProviderInstanceId.make("codex_work"),
+      cause,
+    });
+    const encoded = Schema.encodeUnknownSync(TerminalError)(error);
+    const decoded = Schema.decodeUnknownSync(TerminalError)(encoded);
+
+    expect(decoded).toMatchObject({
+      _tag: "TerminalProviderEnvironmentError",
+      providerInstanceId: "codex_work",
+      cause,
+    });
+    expect(decoded.message).toBe(
+      "Could not prepare the terminal environment for provider instance: codex_work",
+    );
+    expect(decoded.message).not.toContain("secret backend unavailable");
+  });
+});
 
 describe("TerminalOpenInput", () => {
   it("accepts valid open input", () => {

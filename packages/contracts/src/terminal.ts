@@ -318,6 +318,7 @@ export class TerminalProviderEnvironmentError extends Schema.TaggedErrorClass<Te
   "TerminalProviderEnvironmentError",
   {
     providerInstanceId: ProviderInstanceId,
+    cause: Schema.Defect(),
   },
 ) {
   override get message() {

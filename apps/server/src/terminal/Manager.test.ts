@@ -8,6 +8,7 @@ import {
   type TerminalOpenInput,
   type TerminalRestartInput,
   ProviderInstanceId,
+  ServerSettingsError,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -25,11 +26,13 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
@@ -1896,6 +1899,44 @@ it.layer(
         new TerminalProviderInstanceNotFoundError({ providerInstanceId }),
       );
       expect(ptyAdapter.spawnInputs).toHaveLength(0);
+    }),
+  );
+
+  it.effect("preserves the settings failure when provider environment resolution fails", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const providerInstanceId = ProviderInstanceId.make("codex_work");
+      const settingsCause = new Error("secret store read failed");
+      const settingsError = new ServerSettingsError({
+        settingsPath: "/test/settings.json",
+        operation: "read-secret",
+        providerInstanceId,
+        environmentVariable: "OPENROUTER_API_KEY",
+        cause: settingsCause,
+      });
+      const serverSettings = ServerSettings.ServerSettingsService.of({
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.fail(settingsError),
+        updateSettings: () => Effect.fail(settingsError),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.succeed(Stream.empty),
+      });
+
+      const error = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        serverSettings,
+        path,
+        rawProviderInstanceId: providerInstanceId,
+        env: undefined,
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "TerminalProviderEnvironmentError",
+        providerInstanceId,
+      });
+      expect(error.cause).toBe(settingsError);
+      expect(error.message).not.toContain(settingsError.message);
+      expect(error.message).not.toContain("OPENROUTER_API_KEY");
     }),
   );
 

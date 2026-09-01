@@ -1340,7 +1340,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 }) {
   const providerInstanceId = ProviderInstanceId.make(input.rawProviderInstanceId);
   const settings = yield* input.serverSettings.getSettings.pipe(
-    Effect.mapError(() => new TerminalProviderEnvironmentError({ providerInstanceId })),
+    Effect.mapError((cause) => new TerminalProviderEnvironmentError({ providerInstanceId, cause })),
   );
   const instance = settings.providerInstances[providerInstanceId];
   if (instance === undefined) {
