@@ -41,6 +41,14 @@ import {
   type EnvironmentRpcInput,
 } from "../rpc/client.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
+import {
+  applyServerConfigProjection,
+  type ServerConfigProjection,
+  withoutEnvironmentThemes,
+} from "./serverConfigProjection.ts";
+
+// Exported server state includes this type in its inferred public return type.
+export type { ServerConfigProjection } from "./serverConfigProjection.ts";
 
 export type ServerUpdateStage = "downloading" | "installing" | "resuming";
 
@@ -262,75 +270,6 @@ export function resolveServerUpdateProgressResult<E>(
   return Effect.fail(new ServerUpdateProgressIncompleteError({ targetVersion }));
 }
 
-export interface ServerConfigProjection {
-  readonly config: ServerConfig;
-  readonly latestEvent: ServerConfigStreamEvent;
-  readonly source: "cache" | "live";
-}
-
-export function applyServerConfigProjection(
-  current: Option.Option<ServerConfigProjection>,
-  event: ServerConfigStreamEvent,
-): Option.Option<ServerConfigProjection> {
-  switch (event.type) {
-    case "snapshot": {
-      // A snapshot never carries published themes -- the theme stream owns
-      // them -- so taking it wholesale would clear the set on every reconnect
-      // and repaint anyone wearing one until the follow-up event landed.
-      // Only from a server that still streams them. Reconnecting to one that
-      // predates the feature must drop the set rather than leave a palette on
-      // screen that nothing will ever update again.
-      const carried =
-        event.config.environment.capabilities.environmentThemes === true && Option.isSome(current)
-          ? current.value.config.environmentThemes
-          : undefined;
-      return Option.some({
-        config:
-          carried === undefined ? event.config : { ...event.config, environmentThemes: carried },
-        latestEvent: event,
-        source: "live" as const,
-      });
-    }
-    case "keybindingsUpdated":
-      return Option.map(current, (projection) => ({
-        config: {
-          ...projection.config,
-          keybindings: event.payload.keybindings,
-          issues: event.payload.issues,
-        },
-        latestEvent: event,
-        source: "live",
-      }));
-    case "providerStatuses":
-      return Option.map(current, (projection) => ({
-        config: {
-          ...projection.config,
-          providers: event.payload.providers,
-        },
-        latestEvent: event,
-        source: "live",
-      }));
-    case "settingsUpdated":
-      return Option.map(current, (projection) => ({
-        config: {
-          ...projection.config,
-          settings: event.payload.settings,
-        },
-        latestEvent: event,
-        source: "live",
-      }));
-    case "environmentThemesUpdated":
-      return Option.map(current, (projection) => ({
-        config: {
-          ...projection.config,
-          environmentThemes: event.payload.themes.length > 0 ? event.payload.themes : undefined,
-        },
-        latestEvent: event,
-        source: "live",
-      }));
-  }
-}
-
 export function projectServerConfig(
   current: Option.Option<ServerConfigProjection>,
   event: ServerConfigStreamEvent,
@@ -344,22 +283,6 @@ const cachedConfigSnapshotEvent = (config: ServerConfig): ServerConfigStreamEven
   type: "snapshot",
   config,
 });
-
-/**
- * Keeps a complete server configuration available during reconnects. Server
- * config carries the provider/model catalogue used by task creation, so it is
- * useful—and safe—to retain after a transport session ends.
- */
-/**
- * Published themes live only as long as the machine publishes them, so they
- * must not survive in the config cache: a restart or an offline load would
- * otherwise hand clients palettes the environment has already dropped.
- */
-function withoutEnvironmentThemes(config: ServerConfig): ServerConfig {
-  if (config.environmentThemes === undefined) return config;
-  const { environmentThemes: _ephemeral, ...rest } = config;
-  return rest;
-}
 
 export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConfigState.make")(
   function* (environmentThemes?: boolean) {

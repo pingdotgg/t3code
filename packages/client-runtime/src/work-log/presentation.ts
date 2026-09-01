@@ -1,4 +1,14 @@
-import { isToolLifecycleItemType, type ToolLifecycleItemType } from "@t3tools/contracts";
+import {
+  isToolLifecycleItemType,
+  type AssetResource,
+  type ThreadId,
+  type ToolLifecycleItemType,
+} from "@t3tools/contracts";
+import {
+  classifyMarkdownImageSource,
+  markdownImageSourceFragment,
+} from "@t3tools/client-runtime/markdown-images";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 
 export function isWorktreeSetupActivity(kind: string): boolean {
   return kind === "setup-script.requested" || kind === "setup-script.started";
@@ -9,6 +19,7 @@ export interface WorkLogPresentationEntry {
   readonly toolTitle?: string;
   readonly tone: "thinking" | "tool" | "info" | "error";
   readonly command?: string;
+  readonly detail?: string;
   readonly changedFiles?: ReadonlyArray<string>;
   readonly itemType?: ToolLifecycleItemType;
   readonly requestKind?: string;
@@ -57,7 +68,8 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
   if (
     entry.requestKind === "file-read" ||
     entry.itemType === "image_view" ||
-    (entry.itemType === "dynamic_tool_call" && entry.toolTitle === "Read File")
+    (entry.itemType === "dynamic_tool_call" &&
+      entry.toolTitle?.trim().toLowerCase() === "read file")
   ) {
     return "read";
   }
@@ -74,6 +86,53 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
   if (workLogEntryIsLocalCodeSearch(entry)) return "code-search";
   if (entry.itemType === "web_search") return "search";
   return workLogEntryIsToolLike(entry) ? "other" : "update";
+}
+
+export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): string | null {
+  const detail = entry.detail?.trim();
+  return toolGroupAction(entry) === "read" &&
+    detail !== undefined &&
+    !/[\r\n]/.test(detail) &&
+    isWorkspaceImagePreviewPath(detail)
+    ? detail
+    : null;
+}
+
+export interface ViewedImageAsset {
+  readonly resource: Extract<AssetResource, { readonly _tag: "attachment" | "workspace-file" }>;
+  readonly alt: string;
+  readonly srcFragment: string;
+}
+
+const ABSOLUTE_IMAGE_SOURCE_PATTERN = /^(?:file:|[\\/]|[a-z]:[\\/])/i;
+const T3_ATTACHMENT_IMAGE_PATH_PATTERN =
+  /(?:^|[\\/])(?:dev|userdata)[\\/]attachments[\\/]([a-z0-9_-]{1,128})\.[a-z0-9]{1,10}$/i;
+
+export function resolveViewedImageAsset(
+  source: string,
+  input: {
+    readonly threadId: ThreadId;
+    readonly workspaceRoot?: string | null | undefined;
+  },
+): ViewedImageAsset | null {
+  const imageSource = classifyMarkdownImageSource(source, input.workspaceRoot ?? ".");
+  if (imageSource._tag !== "WorkspaceFile") return null;
+
+  const path =
+    input.workspaceRoot == null && imageSource.path.startsWith("./")
+      ? imageSource.path.slice(2)
+      : imageSource.path;
+  const attachmentId = ABSOLUTE_IMAGE_SOURCE_PATTERN.test(source)
+    ? (T3_ATTACHMENT_IMAGE_PATH_PATTERN.exec(path)?.[1] ?? null)
+    : null;
+
+  return {
+    resource: attachmentId
+      ? { _tag: "attachment", attachmentId }
+      : { _tag: "workspace-file", threadId: input.threadId, path },
+    alt: path.split(/[\\/]/).at(-1) ?? "image",
+    srcFragment: markdownImageSourceFragment(source),
+  };
 }
 
 function toolGroupActionCount(
