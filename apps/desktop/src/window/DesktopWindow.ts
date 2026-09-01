@@ -478,8 +478,9 @@ export const make = Effect.gen(function* () {
     });
 
     window.webContents.on("context-menu", (event, params) => {
-      event.preventDefault();
-
+      // Build a native menu for Electron-exclusive capabilities and native
+      // text editing. Empty-space/thread right-clicks stay suppressed so the
+      // renderer's themed fallback can show its icons.
       const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
 
       if (params.misspelledWord) {
@@ -515,14 +516,32 @@ export const make = Effect.gen(function* () {
         menuTemplate.push({ type: "separator" });
       }
 
-      menuTemplate.push(
-        { role: "cut", enabled: params.editFlags.canCut },
-        { role: "copy", enabled: params.editFlags.canCopy },
-        { role: "paste", enabled: params.editFlags.canPaste },
-        { role: "selectAll", enabled: params.editFlags.canSelectAll },
-      );
+      const hasTextEditingContext = params.isEditable || params.selectionText.length > 0;
+      if (hasTextEditingContext) {
+        if (menuTemplate.length > 0 && menuTemplate.at(-1)?.type !== "separator") {
+          menuTemplate.push({ type: "separator" });
+        }
+        menuTemplate.push(
+          { role: "cut", enabled: params.editFlags.canCut },
+          { role: "copy", enabled: params.editFlags.canCopy },
+          { role: "paste", enabled: params.editFlags.canPaste },
+          { role: "selectAll", enabled: params.editFlags.canSelectAll },
+        );
+      }
 
-      void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
+      if (menuTemplate.length > 0) {
+        // Strip trailing separator before showing.
+        const last = menuTemplate[menuTemplate.length - 1];
+        if (last?.type === "separator") {
+          menuTemplate.pop();
+        }
+        void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
+        event.preventDefault();
+        return;
+      }
+
+      // The renderer fallback owns empty-space and thread context menus.
+      event.preventDefault();
     });
 
     window.webContents.setWindowOpenHandler(({ url }) => {

@@ -205,6 +205,7 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly popupTemplates?: Electron.MenuItemConstructorOptions[][];
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -269,7 +270,14 @@ function makeTestLayer(input: {
         desktopServerExposureLayer,
         DesktopState.layer,
         electronAppLayer,
-        electronMenuLayer,
+        Layer.succeed(ElectronMenu.ElectronMenu, {
+          setApplicationMenu: () => Effect.void,
+          popupTemplate: ({ template }) =>
+            Effect.sync(() => {
+              input.popupTemplates?.push([...template]);
+            }),
+          showContextMenu: () => Effect.succeed(Option.none()),
+        } satisfies ElectronMenu.ElectronMenu["Service"]),
         Layer.succeed(ElectronShell.ElectronShell, {
           openExternal: (url) =>
             Effect.sync(() => {
@@ -461,6 +469,88 @@ describe("DesktopWindow", () => {
         assert.deepEqual(fakeWindow.setAutoHideCursor.mock.calls, [[false]]);
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("shows native text editing actions in the desktop context menu", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const popupTemplates: Electron.MenuItemConstructorOptions[][] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        popupTemplates,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const contextMenu = fakeWindow.webContentsListeners.get("context-menu");
+        if (!contextMenu) {
+          return yield* Effect.die("context-menu listener was not registered");
+        }
+
+        const editableEvent = { preventDefault: vi.fn() };
+        contextMenu(editableEvent, {
+          isEditable: true,
+          selectionText: "selected text",
+          editFlags: {
+            canCut: true,
+            canCopy: true,
+            canPaste: true,
+            canSelectAll: true,
+          },
+          dictionarySuggestions: [],
+          linkURL: "",
+          mediaType: "none",
+          misspelledWord: "",
+          x: 0,
+          y: 0,
+        } as unknown as Electron.ContextMenuParams);
+        yield* Effect.promise(() => Promise.resolve());
+
+        const labels = (popupTemplates[0] ?? []).map(
+          (item) => item.role ?? item.label ?? item.type,
+        );
+        assert.deepEqual(labels, ["cut", "copy", "paste", "selectAll"]);
+        assert.equal(editableEvent.preventDefault.mock.calls.length, 1);
+
+        const linkEvent = { preventDefault: vi.fn() };
+        contextMenu(linkEvent, {
+          isEditable: true,
+          selectionText: "selected text",
+          editFlags: {
+            canCut: false,
+            canCopy: true,
+            canPaste: true,
+            canSelectAll: true,
+          },
+          dictionarySuggestions: [],
+          linkURL: "https://example.com/",
+          mediaType: "none",
+          misspelledWord: "",
+          x: 0,
+          y: 0,
+        } as unknown as Electron.ContextMenuParams);
+        yield* Effect.promise(() => Promise.resolve());
+
+        const linkLabels = (popupTemplates[1] ?? []).map(
+          (item) => item.role ?? item.label ?? item.type,
+        );
+        assert.deepEqual(linkLabels, [
+          "Copy Link",
+          "separator",
+          "cut",
+          "copy",
+          "paste",
+          "selectAll",
+        ]);
+        assert.equal(linkEvent.preventDefault.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
   );

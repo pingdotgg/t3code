@@ -195,6 +195,7 @@ describe("buildBulkTitleRegenerationContextMenuItem", () => {
     ).toEqual({
       id: "regenerate-title",
       label: "Regenerate titles (3)",
+      icon: "refresh-cw",
     });
   });
 
@@ -207,6 +208,7 @@ describe("buildBulkTitleRegenerationContextMenuItem", () => {
     ).toEqual({
       id: "regenerate-title",
       label: "Regenerating… (2)",
+      icon: "refresh-cw",
       disabled: true,
     });
   });
@@ -225,13 +227,25 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
   it("offers bulk archive with the selected count", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({ count: 3, hasRunningThread: false }),
-    ).toContainEqual({ id: "archive", label: "Archive (3)", disabled: false });
+    ).toContainEqual({
+      id: "archive",
+      label: "Archive (3)",
+      icon: "archive",
+      disabled: false,
+      separatorBefore: true,
+    });
   });
 
   it("disables bulk archive when a selected thread is running", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
-    ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
+    ).toContainEqual({
+      id: "archive",
+      label: "Archive (2)",
+      icon: "archive",
+      disabled: true,
+      separatorBefore: true,
+    });
   });
 });
 

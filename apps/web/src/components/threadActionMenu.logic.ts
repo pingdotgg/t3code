@@ -74,14 +74,14 @@ export function buildThreadActionMenuItems(
     ...(state.supports.settlement
       ? [
           state.isSettled
-            ? { id: "unsettle" as const, label: "Un-settle thread", icon: "circle-check" }
+            ? { id: "unsettle" as const, label: "Un-settle thread", icon: "undo-2" }
             : { id: "settle" as const, label: "Settle thread", icon: "circle-check" },
         ]
       : []),
     ...(state.supports.snooze
       ? [
           state.isSnoozed
-            ? { id: "unsnooze" as const, label: "Wake thread", icon: "clock" }
+            ? { id: "unsnooze" as const, label: "Wake thread", icon: "alarm-clock-off" }
             : {
                 id: "snooze" as const,
                 label: "Snooze",
@@ -90,6 +90,7 @@ export function buildThreadActionMenuItems(
                 children: state.snoozePresets.map((preset) => ({
                   id: `snooze:${preset.id}` as const,
                   label: `${preset.label} (${preset.whenLabel})`,
+                  icon: "clock",
                 })),
               },
         ]

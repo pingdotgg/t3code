@@ -51,6 +51,48 @@ describe("buildThreadActionMenuItems", () => {
     expect(ids(baseState)).toEqual(expect.arrayContaining(["pin", "settle", "snooze"]));
   });
 
+  it("assigns semantic icons to each thread action", () => {
+    const items = buildThreadActionMenuItems({ ...baseState, branch: "feat/menu" });
+    const icons = Object.fromEntries(items.map((item) => [item.id, item.icon]));
+
+    expect(icons).toMatchObject({
+      "new-thread-on-branch": "message-square-plus",
+      pin: "pin",
+      settle: "circle-check",
+      snooze: "clock",
+      rename: "pencil",
+      "regenerate-title": "refresh-cw",
+      "mark-unread": "mail-open",
+      copy: "copy",
+      archive: "archive",
+      delete: "trash",
+    });
+    expect(items.find((item) => item.id === "snooze")?.children).toEqual([
+      expect.objectContaining({ id: "snooze:hour", icon: "clock" }),
+    ]);
+    const copyItem = items.find((item) => item.id === "copy");
+    expect(copyItem?.children?.map((child) => ({ id: child.id, icon: child.icon }))).toEqual([
+      { id: "copy-path", icon: "folder" },
+      { id: "copy-branch", icon: "git-branch" },
+      { id: "copy-thread-id", icon: "hash" },
+    ]);
+    expect(items.at(-1)).toMatchObject({ id: "delete", destructive: true, icon: "trash" });
+    expect(
+      buildThreadActionMenuItems({
+        ...baseState,
+        isPinned: true,
+        isSettled: true,
+        isSnoozed: true,
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "unpin", icon: "pin-off" }),
+        expect.objectContaining({ id: "unsettle", icon: "undo-2" }),
+        expect.objectContaining({ id: "unsnooze", icon: "alarm-clock-off" }),
+      ]),
+    );
+  });
+
   it("disables snooze when the thread cannot snooze, keeping presets visible", () => {
     const snooze = buildThreadActionMenuItems({ ...baseState, canSnoozeNow: false }).find(
       (item) => item.id === "snooze",
@@ -77,6 +119,7 @@ describe("buildThreadActionMenuItems", () => {
     expect(archiveItem?.icon).toBe("archive");
     expect(archiveItem?.separatorBefore).toBe(true);
     expect(archiveItem?.destructive).toBeFalsy();
+    expect(archiveItem?.tone).toBeUndefined();
     expect(items.at(-1)?.id).toBe("delete");
   });
 

@@ -107,6 +107,8 @@ export interface ContextMenuItem<T extends string = string> {
   label: string;
   destructive?: boolean;
   disabled?: boolean;
+  /** Visual tone styling: destructive (red), warning (amber), neutral (default). */
+  tone?: "neutral" | "destructive" | "warning";
   /** Renders as a non-interactive section header label. Web fallback only — stripped on desktop native menus. */
   header?: boolean;
   /** Icon keyword resolved by the web fallback. Stripped on desktop native menus. */
@@ -121,6 +123,7 @@ export interface ContextMenuItemSchemaType {
   readonly label: string;
   readonly destructive?: boolean;
   readonly disabled?: boolean;
+  readonly tone?: "neutral" | "destructive" | "warning";
   readonly header?: boolean;
   readonly icon?: string;
   readonly separatorBefore?: boolean;
@@ -132,6 +135,13 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   label: Schema.String,
   destructive: Schema.optionalKey(Schema.Boolean),
   disabled: Schema.optionalKey(Schema.Boolean),
+  tone: Schema.optionalKey(
+    Schema.Union([
+      Schema.Literal("neutral"),
+      Schema.Literal("destructive"),
+      Schema.Literal("warning"),
+    ]),
+  ),
   header: Schema.optionalKey(Schema.Boolean),
   icon: Schema.optionalKey(Schema.String),
   separatorBefore: Schema.optionalKey(Schema.Boolean),
