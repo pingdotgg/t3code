@@ -52,7 +52,7 @@ describe("isLegacyModel (bundled manifest)", () => {
       ].map((model) => [model, isLegacyModel(BUNDLED_MODEL_MANIFEST, CLAUDE, model)]),
       [
         ["claude-fable-5-1", false],
-        ["claude-fable-5", false],
+        ["claude-fable-5", true],
         ["claude-opus-5", false],
         ["claude-sonnet-5", false],
         ["claude-opus-4-8", true],
