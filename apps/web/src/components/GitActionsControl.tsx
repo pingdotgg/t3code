@@ -91,7 +91,11 @@ import { resolvePathLinkTarget } from "~/terminal-links";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { readLocalApi } from "~/localApi";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
-import { openPullRequestLink } from "~/lib/openPullRequestLink";
+import {
+  openPullRequestLink,
+  parseChangeRequestUrl,
+  shouldOpenPullRequestExternally,
+} from "~/lib/openPullRequestLink";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -1458,12 +1462,10 @@ export default function GitActionsControl({
         toastActionProps = {
           children: toastCta.label,
           onClick: (event) => {
-            const shouldExternal = event?.metaKey || event?.ctrlKey;
-            if (!shouldExternal && onOpenPullRequest) {
-              const match = /\/pull\/(\d+)(?:\/|$)/.exec(toastCta.url);
-              const num = match ? Number(match[1]) : NaN;
-              if (Number.isSafeInteger(num) && num > 0) {
-                onOpenPullRequest(num);
+            if (!shouldOpenPullRequestExternally(event) && onOpenPullRequest) {
+              const parsed = parseChangeRequestUrl(toastCta.url);
+              if (parsed) {
+                onOpenPullRequest(parsed.number);
                 closeResultToast();
                 return;
               }
@@ -1471,7 +1473,16 @@ export default function GitActionsControl({
             const api = readLocalApi();
             if (!api) return;
             closeResultToast();
-            void openPullRequestLink(api.shell, toastCta.url);
+            void openPullRequestLink(api.shell, toastCta.url).catch((err: unknown) => {
+              console.error(err);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Unable to open pull request link",
+                  description: err instanceof Error ? err.message : "An error occurred.",
+                }),
+              );
+            });
           },
         };
       }
