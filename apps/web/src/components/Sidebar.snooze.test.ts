@@ -95,4 +95,16 @@ describe("snoozeWakeDescription", () => {
       "18:00",
     );
   });
+
+  it("uses the client locale for weekday and calendar-date labels", () => {
+    const weekdayWake = localDate(2026, 4, 13, 9);
+    const dateWake = localDate(2026, 4, 20, 9);
+
+    expect(snoozeWakeDescription(weekdayWake.toISOString(), now, "locale", "de-DE")).toContain(
+      weekdayWake.toLocaleDateString("de-DE", { weekday: "short" }),
+    );
+    expect(snoozeWakeDescription(dateWake.toISOString(), now, "locale", "de-DE")).toContain(
+      dateWake.toLocaleDateString("de-DE", { month: "short", day: "numeric" }),
+    );
+  });
 });

@@ -42,6 +42,7 @@ export function snoozeWakeDescription(
   snoozedUntil: string,
   now: Date,
   timestampFormat: TimestampFormat,
+  locale: string | undefined = getTimestampLocale(),
 ): string {
   const wake = parseTimestampDate(snoozedUntil);
   if (wake === null) return "";
@@ -51,8 +52,8 @@ export function snoozeWakeDescription(
   const dayDelta = Math.floor((wake.getTime() - startOfToday.getTime()) / DAY_MS);
   if (dayDelta === 0) return time;
   if (dayDelta === 1) return `tomorrow ${time}`;
-  const weekday = wake.toLocaleDateString(undefined, { weekday: "short" });
+  const weekday = wake.toLocaleDateString(locale, { weekday: "short" });
   if (dayDelta < 7) return `${weekday} ${time}`;
-  const date = wake.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const date = wake.toLocaleDateString(locale, { month: "short", day: "numeric" });
   return `${date}, ${time}`;
 }
