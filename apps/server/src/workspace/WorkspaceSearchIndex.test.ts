@@ -65,6 +65,24 @@ it.effect("filters image searches before applying the result limit", () =>
   ),
 );
 
+it.effect("maps a rejected native binding import to a create failure", () =>
+  Effect.gen(function* () {
+    const cause = new Error("cannot open shared object file");
+    vi.spyOn(WorkspaceSearchIndex.nativeBinding, "load").mockRejectedValueOnce(cause);
+
+    const error = yield* Effect.flip(
+      Effect.scoped(WorkspaceSearchIndex.make("/workspace/project")),
+    );
+
+    expect(error).toMatchObject({
+      _tag: "WorkspaceSearchIndexCreateFailed",
+      cwd: "/workspace/project",
+      reason: "The native workspace index is unavailable on this host.",
+      cause,
+    });
+  }),
+);
+
 it.effect("preserves unexpected FileFinder creation failures", () =>
   Effect.gen(function* () {
     const cause = new Error("native initialization failed");

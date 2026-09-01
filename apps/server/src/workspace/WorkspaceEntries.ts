@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
+  ProjectEntry,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
   ProjectSearchContentsInput,
@@ -23,8 +24,13 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
+
+const FALLBACK_LIST_MAX_ENTRIES = 25_000;
+const FALLBACK_LIST_GIT_OUTPUT_MAX_BYTES = 8_000_000;
+const FALLBACK_LIST_EXCLUDED_DIRECTORIES = new Set([".git", ".convex", "node_modules"]);
 
 export class WorkspaceEntriesWindowsPathUnsupportedError extends Schema.TaggedErrorClass<WorkspaceEntriesWindowsPathUnsupportedError>()(
   "WorkspaceEntriesWindowsPathUnsupportedError",
@@ -138,8 +144,148 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   return path.resolve(expandHomePath(input.cwd, path), input.partialPath);
 });
 
+function normalizeFallbackEntryPath(input: string): string {
+  return input.replace(/^\.\/+/, "").replace(/\/+$/, "");
+}
+
+function isFallbackExcludedPath(input: string): boolean {
+  return normalizeFallbackEntryPath(input)
+    .split("/")
+    .some((segment) => FALLBACK_LIST_EXCLUDED_DIRECTORIES.has(segment));
+}
+
+function buildFallbackListResult(
+  sourceEntries: ReadonlyArray<ProjectEntry>,
+  truncated: boolean,
+): ProjectListEntriesResult {
+  const entryByPath = new Map<string, ProjectEntry>();
+  for (const sourceEntry of sourceEntries) {
+    const normalizedPath = normalizeFallbackEntryPath(sourceEntry.path);
+    if (!normalizedPath || isFallbackExcludedPath(normalizedPath)) continue;
+    entryByPath.set(normalizedPath, { path: normalizedPath, kind: sourceEntry.kind });
+
+    let separatorIndex = normalizedPath.lastIndexOf("/");
+    while (separatorIndex > 0) {
+      const parentPath = normalizedPath.slice(0, separatorIndex);
+      if (!entryByPath.has(parentPath)) {
+        entryByPath.set(parentPath, { path: parentPath, kind: "directory" });
+      }
+      separatorIndex = parentPath.lastIndexOf("/");
+    }
+  }
+
+  const sortedEntries = [...entryByPath.values()].toSorted((left, right) =>
+    left.path.localeCompare(right.path),
+  );
+  return {
+    entries: sortedEntries.slice(0, FALLBACK_LIST_MAX_ENTRIES),
+    truncated: truncated || sortedEntries.length > FALLBACK_LIST_MAX_ENTRIES,
+  };
+}
+
+const listWorkspaceEntriesFromFilesystem = Effect.fn(
+  "WorkspaceEntries.listWorkspaceEntriesFromFilesystem",
+)(function* (cwd: string, path: Path.Path, vcsProcess: VcsProcess.VcsProcess["Service"]) {
+  const gitResult = yield* vcsProcess
+    .run({
+      operation: "WorkspaceEntries.fallbackList.gitLsFiles",
+      command: "git",
+      cwd,
+      args: ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+      allowNonZeroExit: true,
+      timeoutMs: 15_000,
+      maxOutputBytes: FALLBACK_LIST_GIT_OUTPUT_MAX_BYTES,
+    })
+    .pipe(Effect.orElseSucceed(() => null));
+
+  if (gitResult !== null && gitResult.exitCode === 0) {
+    const files = gitResult.stdout.split("\0").filter(Boolean);
+    if (gitResult.stdoutTruncated && !gitResult.stdout.endsWith("\0")) {
+      files.pop();
+    }
+    const exceededEntryLimit = files.length > FALLBACK_LIST_MAX_ENTRIES;
+    const boundedFiles = files.slice(0, FALLBACK_LIST_MAX_ENTRIES + 1);
+    const ignoredResult = yield* vcsProcess
+      .run({
+        operation: "WorkspaceEntries.fallbackList.gitCheckIgnore",
+        command: "git",
+        cwd,
+        args: ["check-ignore", "--no-index", "-z", "--stdin"],
+        stdin: `${boundedFiles.join("\0")}\0`,
+        allowNonZeroExit: true,
+        timeoutMs: 15_000,
+        maxOutputBytes: FALLBACK_LIST_GIT_OUTPUT_MAX_BYTES,
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    const ignoredPaths = new Set(
+      ignoredResult?.stdout.split("\0").map(normalizeFallbackEntryPath).filter(Boolean) ?? [],
+    );
+    const entries = yield* Effect.forEach(
+      boundedFiles.filter((file) => !ignoredPaths.has(normalizeFallbackEntryPath(file))),
+      (file) =>
+        Effect.promise(async () => {
+          const normalizedPath = normalizeFallbackEntryPath(file);
+          try {
+            const stat = await NodeFSP.lstat(path.join(cwd, normalizedPath));
+            return {
+              path: normalizedPath,
+              kind: stat.isDirectory() ? ("directory" as const) : ("file" as const),
+            };
+          } catch {
+            return null;
+          }
+        }),
+      { concurrency: 32 },
+    );
+    return buildFallbackListResult(
+      entries.filter((entry): entry is ProjectEntry => entry !== null),
+      gitResult.stdoutTruncated || exceededEntryLimit,
+    );
+  }
+
+  const entries: ProjectEntry[] = [];
+  const pendingDirectories = [""];
+  let truncated = false;
+
+  while (pendingDirectories.length > 0 && !truncated) {
+    const relativeDirectory = pendingDirectories.shift() ?? "";
+    const absoluteDirectory = relativeDirectory ? path.join(cwd, relativeDirectory) : cwd;
+    const dirents = yield* Effect.promise(() =>
+      NodeFSP.readdir(absoluteDirectory, { withFileTypes: true }).catch(() => []),
+    );
+
+    for (const dirent of dirents.toSorted((left, right) => left.name.localeCompare(right.name))) {
+      const relativePath = normalizeFallbackEntryPath(
+        relativeDirectory ? `${relativeDirectory}/${dirent.name}` : dirent.name,
+      );
+      if (!relativePath || isFallbackExcludedPath(relativePath)) continue;
+
+      const isDirectory = dirent.isDirectory();
+      entries.push({
+        path: relativePath,
+        kind: isDirectory ? "directory" : "file",
+      });
+      if (entries.length > FALLBACK_LIST_MAX_ENTRIES) {
+        truncated = true;
+        break;
+      }
+      if (isDirectory) {
+        pendingDirectories.push(relativePath);
+      }
+    }
+  }
+
+  return {
+    entries: entries
+      .slice(0, FALLBACK_LIST_MAX_ENTRIES)
+      .toSorted((left, right) => left.path.localeCompare(right.path)),
+    truncated,
+  };
+});
+
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
+  const vcsProcess = yield* VcsProcess.VcsProcess;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
 
@@ -275,6 +421,20 @@ export const make = Effect.gen(function* () {
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+      // The fallback only covers an index that could not be created at all
+      // (for example the native binding failed to load on this host). Scan
+      // timeouts and search failures on a live index still surface so they
+      // are not silently masked by a slower listing.
+      const recoverWithFilesystemList = (
+        cause: WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed,
+      ) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("Falling back to filesystem workspace listing", {
+            cwd: normalizedCwd,
+            cause,
+          });
+          return yield* listWorkspaceEntriesFromFilesystem(normalizedCwd, path, vcsProcess);
+        });
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.list();
@@ -284,6 +444,7 @@ export const make = Effect.gen(function* () {
             WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths"),
           ),
         ),
+        Effect.catchTags({ WorkspaceSearchIndexCreateFailed: recoverWithFilesystemList }),
       );
     },
   );
@@ -293,4 +454,5 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(WorkspaceEntries, make).pipe(
   Layer.provide(WorkspaceSearchIndex.WorkspaceSearchIndexMap.layer),
+  Layer.provide(VcsProcess.layer),
 );

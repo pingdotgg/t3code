@@ -2,19 +2,22 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { FileFinder } from "@ff-labs/fff-node";
-import { it, afterEach, describe, expect } from "@effect/vitest";
+import { it, afterEach, beforeEach, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
+import { VcsProcessSpawnError } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -121,9 +124,114 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(result.truncated).toBe(false);
       }),
     );
+
+    it.effect("falls back to the filesystem when the native index is unavailable", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "src/components/Composer.tsx");
+        yield* writeTextFile(cwd, "README.md");
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js");
+
+        vi.spyOn(FileFinder, "create").mockImplementationOnce(() => {
+          throw new Error("native binding unavailable");
+        });
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.list({ cwd });
+
+        expect(result.entries).toEqual(
+          expect.arrayContaining([
+            { path: "src", kind: "directory" },
+            { path: "src/components", kind: "directory" },
+            { path: "src/components/Composer.tsx", kind: "file" },
+            { path: "README.md", kind: "file" },
+          ]),
+        );
+        expect(result.entries.some((entry) => entry.path.startsWith("node_modules"))).toBe(false);
+        expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("falls back when the native workspace module cannot be imported", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "src/components/Composer.tsx");
+        yield* writeTextFile(cwd, "README.md");
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js");
+
+        vi.spyOn(WorkspaceSearchIndex.nativeBinding, "load").mockRejectedValueOnce(
+          new Error("cannot open shared object file"),
+        );
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.list({ cwd });
+
+        expect(result.entries).toEqual(
+          expect.arrayContaining([
+            { path: "src", kind: "directory" },
+            { path: "src/components", kind: "directory" },
+            { path: "src/components/Composer.tsx", kind: "file" },
+            { path: "README.md", kind: "file" },
+          ]),
+        );
+        expect(result.entries.some((entry) => entry.path.startsWith("node_modules"))).toBe(false);
+        expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("honors git ignore rules in the fallback listing", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, "src/components/Composer.tsx");
+        yield* writeTextFile(cwd, "ignored.txt", "ignore me");
+        yield* writeTextFile(cwd, "stale.ts", "remove me");
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js");
+        yield* git(cwd, ["add", "src/components/Composer.tsx", "ignored.txt", "stale.ts"]);
+        yield* writeTextFile(cwd, ".gitignore", "ignored.txt\n");
+        yield* Effect.promise(() => NodeFSP.unlink(`${cwd}/stale.ts`));
+
+        vi.spyOn(WorkspaceSearchIndex.nativeBinding, "load").mockRejectedValueOnce(
+          new Error("cannot open shared object file"),
+        );
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.list({ cwd });
+        const paths = result.entries.map((entry) => entry.path);
+
+        expect(result.entries).toEqual(
+          expect.arrayContaining([
+            { path: "src", kind: "directory" },
+            { path: "src/components", kind: "directory" },
+            { path: "src/components/Composer.tsx", kind: "file" },
+            { path: ".gitignore", kind: "file" },
+          ]),
+        );
+        expect(paths).not.toContain("ignored.txt");
+        expect(paths).not.toContain("stale.ts");
+        expect(paths.some((entryPath) => entryPath.startsWith("node_modules"))).toBe(false);
+        expect(result.truncated).toBe(false);
+      }),
+    );
   });
 
   describe("search", () => {
+    it.effect("keeps the search index required when the native module is unavailable", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "src/index.ts");
+
+        vi.spyOn(WorkspaceSearchIndex.nativeBinding, "load").mockRejectedValueOnce(
+          new Error("cannot open shared object file"),
+        );
+
+        const error = yield* searchWorkspaceEntries({ cwd, query: "", limit: 10 }).pipe(
+          Effect.flip,
+        );
+
+        expect(error._tag).toBe("WorkspaceSearchIndexCreateFailed");
+      }),
+    );
+
     it.effect("returns files and directories relative to cwd", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir();
@@ -734,3 +842,192 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
     );
   });
 });
+
+const fallbackVcsRunMock = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
+
+// The real VcsProcess layer cannot produce truncated or oversized git output
+// cheaply, so fallback parsing gets its own block with a mocked runner.
+const MockedVcsTestLayer = Layer.empty.pipe(
+  Layer.provideMerge(
+    Layer.effect(WorkspaceEntries.WorkspaceEntries, WorkspaceEntries.make).pipe(
+      Layer.provide(WorkspaceSearchIndex.WorkspaceSearchIndexMap.layer),
+      Layer.provide(WorkspacePaths.layer),
+    ),
+  ),
+  Layer.provideMerge(Layer.mock(VcsProcess.VcsProcess)({ run: fallbackVcsRunMock })),
+  Layer.provide(
+    ServerConfig.ServerConfig.layerTest(process.cwd(), {
+      prefix: "t3-workspace-entries-vcs-mock-test-",
+    }),
+  ),
+  Layer.provideMerge(NodeServices.layer),
+);
+
+const gitLsFilesOutput = (
+  stdout: string,
+  stdoutTruncated = false,
+): VcsProcess.VcsProcessOutput => ({
+  exitCode: ChildProcessSpawner.ExitCode(0),
+  stdout,
+  stderr: "",
+  stdoutTruncated,
+  stderrTruncated: false,
+});
+
+it.layer(MockedVcsTestLayer, { excludeTestServices: true })(
+  "WorkspaceEntries fallback git parsing",
+  (it) => {
+    beforeEach(() => {
+      fallbackVcsRunMock.mockImplementation((input) => {
+        if (input.operation === "WorkspaceEntries.fallbackList.gitCheckIgnore") {
+          return Effect.succeed(gitLsFilesOutput(""));
+        }
+        throw new Error(`Unexpected VcsProcess call: ${input.operation}`);
+      });
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      fallbackVcsRunMock.mockReset();
+    });
+
+    const listWithUnavailableIndex = (cwd: string) =>
+      Effect.gen(function* () {
+        vi.spyOn(WorkspaceSearchIndex.nativeBinding, "load").mockRejectedValueOnce(
+          new Error("cannot open shared object file"),
+        );
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        return yield* workspaceEntries.list({ cwd });
+      });
+
+    it.effect("reconstructs parent directories from git file paths", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "src/components/Composer.tsx");
+        yield* writeTextFile(cwd, "README.md");
+        fallbackVcsRunMock.mockReturnValueOnce(
+          Effect.succeed(gitLsFilesOutput("src/components/Composer.tsx\0README.md\0")),
+        );
+
+        const result = yield* listWithUnavailableIndex(cwd);
+
+        expect(result.entries).toEqual([
+          { path: "README.md", kind: "file" },
+          { path: "src", kind: "directory" },
+          { path: "src/components", kind: "directory" },
+          { path: "src/components/Composer.tsx", kind: "file" },
+        ]);
+        expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("preserves backslashes in POSIX file names", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "src/foo\\bar.ts");
+        fallbackVcsRunMock.mockReturnValueOnce(
+          Effect.succeed(gitLsFilesOutput("src/foo\\bar.ts\0")),
+        );
+
+        const result = yield* listWithUnavailableIndex(cwd);
+
+        expect(result.entries).toContainEqual({ path: "src/foo\\bar.ts", kind: "file" });
+      }),
+    );
+
+    it.effect("drops the partial trailing entry from truncated git output", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "src/kept.ts");
+        yield* writeTextFile(cwd, "README.md");
+        fallbackVcsRunMock.mockReturnValueOnce(
+          Effect.succeed(gitLsFilesOutput("src/kept.ts\0README.md\0src/part", true)),
+        );
+
+        const result = yield* listWithUnavailableIndex(cwd);
+
+        expect(result.entries).toEqual([
+          { path: "README.md", kind: "file" },
+          { path: "src", kind: "directory" },
+          { path: "src/kept.ts", kind: "file" },
+        ]);
+        expect(result.truncated).toBe(true);
+      }),
+    );
+
+    it.effect("keeps a complete trailing entry when truncation ends on the delimiter", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "a.txt");
+        yield* writeTextFile(cwd, "b.txt");
+        fallbackVcsRunMock.mockReturnValueOnce(
+          Effect.succeed(gitLsFilesOutput("a.txt\0b.txt\0", true)),
+        );
+
+        const result = yield* listWithUnavailableIndex(cwd);
+
+        expect(result.entries).toEqual([
+          { path: "a.txt", kind: "file" },
+          { path: "b.txt", kind: "file" },
+        ]);
+        expect(result.truncated).toBe(true);
+      }),
+    );
+
+    it.effect("caps git-derived entries at the fallback limit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        const files = Array.from({ length: 25_001 }, (_, index) => `file-${index}.txt`);
+        vi.spyOn(NodeFSP, "lstat").mockResolvedValue({
+          isDirectory: () => false,
+        } as Awaited<ReturnType<typeof NodeFSP.lstat>>);
+        fallbackVcsRunMock.mockReturnValueOnce(
+          Effect.succeed(gitLsFilesOutput(`${files.join("\0")}\0`)),
+        );
+
+        const result = yield* listWithUnavailableIndex(cwd);
+
+        expect(result.entries).toHaveLength(25_000);
+        expect(result.truncated).toBe(true);
+      }),
+    );
+
+    it.effect("classifies git submodules as directories", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* Effect.promise(() => NodeFSP.mkdir(`${cwd}/vendor/sdk`, { recursive: true }));
+        fallbackVcsRunMock.mockReturnValueOnce(Effect.succeed(gitLsFilesOutput("vendor/sdk\0")));
+
+        const result = yield* listWithUnavailableIndex(cwd);
+
+        expect(result.entries).toContainEqual({ path: "vendor/sdk", kind: "directory" });
+      }),
+    );
+
+    it.effect("walks the directory tree when git cannot run", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "src/index.ts");
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js");
+        fallbackVcsRunMock.mockReturnValueOnce(
+          Effect.fail(
+            new VcsProcessSpawnError({
+              operation: "WorkspaceEntries.fallbackList.gitLsFiles",
+              command: "git",
+              cwd,
+              cause: new Error("spawn git ENOENT"),
+            }),
+          ),
+        );
+
+        const result = yield* listWithUnavailableIndex(cwd);
+
+        expect(result.entries).toEqual([
+          { path: "src", kind: "directory" },
+          { path: "src/index.ts", kind: "file" },
+        ]);
+        expect(result.truncated).toBe(false);
+      }),
+    );
+  },
+);

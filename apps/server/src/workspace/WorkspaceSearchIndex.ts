@@ -1,13 +1,15 @@
-import {
-  type DirItem,
-  type DirSearchResult,
-  type FileItem,
+// Keep this type-only: older glibc hosts cannot load fff-node's native binding.
+// The runtime import lives behind nativeBinding so server startup remains available.
+import type {
+  DirItem,
+  DirSearchResult,
+  FileItem,
   FileFinder,
-  type GrepCursor,
-  type MixedItem,
-  type MixedSearchResult,
-  type Result,
-  type SearchResult,
+  GrepCursor,
+  MixedItem,
+  MixedSearchResult,
+  Result,
+  SearchResult,
 } from "@ff-labs/fff-node";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -297,10 +299,28 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
   return [...entryByPath.values()];
 }
 
+/**
+ * The native binding loads at first index use instead of module load, so hosts
+ * that cannot load it still boot the server and fail per workspace index
+ * instead. The indirection exists so tests can exercise the load-failure path.
+ */
+export const nativeBinding = {
+  load: () => import("@ff-labs/fff-node"),
+};
+
 const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant,
 ) {
+  const { FileFinder } = yield* Effect.tryPromise({
+    try: () => nativeBinding.load(),
+    catch: (cause) =>
+      new WorkspaceSearchIndexCreateFailed({
+        cwd,
+        reason: "The native workspace index is unavailable on this host.",
+        cause,
+      }),
+  });
   const result = yield* Effect.try({
     try: () =>
       FileFinder.create({
