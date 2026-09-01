@@ -251,7 +251,11 @@ export function UsageProviderChart({
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   // Drag-selection endpoints, as period indices. Only daily windows zoom.
   const [brush, setBrush] = useState<{ readonly start: number; readonly end: number } | null>(null);
-  const brushRef = useRef<{ readonly start: number; readonly end: number } | null>(null);
+  const brushRef = useRef<{
+    readonly pointerId: number;
+    readonly start: number;
+    readonly end: number;
+  } | null>(null);
   const zoomable = resolution === "day" && onZoomToDays !== undefined;
   const plotRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
@@ -383,10 +387,16 @@ export function UsageProviderChart({
   const trackBrush = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       const activeBrush = brushRef.current;
-      if (activeBrush === null || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+      if (
+        activeBrush === null ||
+        activeBrush.pointerId !== event.pointerId ||
+        !event.currentTarget.hasPointerCapture(event.pointerId)
+      ) {
+        return;
+      }
       const index = indexAt(event.clientX);
       if (index === null || index === activeBrush.end) return;
-      const nextBrush = { start: activeBrush.start, end: index };
+      const nextBrush = { ...activeBrush, end: index };
       brushRef.current = nextBrush;
       setBrush(nextBrush);
     },
@@ -395,14 +405,16 @@ export function UsageProviderChart({
 
   const beginBrush = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!zoomable || event.button !== 0) return;
+      if (!zoomable || event.button !== 0 || !event.isPrimary || brushRef.current !== null) return;
       const index = indexAt(event.clientX);
       if (index === null) return;
-      event.preventDefault();
+      // `touch-pan-y` owns vertical gestures. Avoid canceling that browser
+      // default while still suppressing text selection for mouse and pen.
+      if (event.pointerType !== "touch") event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
       hoverPositionRef.current = null;
       setHoverIndex(null);
-      const nextBrush = { start: index, end: index };
+      const nextBrush = { pointerId: event.pointerId, start: index, end: index };
       brushRef.current = nextBrush;
       setBrush(nextBrush);
     },
@@ -412,7 +424,14 @@ export function UsageProviderChart({
   const finishBrush = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       const activeBrush = brushRef.current;
-      if (activeBrush === null || onZoomToDays === undefined) return;
+      if (
+        activeBrush === null ||
+        activeBrush.pointerId !== event.pointerId ||
+        !event.currentTarget.hasPointerCapture(event.pointerId) ||
+        onZoomToDays === undefined
+      ) {
+        return;
+      }
       const end = indexAt(event.clientX) ?? activeBrush.end;
       const selection = brushSelection(days, activeBrush.start, end);
       brushRef.current = null;
@@ -425,7 +444,8 @@ export function UsageProviderChart({
     [days, indexAt, onZoomToDays],
   );
 
-  const cancelBrush = useCallback(() => {
+  const cancelBrush = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (brushRef.current?.pointerId !== event.pointerId) return;
     brushRef.current = null;
     setBrush(null);
   }, []);
@@ -457,7 +477,7 @@ export function UsageProviderChart({
 
         <div
           ref={plotRef}
-          className={cn("relative h-56 flex-1", zoomable && "cursor-crosshair touch-none")}
+          className={cn("relative h-56 flex-1", zoomable && "cursor-crosshair touch-pan-y")}
           onMouseMove={handleMove}
           onPointerDown={beginBrush}
           onPointerMove={trackBrush}
