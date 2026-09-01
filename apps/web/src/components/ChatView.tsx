@@ -292,6 +292,7 @@ import {
   useThread,
   useThreadRefs,
   useThreadShell,
+  useServerConfigs,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -1464,6 +1465,7 @@ export default function ChatView(props: ChatViewProps) {
     };
   }, [routeKind, routeThreadRef, routeThreadState]);
   const { markViewed } = useThreadViewState();
+  const serverConfigs = useServerConfigs();
   const settings = useEnvironmentSettings(environmentId);
   // New-thread defaults live in the primary environment's settings.json (the
   // settings UI never writes to remote environments), so read them from the
@@ -1936,11 +1938,23 @@ export default function ChatView(props: ChatViewProps) {
   // lands later still gets its signal (the boundary never moves backwards).
   // Only a focused, visible document counts as reading; a completion that
   // lands in a background tab stays unread until the user comes back.
+  // The environment config decides whether the ack is a server command or a
+  // local write, so wait for it: an ack sent before it loads would be stuck
+  // in local storage and never reach other clients.
   const serverThreadEnvironmentId = serverThread?.environmentId;
   const serverThreadId = serverThread?.id;
   const serverThreadCompletedAt = serverThread?.latestTurn?.completedAt;
+  const serverThreadConfigLoaded =
+    serverThreadEnvironmentId !== undefined && serverConfigs.has(serverThreadEnvironmentId);
   useEffect(() => {
-    if (!serverThreadEnvironmentId || !serverThreadId || !serverThreadCompletedAt) return;
+    if (
+      !serverThreadEnvironmentId ||
+      !serverThreadId ||
+      !serverThreadCompletedAt ||
+      !serverThreadConfigLoaded
+    ) {
+      return;
+    }
     const threadRef = scopeThreadRef(serverThreadEnvironmentId, serverThreadId);
     const acknowledge = () => {
       if (document.visibilityState !== "visible" || !document.hasFocus()) return;
@@ -1955,7 +1969,13 @@ export default function ChatView(props: ChatViewProps) {
       window.removeEventListener("focus", acknowledge);
       document.removeEventListener("visibilitychange", acknowledge);
     };
-  }, [markViewed, serverThreadEnvironmentId, serverThreadId, serverThreadCompletedAt]);
+  }, [
+    markViewed,
+    serverThreadConfigLoaded,
+    serverThreadEnvironmentId,
+    serverThreadId,
+    serverThreadCompletedAt,
+  ]);
   useEffect(() => {
     setMountedTerminalThreadKeys((currentThreadIds) => {
       const nextThreadIds = reconcileMountedTerminalThreadIds({
