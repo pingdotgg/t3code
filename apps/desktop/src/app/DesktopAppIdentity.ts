@@ -48,6 +48,12 @@ const normalizeCommitHash = (value: string): Option.Option<string> => {
 export const resolveUserDataPath = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
+  // Electron locks its internal app name before application code runs. A
+  // branded distribution therefore cannot safely reuse the official app's
+  // live Chromium profile or safeStorage identity by calling app.setName().
+  if (environment.isDownstreamDistribution) {
+    return environment.path.join(environment.appDataDirectory, environment.userDataDirName);
+  }
   const legacyPath = environment.path.join(
     environment.appDataDirectory,
     environment.legacyUserDataDirName,
@@ -119,10 +125,6 @@ export const make = Effect.gen(function* () {
 
   const configure = Effect.gen(function* () {
     const commitHash = yield* resolveAboutCommitHash;
-    // Electron derives its macOS safeStorage Keychain service from the internal
-    // app name. Keep that name stable across branded downstream builds so they
-    // can read the connection catalog encrypted by the upstream app.
-    yield* electronApp.setName(environment.userDataDirName);
     yield* electronApp.setAboutPanelOptions({
       applicationName: environment.displayName,
       applicationVersion: environment.appVersion,

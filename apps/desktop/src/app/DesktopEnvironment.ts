@@ -47,6 +47,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly stateDir: string;
     readonly desktopSettingsPath: string;
     readonly clientSettingsPath: string;
+    readonly connectionCatalogPath: string;
     readonly savedEnvironmentRegistryPath: string;
     readonly serverSettingsPath: string;
     readonly logDir: string;
@@ -77,6 +78,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly linuxWmClass: string;
     readonly linuxApplicationsDir: string;
     readonly appImagePath: Option.Option<string>;
+    readonly isDownstreamDistribution: boolean;
     readonly userDataDirName: string;
     readonly legacyUserDataDirName: string;
     readonly defaultDesktopSettings: DesktopAppSettings.DesktopSettings;
@@ -87,6 +89,24 @@ export class DesktopEnvironment extends Context.Service<
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
 const APP_BASE_NAME = "T3 Code";
+
+function resolveConnectionCatalogFileName(input: {
+  readonly isDownstreamDistribution: boolean;
+  readonly displayName: string;
+}): string {
+  if (!input.isDownstreamDistribution) {
+    return "connection-catalog.json";
+  }
+
+  // A downstream distribution has its own Electron safeStorage key on macOS.
+  // Keep its encrypted catalog separate from the official app's catalog so
+  // both applications can use the shared T3 backend state without attempting
+  // to decrypt or overwrite each other's credentials.
+  const scope = Array.from(input.displayName, (character) =>
+    character.codePointAt(0)!.toString(16).padStart(4, "0"),
+  ).join("");
+  return `connection-catalog.${scope}.json`;
+}
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -181,13 +201,26 @@ const make = Effect.fn("desktop.environment.make")(function* (
     ...(input.appName === undefined ? {} : { appName: input.appName }),
   });
   const displayName = branding.displayName;
+  const isDownstreamDistribution =
+    input.isPackaged && displayName !== `${APP_BASE_NAME} (${branding.stageLabel})`;
   const stateDir = resolveDesktopStateDir({
     baseDir,
     isDevelopment,
     joinPath: path.join,
     t3Home: config.t3Home,
   });
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
+  const connectionCatalogPath = path.join(
+    stateDir,
+    resolveConnectionCatalogFileName({
+      isDownstreamDistribution,
+      displayName,
+    }),
+  );
+  const userDataDirName = isDevelopment
+    ? "t3code-dev"
+    : isDownstreamDistribution
+      ? displayName
+      : "t3code";
   const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
@@ -211,6 +244,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     stateDir,
     desktopSettingsPath: path.join(stateDir, "desktop-settings.json"),
     clientSettingsPath: path.join(stateDir, "client-settings.json"),
+    connectionCatalogPath,
     savedEnvironmentRegistryPath: path.join(stateDir, "saved-environments.json"),
     serverSettingsPath: path.join(stateDir, "settings.json"),
     logDir: path.join(stateDir, "logs"),
@@ -239,6 +273,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
+    isDownstreamDistribution,
     userDataDirName,
     legacyUserDataDirName,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),

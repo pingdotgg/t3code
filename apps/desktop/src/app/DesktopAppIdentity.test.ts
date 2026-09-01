@@ -183,6 +183,27 @@ describe("DesktopAppIdentity", () => {
     );
   });
 
+  it.effect("keeps a downstream profile separate from an existing official profile", () =>
+    withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const userDataPath = yield* identity.resolveUserDataPath;
+
+        assert.equal(
+          userDataPath,
+          "/Users/alice/Library/Application Support/T3 Code (Fork Nightly)",
+        );
+      }),
+      {
+        legacyPathExists: true,
+        environment: {
+          appName: "T3 Code (Fork Nightly)",
+          appVersion: "0.0.38-nightly.20260901.1243",
+        },
+      },
+    ),
+  );
+
   it.effect("configures app identity from the environment commit override", () => {
     const calls: ElectronAppCalls = {
       setAboutPanelOptions: [],
@@ -195,7 +216,7 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         yield* identity.configure;
 
-        assert.deepEqual(calls.setName, ["t3code"]);
+        assert.deepEqual(calls.setName, []);
         assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 Code (Alpha)");
         assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
         assert.equal(calls.setAboutPanelOptions[0]?.version, "0123456789ab");
@@ -215,7 +236,7 @@ describe("DesktopAppIdentity", () => {
     );
   });
 
-  it.effect("keeps downstream builds on the shared secure-storage identity", () => {
+  it.effect("keeps downstream display branding without mutating Electron's locked app name", () => {
     const calls: ElectronAppCalls = {
       setAboutPanelOptions: [],
       setDockIcon: [],
@@ -227,7 +248,7 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         yield* identity.configure;
 
-        assert.deepEqual(calls.setName, ["t3code"]);
+        assert.deepEqual(calls.setName, []);
         assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 Code (Fork Nightly)");
       }),
       {

@@ -1,4 +1,8 @@
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
+import {
+  RemoteEnvironmentAuthFetchError,
+  RemoteEnvironmentAuthTimeoutError,
+} from "@t3tools/client-runtime/rpc";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -10,6 +14,15 @@ import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
+
+const LOCAL_ENVIRONMENT_AUTH_TIMEOUT_MS = 30_000;
+
+function isRetryableLocalAuthError(error: unknown): boolean {
+  return (
+    error instanceof RemoteEnvironmentAuthFetchError ||
+    error instanceof RemoteEnvironmentAuthTimeoutError
+  );
+}
 
 export class DesktopLocalEnvironmentAuthBackendNotConfiguredError extends Schema.TaggedErrorClass<DesktopLocalEnvironmentAuthBackendNotConfiguredError>()(
   "DesktopLocalEnvironmentAuthBackendNotConfiguredError",
@@ -70,12 +83,14 @@ export const make = Effect.gen(function* () {
         const session = yield* bootstrapRemoteBearerSession({
           httpBaseUrl: config.httpBaseUrl.href,
           credential,
+          timeoutMs: LOCAL_ENVIRONMENT_AUTH_TIMEOUT_MS,
           clientMetadata: {
             label: "T3 Code Desktop",
             deviceType: "desktop",
           },
         }).pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.retry({ times: 1, while: isRetryableLocalAuthError }),
           Effect.mapError(
             (cause) =>
               new DesktopLocalEnvironmentAuthSessionBootstrapError({

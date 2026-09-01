@@ -48,6 +48,7 @@ function makeLayer(
   encryptionAvailable = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
+  appName?: string,
 ) {
   const environmentLayer = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -55,6 +56,7 @@ function makeLayer(
     platform: "darwin",
     processArch: "arm64",
     appVersion: "1.2.3",
+    ...(appName === undefined ? {} : { appName }),
     appPath: "/repo",
     isPackaged: true,
     resourcesPath: "/missing/resources",
@@ -117,6 +119,31 @@ describe("DesktopConnectionCatalogStore", () => {
         assert.deepStrictEqual(yield* store.get, Option.none());
       }),
       false,
+    ),
+  );
+
+  it.effect("isolates a downstream distribution from the official encrypted catalog", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-connection-catalog-test-",
+        });
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+          Effect.provide(
+            makeLayer(baseDir, true, null, NodeServices.layer, "T3 Code (Fork Alpha)"),
+          ),
+        );
+        const officialCatalogPath = `${baseDir}/userdata/connection-catalog.json`;
+        const downstreamCatalogPath = `${baseDir}/userdata/connection-catalog.0054003300200043006f00640065002000280046006f0072006b00200041006c0070006800610029.json`;
+
+        yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+        yield* fileSystem.writeFileString(officialCatalogPath, "official-ciphertext");
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":[]}'));
+        assert.equal(yield* fileSystem.readFileString(officialCatalogPath), "official-ciphertext");
+        assert.isTrue(yield* fileSystem.exists(downstreamCatalogPath));
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 

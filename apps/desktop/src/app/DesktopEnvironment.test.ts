@@ -48,6 +48,29 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.displayName, "T3 Code (Fork Nightly)");
       assert.equal(environment.branding.displayName, "T3 Code (Fork Nightly)");
       assert.equal(environment.branding.stageLabel, "Nightly");
+      assert.isTrue(environment.isDownstreamDistribution);
+      assert.equal(environment.userDataDirName, "T3 Code (Fork Nightly)");
+      assert.equal(
+        environment.connectionCatalogPath,
+        "/Users/alice/.t3/userdata/connection-catalog.0054003300200043006f00640065002000280046006f0072006b0020004e0069006700680074006c00790029.json",
+      );
+    }),
+  );
+
+  it.effect("keeps official packaged builds on the shared connection catalog", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        isPackaged: true,
+        appVersion: "0.0.38-nightly.20260901.1",
+        appName: "T3 Code (Nightly)",
+      });
+
+      assert.equal(
+        environment.connectionCatalogPath,
+        "/Users/alice/.t3/userdata/connection-catalog.json",
+      );
+      assert.isFalse(environment.isDownstreamDistribution);
+      assert.equal(environment.userDataDirName, "t3code");
     }),
   );
 
@@ -72,6 +95,7 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.stateDir, "/tmp/t3/userdata");
       assert.equal(environment.desktopSettingsPath, "/tmp/t3/userdata/desktop-settings.json");
       assert.equal(environment.clientSettingsPath, "/tmp/t3/userdata/client-settings.json");
+      assert.equal(environment.connectionCatalogPath, "/tmp/t3/userdata/connection-catalog.json");
       assert.equal(
         environment.savedEnvironmentRegistryPath,
         "/tmp/t3/userdata/saved-environments.json",
