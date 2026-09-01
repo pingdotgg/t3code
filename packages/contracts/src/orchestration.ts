@@ -282,11 +282,21 @@ export const ProjectFaviconPath = TrimmedNonEmptyString.check(
 );
 export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
 
+/**
+ * User-chosen accessibility color for a project (a palette name like "blue"
+ * or a raw CSS hex color). Free-form so palettes can evolve without breaking
+ * decode on older peers; clients map unknown values to a sensible fallback.
+ */
+export const ProjectColor = TrimmedNonEmptyString.check(Schema.isMaxLength(32));
+export type ProjectColor = typeof ProjectColor.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
+  /** Optional so payloads from pre-color servers still decode; null clears. */
+  color: Schema.optional(Schema.NullOr(ProjectColor)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   // Per-project override for where new threads start. Null/absent means
   // "no override": clients fall back to t3.json, then the global setting.
@@ -500,6 +510,8 @@ export const OrchestrationProjectShell = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
+  /** Optional so payloads from pre-color servers still decode; null clears. */
+  color: Schema.optional(Schema.NullOr(ProjectColor)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   // Optional on the wire so cached snapshots from older servers still decode.
@@ -723,6 +735,9 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  /** Absent = leave unchanged, null = clear the color. Only send to servers
+      advertising the projectColor capability. */
+  color: Schema.optional(Schema.NullOr(ProjectColor)),
 });
 
 const ProjectDeleteCommand = Schema.Struct({
@@ -1191,6 +1206,8 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  /** Absent = unchanged, null = cleared. */
+  color: Schema.optional(Schema.NullOr(ProjectColor)),
   updatedAt: IsoDateTime,
 });
 

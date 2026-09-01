@@ -263,6 +263,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(command.faviconPath !== undefined ? { faviconPath: command.faviconPath } : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
+          ...(command.color !== undefined ? { color: command.color } : {}),
           updatedAt: occurredAt,
         },
       };

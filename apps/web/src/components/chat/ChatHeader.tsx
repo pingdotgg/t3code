@@ -43,6 +43,7 @@ import {
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
+import { ProjectColorDot } from "../ProjectColor";
 import { cn } from "~/lib/utils";
 
 interface ChatHeaderProps {
@@ -53,6 +54,7 @@ interface ChatHeaderProps {
   /** Drafts have no server thread yet, so the title carries no action menu. */
   isServerThread: boolean;
   activeProjectName: string | undefined;
+  activeProjectColor: string | null;
   activeProjectCwd: string | null;
   activeProjectFaviconPath: string | null;
   openInCwd: string | null;
@@ -121,6 +123,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadTitle,
   isServerThread,
   activeProjectName,
+  activeProjectColor,
   activeProjectCwd,
   activeProjectFaviconPath,
   openInCwd,
@@ -311,6 +314,7 @@ export const ChatHeader = memo(function ChatHeader({
                     className="size-3.5"
                   />
                   <span className="max-w-40 truncate">{activeProjectName}</span>
+                  <ProjectColorDot color={activeProjectColor} className="size-1.5" />
                 </TooltipTrigger>
                 <TooltipPopup side="top">New thread in {activeProjectName}</TooltipPopup>
               </Tooltip>

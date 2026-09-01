@@ -232,6 +232,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
+import { resolveProjectColorInGroups } from "../projectColors";
 import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import {
   beginBackgroundDraftSubmissionByRef,
@@ -1910,6 +1911,20 @@ function ChatViewContent(props: ChatViewProps) {
   // drive the environment picker in BranchToolbar.
   const allProjects = useProjects();
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
+  // Header color resolves through the sidebar's grouping, so a color set on
+  // another member of the same logical project still marks this thread.
+  const activeProjectColor = useMemo(
+    () =>
+      activeProject
+        ? resolveProjectColorInGroups({
+            project: activeProject,
+            projects: allProjects,
+            settings: projectGroupingSettings,
+            primaryEnvironmentId,
+          })
+        : null,
+    [activeProject, allProjects, primaryEnvironmentId, projectGroupingSettings],
+  );
   useEffect(() => {
     if (!activeThreadRef || !activeProjectRef) return;
     registerFaviconProjectForThread(activeThreadRef, activeProjectRef);
@@ -7159,6 +7174,7 @@ function ChatViewContent(props: ChatViewProps) {
             activeThreadTitle={activeThread.title}
             isServerThread={isServerThread}
             activeProjectName={activeProject?.title}
+            activeProjectColor={activeProjectColor}
             activeProjectCwd={activeProject?.workspaceRoot ?? null}
             activeProjectFaviconPath={activeProject?.faviconPath ?? null}
             openInCwd={gitCwd}

@@ -29,6 +29,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         projectId: ProjectId.make("project-null-options"),
         title: "Null options project",
         workspaceRoot: "/tmp/project-null-options",
+        color: null,
         defaultModelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
@@ -68,6 +69,32 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",
       });
+    }),
+  );
+
+  it.effect("round-trips the project color", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectionProjectRepository;
+
+      const row = {
+        projectId: ProjectId.make("project-color"),
+        title: "Color project",
+        workspaceRoot: "/tmp/project-color",
+        color: "teal",
+        defaultModelSelection: null,
+        defaultThreadEnvMode: null,
+        scripts: [],
+        createdAt: "2026-03-24T00:00:00.000Z",
+        updatedAt: "2026-03-24T00:00:00.000Z",
+        deletedAt: null,
+      };
+      yield* projects.upsert(row);
+      const withColor = yield* projects.getById({ projectId: ProjectId.make("project-color") });
+      assert.strictEqual(Option.getOrNull(withColor)?.color, "teal");
+
+      yield* projects.upsert({ ...row, color: null });
+      const cleared = yield* projects.getById({ projectId: ProjectId.make("project-color") });
+      assert.strictEqual(Option.getOrNull(cleared)?.color, null);
     }),
   );
 
