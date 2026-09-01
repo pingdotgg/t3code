@@ -724,7 +724,14 @@ export async function removeDeliveredCloudQueuedMessage(
   if (!changed) return;
   appAtomRegistry.set(composerCloudDraftsAtom, { ...cloud, signedOut });
   schedulePersistComposerState();
-  await flushComposerDrafts();
+  try {
+    await flushComposerDrafts();
+  } catch (error) {
+    // The live outbox can still remove this acknowledged message. Keep the
+    // archive update pending so a later successful flush lands it too.
+    schedulePersistComposerState();
+    throw error;
+  }
 }
 
 /** Restores only this account, before its connections can deliver queued turns. */

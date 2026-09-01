@@ -322,6 +322,25 @@ describe("thread outbox attachment preparation", () => {
 });
 
 describe("thread outbox drain delivery cleanup", () => {
+  it("removes an acknowledged outbox item even when the sign-out archive write fails", async () => {
+    const message = queuedMessage({ messageId: "archive-write-failure", text: "Delivered" });
+    await harness.manager.enqueue(message);
+    await composerDrafts.archiveCloudComposerDrafts("account-a", new Set([message.environmentId]));
+    harness.draftFile.setWriteError(new Error("Draft storage unavailable"));
+
+    await expect(
+      completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId)),
+    ).resolves.toBe("removed");
+    expect(remainingMessages()).toEqual([]);
+
+    harness.draftFile.setWriteError(null);
+    await composerDrafts.flushComposerDrafts();
+    appAtomRegistry.set(composerDrafts.composerCloudDraftsAtom, { accountId: null, signedOut: {} });
+    composerDrafts.resetComposerDraftsLoadState();
+    await composerDrafts.restoreCloudComposerDrafts("account-a");
+    expect(remainingMessages()).toEqual([]);
+  });
+
   it.each([false, true])(
     "does not restore a message delivered after the sign-out snapshot (outbox already cleared: %s)",
     async (cleared) => {
