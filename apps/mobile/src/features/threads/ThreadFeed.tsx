@@ -167,8 +167,10 @@ function formatMessageTime(input: string): string {
 // measure, not a persistent offset.
 const TURN_FOLD_HEIGHT = 48; // min-h-11 (44) + mb-1 (4)
 const THREAD_FEED_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
-const THREAD_FEED_DISCLOSURE_ENTER_TRANSITION = FadeIn.duration(140);
-const EMPTY_DISCLOSURE_ENTRY_IDS: ReadonlySet<string> = new Set();
+// Let neighboring rows move out of the new rows' space before showing their text.
+const THREAD_FEED_DISCLOSURE_ENTER_TRANSITION = FadeIn.delay(
+  THREAD_DISCLOSURE_TRANSITION_MS,
+).duration(140);
 
 // Entering animations must only play for rows born just now — LegendList
 // remounts rows when they scroll back into view, and replaying an entrance for
@@ -1823,7 +1825,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
-  const previousPresentedFeedRef = useRef<ReadonlyArray<ThreadFeedEntry> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
   const previousLatestTurnRef = useRef(props.latestTurn);
   const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2156,33 +2157,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.latestTurn,
     ],
   );
-  const disclosureEnteringEntryIds = useMemo(() => {
-    const anchorKey = disclosureAnchorKeyRef.current;
-    const previousPresentedFeed = previousPresentedFeedRef.current;
-    if (!disclosureToggleSettling || anchorKey === null || previousPresentedFeed === null) {
-      return EMPTY_DISCLOSURE_ENTRY_IDS;
-    }
-
-    const previousIds = new Set(previousPresentedFeed.map((entry) => entry.id));
-    const anchorIndex = presentedFeed.findIndex((entry) => entry.id === anchorKey);
-    const enteringIds = new Set<string>();
-    if (anchorIndex < 0) {
-      return enteringIds;
-    }
-    for (let index = anchorIndex + 1; index < presentedFeed.length; index += 1) {
-      const entryId = presentedFeed[index]!.id;
-      if (previousIds.has(entryId)) {
-        break;
-      }
-      enteringIds.add(entryId);
-    }
-    return enteringIds;
-  }, [disclosureToggleSettling, presentedFeed]);
-
-  useLayoutEffect(() => {
-    previousPresentedFeedRef.current = presentedFeed;
-  }, [presentedFeed]);
-
   // The empty↔filled key below remounts the list and resets its imperative
   // content-inset override. Seed the fresh instance synchronously with the
   // current overlay height before the scroll integration's next reaction;
@@ -2426,17 +2400,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [expandedWorkRows],
   );
 
-  // Virtualized rows must disappear immediately: retaining their exiting
-  // text can overlap the rows moving into the same space.
+  // Disclosures can mount existing offscreen rows as well as new work rows.
+  // Fade those in after movement; never retain removed rows over replacements.
   const renderItem = useCallback(
     (info: { item: ThreadFeedEntry; index: number }) => (
       <Animated.View
         key={info.item.id}
-        entering={
-          disclosureEnteringEntryIds.has(info.item.id)
-            ? THREAD_FEED_DISCLOSURE_ENTER_TRANSITION
-            : undefined
-        }
+        entering={disclosureToggleSettling ? THREAD_FEED_DISCLOSURE_ENTER_TRANSITION : undefined}
       >
         {renderFeedEntry(info, {
           environmentId: props.environmentId,
@@ -2465,7 +2435,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     ),
     [
       copiedRowId,
-      disclosureEnteringEntryIds,
+      disclosureToggleSettling,
       expandedWorkRows,
       terminalAssistantMessageIds,
       unsettledTurnId,
