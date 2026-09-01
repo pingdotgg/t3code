@@ -2,9 +2,10 @@ import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { Atom } from "effect/unstable/reactivity";
 import { RotateCcwIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 
 import { useClientSettings, useClientSettingsHydrated } from "../../hooks/useSettings";
+import { mountOnboardingTheme } from "../../hooks/useTheme";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
   isFirstRunWorkspaceProvenanceAuthoritative,
@@ -97,6 +98,12 @@ export function FirstRunGate({
     stalled: false,
   }));
   const { decision, stalled } = gateState;
+  const ownsOnboardingTheme = stalled || decision === "wizard";
+
+  useLayoutEffect(() => {
+    if (!ownsOnboardingTheme) return;
+    return mountOnboardingTheme();
+  }, [ownsOnboardingTheme]);
 
   // A workspace still counts as fresh when its only content is the server's
   // own cwd auto-bootstrap: web mode creates a project + thread from cwd at
@@ -189,12 +196,14 @@ export function FirstRunGate({
 
 function FirstRunConnectionRecovery() {
   return (
-    <main className="flex h-dvh min-h-0 items-center justify-center bg-black px-6 text-white">
+    <main className="flex h-dvh min-h-0 items-center justify-center bg-background px-6 text-foreground">
       <div className="flex max-w-sm flex-col items-center text-center">
         <h1 className="text-lg font-semibold">Still connecting</h1>
-        <p className="mt-2 text-sm text-white/64">T3 Code could not confirm this workspace.</p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          T3 Code could not confirm this workspace.
+        </p>
         <Button
-          className="mt-5 border-white/20 bg-black text-white hover:bg-white/10"
+          className="mt-5"
           size="sm"
           variant="outline"
           onClick={() => window.location.reload()}
