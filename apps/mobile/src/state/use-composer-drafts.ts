@@ -15,8 +15,12 @@ import { Atom } from "effect/unstable/reactivity";
 
 import { writeFileAtomically } from "../lib/atomic-file";
 import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
-import { composerAttachmentFileReferenceKey } from "../lib/composerAttachmentFiles";
-import type { DraftComposerAttachment } from "../lib/composerImages";
+import {
+  composerAttachmentFileReferenceKey,
+  isComposerAttachmentFileRetained,
+  retainComposerAttachmentFile,
+} from "../lib/composerAttachmentFiles";
+import type { DraftComposerAttachment, DraftComposerFileAttachment } from "../lib/composerImages";
 import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
 import { appAtomRegistry } from "./atom-registry";
 import { flushThreadOutbox, threadOutboxManager } from "./thread-outbox";
@@ -287,6 +291,9 @@ export async function flushComposerDrafts(): Promise<void> {
 }
 
 function isComposerAttachmentFileReferenced(fileUri: string): boolean {
+  if (isComposerAttachmentFileRetained(fileUri)) {
+    return true;
+  }
   const referenceKey = composerAttachmentFileReferenceKey(fileUri);
   const drafts = Object.values(appAtomRegistry.get(composerDraftsAtom));
   const queuedMessages = Object.values(
@@ -433,6 +440,15 @@ export function scheduleUnusedComposerAttachmentCleanup(
   }
   void releaseUnusedComposerAttachmentFiles(attachments).catch((error) => {
     console.warn("[composer-attachments] could not remove unused files", error);
+  });
+}
+
+/** Keeps previews usable after send/removal, then retries the normal ownership cleanup. */
+export function retainComposerAttachmentFileForPreview(
+  attachment: DraftComposerFileAttachment,
+): () => void {
+  return retainComposerAttachmentFile(attachment.fileUri, () => {
+    scheduleUnusedComposerAttachmentCleanup([attachment]);
   });
 }
 

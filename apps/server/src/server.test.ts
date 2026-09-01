@@ -103,7 +103,7 @@ const collectQueueUntil = Effect.fn("TransferBudget.collectQueueUntil")(function
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
-import { makeRoutesLayer } from "./server.ts";
+import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
 import {
   isThreadDetailEvent,
   resolveAvailableEditorsForConfig,
@@ -629,6 +629,7 @@ const buildAppUnderTest = (options?: {
       {
         disableListenLog: true,
         disableLogger: true,
+        routerConfig: HTTP_ROUTER_CONFIG,
       },
     ).pipe(
       Layer.provide(
@@ -1524,6 +1525,41 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.status, 200);
       assert.deepEqual(body, testEnvironmentDescriptor);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves snapshots for MCP handoff thread IDs above the router default", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make(
+        "thread:mcp:abfba0d2-b591-4b7e-aad1-e943d89811fa:handoff%3A0ae5edf4-2ea3-4ee3-ba7c-48de3ac92896%3A2026-08-24T17%3A08%3A52.138Z:0",
+      );
+      const thread = {
+        ...makeDefaultOrchestrationReadModel().threads[0]!,
+        id: threadId,
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: (requestedThreadId) =>
+              Effect.succeed(
+                requestedThreadId === threadId
+                  ? Option.some({ snapshotSequence: 1, thread })
+                  : Option.none(),
+              ),
+          },
+        },
+      });
+
+      const response = yield* fetchEffect(
+        yield* getHttpServerUrl(`/api/orchestration/threads/${encodeURIComponent(threadId)}`),
+        { headers: { cookie: yield* getAuthenticatedSessionCookieHeader() } },
+      );
+      const snapshot = yield* responseJsonEffect<{
+        readonly thread: { readonly id: ThreadId };
+      }>(response);
+
+      assert.equal(response.status, 200);
+      assert.equal(snapshot.thread.id, threadId);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -134,6 +134,7 @@ import {
   releaseUnusedComposerAttachmentFiles,
   removeComposerDraftsForEnvironment,
   resetComposerDraftsLoadState,
+  retainComposerAttachmentFileForPreview,
   restoreComposerDraftSnapshotState,
   setComposerDraftText,
   setStickyComposerModelSelection,
@@ -317,6 +318,82 @@ describe("mobile composer drafts", () => {
 
     expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
     expect(composerAttachmentCleanupMocks.releaseUploads).not.toHaveBeenCalled();
+  });
+
+  it("keeps a removed file until both playback and a share copy finish", async () => {
+    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    onTestFinished(() => outboxLoad.mockRestore());
+    const fileName = "33333333-3333-4333-8333-333333333333-recording.mp4";
+    const file = {
+      id: "file-preview",
+      type: "file" as const,
+      name: "recording.mp4",
+      mimeType: "video/mp4",
+      sizeBytes: 42,
+      fileUri: `file:///private/var/mobile/Containers/Data/Application/11111111-1111-4111-8111-111111111111/Documents/t3-composer-attachments/${fileName}`,
+    };
+    const currentFile = {
+      ...file,
+      fileUri: `file:///var/mobile/Containers/Data/Application/22222222-2222-4222-8222-222222222222/Documents/t3-composer-attachments/${fileName}`,
+    };
+    const releasePlayback = retainComposerAttachmentFileForPreview(file);
+    const releaseShareCopy = retainComposerAttachmentFileForPreview(currentFile);
+    onTestFinished(releasePlayback);
+    onTestFinished(releaseShareCopy);
+
+    await releaseUnusedComposerAttachmentFiles([currentFile]);
+    expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
+
+    releasePlayback();
+    releasePlayback();
+    await releaseUnusedComposerAttachmentFiles([file]);
+    expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
+
+    const deleted = Promise.withResolvers<void>();
+    composerAttachmentCleanupMocks.remove.mockImplementationOnce(async () => {
+      deleted.resolve();
+      return undefined;
+    });
+    releaseShareCopy();
+    await deleted.promise;
+
+    expect(composerAttachmentCleanupMocks.remove.mock.calls).toEqual([[currentFile.fileUri]]);
+  });
+
+  it("preserves a preview opened while cleanup is checking the incoming inbox", async () => {
+    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    onTestFinished(() => outboxLoad.mockRestore());
+    const file = {
+      id: "file-opening-preview",
+      type: "file" as const,
+      name: "recording.mp4",
+      mimeType: "video/mp4",
+      sizeBytes: 42,
+      fileUri: "file:///documents/t3-composer-attachments/recording.mp4",
+    };
+    const ownershipReadStarted = Promise.withResolvers<void>();
+    const ownershipRead = Promise.withResolvers<[]>();
+    incomingShareStorageMocks.load.mockImplementationOnce(() => {
+      ownershipReadStarted.resolve();
+      return ownershipRead.promise;
+    });
+
+    const cleanup = releaseUnusedComposerAttachmentFiles([file]);
+    await ownershipReadStarted.promise;
+    const release = retainComposerAttachmentFileForPreview(file);
+    onTestFinished(release);
+    ownershipRead.resolve([]);
+    await cleanup;
+    expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
+
+    const deleted = Promise.withResolvers<void>();
+    composerAttachmentCleanupMocks.remove.mockImplementationOnce(async () => {
+      deleted.resolve();
+      return undefined;
+    });
+    release();
+    await deleted.promise;
+    expect(composerAttachmentCleanupMocks.remove.mock.calls).toEqual([[file.fileUri]]);
   });
 
   it("removes an unreferenced local file and its pending upload", async () => {
