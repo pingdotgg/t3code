@@ -334,6 +334,7 @@ function SidebarUpdateControl() {
           onOpenChange={handleSidebarUpdateReleaseNotesPopoverOpenChange}
         >
           <PopoverTrigger
+            closeDelay={150}
             handle={releaseNotesPopoverHandle}
             id={releaseNotesTriggerId}
             openOnHover
