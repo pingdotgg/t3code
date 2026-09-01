@@ -8,8 +8,10 @@ import {
   resolvePullRequestAuthorFilter,
 } from "@t3tools/contracts";
 import type {
+  PullRequestActor,
   PullRequestDiffStat,
   PullRequestInvolvement,
+  PullRequestLabel,
   PullRequestListCursors,
   PullRequestListFilters,
   PullRequestListState,
@@ -40,6 +42,16 @@ export interface PullRequestGroup<Entry extends PullRequestListEntry = PullReque
   readonly entries: ReadonlyArray<Entry>;
 }
 
+export interface PullRequestAuthorFacet {
+  readonly actor: PullRequestActor;
+  readonly count: number;
+  readonly mergedCount: number;
+}
+
+export interface PullRequestLabelFacet extends PullRequestLabel {
+  readonly count: number;
+}
+
 /**
  * The signed-in account per host. Keyed `"<environmentId> <host>"` once a listing spans more than
  * one environment: two machines can both reach github.com signed in as different people, and a
@@ -63,6 +75,59 @@ const GROUP_LABELS: Record<PullRequestGroupKey, string> = {
 function normalize(value: string | null | undefined): string | null {
   const trimmed = value?.trim().toLowerCase() ?? "";
   return trimmed.length > 0 ? trimmed : null;
+}
+
+export function pullRequestLabelColor(color: string | null): string | null {
+  const hex = color?.trim().replace(/^#/, "") ?? "";
+  return /^[0-9a-fA-F]{6}$/.test(hex) ? `#${hex}` : null;
+}
+
+export function collectPullRequestListFacets(
+  entries: ReadonlyArray<PullRequestListEntry>,
+  state: PullRequestListState,
+) {
+  const authors = new Map<string, PullRequestAuthorFacet>();
+  const labels = new Map<string, PullRequestLabelFacet>();
+  const uniqueEntries = new Map(entries.map((entry) => [pullRequestEntryKey(entry), entry]));
+  for (const entry of uniqueEntries.values()) {
+    const inState = state === "all" || entry.state === state;
+    if (entry.author !== null) {
+      const key = normalize(entry.author.login);
+      if (key !== null) {
+        const held = authors.get(key);
+        authors.set(key, {
+          actor: held?.actor ?? entry.author,
+          count: (held?.count ?? 0) + Number(inState),
+          mergedCount: (held?.mergedCount ?? 0) + Number(entry.state === "merged"),
+        });
+      }
+    }
+    if (!inState) continue;
+    for (const label of entry.labels) {
+      const key = normalize(label.name);
+      if (key === null) continue;
+      const held = labels.get(key);
+      labels.set(key, {
+        ...label,
+        name: held?.name ?? label.name,
+        color: held?.color ?? label.color,
+        count: (held?.count ?? 0) + 1,
+      });
+    }
+  }
+  return {
+    authors: [...authors.values()]
+      .filter((author) => author.count > 0)
+      .toSorted(
+        (left, right) =>
+          right.mergedCount - left.mergedCount ||
+          right.count - left.count ||
+          left.actor.login.localeCompare(right.actor.login),
+      ),
+    labels: [...labels.values()].toSorted(
+      (left, right) => right.count - left.count || left.name.localeCompare(right.name),
+    ),
+  };
 }
 
 /**
@@ -433,13 +498,16 @@ export function mergePullRequestDiffStats(
   if (stats.length === 0) return previous;
   const next = new Map(previous);
   for (const stat of stats) {
-    next.set(diffStatKey(stat), { additions: stat.additions, deletions: stat.deletions });
+    next.set(pullRequestDiffStatKey(stat), {
+      additions: stat.additions,
+      deletions: stat.deletions,
+    });
   }
   return next;
 }
 
 /** A project id only names a project within its own environment, so the key carries both. */
-const diffStatKey = (row: {
+export const pullRequestDiffStatKey = (row: {
   readonly environmentId: string;
   readonly projectId: string;
   readonly number: number;
@@ -792,6 +860,6 @@ export function withDiffStat<
   statsByRow: ReadonlyMap<string, { readonly additions: number; readonly deletions: number }>,
 ): Entry {
   if (entry.additions !== 0 || entry.deletions !== 0) return entry;
-  const stat = statsByRow.get(diffStatKey(entry));
+  const stat = statsByRow.get(pullRequestDiffStatKey(entry));
   return stat === undefined ? entry : { ...entry, ...stat };
 }
