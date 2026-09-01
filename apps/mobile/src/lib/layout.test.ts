@@ -8,10 +8,37 @@ import {
   deriveLayout,
   deriveStableFormSheetDetent,
   deriveThreadFeedInitialContentInset,
+  deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
   SPLIT_LAYOUT_MIN_HEIGHT,
   SPLIT_LAYOUT_MIN_WIDTH,
 } from "./layout";
+
+describe("thread work-log text sizing", () => {
+  it.each([11, 16, 22])(
+    "keeps exact compact rows at base size %i without OS enlargement",
+    (baseFontSize) => {
+      expect(deriveThreadWorkLogSizing({ baseFontSize, fontScale: 1 })).toEqual({
+        estimatedRowHeight: 32,
+        fixedRowHeight: 32,
+      });
+    },
+  );
+
+  it.each([
+    { baseFontSize: 16, fontScale: 1.25, estimatedRowHeight: 32 },
+    { baseFontSize: 16, fontScale: 2, estimatedRowHeight: 38 },
+    { baseFontSize: 22, fontScale: 2, estimatedRowHeight: 52 },
+  ])(
+    "measures accessibility text instead of locking it to the estimate: %j",
+    ({ estimatedRowHeight, ...settings }) => {
+      expect(deriveThreadWorkLogSizing(settings)).toEqual({
+        estimatedRowHeight,
+        fixedRowHeight: undefined,
+      });
+    },
+  );
+});
 
 describe("deriveThreadFeedInitialContentInset", () => {
   it("seeds Android scroll math with the composer overlay estimate", () => {

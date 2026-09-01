@@ -30,7 +30,13 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { AppText as Text } from "../../components/AppText";
 import { T3Wordmark } from "../../components/T3Wordmark";
 import { cn } from "../../lib/cn";
+import { THREAD_WORK_ROW_MIN_HEIGHT, type deriveThreadWorkLogSizing } from "../../lib/layout";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
+import {
+  resolveThreadWorkGroupInitialScroll,
+  shouldFollowThreadWorkGroupAppend,
+  type ThreadWorkGroupScrollPosition,
+} from "./thread-feed-live-follow";
 import {
   resolveWorkEntryToolPresentation,
   type ToolGroupSummaryKind,
@@ -331,12 +337,9 @@ function isFreshRow(createdAt: string): boolean {
   return Number.isFinite(timestamp) && Date.now() - timestamp < FRESH_ROW_WINDOW_MS;
 }
 
-// Pre-measurement heights for the feed's getFixedItemSize. Collapsed work-log
-// rows are single-line (numberOfLines={1}) inside a min-height that stays
-// taller than text-sm at every supported base font size, so row height is
-// deterministic. Values mirror the classNames below. A mismatch only costs a
-// one-time correction on measure.
-const WORK_ROW_HEIGHT = 32; // min-h-8
+// The minimum matches min-h-8 below. Exact sizing is disabled when native
+// accessibility scaling can make the single-line text taller than that minimum.
+const WORK_ROW_HEIGHT = THREAD_WORK_ROW_MIN_HEIGHT;
 const WORK_ROW_GAP = 1; // gap-px
 const WORK_LOG_BOTTOM_MARGIN = 4; // mb-1
 const WORK_GROUP_MAX_HEIGHT = 256;
@@ -344,8 +347,11 @@ const WORK_GROUP_EDGE_FADE_HEIGHT = 12;
 
 export const WORK_GROUP_TOGGLE_HEIGHT = 32; // min-h-8
 
-function workLogRowsHeight(activities: ReadonlyArray<ThreadFeedActivity>): number {
-  return activities.length * WORK_ROW_HEIGHT + Math.max(0, activities.length - 1) * WORK_ROW_GAP;
+function workLogRowsHeight(
+  activities: ReadonlyArray<ThreadFeedActivity>,
+  rowHeight = WORK_ROW_HEIGHT,
+): number {
+  return activities.length * rowHeight + Math.max(0, activities.length - 1) * WORK_ROW_GAP;
 }
 
 export function collapsedWorkLogHeight(activities: ReadonlyArray<ThreadFeedActivity>): number {
@@ -364,6 +370,8 @@ interface ThreadWorkLogProps {
   readonly anchorKey: string;
   readonly copiedRowId: string | null;
   readonly expandedRows: Readonly<Record<string, boolean>>;
+  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
+  readonly scrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
   readonly iconSubtleColor: ColorValue;
   readonly onCopyRow: (rowId: string, value: string) => void;
   readonly onToggleRow: (rowId: string, anchorKey: string) => void;
@@ -406,6 +414,9 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
         <ThreadWorkGroupList
           activities={props.activities}
           expandedRows={props.expandedRows}
+          groupId={props.anchorKey}
+          rowSizing={props.rowSizing}
+          scrollPositions={props.scrollPositions}
           renderRow={renderRow}
         />
       ) : (
@@ -418,20 +429,45 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
 function ThreadWorkGroupList(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly expandedRows: Readonly<Record<string, boolean>>;
+  readonly groupId: string;
+  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
+  readonly scrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
   readonly renderRow: (row: ThreadFeedActivity) => ReactNode;
 }) {
   const rowsHeight = workLogRowsHeight(props.activities);
+  const estimatedRowsHeight = workLogRowsHeight(
+    props.activities,
+    props.rowSizing.estimatedRowHeight,
+  );
+  const [initialPosition] = useState(() => {
+    const position = props.scrollPositions.get(props.groupId);
+    return props.activities.some((row) => row.id === position?.rowId) ? position : undefined;
+  });
+  const [initialScrollIndex] = useState(() =>
+    resolveThreadWorkGroupInitialScroll(props.activities, initialPosition),
+  );
+  const [restoringPosition, setRestoringPosition] = useState(initialScrollIndex !== undefined);
   const listRef = useRef<LegendListRef>(null);
+  const loadedRef = useRef(false);
+  const userScrollingRef = useRef(false);
+  const pendingAppendHeightRef = useRef<number | null>(null);
   const previousContent = useRef({
-    rowCount: props.activities.length,
-    lastRowId: props.activities.at(-1)?.id,
-    height: rowsHeight,
+    rows: props.activities,
+    height: Math.max(estimatedRowsHeight, initialPosition?.contentHeight ?? 0),
     expandedRows: props.expandedRows,
   });
-  const [measuredContentHeight, setMeasuredContentHeight] = useState(rowsHeight);
-  const contentHeight = Math.max(rowsHeight, measuredContentHeight);
+  const [measuredContent, setMeasuredContent] = useState(() => ({
+    height: Math.max(estimatedRowsHeight, initialPosition?.contentHeight ?? 0),
+    rowCount: props.activities.length,
+  }));
+  const contentHeight = Math.max(
+    rowsHeight,
+    measuredContent.height +
+      Math.max(0, props.activities.length - measuredContent.rowCount) *
+        (props.rowSizing.estimatedRowHeight + WORK_ROW_GAP),
+  );
   const height = Math.min(contentHeight, WORK_GROUP_MAX_HEIGHT);
-  const scrollOffset = useSharedValue(0);
+  const scrollOffset = useSharedValue(initialPosition?.scrollOffset ?? 0);
   const sharedValues = useMemo(() => ({ scrollOffset }), [scrollOffset]);
   const gradientId = `work-group-fade-${useId().replaceAll(":", "")}`;
   const fadeFraction = WORK_GROUP_EDGE_FADE_HEIGHT / height;
@@ -449,36 +485,85 @@ function ThreadWorkGroupList(props: {
         Math.max(0, contentHeight - height - scrollOffset.value) / WORK_GROUP_EDGE_FADE_HEIGHT,
       ),
   }));
+  const rememberPosition = useCallback(() => {
+    if (!loadedRef.current) return;
+    const state = listRef.current?.getState();
+    const row = state ? props.activities[state.start] : undefined;
+    if (!state || !row) return;
+    props.scrollPositions.set(props.groupId, {
+      rowId: row.id,
+      offsetWithinRow: Math.max(0, state.scroll - state.positionAtIndex(state.start)),
+      scrollOffset: Math.max(0, state.scroll),
+      contentHeight: state.contentLength,
+    });
+  }, [props.activities, props.groupId, props.scrollPositions]);
+  const finishPendingAppend = useCallback(() => {
+    const targetHeight = pendingAppendHeightRef.current;
+    const state = listRef.current?.getState();
+    if (
+      targetHeight !== null &&
+      state &&
+      !userScrollingRef.current &&
+      Math.abs(state.scrollLength - targetHeight) <= 1
+    ) {
+      pendingAppendHeightRef.current = null;
+      void listRef.current?.scrollToEnd({ animated: false });
+    }
+  }, []);
   const onContentSizeChange = useCallback(
     (_width: number, nextHeight: number) => {
       const previous = previousContent.current;
-      const appended =
-        nextHeight > previous.height &&
-        props.activities.length > previous.rowCount &&
-        props.activities[previous.rowCount - 1]?.id === previous.lastRowId;
-      const wasAtEnd =
-        previous.height - Math.min(previous.height, WORK_GROUP_MAX_HEIGHT) - scrollOffset.value <=
-        1;
+      const detailsChanged = previous.expandedRows !== props.expandedRows;
+      const followAppend =
+        loadedRef.current &&
+        shouldFollowThreadWorkGroupAppend({
+          previousRows: previous.rows,
+          rows: props.activities,
+          previousContentHeight: previous.height,
+          contentHeight: nextHeight,
+          viewportHeight: Math.min(previous.height, WORK_GROUP_MAX_HEIGHT),
+          scrollOffset: scrollOffset.value,
+          detailsChanged,
+          userScrolling: userScrollingRef.current,
+        });
       previousContent.current = {
-        rowCount: props.activities.length,
-        lastRowId: props.activities.at(-1)?.id,
+        rows: props.activities,
         height: Math.max(rowsHeight, nextHeight),
         expandedRows: props.expandedRows,
       };
-      setMeasuredContentHeight(nextHeight);
+      setMeasuredContent((current) =>
+        current.height === nextHeight && current.rowCount === props.activities.length
+          ? current
+          : { height: nextHeight, rowCount: props.activities.length },
+      );
       // Follow new calls only, never a detail toggle or a growing tool result.
-      if (appended && wasAtEnd && previous.expandedRows === props.expandedRows) {
-        void listRef.current?.scrollToEnd({ animated: false });
+      if (followAppend) {
+        pendingAppendHeightRef.current = Math.min(nextHeight, WORK_GROUP_MAX_HEIGHT);
+      } else if (detailsChanged || userScrollingRef.current || previous.rows !== props.activities) {
+        pendingAppendHeightRef.current = null;
+      } else if (pendingAppendHeightRef.current !== null) {
+        pendingAppendHeightRef.current = Math.min(nextHeight, WORK_GROUP_MAX_HEIGHT);
       }
+      // A short group can grow its viewport on this append. Wait for that
+      // layout before calculating the end offset, rather than jumping twice.
+      finishPendingAppend();
+      rememberPosition();
     },
-    [props.activities, props.expandedRows, rowsHeight, scrollOffset],
+    [
+      props.activities,
+      props.expandedRows,
+      rowsHeight,
+      scrollOffset,
+      finishPendingAppend,
+      rememberPosition,
+    ],
   );
   const getFixedItemSize = useCallback(
     (row: ThreadFeedActivity, index: number) =>
-      props.expandedRows[row.id]
+      props.expandedRows[row.id] || props.rowSizing.fixedRowHeight === undefined
         ? undefined
-        : WORK_ROW_HEIGHT + (index < props.activities.length - 1 ? WORK_ROW_GAP : 0),
-    [props.activities.length, props.expandedRows],
+        : props.rowSizing.fixedRowHeight + (index < props.activities.length - 1 ? WORK_ROW_GAP : 0),
+    [props.activities.length, props.expandedRows, props.rowSizing.fixedRowHeight],
   );
   const renderItem = useCallback(
     ({ item, index }: { item: ThreadFeedActivity; index: number }) => (
@@ -520,12 +605,41 @@ function ThreadWorkGroupList(props: {
         ref={listRef}
         data={props.activities}
         keyExtractor={workLogRowKey}
-        estimatedItemSize={WORK_ROW_HEIGHT + WORK_ROW_GAP}
+        estimatedItemSize={props.rowSizing.estimatedRowHeight + WORK_ROW_GAP}
         getFixedItemSize={getFixedItemSize}
+        initialScrollIndex={initialScrollIndex}
+        // Bootstrap overscan is only 50px. An offset inside expanded detail can
+        // otherwise leave its own row unmeasured until after scroll restoration.
+        alwaysRender={
+          restoringPosition && initialPosition ? { keys: [initialPosition.rowId] } : undefined
+        }
+        recycleItems={false}
         extraData={props.renderRow}
         renderItem={renderItem}
         sharedValues={sharedValues}
         onContentSizeChange={onContentSizeChange}
+        onLayout={finishPendingAppend}
+        onLoad={() => {
+          loadedRef.current = true;
+          setRestoringPosition(false);
+          rememberPosition();
+        }}
+        onScroll={rememberPosition}
+        onScrollBeginDrag={() => {
+          userScrollingRef.current = true;
+          pendingAppendHeightRef.current = null;
+        }}
+        onScrollEndDrag={() => {
+          userScrollingRef.current = false;
+        }}
+        onMomentumScrollBegin={() => {
+          userScrollingRef.current = true;
+          pendingAppendHeightRef.current = null;
+        }}
+        onMomentumScrollEnd={() => {
+          userScrollingRef.current = false;
+          rememberPosition();
+        }}
         maintainVisibleContentPosition
         nestedScrollEnabled
         directionalLockEnabled
@@ -544,7 +658,10 @@ function workLogRowKey(row: ThreadFeedActivity): string {
 }
 
 const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
-  props: Omit<ThreadWorkLogProps, "activities" | "copiedRowId" | "expandedRows"> & {
+  props: Omit<
+    ThreadWorkLogProps,
+    "activities" | "copiedRowId" | "expandedRows" | "rowSizing" | "scrollPositions"
+  > & {
     readonly row: ThreadFeedActivity;
     readonly copied: boolean;
     readonly expanded: boolean;
