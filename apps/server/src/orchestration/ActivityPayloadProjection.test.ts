@@ -64,6 +64,28 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(projected.payload).length).toBeLessThan(500);
   });
 
+  it("keeps preview normalization and fence-only fallback while scanning lines", () => {
+    const preview = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: { rawOutput: `\`\`\`\n  actual\tresult  \n${"x".repeat(5000)}` },
+      }),
+    );
+    const fences = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: { rawOutput: "```\r\n \t \n```\n" },
+      }),
+    );
+
+    expect((preview.payload as { data: { rawOutput: unknown } }).data.rawOutput).toEqual({
+      content: "actual result",
+    });
+    expect((fences.payload as { data: { rawOutput: unknown } }).data.rawOutput).toEqual({
+      content: "2 lines",
+    });
+  });
+
   it("keeps bounded Claude and ACP command output summaries", () => {
     const claude = projectActivityPayload(
       activity({
