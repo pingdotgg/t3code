@@ -527,8 +527,11 @@ export async function pickComposerMedia(input: {
     if (!mimeType || !isProviderSendTurnSupportedImageMimeType(mimeType)) {
       // HEIC and friends: providers cannot accept the original bytes, so land
       // the picker's JPEG export in the owned directory instead of rejecting
-      // the photo. iPhone camera-roll photos are HEIC by default.
-      if (!asset.base64) {
+      // the photo. iPhone camera-roll photos are HEIC by default. iOS always
+      // exports JPEG; Android's quality-1 export is the raw original, so only
+      // accept an export that actually carries the JPEG magic number ("/9j/"
+      // is base64 for FF D8 FF).
+      if (!asset.base64?.startsWith("/9j/")) {
         error = `'${name}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.`;
         continue;
       }

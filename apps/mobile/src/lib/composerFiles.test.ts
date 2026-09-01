@@ -204,9 +204,11 @@ describe("composer file attachments", () => {
 
     it("lands the picker's JPEG export for an unconverted HEIC photo", async () => {
       mocks.open.mockImplementation(() => otherMagic());
+      // "/9j/" is the base64 encoding of the JPEG magic number FF D8 FF.
+      const jpegBase64 = "/9j/heic-as-jpeg";
       mocks.pickMedia.mockResolvedValue({
         canceled: false,
-        assets: [{ ...photo, base64: "aGVpYy1hcy1qcGVn" }],
+        assets: [{ ...photo, base64: jpegBase64 }],
       });
 
       const result = await pickComposerImages({ existingCount: 0 });
@@ -225,21 +227,26 @@ describe("composer file attachments", () => {
         error: null,
       });
       // The JPEG export is written once; the HEIC original is never copied.
-      expect(mocks.write).toHaveBeenCalledWith(fileUri, "aGVpYy1hcy1qcGVn", {
+      expect(mocks.write).toHaveBeenCalledWith(fileUri, jpegBase64, {
         encoding: "base64",
       });
       expect(mocks.copy).not.toHaveBeenCalled();
     });
 
-    it("rejects unconverted HEIC when the picker supplied no JPEG export", async () => {
+    it.each([
+      { label: "no export", base64: null },
+      // Android's quality-1 export is the raw original, not a JPEG transcode.
+      { label: "a non-JPEG export", base64: "AAAAGGZ0eXBoZWlj" },
+    ])("rejects unconverted HEIC with $label", async ({ base64 }) => {
       mocks.open.mockImplementation(() => otherMagic());
-      mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [photo] });
+      mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [{ ...photo, base64 }] });
 
       const result = await pickComposerImages({ existingCount: 0 });
 
       expect(result.images).toEqual([]);
       expect(result.error).toContain("not a supported image type");
       expect(mocks.copy).not.toHaveBeenCalled();
+      expect(mocks.write).not.toHaveBeenCalled();
     });
 
     it("retains a copied photo when another asset cannot be copied", async () => {
