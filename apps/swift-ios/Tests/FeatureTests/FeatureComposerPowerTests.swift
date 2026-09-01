@@ -304,6 +304,307 @@ struct FeatureComposerPowerTests {
         #expect(FeatureComposerPasteboardPolicy.containsImage(in: pasteboard))
     }
 
+    @Test(
+        "The traits menu renders every supported descriptor in catalog order",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func traitsMenuIncludesReasoningAndServiceTierWithDescriptorMetadata() throws {
+        let control = try #require(
+            FeatureComposerTraitsControl.resolve(
+                explicit: .init(
+                    providerID: "codex",
+                    modelID: "gpt-5.6-sol",
+                    options: [.init(id: "reasoningEffort", value: .string("high"))]
+                ),
+                inherited: nil,
+                providers: [Self.solProvider],
+                materializesDefaultSelection: true
+            )
+        )
+
+        #expect(control.sections.map(\.id) == ["reasoningEffort", "serviceTier"])
+        #expect(control.sections.map(\.label) == ["Reasoning", "Service Tier"])
+        let reasoning = try #require(control.sections.first)
+        #expect(reasoning.choices.map(\.id) == ["low", "medium", "high", "xhigh", "max", "ultra"])
+        #expect(reasoning.choices.first?.isDefault == true)
+        #expect(reasoning.currentChoiceID == "high")
+        let serviceTier = try #require(control.sections.last)
+        #expect(serviceTier.choices.map(\.label) == ["Standard", "Fast"])
+        #expect(serviceTier.choices.first?.isDefault == true)
+        #expect(serviceTier.currentChoiceID == "default")
+        #expect(serviceTier.choices.last?.detail == "1.5x speed, increased usage.")
+    }
+
+    @Test(
+        "The traits trigger matches Electron's Standard and Fast display",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func traitsTriggerUsesReasoningTextAndFastModeBolt() throws {
+        let standard = try #require(
+            FeatureComposerTraitsControl.resolve(
+                explicit: .init(
+                    providerID: "codex",
+                    modelID: "gpt-5.6-sol",
+                    options: [
+                        .init(id: "reasoningEffort", value: .string("high")),
+                        .init(id: "serviceTier", value: .string("default")),
+                    ]
+                ),
+                inherited: nil,
+                providers: [Self.solProvider],
+                materializesDefaultSelection: true
+            )
+        )
+        let fastSelection = standard.selection(choosing: "priority", in: "serviceTier")
+        let fast = try #require(
+            FeatureComposerTraitsControl.resolve(
+                explicit: fastSelection,
+                inherited: nil,
+                providers: [Self.solProvider],
+                materializesDefaultSelection: true
+            )
+        )
+
+        #expect(standard.triggerLabel == "High")
+        #expect(!standard.showsFastModeIcon)
+        #expect(fast.triggerLabel == "High")
+        #expect(fast.showsFastModeIcon)
+    }
+
+    @Test(
+        "Trait choices materialize defaults and persist through subsequent turns",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func traitChoicesPersistBothEffectiveSelectionsOnTheSubmissionPath() throws {
+        let inherited = FeatureSelection(
+            providerID: "codex",
+            modelID: "gpt-5.6-sol",
+            options: [.init(id: "futureOption", value: .string("preserve-me"))]
+        )
+        let initial = try #require(
+            FeatureComposerTraitsControl.resolve(
+                explicit: nil,
+                inherited: inherited,
+                providers: [Self.solProvider],
+                materializesDefaultSelection: false
+            )
+        )
+        let reasoningSelection = initial.selection(choosing: "xhigh", in: "reasoningEffort")
+        let afterReasoning = try #require(
+            FeatureComposerTraitsControl.resolve(
+                explicit: reasoningSelection,
+                inherited: inherited,
+                providers: [Self.solProvider],
+                materializesDefaultSelection: false
+            )
+        )
+        let effectiveSelection = afterReasoning.selection(
+            choosing: "priority",
+            in: "serviceTier"
+        )
+        let submission = FeatureMessageSubmission(
+            threadID: "thread-1",
+            text: "Continue",
+            selection: effectiveSelection
+        )
+
+        #expect(submission.selection?.providerID == "codex")
+        #expect(submission.selection?.modelID == "gpt-5.6-sol")
+        #expect(
+            submission.selection?.options.first(where: { $0.id == "reasoningEffort" })?.value
+                == .string("xhigh")
+        )
+        #expect(
+            submission.selection?.options.first(where: { $0.id == "serviceTier" })?.value
+                == .string("priority")
+        )
+        #expect(
+            submission.selection?.options.first(where: { $0.id == "futureOption" })?.value
+                == .string("preserve-me")
+        )
+        #expect(submission.selection?.options.filter { $0.id == "reasoningEffort" }.count == 1)
+        #expect(submission.selection?.options.filter { $0.id == "serviceTier" }.count == 1)
+    }
+
+    @Test(
+        "Defaults, inherited selections, and provider changes resolve independently",
+        .bug("https://github.com/pingdotgg/t3code/pull/7344#discussion_r3826822638")
+    )
+    func traitsFollowTheEffectiveModelSelection() throws {
+        let defaultControl = try #require(
+            FeatureComposerTraitsControl.resolve(
+                explicit: .init(providerID: "codex", modelID: "missing"),
+                inherited: nil,
+                providers: [Self.solProvider],
+                materializesDefaultSelection: true
+            )
+        )
+        #expect(defaultControl.sections.map(\.currentChoiceID) == ["low", "default"])
+
+        let inheritedControl = try #require(
+            FeatureComposerTraitsControl.resolve(
+                explicit: nil,
+                inherited: .init(
+                    providerID: "codex",
+                    modelID: "gpt-5.6-sol",
+                    options: [
+                        .init(id: "reasoningEffort", value: .string("max")),
+                        .init(id: "serviceTier", value: .string("priority")),
+                    ]
+                ),
+                providers: [Self.solProvider],
+                materializesDefaultSelection: false
+            )
+        )
+        #expect(inheritedControl.sections.map(\.currentChoiceID) == ["max", "priority"])
+
+        let plainProvider = FeatureProvider(
+            id: "plain",
+            name: "Plain",
+            driver: "grok",
+            models: [FeatureModel(id: "basic", name: "Basic")]
+        )
+        #expect(
+            FeatureComposerTraitsControl.resolve(
+                explicit: .init(providerID: "plain", modelID: "basic"),
+                inherited: nil,
+                providers: [Self.solProvider, plainProvider],
+                materializesDefaultSelection: true
+            ) == nil
+        )
+    }
+
+    @Test(
+        "Unsupported descriptors hide while boolean descriptors remain selectable",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func unsupportedDescriptorsDoNotCreateSections() throws {
+        let provider = FeatureProvider(
+            id: "mixed",
+            name: "Mixed",
+            driver: "cursor",
+            models: [
+                FeatureModel(
+                    id: "mixed-model",
+                    name: "Mixed model",
+                    isDefault: true,
+                    options: [
+                        .init(id: "empty", label: "Empty", kind: .select),
+                        .init(
+                            id: "promptEffort",
+                            label: "Prompt effort",
+                            kind: .select,
+                            choices: [.init(id: "ultrathink", label: "Ultrathink")],
+                            promptInjectedValues: ["ultrathink"]
+                        ),
+                        .init(
+                            id: "thinking",
+                            label: "Thinking",
+                            kind: .boolean,
+                            defaultValue: .boolean(false)
+                        ),
+                    ]
+                ),
+            ]
+        )
+        let control = try #require(
+            FeatureComposerTraitsControl.resolve(
+                explicit: nil,
+                inherited: nil,
+                providers: [provider],
+                materializesDefaultSelection: true
+            )
+        )
+
+        #expect(control.sections.map(\.id) == ["thinking"])
+        #expect(control.sections[0].choices.map(\.id) == ["on", "off"])
+        #expect(control.sections[0].currentChoiceID == "off")
+        #expect(control.sections[0].choices.allSatisfy { !$0.isDefault })
+        #expect(control.triggerLabel == "Thinking Off")
+    }
+
+    @Test(
+        "Changing a visible trait preserves a hidden prompt-injected selection",
+        .bug("https://github.com/saphid/t3code-personal/issues/110")
+    )
+    func visibleTraitChangesPreservePromptInjectedSelections() throws {
+        var provider = Self.solProvider
+        provider.models[0].options[0].choices.append(
+            .init(id: "ultrathink", label: "Ultrathink")
+        )
+        provider.models[0].options[0].promptInjectedValues = ["ultrathink"]
+        let control = try #require(
+            FeatureComposerTraitsControl.resolve(
+                explicit: .init(
+                    providerID: "codex",
+                    modelID: "gpt-5.6-sol",
+                    options: [
+                        .init(id: "reasoningEffort", value: .string("ultrathink")),
+                        .init(id: "serviceTier", value: .string("default")),
+                    ]
+                ),
+                inherited: nil,
+                providers: [provider],
+                materializesDefaultSelection: true
+            )
+        )
+
+        #expect(control.sections[0].choices.allSatisfy { $0.id != "ultrathink" })
+        #expect(control.sections[0].currentChoiceID == "ultrathink")
+        #expect(control.triggerLabel == "Ultrathink")
+        let selection = control.selection(choosing: "priority", in: "serviceTier")
+        #expect(
+            selection.options.first(where: { $0.id == "reasoningEffort" })?.value
+                == .string("ultrathink")
+        )
+        #expect(
+            selection.options.first(where: { $0.id == "serviceTier" })?.value
+                == .string("priority")
+        )
+    }
+
+    /// Mirrors the live Codex descriptors Alex supplied for `gpt-5.6-sol`.
+    private static let solProvider = FeatureProvider(
+        id: "codex",
+        name: "Codex",
+        driver: "codex",
+        models: [
+            FeatureModel(
+                id: "gpt-5.6-sol",
+                name: "GPT-5.6-Sol",
+                isDefault: true,
+                options: [
+                    .init(
+                        id: "reasoningEffort",
+                        label: "Reasoning",
+                        kind: .select,
+                        choices: [
+                            .init(id: "low", label: "Low", isDefault: true),
+                            .init(id: "medium", label: "Medium"),
+                            .init(id: "high", label: "High"),
+                            .init(id: "xhigh", label: "Extra High"),
+                            .init(id: "max", label: "Max"),
+                            .init(id: "ultra", label: "Ultra"),
+                        ]
+                    ),
+                    .init(
+                        id: "serviceTier",
+                        label: "Service Tier",
+                        kind: .select,
+                        choices: [
+                            .init(id: "default", label: "Standard", isDefault: true),
+                            .init(
+                                id: "priority",
+                                label: "Fast",
+                                detail: "1.5x speed, increased usage."
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+    )
+
     @Test
     func detectsCommandsModelsSkillsAndPathsAtTheCursor() {
         #expect(
