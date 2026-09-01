@@ -61,13 +61,19 @@ chrome and read one key of `Shell.state`: `Sidebar`, `Workspace` (the header
 strip), `Composer`, `RightPanel`, `SettingsNav`, `GitActions`,
 `Notifications`, `ContextMenuHost`, plus `WebSurface`, `DefaultShell` and
 `ShellErrorOverlay`. Under them sit the primitives a rice composes its own
-chrome from, all styled from `Theme`: `ShellButton` (outline, `subtle` ghost,
-`primary`), `ShellComboBox` (ghost, `outline: true` for a field),
-`ShellSplitButton` (the header's action + chevron pill), `ShellMenu` /
-`ShellMenuItem`, `ShellTextField`, `ShellIcon`, `WindowControls` and
-`TitleBar`. `ShellIcon` draws the page's lucide icons as a `Shape` from the
-path table in `js/lucide.js`, so bricks pass an icon name (`iconName:
-"git-branch"`) and get the same glyph the HTML shows, at any size or color.
+chrome from, all styled from `Theme`: `ShellWindow` (the root every rice
+starts from: theme-driven colour, opacity and frame, `sidebarCollapsed` /
+`settingsActive` read from the page, the shell's context menus, the error
+overlay and the page's window commands), `ShellCard` (a rounded, hairlined
+panel), `ShellButton` (outline, `subtle` ghost, `primary`), `ShellComboBox`
+(ghost, `outline: true` for a field), `ShellSplitButton` (the header's action
+
+- chevron pill), `ShellMenu` / `ShellMenuItem`, `ShellTextField`, `ShellIcon`,
+  `WindowControls` (glyph buttons, or macOS traffic lights with
+  `trafficLights: true`) and `TitleBar`. `ShellIcon` draws the page's lucide
+  icons as a `Shape` from the path table in `js/lucide.js`, so bricks pass an
+  icon name (`iconName: "git-branch"`) and get the same glyph the HTML shows, at
+  any size or color.
 
 `DefaultShell` is laid out like the page: the sidebar's brand band ("T3 Code"
 plus the collapse toggle), a 52 px header strip with the breadcrumb and the
@@ -123,7 +129,10 @@ overrides it.
 
 The file _is_ the interface for colour propagation: theme managers (omarchy
 themes, pywal templates, a hand-written file) write it and the app follows.
-The shell does not import terminal configs.
+The shell itself does not import terminal configs; the generator that comes
+closest, `examples/terminal/theme-from-terminal.mjs`, asks the running
+terminal for its palette over OSC 10 / 11 / 12 / 17 / 4 and writes a
+`theme.json` from the answer, keeping the shell on the file contract.
 
 Its shape is the web app's own `ThemeFile` (`apps/web/src/themePalette.ts`;
 the Settings → Theme editor exports it) plus a shell-only `window` section:
