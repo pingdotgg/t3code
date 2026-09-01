@@ -938,7 +938,7 @@ export const make = Effect.gen(function* () {
         prLookupEpochByCwd.set(cacheKey, prLookupEpoch(cacheKey) + 1);
       }),
     );
-  // Cache keys are NUL-joined [cwd, branch, upstreamRef, defaultBranch, epoch] — none of the
+  // Cache keys are NUL-joined [cwd, branch, upstreamRef, epoch] — none of the
   // segments can contain a NUL byte, and refs are never empty, so "" decodes
   // back to a null ref.
   const prLookupCacheKey = (
@@ -946,16 +946,8 @@ export const make = Effect.gen(function* () {
     details: {
       branch: string;
       upstreamRef: string | null;
-      defaultBranch: string | null;
     },
-  ) =>
-    [
-      cwd,
-      details.branch,
-      details.upstreamRef ?? "",
-      details.defaultBranch ?? "",
-      String(prLookupEpoch(cwd)),
-    ].join("\u0000");
+  ) => [cwd, details.branch, details.upstreamRef ?? "", String(prLookupEpoch(cwd))].join("\u0000");
   // Consecutive failures per cache key, so a branch that keeps failing waits
   // longer before the next attempt. Cleared as soon as a lookup succeeds.
   const prLookupFailureStreakByKey = new Map<string, number>();
@@ -975,27 +967,32 @@ export const make = Effect.gen(function* () {
   };
   const prLookupCache = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", branch = "", upstreamRef = "", defaultBranch = ""] = key.split("\u0000");
+      const [cwd = "", branch = "", upstreamRef = ""] = key.split("\u0000");
       const details = {
         branch,
         upstreamRef: upstreamRef.length > 0 ? upstreamRef : null,
-        defaultBranch: defaultBranch.length > 0 ? defaultBranch : null,
       };
       return Effect.gen(function* () {
         const headContext = yield* resolveBranchHeadContext(cwd, details);
-        const upstreamHeadIsDefault =
-          headContext.headBranch === details.defaultBranch ||
-          (details.defaultBranch === null &&
-            (headContext.headBranch === "main" || headContext.headBranch === "master"));
-        // `git worktree add -b feature origin/main` makes the new local branch
-        // track origin/main. That upstream is the branch's base, not its
-        // published PR head. Looking up PRs for it can attach an old reverse
-        // merge from main and auto-settle an unrelated feature thread.
-        if (
-          headContext.headBranch !== details.branch &&
-          upstreamHeadIsDefault &&
-          !headContext.isCrossRepository
-        ) {
+        // A git-mangled tracking checkout keeps a trailing slice of its
+        // upstream ref as the local name: `git checkout --track
+        // my-org/upstream/effect-atom` cannot name it "effect-atom", so it
+        // keeps "upstream/effect-atom". Its upstream is still its published
+        // head. Both suffix checks are needed: "v2" cut from origin/release/v2
+        // is a tail of the ref but does not end in the head, and "feature/dev"
+        // cut from origin/dev ends in the head but is not a tail of the ref.
+        const localBranchIsAliasOfHead =
+          details.branch === headContext.headBranch ||
+          (details.branch.endsWith(`/${headContext.headBranch}`) &&
+            details.upstreamRef !== null &&
+            details.upstreamRef.endsWith(`/${details.branch}`));
+        // Any other branch tracking a differently named ref was cut from it,
+        // the way `git worktree add -b feature origin/dev` is, so that
+        // upstream is the branch's base and not its published head. Looking up
+        // PRs for it attaches the base branch's own change request (an old
+        // reverse merge from the default branch, or an integration branch's
+        // release PR) to an unrelated feature thread.
+        if (!localBranchIsAliasOfHead && !headContext.isCrossRepository) {
           return { latest: null, headContext };
         }
         // Only skip when the branch is untracked as well: anything carrying an
