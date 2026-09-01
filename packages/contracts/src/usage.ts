@@ -14,23 +14,23 @@
  */
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
  * Bumped whenever the shape of {@link UsageSummary} changes incompatibly. The
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 8 as const;
+export const USAGE_CONTRACT_VERSION = 9 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
  * v5 only adds `grok` to {@link UsageProviderKind}; v6 adds the optional bucket
  * `project`; v7 adds its optional stable `projectId`; v8 distinguishes outside
- * projects from unknown attribution. v4 Claude/Codex buckets remain valid, so
- * mixed-version environments keep those totals instead of treating every
- * older server as stale.
+ * projects from unknown attribution; v9 adds the separate thread-breakdown RPC.
+ * v4 Claude/Codex buckets remain valid, so mixed-version environments keep
+ * those totals instead of treating every older server as stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 /** First contract version that explicitly distinguishes outside from unknown attribution. */
@@ -221,6 +221,79 @@ export const UsageSummary = Schema.Struct({
   scanDurationMs: NonNegativeInt,
 });
 export type UsageSummary = typeof UsageSummary.Type;
+
+export const UsageThreadBreakdownInput = Schema.Struct({
+  /** Inclusive first day of the window, in `timeZone`. */
+  sinceDay: UsageDay,
+  /** Inclusive last day of the window, in `timeZone`. */
+  untilDay: UsageDay,
+  timeZone: TrimmedNonEmptyString,
+  /**
+   * Restrict to one project's sessions: a title selects that project, `null`
+   * selects sessions outside every project, absent applies no filter.
+   */
+  project: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type UsageThreadBreakdownInput = typeof UsageThreadBreakdownInput.Type;
+
+/** One Claude subagent's slice of its parent thread. */
+export const UsageAgentRow = Schema.Struct({
+  agentId: TrimmedNonEmptyString,
+  totals: UsageTokenTotals,
+  costUsd: Schema.Number,
+});
+export type UsageAgentRow = typeof UsageAgentRow.Type;
+
+/**
+ * One day of a thread's estimated cost. Days the thread was idle are omitted.
+ * Unpriced records contribute tokens to the row totals but nothing here.
+ */
+export const UsageThreadDayCost = Schema.Struct({
+  day: UsageDay,
+  costUsd: Schema.Number,
+});
+export type UsageThreadDayCost = typeof UsageThreadDayCost.Type;
+
+/**
+ * One thread's (or unattributed session group's) slice of the window.
+ *
+ * `threadId` is present when the sessions map to a T3 Code thread on this
+ * environment, via the thread's resume cursor or its dedicated worktree.
+ * Sessions that never ran through T3 Code stay session-granular with a title
+ * taken from the transcript.
+ */
+export const UsageThreadRow = Schema.Struct({
+  /** Stable within one environment; opaque to clients. */
+  key: TrimmedNonEmptyString,
+  threadId: Schema.NullOr(ThreadId),
+  title: TrimmedNonEmptyString,
+  provider: UsageProviderKind,
+  project: Schema.optional(TrimmedNonEmptyString),
+  totals: UsageTokenTotals,
+  costUsd: Schema.Number,
+  /** Distinct transcript sessions folded into this row. */
+  sessions: NonNegativeInt,
+  agents: Schema.Array(UsageAgentRow),
+  daily: Schema.Array(UsageThreadDayCost),
+});
+export type UsageThreadRow = typeof UsageThreadRow.Type;
+
+/**
+ * On-demand drill-down behind the usage summary. Rows are capped server-side
+ * (cost-descending) because a window can hold thousands of sessions and this
+ * payload rides the same WebSocket as everything else.
+ */
+export const UsageThreadBreakdown = Schema.Struct({
+  contractVersion: Schema.Number,
+  readAt: Schema.String,
+  sinceDay: UsageDay,
+  untilDay: UsageDay,
+  rows: Schema.Array(UsageThreadRow),
+  /** Rows dropped by the cap, so the UI can say coverage is partial. */
+  truncatedRows: NonNegativeInt,
+  scanDurationMs: NonNegativeInt,
+});
+export type UsageThreadBreakdown = typeof UsageThreadBreakdown.Type;
 
 export class UsageReadError extends Schema.TaggedErrorClass<UsageReadError>()("UsageReadError", {
   reason: Schema.Literals(["scanFailed", "invalidWindow"]),

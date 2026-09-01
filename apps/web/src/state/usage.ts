@@ -12,6 +12,8 @@ import {
   type EnvironmentId,
   type UsageSummary,
   type UsageSummaryInput,
+  type UsageThreadBreakdownInput,
+  type UsageThreadRow,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -141,4 +143,62 @@ export function useUsage(
     isPartial: answeredCount > 0 && stillReporting > 0,
     refresh,
   };
+}
+
+export interface UsageThreadsView {
+  readonly rows: readonly UsageThreadRow[];
+  readonly truncatedRows: number;
+  /** True until every listed environment answered or failed. */
+  readonly isPending: boolean;
+  readonly failedEnvironments: number;
+}
+
+const usageThreadsAtom = Atom.family((requestKey: string) =>
+  Atom.make((get): UsageThreadsView => {
+    const { input, environmentIds } = JSON.parse(requestKey) as {
+      input: UsageThreadBreakdownInput;
+      environmentIds: readonly EnvironmentId[];
+    };
+
+    const rows: UsageThreadRow[] = [];
+    // Environments sharing a transcript directory report the same sessions;
+    // row keys are derived from provider session ids, so first-in wins.
+    const seen = new Set<string>();
+    let truncatedRows = 0;
+    let pending = 0;
+    let failed = 0;
+    for (const environmentId of environmentIds) {
+      const result = get(serverEnvironment.usageThreadBreakdown({ environmentId, input }));
+      if (result.waiting) pending += 1;
+      if (result._tag === "Failure") failed += 1;
+      const breakdown = Option.getOrNull(AsyncResult.value(result));
+      if (breakdown === null) continue;
+      truncatedRows += breakdown.truncatedRows;
+      for (const row of breakdown.rows) {
+        const dedupeKey = `${row.provider}\u0000${row.key}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        rows.push(row);
+      }
+    }
+    rows.sort((a, b) => b.costUsd - a.costUsd);
+
+    return { rows, truncatedRows, isPending: pending > 0, failedEnvironments: failed };
+  }).pipe(Atom.withLabel(`web-usage:threads:${requestKey}`)),
+);
+
+/**
+ * Thread drill-down across the environments that contributed to the summary.
+ * Mount the consuming component only while the thread view is open; fetching
+ * starts on first read.
+ */
+export function useUsageThreads(
+  input: UsageThreadBreakdownInput,
+  environmentIds: readonly EnvironmentId[],
+): UsageThreadsView {
+  const requestKey = useMemo(
+    () => JSON.stringify({ input, environmentIds }),
+    [input, environmentIds],
+  );
+  return useAtomValue(usageThreadsAtom(requestKey));
 }

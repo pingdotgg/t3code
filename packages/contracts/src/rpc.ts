@@ -192,7 +192,13 @@ import {
   ResourceTelemetryRetryResult,
   ResourceTelemetrySnapshot,
 } from "./resourceTelemetry.ts";
-import { UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
+import {
+  UsageReadError,
+  UsageSummary,
+  UsageSummaryInput,
+  UsageThreadBreakdown,
+  UsageThreadBreakdownInput,
+} from "./usage.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
   SourceControlCloneRepositoryInput,
@@ -291,6 +297,7 @@ export const WS_METHODS = {
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
+  serverGetUsageThreadBreakdown: "server.getUsageThreadBreakdown",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -452,6 +459,15 @@ export const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSumm
   success: UsageSummary,
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
 });
+
+export const WsServerGetUsageThreadBreakdownRpc = Rpc.make(
+  WS_METHODS.serverGetUsageThreadBreakdown,
+  {
+    payload: UsageThreadBreakdownInput,
+    success: UsageThreadBreakdown,
+    error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+  },
+);
 
 export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
   payload: ServerSignalProcessInput,
@@ -1044,6 +1060,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
+  WsServerGetUsageThreadBreakdownRpc,
   WsServerSignalProcessRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,

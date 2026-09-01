@@ -311,3 +311,102 @@ export async function readTranscriptRecords(
     await handle.close().catch(() => undefined);
   }
 }
+
+/** Prefixes that mark an injected preamble, not something the user typed. */
+const NOT_TITLE_PREFIXES = ["<", "# AGENTS.md instructions", "Caveat: the messages below"];
+
+const TITLE_MAX_LENGTH = 80;
+const TITLE_MAX_LINES = 400;
+
+function cleanTitle(text: unknown): string | null {
+  if (typeof text !== "string") return null;
+  const collapsed = text.split(/\s+/).join(" ").trim();
+  if (collapsed.length === 0) return null;
+  if (NOT_TITLE_PREFIXES.some((prefix) => collapsed.startsWith(prefix))) return null;
+  return collapsed.length > TITLE_MAX_LENGTH
+    ? `${collapsed.slice(0, TITLE_MAX_LENGTH - 1)}\u2026`
+    : collapsed;
+}
+
+function claudeTitleFromLine(line: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const record = parsed as Record<string, unknown>;
+  if (record["type"] !== "user") return null;
+  const message = record["message"];
+  if (typeof message !== "object" || message === null) return null;
+  const content = (message as Record<string, unknown>)["content"];
+  if (typeof content === "string") return cleanTitle(content);
+  if (!Array.isArray(content)) return null;
+  for (const block of content) {
+    if (typeof block !== "object" || block === null) continue;
+    const entry = block as Record<string, unknown>;
+    if (entry["type"] !== "text") continue;
+    const title = cleanTitle(entry["text"]);
+    if (title !== null) return title;
+  }
+  return null;
+}
+
+function codexTitleFromLine(line: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const payload = (parsed as Record<string, unknown>)["payload"];
+  if (typeof payload !== "object" || payload === null) return null;
+  const record = payload as Record<string, unknown>;
+  if (record["type"] !== "message" || record["role"] !== "user") return null;
+  const content = record["content"];
+  if (!Array.isArray(content)) return null;
+  for (const block of content) {
+    if (typeof block !== "object" || block === null) continue;
+    const title = cleanTitle((block as Record<string, unknown>)["text"]);
+    if (title !== null) return title;
+  }
+  return null;
+}
+
+/**
+ * First thing the user actually typed in a session, as a display title.
+ *
+ * Only called for the handful of unattributed rows that survived the response
+ * cap, so a second bounded read per row is fine. Returns null when the file
+ * cannot be read, holds no user text (Grok logs carry none we trust), or only
+ * injected preambles appear early on.
+ */
+export async function readTranscriptTitle(
+  filePath: string,
+  provider: UsageProviderKind,
+): Promise<string | null> {
+  if (provider === "grok") return null;
+  try {
+    const lines = NodeReadline.createInterface({
+      input: NodeFS.createReadStream(filePath, { encoding: "utf8" }),
+      crlfDelay: Infinity,
+    });
+    let seen = 0;
+    for await (const line of lines) {
+      seen += 1;
+      if (seen > TITLE_MAX_LINES) break;
+      const gate = provider === "claude" ? '"user"' : '"message"';
+      if (!line.includes(gate)) continue;
+      const title = provider === "claude" ? claudeTitleFromLine(line) : codexTitleFromLine(line);
+      if (title !== null) {
+        lines.close();
+        return title;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}

@@ -16,10 +16,13 @@ import * as NodeOS from "node:os";
 
 import {
   USAGE_CONTRACT_VERSION,
+  type ThreadId,
   type UsageProviderKind,
   type UsageSource,
   type UsageSummary,
   type UsageSummaryInput,
+  type UsageThreadBreakdown,
+  type UsageThreadBreakdownInput,
   UsageReadError,
 } from "@t3tools/contracts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -39,6 +42,8 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ServerConfig } from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
+import { ProjectionThreadRepository } from "../persistence/Services/ProjectionThreads.ts";
+import { ProviderSessionRuntimeRepository } from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
@@ -48,7 +53,9 @@ import {
   listTranscriptFiles,
   readDirectoryVolumeId,
   readTranscriptRecords,
+  readTranscriptTitle,
 } from "./usageTranscriptReader.ts";
+import { foldThreadRows, ThreadUsageAccumulator, type ThreadRef } from "./usageThreads.ts";
 import {
   decodeScanCache,
   dedupeWithinFile,
@@ -74,6 +81,12 @@ const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
 
+/**
+ * Thread rows sent per breakdown request. A window can hold thousands of
+ * sessions; everything past the cap is counted, not shipped.
+ */
+const THREAD_ROW_CAP = 40;
+
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
   fetchedAtMs: Schema.Number,
@@ -95,6 +108,9 @@ export class UsageService extends Context.Service<
   UsageService,
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    readonly readThreadBreakdown: (
+      input: UsageThreadBreakdownInput,
+    ) => Effect.Effect<UsageThreadBreakdown, UsageReadError>;
   }
 >()("t3/usage/UsageService") {}
 
@@ -119,6 +135,16 @@ export const layerTest = Layer.succeed(
         },
         scanDurationMs: 0,
       }),
+    readThreadBreakdown: (input) =>
+      Effect.succeed({
+        contractVersion: USAGE_CONTRACT_VERSION,
+        readAt: "1970-01-01T00:00:00.000Z",
+        sinceDay: input.sinceDay,
+        untilDay: input.untilDay,
+        rows: [],
+        truncatedRows: 0,
+        scanDurationMs: 0,
+      }),
   }),
 );
 
@@ -130,6 +156,8 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
   const projectRepository = yield* ProjectionProjectRepository;
+  const threadRepository = yield* ProjectionThreadRepository;
+  const runtimeRepository = yield* ProviderSessionRuntimeRepository;
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
@@ -595,7 +623,179 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary } as const;
+  /**
+   * Maps each thread's current provider session to the thread, from resume
+   * cursors. Historic sessions of the same thread attribute through the
+   * worktree map instead; sessions that never ran through T3 Code stay
+   * session-granular.
+   */
+  const loadThreadAttribution = Effect.fn("UsageService.loadThreadAttribution")(function* () {
+    const sessionToThread = new Map<string, ThreadRef>();
+    const worktreeToThread = new Map<string, ThreadRef>();
+    const titles = new Map<string, string>();
+
+    const projects = yield* projectRepository
+      .listAll()
+      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+    const worktreeClaims = new Map<string, { ref: ThreadRef; shared: boolean }>();
+    for (const project of projects) {
+      const threads = yield* threadRepository
+        .listByProjectId({ projectId: project.projectId })
+        .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+      for (const thread of threads) {
+        const title = thread.title.trim();
+        if (title.length > 0) titles.set(thread.threadId, title);
+        const worktree = thread.worktreePath?.trim() ?? "";
+        // The project root is not a dedicated worktree: interactive sessions
+        // run there too, and several threads usually share it.
+        if (worktree.length === 0 || worktree === project.workspaceRoot) continue;
+        const ref: ThreadRef = { threadId: thread.threadId, title: title || thread.threadId };
+        const claim = worktreeClaims.get(worktree);
+        if (claim === undefined) worktreeClaims.set(worktree, { ref, shared: false });
+        else claim.shared = true;
+      }
+    }
+    for (const [worktree, claim] of worktreeClaims) {
+      if (!claim.shared) worktreeToThread.set(worktree, claim.ref);
+    }
+
+    const runtimes = yield* runtimeRepository
+      .list()
+      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+    for (const runtime of runtimes) {
+      const cursor = runtime.resumeCursor;
+      if (typeof cursor !== "object" || cursor === null) continue;
+      const cursorRecord = cursor as Record<string, unknown>;
+      // Claude cursors carry the transcript uuid as `resume`; Codex cursors
+      // carry the rollout uuid as `threadId`. Other providers do not surface
+      // usage transcripts, so their cursors are irrelevant here.
+      const sessionId =
+        runtime.providerName === "claudeAgent"
+          ? cursorRecord["resume"]
+          : runtime.providerName === "codex"
+            ? cursorRecord["threadId"]
+            : undefined;
+      if (typeof sessionId !== "string" || sessionId.length === 0) continue;
+      const provider = runtime.providerName === "claudeAgent" ? "claude" : "codex";
+      sessionToThread.set(`${provider}:${sessionId}`, {
+        threadId: runtime.threadId,
+        title: titles.get(runtime.threadId) ?? runtime.threadId,
+      });
+    }
+
+    return { sessionToThread, worktreeToThread };
+  });
+
+  const readThreadBreakdown = Effect.fn("UsageService.readThreadBreakdown")(function* (
+    input: UsageThreadBreakdownInput,
+  ) {
+    if (input.sinceDay > input.untilDay) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: `sinceDay '${input.sinceDay}' is after untilDay '${input.untilDay}'`,
+      });
+    }
+    const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
+    if (Option.isNone(windowStart)) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: `sinceDay '${input.sinceDay}' is not a valid date`,
+      });
+    }
+
+    const startedAtMs = yield* Clock.currentTimeMillis;
+    yield* ensureRates();
+    yield* ensureScanCacheLoaded;
+
+    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    const windowStartMs = DateTime.toEpochMillis(windowStart.value) - MTIME_SLACK_MS;
+
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: input.timeZone,
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      rates,
+      resolveProject: yield* resolveProjects(),
+    });
+
+    // Preferred transcript per session for title extraction: the main file,
+    // never a subagent's.
+    const titleFiles = new Map<
+      string,
+      { readonly path: string; readonly provider: UsageProviderKind }
+    >();
+
+    for (const { provider, dir, fileName } of dirs) {
+      const exists = yield* fileSystem
+        .exists(dir)
+        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+      if (!exists) continue;
+
+      const files = yield* Effect.promise(() =>
+        listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
+      );
+      for (const file of files) {
+        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        if (records.length === 0) continue;
+        const isSubagent =
+          provider === "claude" && path.basename(path.dirname(file.path)) === "subagents";
+        const agentId = isSubagent ? path.basename(file.path, ".jsonl") : null;
+        for (const record of records) {
+          const sessionKey =
+            record.sessionId.length > 0
+              ? `${provider}:${record.sessionId}`
+              : `${provider}:file:${file.path}`;
+          if (accumulator.add(record, { sessionKey, agentId }) && !isSubagent) {
+            if (!titleFiles.has(sessionKey)) {
+              titleFiles.set(sessionKey, { path: file.path, provider });
+            }
+          }
+        }
+      }
+    }
+
+    const attribution = yield* loadThreadAttribution();
+    const folded = foldThreadRows(accumulator.finish(), attribution, {
+      cap: THREAD_ROW_CAP,
+      ...(input.project === undefined ? {} : { projectFilter: input.project }),
+    });
+
+    // Transcript titles only for unattributed rows that survived the cap.
+    const rows = yield* Effect.forEach(
+      folded.rows,
+      Effect.fnUntraced(function* ({ titleSessionKey, ...row }) {
+        if (row.title !== null) return { ...row, title: row.title };
+        const source = titleFiles.get(titleSessionKey);
+        const transcriptTitle =
+          source === undefined
+            ? null
+            : yield* Effect.promise(() => readTranscriptTitle(source.path, source.provider));
+        const fallback = row.key.startsWith("session:") ? shortSessionLabel(row.key) : row.key;
+        return { ...row, title: transcriptTitle ?? fallback };
+      }),
+      { concurrency: 8 },
+    );
+
+    const readAt = yield* DateTime.now;
+    const finishedAtMs = yield* Clock.currentTimeMillis;
+    return {
+      contractVersion: USAGE_CONTRACT_VERSION,
+      readAt: DateTime.formatIso(readAt),
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      rows,
+      truncatedRows: folded.truncatedRows,
+      scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
+    } satisfies UsageThreadBreakdown;
+  });
+
+  return { readSummary, readThreadBreakdown } as const;
 });
+
+/** `session:claude:8f14e45f-...` reads as `Session 8f14e45f`. */
+function shortSessionLabel(rowKey: string): string {
+  const sessionId = rowKey.slice(rowKey.lastIndexOf(":") + 1);
+  return sessionId.length > 8 ? `Session ${sessionId.slice(0, 8)}` : `Session ${sessionId}`;
+}
 
 export const layer = Layer.effect(UsageService, make);

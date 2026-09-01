@@ -36,6 +36,7 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
+import { UsageThreadTable } from "./UsageThreadTable";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 
 const WINDOW_OPTIONS = [
@@ -54,7 +55,7 @@ export function UsagePage() {
     window: makeWindow(30),
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
-  const [breakdown, setBreakdown] = useState<"model" | "project" | "time">("model");
+  const [breakdown, setBreakdown] = useState<"model" | "project" | "thread" | "time">("model");
   // A namespaced project key, null for work outside every project, undefined for all.
   const [projectFilter, setProjectFilter] = useState<string | null | undefined>(undefined);
   const { days: windowDays, custom: isCustomWindow, window } = windowSelection;
@@ -434,7 +435,12 @@ export function UsagePage() {
                       value={[breakdown]}
                       onValueChange={(next) => {
                         const value = next[0];
-                        if (value === "model" || value === "project" || value === "time") {
+                        if (
+                          value === "model" ||
+                          value === "project" ||
+                          value === "thread" ||
+                          value === "time"
+                        ) {
                           setBreakdown(value);
                         }
                       }}
@@ -443,6 +449,7 @@ export function UsagePage() {
                         [
                           { value: "model", label: "Model" },
                           { value: "project", label: "Project" },
+                          { value: "thread", label: "Thread" },
                           { value: "time", label: isPast24Hours ? "Hour" : "Day" },
                         ] as const
                       ).map((option) => (
@@ -453,7 +460,17 @@ export function UsagePage() {
                     </ToggleGroup>
                   </div>
 
-                  {breakdown === "project" ? (
+                  {breakdown === "thread" ? (
+                    <UsageThreadTable
+                      input={{
+                        sinceDay: window.sinceDay,
+                        untilDay: window.untilDay,
+                        timeZone: window.timeZone,
+                        ...(projectFilter === undefined ? {} : { project: projectFilter }),
+                      }}
+                      environmentIds={merged.contributingEnvironments}
+                    />
+                  ) : breakdown === "project" ? (
                     <table className="w-full table-fixed text-sm">
                       <colgroup>
                         <col className="w-2/5" />
