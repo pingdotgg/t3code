@@ -53,6 +53,18 @@ interface Point {
   readonly y: number;
 }
 
+/** Gives a one-period daily window enough horizontal span to draw a path. */
+export function spanSinglePeriodPoints(points: readonly Point[]): readonly Point[] {
+  const only = points.length === 1 ? points[0] : undefined;
+  return only === undefined ? points : [only, { ...only, x: VIEW_WIDTH }];
+}
+
+/** Selects distinct left, middle, and right labels for the available span. */
+export function chartLabelIndices(periodCount: number): readonly number[] {
+  if (periodCount <= 0) return [];
+  return [...new Set([0, Math.floor(periodCount / 2), periodCount - 1])];
+}
+
 function valueFor(
   totals: DailyTotals | HourlyTotals | undefined,
   provider: UsageProviderKind,
@@ -289,14 +301,11 @@ export function UsageProviderChart({
 
     const built = providers.map((provider) => {
       const providerIndex = PROVIDER_ORDER.indexOf(provider);
-      const line = curvePath(
-        smoothCurve(
-          columns.map((column, periodIndex) => ({
-            x: periodIndex * step,
-            y: toY(column.bands[providerIndex]?.value ?? 0),
-          })),
-        ),
-      );
+      const points = columns.map((column, periodIndex) => ({
+        x: periodIndex * step,
+        y: toY(column.bands[providerIndex]?.value ?? 0),
+      }));
+      const line = curvePath(smoothCurve(spanSinglePeriodPoints(points)));
       return {
         provider,
         total: columns.reduce((sum, column) => sum + (column.bands[providerIndex]?.value ?? 0), 0),
@@ -408,9 +417,6 @@ export function UsageProviderChart({
       if (!zoomable || event.button !== 0 || !event.isPrimary || brushRef.current !== null) return;
       const index = indexAt(event.clientX);
       if (index === null) return;
-      // `touch-pan-y` owns vertical gestures. Avoid canceling that browser
-      // default while still suppressing text selection for mouse and pen.
-      if (event.pointerType !== "touch") event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
       hoverPositionRef.current = null;
       setHoverIndex(null);
@@ -427,7 +433,6 @@ export function UsageProviderChart({
       if (
         activeBrush === null ||
         activeBrush.pointerId !== event.pointerId ||
-        !event.currentTarget.hasPointerCapture(event.pointerId) ||
         onZoomToDays === undefined
       ) {
         return;
@@ -477,12 +482,16 @@ export function UsageProviderChart({
 
         <div
           ref={plotRef}
-          className={cn("relative h-56 flex-1", zoomable && "cursor-crosshair touch-pan-y")}
+          className={cn(
+            "relative h-56 flex-1",
+            zoomable && "cursor-crosshair touch-pan-y select-none",
+          )}
           onMouseMove={handleMove}
           onPointerDown={beginBrush}
           onPointerMove={trackBrush}
           onPointerUp={finishBrush}
           onPointerCancel={cancelBrush}
+          onLostPointerCapture={cancelBrush}
           onDoubleClick={onResetZoom}
           onMouseLeave={() => {
             hoverPositionRef.current = null;
@@ -548,7 +557,7 @@ export function UsageProviderChart({
               />
             )}
 
-            {hoverIndex === null ? null : (
+            {hoverIndex === null || periods.length === 1 ? null : (
               <line
                 x1={hoverIndex * stepX}
                 x2={hoverIndex * stepX}
@@ -600,17 +609,9 @@ export function UsageProviderChart({
       </div>
 
       <div className="flex justify-between pl-16 text-[10px] text-muted-foreground uppercase">
-        <span>{periods[0] === undefined ? "" : formatPeriod(periods[0])}</span>
-        <span>
-          {periods[Math.floor(periods.length / 2)] === undefined
-            ? ""
-            : formatPeriod(periods[Math.floor(periods.length / 2)] ?? "")}
-        </span>
-        <span>
-          {periods[periods.length - 1] === undefined
-            ? ""
-            : formatPeriod(periods[periods.length - 1] ?? "")}
-        </span>
+        {chartLabelIndices(periods.length).map((index) => (
+          <span key={index}>{formatPeriod(periods[index] ?? "")}</span>
+        ))}
       </div>
     </div>
   );

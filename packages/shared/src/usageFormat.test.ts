@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  compareUsageDays,
   enumerateHourStarts,
   formatDateTimeShort,
   formatHourShort,
@@ -9,6 +10,19 @@ import {
   makeCustomWindow,
   makeWindow,
 } from "./usageFormat.ts";
+
+describe("compareUsageDays", () => {
+  it("compares strict four-digit calendar dates numerically", () => {
+    expect(compareUsageDays("2026-08-03", "2026-08-11")).toBe(-1);
+    expect(compareUsageDays("2026-08-11", "2026-08-03")).toBe(1);
+    expect(compareUsageDays("2026-08-03", "2026-08-03")).toBe(0);
+  });
+
+  it("rejects variable-width years and impossible dates", () => {
+    expect(compareUsageDays("10000-01-01", "9999-12-31")).toBeNull();
+    expect(compareUsageDays("2026-02-29", "2026-03-01")).toBeNull();
+  });
+});
 
 describe("hourly usage formatting", () => {
   it("enumerates 24 fixed buckets across a rolling window", () => {
@@ -95,5 +109,9 @@ describe("makeCustomWindow", () => {
 
     expect(window.sinceDay).toBe("0001-01-01");
     expect(window.untilDay).toBe("0001-03-31");
+  });
+
+  it("rejects bounds outside the strict day format", () => {
+    expect(() => makeCustomWindow("10000-01-01", "9999-12-31")).toThrow(RangeError);
   });
 });

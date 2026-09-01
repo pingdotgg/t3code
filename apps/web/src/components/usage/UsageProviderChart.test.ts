@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { brushSelection, buildDayColumns, periodIndexAt, niceScale } from "./UsageProviderChart";
+import {
+  brushSelection,
+  buildDayColumns,
+  chartLabelIndices,
+  periodIndexAt,
+  niceScale,
+  spanSinglePeriodPoints,
+} from "./UsageProviderChart";
 import { providersWithUsage } from "./usageProviders";
 
 describe("niceScale", () => {
@@ -164,5 +171,34 @@ describe("periodIndexAt", () => {
   it("clamps a captured pointer to either chart edge", () => {
     expect(periodIndexAt(-50, 100, 400, 5)).toBe(0);
     expect(periodIndexAt(750, 100, 400, 5)).toBe(4);
+  });
+});
+
+describe("spanSinglePeriodPoints", () => {
+  it("repeats one point across the chart width", () => {
+    expect(spanSinglePeriodPoints([{ x: 0, y: 42 }])).toEqual([
+      { x: 0, y: 42 },
+      { x: 960, y: 42 },
+    ]);
+  });
+
+  it("leaves multi-period points unchanged", () => {
+    const points = [
+      { x: 0, y: 42 },
+      { x: 960, y: 12 },
+    ];
+
+    expect(spanSinglePeriodPoints(points)).toBe(points);
+  });
+});
+
+describe("chartLabelIndices", () => {
+  it("deduplicates labels for one- and two-period windows", () => {
+    expect(chartLabelIndices(1)).toEqual([0]);
+    expect(chartLabelIndices(2)).toEqual([0, 1]);
+  });
+
+  it("keeps left, middle, and right labels for wider windows", () => {
+    expect(chartLabelIndices(5)).toEqual([0, 2, 4]);
   });
 });

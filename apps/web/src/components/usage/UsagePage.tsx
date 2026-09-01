@@ -5,9 +5,11 @@ import { useMemo, useState } from "react";
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
+import { useCommitOnBlur } from "../../hooks/useCommitOnBlur";
 import { cn } from "../../lib/utils";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import {
+  compareUsageDays,
   enumerateDays,
   enumerateHourStarts,
   formatCount,
@@ -531,6 +533,20 @@ function UsageDateRangeInputs({
   readonly untilDay: string;
   readonly onChange: (sinceDay: string, untilDay: string) => void;
 }) {
+  // The shared buffered-input hook preserves a focused draft across upstream
+  // range changes and commits on both blur and Enter. Keep the hooks separate
+  // so each bound can validate against the last committed opposite bound.
+  const sinceInput = useCommitOnBlur(sinceDay, (next) => {
+    const comparison = compareUsageDays(next, untilDay);
+    if (comparison !== null && comparison <= 0) onChange(next, untilDay);
+  });
+  const untilInput = useCommitOnBlur(untilDay, (next) => {
+    const comparison = compareUsageDays(sinceDay, next);
+    if (comparison !== null && comparison <= 0) onChange(sinceDay, next);
+  });
+  const comparison = compareUsageDays(sinceInput.value, untilInput.value);
+  const invalid = comparison === null || comparison > 0;
+
   return (
     <div className={cn("flex items-center gap-1.5 text-xs text-muted-foreground", className)}>
       <Input
@@ -539,11 +555,9 @@ function UsageDateRangeInputs({
         size="compact"
         aria-label="From day"
         className="w-auto [color-scheme:inherit]"
-        value={sinceDay}
-        max={untilDay}
-        onChange={(event) => {
-          if (event.target.value) onChange(event.target.value, untilDay);
-        }}
+        max={untilInput.value}
+        aria-invalid={invalid || undefined}
+        {...sinceInput}
       />
       <span>to</span>
       <Input
@@ -552,11 +566,9 @@ function UsageDateRangeInputs({
         size="compact"
         aria-label="To day"
         className="w-auto [color-scheme:inherit]"
-        value={untilDay}
-        min={sinceDay}
-        onChange={(event) => {
-          if (event.target.value) onChange(sinceDay, event.target.value);
-        }}
+        min={sinceInput.value}
+        aria-invalid={invalid || undefined}
+        {...untilInput}
       />
     </div>
   );
