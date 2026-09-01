@@ -24,7 +24,8 @@ export interface ProcessRunInput {
   readonly spawnCwd?: string | undefined;
   readonly timeout?: Duration.Input | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
-  readonly stdin?: string | undefined;
+  readonly stdin?: string | Uint8Array | undefined;
+  readonly captureStdoutBytes?: boolean | undefined;
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
@@ -44,6 +45,7 @@ export interface ProcessRunOutput {
   readonly stderrTruncated: boolean;
   readonly stdoutInvalidUtf8: boolean;
   readonly stderrInvalidUtf8: boolean;
+  readonly stdoutBytes?: Uint8Array;
 }
 
 const ProcessInvocationFields = {
@@ -182,6 +184,7 @@ const collectText = Effect.fn("processRunner.collectText")(function* (input: {
   readonly maxOutputBytes: number;
   readonly outputMode: "error" | "truncate";
   readonly truncatedMarker: string;
+  readonly preserveBytes: boolean;
 }) {
   const stream = input.stream.pipe(
     Stream.mapError(
@@ -202,6 +205,7 @@ const collectText = Effect.fn("processRunner.collectText")(function* (input: {
       stream,
       maxBytes: input.maxOutputBytes,
       truncatedMarker: input.truncatedMarker,
+      preserveBytes: input.preserveBytes,
     });
   }
 
@@ -239,13 +243,15 @@ const collectText = Effect.fn("processRunner.collectText")(function* (input: {
         });
       },
     ),
-    Effect.map(
-      (state): CollectedUint8StreamText => ({
-        ...decodeUtf8(Buffer.concat(state.chunks, state.bytes)),
+    Effect.map((state): CollectedUint8StreamText => {
+      const rawBytes = Buffer.concat(state.chunks, state.bytes);
+      return {
+        ...decodeUtf8(rawBytes),
         bytes: state.bytes,
         truncated: false,
-      }),
-    ),
+        ...(input.preserveBytes ? { rawBytes } : {}),
+      };
+    }),
   );
 });
 
@@ -335,7 +341,10 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   const writeStdin =
     stdin === undefined
       ? Effect.void
-      : Stream.run(Stream.encodeText(Stream.make(stdin)), child.stdin).pipe(
+      : Stream.run(
+          typeof stdin === "string" ? Stream.encodeText(Stream.make(stdin)) : Stream.make(stdin),
+          child.stdin,
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new ProcessStdinError({
@@ -343,7 +352,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
                 argumentCount: input.args.length,
                 cwd: input.cwd,
                 spawnCwd: input.spawnCwd,
-                stdinBytes: Buffer.byteLength(stdin),
+                stdinBytes: typeof stdin === "string" ? Buffer.byteLength(stdin) : stdin.byteLength,
                 cause,
               }),
           ),
@@ -361,6 +370,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
         maxOutputBytes,
         outputMode,
         truncatedMarker,
+        preserveBytes: input.captureStdoutBytes === true,
       }),
       collectText({
         command: input.command,
@@ -372,6 +382,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
         maxOutputBytes,
         outputMode,
         truncatedMarker,
+        preserveBytes: false,
       }),
       writeStdin,
     ],
@@ -401,6 +412,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
     stderrTruncated: stderr.truncated,
     stdoutInvalidUtf8: stdout.invalidUtf8,
     stderrInvalidUtf8: stderr.invalidUtf8,
+    ...(stdout.rawBytes !== undefined ? { stdoutBytes: stdout.rawBytes } : {}),
   } satisfies ProcessRunOutput;
 });
 

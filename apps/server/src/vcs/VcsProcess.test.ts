@@ -61,6 +61,23 @@ describe("VcsProcess.run", () => {
     }).pipe(provideLive),
   );
 
+  it.effect("round-trips raw process bytes when requested", () =>
+    Effect.gen(function* () {
+      const rawBytes = new Uint8Array([0x66, 0x80, 0x6f]);
+      const result = yield* run({
+        operation: "test.raw-stdout",
+        command: "node",
+        args: ["-e", "process.stdin.on('data', chunk => process.stdout.write(chunk))"],
+        cwd: process.cwd(),
+        stdin: rawBytes,
+        captureStdoutBytes: true,
+      });
+
+      expect(result.stdoutInvalidUtf8).toBe(true);
+      expect(Array.from(result.stdoutBytes ?? [])).toEqual(Array.from(rawBytes));
+    }).pipe(provideLive),
+  );
+
   it.effect("writes stdin before waiting for exit", () =>
     Effect.gen(function* () {
       const result = yield* run({

@@ -23,7 +23,8 @@ export interface VcsProcessInput {
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
   readonly spawnCwd?: string;
-  readonly stdin?: string;
+  readonly stdin?: string | Uint8Array;
+  readonly captureStdoutBytes?: boolean;
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number;
@@ -40,6 +41,7 @@ export interface VcsProcessOutput {
   /** Present on real process output; optional so narrow test doubles remain lightweight. */
   readonly stdoutInvalidUtf8?: boolean;
   readonly stderrInvalidUtf8?: boolean;
+  readonly stdoutBytes?: Uint8Array;
 }
 
 export class VcsProcess extends Context.Service<
@@ -117,6 +119,9 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+        ...(input.captureStdoutBytes !== undefined
+          ? { captureStdoutBytes: input.captureStdoutBytes }
+          : {}),
         ...(input.env !== undefined ? { env: input.env } : {}),
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
@@ -178,6 +183,7 @@ export const make = Effect.gen(function* () {
       stderrTruncated: result.stderrTruncated,
       stdoutInvalidUtf8: result.stdoutInvalidUtf8 ?? false,
       stderrInvalidUtf8: result.stderrInvalidUtf8 ?? false,
+      ...(result.stdoutBytes !== undefined ? { stdoutBytes: result.stdoutBytes } : {}),
     } satisfies VcsProcessOutput;
   });
 

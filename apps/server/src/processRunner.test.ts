@@ -246,6 +246,24 @@ describe("runProcess", () => {
     }),
   );
 
+  it.effect("preserves raw stdout bytes when requested", () =>
+    Effect.gen(function* () {
+      const stdoutBytes = new Uint8Array([0x66, 0x80, 0x6f]);
+      const spawner = makeSpawner(() =>
+        Effect.succeed(makeHandle({ stdout: Stream.make(stdoutBytes) })),
+      );
+
+      const result = yield* runWith(spawner)({
+        command: "fake",
+        args: ["raw-stdout"],
+        captureStdoutBytes: true,
+      });
+
+      expect(result.stdoutInvalidUtf8).toBe(true);
+      expect(Array.from(result.stdoutBytes ?? [])).toEqual(Array.from(stdoutBytes));
+    }),
+  );
+
   it.effect("fails fast on output limit before timeout for long-running output", () =>
     Effect.gen(function* () {
       const textChunk = "x".repeat(64);
@@ -316,6 +334,32 @@ describe("runProcess", () => {
 
       expect(result.stdout).toBe("stdin payload");
       expect(result.code).toBe(0);
+    }),
+  );
+
+  it.effect("writes raw stdin bytes without UTF-8 encoding", () =>
+    Effect.gen(function* () {
+      const stdinBytes = new Uint8Array([0x66, 0x80, 0x6f]);
+      const receivedBytes: number[] = [];
+      const spawner = makeSpawner(() =>
+        Effect.succeed(
+          makeHandle({
+            stdin: Sink.forEach((chunk: Uint8Array) =>
+              Effect.sync(() => {
+                receivedBytes.push(...chunk);
+              }),
+            ),
+          }),
+        ),
+      );
+
+      yield* runWith(spawner)({
+        command: "fake",
+        args: ["raw-stdin"],
+        stdin: stdinBytes,
+      });
+
+      expect(receivedBytes).toEqual(Array.from(stdinBytes));
     }),
   );
 

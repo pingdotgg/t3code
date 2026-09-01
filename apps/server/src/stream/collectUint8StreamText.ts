@@ -7,6 +7,7 @@ export interface CollectedUint8StreamText {
   readonly truncated: boolean;
   readonly bytes: number;
   readonly invalidUtf8: boolean;
+  readonly rawBytes?: Uint8Array;
 }
 
 export const decodeUtf8 = (
@@ -26,6 +27,7 @@ export const collectUint8StreamText = <E>(input: {
   readonly stream: Stream.Stream<Uint8Array, E>;
   readonly maxBytes?: number | undefined;
   readonly truncatedMarker?: string | null | undefined;
+  readonly preserveBytes?: boolean | undefined;
 }): Effect.Effect<CollectedUint8StreamText, E> => {
   const maxBytes = input.maxBytes ?? Number.POSITIVE_INFINITY;
   const truncatedMarker = input.truncatedMarker ?? "";
@@ -68,7 +70,8 @@ export const collectUint8StreamText = <E>(input: {
       },
     ),
     Effect.map((state): CollectedUint8StreamText => {
-      const decoded = decodeUtf8(Buffer.concat(state.chunks, state.bytes));
+      const rawBytes = Buffer.concat(state.chunks, state.bytes);
+      const decoded = decodeUtf8(rawBytes);
       return {
         text:
           state.truncated && truncatedMarker.length > 0
@@ -77,6 +80,7 @@ export const collectUint8StreamText = <E>(input: {
         bytes: state.bytes,
         truncated: state.truncated,
         invalidUtf8: decoded.invalidUtf8,
+        ...(input.preserveBytes ? { rawBytes } : {}),
       };
     }),
   );
