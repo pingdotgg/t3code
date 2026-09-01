@@ -129,6 +129,17 @@ export const listen: Effect.Effect<
                 );
                 return false;
               case "install": {
+                // Another install (local, or an earlier remote request)
+                // already owns the shutdown and will relaunch the app. It
+                // also holds the reservation, so check this before the
+                // reservation wait below or the join path is unreachable.
+                if (yield* Ref.get(desktopState.quitting)) {
+                  yield* publishReport(state, { outcome: "installing" });
+                  yield* logInfo("remote update joining an in-progress install", {
+                    requestId: request.requestId,
+                  });
+                  return true;
+                }
                 // "downloaded" fires from inside the download action, so
                 // install may be refused for the reservation the download
                 // still holds. Wait for it to free up before reporting:
@@ -145,11 +156,8 @@ export const listen: Effect.Effect<
                 const before = yield* updates.getState;
                 const result = yield* updates.install;
                 if (!result.accepted) {
-                  // Refused because an install (local or an earlier remote
-                  // request) is already tearing the app down: that install
-                  // will relaunch, so this request joins it. Any other
-                  // refusal (reservation held by a check that raced in) is
-                  // retried once the reservation frees up.
+                  // An install that started between the quitting check and
+                  // this call owns the relaunch: join it.
                   if (yield* Ref.get(desktopState.quitting)) {
                     return true;
                   }
