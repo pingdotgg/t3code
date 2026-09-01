@@ -56,7 +56,7 @@ export function threadPullRequestRefreshSource(input: {
   };
 }): ThreadPullRequestRefreshSource | null {
   if (
-    input.thread.repository !== input.panel.repository ||
+    input.thread.repository?.toLowerCase() !== input.panel.repository.toLowerCase() ||
     input.thread.number !== input.panel.number ||
     input.thread.state === input.panel.state
   ) {

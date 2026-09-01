@@ -4629,7 +4629,6 @@ function ChatViewContent(props: ChatViewProps) {
             },
           }),
         );
-        sidebarPrRefreshKeyRef.current = null;
         return;
       }
       if (source === "vcs" && activeThreadRef && gitCwd !== null) {

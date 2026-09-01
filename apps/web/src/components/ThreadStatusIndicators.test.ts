@@ -101,6 +101,15 @@ describe("threadPullRequestRefreshSource", () => {
       }),
     ).toBeNull();
   });
+
+  it("matches repository identity without case sensitivity", () => {
+    expect(
+      threadPullRequestRefreshSource({
+        panel: { ...panel, repository: "PingDotGG/T3Code" },
+        thread: { repository: "pingdotgg/t3code", number: 42, state: "open", linked: false },
+      }),
+    ).toBe("vcs");
+  });
 });
 
 describe("resolveThreadPr", () => {
