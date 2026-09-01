@@ -28,6 +28,7 @@ export type ModelEsque = {
   subProvider?: string | undefined;
   isLegacy?: boolean | undefined;
   isUnavailable?: boolean | undefined;
+  unavailableReason?: string | undefined;
 };
 
 function escapeRegExp(value: string): string {

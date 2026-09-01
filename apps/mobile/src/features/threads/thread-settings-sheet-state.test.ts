@@ -18,6 +18,7 @@ function modelOption(
     providerDriver: "codex",
     isDefault: false,
     isLegacy: false,
+    unavailableReason: null,
     capabilities: null,
     selection: {
       instanceId: ProviderInstanceId.make("codex"),

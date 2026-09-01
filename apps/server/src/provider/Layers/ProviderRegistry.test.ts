@@ -134,6 +134,7 @@ type TestClaudeCapabilities = {
   readonly tokenSource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly restrictedModels: ReadonlySet<string>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -144,6 +145,7 @@ function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
       tokenSource: undefined,
       apiProvider: undefined,
       slashCommands: [],
+      restrictedModels: new Set<string>(),
       ...overrides,
     });
 }
@@ -2120,6 +2122,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             mockSpawnerLayer((args) => {
               const joined = args.join(" ");
               if (joined === "--version") return { stdout: "2.1.169\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("marks models the organization restricts as unavailable", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({ restrictedModels: new Set(["claude-fable-5"]) }),
+          );
+          // Still listed, so the picker can explain why it can't be used —
+          // hiding it would just relocate the surprise.
+          const fable5 = status.models.find((model) => model.slug === "claude-fable-5");
+          assert.strictEqual(fable5?.unavailableReason, "Restricted by your organization.");
+          const opus5 = status.models.find((model) => model.slug === "claude-opus-5");
+          assert.strictEqual(opus5?.unavailableReason, undefined);
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.219\n", stderr: "", code: 0 };
               if (joined === "auth status")
                 return {
                   stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',

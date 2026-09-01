@@ -98,14 +98,20 @@ function ModelRow(props: {
   readonly isFirst: boolean;
   readonly isLast: boolean;
 }) {
+  const restricted = props.option.unavailableReason !== null;
+  // The reason replaces the subtitle: it is the one thing that explains why
+  // the row can't be picked, and rows only have space for a single detail line.
+  const detail = props.option.unavailableReason ?? props.option.subtitle;
   return (
     <Pressable
-      accessibilityLabel={[props.option.label, props.option.subtitle].filter(Boolean).join(", ")}
+      accessibilityLabel={[props.option.label, detail].filter(Boolean).join(", ")}
       accessibilityRole="radio"
-      accessibilityState={{ checked: props.selected }}
+      accessibilityState={{ checked: props.selected, disabled: restricted }}
+      disabled={restricted}
       onPress={props.onPress}
       className={cn(
-        "mx-4 min-h-11 flex-row items-center gap-2 bg-card px-4 py-2 active:bg-subtle",
+        "mx-4 min-h-11 flex-row items-center gap-2 bg-card px-4 py-2",
+        restricted ? "opacity-40" : "active:bg-subtle",
         props.isFirst && "rounded-t-2xl",
         props.isLast ? "rounded-b-2xl" : "border-b border-border-subtle",
       )}
@@ -129,9 +135,9 @@ function ModelRow(props: {
             </View>
           ) : null}
         </View>
-        {props.option.subtitle ? (
+        {detail ? (
           <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-            {props.option.subtitle}
+            {detail}
           </Text>
         ) : null}
       </View>

@@ -17,6 +17,13 @@ export type ModelOption = {
   readonly providerDriver: string;
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
+  /**
+   * Why this environment can't run the model (today: not entitled by the
+   * Claude account's organization), or `null` when it can. Picking a
+   * restricted model silently runs the org default instead, so rows carrying
+   * a reason are shown disabled.
+   */
+  readonly unavailableReason: string | null;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
 };
@@ -143,6 +150,7 @@ export function buildModelOptions(
         providerDriver: provider.driver,
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
+        unavailableReason: model.unavailableReason ?? null,
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(
           {
@@ -174,6 +182,7 @@ export function buildModelOptions(
         providerDriver: fallbackModelSelection.instanceId,
         isDefault: false,
         isLegacy: false,
+        unavailableReason: null,
         capabilities: null,
         selection: fallbackModelSelection,
       });

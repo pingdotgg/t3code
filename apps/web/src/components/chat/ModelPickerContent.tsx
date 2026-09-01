@@ -54,6 +54,7 @@ type ModelPickerItem = {
   continuationGroupKey?: string | undefined;
   isLegacy?: boolean | undefined;
   isUnavailable?: boolean | undefined;
+  unavailableReason?: string | undefined;
 };
 
 export function shouldIncludeModelPickerOption(input: {
@@ -70,6 +71,18 @@ export function shouldIncludeModelPickerOption(input: {
     input.option.slug === input.activeModel &&
     input.option.isUnavailable === true
   );
+}
+
+/**
+ * A model the environment can't run states its own reason, so every picker
+ * disables it whether or not the call site passes `getModelDisabledReason`.
+ * Caller-supplied reasons (thread state) apply on top of that.
+ */
+export function resolveModelPickerDisabledReason(
+  option: Pick<ModelEsque, "unavailableReason"> | undefined,
+  callerReason: string | null | undefined,
+): string | null {
+  return option?.unavailableReason ?? callerReason ?? null;
 }
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
@@ -258,6 +271,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           ...(model.subProvider ? { subProvider: model.subProvider } : {}),
           ...(model.isLegacy ? { isLegacy: true } : {}),
           ...(model.isUnavailable ? { isUnavailable: true } : {}),
+          ...(model.unavailableReason ? { unavailableReason: model.unavailableReason } : {}),
           instanceId,
           driverKind: entry.driverKind,
           instanceDisplayName: entry.displayName,
@@ -452,9 +466,25 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     });
   }, []);
 
+  // An unrunnable model carries its own reason, so every picker disables it
+  // without each call site having to opt in. Caller-supplied reasons (thread
+  // state) still apply on top.
+  const resolveDisabledReason = useCallback(
+    (instanceId: ProviderInstanceId, modelSlug: string): string | null => {
+      const option = modelOptionsByInstance
+        .get(instanceId)
+        ?.find((candidate) => candidate.slug === modelSlug);
+      return resolveModelPickerDisabledReason(
+        option,
+        getModelDisabledReason?.(instanceId, modelSlug),
+      );
+    },
+    [getModelDisabledReason, modelOptionsByInstance],
+  );
+
   const handleModelSelect = useCallback(
     (modelSlug: string, instanceId: ProviderInstanceId) => {
-      if (getModelDisabledReason?.(instanceId, modelSlug)) {
+      if (resolveDisabledReason(instanceId, modelSlug)) {
         return;
       }
       const options = modelOptionsByInstance.get(instanceId);
@@ -473,7 +503,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         onInstanceModelChange(instanceId, resolvedModel);
       }
     },
-    [entryByInstanceId, getModelDisabledReason, modelOptionsByInstance, onInstanceModelChange],
+    [entryByInstanceId, modelOptionsByInstance, onInstanceModelChange, resolveDisabledReason],
   );
 
   const toggleFavorite = useCallback(
@@ -497,7 +527,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     >();
     let selectableModelIndex = 0;
     for (const model of visibleModels) {
-      if (getModelDisabledReason?.(model.instanceId, model.slug)) {
+      if (
+        resolveModelPickerDisabledReason(
+          model,
+          getModelDisabledReason?.(model.instanceId, model.slug),
+        )
+      ) {
         continue;
       }
       const jumpCommand = modelPickerJumpCommandForIndex(selectableModelIndex);
@@ -784,8 +819,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     if (!model) {
                       return null;
                     }
-                    const disabledReason =
-                      getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                    const disabledReason = resolveModelPickerDisabledReason(
+                      model,
+                      getModelDisabledReason?.(model.instanceId, model.slug),
+                    );
                     return (
                       <ModelListRow
                         key={modelKey}

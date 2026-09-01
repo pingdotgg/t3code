@@ -53,6 +53,19 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       const invocationPath = path.join(tempDir, "invocation.json");
       const workspaceCwd = path.join(tempDir, "workspace");
       yield* fs.makeDirectory(workspaceCwd, { recursive: true });
+      // Point the probe at an isolated config dir so entitlements come from
+      // this fixture rather than the developer's real ~/.claude.json.
+      const claudeConfigDir = path.join(tempDir, "claude-config");
+      yield* fs.makeDirectory(claudeConfigDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(claudeConfigDir, ".claude.json"),
+        JSON.stringify({
+          modelAccessCache: [
+            { apiName: "claude-fable-5", entitled: false },
+            { apiName: "claude-opus-5", entitled: true },
+          ],
+        }),
+      );
 
       yield* fs.writeFileString(
         executablePath,
@@ -106,6 +119,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           ...process.env,
           T3_PROBE_INVOCATION_PATH: invocationPath,
           ENABLE_CLAUDEAI_MCP_SERVERS: "true",
+          CLAUDE_CONFIG_DIR: claudeConfigDir,
         },
         workspaceCwd,
       );
@@ -122,6 +136,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
             input: { hint: "[path]" },
           },
         ],
+        restrictedModels: new Set(["claude-fable-5"]),
       });
 
       // @effect-diagnostics-next-line preferSchemaOverJson:off

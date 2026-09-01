@@ -3130,6 +3130,25 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return;
     }
 
+    // `informational` is another real-but-undeclared subtype. Its warning level
+    // carries notices the user has to see to understand the turn — notably the
+    // org-restricted model substitution ("Model "…" is restricted by your
+    // organization's settings. Using … instead."), which decides which model
+    // actually answered. Without a case it reached the unknown-subtype branch
+    // and surfaced as an error row that named no model. Quieter levels are
+    // transcript and footer chrome, so they stay consumed.
+    if ((message.subtype as string) === "informational") {
+      const informational = message as unknown as {
+        readonly content?: unknown;
+        readonly level?: unknown;
+      };
+      const content = typeof informational.content === "string" ? informational.content.trim() : "";
+      if (informational.level === "warning" && content.length > 0) {
+        yield* emitRuntimeWarning(context, content, message);
+      }
+      return;
+    }
+
     switch (message.subtype) {
       case "init":
         yield* offerRuntimeEvent({
