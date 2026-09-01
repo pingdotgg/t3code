@@ -52,6 +52,11 @@ On mobile, the model picker shows each OpenCode model's upstream provider, such 
 GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list
 when starting a thread or changing an existing thread's model.
 
+## Changing projects
+
+On web and desktop, changing the project from a new thread keeps the current environment when that
+project exists there. If it does not, T3 Code selects another environment that has the project.
+
 ## Notices above the composer
 
 On web and desktop, loading and syncing statuses fill the available banner width beside the
