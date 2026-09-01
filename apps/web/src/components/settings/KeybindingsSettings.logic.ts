@@ -265,6 +265,13 @@ export function buildKeybindingCommandOptions(
   );
 }
 
+export function isKeybindingCommandSupportedByServer(
+  command: KeybindingCommand,
+  supportsBoardKeybinding: boolean,
+): boolean {
+  return command !== "board.open" || supportsBoardKeybinding;
+}
+
 export function commandLabel(command: KeybindingCommand): string {
   const raw = String(command);
   if (raw.startsWith("script.") && raw.endsWith(".run")) {

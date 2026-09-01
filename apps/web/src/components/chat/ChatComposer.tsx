@@ -71,7 +71,7 @@ import {
   type PromptStashEntry,
 } from "../../promptStashStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
-import { ComposerStashMenu } from "./ComposerStashMenu";
+import { claimComposerStashMenuForOwner, ComposerStashMenu } from "./ComposerStashMenu";
 import {
   ComposerTasksBadge,
   ComposerTasksContent,
@@ -95,6 +95,7 @@ import {
 } from "@t3tools/client-runtime/state/attachments";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
+  canShowComposerAttachmentPicker,
   classifyComposerAttachmentFile,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
@@ -617,6 +618,8 @@ export interface ChatComposerProps {
   attachmentUploadsCapabilityKnown: boolean;
   supportsAttachmentUploads: boolean;
   maxFileAttachmentBytes: number | null;
+  /** Embedded surfaces can offer image uploads without accepting generic files. */
+  allowGenericFileAttachments?: boolean;
   routeKind: "server" | "draft";
   routeThreadRef: ScopedThreadRef;
   draftId: DraftId | null;
@@ -727,6 +730,12 @@ export interface ChatComposerProps {
   onExpandImage: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
   openingVideoAttachmentId: string | null;
+  /**
+   * A compact composer rendered alongside other durable threads. Its keyboard
+   * shortcuts are scoped to its own focused form so another board card cannot
+   * claim them.
+   */
+  embedded?: boolean;
 }
 
 // --------------------------------------------------------------------------
@@ -740,6 +749,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     attachmentUploadsCapabilityKnown,
     supportsAttachmentUploads,
     maxFileAttachmentBytes,
+    allowGenericFileAttachments = true,
     routeKind,
     routeThreadRef,
     draftId,
@@ -806,6 +816,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
     onFileOpen,
     openingVideoAttachmentId,
+    embedded = false,
   } = props;
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = props.threadSyncPhase === null ? props.activeTaskSteps : null;
@@ -833,16 +844,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   const needsReattachFileCount = composerFiles.filter(composerFileNeedsReattach).length;
-  const fileStagingLimit = fileAttachmentStagingLimit({
+  const fileStagingLimit = allowGenericFileAttachments
+    ? fileAttachmentStagingLimit({
+        attachmentUploadsCapabilityKnown,
+        supportsAttachmentUploads,
+        maxFileAttachmentBytes,
+      })
+    : null;
+  const attachmentPickerVisible = canShowComposerAttachmentPicker({
     attachmentUploadsCapabilityKnown,
     supportsAttachmentUploads,
     maxFileAttachmentBytes,
+    allowGenericFileAttachments,
   });
+  const attachmentPickerLabel = allowGenericFileAttachments ? "Attach files" : "Attach images";
   const fileCapabilityBlockReason = fileAttachmentCapabilityBlockReason({
     files: composerFiles,
     attachmentUploadsCapabilityKnown,
     supportsAttachmentUploads,
     maxFileAttachmentBytes,
+    allowGenericFileAttachments,
   });
   const attachmentBlockReason =
     fileCapabilityBlockReason ??
@@ -1205,8 +1226,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     null,
   );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
-  const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
-  const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
+  const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(embedded);
+  const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(embedded);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
@@ -2929,6 +2950,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
+      if (embedded) {
+        const composerForm = composerFormRef.current;
+        if (
+          composerForm === null ||
+          !(event.target instanceof Node) ||
+          !composerForm.contains(event.target)
+        ) {
+          return;
+        }
+      }
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: getTerminalFocusOwner() !== null,
@@ -2957,6 +2988,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return () => window.removeEventListener("keydown", handler, true);
   }, [
     activePendingProgress,
+    embedded,
     isComposerApprovalState,
     isComposerModelPickerOpen,
     keybindings,
@@ -3032,6 +3064,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (attachmentKind === "image") {
         acceptedImages.push(normalizeComposerImageFileMimeType(file));
       } else {
+        if (!allowGenericFileAttachments) {
+          error = "Send file attachments from the full thread";
+          continue;
+        }
         if (fileStagingLimit === null) {
           error = "This server does not support file attachments.";
           continue;
@@ -3405,6 +3441,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ref={composerFormRef}
       onSubmit={submitComposer}
       onFocusCapture={(event) => {
+        claimComposerStashMenuForOwner(composerTargetKey(composerDraftTarget));
         const activeElement = event.target;
         if (
           isComposerCollapsedMobile &&
@@ -3426,8 +3463,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onDragOverCapture={composerMentionDragHandlers.onDragOver}
       onDragLeaveCapture={onComposerMentionDragLeaveCapture}
       onDropCapture={composerMentionDragHandlers.onDrop}
-      className="mx-auto w-full min-w-0 max-w-3xl"
+      className={cn("mx-auto w-full min-w-0", embedded ? "max-w-full" : "max-w-3xl")}
       data-chat-composer-form="true"
+      data-chat-composer-embedded={embedded ? "true" : undefined}
     >
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
@@ -3662,6 +3700,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         modelPickerOpen: false,
                       },
                     })}
+                    ownerKey={composerTargetKey(composerDraftTarget)}
                     onRestore={restoreStashEntry}
                     onDelete={deleteStashEntry}
                     onClose={() => setIsStashMenuOpen(false)}
@@ -4188,13 +4227,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
-                  {fileStagingLimit !== null && pendingUserInputs.length === 0 ? (
+                  {attachmentPickerVisible && pendingUserInputs.length === 0 ? (
                     <>
                       <input
                         ref={attachmentInputRef}
                         type="file"
                         multiple
                         className="hidden"
+                        accept={allowGenericFileAttachments ? undefined : "image/*"}
                         onChange={(event) => {
                           const files = Array.from(event.currentTarget.files ?? []);
                           event.currentTarget.value = "";
@@ -4211,13 +4251,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               size="icon-sm"
                               onPointerDown={(event) => event.preventDefault()}
                               onClick={() => attachmentInputRef.current?.click()}
-                              aria-label="Attach files"
+                              aria-label={attachmentPickerLabel}
                             />
                           }
                         >
                           <PaperclipIcon />
                         </TooltipTrigger>
-                        <TooltipPopup>Attach files</TooltipPopup>
+                        <TooltipPopup>{attachmentPickerLabel}</TooltipPopup>
                       </Tooltip>
                     </>
                   ) : null}

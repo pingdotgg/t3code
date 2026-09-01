@@ -272,6 +272,8 @@ interface MessagesTimelineProps {
   topFadeEnabled?: boolean;
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: { readonly loading: boolean; readonly onLoadEarlier: () => void } | null;
+  /** Dense layout for a bounded embedded thread surface. */
+  density?: "default" | "compact";
 }
 
 // ---------------------------------------------------------------------------
@@ -313,7 +315,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   loadEarlier = null,
+  density = "default",
 }: MessagesTimelineProps) {
+  const isCompact = density === "compact";
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
@@ -463,7 +467,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
-  const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  const minimapItems = useMemo(
+    () => (isCompact ? [] : deriveTimelineMinimapItems(rows)),
+    [isCompact, rows],
+  );
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
@@ -486,6 +493,33 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     );
     return config ? { ...config, onReady: handleAnchorReady } : undefined;
   }, [anchorMessageId, handleAnchorReady, rows]);
+
+  const timelineRealContentOverflowsViewport = useCallback(() => {
+    const list = listRef.current;
+    const state = list?.getState();
+    if (!list || !state || state.data.length === 0) {
+      return false;
+    }
+
+    const lastRowIndex = state.data.length - 1;
+    const lastRowTop = state.positionAtIndex(lastRowIndex);
+    const lastRowHeight = state.sizeAtIndex(lastRowIndex);
+    if (
+      typeof lastRowTop !== "number" ||
+      typeof lastRowHeight !== "number" ||
+      !Number.isFinite(lastRowTop) ||
+      !Number.isFinite(lastRowHeight)
+    ) {
+      return false;
+    }
+
+    const realContentBottom = lastRowTop + Math.max(1, lastRowHeight);
+    const visibleScrollLength = Math.max(
+      0,
+      (state.scrollLength ?? 0) - contentInsetEndAdjustment - CHAT_TIMELINE_ANCHOR_OFFSET,
+    );
+    return realContentBottom > visibleScrollLength;
+  }, [contentInsetEndAdjustment, listRef]);
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
@@ -518,12 +552,105 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   }, [contentInsetEndAdjustment, listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
 
   useEffect(() => {
+    if (!isCompact) {
+      return;
+    }
+
+    let removeListeners: (() => void) | null = null;
+    let frame: number | null = null;
+    const attach = (remainingAttempts: number) => {
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        const scrollNode = listRef.current?.getScrollableNode();
+        if (!scrollNode) {
+          if (remainingAttempts > 0) {
+            attach(remainingAttempts - 1);
+          }
+          return;
+        }
+
+        const handleManualNavigation = () => {
+          onManualNavigation();
+        };
+        // Only user gestures should leave live-follow. Scroll callbacks also
+        // fire for anchor placement, list maintenance, and other programmatic
+        // rAF scrolls, so they cannot establish intent on their own.
+        const contentScrollsUp = () => timelineRealContentOverflowsViewport();
+        const viewportIsAwayFromEnd = () =>
+          resolveTimelineIsAtEnd(listRef.current?.getState(), contentInsetEndAdjustment) === false;
+
+        const handleWheel = (event: WheelEvent) => {
+          if (event.deltaY < 0 && contentScrollsUp()) {
+            handleManualNavigation();
+          }
+        };
+        const handleTouchMove = () => {
+          if (viewportIsAwayFromEnd()) {
+            handleManualNavigation();
+          }
+        };
+        const handlePointerDown = (event: PointerEvent) => {
+          if (event.target === scrollNode) {
+            if (contentScrollsUp()) {
+              handleManualNavigation();
+            }
+            return;
+          }
+          if (viewportIsAwayFromEnd()) {
+            handleManualNavigation();
+          }
+        };
+        const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+          switch (event.key) {
+            case "PageUp":
+            case "Home":
+            case "ArrowUp":
+              if (contentScrollsUp()) {
+                handleManualNavigation();
+              }
+              break;
+            default:
+              break;
+          }
+        };
+
+        scrollNode.addEventListener("wheel", handleWheel, { passive: true });
+        scrollNode.addEventListener("touchmove", handleTouchMove, { passive: true });
+        scrollNode.addEventListener("pointerdown", handlePointerDown, { passive: true });
+        scrollNode.addEventListener("keydown", handleKeyDown);
+        removeListeners = () => {
+          scrollNode.removeEventListener("wheel", handleWheel);
+          scrollNode.removeEventListener("touchmove", handleTouchMove);
+          scrollNode.removeEventListener("pointerdown", handlePointerDown);
+          scrollNode.removeEventListener("keydown", handleKeyDown);
+        };
+      });
+    };
+    attach(12);
+
+    return () => {
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+      }
+      removeListeners?.();
+    };
+  }, [
+    contentInsetEndAdjustment,
+    isCompact,
+    listRef,
+    onManualNavigation,
+    routeThreadKey,
+    timelineViewportElement,
+    timelineRealContentOverflowsViewport,
+  ]);
+
+  useEffect(() => {
     const frame = requestAnimationFrame(handleScroll);
     return () => cancelAnimationFrame(frame);
   }, [handleScroll, rows.length]);
 
   useEffect(() => {
-    if (!timelineViewportElement) {
+    if (isCompact || !timelineViewportElement) {
       return;
     }
 
@@ -545,7 +672,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [timelineViewportElement, rows.length]);
+  }, [isCompact, timelineViewportElement, rows.length]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -598,15 +725,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [isRevertingCheckpoint, isWorking, isPreparingWorktree, latestTurn?.turnId],
   );
 
-  // Stable renderItem — no closure deps. Row components read shared state
-  // from TimelineRowCtx, which propagates through LegendList's memo.
+  // Row components read shared state from TimelineRowCtx, which propagates
+  // through LegendList's memo. Density only changes the surrounding rail.
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
-      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip" data-timeline-root="true">
+      <div
+        className={cn(
+          "mx-auto w-full min-w-0 overflow-x-clip",
+          isCompact ? "max-w-full" : "max-w-3xl",
+        )}
+        data-timeline-root="true"
+      >
         <TimelineRowContent row={item} />
       </div>
     ),
-    [],
+    [isCompact],
   );
 
   if (rows.length === 0 && !isWorking) {
@@ -615,7 +748,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-placeholder text-sm">Send a message to start the conversation.</p>
+        <p
+          className={
+            isCompact ? "text-[10px] text-muted-foreground/55" : "text-placeholder text-sm"
+          }
+        >
+          Send a message to start the conversation.
+        </p>
       </div>
     );
   }
@@ -642,7 +781,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             maintainVisibleContentPosition={maintainVisibleContentPosition}
             onScroll={handleScroll}
             className={cn(
-              "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
+              "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
+              isCompact ? "px-1.5" : "px-3 sm:px-5",
               topFadeEnabled && "topbar-scroll-fade",
             )}
             ListHeaderComponent={
@@ -660,20 +800,22 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             }
             ListFooterComponent={TIMELINE_LIST_FOOTER}
           />
-          <TimelineMinimap
-            items={minimapItems}
-            hasPersistentGutter={minimapHasPersistentGutter}
-            hitStripWidth={minimapHitStripWidth}
-            stripMap={minimapStripMap}
-            onSelect={(item) => {
-              onManualNavigation();
-              void listRef.current?.scrollToIndex({
-                index: item.rowIndex,
-                animated: true,
-                viewOffset: 24,
-              });
-            }}
-          />
+          {isCompact ? null : (
+            <TimelineMinimap
+              items={minimapItems}
+              hasPersistentGutter={minimapHasPersistentGutter}
+              hitStripWidth={minimapHitStripWidth}
+              stripMap={minimapStripMap}
+              onSelect={(item) => {
+                onManualNavigation();
+                void listRef.current?.scrollToIndex({
+                  index: item.rowIndex,
+                  animated: true,
+                  viewOffset: 24,
+                });
+              }}
+            />
+          )}
         </div>
       </TimelineRowActivityCtx>
     </TimelineRowCtx>

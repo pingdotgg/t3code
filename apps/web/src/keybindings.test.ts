@@ -140,6 +140,11 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
+  {
+    shortcut: modShortcut("b", { altKey: true, shiftKey: true }),
+    command: "board.open",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
   {
@@ -406,6 +411,7 @@ describe("shortcutLabelForCommand", () => {
       shortcutLabelForCommand(DEFAULT_BINDINGS, "projectSearch.toggle", "MacIntel"),
       "⇧⌘F",
     );
+    assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "board.open", "MacIntel"), "⌥⇧⌘B");
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "modelPicker.toggle", "Linux"),
       "Ctrl+Shift+M",
@@ -622,6 +628,31 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: true },
       }),
       "filePicker.toggle",
+    );
+  });
+
+  it("matches board.open outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "b", metaKey: true, altKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "MacIntel",
+          context: { terminalFocus: false },
+        },
+      ),
+      "board.open",
+    );
+    assert.notStrictEqual(
+      resolveShortcutCommand(
+        event({ key: "b", metaKey: true, altKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "MacIntel",
+          context: { terminalFocus: true },
+        },
+      ),
+      "board.open",
     );
   });
 

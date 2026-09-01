@@ -42,6 +42,9 @@ interface PrimaryServerState {
 
 const EMPTY_AVAILABLE_EDITORS: ReadonlyArray<EditorId> = [];
 export const EMPTY_SERVER_PROVIDERS: ReadonlyArray<ServerProvider> = [];
+const DEFAULT_BOARD_OPEN_KEYBINDING = DEFAULT_RESOLVED_KEYBINDINGS.find(
+  (keybinding) => keybinding.command === "board.open",
+);
 const EMPTY_PRIMARY_SERVER_STATE: PrimaryServerState = {
   config: null,
   latestEvent: null,
@@ -88,10 +91,36 @@ export const primaryServerProvidersAtom = Atom.make(
     get(primaryServerConfigAtom)?.providers ?? EMPTY_SERVER_PROVIDERS,
 ).pipe(Atom.withLabel("web-primary-server-providers"));
 
-export const primaryServerKeybindingsAtom = Atom.make(
-  (get): ServerConfig["keybindings"] =>
-    get(primaryServerConfigAtom)?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
-).pipe(Atom.withLabel("web-primary-server-keybindings"));
+/**
+ * Older servers omit `board.open` because their keybinding schema cannot
+ * persist it. The client still owns dispatch for Board, so retain its default
+ * shortcut locally while the server's bindings catch up.
+ */
+export function resolvePrimaryServerKeybindings(
+  keybindings: ServerConfig["keybindings"] | null,
+  supportsBoardKeybinding: boolean,
+): ServerConfig["keybindings"] {
+  const resolved = keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
+  if (
+    supportsBoardKeybinding ||
+    resolved.some((keybinding) => keybinding.command === "board.open")
+  ) {
+    return resolved;
+  }
+  return DEFAULT_BOARD_OPEN_KEYBINDING ? [DEFAULT_BOARD_OPEN_KEYBINDING, ...resolved] : resolved;
+}
+
+export const primaryServerKeybindingsAtom = Atom.make((get): ServerConfig["keybindings"] => {
+  const config = get(primaryServerConfigAtom);
+  return resolvePrimaryServerKeybindings(
+    config?.keybindings ?? null,
+    config?.environment.capabilities.boardKeybinding === true,
+  );
+}).pipe(Atom.withLabel("web-primary-server-keybindings"));
+
+export const primaryServerSupportsBoardKeybindingAtom = Atom.make(
+  (get): boolean => get(primaryServerConfigAtom)?.environment.capabilities.boardKeybinding === true,
+).pipe(Atom.withLabel("web-primary-server-supports-board-keybinding"));
 
 export const primaryServerAvailableEditorsAtom = Atom.make(
   (get): ReadonlyArray<EditorId> =>

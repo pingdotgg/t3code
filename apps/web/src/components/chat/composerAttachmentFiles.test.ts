@@ -5,6 +5,7 @@ import type { ComposerFileAttachment, ComposerImageAttachment } from "../../comp
 import { isVideoAttachment, videoMimeType } from "../../types";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
+  canShowComposerAttachmentPicker,
   classifyComposerAttachmentFile,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
@@ -166,6 +167,43 @@ describe("composer attachment files", () => {
         maxFileAttachmentBytes: 50 * 1024 * 1024,
       }),
     ).toBe(unsupportedReason);
+  });
+
+  it("keeps the attachment picker image-only when generic files require the full thread", () => {
+    const boardAttachmentPolicy = {
+      attachmentUploadsCapabilityKnown: true,
+      supportsAttachmentUploads: true,
+      maxFileAttachmentBytes: null,
+      allowGenericFileAttachments: false,
+    } as const;
+
+    expect(canShowComposerAttachmentPicker(boardAttachmentPolicy)).toBe(true);
+    expect(
+      fileAttachmentCapabilityBlockReason({
+        ...boardAttachmentPolicy,
+        files: [{ name: "report.pdf", sizeBytes: 1024 }],
+      }),
+    ).toBe("Send file attachments from the full thread");
+    expect(
+      canShowComposerAttachmentPicker({
+        ...boardAttachmentPolicy,
+        supportsAttachmentUploads: false,
+      }),
+    ).toBe(true);
+    expect(
+      canShowComposerAttachmentPicker({
+        ...boardAttachmentPolicy,
+        attachmentUploadsCapabilityKnown: false,
+        supportsAttachmentUploads: false,
+      }),
+    ).toBe(false);
+    expect(
+      canShowComposerAttachmentPicker({
+        attachmentUploadsCapabilityKnown: true,
+        supportsAttachmentUploads: true,
+        maxFileAttachmentBytes: null,
+      }),
+    ).toBe(false);
   });
 
   it("blocks retained files that exceed a newly lower server limit", () => {

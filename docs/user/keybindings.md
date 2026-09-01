@@ -63,6 +63,10 @@ shortcut is `mod+shift+s`, and it does not run while the terminal has focus.
 already pinned. Its default shortcut is `mod+shift+p`, and it does not run while the terminal has
 focus. See [Organizing threads](./thread-sidebar.md) for how pinned threads are ordered.
 
+`board.open` opens [Board view](./board-view.md) from anywhere and defaults to
+`mod+alt+shift+b`. Its current shortcut appears beside **Board view** in the sidebar and in the
+command palette. It does not run while the terminal has focus.
+
 The command palette searches settings, active thread titles, projects, branches, user messages, and
 final agent responses across connected environments. A setting result opens its exact control or
 section. Message matches show one labeled excerpt while keeping the thread's project, branch, and

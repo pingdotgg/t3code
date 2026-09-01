@@ -20,6 +20,11 @@ interface FileAttachmentCapabilityState {
   readonly maxFileAttachmentBytes: number | null;
 }
 
+interface GenericFileAttachmentPolicy {
+  /** Whether this composer can stage and send non-image attachments. */
+  readonly allowGenericFileAttachments?: boolean;
+}
+
 const IMAGE_MIME_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
   gif: "image/gif",
   jpeg: "image/jpeg",
@@ -101,12 +106,16 @@ export function fileAttachmentStagingLimit(input: FileAttachmentCapabilityState)
 
 /** Why retained generic files cannot send with the current server config. */
 export function fileAttachmentCapabilityBlockReason(
-  input: FileAttachmentCapabilityState & {
-    readonly files: ReadonlyArray<{ readonly name: string; readonly sizeBytes: number }>;
-  },
+  input: FileAttachmentCapabilityState &
+    GenericFileAttachmentPolicy & {
+      readonly files: ReadonlyArray<{ readonly name: string; readonly sizeBytes: number }>;
+    },
 ): string | null {
   if (input.files.length === 0) {
     return null;
+  }
+  if (input.allowGenericFileAttachments === false) {
+    return "Send file attachments from the full thread";
   }
   if (!input.attachmentUploadsCapabilityKnown) {
     return "Waiting for the server before file attachments can send";
@@ -120,6 +129,16 @@ export function fileAttachmentCapabilityBlockReason(
     return fileAttachmentTooLargeMessage(oversizedFile.name, maxFileAttachmentBytes);
   }
   return null;
+}
+
+/** Whether the picker can offer at least images for the current composer surface. */
+export function canShowComposerAttachmentPicker(
+  input: FileAttachmentCapabilityState & GenericFileAttachmentPolicy,
+): boolean {
+  if (input.allowGenericFileAttachments === false) {
+    return input.attachmentUploadsCapabilityKnown;
+  }
+  return fileAttachmentStagingLimit(input) !== null;
 }
 
 /**

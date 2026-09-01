@@ -40,6 +40,7 @@ import {
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
   primaryServerKeybindingsConfigPathAtom,
+  primaryServerSupportsBoardKeybindingAtom,
   serverEnvironment,
 } from "../../state/server";
 import { usePrimaryEnvironment } from "../../state/environments";
@@ -61,6 +62,7 @@ import {
   isKnownWhenVariable,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
+  isKeybindingCommandSupportedByServer,
   parseWhenExpressionDraft,
   type KeybindingCommandOption,
   type KeybindingRow,
@@ -1320,6 +1322,7 @@ function BrowserKeybindingNotice() {
 
 export function KeybindingsSettingsPanel() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const supportsBoardKeybinding = useAtomValue(primaryServerSupportsBoardKeybindingAtom);
   const keybindingsConfigPath = useAtomValue(primaryServerKeybindingsConfigPathAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const primaryEnvironment = usePrimaryEnvironment();
@@ -1338,8 +1341,20 @@ export function KeybindingsSettingsPanel() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
   const [isAddingBinding, setIsAddingBinding] = useState(false);
-  const rows = useMemo(() => buildKeybindingRows(keybindings, query), [keybindings, query]);
-  const commandOptions = useMemo(() => buildKeybindingCommandOptions(keybindings), [keybindings]);
+  const rows = useMemo(
+    () =>
+      buildKeybindingRows(keybindings, query).filter((row) =>
+        isKeybindingCommandSupportedByServer(row.command, supportsBoardKeybinding),
+      ),
+    [keybindings, query, supportsBoardKeybinding],
+  );
+  const commandOptions = useMemo(
+    () =>
+      buildKeybindingCommandOptions(keybindings).filter((command) =>
+        isKeybindingCommandSupportedByServer(command, supportsBoardKeybinding),
+      ),
+    [keybindings, supportsBoardKeybinding],
+  );
   const whenVariables = useMemo(() => buildWhenVariableOptions(), []);
 
   useEffect(() => {
@@ -1386,7 +1401,12 @@ export function KeybindingsSettingsPanel() {
 
   const saveKeybinding = useCallback(
     (input: ServerUpsertKeybindingInput) => {
-      if (!primaryEnvironment) return;
+      if (
+        !primaryEnvironment ||
+        !isKeybindingCommandSupportedByServer(input.command, supportsBoardKeybinding)
+      ) {
+        return;
+      }
       setSavingCommand(input.command);
       const payload: ServerUpsertKeybindingInput = {
         command: input.command,
@@ -1414,7 +1434,7 @@ export function KeybindingsSettingsPanel() {
         }
       })();
     },
-    [primaryEnvironment, upsertKeybinding],
+    [primaryEnvironment, supportsBoardKeybinding, upsertKeybinding],
   );
 
   const removeKeybinding = useCallback(

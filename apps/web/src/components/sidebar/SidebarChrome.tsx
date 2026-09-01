@@ -2,14 +2,18 @@ import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
+  LayoutDashboardIcon,
   SettingsIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { shortcutLabelForCommand } from "../../keybindings";
+import { primaryServerKeybindingsAtom } from "../../state/server";
 import { useEnvironments } from "../../state/environments";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -122,10 +126,12 @@ function SidebarUtilityItem({
   icon,
   label,
   onClick,
+  shortcutLabel,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
+  shortcutLabel?: string;
 }) {
   return (
     <SidebarMenuItem className="shrink-0">
@@ -137,7 +143,9 @@ function SidebarUtilityItem({
             </SidebarMenuButton>
           }
         />
-        <TooltipPopup side="top">{label}</TooltipPopup>
+        <TooltipPopup side="top">
+          {shortcutLabel ? `${label} (${shortcutLabel})` : label}
+        </TooltipPopup>
       </Tooltip>
     </SidebarMenuItem>
   );
@@ -145,6 +153,7 @@ function SidebarUtilityItem({
 
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const canGoBack = useCanGoBack();
   const { isMobile, setOpenMobile } = useSidebar();
   const currentFooterPage = useLocation({
@@ -157,7 +166,9 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             ? "usage"
             : location.pathname === "/pull-requests"
               ? "pull-requests"
-              : null,
+              : location.pathname === "/board"
+                ? "board"
+                : null,
   });
   const { environments } = useEnvironments();
   // The page reads every connected server, so one of them offering pull requests is enough for
@@ -165,6 +176,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const pullRequestsSupported = environments.some(
     (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
   );
+  const boardShortcutLabel = shortcutLabelForCommand(keybindings, "board.open");
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -185,6 +197,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     }
     void navigate({ to: "/usage" });
   }, [isMobile, navigate, setOpenMobile]);
+
+  const handleBoardClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/board" });
+  }, [closeMobileSidebar, navigate]);
 
   const handleBackClick = useCallback(() => {
     closeMobileSidebar();
@@ -222,6 +239,12 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             icon={<ChartNoAxesColumnIcon />}
             label="Usage"
             onClick={handleUsageClick}
+          />
+          <SidebarUtilityItem
+            icon={<LayoutDashboardIcon />}
+            label="Board view"
+            onClick={handleBoardClick}
+            {...(boardShortcutLabel === null ? {} : { shortcutLabel: boardShortcutLabel })}
           />
         </>
       )}

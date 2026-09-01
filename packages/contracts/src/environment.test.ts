@@ -40,6 +40,10 @@ describe("ExecutionEnvironmentDescriptor", () => {
     ).toBe(true);
   });
 
+  it("treats a missing Board keybinding capability as unsupported", () => {
+    expect(decodeDescriptor(descriptor).capabilities.boardKeybinding).toBeUndefined();
+  });
+
   it("preserves the server's generic attachment upload limit", () => {
     expect(
       decodeDescriptor({

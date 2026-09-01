@@ -36,11 +36,29 @@ import {
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 import type { ComposerSubmissionIntent } from "../composer-logic";
 import type { TimelineEntry } from "../session-logic";
+import { applyClaudePromptEffortPrefix, resolvePromptInjectedEffort } from "@t3tools/shared/model";
+import { getProviderModelCapabilities } from "../providerModels";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
+export const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
+  "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]";
+
+export function formatOutgoingPrompt(input: {
+  readonly provider: ProviderDriverKind;
+  readonly model: string | null;
+  readonly models: ReadonlyArray<ServerProvider["models"][number]>;
+  readonly effort: string | null;
+  readonly text: string;
+}): string {
+  const capabilities = getProviderModelCapabilities(input.models, input.model, input.provider);
+  return applyClaudePromptEffortPrefix(
+    input.text,
+    resolvePromptInjectedEffort(capabilities, input.effort),
+  );
+}
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
