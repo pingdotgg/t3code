@@ -148,6 +148,6 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
-function formatWorkingTimerNow(startIso: string): string {
+export function formatWorkingTimerNow(startIso: string): string {
   return formatWorkingTimer(startIso, new Date().toISOString()) ?? "0s";
 }
