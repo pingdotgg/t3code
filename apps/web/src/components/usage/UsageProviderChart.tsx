@@ -368,18 +368,9 @@ export function UsageProviderChart({
       if (plot === null || periods.length === 0) return;
       const bounds = plot.getBoundingClientRect();
       if (bounds.width === 0) return;
+      if (brushRef.current !== null) return;
       const index = indexAt(event.clientX);
       if (index === null) return;
-      const activeBrush = brushRef.current;
-      if (activeBrush !== null) {
-        // While selecting, the crosshair and tooltip give way to the band.
-        if (index !== activeBrush.end) {
-          const nextBrush = { start: activeBrush.start, end: index };
-          brushRef.current = nextBrush;
-          setBrush(nextBrush);
-        }
-        return;
-      }
       const localX = Math.min(bounds.width, Math.max(0, event.clientX - bounds.left));
       const localY = Math.min(bounds.height, Math.max(0, event.clientY - bounds.top));
       hoverPositionRef.current = { x: localX, y: localY };
@@ -387,6 +378,19 @@ export function UsageProviderChart({
       setHoverIndex(index);
     },
     [indexAt, periods.length, positionTooltip],
+  );
+
+  const trackBrush = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const activeBrush = brushRef.current;
+      if (activeBrush === null || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+      const index = indexAt(event.clientX);
+      if (index === null || index === activeBrush.end) return;
+      const nextBrush = { start: activeBrush.start, end: index };
+      brushRef.current = nextBrush;
+      setBrush(nextBrush);
+    },
+    [indexAt],
   );
 
   const beginBrush = useCallback(
@@ -453,9 +457,10 @@ export function UsageProviderChart({
 
         <div
           ref={plotRef}
-          className={cn("relative h-56 flex-1", zoomable && "cursor-crosshair")}
+          className={cn("relative h-56 flex-1", zoomable && "cursor-crosshair touch-none")}
           onMouseMove={handleMove}
           onPointerDown={beginBrush}
+          onPointerMove={trackBrush}
           onPointerUp={finishBrush}
           onPointerCancel={cancelBrush}
           onDoubleClick={onResetZoom}
