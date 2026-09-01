@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import type {
@@ -209,6 +211,44 @@ it.effect("refines unknown self-hosted GitLab projects before listing merge requ
     assert.strictEqual(refinementCalls, 1);
     assert.strictEqual(result.providers[0]?.host, "code.example.test");
     assert.strictEqual(result.providers[0]?.kind, "gitlab");
+  }),
+);
+
+it.effect("does not refine legacy projects outside the requested project ids", () =>
+  Effect.gen(function* () {
+    const asked: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "selected",
+          workspaceRoot: "/selected",
+          repository: "group/selected",
+          provider: "unknown",
+          host: "selected.example.test",
+        }),
+        project({
+          id: "p2",
+          title: "unrelated",
+          workspaceRoot: "/unrelated",
+          repository: "group/unrelated",
+          provider: "unknown",
+          host: "unrelated.example.test",
+        }),
+      ],
+      providers: [fakeProvider("gitlab")],
+      resolveHandle: ({ cwd, context }) => {
+        asked.push(cwd);
+        return Effect.succeed({
+          context: { ...context!, provider: { ...context!.provider, kind: "gitlab" } },
+          provider: undefined as never,
+        });
+      },
+    });
+
+    yield* service.viewers({ projectIds: ["p1" as ProjectId] });
+
+    assert.deepStrictEqual(asked, ["/selected"]);
   }),
 );
 
@@ -610,6 +650,202 @@ it.effect("calls a transient viewer failure a failed operation, not a signed-out
 
     // `cli-unauthenticated` would send the reader to `gh auth login` over a transient error.
     assert.strictEqual(error._tag, "PullRequestOperationError");
+  }),
+);
+
+it.effect("reads snapshot viewer identity freshly after the host account changes", () =>
+  Effect.gen(function* () {
+    let viewer = "Bilal";
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [fakeProvider("github", { getViewer: () => Effect.succeed(viewer) })],
+    });
+
+    const listing = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(listing.viewers, { "github.com": "Bilal" });
+
+    viewer = "Octocat";
+    const identity = yield* service.viewers({});
+    assert.deepStrictEqual(identity.viewers, { "github.com": "Octocat" });
+
+    const refreshedListing = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(refreshedListing.viewers, { "github.com": "Octocat" });
+  }),
+);
+
+it.effect("does not let an older viewer request replace a newer identity", () =>
+  Effect.gen(function* () {
+    const firstFreshStarted = yield* Deferred.make<void>();
+    const releaseFirstFresh = yield* Deferred.make<void>();
+    let viewerCalls = 0;
+    let listCalls = 0;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          getViewer: () =>
+            Effect.gen(function* () {
+              viewerCalls += 1;
+              if (viewerCalls === 2) {
+                yield* Deferred.succeed(firstFreshStarted, undefined);
+                yield* Deferred.await(releaseFirstFresh);
+                return "Bilal";
+              }
+              return viewerCalls === 1 ? "Bilal" : "Octocat";
+            }),
+          listChangeRequests: () => {
+            listCalls += 1;
+            return Effect.succeed({
+              items: [changeRequest(listCalls, `2026-07-0${listCalls}T00:00:00Z`)],
+              truncated: false,
+              continues: true,
+            });
+          },
+        }),
+      ],
+    });
+
+    assert.deepStrictEqual((yield* service.list({ state: "open" })).viewers, {
+      "github.com": "Bilal",
+    });
+    const older = yield* service.viewers({}).pipe(Effect.forkChild);
+    yield* Deferred.await(firstFreshStarted);
+    assert.deepStrictEqual((yield* service.viewers({})).viewers, { "github.com": "Octocat" });
+    yield* Deferred.succeed(releaseFirstFresh, undefined);
+    assert.deepStrictEqual((yield* Fiber.join(older)).viewers, { "github.com": "Bilal" });
+
+    const current = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(current.viewers, { "github.com": "Octocat" });
+    assert.strictEqual(listCalls, 2);
+  }),
+);
+
+it.effect("does not let an in-flight viewer request survive invalidation", () =>
+  Effect.gen(function* () {
+    const staleRequestStarted = yield* Deferred.make<void>();
+    const releaseStaleRequest = yield* Deferred.make<void>();
+    let viewerCalls = 0;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          getViewer: () =>
+            Effect.gen(function* () {
+              viewerCalls += 1;
+              if (viewerCalls === 2) {
+                yield* Deferred.succeed(staleRequestStarted, undefined);
+                yield* Deferred.await(releaseStaleRequest);
+              }
+              return viewerCalls < 3 ? "Bilal" : "Octocat";
+            }),
+        }),
+      ],
+    });
+
+    assert.deepStrictEqual((yield* service.list({ state: "open" })).viewers, {
+      "github.com": "Bilal",
+    });
+    const stale = yield* service.viewers({}).pipe(Effect.forkChild);
+    yield* Deferred.await(staleRequestStarted);
+    yield* service.invalidate({});
+    yield* Deferred.succeed(releaseStaleRequest, undefined);
+    assert.deepStrictEqual((yield* Fiber.join(stale)).viewers, { "github.com": "Bilal" });
+
+    assert.deepStrictEqual((yield* service.list({ state: "open" })).viewers, {
+      "github.com": "Octocat",
+    });
+    assert.strictEqual(viewerCalls, 3);
+  }),
+);
+
+it.effect("keeps a healthy host when another host's viewer verification fails", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "github", workspaceRoot: "/a", repository: "acme/web" }),
+        project({
+          id: "p2",
+          title: "gitlab",
+          workspaceRoot: "/b",
+          repository: "acme/api",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          getViewer: () => Effect.fail(requestFailed),
+        }),
+        fakeProvider("gitlab", {
+          getViewer: () => Effect.succeed("healthy-viewer"),
+        }),
+      ],
+    });
+
+    const result = yield* service.viewers({});
+
+    assert.deepStrictEqual(result.viewers, { "gitlab.com": "healthy-viewer" });
+  }),
+);
+
+it.effect("strands a list that was in flight when the host account changed", () =>
+  Effect.gen(function* () {
+    const firstListStarted = yield* Deferred.make<void>();
+    const releaseFirstList = yield* Deferred.make<void>();
+    let viewer = "Bilal";
+    let listCalls = 0;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          getViewer: () => Effect.succeed(viewer),
+          listChangeRequests: () =>
+            Effect.gen(function* () {
+              listCalls += 1;
+              const call = listCalls;
+              if (call === 1) {
+                yield* Deferred.succeed(firstListStarted, undefined);
+                yield* Deferred.await(releaseFirstList);
+              }
+              return {
+                items: [changeRequest(call, `2026-07-0${call}T00:00:00Z`)],
+                truncated: false,
+                continues: true,
+              };
+            }),
+        }),
+      ],
+    });
+
+    const oldListing = yield* service.list({ state: "open" }).pipe(Effect.forkChild);
+    yield* Deferred.await(firstListStarted);
+
+    viewer = "Octocat";
+    assert.deepStrictEqual((yield* service.viewers({})).viewers, { "github.com": "Octocat" });
+
+    const current = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(current.viewers, { "github.com": "Octocat" });
+    assert.deepStrictEqual(
+      current.entries.map((entry) => entry.number),
+      [2],
+    );
+
+    yield* Deferred.succeed(releaseFirstList, undefined);
+    assert.deepStrictEqual((yield* Fiber.join(oldListing)).viewers, { "github.com": "Bilal" });
+
+    const cached = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(
+      cached.entries.map((entry) => entry.number),
+      [2],
+    );
+    assert.strictEqual(listCalls, 2);
   }),
 );
 

@@ -16,6 +16,7 @@ const descriptor = {
 describe("ExecutionEnvironmentDescriptor", () => {
   it("treats a missing pull-request capability as unsupported under version skew", () => {
     expect(decodeDescriptor(descriptor).capabilities.pullRequests).toBeUndefined();
+    expect(decodeDescriptor(descriptor).capabilities.pullRequestViewers).toBeUndefined();
   });
 
   it("preserves an advertised pull-request capability", () => {
@@ -24,6 +25,12 @@ describe("ExecutionEnvironmentDescriptor", () => {
         ...descriptor,
         capabilities: { ...descriptor.capabilities, pullRequests: true },
       }).capabilities.pullRequests,
+    ).toBe(true);
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, pullRequestViewers: true },
+      }).capabilities.pullRequestViewers,
     ).toBe(true);
   });
 

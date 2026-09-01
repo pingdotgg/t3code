@@ -43,6 +43,8 @@ import {
   type PullRequestThreadCommentsInput,
   type PullRequestThreadCommentsResult,
   type PullRequestUpdateInput,
+  type PullRequestViewerInput,
+  type PullRequestViewerResult,
   type SourceControlProviderInfo,
   type SourceControlProviderKind,
 } from "@t3tools/contracts";
@@ -116,6 +118,9 @@ export type PullRequestError = PullRequestUnavailableError | PullRequestOperatio
 export class PullRequestService extends Context.Service<
   PullRequestService,
   {
+    readonly viewers: (
+      input: PullRequestViewerInput,
+    ) => Effect.Effect<PullRequestViewerResult, PullRequestError>;
     readonly list: (
       input: PullRequestListInput,
     ) => Effect.Effect<PullRequestListResult, PullRequestError>;
@@ -492,7 +497,7 @@ export const make = Effect.gen(function* () {
 
   const refineUnknownProjectKinds = (
     projects: ReadonlyArray<OrchestrationProjectShell>,
-    filter: Pick<PullRequestListInput, "projectId" | "host">,
+    filter: Pick<PullRequestListInput, "projectId" | "projectIds" | "host">,
   ) => {
     type RefinementCandidate = {
       readonly project: OrchestrationProjectShell;
@@ -503,6 +508,7 @@ export const make = Effect.gen(function* () {
     const refinements = new Map<string, RefinementCandidate[]>();
     for (const project of projects) {
       if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
+      if (filter.projectIds !== undefined && !filter.projectIds.includes(project.id)) continue;
       const identity = project.repositoryIdentity;
       if (identity?.provider !== "unknown" || repositoryIdentityOf(project) === null) continue;
       const host = pullRequestHostOf(identity, "unknown");
@@ -698,22 +704,33 @@ export const make = Effect.gen(function* () {
   // per read, three reads per page. Only a success is believed for a while: a failure is the
   // "is this host set up" answer the provider switcher shows, and holding it would keep saying
   // signed-out after the reader has signed in.
+  let epochCounter = 0;
+  let listingsEpoch = 0;
+  let viewerRequestCounter = 0;
   const viewersByHost = new Map<string, { readonly at: number; readonly result: ResolvedViewer }>();
+  const latestViewerRequestByHost = new Map<string, number>();
 
   const resolveViewers = (
     projects: ReadonlyArray<SupportedProject>,
     viewerRoots: WorkspaceProjects["viewerRoots"],
+    options: { readonly fresh?: boolean } = {},
   ) =>
     Effect.forEach(
       [...new Set(projects.map(({ host }) => host))],
       (host) =>
         Effect.flatMap(Clock.currentTimeMillis, (now): Effect.Effect<ResolvedViewer> => {
           const held = viewersByHost.get(host);
-          if (held !== undefined && now - held.at <= Duration.toMillis(VIEWER_CACHE_TTL)) {
+          if (
+            options.fresh !== true &&
+            held !== undefined &&
+            now - held.at <= Duration.toMillis(VIEWER_CACHE_TTL)
+          ) {
             return Effect.succeed(held.result);
           }
           const forHost = projects.filter((project) => project.host === host);
           const api = forHost[0]!.api;
+          const request = ++viewerRequestCounter;
+          latestViewerRequestByHost.set(host, request);
           // Every checkout on the host, not just the ones that survived de-duplication: one
           // unreadable worktree would otherwise report the whole host as signed out.
           const roots =
@@ -726,12 +743,50 @@ export const make = Effect.gen(function* () {
               error: null as PullRequestProviderError | null,
             })),
             Effect.tap((result) =>
-              Effect.map(Clock.currentTimeMillis, (at) => viewersByHost.set(host, { at, result })),
+              Effect.map(Clock.currentTimeMillis, (at) => {
+                if (latestViewerRequestByHost.get(host) !== request) return;
+                if (
+                  options.fresh === true &&
+                  held !== undefined &&
+                  held.result.viewer !== result.viewer
+                ) {
+                  listingsEpoch = ++epochCounter;
+                }
+                viewersByHost.set(host, { at, result });
+              }),
             ),
-            Effect.catch((error) => Effect.succeed({ host, kind: api.kind, viewer: null, error })),
+            Effect.catch((error) =>
+              Effect.sync(() => {
+                if (latestViewerRequestByHost.get(host) !== request) {
+                  return { host, kind: api.kind, viewer: null, error };
+                }
+                if (options.fresh === true && held !== undefined && held.result.viewer !== null) {
+                  listingsEpoch = ++epochCounter;
+                }
+                viewersByHost.delete(host);
+                return { host, kind: api.kind, viewer: null, error };
+              }),
+            ),
           );
         }),
       { concurrency: REPOSITORY_CONCURRENCY },
+    );
+
+  // Snapshot hydration needs identity before the slower repository listing has answered. This
+  // read deliberately bypasses the viewer cache: an account can be switched outside T3, and a
+  // cached identity must never authorize rows persisted for the previous account.
+  const viewers: PullRequestService["Service"]["viewers"] = (input) =>
+    listWorkspaceProjects(input).pipe(
+      Effect.flatMap(({ supported, viewerRoots }) =>
+        resolveViewers(supported, viewerRoots, { fresh: true }),
+      ),
+      Effect.map((results) => ({
+        viewers: Object.fromEntries(
+          results.flatMap((result) =>
+            result.viewer === null ? [] : [[result.host, result.viewer] as const],
+          ),
+        ),
+      })),
     );
 
   /**
@@ -1849,8 +1904,6 @@ export const make = Effect.gen(function* () {
   // epoch strands every entry made under the old one — no enumerating a cache whose keys
   // (cursors, commits) nothing holds a list of. The counter is shared and monotonic so a
   // scope re-entering `refEpochs` after eviction can never mint a key an old entry still has.
-  let epochCounter = 0;
-  let listingsEpoch = 0;
   const refEpochs = new Map<string, number>();
   const REF_EPOCH_CAPACITY = 2_048;
   const refScope = (ref: PullRequestRef) => `${ref.projectId} ${ref.repository} ${ref.number}`;
@@ -2063,6 +2116,7 @@ export const make = Effect.gen(function* () {
         // A whole-workspace refresh is the reader asking to be re-answered from the hosts,
         // and that includes who the hosts say they are.
         viewersByHost.clear();
+        latestViewerRequestByHost.clear();
         return;
       }
       bumpRefEpoch(input.reference);
@@ -2086,6 +2140,7 @@ export const make = Effect.gen(function* () {
       );
 
   return PullRequestService.of({
+    viewers,
     list,
     listStats,
     detail,

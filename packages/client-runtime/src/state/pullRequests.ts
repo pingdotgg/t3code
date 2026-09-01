@@ -71,6 +71,11 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     staleTimeMs: 15_000,
   });
   return {
+    viewers: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:viewers",
+      tag: WS_METHODS.pullRequestsViewers,
+      staleTimeMs: 0,
+    }),
     list: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:list",
       tag: WS_METHODS.pullRequestsList,

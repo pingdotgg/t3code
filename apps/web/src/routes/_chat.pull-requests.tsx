@@ -56,9 +56,14 @@ import {
   pullRequestDiffStatKey,
   pullRequestEntryKey,
   pullRequestEntryViewer,
+  pullRequestViewerKey,
   rankPullRequestMatches,
   pullRequestEnvironmentSetKey,
+  pullRequestListViewersMatchVerification,
+  pullRequestViewersMatchForEnvironments,
   readPullRequestListSnapshot,
+  resolvePullRequestRetainedVerification,
+  resolvePullRequestViewerGate,
   resolveProjectScope,
   resolveQueryEnvironmentIds,
   resolveSelectedEnvironmentId,
@@ -122,6 +127,7 @@ import {
   pullRequestEnvironment,
   usePullRequestList,
   usePullRequestListStats,
+  usePullRequestViewers,
   type EnvironmentQueryTarget,
 } from "../state/pullRequests";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -302,6 +308,17 @@ function PullRequestsRouteView() {
         )
         .toSorted((left, right) => left.environmentId.localeCompare(right.environmentId)),
     [environments],
+  );
+  const viewerCapableEnvironmentIds = useMemo(
+    () =>
+      new Set(
+        capableEnvironments.flatMap((environment) =>
+          environment.serverConfig?.environment.capabilities.pullRequestViewers === true
+            ? [environment.environmentId]
+            : [],
+        ),
+      ),
+    [capableEnvironments],
   );
   // The server the URL asks for, kept only while it is one the page could read: a link naming a
   // server this workspace no longer has falls back to all of them rather than to nothing.
@@ -698,7 +715,59 @@ function PullRequestsRouteView() {
       sentParsed.text,
     ],
   );
-  const listQuery = usePullRequestList(listTargets);
+  // Verify the account independently of the slower repository listing. This is deliberately a
+  // fresh server read: the host CLI account can change outside T3 between two page loads.
+  const viewerTargets = useMemo(
+    () =>
+      environmentQueries.flatMap(({ environmentId, projectIds }) =>
+        viewerCapableEnvironmentIds.has(environmentId)
+          ? [
+              {
+                environmentId,
+                input: {
+                  ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+                  ...(projectIds ? { projectIds } : {}),
+                  ...(search.host ? { host: search.host } : {}),
+                },
+              },
+            ]
+          : [],
+      ),
+    [environmentQueries, scopedProjectId, search.host, viewerCapableEnvironmentIds],
+  );
+  const viewerQuery = usePullRequestViewers(viewerTargets);
+  const queriedViewerEnvironmentIds = useMemo(
+    () => new Set(viewerTargets.map(({ environmentId }) => environmentId)),
+    [viewerTargets],
+  );
+  // The fresh viewer read also invalidates server-side listing caches when the CLI account has
+  // changed. Do not race a warm list hit against that read, and never ask an environment whose
+  // identity check failed. Older servers without this method keep their live-list behavior, but
+  // cannot hydrate a persisted snapshot because their identity cannot be verified independently.
+  const viewerGate = useMemo(
+    () =>
+      resolvePullRequestViewerGate(
+        environmentQueries.map(({ environmentId }) => environmentId),
+        viewerCapableEnvironmentIds,
+        viewerQuery.environmentIds,
+        viewerQuery.isPending,
+      ),
+    [
+      environmentQueries,
+      viewerCapableEnvironmentIds,
+      viewerQuery.environmentIds,
+      viewerQuery.isPending,
+    ],
+  );
+  const verifiedEnvironmentIds = useMemo(
+    () => new Set(viewerGate.listEnvironmentIds),
+    [viewerGate.listEnvironmentIds],
+  );
+  const verifiedListTargets = useMemo(
+    () => listTargets.filter(({ environmentId }) => verifiedEnvironmentIds.has(environmentId)),
+    [listTargets, verifiedEnvironmentIds],
+  );
+  const listQuery = usePullRequestList(verifiedListTargets);
 
   /**
    * The same filters with nothing typed, read whether or not anything is. It is the same atom the
@@ -734,21 +803,38 @@ function PullRequestsRouteView() {
       search.state,
     ],
   );
-  const baselineQuery = usePullRequestList(baselineTargets);
+  const verifiedBaselineTargets = useMemo(
+    () => baselineTargets.filter(({ environmentId }) => verifiedEnvironmentIds.has(environmentId)),
+    [baselineTargets, verifiedEnvironmentIds],
+  );
+  const baselineQuery = usePullRequestList(verifiedBaselineTargets);
   const facetTargets = useMemo(() => {
     if (!filtersOpen) return NO_LIST_TARGETS;
-    return environmentQueries.map(({ environmentId, projectIds }) => ({
-      environmentId,
-      input: {
-        state: "all",
-        involvement: search.involvement,
-        limit: PAGE_SIZE,
-        ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
-        ...(projectIds ? { projectIds } : {}),
-        ...(search.host ? { host: search.host } : {}),
-      } satisfies PullRequestListInput,
-    }));
-  }, [environmentQueries, filtersOpen, scopedProjectId, search.host, search.involvement]);
+    return environmentQueries.flatMap(({ environmentId, projectIds }) =>
+      verifiedEnvironmentIds.has(environmentId)
+        ? [
+            {
+              environmentId,
+              input: {
+                state: "all",
+                involvement: search.involvement,
+                limit: PAGE_SIZE,
+                ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+                ...(projectIds ? { projectIds } : {}),
+                ...(search.host ? { host: search.host } : {}),
+              } satisfies PullRequestListInput,
+            },
+          ]
+        : [],
+    );
+  }, [
+    environmentQueries,
+    filtersOpen,
+    scopedProjectId,
+    search.host,
+    search.involvement,
+    verifiedEnvironmentIds,
+  ]);
   const facetQuery = usePullRequestList(facetTargets);
   // The priority groups' own reads. The feed below is paginated by recency, so an older authored
   // or review-requested row can be missing from its first page; partitioned from these
@@ -784,8 +870,97 @@ function PullRequestsRouteView() {
     search.host,
     search.state,
   ]);
-  const authoredQuery = usePullRequestList(partitionTargets.authored);
-  const reviewingQuery = usePullRequestList(partitionTargets.reviewing);
+  const verifiedAuthoredTargets = useMemo(
+    () =>
+      partitionTargets.authored.filter(({ environmentId }) =>
+        verifiedEnvironmentIds.has(environmentId),
+      ),
+    [partitionTargets.authored, verifiedEnvironmentIds],
+  );
+  const verifiedReviewingTargets = useMemo(
+    () =>
+      partitionTargets.reviewing.filter(({ environmentId }) =>
+        verifiedEnvironmentIds.has(environmentId),
+      ),
+    [partitionTargets.reviewing, verifiedEnvironmentIds],
+  );
+  const authoredQuery = usePullRequestList(verifiedAuthoredTargets);
+  const reviewingQuery = usePullRequestList(verifiedReviewingTargets);
+  const acceptVerifiedData = (data: MergedPullRequestList | null) => {
+    if (data === null) return null;
+    return pullRequestListViewersMatchVerification(
+      data.viewers,
+      viewerQuery.viewers,
+      queriedViewerEnvironmentIds,
+    )
+      ? data
+      : null;
+  };
+  // Query atoms retain their previous success while refreshing. Keep that useful behavior for
+  // the same account, but never render the retained answer after fresh verification identifies
+  // another account.
+  const verifiedListData = acceptVerifiedData(listQuery.data);
+  const verifiedBaselineData = acceptVerifiedData(baselineQuery.data);
+  const verifiedFacetData = acceptVerifiedData(facetQuery.data);
+  const verifiedAuthoredData = acceptVerifiedData(authoredQuery.data);
+  const verifiedReviewingData = acceptVerifiedData(reviewingQuery.data);
+  const rejectedRefreshes = useRef(new Map<string, () => void>());
+  useEffect(() => {
+    const viewers = viewerQuery.viewers;
+    if (viewerQuery.isPending || viewerQuery.error !== null || viewers === null) return;
+
+    const queries = [
+      ["list", listQuery, verifiedListData],
+      ["baseline", baselineQuery, verifiedBaselineData],
+      ["facet", facetQuery, verifiedFacetData],
+      ["authored", authoredQuery, verifiedAuthoredData],
+      ["reviewing", reviewingQuery, verifiedReviewingData],
+    ] as const;
+    for (const [name, query, accepted] of queries) {
+      if (query.data === null || accepted !== null) {
+        rejectedRefreshes.current.delete(name);
+        continue;
+      }
+      if (
+        query.isPending ||
+        query.error !== null ||
+        rejectedRefreshes.current.get(name) === query.refresh
+      ) {
+        continue;
+      }
+      rejectedRefreshes.current.set(name, query.refresh);
+      query.refresh();
+    }
+  }, [
+    authoredQuery.data,
+    authoredQuery.error,
+    authoredQuery.isPending,
+    authoredQuery.refresh,
+    baselineQuery.data,
+    baselineQuery.error,
+    baselineQuery.isPending,
+    baselineQuery.refresh,
+    facetQuery.data,
+    facetQuery.error,
+    facetQuery.isPending,
+    facetQuery.refresh,
+    listQuery.data,
+    listQuery.error,
+    listQuery.isPending,
+    listQuery.refresh,
+    reviewingQuery.data,
+    reviewingQuery.error,
+    reviewingQuery.isPending,
+    reviewingQuery.refresh,
+    verifiedAuthoredData,
+    verifiedBaselineData,
+    verifiedFacetData,
+    verifiedListData,
+    verifiedReviewingData,
+    viewerQuery.error,
+    viewerQuery.isPending,
+    viewerQuery.viewers,
+  ]);
   // The header's refresh punches through the server's cache before re-reading; the error and
   // empty states retry plainly, because a failure is never cached.
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
@@ -810,6 +985,7 @@ function PullRequestsRouteView() {
       setInvalidating(false);
     }
     refreshList();
+    viewerQuery.refresh();
     baselineQuery.refresh();
     facetQuery.refresh();
     authoredQuery.refresh();
@@ -828,7 +1004,7 @@ function PullRequestsRouteView() {
     }
     setDetailRefreshToken((token) => token + 1);
   };
-  const refreshing = invalidating || listQuery.isPending;
+  const refreshing = invalidating || viewerQuery.isPending || listQuery.isPending;
 
   // Every page size and every search is its own query, and a new one starts empty. The last
   // answer for these filters is held so the page grows and narrows in place rather than blanking
@@ -854,17 +1030,121 @@ function PullRequestsRouteView() {
   // A reload recreates the registry the queries live in, so with nothing held the page would
   // cold-start into skeletons even though almost every row is unchanged. The last answer for
   // this set of environments is kept across reloads and hydrated here as the carried rows: they
-  // render at once — narrowed to the current filters like any carried answer — and the live read
-  // reconciles them in place by key rather than replacing them with ghosts.
+  // render once the current host identities are known — narrowed to the current filters like any
+  // carried answer — and the live read reconciles them in place by key rather than replacing them
+  // with ghosts. Waiting for identity prevents one CLI account from seeing another's stored rows.
   useEffect(() => {
+    const viewers = viewerQuery.viewers;
     if (environmentKey.length === 0) return;
+    const projectScopes = new Map(
+      environmentQueries.map(({ environmentId, projectIds }) => [environmentId, projectIds]),
+    );
+    if (loaded !== null) {
+      const heldOrdered = ordered?.entries ?? loaded.data.entries;
+      const retainedViewerKeys = new Set(
+        [
+          ...heldOrdered,
+          ...(loaded.partitions?.authored ?? []),
+          ...(loaded.partitions?.reviewing ?? []),
+        ]
+          .filter((entry) => {
+            const projectIds = projectScopes.get(entry.environmentId);
+            return projectIds === undefined || projectIds.includes(entry.projectId);
+          })
+          .map(pullRequestViewerKey),
+      );
+      const retainedViewerMismatch =
+        !viewerQuery.isPending &&
+        loaded.environmentKey === environmentKey &&
+        viewers !== null &&
+        !pullRequestViewersMatchForEnvironments(
+          loaded.data.viewers,
+          viewers,
+          queriedViewerEnvironmentIds,
+          retainedViewerKeys,
+        );
+      const verification = resolvePullRequestRetainedVerification({
+        verificationPending: viewerQuery.isPending,
+        verificationFailed: viewerGate.shouldClearRetainedRows,
+        viewerMismatch: retainedViewerMismatch,
+        entries: loaded.data.entries,
+        ordered: heldOrdered,
+        partitions: loaded.partitions,
+        listedViewers: loaded.data.viewers,
+        verifiedViewers: viewers,
+        queriedEnvironmentIds: queriedViewerEnvironmentIds,
+      });
+      if (verification.status === "verifying") return;
+      if (verification.status === "failed" || verification.status === "accountChanged") {
+        if (!verification.changed) return;
+        if (verification.empty) {
+          setLoaded(null);
+          setOrdered(null);
+          setPage({ key: filterKey, size: PAGE_SIZE, cursors: null, regrown: [] });
+          return;
+        }
+        if (
+          verification.entries !== loaded.data.entries ||
+          verification.partitions !== loaded.partitions
+        ) {
+          setLoaded((current) =>
+            current === null
+              ? null
+              : {
+                  ...current,
+                  data: { ...current.data, entries: verification.entries },
+                  ...(verification.partitions === undefined
+                    ? {}
+                    : { partitions: verification.partitions }),
+                },
+          );
+        }
+        if (verification.ordered !== heldOrdered) {
+          setOrdered({ key: ordered?.key ?? filterKey, entries: verification.ordered });
+        }
+        const heldVisible = ordered?.key === filterKey ? heldOrdered : loaded.data.entries;
+        const retainedVisible =
+          ordered?.key === filterKey ? verification.ordered : verification.entries;
+        if (retainedVisible !== heldVisible) {
+          setPage({
+            key: filterKey,
+            size: Math.min(
+              Math.max(pageSize, Math.ceil(retainedVisible.length / PAGE_SIZE) * PAGE_SIZE),
+              MAX_PAGE_SIZE,
+            ),
+            cursors: null,
+            regrown: [],
+          });
+        }
+        return;
+      }
+    }
+    // A pending read is not a mismatch: keep what this session already verified until the fresh
+    // identity arrives. A legacy-only environment has no independent identity to compare and
+    // continues to use live rows, but never hydrates persisted ones.
+    if (viewerQuery.isPending || viewers === null) return;
     setLoaded((current) => {
+      if (!viewerGate.canHydrateSnapshot) return current;
       // Rows read from a different set of environments cannot even be narrowed — one of them may
       // no longer be connected at all — so that set's own snapshot beats holding them.
       if (current !== null && current.environmentKey === environmentKey) return current;
       const snapshot = readPullRequestListSnapshot(
         typeof window === "undefined" ? undefined : window.localStorage,
         environmentKey,
+        {
+          viewers,
+          includeEntry: (entry) => {
+            const projectIds = projectScopes.get(entry.environmentId);
+            return (
+              (projectIds === undefined || projectIds.includes(entry.projectId)) &&
+              narrowPullRequestsToFilters([entry], {
+                state: search.state,
+                projectId: scopedProjectId,
+                host: search.host,
+              }).length > 0
+            );
+          },
+        },
       );
       if (snapshot === null) return null;
       return {
@@ -875,22 +1155,36 @@ function PullRequestsRouteView() {
         ...(snapshot.partitions === undefined ? {} : { partitions: snapshot.partitions }),
       };
     });
-  }, [environmentKey]);
+  }, [
+    environmentKey,
+    environmentQueries,
+    filterKey,
+    loaded,
+    ordered,
+    pageSize,
+    queriedViewerEnvironmentIds,
+    scopedProjectId,
+    search.host,
+    search.state,
+    viewerGate,
+    viewerQuery.isPending,
+    viewerQuery.viewers,
+  ]);
   useEffect(() => {
     // Only once this query has settled. While a search is being swapped in or out the text has
     // already changed and the data has not, so recording them together would file the previous
     // answer under the new question — which is how a search's answer came to speak for the
     // workspace after the search was cleared.
-    if (!listQuery.data || listQuery.isPending) return;
-    const data = listQuery.data;
+    if (!verifiedListData || listQuery.isPending) return;
+    const data = verifiedListData;
     setLoaded((current) => {
       // The partitions arrive on their own clock, so this records whichever have landed by
       // now and runs again when the rest do. Until then the ones already held for this scope
       // stay — hydrated or previously answered — rather than being dropped for a feed that
       // merely settled first.
       const partitions =
-        partitionsWanted && authoredQuery.data !== null && reviewingQuery.data !== null
-          ? { authored: authoredQuery.data.entries, reviewing: reviewingQuery.data.entries }
+        partitionsWanted && verifiedAuthoredData !== null && verifiedReviewingData !== null
+          ? { authored: verifiedAuthoredData.entries, reviewing: verifiedReviewingData.entries }
           : current !== null &&
               current.environmentKey === environmentKey &&
               current.scope === scopeKey
@@ -915,8 +1209,8 @@ function PullRequestsRouteView() {
             data: {
               ...data,
               entries: accumulatedEntries,
-              viewers: baselineQuery.data?.viewers ?? data.viewers,
-              providers: baselineQuery.data?.providers ?? data.providers,
+              viewers: verifiedBaselineData?.viewers ?? data.viewers,
+              providers: verifiedBaselineData?.providers ?? data.providers,
             },
             ...(partitions === undefined ? {} : { partitions }),
           },
@@ -934,14 +1228,14 @@ function PullRequestsRouteView() {
     environmentKey,
     scopeKey,
     sentQuery,
-    listQuery.data,
+    verifiedListData,
     listQuery.isPending,
     partitionsWanted,
-    authoredQuery.data,
-    reviewingQuery.data,
+    verifiedAuthoredData,
+    verifiedReviewingData,
     ordered,
     filterKey,
-    baselineQuery.data,
+    verifiedBaselineData,
   ]);
   // Changing a filter asks a question nothing has answered yet, and the page is already holding
   // perfectly good rows for the last one. Rather than blank out for the round trip, those rows
@@ -949,17 +1243,31 @@ function PullRequestsRouteView() {
   // row it excludes. Narrowed to nothing there is nothing to carry, and the skeletons below are
   // right after all. Rows read from a different set of environments are dropped rather than
   // narrowed: one of those environments may no longer be connected.
+  const verifiedLoadedData = loaded === null ? null : acceptVerifiedData(loaded.data);
   const narrowed = useMemo(() => {
-    if (loaded === null || loaded.environmentKey !== environmentKey || loaded.scope === scopeKey) {
+    if (
+      loaded === null ||
+      verifiedLoadedData === null ||
+      loaded.environmentKey !== environmentKey ||
+      loaded.scope === scopeKey
+    ) {
       return null;
     }
-    const entries = narrowPullRequestsToFilters(loaded.data.entries, {
+    const entries = narrowPullRequestsToFilters(verifiedLoadedData.entries, {
       state: search.state,
       projectId: scopedProjectId,
       host: search.host,
     });
-    return entries.length === 0 ? null : { ...loaded.data, entries };
-  }, [environmentKey, loaded, scopeKey, scopedProjectId, search.host, search.state]);
+    return entries.length === 0 ? null : { ...verifiedLoadedData, entries };
+  }, [
+    environmentKey,
+    loaded,
+    scopeKey,
+    scopedProjectId,
+    search.host,
+    search.state,
+    verifiedLoadedData,
+  ]);
   // With nothing typed and nothing to carry on from, the answer is taken from the read that is
   // keyed to exactly that question. Otherwise a search's answer lingers for a render after the
   // text has gone — the data cannot say which question it belongs to, but the read it came from
@@ -969,21 +1277,39 @@ function PullRequestsRouteView() {
   // have its extra rows thrown away for the ninety-nine the baseline keeps answering with.
   const answered =
     (sentQuery.length === 0 && sentCursors === null && pageSize === PAGE_SIZE
-      ? baselineQuery.data
-      : listQuery.data) ??
-    (loaded?.scope === scopeKey && loaded.query === sentQuery ? loaded.data : null);
+      ? verifiedBaselineData
+      : verifiedListData) ??
+    (loaded?.scope === scopeKey && loaded.query === sentQuery ? verifiedLoadedData : null);
   // Clearing a search returns to a list that has already been read, so it comes back at once
   // rather than after another round trip: the search was the temporary state, not the list.
   const carried =
-    (sentQuery.length === 0 ? baselineQuery.data : undefined) ??
-    (loaded?.scope === scopeKey ? loaded.data : null) ??
+    (sentQuery.length === 0 ? verifiedBaselineData : undefined) ??
+    (loaded?.scope === scopeKey ? verifiedLoadedData : null) ??
     narrowed;
   const listData = answered ?? carried;
+  const baselineAnswers = sentQuery.length === 0 && sentCursors === null && pageSize === PAGE_SIZE;
+  const answerRejected = baselineAnswers
+    ? baselineQuery.data !== null && verifiedBaselineData === null
+    : listQuery.data !== null && verifiedListData === null;
+  const answerQueryName = baselineAnswers ? "baseline" : "list";
+  const answerQuery = baselineAnswers ? baselineQuery : listQuery;
+  const verificationFailed =
+    answerRejected &&
+    !answerQuery.isPending &&
+    rejectedRefreshes.current.get(answerQueryName) === answerQuery.refresh;
   /** The rows on screen answer the previous question, held while this one is on its way. */
   const showingCarried = answered === null && carried !== null;
   const loadingMore = listQuery.isPending && listData !== null;
+  const listError =
+    viewerQuery.error ??
+    listQuery.error ??
+    (verificationFailed
+      ? "Could not verify the pull request account. Retry to load safely."
+      : null);
   /** Nothing read and nothing to carry, which is the one thing skeletons are for. */
-  const firstLoad = listQuery.isPending && listData === null;
+  const firstLoad =
+    (viewerQuery.isPending || listQuery.isPending || (answerRejected && listError === null)) &&
+    listData === null;
 
   // `ordered` is declared above, ahead of the snapshot write, but grown here from this round's
   // own answer.
@@ -1076,6 +1402,7 @@ function PullRequestsRouteView() {
   // host's rate limit.
   useLiveRefresh(
     () => {
+      viewerQuery.refresh();
       refreshList();
       authoredQuery.refresh();
       reviewingQuery.refresh();
@@ -1083,33 +1410,36 @@ function PullRequestsRouteView() {
     { enabled: pullRequestsSupported },
   );
 
-  const viewers = baselineQuery.data?.viewers ?? listData?.viewers ?? EMPTY_VIEWERS;
-  const listErrors = baselineQuery.data?.errors ?? listData?.errors ?? [];
+  const viewers = verifiedBaselineData?.viewers ?? listData?.viewers ?? EMPTY_VIEWERS;
+  const listErrors = verifiedBaselineData?.errors ?? listData?.errors ?? [];
   const facets = useMemo(
     () =>
       collectPullRequestListFacets(
         [
-          ...(facetQuery.data?.entries ?? []),
-          ...(baselineQuery.data?.entries ?? listData?.entries ?? []),
+          ...(verifiedFacetData?.entries ?? []),
+          ...(verifiedBaselineData?.entries ?? listData?.entries ?? []),
         ],
         search.state,
       ),
-    [baselineQuery.data?.entries, facetQuery.data?.entries, listData?.entries, search.state],
+    [listData?.entries, search.state, verifiedBaselineData?.entries, verifiedFacetData?.entries],
   );
 
   /** The hosts that narrowed the listing themselves, so their answer is not narrowed again. */
   const searchingHosts = useMemo(
     () =>
       new Set(
-        (baselineQuery.data?.providers ?? listData?.providers ?? []).flatMap((provider) =>
+        (verifiedBaselineData?.providers ?? listData?.providers ?? []).flatMap((provider) =>
           provider.searchesOnHost ? [provider.host] : [],
         ),
       ),
-    [baselineQuery.data?.providers, listData?.providers],
+    [verifiedBaselineData?.providers, listData?.providers],
   );
 
   const entries = useMemo(() => {
-    const known = ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []);
+    const known =
+      verifiedLoadedData !== null && ordered?.key === filterKey
+        ? ordered.entries
+        : (listData?.entries ?? []);
     const involvementEntries = filterPullRequestsByInvolvement(known, viewers, search.involvement);
     // The hosts search more than the row shows — a body, a review, a commit message — so once
     // their answer is in, narrowing it again here would throw away matches the reader asked for.
@@ -1149,6 +1479,7 @@ function PullRequestsRouteView() {
     searchingHosts,
     showingCarried,
     typedParsed.text,
+    verifiedLoadedData,
     viewers,
   ]);
 
@@ -1168,6 +1499,7 @@ function PullRequestsRouteView() {
       !sentinel ||
       entries.length === 0 ||
       listData?.truncated !== true ||
+      viewerQuery.isPending ||
       listQuery.isPending ||
       listQuery.error !== null ||
       // The rows on screen belong to the previous question, so nothing about them says where
@@ -1200,6 +1532,7 @@ function PullRequestsRouteView() {
     listQuery.isPending,
     pageSize,
     showingCarried,
+    viewerQuery.isPending,
   ]);
 
   /**
@@ -1228,10 +1561,10 @@ function PullRequestsRouteView() {
             matchesPullRequestFilters(entry, localFilters, pullRequestEntryViewer(entry, viewers)),
           );
     const authored = narrow(
-      partitionsWanted ? (authoredQuery.data?.entries ?? held?.authored) : undefined,
+      partitionsWanted ? (verifiedAuthoredData?.entries ?? held?.authored) : undefined,
     );
     const reviewing = narrow(
-      partitionsWanted ? (reviewingQuery.data?.entries ?? held?.reviewing) : undefined,
+      partitionsWanted ? (verifiedReviewingData?.entries ?? held?.reviewing) : undefined,
     );
     if (authored === undefined || reviewing === undefined) {
       return groupPullRequestsByInvolvement(entries, viewers);
@@ -1240,12 +1573,12 @@ function PullRequestsRouteView() {
   }, [
     hasLocalFilters,
     localFilters,
-    authoredQuery.data?.entries,
+    verifiedAuthoredData?.entries,
     entries,
     environmentKey,
     loaded,
     partitionsWanted,
-    reviewingQuery.data?.entries,
+    verifiedReviewingData?.entries,
     scopeKey,
     search.involvement,
     viewers,
@@ -1574,7 +1907,10 @@ function PullRequestsRouteView() {
   // so that case waits with the skeletons rather than answering for the hosts. A search says so
   // in its own words and is left to.
   const carriedToNothing =
-    showingCarried && listQuery.isPending && entries.length === 0 && typedQuery.length === 0;
+    showingCarried &&
+    (viewerQuery.isPending || listQuery.isPending) &&
+    entries.length === 0 &&
+    typedQuery.length === 0;
   const listBody = (
     <>
       {!capabilityKnown ? (
@@ -1586,8 +1922,14 @@ function PullRequestsRouteView() {
         />
       ) : firstLoad ? (
         <PullRequestListGhost rows={7} />
-      ) : listQuery.error && listData === null ? (
-        <PullRequestsUnavailableState error={listQuery.error} onRetry={() => listQuery.refresh()} />
+      ) : listError && listData === null ? (
+        <PullRequestsUnavailableState
+          error={listError}
+          onRetry={() => {
+            viewerQuery.refresh();
+            listQuery.refresh();
+          }}
+        />
       ) : carriedToNothing ? (
         <PullRequestListGhost rows={7} />
       ) : entries.length === 0 ? (
@@ -1652,10 +1994,17 @@ function PullRequestsRouteView() {
         </div>
       )}
 
-      {listQuery.error && listData !== null ? (
+      {listError && listData !== null ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs">
           <span>The latest request failed. Showing the last pull requests loaded.</span>
-          <Button size="xs" variant="outline" onClick={() => listQuery.refresh()}>
+          <Button
+            size="xs"
+            variant="outline"
+            onClick={() => {
+              viewerQuery.refresh();
+              listQuery.refresh();
+            }}
+          >
             Retry
           </Button>
         </div>
