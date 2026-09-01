@@ -8,6 +8,7 @@ import { SETTINGS_SECTION_LABELS } from "./settingsSearch";
 const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
   ...SETTINGS_SECTION_LABELS,
   "/settings/diagnostics": "Diagnostics",
+  "/settings/open-source-licenses": "Open source licenses",
 };
 
 function settingsBreadcrumbLabel(pathname: string): string | null {

@@ -1,9 +1,6 @@
-vscode-icons
+MIT License
 
-The custom file icon symbols bundled with T3 Code are adapted from the
-vscode-icons project: https://github.com/vscode-icons/vscode-icons
-
-Copyright (c) 2016 Roberto Huertas
+Copyright (c) Anton Korzunov <thekashey@gmail.com>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

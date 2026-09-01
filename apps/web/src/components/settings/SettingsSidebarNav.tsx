@@ -273,7 +273,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 ))
               : SETTINGS_NAV_ITEMS.map((item) => {
                   const Icon = item.icon;
-                  const isActive = pathname === item.to || pathname.startsWith(`${item.to}/`);
+                  const isGeneralDetailPage =
+                    item.to === "/settings/general" &&
+                    (pathname === "/settings/diagnostics" ||
+                      pathname === "/settings/open-source-licenses");
+                  const isActive =
+                    isGeneralDetailPage ||
+                    pathname === item.to ||
+                    pathname.startsWith(`${item.to}/`);
                   return (
                     <SidebarMenuItem key={item.to}>
                       <SidebarMenuButton

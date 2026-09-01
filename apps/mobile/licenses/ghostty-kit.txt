@@ -1,9 +1,17 @@
-vscode-icons
+GhosttyKit
 
-The custom file icon symbols bundled with T3 Code are adapted from the
-vscode-icons project: https://github.com/vscode-icons/vscode-icons
+The iOS terminal renderer vendors GhosttyKit.xcframework, a libghostty build produced from T3's
+iOS 16 support fork. That fork was created from VVTerm's custom-I/O Ghostty fork.
 
-Copyright (c) 2016 Roberto Huertas
+Upstream project: https://github.com/ghostty-org/ghostty
+Custom-I/O base fork: https://github.com/wiedymi/ghostty/tree/custom-io
+Vendored source fork: https://github.com/Yash-Singh1/ghostty/tree/custom-io
+Vendored revision: d36c3b8dffd0d756dd5e5f4933962f774a0e6753
+Reference integration: https://github.com/vivy-company/vvterm
+
+MIT License
+
+Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

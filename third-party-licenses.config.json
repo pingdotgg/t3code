@@ -1,0 +1,181 @@
+{
+  "customNotices": [
+    {
+      "bundles": ["assets", "mobile", "web"],
+      "license": "MIT",
+      "name": "vscode-icons",
+      "noticeFile": "apps/web/THIRD_PARTY_NOTICES.md",
+      "sourceUrl": "https://github.com/vscode-icons/vscode-icons"
+    },
+    {
+      "bundles": ["android", "assets", "mobile", "web"],
+      "license": "MIT",
+      "name": "libghostty-vt",
+      "noticeFile": "native/libghostty-vt/LICENSE",
+      "sourceUrl": "https://github.com/ghostty-org/ghostty"
+    },
+    {
+      "bundles": ["assets", "web"],
+      "license": "MIT",
+      "name": "Symbols Nerd Font Mono",
+      "noticeFile": "apps/web/src/terminal/ghostty/fonts/LICENSE",
+      "sourceUrl": "https://github.com/ryanoasis/nerd-fonts"
+    },
+    {
+      "bundles": ["ios", "mobile"],
+      "license": "MIT",
+      "name": "GhosttyKit",
+      "noticeFile": "apps/mobile/licenses/ghostty-kit.txt",
+      "sourceUrl": "https://github.com/Yash-Singh1/ghostty/tree/custom-io"
+    },
+    {
+      "bundles": ["android", "assets", "mobile"],
+      "license": "Apache-2.0",
+      "name": "MesloLGS NF",
+      "noticeFile": "apps/mobile/licenses/meslo-lgs-nf.txt",
+      "sourceUrl": "https://github.com/romkatv/powerlevel10k-media"
+    },
+    {
+      "bundles": ["mobile"],
+      "license": "MIT",
+      "name": "react-native-uitextview",
+      "noticeFile": "apps/mobile/modules/t3-markdown-text/LICENSE",
+      "sourceUrl": "https://github.com/bluesky-social/react-native-uitextview",
+      "version": "2.2.0"
+    },
+    {
+      "bundles": ["mobile"],
+      "license": "MIT",
+      "name": "Expo text editor implementation",
+      "noticeFile": "apps/mobile/modules/t3-composer-editor/LICENSE",
+      "sourceUrl": "https://github.com/expo/expo"
+    }
+  ],
+  "packageOverrides": [
+    {
+      "license": "MIT",
+      "name": "@react-grab/cli",
+      "noticeFile": "apps/web/licenses/react-grab-cli.txt",
+      "sourceUrl": "https://github.com/aidenybai/react-grab/tree/main/packages/cli"
+    },
+    {
+      "name": "glob-to-regexp",
+      "noticeFile": "apps/web/licenses/glob-to-regexp.txt"
+    },
+    {
+      "name": "kubernetes-types",
+      "noticeFile": "apps/web/licenses/kubernetes-types.txt"
+    },
+    {
+      "name": "@msgpackr-extract/msgpackr-extract-linux-x64",
+      "noticeFile": "apps/web/licenses/msgpackr-extract-linux-x64.txt"
+    },
+    {
+      "name": "isarray",
+      "noticeFile": "apps/web/licenses/isarray.txt"
+    },
+    {
+      "name": "keyv",
+      "noticeFile": "apps/web/licenses/keyv.txt"
+    },
+    {
+      "license": "MIT",
+      "name": "type-fest",
+      "noticeFile": "apps/web/licenses/type-fest.txt"
+    },
+    {
+      "name": "lazy-val",
+      "noticeFile": "apps/web/licenses/lazy-val.txt"
+    },
+    {
+      "name": "@pierre/theming",
+      "noticeFile": "apps/web/licenses/pierre-theming.txt"
+    },
+    {
+      "name": "lru_map",
+      "noticeFile": "apps/web/licenses/lru-map.txt"
+    },
+    {
+      "name": "@electron-internal/extract-zip",
+      "noticeFile": "apps/web/licenses/electron-internal-extract-zip.txt"
+    },
+    {
+      "noticeFile": "apps/mobile/licenses/metro.txt",
+      "repositoryUrl": "https://github.com/facebook/metro"
+    },
+    {
+      "noticeFile": "apps/mobile/licenses/metro.txt",
+      "repositoryUrl": "https://github.com/react/metro"
+    },
+    {
+      "name": "@react-native-ai/apple",
+      "noticeFile": "apps/mobile/licenses/react-native-ai.txt",
+      "sourceUrl": "https://github.com/callstackincubator/ai"
+    },
+    {
+      "name": "react-remove-scroll-bar",
+      "noticeFile": "apps/mobile/licenses/react-remove-scroll-bar.txt"
+    },
+    {
+      "name": "standard-navigation",
+      "noticeFile": "apps/mobile/licenses/standard-navigation.txt"
+    },
+    {
+      "name": "@expo/sdk-runtime-versions",
+      "noticeFile": "apps/mobile/modules/t3-composer-editor/LICENSE"
+    },
+    {
+      "name": "@expo/ws-tunnel",
+      "noticeFile": "apps/mobile/modules/t3-composer-editor/LICENSE"
+    },
+    {
+      "name": "stream-buffers",
+      "noticeFile": "apps/mobile/licenses/stream-buffers.txt"
+    },
+    {
+      "name": "bplist-parser",
+      "noticeFile": "apps/mobile/licenses/bplist-parser.txt"
+    },
+    {
+      "name": "@expo/devcert",
+      "noticeFile": "apps/mobile/licenses/expo-devcert.txt"
+    },
+    {
+      "name": "jimp-compact",
+      "noticeFile": "apps/mobile/licenses/jimp-compact.txt"
+    },
+    {
+      "name": "fb-watchman",
+      "noticeFile": "apps/web/licenses/kubernetes-types.txt"
+    },
+    {
+      "name": "bser",
+      "noticeFile": "apps/web/licenses/kubernetes-types.txt"
+    },
+    {
+      "name": "@expo/xcpretty",
+      "noticeFile": "apps/mobile/licenses/expo-xcpretty.txt"
+    },
+    {
+      "license": "MIT",
+      "name": "fb-dotslash",
+      "noticeFile": "apps/mobile/licenses/fb-dotslash.txt"
+    },
+    {
+      "name": "structured-headers",
+      "noticeFile": "apps/mobile/licenses/structured-headers.txt"
+    },
+    {
+      "name": "badgin",
+      "noticeFile": "apps/mobile/licenses/badgin.txt"
+    },
+    {
+      "name": "react-native-nitro-modules",
+      "noticeFile": "apps/mobile/licenses/react-native-nitro-modules.txt"
+    },
+    {
+      "name": "boolbase",
+      "noticeFile": "apps/mobile/licenses/boolbase.txt"
+    }
+  ]
+}
