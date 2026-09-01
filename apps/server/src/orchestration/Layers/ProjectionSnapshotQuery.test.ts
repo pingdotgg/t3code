@@ -484,6 +484,77 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       if (threadDetail._tag === "Some") {
         assert.deepEqual(threadDetail.value, snapshot.threads[0]);
       }
+
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          created_at
+        )
+        VALUES
+          (
+            'activity-task-started',
+            'thread-1',
+            'turn-1',
+            'info',
+            'task.started',
+            'Ship the query filter',
+            '{"taskId":"task-1","detail":"Ship the query filter"}',
+            '2026-02-24T00:00:06.100Z'
+          ),
+          (
+            'activity-malformed-tool',
+            'thread-1',
+            'turn-1',
+            'info',
+            'tool.completed',
+            'Malformed tool output',
+            'not-json',
+            '2026-02-24T00:00:06.200Z'
+          )
+      `;
+
+      const detailWithoutActivities = yield* snapshotQuery.getThreadDetailById(
+        ThreadId.make("thread-1"),
+        { activityKinds: [] },
+      );
+      assert.equal(detailWithoutActivities._tag, "Some");
+      if (detailWithoutActivities._tag === "Some") {
+        assert.deepEqual(detailWithoutActivities.value.activities, []);
+        assert.deepEqual(detailWithoutActivities.value.messages, snapshot.threads[0]?.messages);
+        assert.deepEqual(
+          detailWithoutActivities.value.proposedPlans,
+          snapshot.threads[0]?.proposedPlans,
+        );
+        assert.deepEqual(
+          detailWithoutActivities.value.checkpoints,
+          snapshot.threads[0]?.checkpoints,
+        );
+      }
+
+      const detailWithTaskActivities = yield* snapshotQuery.getThreadDetailById(
+        ThreadId.make("thread-1"),
+        { activityKinds: ["task.started", "task.progress"] },
+      );
+      assert.equal(detailWithTaskActivities._tag, "Some");
+      if (detailWithTaskActivities._tag === "Some") {
+        assert.deepEqual(detailWithTaskActivities.value.activities, [
+          {
+            id: asEventId("activity-task-started"),
+            tone: "info",
+            kind: "task.started",
+            summary: "Ship the query filter",
+            payload: { taskId: "task-1", detail: "Ship the query filter" },
+            turnId: asTurnId("turn-1"),
+            createdAt: "2026-02-24T00:00:06.100Z",
+          },
+        ]);
+      }
     }),
   );
 
