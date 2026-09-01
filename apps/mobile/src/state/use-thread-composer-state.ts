@@ -312,7 +312,8 @@ export function useThreadComposerState() {
     );
     return messageId;
   }, [
-    selectedEnvironmentRuntime?.serverConfig?.providers,
+    selectedEnvironmentRuntime?.connectionState,
+    selectedEnvironmentRuntime?.serverConfig,
     selectedThreadDetail,
     selectedThreadShell,
     uploadThreadFeedback,

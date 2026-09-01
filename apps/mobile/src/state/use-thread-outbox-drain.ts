@@ -52,6 +52,7 @@ import {
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
   replaceComposerDraftAttachments,
+  removeDeliveredCloudQueuedMessage,
   undoComposerDraftMerge,
   updateComposerDraftSettings,
   waitForComposerDraftsLoaded,
@@ -183,13 +184,14 @@ export async function completeQueuedMessageDelivery(
   queuedMessage: QueuedThreadMessage,
   deliveryRevision: number,
 ): Promise<"removed" | "edited" | "failed"> {
-  // The editor may have taken the entry while startTurn was in flight; its
-  // unsaved edits have not bumped the revision yet, so the CAS alone would
-  // let removal win and the editor would lose them once it saves.
-  if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
-    return "edited";
-  }
   try {
+    await removeDeliveredCloudQueuedMessage(queuedMessage);
+    // The editor may have taken the entry while startTurn was in flight; its
+    // unsaved edits have not bumped the revision yet, so the CAS alone would
+    // let removal win and the editor would lose them once it saves.
+    if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
+      return "edited";
+    }
     // Removal also releases the message's local attachment files.
     const removed = await removeThreadOutboxMessage(
       queuedMessage,
@@ -225,6 +227,7 @@ export async function removeAcknowledgedExistingThreadMessage(
   acknowledgedMessageIds: Set<MessageId>,
 ): Promise<boolean> {
   try {
+    await removeDeliveredCloudQueuedMessage(queuedMessage);
     const removed = await removeThreadOutboxMessage(queuedMessage);
     if (removed) {
       acknowledgedMessageIds.delete(queuedMessage.messageId);

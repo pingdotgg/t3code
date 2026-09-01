@@ -34,7 +34,7 @@ export function composerDraftEnvironmentId(
     );
   }
   const scope = draftKey.startsWith("new-task:") ? draftKey.slice("new-task:".length) : draftKey;
-  const separator = scope.indexOf(":");
+  const separator = scope.lastIndexOf(":");
   return separator > 0 ? EnvironmentId.make(scope.slice(0, separator)) : null;
 }
 

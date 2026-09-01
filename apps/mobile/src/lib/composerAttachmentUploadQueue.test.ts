@@ -126,6 +126,46 @@ describe("composer attachment upload queue", () => {
     queue.dispose();
   });
 
+  it("restarts a re-added attachment after its aborted transfer finishes settling", async () => {
+    const firstStarted = Promise.withResolvers<void>();
+    const firstSettled = Promise.withResolvers<boolean>();
+    const secondStarted = Promise.withResolvers<void>();
+    const secondSettled = Promise.withResolvers<boolean>();
+    let states: Readonly<Record<string, ComposerAttachmentUploadState>> = {};
+    let firstSignal: AbortSignal | undefined;
+    const upload = vi.fn(async (_request: ComposerAttachmentUploadRequest, signal: AbortSignal) => {
+      if (!firstSignal) {
+        firstSignal = signal;
+        firstStarted.resolve();
+        return firstSettled.promise;
+      }
+      secondStarted.resolve();
+      return secondSettled.promise;
+    });
+    const queue = createComposerAttachmentUploadQueue({
+      upload,
+      onChange: (next) => {
+        states = next;
+      },
+    });
+    const local = request("re-added");
+    queue.sync([local]);
+    await firstStarted.promise;
+    queue.sync([]);
+    queue.sync([local]);
+    expect(firstSignal?.aborted).toBe(true);
+    expect(upload).toHaveBeenCalledOnce();
+    firstSettled.resolve(false);
+    await secondStarted.promise;
+    expect(upload).toHaveBeenCalledTimes(2);
+    secondSettled.resolve(true);
+    await queue.settled();
+    expect(states[composerAttachmentUploadKey(environmentId, local.attachment.id)]).toEqual({
+      status: "ready",
+    });
+    queue.dispose();
+  });
+
   it("keeps failures stable until retry and reports bounded progress", async () => {
     let states: Readonly<Record<string, ComposerAttachmentUploadState>> = {};
     const progress: number[] = [];
@@ -183,6 +223,11 @@ describe("draft upload scope and offline submission", () => {
       composerDraftEnvironmentId("pending-task:message", [{ messageId: "message", environmentId }]),
     ).toBe(environmentId);
     expect(composerDraftEnvironmentId("pending-task:missing", [])).toBeNull();
+    const colonEnvironment = EnvironmentId.make("a:vcs-status:b");
+    expect(composerDraftEnvironmentId(`${colonEnvironment}:thread`, [])).toBe(colonEnvironment);
+    expect(composerDraftEnvironmentId(`new-task:${colonEnvironment}:project`, [])).toBe(
+      colonEnvironment,
+    );
   });
 
   it("allows offline queuing while a connected composer waits for upload or retry", () => {

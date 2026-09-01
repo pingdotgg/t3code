@@ -646,6 +646,87 @@ export async function archiveCloudComposerDrafts(
   await flushComposerDrafts();
 }
 
+function sameDraftAttachmentIds(
+  left: ReadonlyArray<DraftComposerAttachment>,
+  right: ReadonlyArray<DraftComposerAttachment>,
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((attachment, index) => attachment.id === right[index]?.id)
+  );
+}
+
+/** An in-flight delivery can finish after sign-out took its snapshot. */
+export async function removeDeliveredCloudQueuedMessage(
+  message: QueuedThreadMessage,
+): Promise<void> {
+  await waitForComposerDraftsLoaded();
+  const cloud = appAtomRegistry.get(composerCloudDraftsAtom);
+  const signedOut = { ...cloud.signedOut };
+  let changed = false;
+  for (const [accountId, saved] of Object.entries(signedOut)) {
+    const archived = saved.queuedMessages.find(
+      (candidate) =>
+        candidate.environmentId === message.environmentId &&
+        candidate.messageId === message.messageId,
+    );
+    if (
+      !archived ||
+      archived.commandId !== message.commandId ||
+      archived.threadId !== message.threadId ||
+      archived.text !== message.text ||
+      !sameDraftAttachmentIds(archived.attachments, message.attachments)
+    )
+      continue;
+    // Upload ids may change during preparation; user edits must remain recoverable.
+    if (
+      JSON.stringify([
+        archived.modelSelection,
+        archived.runtimeMode,
+        archived.interactionMode,
+        archived.creation,
+      ]) !==
+      JSON.stringify([
+        message.modelSelection,
+        message.runtimeMode,
+        message.interactionMode,
+        message.creation,
+      ])
+    )
+      continue;
+    const editorKey = `pending-task:${message.messageId}`;
+    const editor = saved.drafts[editorKey];
+    if (
+      editor &&
+      (editor.text !== message.text ||
+        !sameDraftAttachmentIds(editor.attachments, message.attachments) ||
+        (editor.modelSelection !== undefined &&
+          JSON.stringify(editor.modelSelection) !== JSON.stringify(message.modelSelection)) ||
+        (editor.runtimeMode !== undefined && editor.runtimeMode !== message.runtimeMode) ||
+        (editor.interactionMode !== undefined &&
+          editor.interactionMode !== message.interactionMode) ||
+        (editor.workspaceSelection !== undefined &&
+          (editor.workspaceSelection.mode !== message.creation?.workspaceMode ||
+            editor.workspaceSelection.branch !== message.creation?.branch ||
+            editor.workspaceSelection.worktreePath !== message.creation?.worktreePath ||
+            (editor.workspaceSelection.startFromOrigin ?? false) !==
+              (message.creation?.startFromOrigin ?? false))))
+    )
+      continue;
+    const drafts = { ...saved.drafts };
+    delete drafts[editorKey];
+    signedOut[accountId] = {
+      drafts,
+      queuedMessages: saved.queuedMessages.filter((candidate) => candidate !== archived),
+    };
+    changed = true;
+  }
+  if (!changed) return;
+  appAtomRegistry.set(composerCloudDraftsAtom, { ...cloud, signedOut });
+  schedulePersistComposerState();
+  await flushComposerDrafts();
+}
+
 /** Restores only this account, before its connections can deliver queued turns. */
 export async function restoreCloudComposerDrafts(accountId: string): Promise<void> {
   await waitForComposerDraftsLoaded();

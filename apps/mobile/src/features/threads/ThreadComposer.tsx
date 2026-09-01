@@ -718,10 +718,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   />
                 ) : (
                   <ComposerActionButton
-                    accessibilityLabel={sendLabel}
+                    accessibilityLabel={attachmentBlockReason ?? sendLabel}
                     icon="arrow.up"
                     variant="primary"
-                    disabled={!hasContent}
+                    disabled={!canSend}
                     onPress={handleSend}
                   />
                 )}
