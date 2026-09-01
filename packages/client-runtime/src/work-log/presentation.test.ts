@@ -371,7 +371,12 @@ describe("command work-log details", () => {
 });
 
 describe("workEntryViewedImagePath", () => {
-  const entry = { label: "Read", tone: "tool" } as const;
+  const entry = {
+    id: "entry-1",
+    createdAt: "2026-01-01T00:00:00Z",
+    label: "Read",
+    tone: "tool",
+  } as const;
 
   it("returns a single image path from supported read entries", () => {
     expect(
@@ -380,7 +385,7 @@ describe("workEntryViewedImagePath", () => {
     expect(
       workEntryViewedImagePath({
         ...entry,
-        itemType: "dynamic_tool_call",
+        itemType: "dynamic_tool",
         toolTitle: "Read file",
         detail: "C:\\workspace\\a.webp",
       }),
@@ -397,10 +402,10 @@ describe("workEntryViewedImagePath", () => {
 
   it("rejects non-image, multi-line, and non-read details", () => {
     expect(
-      workEntryViewedImagePath({ ...entry, itemType: "image_view", detail: "a.txt" }),
+      workEntryViewedImagePath({ ...entry, requestKind: "file-read", detail: "a.txt" }),
     ).toBeNull();
     expect(
-      workEntryViewedImagePath({ ...entry, itemType: "image_view", detail: "a.png\nb.png" }),
+      workEntryViewedImagePath({ ...entry, requestKind: "file-read", detail: "a.png\nb.png" }),
     ).toBeNull();
     expect(workEntryViewedImagePath({ ...entry, detail: "a.png" })).toBeNull();
   });
@@ -439,7 +444,7 @@ describe("resolveViewedImageAsset", () => {
       }),
     ).toEqual({
       resource: {
-        _tag: "media-file",
+        _tag: "workspace-file",
         threadId,
         path: "/workspace/screens/logo.svg",
       },

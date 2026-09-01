@@ -2254,8 +2254,31 @@ export function GeneralSettingsPanel() {
                   />
                 }
               />
-            ) : null}
-          </>
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarAutoSettleAfterDays !== null}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  sidebarAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
+                })
+              }
+              aria-label="Auto-settle inactive threads"
+            />
+          }
+        />
+        {settings.sidebarAutoSettleAfterDays !== null ? (
+          <SettingsRow
+            title={searchableSetting("days-before-auto-settle").title}
+            description="Any new activity un-settles a thread automatically."
+            control={
+              <AutoSettleDaysInput
+                value={settings.sidebarAutoSettleAfterDays}
+                onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
+              />
+            }
+          />
         ) : null}
       </SettingsSection>
 

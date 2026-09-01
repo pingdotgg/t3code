@@ -181,7 +181,7 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
       {expanded ? (
         <ComposerBanner.Scroll data-composer-tasks-scroll="true">
           <ComposerBanner.Children
-            render={<ul />}
+            render={<ul role="list" />}
             aria-label={`Task list. ${progress.completedSteps} of ${progress.totalSteps} complete.`}
             data-composer-tasks-list="true"
           >
@@ -228,21 +228,6 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
         </ComposerBanner.Scroll>
       ) : null}
     </div>
-  );
-});
-
-export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
-  onCollapse,
-  ...props
-}: Omit<ComponentProps<typeof ComposerTasksContent>, "expanded" | "onToggle"> & {
-  readonly onCollapse: () => void;
-}) {
-  return (
-    <ComposerBanner.Attachment>
-      <ComposerBanner.Root>
-        <ComposerTasksContent {...props} expanded onToggle={onCollapse} />
-      </ComposerBanner.Root>
-    </ComposerBanner.Attachment>
   );
 });
 

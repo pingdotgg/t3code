@@ -98,6 +98,7 @@ import {
   classifyComposerAttachmentFile,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
+  isPreviewableComposerVideo,
   normalizeComposerImageFileMimeType,
   shouldHandleComposerAttachmentPaste,
 } from "./composerAttachmentFiles";
@@ -157,7 +158,11 @@ import {
 } from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { resolveContextWindowModelDisplayName } from "./ContextWindowMeter.logic";
-import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
+import {
+  attachVideoThumbnail,
+  buildExpandedImagePreview,
+  type ExpandedImagePreview,
+} from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
@@ -224,10 +229,9 @@ function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children:
       const rect = (mainSurface ?? form ?? anchor).getBoundingClientRect();
       const rootFontSizePx =
         Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
-      const drawerInsetRem =
-        Number.parseFloat(
-          window.getComputedStyle(form ?? anchor).getPropertyValue("--chat-composer-drawer-inset"),
-        ) || 1.375;
+      const drawerInsetRem = Number.parseFloat(
+        window.getComputedStyle(form ?? anchor).getPropertyValue("--chat-composer-drawer-inset"),
+      );
       const drawerInset = drawerInsetRem * rootFontSizePx;
       // One extra pixel prevents fractional layout coordinates from exposing
       // the canvas between the drawer mask and the composer's foreground edge.
@@ -1393,11 +1397,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           skill.description ??
           (skill.scope ? `${skill.scope} skill` : ""),
       }));
-      const slashCommandItems = [
-        ...builtInSlashCommandItems,
-        ...providerSlashCommandItems,
-        ...skillItems,
-      ];
+      const slashCommandItems = slashCommandItemsForPromptPosition(
+        [...builtInSlashCommandItems, ...providerSlashCommandItems, ...skillItems],
+        composerTrigger.rangeStart === 0,
+      );
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
@@ -3013,7 +3016,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     : null;
   const bannerStackItems = activityStackItem
-    ? [...props.bannerItems, activityStackItem]
+    ? [activityStackItem, ...props.bannerItems]
     : props.bannerItems;
   useEffect(() => {
     if (activeTasksProgress === null || activeTaskSteps === null) {
@@ -3115,12 +3118,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     let error: string | null = null;
     for (const file of files) {
       const attachmentKind = classifyComposerAttachmentFile(file);
-      const replacesReattachMarker =
-        attachmentKind === "file" &&
-        reattachKeys.delete(
-          `${file.type || "application/octet-stream"}\u0000${file.size}\u0000${file.name || "file"}`,
-        );
-      if (!replacesReattachMarker && reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      const fileMimeType =
+        attachmentKind === "file"
+          ? (videoMimeType({ name: file.name, mimeType: file.type }) ??
+            (file.type || "application/octet-stream"))
+          : file.type;
+      const matchingReattachMarker =
+        attachmentKind === "file"
+          ? reattachMarkers.find(
+              (marker) =>
+                !replacedReattachMarkerIds.has(marker.id) &&
+                composerFileMatchesReattachMarker(marker, {
+                  name: file.name || "file",
+                  mimeType: fileMimeType,
+                  sizeBytes: file.size,
+                }),
+            )
+          : undefined;
+      if (matchingReattachMarker) {
+        replacedReattachMarkerIds.add(matchingReattachMarker.id);
+      }
+      if (!matchingReattachMarker && reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
         error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`;
         // Keep scanning: a later file in this batch can still replace a
         // needs-reattach marker without needing a free slot.
@@ -3145,16 +3163,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           error = fileAttachmentTooLargeMessage(file.name, fileStagingLimit);
           continue;
         }
+        const attachmentFile =
+          file.type === fileMimeType
+            ? file
+            : new File([file], file.name, { type: fileMimeType, lastModified: file.lastModified });
         acceptedFiles.push({
           type: "file",
           id: randomUUID(),
-          name: file.name || "file",
-          mimeType: file.type || "application/octet-stream",
-          sizeBytes: file.size,
-          file,
+          name: attachmentFile.name || "file",
+          mimeType: fileMimeType,
+          sizeBytes: attachmentFile.size,
+          file: attachmentFile,
         });
       }
-      if (!replacesReattachMarker) {
+      if (!matchingReattachMarker) {
         reservedCount += 1;
       }
     }

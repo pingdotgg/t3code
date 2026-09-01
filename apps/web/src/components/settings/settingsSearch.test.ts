@@ -147,7 +147,6 @@ describe("searchSettings", () => {
       hasProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
-      hasThreadAutoSettlement: false,
     });
 
     const gatedIds = new Set<string>([
@@ -161,28 +160,8 @@ describe("searchSettings", () => {
       "t3-connect",
       "tailscale-https",
       "wsl-backend",
-      "auto-settle-inactive-threads",
-      "auto-settle-merged-threads",
-      "days-before-auto-settle",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
-  });
-
-  it("shows automatic settlement settings when the server supports them", () => {
-    const available = filterAvailableSettingsSearchItems({
-      hasCloudPublicConfig: false,
-      hasPrimaryEnvironment: false,
-      hasProviderSettingsEnvironment: false,
-      canManageLocalBackend: false,
-      isWslSettingsRowVisible: false,
-      hasThreadAutoSettlement: true,
-    });
-
-    expect(searchSettings("auto-settle", available).map((item) => item.id)).toEqual([
-      "auto-settle-inactive-threads",
-      "auto-settle-merged-threads",
-      "days-before-auto-settle",
-    ]);
   });
 
   it("keeps catalog result ids unique", () => {

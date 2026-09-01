@@ -104,8 +104,8 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
     <div
       data-slot="composer-banner-attachment"
       className={cn(
-        "-mb-[calc(1rem+1px)] w-full",
-        // Adjacent attachments share their outline.
+        "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
+        // Adjacent attachments share their outline, including notices outside the form.
         "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0",
         "not-first:*:data-[composer-banner-width=content]:w-full",
         className,
@@ -315,7 +315,11 @@ function ToggleIcon({ expanded, className }: { expanded: boolean; className?: st
   return (
     <span
       aria-hidden
-      className={cn(buttonVariants({ size: "icon-xs", variant: "ghost" }), className)}
+      className={cn(
+        buttonVariants({ size: "icon-xs", variant: "ghost" }),
+        "pointer-events-none",
+        className,
+      )}
     >
       <ChevronDownIcon className={cn("size-3.5", !expanded && "rotate-180")} />
     </span>

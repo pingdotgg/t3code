@@ -31,7 +31,6 @@ export interface SettingsSearchItem {
   readonly providerSettingsOnly?: boolean;
   readonly localBackendManagementOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
-  readonly requiresThreadAutoSettlement?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -40,7 +39,6 @@ export interface SettingsSearchAvailability {
   readonly hasProviderSettingsEnvironment: boolean;
   readonly canManageLocalBackend: boolean;
   readonly isWslSettingsRowVisible: boolean;
-  readonly hasThreadAutoSettlement: boolean;
 }
 
 /**
@@ -157,14 +155,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Auto-settle inactive threads",
     to: "/settings/general",
     searchTerms: ["sidebar inactivity days no activity automatically"],
-    requiresThreadAutoSettlement: true,
   },
   {
     id: "auto-settle-merged-threads",
     title: "Auto-settle merged threads",
     to: "/settings/general",
     searchTerms: ["pull request merge closed automatically sidebar"],
-    requiresThreadAutoSettlement: true,
   },
   {
     id: "days-before-auto-settle",
@@ -172,7 +168,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     targetId: "auto-settle-inactive-threads",
     searchTerms: ["thread timeout activity sidebar"],
-    requiresThreadAutoSettlement: true,
   },
   {
     id: "time-format",
@@ -255,7 +250,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "quit-confirmation",
     title: "Quit shortcut",
     to: "/settings/general",
-    searchTerms: ["confirmation desktop app exit direct hold double click press twice"],
+    searchTerms: ["confirmation shortcut desktop app exit"],
     desktopOnly: true,
   },
   {
@@ -328,31 +323,36 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "agent-browser-access",
     title: "Agent browser access",
     to: "/settings/integrations",
-    targetId: "browser",
+    searchTerms: ["allow open drive preview tools sessions"],
   },
   {
     id: "browser-default-viewport",
     title: "Default browser viewport",
     to: "/settings/integrations",
-    targetId: "browser",
+    searchTerms: ["preview size width height device desktop mobile rotate"],
   },
   {
     id: "browser-default-zoom",
     title: "Default browser zoom",
     to: "/settings/integrations",
-    targetId: "browser",
+    searchTerms: ["preview page scale tabs percent"],
   },
   {
     id: "browser-default-appearance",
     title: "Default browser appearance",
     to: "/settings/integrations",
-    targetId: "browser",
+    searchTerms: ["preview color scheme light dark system os"],
+  },
+  {
+    id: "browser-recording-frame-rate",
+    title: "Browser recording frame rate",
+    to: "/settings/integrations",
   },
   {
     id: "browser-auto-show-floating-preview",
     title: "Auto-show floating preview",
     to: "/settings/integrations",
-    targetId: "browser",
+    searchTerms: ["agent opens browser pop into view hide"],
   },
   {
     id: "source-control",
@@ -491,8 +491,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.primaryOnly || availability.hasPrimaryEnvironment) &&
       (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
       (!item.localBackendManagementOnly || availability.canManageLocalBackend) &&
-      (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
-      (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement),
+      (!item.wslAvailableOnly || availability.isWslSettingsRowVisible),
   );
 }
 
