@@ -8,6 +8,7 @@ import {
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
+import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -25,6 +26,8 @@ import {
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
+  isVideoPreviewRequestCurrent,
+  loadVideoPreviewUrl,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveEffectiveInteractionMode,
