@@ -316,4 +316,25 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).toContain("max-h-[30rem]");
     expect(html).not.toContain("Image unavailable");
   });
+
+  it.each([
+    ["markdown", (uri: string) => `![inline data](${uri})`],
+    ["raw HTML", (uri: string) => `<img src="${uri}" alt="inline data">`],
+  ])("keeps %s data URI images directly loadable", (_variant, source) => {
+    const dataUri =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const html = render(source(dataUri));
+
+    expect(testState.resources).toEqual([]);
+    expect(html).toContain(`src="${dataUri}"`);
+    expect(html).not.toContain("Image unavailable");
+  });
+
+  it("blocks non-image data URIs instead of passing them to a raw image", () => {
+    const html = render("![payload](data:text/html;base64,PHNjcmlwdC8+)");
+
+    expect(testState.resources).toEqual([]);
+    expect(html).toContain("Image unavailable");
+    expect(html).not.toContain("data:text/html");
+  });
 });
