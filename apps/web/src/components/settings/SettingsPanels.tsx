@@ -510,7 +510,7 @@ function AboutVersionSection() {
               description="Required for Custom. Paste a public GitHub repository URL or owner/repository."
               control={
                 <DraftInput
-                  autoFocus
+                  autoFocus={draftUpdateTrack === "custom"}
                   className="w-full sm:w-72"
                   aria-label="Custom release source"
                   placeholder="https://github.com/owner/repository"

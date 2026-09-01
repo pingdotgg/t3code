@@ -220,7 +220,8 @@ prereleases from the custom repository. A downstream Nightly builder can therefo
 pull requests onto upstream `main`, publish compatible Nightly artifacts in its own repository,
 and have installed clients follow that repository without changing the upstream release channel.
 
-The custom source is persisted per desktop installation and is restricted to GitHub repositories.
+The custom source is persisted in the shared `~/.t3/userdata` state directory, so side-by-side
+installations can affect one another; it is restricted to GitHub repositories.
 The custom repository must publish the same platform artifact names and updater metadata as the
 standard release workflow. The updater does not verify that a custom repository is maintained by
 T3 Tools, so this setting should only be used with a release source you control.
