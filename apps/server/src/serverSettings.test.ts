@@ -286,6 +286,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         });
         const change = Option.getOrUndefined(yield* Stream.runHead(changes));
         const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        // Inspect raw persisted JSON before schema decoding can apply defaults.
         // @effect-diagnostics-next-line preferSchemaOverJson:off
         const persisted = JSON.parse(raw) as Record<string, unknown>;
 

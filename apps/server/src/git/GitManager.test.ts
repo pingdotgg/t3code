@@ -1001,6 +1001,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         ghScenario: {
           prListSequence: [
+            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
@@ -1052,6 +1053,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListSequence: [
+            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
@@ -1112,6 +1114,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListByHeadSelector: {
+            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             // @effect-diagnostics-next-line preferSchemaOverJson:off
             "contributor:feature/deleted-fork-branch": JSON.stringify([
               {
@@ -1190,6 +1193,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListSequence: [
+            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
@@ -1242,6 +1246,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListSequence: [
+            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
