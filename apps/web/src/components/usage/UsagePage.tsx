@@ -103,6 +103,10 @@ export function UsagePage() {
         )
       : scoped;
   }, [merged.projects, metric, projectFilter]);
+  const breakdownProjectCostUsd = useMemo(
+    () => breakdownProjects.reduce((sum, project) => sum + project.costUsd, 0),
+    [breakdownProjects],
+  );
   const projectLabelsRef = useRef(new Map<string, string>());
   for (const project of merged.projects) {
     if (project.projectKey !== null && project.project !== null) {
@@ -469,7 +473,9 @@ export function UsagePage() {
                         {breakdownProjects.length === 0 ? (
                           <tr>
                             <td colSpan={4} className="py-6 text-center text-muted-foreground">
-                              No activity in this window.
+                              {merged.records === 0
+                                ? "No activity in this window."
+                                : "No project attribution in this window."}
                             </td>
                           </tr>
                         ) : (
@@ -491,7 +497,13 @@ export function UsagePage() {
                                 {formatUsd(project.costUsd)}
                               </td>
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
-                                {formatPercent(project.costShare)}
+                                {formatPercent(
+                                  projectFilter === undefined
+                                    ? project.costShare
+                                    : breakdownProjectCostUsd === 0
+                                      ? 0
+                                      : project.costUsd / breakdownProjectCostUsd,
+                                )}
                               </td>
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
                                 {formatTokens(project.totalTokens)}

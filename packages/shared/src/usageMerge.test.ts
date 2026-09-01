@@ -31,6 +31,7 @@ function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
     records: 5,
     unpricedRecords: 0,
     sessions: 1,
+    projectAttribution: "outside",
     ...overrides,
   };
 }
@@ -342,7 +343,7 @@ describe("mergeUsage", () => {
     expect(merged.daily[0]?.costUsd).toBe(10);
   });
 
-  it("rolls buckets up by project, with unattributed buckets under null", () => {
+  it("rolls buckets up by project, with explicit outside buckets under null", () => {
     const merged = mergeUsage(
       [
         environment(
@@ -463,7 +464,7 @@ describe("mergeUsage", () => {
     const oldEnvironment = environment(
       "env-old",
       summary(
-        [bucket({ costUsd: 4 })],
+        [bucket({ costUsd: 4, projectAttribution: undefined })],
         [{ provider: "claude", hostId: "mac", homePath: "/old/.claude" }],
         USAGE_PROJECT_ATTRIBUTION_SINCE - 1,
       ),
@@ -474,6 +475,32 @@ describe("mergeUsage", () => {
     expect(unfiltered.projects).toEqual([]);
 
     const outside = mergeUsage([oldEnvironment], USAGE_CONTRACT_VERSION, {
+      projectFilter: null,
+    });
+    expect(outside.costUsd).toBe(0);
+  });
+
+  it("does not treat current unknown attribution as outside projects", () => {
+    const currentEnvironment = environment(
+      "env-current",
+      summary(
+        [
+          bucket({
+            provider: "grok",
+            model: "grok-code-fast-1",
+            costUsd: 4,
+            projectAttribution: "unknown",
+          }),
+        ],
+        [{ provider: "grok", hostId: "mac", homePath: "/unknown" }],
+      ),
+    );
+
+    const unfiltered = mergeUsage([currentEnvironment], USAGE_CONTRACT_VERSION);
+    expect(unfiltered.costUsd).toBe(4);
+    expect(unfiltered.projects).toEqual([]);
+
+    const outside = mergeUsage([currentEnvironment], USAGE_CONTRACT_VERSION, {
       projectFilter: null,
     });
     expect(outside.costUsd).toBe(0);

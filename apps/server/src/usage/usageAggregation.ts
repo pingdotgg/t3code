@@ -215,9 +215,15 @@ export class UsageAggregator {
           ).toISOString();
     // The key is parsed back apart on NUL, which project fields must not carry.
     const resolvedProject = this.#options.resolveProject?.(record.cwd) ?? null;
+    const projectAttribution =
+      resolvedProject !== null
+        ? "project"
+        : this.#options.resolveProject === undefined || record.cwd.length === 0
+          ? "unknown"
+          : "outside";
     const projectId = resolvedProject?.projectId.replaceAll("\u0000", "") ?? "";
     const project = resolvedProject?.title.replaceAll("\u0000", "") ?? "";
-    const key = `${day}\u0000${hourStart}\u0000${projectId}\u0000${project}\u0000${record.provider}\u0000${record.model}`;
+    const key = `${day}\u0000${hourStart}\u0000${projectAttribution}\u0000${projectId}\u0000${project}\u0000${record.provider}\u0000${record.model}`;
     let bucket = this.#buckets.get(key);
     if (bucket === undefined) {
       bucket = {
@@ -252,13 +258,21 @@ export class UsageAggregator {
   finish(): AggregateResult {
     const buckets: UsageBucket[] = [];
     for (const [key, bucket] of this.#buckets) {
-      const [day = "", hourStart = "", projectId = "", project = "", provider = "", model = ""] =
-        key.split("\u0000");
+      const [
+        day = "",
+        hourStart = "",
+        projectAttribution = "unknown",
+        projectId = "",
+        project = "",
+        provider = "",
+        model = "",
+      ] = key.split("\u0000");
       buckets.push({
         day: day as UsageDay,
         ...(hourStart === "" ? {} : { hourStart }),
         ...(project === "" ? {} : { project }),
         ...(projectId === "" ? {} : { projectId: projectId as ProjectId }),
+        projectAttribution: projectAttribution as UsageBucket["projectAttribution"],
         provider: provider as UsageBucket["provider"],
         model,
         totals: bucket.totals,

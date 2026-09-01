@@ -21,19 +21,20 @@ import { NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 7 as const;
+export const USAGE_CONTRACT_VERSION = 8 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
  * v5 only adds `grok` to {@link UsageProviderKind}; v6 adds the optional bucket
- * `project`; v7 adds its optional stable `projectId`. v4 Claude/Codex buckets
- * remain valid, so mixed-version environments keep those totals instead of
- * treating every older server as stale.
+ * `project`; v7 adds its optional stable `projectId`; v8 distinguishes outside
+ * projects from unknown attribution. v4 Claude/Codex buckets remain valid, so
+ * mixed-version environments keep those totals instead of treating every
+ * older server as stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
-/** First contract version whose absent project fields mean outside all projects. */
-export const USAGE_PROJECT_ATTRIBUTION_SINCE = 6 as const;
+/** First contract version that explicitly distinguishes outside from unknown attribution. */
+export const USAGE_PROJECT_ATTRIBUTION_SINCE = 8 as const;
 
 export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
@@ -105,6 +106,11 @@ export const UsageBucket = Schema.Struct({
   project: Schema.optional(TrimmedNonEmptyString),
   /** Stable identity for `project`; absent on summaries from pre-v7 servers. */
   projectId: Schema.optional(ProjectId),
+  /**
+   * Whether the session ran in a project, outside every project, or carried no
+   * working directory. Optional only so current clients can read older summaries.
+   */
+  projectAttribution: Schema.optional(Schema.Literals(["project", "outside", "unknown"])),
   provider: UsageProviderKind,
   model: TrimmedNonEmptyString,
   totals: UsageTokenTotals,

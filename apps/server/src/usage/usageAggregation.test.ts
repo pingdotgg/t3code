@@ -96,7 +96,7 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.totals.outputTokens).toBe(100);
   });
 
-  it("splits buckets by resolved project and omits the field when unresolved", () => {
+  it("distinguishes project, outside, and unknown attribution", () => {
     const projectId = ProjectId.make("project-app");
     const aggregator = new UsageAggregator({
       timeZone: "UTC",
@@ -108,15 +108,24 @@ describe("UsageAggregator", () => {
     aggregator.add(record({ cwd: "/work/app" }));
     aggregator.add(record({ cwd: "/work/app" }));
     aggregator.add(record({ cwd: "/elsewhere" }));
+    aggregator.add(record({ cwd: "", model: "grok-4" }));
     const { buckets } = aggregator.finish();
 
-    // Same day, provider and model, so only the project splits the cell.
-    expect(buckets).toHaveLength(2);
-    expect(buckets[0]?.project).toBeUndefined();
-    expect(buckets[0]?.records).toBe(1);
-    expect(buckets[1]?.project).toBe("App");
-    expect(buckets[1]?.projectId).toBe(projectId);
-    expect(buckets[1]?.records).toBe(2);
+    expect(buckets).toHaveLength(3);
+    const outside = buckets.find((bucket) => bucket.projectAttribution === "outside");
+    expect(outside?.project).toBeUndefined();
+    expect(outside?.records).toBe(1);
+    const project = buckets.find((bucket) => bucket.projectAttribution === "project");
+    expect(project?.project).toBe("App");
+    expect(project?.projectId).toBe(projectId);
+    expect(project?.records).toBe(2);
+    expect(buckets.some((bucket) => bucket.projectAttribution === "unknown")).toBe(true);
+  });
+
+  it("marks every bucket unknown when no project resolver is available", () => {
+    const result = aggregate([record({ cwd: "/work/app" })]);
+
+    expect(result.buckets[0]?.projectAttribution).toBe("unknown");
   });
 
   it("buckets by the day in the requested time zone", () => {

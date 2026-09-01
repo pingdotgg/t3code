@@ -115,7 +115,7 @@ const projectTotals = Object.freeze([
     costUsd: 9,
     totalTokens: 200,
     records: 2,
-    costShare: 9 / 16,
+    costShare: 9 / 20,
   },
   {
     projectId: null,
@@ -124,7 +124,7 @@ const projectTotals = Object.freeze([
     costUsd: 7,
     totalTokens: 900,
     records: 1,
-    costShare: 7 / 16,
+    costShare: 7 / 20,
   },
 ]);
 
@@ -199,6 +199,8 @@ describe("UsagePage project breakdown", () => {
     expect(body).toMatch(/Expensive Project.*Outside projects/);
     expect(body).toContain("$9.00");
     expect(body).toContain("$7.00");
+    expect(body).toContain("45.0%");
+    expect(body).toContain("35.0%");
   });
 
   it("ranks projects by tokens when the token metric is selected", () => {
@@ -220,6 +222,35 @@ describe("UsagePage project breakdown", () => {
 
     expect(body).toContain("Expensive Project");
     expect(body).not.toContain("Outside projects");
+    expect(body).toContain("100.0%");
+  });
+
+  it("distinguishes unattributed usage from an empty window", () => {
+    testState.breakdown = "project";
+    const usage = testState.useUsage();
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      merged: { ...usage.merged, projects: [], records: 1 },
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup).toContain("No project attribution in this window.");
+    expect(markup).not.toContain("No activity in this window.");
+  });
+
+  it("keeps the empty-window message when there is no usage", () => {
+    testState.breakdown = "project";
+    const usage = testState.useUsage();
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      merged: { ...usage.merged, projects: [], records: 0 },
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup).toContain("No activity in this window.");
+    expect(markup).not.toContain("No project attribution in this window.");
   });
 });
 

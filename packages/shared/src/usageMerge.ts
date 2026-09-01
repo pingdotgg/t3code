@@ -8,7 +8,6 @@
  */
 import {
   USAGE_MERGE_COMPATIBLE_SINCE,
-  USAGE_PROJECT_ATTRIBUTION_SINCE,
   type EnvironmentId,
   type ProjectId,
   type UsageBucket,
@@ -234,10 +233,10 @@ export interface MergeUsageOptions {
   readonly projectFilter?: string | null;
 }
 
-function localBucketProjectKey(bucket: UsageBucket): string | null {
+function localBucketProjectKey(bucket: UsageBucket): string | null | undefined {
   if (bucket.projectId !== undefined) return `id:${bucket.projectId}`;
   if (bucket.project !== undefined) return `title:${bucket.project}`;
-  return null;
+  return bucket.projectAttribution === "outside" ? null : undefined;
 }
 
 function namespacedProjectKey(environmentId: EnvironmentId, localKey: string): string {
@@ -376,14 +375,11 @@ export function mergeUsage(
       unfilteredCostUsd += bucket.costUsd;
       const localProjectKey = localBucketProjectKey(bucket);
       const projectKey =
-        localProjectKey === null
-          ? environment.summary.contractVersion >= USAGE_PROJECT_ATTRIBUTION_SINCE
-            ? null
-            : undefined
-          : namespacedProjectKey(environment.environmentId, localProjectKey);
-      // Pre-project contracts cannot distinguish an outside-project bucket
-      // from one whose attribution is simply unavailable. Keep its usage in
-      // unfiltered totals, but never claim it belongs to the Outside slice.
+        typeof localProjectKey === "string"
+          ? namespacedProjectKey(environment.environmentId, localProjectKey)
+          : localProjectKey;
+      // Unknown attribution stays in unfiltered totals but never claims to be
+      // part of the explicit Outside projects slice.
       if (projectKey === undefined) {
         if (projectFilter !== undefined) continue;
       } else {

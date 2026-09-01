@@ -252,6 +252,7 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
 
   if (record["type"] === "turn_context") {
     if (typeof payloadRecord["model"] === "string") state.model = payloadRecord["model"];
+    if (typeof payloadRecord["cwd"] === "string") state.cwd = payloadRecord["cwd"];
     return null;
   }
 

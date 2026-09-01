@@ -297,6 +297,7 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
   if (
     typeof state.model !== "string" ||
     typeof state.sessionId !== "string" ||
+    typeof state.cwd !== "string" ||
     (state.lastUsageSignature !== null && typeof state.lastUsageSignature !== "string") ||
     typeof state.sawSessionMeta !== "boolean" ||
     typeof state.suppressingForkCopies !== "boolean" ||
@@ -308,6 +309,7 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
   return {
     model: state.model,
     sessionId: state.sessionId,
+    cwd: state.cwd,
     lastUsageSignature: state.lastUsageSignature ?? null,
     sawSessionMeta: state.sawSessionMeta,
     suppressingForkCopies: state.suppressingForkCopies,

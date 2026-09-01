@@ -119,6 +119,27 @@ describe("parseCodexLine", () => {
     expect(record?.totals.reasoningTokens).toBe(116);
   });
 
+  it("attributes resumed usage to the latest turn working directory", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(sessionMeta, state);
+    parseCodexLine(
+      JSON.stringify({
+        type: "turn_context",
+        timestamp: "2026-08-01T05:17:42.694Z",
+        payload: {
+          type: "turn_context",
+          model: "gpt-5.6-sol",
+          cwd: "/home/theo/next-project",
+        },
+      }),
+      state,
+    );
+
+    const record = parseCodexLine(tokenCount(100, 0, 10, 0), state);
+
+    expect(record?.cwd).toBe("/home/theo/next-project");
+  });
+
   it("skips a repeated token_count so deltas are not double counted", () => {
     const state = initialCodexScanState();
     parseCodexLine(turnContext, state);

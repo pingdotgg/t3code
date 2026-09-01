@@ -81,6 +81,7 @@ describe("scan cache round trip", () => {
         codexState: {
           model: "gpt-5.2-codex",
           sessionId: "session-c",
+          cwd: "/home/theo/codex-project",
           lastUsageSignature: '{"input_tokens":1}',
           sawSessionMeta: true,
           suppressingForkCopies: false,
