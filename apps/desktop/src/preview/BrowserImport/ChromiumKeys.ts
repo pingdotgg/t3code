@@ -67,6 +67,12 @@ export interface ChromiumKeyMaterial {
   readonly cbcV10?: Buffer;
   /** AES-128-CBC, Linux keyring-derived. */
   readonly cbcV11?: Buffer;
+  /**
+   * AES-128-CBC from an empty passphrase. Some Linux clients wrote records
+   * with it (crbug.com/1195256), so Chromium — and this import — retry with it
+   * after a record's own key fails.
+   */
+  readonly cbcEmpty?: Buffer;
 }
 
 const derive = (passphrase: string, iterations: number) =>
@@ -208,6 +214,7 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
     return {
       cbcV10: derive(LINUX_FALLBACK_PASSPHRASE, LINUX_KEY_ITERATIONS),
       ...(keyringSecret ? { cbcV11: derive(keyringSecret, LINUX_KEY_ITERATIONS) } : {}),
+      cbcEmpty: derive("", LINUX_KEY_ITERATIONS),
     };
   }
 

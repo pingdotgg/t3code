@@ -197,6 +197,58 @@ describe("readChromiumCookieDatabase", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("recovers records written with the empty-passphrase key", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-chromium-cookies-",
+      });
+      const filename = `${directory}/Cookies`;
+      const cbcV10 = Buffer.from("0123456789abcdef");
+      const cbcV11 = Buffer.from("fedcba9876543210");
+      // The key some Linux clients actually encrypted with (crbug.com/1195256):
+      // OSCrypt's derivation over an empty passphrase.
+      const cbcEmpty = NodeCrypto.pbkdf2Sync("", "saltysalt", 1, 16, "sha1");
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`create table meta (key text primary key, value text not null)`;
+        yield* sql`insert into meta values ('version', '23')`;
+        yield* sql`
+          create table cookies (
+            host_key text not null, name text not null, value text not null,
+            encrypted_value blob not null, path text not null, expires_utc integer not null,
+            is_secure integer not null, is_httponly integer not null, samesite integer not null,
+            top_frame_site_key text not null default ''
+          )
+        `;
+        yield* sql`insert into cookies (host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite) values
+          ('ev10.example', 'empty-v10', '', ${encryptChromium("v10", "empty v10 value", cbcEmpty)}, '/', 0, 1, 0, 0)`;
+        yield* sql`insert into cookies (host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite) values
+          ('ev11.example', 'empty-v11', '', ${encryptChromium("v11", "empty v11 value", cbcEmpty)}, '/', 0, 1, 0, 0)`;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+      // The records' own keys fail, and the empty key recovers both — the
+      // retry Chromium itself performs.
+      const recovered = yield* readChromiumCookieDatabase(
+        filename,
+        { cbcV10, cbcV11, cbcEmpty },
+        "linux",
+      );
+      expect(recovered.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
+        { name: "empty-v10", value: "empty v10 value" },
+        { name: "empty-v11", value: "empty v11 value" },
+      ]);
+      expect(recovered.undecryptable).toBe(0);
+
+      // Matching Chromium: a record whose own key is missing entirely is not
+      // retried with the empty key.
+      const noV11 = yield* readChromiumCookieDatabase(filename, { cbcV10, cbcEmpty }, "linux");
+      expect(noV11.cookies.map(({ name }) => name)).toEqual(["empty-v10"]);
+      expect(noV11.undecryptableHosts).toEqual(["ev11.example"]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("preserves arbitrary long encrypted values from pre-24 schemas", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

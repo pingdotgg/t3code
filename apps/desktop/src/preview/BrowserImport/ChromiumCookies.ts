@@ -169,11 +169,23 @@ export function decryptChromiumValue(
   const prefix = buffer.subarray(0, 3).toString("latin1");
   const payload = buffer.subarray(3);
 
+  // Chromium retries a failed record with a key derived from an empty
+  // passphrase, because some Linux clients wrote data that way
+  // (crbug.com/1195256). A record whose own key is missing entirely stays
+  // skipped, matching Chromium.
   if (prefix === "v10") {
-    return keys.cbcV10 ? decryptCbc(payload, keys.cbcV10, domain, schemaVersion) : null;
+    if (!keys.cbcV10) return null;
+    return (
+      decryptCbc(payload, keys.cbcV10, domain, schemaVersion) ??
+      (keys.cbcEmpty ? decryptCbc(payload, keys.cbcEmpty, domain, schemaVersion) : null)
+    );
   }
   if (prefix === "v11") {
-    return keys.cbcV11 ? decryptCbc(payload, keys.cbcV11, domain, schemaVersion) : null;
+    if (!keys.cbcV11) return null;
+    return (
+      decryptCbc(payload, keys.cbcV11, domain, schemaVersion) ??
+      (keys.cbcEmpty ? decryptCbc(payload, keys.cbcEmpty, domain, schemaVersion) : null)
+    );
   }
   if (platform === "darwin") {
     return stripDomainBinding(buffer, domain, schemaVersion)?.toString("utf8") ?? null;
