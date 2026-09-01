@@ -373,24 +373,26 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
-const CHAT_MARKDOWN_REMARK_PLUGINS = [
-  remarkGfm,
+export const CHAT_MARKDOWN_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [
+  [remarkGfm, { singleTilde: false }],
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
   remarkPreserveCodeMeta,
   remarkNormalizeLinksAndTagInlineCode,
-] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+];
 
-const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
-  remarkGfm,
+export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: NonNullable<
+  ReactMarkdownOptions["remarkPlugins"]
+> = [
+  [remarkGfm, { singleTilde: false }],
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
   remarkBreaks,
   remarkPreserveCodeMeta,
   remarkNormalizeLinksAndTagInlineCode,
-] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+];
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,

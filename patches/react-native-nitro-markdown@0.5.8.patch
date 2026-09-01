@@ -1,0 +1,7 @@
+diff --git a/cpp/md4c/md4c.c b/cpp/md4c/md4c.c
+index b5316606ff6974d0217f4cdd4fa0241a6a542c5b..8c96839ee24705e5b530424d9e0fd3927b870b73 100644
+--- a/cpp/md4c/md4c.c
++++ b/cpp/md4c/md4c.c
+@@ -3308 +3308 @@ md_collect_marks(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lines, int table_m
+-                if(tmp - off <= 2) {
++                if((ch == _T('$') && tmp - off <= 2) || (ch == _T('~') && tmp - off == 2)) {
