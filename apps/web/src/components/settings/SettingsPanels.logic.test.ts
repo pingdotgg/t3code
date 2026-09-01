@@ -20,6 +20,7 @@ import {
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
   resolveDesktopUpdateTrack,
+  setDesktopUpdateChannelAfterPendingRepositoryChange,
 } from "./SettingsPanels.logic";
 
 describe("desktop update track", () => {
@@ -31,6 +32,40 @@ describe("desktop update track", () => {
   it("shows the release channel when no custom source is selected", () => {
     expect(resolveDesktopUpdateTrack("latest", null)).toBe("latest");
     expect(resolveDesktopUpdateTrack("nightly", null)).toBe("nightly");
+  });
+
+  it("waits for a source-field blur commit before changing tracks", async () => {
+    let resolveRepositoryChange: (() => void) | undefined;
+    const pendingRepositoryChange = new Promise<void>((resolve) => {
+      resolveRepositoryChange = resolve;
+    });
+    const calls: string[] = [];
+
+    const change = setDesktopUpdateChannelAfterPendingRepositoryChange({
+      channel: "latest",
+      pendingRepositoryChange,
+      setUpdateChannel: async (channel) => {
+        calls.push(channel);
+      },
+    });
+
+    await Promise.resolve();
+    expect(calls).toEqual([]);
+    resolveRepositoryChange?.();
+    await change;
+    expect(calls).toEqual(["latest"]);
+  });
+
+  it("still changes tracks when the pending source commit fails", async () => {
+    const calls: string[] = [];
+    await setDesktopUpdateChannelAfterPendingRepositoryChange({
+      channel: "nightly",
+      pendingRepositoryChange: Promise.reject(new Error("invalid source")),
+      setUpdateChannel: async (channel) => {
+        calls.push(channel);
+      },
+    });
+    expect(calls).toEqual(["nightly"]);
   });
 });
 

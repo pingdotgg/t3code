@@ -31,6 +31,15 @@ export function resolveDesktopUpdateTrack(
   return repository !== null || isCustomDraftSelected ? "custom" : channel;
 }
 
+export async function setDesktopUpdateChannelAfterPendingRepositoryChange(input: {
+  readonly channel: DesktopUpdateChannel;
+  readonly pendingRepositoryChange: Promise<unknown> | null;
+  readonly setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<unknown>;
+}): Promise<void> {
+  await input.pendingRepositoryChange?.catch(() => undefined);
+  await input.setUpdateChannel(input.channel);
+}
+
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";
 }

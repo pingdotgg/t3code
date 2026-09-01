@@ -138,6 +138,7 @@ import {
   rememberEnabledProjectGroupingMode,
   resolveBackgroundActivityProfileOption,
   resolveDesktopUpdateTrack,
+  setDesktopUpdateChannelAfterPendingRepositoryChange,
 } from "./SettingsPanels.logic";
 import {
   PolicyTooltip,
@@ -231,6 +232,9 @@ function AboutVersionSection() {
   const [isChangingUpdateRepository, setIsChangingUpdateRepository] = useState(false);
   const [draftUpdateTrack, setDraftUpdateTrack] = useState<DesktopUpdateTrack | null>(null);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
+  // Clicking the selector blurs the source input first. Keep those updater IPC calls ordered.
+  const pendingRepositoryChangeRef = useRef<Promise<unknown> | null>(null);
+  const queuedUpdateTrackRef = useRef<DesktopUpdateTrack | null>(null);
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
@@ -242,6 +246,7 @@ function AboutVersionSection() {
   const handleUpdateTrackChange = useCallback(
     (track: DesktopUpdateTrack) => {
       if (track === "custom") {
+        queuedUpdateTrackRef.current = null;
         setDraftUpdateTrack("custom");
         return;
       }
@@ -250,15 +255,24 @@ function AboutVersionSection() {
       if (!bridge || typeof bridge.setUpdateChannel !== "function") {
         return;
       }
-      if (track === selectedUpdateChannel && selectedUpdateRepository === null) {
+      const pendingRepositoryChange = pendingRepositoryChangeRef.current;
+      if (
+        track === selectedUpdateChannel &&
+        selectedUpdateRepository === null &&
+        pendingRepositoryChange === null
+      ) {
         setDraftUpdateTrack(null);
         return;
       }
 
+      queuedUpdateTrackRef.current = track;
       setDraftUpdateTrack(track);
       setIsChangingUpdateChannel(true);
-      void bridge
-        .setUpdateChannel(track)
+      void setDesktopUpdateChannelAfterPendingRepositoryChange({
+        channel: track,
+        pendingRepositoryChange,
+        setUpdateChannel: bridge.setUpdateChannel,
+      })
         .catch((error: unknown) => {
           toastManager.add(
             stackedThreadToast({
@@ -269,6 +283,7 @@ function AboutVersionSection() {
           );
         })
         .finally(() => {
+          queuedUpdateTrackRef.current = null;
           setIsChangingUpdateChannel(false);
           setDraftUpdateTrack(null);
         });
@@ -295,10 +310,13 @@ function AboutVersionSection() {
       if (repository === selectedUpdateRepository) return;
 
       setIsChangingUpdateRepository(true);
-      void bridge
-        .setUpdateRepository(repository)
+      const repositoryChange = bridge.setUpdateRepository(repository);
+      pendingRepositoryChangeRef.current = repositoryChange;
+      void repositoryChange
         .then(() => {
-          setDraftUpdateTrack(null);
+          if (queuedUpdateTrackRef.current === null) {
+            setDraftUpdateTrack(null);
+          }
         })
         .catch((error: unknown) => {
           toastManager.add(
@@ -310,6 +328,9 @@ function AboutVersionSection() {
           );
         })
         .finally(() => {
+          if (pendingRepositoryChangeRef.current === repositoryChange) {
+            pendingRepositoryChangeRef.current = null;
+          }
           setIsChangingUpdateRepository(false);
         });
     },
