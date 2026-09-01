@@ -350,6 +350,16 @@ export function primeTerminalCopyInput(
   input.select();
 }
 
+export function copyTerminalSelection(
+  input: Pick<HTMLTextAreaElement, "value" | "select">,
+  selection: string,
+  copy = () => document.execCommand("copy"),
+): boolean {
+  if (selection.length === 0) return false;
+  primeTerminalCopyInput(input, selection);
+  return copy();
+}
+
 export function clearPrimedTerminalCopyInput(
   input: Pick<HTMLTextAreaElement, "value">,
   primedSelection: string,
@@ -913,6 +923,10 @@ export class GhosttyTerminalSurface {
 
   getSelection(): string {
     return this.core.selectionText();
+  }
+
+  copySelectionToClipboard(): boolean {
+    return copyTerminalSelection(this.input, this.getSelection());
   }
 
   getSelectionPosition(): GhosttySelectionPosition | null {

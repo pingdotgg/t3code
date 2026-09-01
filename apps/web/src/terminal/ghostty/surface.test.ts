@@ -7,6 +7,7 @@ import {
   advanceTerminalSelectionClickSequence,
   applyTerminalCopyEvent,
   clearPrimedTerminalCopyInput,
+  copyTerminalSelection,
   ghosttyMouseButton,
   isTerminalAltGraphText,
   isTerminalCompositionCommitInput,
@@ -280,6 +281,33 @@ describe("applyTerminalCopyEvent", () => {
     expect(input.value).toBe("git status");
     expect(input.selectionStart).toBe(0);
     expect(input.selectionEnd).toBe(10);
+  });
+});
+
+describe("copyTerminalSelection", () => {
+  it("primes and copies a non-empty terminal selection", () => {
+    const input = {
+      value: "",
+      select: vi.fn(),
+    };
+    const copy = vi.fn(() => true);
+
+    expect(copyTerminalSelection(input, "git status", copy)).toBe(true);
+    expect(input.value).toBe("git status");
+    expect(input.select).toHaveBeenCalledOnce();
+    expect(copy).toHaveBeenCalledOnce();
+  });
+
+  it("does not copy an empty terminal selection", () => {
+    const input = {
+      value: "",
+      select: vi.fn(),
+    };
+    const copy = vi.fn(() => true);
+
+    expect(copyTerminalSelection(input, "", copy)).toBe(false);
+    expect(input.select).not.toHaveBeenCalled();
+    expect(copy).not.toHaveBeenCalled();
   });
 });
 

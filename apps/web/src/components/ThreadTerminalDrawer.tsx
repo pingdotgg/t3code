@@ -827,6 +827,7 @@ export function TerminalViewport({
         if (!shouldHandle) {
           return;
         }
+        terminalRef.current?.copySelectionToClipboard();
         selectionPointerRef.current = { x: event.clientX, y: event.clientY };
         const delay = terminalSelectionActionDelayForClickCount(event.detail);
         selectionActionTimerRef.current = window.setTimeout(() => {
