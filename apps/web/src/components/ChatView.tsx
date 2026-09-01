@@ -193,6 +193,7 @@ import {
   GitBranchIcon,
   Minimize2Icon,
   PaperclipIcon,
+  TriangleAlertIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
@@ -358,6 +359,7 @@ import {
   shouldDockDraftHeroForSubmission,
   shouldReleaseTimelineAnchorForToolActivity,
   shouldShowBranchMismatchBanner,
+  shouldShowStartingSessionWarning,
   shouldShowPlanFollowUpPrompt,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
@@ -1334,6 +1336,9 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
+    reportFailure: false,
+  });
+  const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, {
     reportFailure: false,
   });
   const respondToThreadApproval = useAtomCommand(threadEnvironment.respondToApproval, {
@@ -4867,6 +4872,61 @@ function ChatViewContent(props: ChatViewProps) {
   // interrupting, and works by session, so no active turn is needed.
   const activeBackgroundLiveness =
     !isWorking && activeThread ? (activeThreadShell?.backgroundLiveness ?? null) : null;
+  const startingSessionWarningVisible = shouldShowStartingSessionWarning({
+    session: activeThread?.session ?? null,
+    now: `${nowMinute}:00.000Z`,
+  });
+  const [isStoppingStartingSession, setIsStoppingStartingSession] = useState(false);
+  useEffect(() => {
+    setIsStoppingStartingSession(false);
+  }, [activeThread?.id, activeThread?.session?.status]);
+  const handleStopStartingSession = useCallback(async () => {
+    if (!activeThread || activeThread.session?.status !== "starting") return;
+
+    setIsStoppingStartingSession(true);
+    const result = await stopThreadSession({
+      environmentId,
+      input: { threadId: activeThread.id },
+    });
+    if (result._tag === "Failure") {
+      setIsStoppingStartingSession(false);
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to stop the unresponsive agent.",
+        );
+      }
+    }
+  }, [activeThread, environmentId, setThreadError, stopThreadSession]);
+  const startingSessionWarningBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!activeThread || !startingSessionWarningVisible) return null;
+
+    return {
+      id: `starting-session-warning:${activeThread.id}:${activeThread.session?.updatedAt ?? "unknown"}`,
+      variant: "warning",
+      priority: "urgent",
+      icon: <TriangleAlertIcon />,
+      title: "Agent may be stuck",
+      description:
+        "It has been connecting longer than expected. Stop it, then resend your message.",
+      actions: (
+        <Button
+          size="xs"
+          variant="ghost"
+          disabled={isStoppingStartingSession}
+          onClick={() => void handleStopStartingSession()}
+        >
+          {isStoppingStartingSession ? "Stopping..." : "Stop agent"}
+        </Button>
+      ),
+    };
+  }, [
+    activeThread,
+    handleStopStartingSession,
+    isStoppingStartingSession,
+    startingSessionWarningVisible,
+  ]);
   const [isStoppingBackgroundWork, setIsStoppingBackgroundWork] = useState(false);
   useEffect(() => {
     // "Stopping..." holds until the liveness clears; the interrupt command
@@ -5109,6 +5169,8 @@ function ChatViewContent(props: ChatViewProps) {
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
+    const startingSessionWarningItems =
+      startingSessionWarningBannerItem === null ? [] : [startingSessionWarningBannerItem];
     const resumeCompactionItems =
       resumeCompactionBannerItem === null ? [] : [resumeCompactionBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
@@ -5116,6 +5178,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...systemComposerBannerItems,
+        ...startingSessionWarningItems,
         ...backgroundLivenessItems,
         ...resumeCompactionItems,
         ...wokeThreadItems,
@@ -5124,6 +5187,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return [
       ...systemComposerBannerItems,
+      ...startingSessionWarningItems,
       ...backgroundLivenessItems,
       ...resumeCompactionItems,
       ...wokeThreadItems,
@@ -5177,6 +5241,7 @@ function ChatViewContent(props: ChatViewProps) {
     parkedThreadBannerItem,
     resumeCompactionBannerItem,
     showBranchMismatchBanner,
+    startingSessionWarningBannerItem,
     systemComposerBannerItems,
     wokeThreadBannerItem,
   ]);

@@ -41,6 +41,7 @@ export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
+export const STARTING_SESSION_WARNING_AFTER_MS = 60_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
@@ -135,6 +136,21 @@ export function hasEnvironmentReconnectWarningGraceElapsed(
   elapsedEnvironmentId: EnvironmentId | null,
 ): boolean {
   return activeEnvironmentId !== null && activeEnvironmentId === elapsedEnvironmentId;
+}
+
+export function shouldShowStartingSessionWarning(input: {
+  session: Pick<NonNullable<Thread["session"]>, "status" | "updatedAt"> | null;
+  now: string;
+}): boolean {
+  if (input.session?.status !== "starting") return false;
+
+  const startedAtMs = Date.parse(input.session.updatedAt);
+  const nowMs = Date.parse(input.now);
+  return (
+    Number.isFinite(startedAtMs) &&
+    Number.isFinite(nowMs) &&
+    nowMs - startedAtMs >= STARTING_SESSION_WARNING_AFTER_MS
+  );
 }
 
 export function startNewThreadForProject(

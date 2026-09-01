@@ -35,6 +35,8 @@ import {
   resolveSendEnvMode,
   resolveDraftHeroState,
   scheduleEnvironmentReconnectWarning,
+  shouldShowStartingSessionWarning,
+  STARTING_SESSION_WARNING_AFTER_MS,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
   shouldDockDraftHeroForSubmission,
@@ -263,6 +265,47 @@ describe("environment reconnect warning grace", () => {
     expect(hasEnvironmentReconnectWarningGraceElapsed(anotherEnvironmentId, environmentId)).toBe(
       false,
     );
+  });
+});
+
+describe("starting session warning", () => {
+  const startingSession = {
+    status: "starting" as const,
+    updatedAt: "2026-03-29T00:00:00.000Z",
+  };
+
+  it("appears after the provider has remained in startup past the grace period", () => {
+    expect(
+      shouldShowStartingSessionWarning({
+        session: startingSession,
+        now: new Date(
+          Date.parse(startingSession.updatedAt) + STARTING_SESSION_WARNING_AFTER_MS - 1,
+        ).toISOString(),
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowStartingSessionWarning({
+        session: startingSession,
+        now: new Date(
+          Date.parse(startingSession.updatedAt) + STARTING_SESSION_WARNING_AFTER_MS,
+        ).toISOString(),
+      }),
+    ).toBe(true);
+  });
+
+  it("stays hidden for healthy session states and malformed timestamps", () => {
+    expect(
+      shouldShowStartingSessionWarning({
+        session: { ...startingSession, status: "running" },
+        now: "2026-03-29T00:10:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowStartingSessionWarning({
+        session: { ...startingSession, updatedAt: "invalid" },
+        now: "2026-03-29T00:10:00.000Z",
+      }),
+    ).toBe(false);
   });
 });
 
