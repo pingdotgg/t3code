@@ -132,23 +132,37 @@ export function WelcomeWizard({
   const [mode, setMode] = useState<ConnectionMode>("local");
   const [pairedEnvironmentId, setPairedEnvironmentId] = useState<EnvironmentId | null>(null);
   const finishingPromiseRef = useRef<Promise<boolean> | null>(null);
+  const completionErrorToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
   const targetEnvironment = useOnboardingTargetEnvironment(mode, pairedEnvironmentId);
   const stageIndex = step === "agents" ? 1 : step === "import" ? 2 : 0;
   const finish = useCallback(
     (projectRef?: ScopedProjectRef) => {
       if (finishingPromiseRef.current !== null) return finishingPromiseRef.current;
+      if (completionErrorToastIdRef.current !== null) {
+        toastManager.close(completionErrorToastIdRef.current);
+        completionErrorToastIdRef.current = null;
+      }
 
       const completion = completeOnboarding()
         .then(() => {
+          if (completionErrorToastIdRef.current !== null) {
+            toastManager.close(completionErrorToastIdRef.current);
+            completionErrorToastIdRef.current = null;
+          }
           onDone(projectRef);
           return true;
         })
         .catch(() => {
-          toastManager.add({
+          const errorToast = {
             type: "error",
             title: "Could not finish setup",
             description: "Your settings could not be saved. Try again.",
-          });
+          } as const;
+          if (completionErrorToastIdRef.current === null) {
+            completionErrorToastIdRef.current = toastManager.add(errorToast);
+          } else {
+            toastManager.update(completionErrorToastIdRef.current, errorToast);
+          }
           return false;
         })
         .finally(() => {
