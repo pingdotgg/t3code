@@ -2235,7 +2235,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
-  it.effect("clears stale pending user input from projected shell summaries", () =>
+  it.effect("reads only user-input activities when refreshing shell summaries", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
       const eventStore = yield* OrchestrationEventStore;
@@ -2293,70 +2293,128 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         },
       });
 
+      // Invalid JSON proves the summary query filters tool rows before decoding payloads.
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at
+        )
+        VALUES
+          (
+            'activity-malformed-tool-output',
+            'thread-stale-user-input',
+            NULL,
+            'info',
+            'tool.completed',
+            'Tool completed',
+            '{not-json',
+            NULL,
+            '2026-02-26T12:35:02.000Z'
+          ),
+          (
+            'activity-user-input-resolved-requested',
+            'thread-stale-user-input',
+            NULL,
+            'info',
+            'user-input.requested',
+            'User input requested',
+            json_object('requestId', 'user-input-resolved'),
+            NULL,
+            '2026-02-26T12:35:03.000Z'
+          ),
+          (
+            'activity-user-input-resolved',
+            'thread-stale-user-input',
+            NULL,
+            'info',
+            'user-input.resolved',
+            'User input resolved',
+            json_object('requestId', 'user-input-resolved'),
+            NULL,
+            '2026-02-26T12:35:04.000Z'
+          ),
+          (
+            'activity-user-input-stale-requested',
+            'thread-stale-user-input',
+            NULL,
+            'info',
+            'user-input.requested',
+            'User input requested',
+            json_object('requestId', 'user-input-stale'),
+            NULL,
+            '2026-02-26T12:35:05.000Z'
+          ),
+          (
+            'activity-user-input-stale-failed',
+            'thread-stale-user-input',
+            NULL,
+            'error',
+            'provider.user-input.respond.failed',
+            'Provider user input response failed',
+            json_object(
+              'requestId',
+              'user-input-stale',
+              'detail',
+              'Unknown pending Codex user input request: user-input-stale'
+            ),
+            NULL,
+            '2026-02-26T12:35:06.000Z'
+          ),
+          (
+            'activity-user-input-active-requested',
+            'thread-stale-user-input',
+            NULL,
+            'info',
+            'user-input.requested',
+            'User input requested',
+            json_object('requestId', 'user-input-active'),
+            NULL,
+            '2026-02-26T12:35:07.000Z'
+          ),
+          (
+            'activity-user-input-active-failed',
+            'thread-stale-user-input',
+            NULL,
+            'error',
+            'provider.user-input.respond.failed',
+            'Provider user input response failed',
+            json_object(
+              'requestId',
+              'user-input-active',
+              'detail',
+              'Provider is temporarily unavailable'
+            ),
+            NULL,
+            '2026-02-26T12:35:08.000Z'
+          )
+      `;
+
       yield* appendAndProject({
-        type: "thread.activity-appended",
+        type: "thread.message-sent",
         eventId: EventId.make("evt-stale-user-input-3"),
         aggregateKind: "thread",
         aggregateId: ThreadId.make("thread-stale-user-input"),
-        occurredAt: "2026-02-26T12:35:02.000Z",
+        occurredAt: "2026-02-26T12:35:09.000Z",
         commandId: CommandId.make("cmd-stale-user-input-3"),
         causationEventId: null,
         correlationId: CorrelationId.make("cmd-stale-user-input-3"),
         metadata: {},
         payload: {
           threadId: ThreadId.make("thread-stale-user-input"),
-          activity: {
-            id: EventId.make("activity-stale-user-input-requested"),
-            tone: "info",
-            kind: "user-input.requested",
-            summary: "User input requested",
-            payload: {
-              requestId: "user-input-request-stale-1",
-              questions: [
-                {
-                  id: "sandbox_mode",
-                  header: "Sandbox",
-                  question: "Which mode should be used?",
-                  options: [
-                    {
-                      label: "workspace-write",
-                      description: "Allow workspace writes only",
-                    },
-                  ],
-                },
-              ],
-            },
-            turnId: null,
-            createdAt: "2026-02-26T12:35:02.000Z",
-          },
-        },
-      });
-
-      yield* appendAndProject({
-        type: "thread.activity-appended",
-        eventId: EventId.make("evt-stale-user-input-4"),
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-stale-user-input"),
-        occurredAt: "2026-02-26T12:35:03.000Z",
-        commandId: CommandId.make("cmd-stale-user-input-4"),
-        causationEventId: null,
-        correlationId: CorrelationId.make("cmd-stale-user-input-4"),
-        metadata: {},
-        payload: {
-          threadId: ThreadId.make("thread-stale-user-input"),
-          activity: {
-            id: EventId.make("activity-stale-user-input-failed"),
-            tone: "error",
-            kind: "provider.user-input.respond.failed",
-            summary: "Provider user input response failed",
-            payload: {
-              requestId: "user-input-request-stale-1",
-              detail:
-                "Provider adapter request failed (codex) for item/tool/requestUserInput: Unknown pending Codex user input request: user-input-request-stale-1",
-            },
-            turnId: null,
-            createdAt: "2026-02-26T12:35:03.000Z",
-          },
+          messageId: MessageId.make("message-stale-user-input"),
+          role: "user",
+          text: "Continue",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-02-26T12:35:09.000Z",
+          updatedAt: "2026-02-26T12:35:09.000Z",
         },
       });
 
@@ -2367,7 +2425,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         FROM projection_threads
         WHERE thread_id = 'thread-stale-user-input'
       `;
-      assert.deepEqual(threadRows, [{ pendingUserInputCount: 0 }]);
+      assert.deepEqual(threadRows, [{ pendingUserInputCount: 1 }]);
     }),
   );
 
