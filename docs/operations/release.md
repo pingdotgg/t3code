@@ -207,7 +207,24 @@ available.
 - Provider: GitHub Releases (`provider: github`) configured at build time.
 - Repository slug source:
   - `T3CODE_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
-  - otherwise `GITHUB_REPOSITORY` from GitHub Actions.
+- otherwise `GITHUB_REPOSITORY` from GitHub Actions.
+
+### Custom desktop release sources
+
+Packaged desktop builds can use a custom GitHub repository as their update source. In the About
+panel, select the desired update track and enter the repository as `owner/repository` in
+**Custom release source**. Leaving the field empty restores the repository bundled into the build.
+
+The selected track still controls release selection: Stable reads releases and Nightly reads
+prereleases from the custom repository. A downstream Nightly builder can therefore merge selected
+pull requests onto upstream `main`, publish compatible Nightly artifacts in its own repository,
+and have installed clients follow that repository without changing the upstream release channel.
+
+The custom source is persisted per desktop installation and is restricted to GitHub repositories.
+The custom repository must publish the same platform artifact names and updater metadata as the
+standard release workflow. The updater does not verify that a custom repository is maintained by
+T3 Tools, so this setting should only be used with a release source you control.
+
 - Required release assets for updater:
   - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
   - channel metadata: `latest*.yml` for stable releases, `nightly*.yml` for nightly releases

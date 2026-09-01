@@ -6,6 +6,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   type BackgroundActivityProfile,
   type DesktopUpdateChannel,
+  type DesktopUpdateRepository,
   ProviderDriverKind,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
@@ -225,11 +226,18 @@ function AboutVersionTitle() {
 function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
+  const [customUpdateRepository, setCustomUpdateRepository] = useState("");
+  const [isChangingUpdateRepository, setIsChangingUpdateRepository] = useState(false);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
+  const selectedUpdateRepository = updateState?.repository ?? null;
   const selectedHostedAppChannel = hasDesktopBridge ? null : HOSTED_APP_CHANNEL;
+
+  useEffect(() => {
+    setCustomUpdateRepository(selectedUpdateRepository ?? "");
+  }, [selectedUpdateRepository]);
 
   const handleUpdateChannelChange = useCallback(
     (channel: DesktopUpdateChannel) => {
@@ -260,6 +268,33 @@ function AboutVersionSection() {
     },
     [selectedUpdateChannel],
   );
+
+  const handleUpdateRepositoryChange = useCallback(() => {
+    const bridge = window.desktopBridge;
+    if (!bridge || typeof bridge.setUpdateRepository !== "function") return;
+
+    const repository: DesktopUpdateRepository = customUpdateRepository.trim() || null;
+    if (repository === selectedUpdateRepository) return;
+
+    setIsChangingUpdateRepository(true);
+    void bridge
+      .setUpdateRepository(repository)
+      .then((state) => {
+        setCustomUpdateRepository(state.repository ?? "");
+      })
+      .catch((error: unknown) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not change update source",
+            description: error instanceof Error ? error.message : "Update source change failed.",
+          }),
+        );
+      })
+      .finally(() => {
+        setIsChangingUpdateRepository(false);
+      });
+  }, [customUpdateRepository, selectedUpdateRepository]);
 
   const handleButtonClick = useCallback(async () => {
     const bridge = window.desktopBridge;
@@ -390,36 +425,58 @@ function AboutVersionSection() {
         }
       />
       {hasDesktopBridge ? (
-        <SettingsRow
-          title="Update track"
-          description="Stable follows full releases. Nightly follows the nightly desktop channel and can switch back to stable immediately."
-          control={
-            <Select
-              value={selectedUpdateChannel}
-              onValueChange={(value) => {
-                handleUpdateChannelChange(value as DesktopUpdateChannel);
-              }}
-            >
-              <SelectTrigger
-                className="w-full sm:w-40"
-                aria-label="Update track"
-                disabled={isChangingUpdateChannel}
+        <>
+          <SettingsRow
+            title="Update track"
+            description="Stable follows full releases. Nightly follows the nightly desktop channel and can switch back to stable immediately."
+            control={
+              <Select
+                value={selectedUpdateChannel}
+                onValueChange={(value) => {
+                  handleUpdateChannelChange(value as DesktopUpdateChannel);
+                }}
               >
-                <SelectValue>
-                  {selectedUpdateChannel === "nightly" ? "Nightly" : "Stable"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="latest">
-                  Stable
-                </SelectItem>
-                <SelectItem hideIndicator value="nightly">
-                  Nightly
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
+                <SelectTrigger
+                  className="w-full sm:w-40"
+                  aria-label="Update track"
+                  disabled={isChangingUpdateChannel || isChangingUpdateRepository}
+                >
+                  <SelectValue>
+                    {selectedUpdateChannel === "nightly" ? "Nightly" : "Stable"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="latest">
+                    Stable
+                  </SelectItem>
+                  <SelectItem hideIndicator value="nightly">
+                    Nightly
+                  </SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+          <SettingsRow
+            title="Custom release source"
+            description="Optional GitHub owner/repository. Leave empty to use the bundled T3 Code release source."
+            control={
+              <Input
+                className="w-full sm:w-64"
+                aria-label="Custom release source"
+                placeholder="owner/repository"
+                value={customUpdateRepository}
+                disabled={isChangingUpdateRepository}
+                onChange={(event) => setCustomUpdateRepository(event.target.value)}
+                onBlur={handleUpdateRepositoryChange}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.currentTarget.blur();
+                  }
+                }}
+              />
+            }
+          />
+        </>
       ) : selectedHostedAppChannel ? (
         <SettingsRow
           title="Update track"

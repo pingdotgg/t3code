@@ -1,7 +1,11 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DesktopEnvironmentBootstrapSchema } from "./ipc.ts";
+import {
+  DesktopEnvironmentBootstrapSchema,
+  isValidDesktopUpdateRepository,
+  normalizeDesktopUpdateRepository,
+} from "./ipc.ts";
 
 describe("DesktopEnvironmentBootstrapSchema", () => {
   const decode = Schema.decodeUnknownSync(DesktopEnvironmentBootstrapSchema);
@@ -35,4 +39,20 @@ describe("DesktopEnvironmentBootstrapSchema", () => {
       }).runningDistro,
     ).toBeNull();
   });
+});
+
+describe("desktop update repository", () => {
+  it("normalizes GitHub URLs to owner/repository", () => {
+    expect(normalizeDesktopUpdateRepository(" https://github.com/acme/t3code.git ")).toBe(
+      "acme/t3code",
+    );
+  });
+
+  it.each(["", "acme", "acme/t3code/releases", "https://example.com/acme/t3code"])(
+    "rejects non-GitHub repository %j",
+    (repository) => {
+      expect(normalizeDesktopUpdateRepository(repository)).toBeNull();
+      expect(isValidDesktopUpdateRepository(repository)).toBe(false);
+    },
+  );
 });

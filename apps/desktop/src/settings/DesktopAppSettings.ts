@@ -1,6 +1,8 @@
 import {
   DesktopServerExposureModeSchema,
   DesktopUpdateChannelSchema,
+  normalizeDesktopUpdateRepository,
+  type DesktopUpdateRepository,
   type DesktopServerExposureMode,
   type DesktopUpdateChannel,
 } from "@t3tools/contracts";
@@ -33,6 +35,7 @@ export interface DesktopSettings {
   readonly tailscaleServePort: number;
   readonly updateChannel: DesktopUpdateChannel;
   readonly updateChannelConfiguredByUser: boolean;
+  readonly updateRepository: DesktopUpdateRepository;
   // Was a "local" | "wsl" swap mode in an earlier iteration of the WSL
   // integration. We now run Windows and WSL backends side by side, so the
   // setting is just whether the WSL backend should be running alongside the
@@ -81,6 +84,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
   updateChannel: "latest",
   updateChannelConfiguredByUser: false,
+  updateRepository: null,
   wslBackendEnabled: false,
   wslDistro: null,
   wslOnly: false,
@@ -102,6 +106,7 @@ const DesktopSettingsDocument = Schema.Struct({
   tailscaleServePort: Schema.optionalKey(Schema.Number),
   updateChannel: Schema.optionalKey(DesktopUpdateChannelSchema),
   updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
+  updateRepository: Schema.optionalKey(Schema.NullOr(Schema.String)),
   // Newer form of the WSL toggle. `wslMode` is still accepted on load so
   // existing on-disk settings keep working; on the next persist we write the
   // new boolean and the legacy key drops out.
@@ -165,6 +170,9 @@ export class DesktopAppSettings extends Context.Service<
     }) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setUpdateChannel: (
       channel: DesktopUpdateChannel,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setUpdateRepository: (
+      repository: DesktopUpdateRepository,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setWslBackendEnabled: (
       enabled: boolean,
@@ -235,6 +243,7 @@ function normalizeDesktopSettingsDocument(
       ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
       : defaultSettings.updateChannel,
     updateChannelConfiguredByUser,
+    updateRepository: normalizeDesktopUpdateRepository(parsed.updateRepository),
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
     wslOnly: parsed.wslOnly === true,
@@ -270,6 +279,9 @@ function toDesktopSettingsDocument(
   }
   if (settings.updateChannelConfiguredByUser !== defaults.updateChannelConfiguredByUser) {
     document.updateChannelConfiguredByUser = settings.updateChannelConfiguredByUser;
+  }
+  if (settings.updateRepository !== defaults.updateRepository) {
+    document.updateRepository = settings.updateRepository;
   }
   if (settings.wslBackendEnabled !== defaults.wslBackendEnabled) {
     document.wslBackendEnabled = settings.wslBackendEnabled;
@@ -339,6 +351,19 @@ function setUpdateChannel(
         ...settings,
         updateChannel: requestedChannel,
         updateChannelConfiguredByUser: true,
+      };
+}
+
+function setUpdateRepository(
+  settings: DesktopSettings,
+  requestedRepository: DesktopUpdateRepository,
+): DesktopSettings {
+  const repository = normalizeDesktopUpdateRepository(requestedRepository);
+  return settings.updateRepository === repository
+    ? settings
+    : {
+        ...settings,
+        updateRepository: repository,
       };
 }
 
@@ -530,6 +555,12 @@ export const make = Effect.gen(function* () {
       persist((settings) => setUpdateChannel(settings, channel)).pipe(
         Effect.withSpan("desktop.settings.setUpdateChannel", { attributes: { channel } }),
       ),
+    setUpdateRepository: (repository) =>
+      persist((settings) => setUpdateRepository(settings, repository)).pipe(
+        Effect.withSpan("desktop.settings.setUpdateRepository", {
+          attributes: { repository: repository ?? "bundled" },
+        }),
+      ),
     setWslBackendEnabled: (enabled) =>
       persist((settings) => setWslBackendEnabled(settings, enabled)).pipe(
         Effect.withSpan("desktop.settings.setWslBackendEnabled", { attributes: { enabled } }),
@@ -581,6 +612,8 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),
         setUpdateChannel: (channel) => update((settings) => setUpdateChannel(settings, channel)),
+        setUpdateRepository: (repository) =>
+          update((settings) => setUpdateRepository(settings, repository)),
         setWslBackendEnabled: (enabled) =>
           update((settings) => setWslBackendEnabled(settings, enabled)),
         setWslDistro: (distro) => update((settings) => setWslDistro(settings, distro)),

@@ -19,6 +19,7 @@ const baseState: DesktopUpdateState = {
   enabled: true,
   status: "idle",
   channel: "latest",
+  repository: null,
   currentVersion: "1.0.0",
   hostArch: "x64",
   appArch: "x64",
@@ -194,6 +195,12 @@ describe("desktop update UI helpers", () => {
   it("builds the nightly release URL without dropping its version suffix", () => {
     expect(getDesktopUpdateReleaseUrl("0.0.30-nightly.20260728.931")).toBe(
       "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30-nightly.20260728.931",
+    );
+  });
+
+  it("uses a custom repository for release notes", () => {
+    expect(getDesktopUpdateReleaseUrl("0.0.30-nightly.20260728.931", "acme/t3code")).toBe(
+      "https://github.com/acme/t3code/releases/tag/v0.0.30-nightly.20260728.931",
     );
   });
 

@@ -32,6 +32,7 @@ interface UpdatesHarnessOptions {
   readonly setDisableDifferentialDownload?: Effect.Effect<void>;
   readonly stopBackend?: Effect.Effect<void>;
   readonly env?: Record<string, string | undefined>;
+  readonly updateRepository?: string | null;
 }
 
 const flushCallbacks = Effect.yieldNow;
@@ -156,10 +157,15 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   let testSettings: DesktopAppSettings.DesktopSettings = {
     ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+    ...(options.updateRepository !== undefined
+      ? { updateRepository: options.updateRepository }
+      : {}),
   };
   const setUpdateChannelError = options.setUpdateChannelError;
   const settingsLayer =
-    setUpdateChannelError || options.beforeSetUpdateChannel
+    setUpdateChannelError ||
+    options.beforeSetUpdateChannel ||
+    options.updateRepository !== undefined
       ? Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
           get: Effect.sync(() => testSettings),
           load: Effect.sync(() => testSettings),
@@ -182,6 +188,15 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
                     }),
                   ),
                 ),
+          setUpdateRepository: (repository) =>
+            Effect.sync(() => {
+              const changed = testSettings.updateRepository !== repository;
+              testSettings = {
+                ...testSettings,
+                updateRepository: repository,
+              };
+              return { settings: testSettings, changed };
+            }),
           setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
           setWslDistro: () => Effect.die("unexpected WSL distro change"),
           setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
@@ -292,6 +307,59 @@ describe("DesktopUpdates", () => {
 
       assert.equal(harness.listenerCount(), 0);
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("uses a custom GitHub repository for the selected release channel", () => {
+    const harness = makeHarness({
+      env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+      updateRepository: "acme/t3code",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        assert.deepEqual(harness.feedUrls(), [
+          {
+            provider: "github",
+            owner: "acme",
+            repo: "t3code",
+            releaseType: "release",
+          },
+        ]);
+        assert.equal((yield* updates.getState).repository, "acme/t3code");
+
+        yield* updates.setChannel("nightly");
+        assert.deepEqual(harness.feedUrls().at(-1), {
+          provider: "github",
+          owner: "acme",
+          repo: "t3code",
+          releaseType: "prerelease",
+          channel: "nightly",
+        });
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("rejects malformed custom repositories without changing the source", () => {
+    const harness = makeHarness({
+      env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+      updateRepository: "acme/t3code",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        const error = yield* updates
+          .setRepository("https://example.com/releases")
+          .pipe(Effect.flip);
+        assert.instanceOf(error, DesktopUpdates.DesktopUpdateRepositoryError);
+        assert.equal((yield* updates.getState).repository, "acme/t3code");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
   it.effect("updates and broadcasts state from updater events", () => {
