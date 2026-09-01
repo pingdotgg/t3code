@@ -432,9 +432,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
 
-  // Swipe: the v2 primary action is the lifecycle transition. Every settled
-  // row can un-settle — explicit settles clear the override, auto-settled
-  // rows get pinned active until real activity clears the pin.
+  // Swipe: the v2 primary action is the lifecycle transition. Un-settling a
+  // settled row keeps it active until new activity clears the user override.
   const canUnsettle = variant === "slim";
   const [snoozeGateTick, bumpSnoozeGateTick] = useState(0);
   const snoozeGateExpiryMs = props.snoozeSupported

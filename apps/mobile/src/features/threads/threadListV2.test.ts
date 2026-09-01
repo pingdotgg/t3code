@@ -282,24 +282,7 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
-  it("ignores the previous pull request state after a different pull request is linked", () => {
-    const thread = makeThread({
-      id: ThreadId.make("linked"),
-      title: "Linked pull request",
-      linkedPullRequest,
-    });
-    const layout = buildThreadListV2Items({
-      threads: [thread],
-      environmentId: null,
-      searchQuery: "",
-      now: NOW,
-    });
-
-    expect(layout.settledCount).toBe(0);
-    expect(layout.items[0]?.variant).toBe("card");
-  });
-
-  it("places a server-settled thread in the settled shelf", () => {
+  it("places a persisted settled thread in the settled shelf", () => {
     const thread = makeThread({
       id: ThreadId.make("linked-merged"),
       title: "Linked merged pull request",
@@ -316,19 +299,6 @@ describe("buildThreadListV2Items", () => {
 
     expect(layout.settledCount).toBe(1);
     expect(layout.items[0]?.variant).toBe("slim");
-  });
-
-  it("keeps a merged thread active when auto-settle on merge is off", () => {
-    const merged = makeThread({ id: ThreadId.make("merged"), title: "Merged" });
-    const layout = buildThreadListV2Items({
-      threads: [merged],
-      environmentId: null,
-      searchQuery: "",
-      now: NOW,
-    });
-
-    expect(layout.items.map((item) => item.thread.id)).toEqual(["merged"]);
-    expect(layout.settledCount).toBe(0);
   });
 
   it("hides snoozed threads and counts them — visibility parity with web", () => {
@@ -382,74 +352,21 @@ describe("buildThreadListV2Items", () => {
     expect(layout.settledCount).toBe(1);
   });
 
-  it("places server-settled pinned threads in the settled shelf", () => {
-    const merged = makeThread({
-      id: ThreadId.make("pinned-merged"),
-      title: "Pinned merged pull request",
+  it("keeps active pinned threads in the pinned block", () => {
+    const pinned = makeThread({
+      id: ThreadId.make("pinned"),
+      title: "Pinned thread",
       pinnedAt: "2026-06-01T12:00:00.000Z",
-      settledOverride: "settled",
-      settledAt: NOW,
     });
     const layout = buildThreadListV2Items({
-      threads: [makeThread({ id: ThreadId.make("active"), title: "Active" }), merged],
-      environmentId: null,
-      searchQuery: "",
-      now: NOW,
-    });
-
-    expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "pinned-merged"]);
-    expect(layout.items.map((item) => item.variant)).toEqual(["card", "slim"]);
-    expect(layout.items[1]?.thread.pinnedAt).toBe("2026-06-01T12:00:00.000Z");
-    expect(layout.settledCount).toBe(1);
-  });
-
-  it("places server-settled inactive pinned threads in the settled shelf", () => {
-    const inactive = makeThread({
-      id: ThreadId.make("pinned-inactive"),
-      title: "Pinned inactive thread",
-      createdAt: "2026-05-20T00:00:00.000Z",
-      pinnedAt: "2026-05-21T00:00:00.000Z",
-      settledOverride: "settled",
-      settledAt: NOW,
-      latestTurn: {
-        turnId: TurnId.make("turn-inactive"),
-        state: "completed",
-        requestedAt: "2026-05-21T00:00:00.000Z",
-        startedAt: "2026-05-21T00:00:01.000Z",
-        completedAt: "2026-05-21T00:00:02.000Z",
-        assistantMessageId: null,
-      },
-    });
-    const layout = buildThreadListV2Items({
-      threads: [inactive],
+      threads: [pinned],
       environmentId: null,
       searchQuery: "",
       now: NOW,
     });
 
     expect(layout.items[0]).toMatchObject({
-      thread: { id: "pinned-inactive" },
-      variant: "slim",
-      pinned: false,
-    });
-    expect(layout.settledCount).toBe(1);
-  });
-
-  it("keeps pinned merged threads pinned when auto-settle on merge is off", () => {
-    const merged = makeThread({
-      id: ThreadId.make("pinned-merged"),
-      title: "Pinned merged pull request",
-      pinnedAt: "2026-06-01T12:00:00.000Z",
-    });
-    const layout = buildThreadListV2Items({
-      threads: [merged],
-      environmentId: null,
-      searchQuery: "",
-      now: NOW,
-    });
-
-    expect(layout.items[0]).toMatchObject({
-      thread: { id: "pinned-merged" },
+      thread: { id: "pinned" },
       variant: "card",
       pinned: true,
     });

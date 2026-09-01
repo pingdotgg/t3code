@@ -1226,13 +1226,13 @@ const makeWsRpcLayer = (
               // closes its session and terminals after the command lands.
               // Settlement cleanup is driven by thread.settled events in the
               // provider reactor, including settlements that have no client.
-              const parkingCommand =
+              const archiveCommand =
                 normalizedCommand.type === "thread.archive" ? normalizedCommand : undefined;
-              // Best-effort on purpose: the user's archive/settle must not
+              // Best-effort on purpose: the user's archive must not
               // fail because this cleanup read blipped, so a failed read
               // logs and skips the stop instead of propagating.
-              const shouldStopSessionAfterCommand = parkingCommand
-                ? yield* projectionSnapshotQuery.getThreadShellById(parkingCommand.threadId).pipe(
+              const shouldStopSessionAfterCommand = archiveCommand
+                ? yield* projectionSnapshotQuery.getThreadShellById(archiveCommand.threadId).pipe(
                     Effect.map(
                       Option.match({
                         onNone: () => false,
@@ -1243,7 +1243,7 @@ const makeWsRpcLayer = (
                     Effect.catchCause((cause) =>
                       Effect.logWarning(
                         "failed to read thread session state before session-stop check",
-                        { threadId: parkingCommand.threadId, cause },
+                        { threadId: archiveCommand.threadId, cause },
                       ).pipe(Effect.as(false)),
                     ),
                   )
@@ -1252,38 +1252,35 @@ const makeWsRpcLayer = (
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
               );
               yield* recordClientCommandAnalytics(normalizedCommand);
-              if (parkingCommand) {
-                const parkingKind = "archive";
+              if (archiveCommand) {
                 if (shouldStopSessionAfterCommand) {
                   yield* Effect.gen(function* () {
                     const stopCommand = yield* normalizeDispatchCommand({
                       type: "thread.session.stop",
                       commandId: CommandId.make(
-                        `session-stop-for-${parkingKind}:${parkingCommand.commandId}`,
+                        `session-stop-for-archive:${archiveCommand.commandId}`,
                       ),
-                      threadId: parkingCommand.threadId,
+                      threadId: archiveCommand.threadId,
                       createdAt: yield* nowIso,
                     });
 
                     yield* dispatchNormalizedCommand(stopCommand);
                   }).pipe(
                     Effect.catchCause((cause) =>
-                      Effect.logWarning(`failed to stop provider session during ${parkingKind}`, {
-                        threadId: parkingCommand.threadId,
+                      Effect.logWarning("failed to stop provider session during archive", {
+                        threadId: archiveCommand.threadId,
                         cause,
                       }),
                     ),
                   );
                 }
 
-                // Terminals are user-opened panes, not thread background
-                // work: archive removes the thread from view so they close
-                // with it, but a settled thread stays reachable and may be
-                // un-settled, so its terminals stay up.
-                yield* terminalManager.close({ threadId: parkingCommand.threadId }).pipe(
+                // Archive removes the thread from view, so its user-opened
+                // terminal panes close with it.
+                yield* terminalManager.close({ threadId: archiveCommand.threadId }).pipe(
                   Effect.catch((error) =>
                     Effect.logWarning("failed to close thread terminals after archive", {
-                      threadId: parkingCommand.threadId,
+                      threadId: archiveCommand.threadId,
                       error: error.message,
                     }),
                   ),

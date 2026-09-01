@@ -3,6 +3,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -25,13 +26,9 @@ import {
   requireThreadNotArchived,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
+import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-
-// Session adoption takes seconds; a user message still unadopted after this
-// window is a failed/stale start, not pending work. Mirrors the client's
-// QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts.
-const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
@@ -90,59 +87,28 @@ function hasOpenBlockingRequest(thread: {
   return openRequestIds.size > 0;
 }
 
-/**
- * A queued turn start — a user message no turn has picked up yet — is work
- * in flight even though session is still null (turn.start emits
- * message-sent + turn-start-requested; the session arrives later). Detection
- * mirrors the client's hasQueuedTurnStart: the newest user message is
- * strictly newer than every latestTurn timestamp (adoption stamps the new
- * turn's requestedAt with the message time, clearing this), and only within
- * the adoption grace window — historical threads whose last user message
- * postdates their turn timestamps (older-server data, mid-turn messages)
- * must not be blocked forever. A failed session start (status "error")
- * clears the block immediately.
- *
- * The age check is bounded on BOTH sides: message timestamps are
- * client-supplied, so a client clock ahead of the server yields a negative
- * age. Without the lower bound that negative age satisfies `<= grace` for
- * as long as the skew lasts, extending the block far past the intended two
- * minutes.
- */
-function threadHasQueuedTurnStart(
-  thread: {
-    readonly messages: ReadonlyArray<{ readonly role: string; readonly createdAt: string }>;
-    readonly latestTurn: {
-      readonly requestedAt: string;
-      readonly startedAt: string | null;
-      readonly completedAt: string | null;
-    } | null;
-    readonly session: { readonly status: string } | null;
-  },
-  occurredAt: string,
+/** Apply the shared shell-level rule to the detailed command read model. */
+function hasQueuedTurnStartForThread(
+  thread: Pick<OrchestrationThread, "messages" | "latestTurn" | "session">,
+  now: string,
 ): boolean {
-  const latestUserMessageAtMs = thread.messages.reduce(
-    (latest, message) =>
-      message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
-    Number.NEGATIVE_INFINITY,
-  );
-  const latestTurnAtMs =
-    thread.latestTurn === null
-      ? Number.NEGATIVE_INFINITY
-      : Math.max(
-          ...[
-            thread.latestTurn.requestedAt,
-            thread.latestTurn.startedAt,
-            thread.latestTurn.completedAt,
-          ].map((candidate) =>
-            candidate == null ? Number.NEGATIVE_INFINITY : Date.parse(candidate),
-          ),
-        );
-  const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
-  return (
-    thread.session?.status !== "error" &&
-    Number.isFinite(latestUserMessageAtMs) &&
-    latestUserMessageAtMs > latestTurnAtMs &&
-    Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS
+  let latestUserMessageAt: string | null = null;
+  let latestUserMessageAtMs = Number.NEGATIVE_INFINITY;
+  for (const message of thread.messages) {
+    if (message.role !== "user") continue;
+    const messageAtMs = Date.parse(message.createdAt);
+    latestUserMessageAtMs = Math.max(latestUserMessageAtMs, messageAtMs);
+    if (messageAtMs === latestUserMessageAtMs) {
+      latestUserMessageAt = message.createdAt;
+    }
+  }
+  return threadHasQueuedTurnStart(
+    {
+      latestUserMessageAt: Number.isFinite(latestUserMessageAtMs) ? latestUserMessageAt : null,
+      latestTurn: thread.latestTurn,
+      session: thread.session,
+    },
+    now,
   );
 }
 
@@ -482,7 +448,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       }
       const occurredAt = yield* nowIso;
       // Settling inside the adoption window would hide just-requested work.
-      if (threadHasQueuedTurnStart(thread, occurredAt)) {
+      if (hasQueuedTurnStartForThread(thread, occurredAt)) {
         return yield* new OrchestrationThreadSettleBlockedError({ threadId: command.threadId });
       }
       // Settling an already-settled thread re-emits with the original
@@ -607,7 +573,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // invisible pending work: no session, no pending flags. Snoozing in
       // that window would hide a just-requested turn exactly the way settle
       // would.
-      if (threadHasQueuedTurnStart(thread, occurredAt)) {
+      if (hasQueuedTurnStartForThread(thread, occurredAt)) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -1149,7 +1115,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         if (
           thread.settledOverride !== "settled" ||
           sessionComingAlive ||
-          threadHasQueuedTurnStart(thread, command.createdAt)
+          hasQueuedTurnStartForThread(thread, command.createdAt)
         ) {
           return yield* Effect.fail(
             new OrchestrationCommandInvariantError({
