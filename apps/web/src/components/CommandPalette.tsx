@@ -43,6 +43,7 @@ import {
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
+  RefreshCwIcon,
   ServerIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -146,7 +147,11 @@ import {
   ThreadCommandSubtitle,
 } from "./ThreadCommandSubtitle";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
-import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
+import {
+  primaryServerKeybindingsAtom,
+  primaryServerProvidersAtom,
+  serverEnvironment,
+} from "../state/server";
 import {
   deriveProviderInstanceEntries,
   resolveDefaultProviderModelSelection,
@@ -167,6 +172,7 @@ import {
   buildSidebarProjectSnapshots,
 } from "../sidebarProjectGrouping";
 import type { Project } from "../types";
+import { refreshProvidersAndReload } from "../reloadWindow";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
@@ -405,8 +411,38 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const { environments } = useEnvironments();
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   const { theme, themeHalves, resolvedTheme } = useTheme();
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
+  const connectedEnvironmentIds = useMemo(
+    () =>
+      environments
+        .filter((environment) => environment.connection.phase === "connected")
+        .map((environment) => environment.environmentId),
+    [environments],
+  );
+  const reloadWindow = useCallback(
+    () =>
+      refreshProvidersAndReload({
+        environmentIds: connectedEnvironmentIds,
+        refreshProviders: (environmentId) =>
+          refreshProviders({ environmentId, input: {} }).then(() => undefined),
+        onRefreshStart: () => {
+          toastManager.add({
+            type: "loading",
+            title: "Reloading window...",
+            description: "Refreshing providers before reload.",
+            timeout: 0,
+          });
+        },
+        reload: () => window.location.reload(),
+      }),
+    [connectedEnvironmentIds, refreshProviders],
+  );
   const routeTarget = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
@@ -448,6 +484,12 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           previewOpen,
         },
       });
+      if (command === "window.reload") {
+        event.preventDefault();
+        event.stopPropagation();
+        void reloadWindow();
+        return;
+      }
       if (command === "themeEditor.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -468,7 +510,16 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, previewOpen, resolvedTheme, terminalOpen, theme, themeHalves, toggleMode]);
+  }, [
+    keybindings,
+    previewOpen,
+    reloadWindow,
+    resolvedTheme,
+    terminalOpen,
+    theme,
+    themeHalves,
+    toggleMode,
+  ]);
 
   useEffect(
     () =>
@@ -504,6 +555,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           setOpen={setOpen}
           openOverlayMode={toggleMode}
           clearOpenIntent={clearOpenIntent}
+          reloadWindow={reloadWindow}
         />
       </CommandDialog>
     </ComposerHandleContext>
@@ -516,6 +568,7 @@ function CommandPaletteDialog(props: {
   readonly setOpen: (open: boolean) => void;
   readonly openOverlayMode: (mode: SearchOverlayMode) => void;
   readonly clearOpenIntent: () => void;
+  readonly reloadWindow: () => Promise<void>;
 }) {
   const composerHandleRef = useComposerHandleContext();
 
@@ -550,6 +603,7 @@ function CommandPaletteDialog(props: {
           setOpen={props.setOpen}
           openOverlayMode={props.openOverlayMode}
           clearOpenIntent={props.clearOpenIntent}
+          reloadWindow={props.reloadWindow}
         />
       )}
     </CommandDialogPopup>
@@ -561,9 +615,10 @@ function OpenCommandPaletteDialog(props: {
   readonly setOpen: (open: boolean) => void;
   readonly openOverlayMode: (mode: SearchOverlayMode) => void;
   readonly clearOpenIntent: () => void;
+  readonly reloadWindow: () => Promise<void>;
 }) {
   const navigate = useNavigate();
-  const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
+  const { clearOpenIntent, openIntent, openOverlayMode, reloadWindow, setOpen } = props;
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
@@ -1610,6 +1665,17 @@ function OpenCommandPaletteDialog(props: {
         initialAppearance: resolvedTheme,
       });
     },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:reload-window",
+    searchTerms: ["reload window", "refresh", "providers", "plugins", "skills"],
+    title: "Reload Window",
+    description: "Refresh providers and reload the app",
+    icon: <RefreshCwIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "window.reload",
+    run: reloadWindow,
   });
 
   actionItems.push({

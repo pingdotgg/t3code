@@ -52,6 +52,10 @@ successful pick; its hover glow and badge preview the element and color family t
 `rightPanel.toggleMaximized` maximizes or restores the open right panel. It has no default shortcut,
 so add one in **Settings** → **Keybindings** if you want to use it.
 
+`window.reload` refreshes provider metadata in every connected environment, then reloads the app.
+Use **Reload Window** from the command palette, or assign it a shortcut in **Settings** →
+**Keybindings**. It has no default shortcut.
+
 `thread.settle` settles the active thread or restores it when it is already settled. Its default
 shortcut is `mod+shift+s`, and it does not run while the terminal has focus.
 
