@@ -1551,6 +1551,7 @@ function ChatViewContent(props: ChatViewProps) {
   // stale pending provider callback, `runtime.error`) can restore the text to
   // the composer instead of losing it. See `deriveTurnFailureRecoveryAction`.
   const pendingSendRecoveryRef = useRef<{
+    environmentId: EnvironmentId;
     threadId: ThreadId;
     prompt: string;
     images: ComposerImageAttachment[];
@@ -5613,7 +5614,15 @@ function ChatViewContent(props: ChatViewProps) {
   // composer instead of losing the text.
   useEffect(() => {
     const pending = pendingSendRecoveryRef.current;
-    if (!pending || !activeServerThread || activeServerThread.id !== pending.threadId) {
+    if (
+      !pending ||
+      !activeServerThread ||
+      // Thread ids are only unique within an environment, so scope the guard by
+      // environment too: otherwise the same id in another environment would
+      // restore this send's content into a different thread's composer.
+      activeServerThread.environmentId !== pending.environmentId ||
+      activeServerThread.id !== pending.threadId
+    ) {
       return;
     }
     const session = activeServerThread.session ?? null;
@@ -6321,6 +6330,7 @@ function ChatViewContent(props: ChatViewProps) {
         // state already arrived while these RPCs were in flight (a ref write
         // alone would not re-run the effect).
         pendingSendRecoveryRef.current = {
+          environmentId: activeThread.environmentId,
           threadId: threadIdForSend,
           prompt: promptForSend,
           images: composerImagesSnapshot,
