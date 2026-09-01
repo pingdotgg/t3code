@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFontDatabase>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -240,8 +241,14 @@ QColor ThemeStore::color(const QString& role, const QColor& fallback) const {
 namespace {
 
 // The page publishes CSS font-family lists; QML wants one family and falls
-// back on its own, so take the first non-generic entry.
+// back on its own, so take the first installed non-generic entry, or the
+// first non-generic one when nothing in the list is installed.
 QString firstFontFamily(const QString& list) {
+  static const QStringList generic{QStringLiteral("system-ui"), QStringLiteral("sans-serif"),
+                                   QStringLiteral("serif"),     QStringLiteral("monospace"),
+                                   QStringLiteral("ui-sans-serif"), QStringLiteral("ui-monospace"),
+                                   QStringLiteral("-apple-system"), QStringLiteral("BlinkMacSystemFont")};
+  QStringList candidates;
   for (QString family : list.split(QLatin1Char(','))) {
     family = family.trimmed();
     if (family.startsWith(QLatin1Char('"')) || family.startsWith(QLatin1Char('\''))) {
@@ -250,15 +257,16 @@ QString firstFontFamily(const QString& list) {
     if (family.endsWith(QLatin1Char('"')) || family.endsWith(QLatin1Char('\''))) {
       family.chop(1);
     }
-    static const QStringList generic{QStringLiteral("system-ui"), QStringLiteral("sans-serif"),
-                                     QStringLiteral("serif"),     QStringLiteral("monospace"),
-                                     QStringLiteral("ui-sans-serif"), QStringLiteral("ui-monospace"),
-                                     QStringLiteral("-apple-system"), QStringLiteral("BlinkMacSystemFont")};
     if (!family.isEmpty() && !generic.contains(family)) {
+      candidates.append(family);
+    }
+  }
+  for (const QString& family : candidates) {
+    if (QFontDatabase::hasFamily(family)) {
       return family;
     }
   }
-  return QString();
+  return candidates.value(0);
 }
 
 }  // namespace
