@@ -46,16 +46,17 @@ function pullRequestSettles(
   if (pullRequest.state !== "closed" && (pullRequest.state !== "merged" || !autoSettleOnMerge)) {
     return false;
   }
-  if (pullRequest.updatedAt === null) return true;
+  if (pullRequest.updatedAt === null) return false;
   const userAnchor = latestTimestamp([
     thread.createdAt,
     thread.latestUserMessageAt,
     thread.latestTurn?.requestedAt,
   ]);
-  if (userAnchor === null) return true;
+  if (userAnchor === null) return false;
   const pullRequestAt = Date.parse(pullRequest.updatedAt);
   const userAnchorAt = Date.parse(userAnchor);
-  return Number.isNaN(pullRequestAt) || Number.isNaN(userAnchorAt) || pullRequestAt >= userAnchorAt;
+  if (Number.isNaN(pullRequestAt) || Number.isNaN(userAnchorAt)) return false;
+  return pullRequestAt >= userAnchorAt;
 }
 
 export function shouldAutoSettleThread(input: {
@@ -87,6 +88,7 @@ export function isAutoSettlementCandidate(thread: OrchestrationThreadShell, now:
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.session?.status === "starting" || thread.session?.status === "running") return false;
+  if (thread.backgroundLiveness != null) return false;
   if (threadHasQueuedTurnStart(thread, now)) return false;
   if (thread.snoozedUntil == null || Date.parse(thread.snoozedUntil) <= Date.parse(now))
     return true;

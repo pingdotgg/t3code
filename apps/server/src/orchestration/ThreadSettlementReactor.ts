@@ -54,8 +54,6 @@ export const make = Effect.gen(function* () {
     const pullRequestFor = Effect.fn("ThreadSettlementReactor.pullRequestFor")(function* (
       thread: (typeof candidates)[number],
     ) {
-      const project = projects.get(thread.projectId);
-      if (project === undefined) return null;
       if (thread.linkedPullRequest != null) {
         const linkedProject = projects.get(thread.linkedPullRequest.projectId);
         if (linkedProject === undefined) {
@@ -78,6 +76,10 @@ export const make = Effect.gen(function* () {
         return yield* lookup;
       }
       if (thread.branch === null) return null;
+      const project = projects.get(thread.projectId);
+      if (project === undefined) {
+        return yield* Effect.die(new Error("thread project not found"));
+      }
       const cwd = project.workspaceRoot;
       const key = `branch:${cwd}:${thread.branch}`;
       let lookup = lookupByKey.get(key);
@@ -111,7 +113,7 @@ export const make = Effect.gen(function* () {
             type: "thread.auto-settle",
             commandId: CommandId.make(`server:auto-settle:${thread.id}:${uuid}`),
             threadId: thread.id,
-            expectedUpdatedAt: thread.updatedAt,
+            snapshotSequence: snapshot.snapshotSequence,
           });
         }).pipe(
           Effect.catchCause((cause) =>

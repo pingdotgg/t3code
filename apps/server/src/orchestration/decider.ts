@@ -461,10 +461,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      if (
-        command.type === "thread.auto-settle" &&
-        (thread.updatedAt !== command.expectedUpdatedAt || thread.settledOverride !== null)
-      ) {
+      if (command.type === "thread.auto-settle" && thread.settledOverride !== null) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,

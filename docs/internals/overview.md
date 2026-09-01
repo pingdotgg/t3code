@@ -91,9 +91,12 @@ does not define turn end.
 Thread settlement is server-owned. Per-environment settings control PR and inactivity settlement.
 [`ThreadSettlementReactor`][settlement] checks threads at startup, when those settings change, and
 once per minute, including when no client is connected. It dispatches the guarded internal
-`thread.auto-settle` command, which uses the existing settlement event lifecycle. Clients render the
-persisted settlement state and do not derive settlement from PR or inactivity state. A committed
-`thread.settled` event also lets `ProviderCommandReactor` stop an idle provider session.
+`thread.auto-settle` command, which uses the existing settlement event lifecycle. Automatic
+settlement excludes live background work and requires a comparable PR timestamp for immediate PR
+settlement. The command also rejects any later event for its thread after the reactor's snapshot.
+Clients render the persisted settlement state and do not derive settlement from PR or inactivity
+state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle provider
+session.
 
 ## Drainable workers
 

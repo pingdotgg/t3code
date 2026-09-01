@@ -90,6 +90,13 @@ describe("shouldAutoSettleThread", () => {
     ).toBe(false);
   });
 
+  it("requires a comparable PR timestamp for immediate settlement", () => {
+    const recentThread = makeThread({ latestUserMessageAt: "2026-08-27T00:00:00.000Z" });
+    expect(decide(recentThread, { state: "closed", updatedAt: null })).toBe(false);
+    expect(decide(recentThread, { state: "merged", updatedAt: "unknown" })).toBe(false);
+    expect(decide(makeThread(), { state: "closed", updatedAt: null })).toBe(true);
+  });
+
   it("uses user request time instead of completion time as the PR anchor", () => {
     const thread = makeThread({
       latestTurn: {
@@ -109,6 +116,8 @@ describe("shouldAutoSettleThread", () => {
     expect(decide(makeThread({ snoozedUntil: "2026-08-29T00:00:00.000Z" }))).toBe(false);
     expect(decide(makeThread({ hasPendingApprovals: true }))).toBe(false);
     expect(decide(makeThread({ hasPendingUserInput: true }))).toBe(false);
+    expect(decide(makeThread({ backgroundLiveness: "working" }))).toBe(false);
+    expect(decide(makeThread({ backgroundLiveness: "monitoring" }))).toBe(false);
     expect(
       decide(
         makeThread({

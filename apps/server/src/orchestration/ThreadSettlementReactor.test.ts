@@ -315,6 +315,14 @@ describe("ThreadSettlementReactor", () => {
             branch: "skip-input",
             hasPendingUserInput: true,
           }),
+          makeThread("background-working", {
+            branch: "skip-background-working",
+            backgroundLiveness: "working",
+          }),
+          makeThread("background-monitoring", {
+            branch: "skip-background-monitoring",
+            backgroundLiveness: "monitoring",
+          }),
           makeThread("queued", {
             branch: "skip-queued",
             latestUserMessageAt: "2026-08-28T11:59:00.000Z",
@@ -351,16 +359,16 @@ describe("ThreadSettlementReactor", () => {
           const commands = yield* Ref.get(fixture.commands);
           assert.deepStrictEqual(
             commands
-              .map(({ threadId, expectedUpdatedAt }) => ({ threadId, expectedUpdatedAt }))
+              .map(({ threadId, snapshotSequence }) => ({ threadId, snapshotSequence }))
               .sort((left, right) => left.threadId.localeCompare(right.threadId)),
             [
               {
                 threadId: ThreadId.make("closed-pr"),
-                expectedUpdatedAt: "2026-08-20T00:00:00.000Z",
+                snapshotSequence: 1,
               },
               {
                 threadId: ThreadId.make("inactive"),
-                expectedUpdatedAt: "2026-08-20T00:00:00.000Z",
+                snapshotSequence: 1,
               },
             ],
           );
@@ -528,6 +536,42 @@ describe("ThreadSettlementReactor", () => {
     ),
   );
 
+  it.effect("keeps threads active when their pull request project is unavailable", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const linkedPullRequest = {
+          projectId: LINKED_PROJECT_ID,
+          repository: "owner/repository",
+          number: 10,
+          url: "https://example.test/owner/repository/pull/10",
+        } as const;
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(
+            [
+              makeThread("missing-own-project", { linkedPullRequest }),
+              makeThread("missing-branch-project", { branch: "saved-feature" }),
+            ],
+            [makeProject(LINKED_PROJECT_ID, "/workspace/linked")],
+          ),
+          pullRequestDetail: (input) =>
+            Effect.succeed(makePullRequestDetail({ ...input, state: "open" })),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+          assert.deepStrictEqual(yield* Ref.get(fixture.detailCalls), [
+            { projectId: LINKED_PROJECT_ID, repository: "owner/repository", number: 10 },
+          ]);
+          assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("deduplicates saved-branch and linked pull request lookups within a sweep", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -590,12 +634,8 @@ describe("ThreadSettlementReactor", () => {
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
-        const staleUpdatedAt = "2026-08-18T00:00:00.000Z";
         const fixture = yield* makeHarness({
-          snapshot: makeSnapshot([
-            makeThread("stale", { updatedAt: staleUpdatedAt }),
-            makeThread("next-candidate"),
-          ]),
+          snapshot: makeSnapshot([makeThread("stale"), makeThread("next-candidate")]),
           onDispatch: (command) =>
             command.threadId === ThreadId.make("stale")
               ? Effect.fail(
@@ -614,8 +654,8 @@ describe("ThreadSettlementReactor", () => {
           const firstSweep = yield* Ref.get(fixture.commands);
           assert.strictEqual(
             firstSweep.find((command) => command.threadId === ThreadId.make("stale"))
-              ?.expectedUpdatedAt,
-            staleUpdatedAt,
+              ?.snapshotSequence,
+            1,
           );
           assert.strictEqual(
             firstSweep.some((command) => command.threadId === ThreadId.make("next-candidate")),

@@ -18,6 +18,7 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
@@ -318,6 +319,91 @@ describe("OrchestrationEngine", () => {
       });
       expect(yield* engine.latestSequence).toBe(sequence);
     }).pipe(Effect.provide(makeOrchestrationLayer())),
+  );
+
+  effectIt.effect(
+    "rejects same-millisecond thread changes without blocking on unrelated threads",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(now()));
+        const engine = yield* OrchestrationEngineService;
+        const snapshots = yield* ProjectionSnapshotQuery;
+        const projectId = ProjectId.make("project-auto-settle-guard");
+        const guardedThreadId = ThreadId.make("thread-auto-settle-guarded");
+        const unrelatedThreadId = ThreadId.make("thread-auto-settle-unrelated");
+
+        yield* engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-auto-settle-guard-project"),
+          projectId,
+          title: "Project",
+          workspaceRoot: "/tmp/project-auto-settle-guard",
+          createdAt: now(),
+        });
+        for (const threadId of [guardedThreadId, unrelatedThreadId]) {
+          yield* engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`cmd-create-${threadId}`),
+            threadId,
+            projectId,
+            title: "Thread",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now(),
+          });
+        }
+
+        const beforeUpdate = yield* snapshots.getSnapshot();
+        const snapshotSequence = beforeUpdate.snapshotSequence;
+        const originalUpdatedAt = beforeUpdate.threads.find(
+          (thread) => thread.id === guardedThreadId,
+        )?.updatedAt;
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-auto-settle-guard-meta"),
+          threadId: guardedThreadId,
+          branch: "new-branch",
+        });
+        const afterUpdate = yield* snapshots.getSnapshot();
+        expect(afterUpdate.threads.find((thread) => thread.id === guardedThreadId)?.updatedAt).toBe(
+          originalUpdatedAt,
+        );
+
+        const staleError = yield* engine
+          .dispatch({
+            type: "thread.auto-settle",
+            commandId: CommandId.make("cmd-auto-settle-stale-snapshot"),
+            threadId: guardedThreadId,
+            snapshotSequence,
+          })
+          .pipe(Effect.flip);
+        expect(staleError._tag).toBe("OrchestrationCommandInvariantError");
+
+        const freshSnapshotSequence = yield* engine.latestSequence;
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-auto-settle-unrelated-meta"),
+          threadId: unrelatedThreadId,
+          title: "Unrelated update",
+        });
+        yield* engine.dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("cmd-auto-settle-after-unrelated-update"),
+          threadId: guardedThreadId,
+          snapshotSequence: freshSnapshotSequence,
+        });
+
+        const settled = yield* snapshots.getSnapshot();
+        expect(
+          settled.threads.find((thread) => thread.id === guardedThreadId)?.settledOverride,
+        ).toBe("settled");
+      }).pipe(Effect.provide(makeOrchestrationLayer())),
   );
 
   it("persists deterministic read models for repeated snapshot reads", async () => {

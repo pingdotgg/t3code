@@ -3257,16 +3257,12 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       });
       const beforeSettlement = yield* Effect.promise(() => harness.readModel());
-      const expectedUpdatedAt = beforeSettlement.threads.find(
-        (entry) => entry.id === ThreadId.make("thread-1"),
-      )?.updatedAt;
-      expect(expectedUpdatedAt).toBeDefined();
 
       yield* harness.engine.dispatch({
         type: "thread.auto-settle",
         commandId: CommandId.make("cmd-auto-settle-with-session"),
         threadId: ThreadId.make("thread-1"),
-        expectedUpdatedAt: expectedUpdatedAt!,
+        snapshotSequence: beforeSettlement.snapshotSequence,
       });
 
       yield* Deferred.await(sessionStopped);

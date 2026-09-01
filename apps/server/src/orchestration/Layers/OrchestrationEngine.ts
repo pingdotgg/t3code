@@ -169,6 +169,20 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
+        if (
+          envelope.command.type === "thread.auto-settle" &&
+          (yield* eventStore.hasEventAfter({
+            aggregateKind: "thread",
+            aggregateId: envelope.command.threadId,
+            sequenceExclusive: envelope.command.snapshotSequence,
+          }))
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: envelope.command.type,
+            detail: `thread ${envelope.command.threadId} changed before automatic settlement`,
+          });
+        }
+
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,

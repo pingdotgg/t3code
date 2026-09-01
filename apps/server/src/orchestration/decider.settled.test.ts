@@ -81,22 +81,16 @@ function makeSession(status: OrchestrationSession["status"]): OrchestrationSessi
 }
 
 it.layer(NodeServices.layer)("settled thread decider", (it) => {
-  it.effect("rejects an automatic settle after the thread changes or is pinned active", () =>
+  it.effect("rejects an automatic settle when the thread is pinned active", () =>
     Effect.gen(function* () {
       const command = {
         type: "thread.auto-settle" as const,
         commandId: CommandId.make("cmd-auto-settle"),
         threadId: ThreadId.make("thread-1"),
-        expectedUpdatedAt: "2025-12-31T00:00:00.000Z",
+        snapshotSequence: 0,
       };
-      const stale = yield* decideOrchestrationCommand({
-        command,
-        readModel: makeReadModel(null),
-      }).pipe(Effect.flip);
-      expect(stale._tag).toBe("OrchestrationCommandInvariantError");
-
       const pinnedActive = yield* decideOrchestrationCommand({
-        command: { ...command, expectedUpdatedAt: NOW },
+        command,
         readModel: makeReadModel("active"),
       }).pipe(Effect.flip);
       expect(pinnedActive._tag).toBe("OrchestrationCommandInvariantError");
