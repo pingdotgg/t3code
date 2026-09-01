@@ -1,10 +1,14 @@
 import { ExternalLinkIcon, PaperclipIcon, PlayIcon } from "lucide-react";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { createContext, useContext, useMemo } from "react";
+import type { Options as ReactMarkdownOptions } from "react-markdown";
 
 import { cn } from "~/lib/utils";
 
 import ChatMarkdown from "../ChatMarkdown";
-import { splitPullRequestBody } from "./pullRequestMarkdown.logic";
+import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
+
+export const PullRequestMarkdownContext = createContext<string | null>(null);
 
 /**
  * A pull request body, rendered with the app's markdown renderer plus a card for each upload
@@ -27,6 +31,11 @@ export function PullRequestMarkdown({
   className?: string;
 }) {
   const segments = splitPullRequestBody(text);
+  const repositoryUrl = useContext(PullRequestMarkdownContext);
+  const extraRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
+    () => (repositoryUrl ? [[remarkPullRequestAutolinks, { repositoryUrl }]] : []),
+    [repositoryUrl],
+  );
   return (
     <div className={cn("space-y-3", className)}>
       {segments.map((segment) => {
@@ -37,6 +46,7 @@ export function PullRequestMarkdown({
               text={segment.text}
               cwd={cwd}
               environmentId={environmentId}
+              extraRemarkPlugins={extraRemarkPlugins}
             />
           );
         }
