@@ -33,6 +33,10 @@ Selecting Stable or Nightly clears the custom source. A source-code branch is no
 update feed by itself. Its automation must publish the desktop manifests and installers as GitHub
 Release assets, then Custom can follow that repository.
 
+On macOS, keep the application name supplied by its disk image. Renaming the `.app` bundle breaks
+the native updater's replacement target. T3 Code detects that mismatch before shutdown and keeps
+the app open with recovery instructions.
+
 ## Choose the Action You See
 
 | Action                     | What to do                                                                                                                                                                  |

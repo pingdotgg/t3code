@@ -22,6 +22,7 @@ export interface MakeDesktopEnvironmentInput {
   readonly platform: NodeJS.Platform;
   readonly processArch: string;
   readonly appVersion: string;
+  readonly appName?: string;
   readonly appPath: string;
   readonly isPackaged: boolean;
   readonly resourcesPath: string;
@@ -100,13 +101,19 @@ function resolveDesktopAppStageLabel(input: {
 
 function resolveDesktopAppBranding(input: {
   readonly isDevelopment: boolean;
+  readonly isPackaged: boolean;
   readonly appVersion: string;
+  readonly appName?: string;
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
+  const packagedDisplayName = input.appName?.trim();
   return {
     baseName: APP_BASE_NAME,
     stageLabel,
-    displayName: `${APP_BASE_NAME} (${stageLabel})`,
+    displayName:
+      input.isPackaged && packagedDisplayName
+        ? packagedDisplayName
+        : `${APP_BASE_NAME} (${stageLabel})`,
   };
 }
 
@@ -169,7 +176,9 @@ const make = Effect.fn("desktop.environment.make")(function* (
       : appRoot;
   const branding = resolveDesktopAppBranding({
     isDevelopment,
+    isPackaged: input.isPackaged,
     appVersion: input.appVersion,
+    ...(input.appName === undefined ? {} : { appName: input.appName }),
   });
   const displayName = branding.displayName;
   const stateDir = resolveDesktopStateDir({

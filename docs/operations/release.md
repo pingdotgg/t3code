@@ -225,6 +225,14 @@ The custom repository must publish the same platform artifact names and updater 
 standard release workflow. The updater does not verify that a custom repository is maintained by
 T3 Tools, so this setting should only be used with a release source you control.
 
+Downstream builds that coexist with an upstream installation must set
+`T3CODE_DESKTOP_DISTRIBUTION` while building every artifact. For example, `Fork` produces the
+product name `T3 Code (Fork Nightly)`, bundle ID `com.t3tools.t3code.fork`, and package/updater
+cache name `t3code-fork`. Keep the distribution value stable across releases and install the first
+downstream build manually. Do not rename the `.app` bundle after installing it. The desktop checks
+that its packaged product name matches its bundle path before it stops backends or asks the native
+updater to quit.
+
 - Required release assets for updater:
   - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
   - channel metadata: `latest*.yml` for stable releases, `nightly*.yml` for nightly releases

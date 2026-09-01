@@ -35,6 +35,22 @@ const makeEnvironment = (
   DesktopEnvironment.DesktopEnvironment.pipe(Effect.provide(makeEnvironmentLayer(overrides, env)));
 
 describe("DesktopEnvironment", () => {
+  it.effect("uses the packaged product name as the updater-safe display name", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        isPackaged: true,
+        appVersion: "0.0.38-nightly.20260901.1",
+        appName: "T3 Code (Fork Nightly)",
+        appPath: "/Applications/T3 Code (Fork Nightly).app/Contents/Resources/app.asar",
+        resourcesPath: "/Applications/T3 Code (Fork Nightly).app/Contents/Resources",
+      });
+
+      assert.equal(environment.displayName, "T3 Code (Fork Nightly)");
+      assert.equal(environment.branding.displayName, "T3 Code (Fork Nightly)");
+      assert.equal(environment.branding.stageLabel, "Nightly");
+    }),
+  );
+
   it.effect("derives state paths and development identity inside Effect", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(

@@ -33,12 +33,16 @@ interface UpdatesHarnessOptions {
   readonly stopBackend?: Effect.Effect<void>;
   readonly env?: Record<string, string | undefined>;
   readonly updateRepository?: string | null;
+  readonly appPath?: string;
 }
 
 const flushCallbacks = Effect.yieldNow;
 
 function makeHarness(options: UpdatesHarnessOptions = {}) {
   let checkCount = 0;
+  let destroyWindowCount = 0;
+  let quitAndInstallCount = 0;
+  let stopBackendCount = 0;
   let allowDowngrade = false;
   let fullChangelog = false;
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
@@ -85,7 +89,10 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       checkCount += 1;
     }).pipe(Effect.andThen(options.checkForUpdates ?? Effect.void)),
     downloadUpdate: Effect.void,
-    quitAndInstall: () => Effect.void,
+    quitAndInstall: () =>
+      Effect.sync(() => {
+        quitAndInstallCount += 1;
+      }),
     on: (eventName, listener) =>
       Effect.acquireRelease(
         Effect.sync(() => {
@@ -110,7 +117,9 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       Effect.sync(() => {
         sentStates.push(state as DesktopUpdateState);
       }),
-    destroyAll: Effect.void,
+    destroyAll: Effect.sync(() => {
+      destroyWindowCount += 1;
+    }),
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindow["Service"]);
 
@@ -118,7 +127,10 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
     label: Effect.succeed("Windows"),
     start: Effect.void,
-    stop: () => options.stopBackend ?? Effect.void,
+    stop: () =>
+      Effect.sync(() => {
+        stopBackendCount += 1;
+      }).pipe(Effect.andThen(options.stopBackend ?? Effect.void)),
     currentConfig: Effect.succeed(Option.none()),
     snapshot: Effect.succeed({
       desiredRunning: false,
@@ -137,7 +149,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     platform: "darwin",
     processArch: "x64",
     appVersion: "1.2.3",
-    appPath: "/repo",
+    appPath: options.appPath ?? "/repo",
     isPackaged: true,
     resourcesPath: "/missing/resources",
     runningUnderArm64Translation: false,
@@ -240,8 +252,11 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   return {
     layer,
     checkCount: () => checkCount,
+    destroyWindowCount: () => destroyWindowCount,
     feedUrls: () => feedUrls,
     fullChangelog: () => fullChangelog,
+    quitAndInstallCount: () => quitAndInstallCount,
+    stopBackendCount: () => stopBackendCount,
     listenerCount: () =>
       Array.from(listeners.values()).reduce(
         (total, eventListeners) => total + eventListeners.size,
@@ -639,6 +654,62 @@ describe("DesktopUpdates", () => {
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),
   );
+
+  it.effect("leaves window closure to the updater after shutdown is ready", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+
+        assert.isTrue(result.accepted);
+        assert.equal(harness.stopBackendCount(), 1);
+        assert.equal(harness.destroyWindowCount(), 0);
+        assert.equal(harness.quitAndInstallCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("keeps the app open when its macOS bundle was renamed", () => {
+    const harness = makeHarness({
+      appPath: "/Applications/T3 Code (Fork Nightly).app/Contents/Resources/app.asar",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const desktopState = yield* DesktopState.DesktopState;
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+
+        assert.isTrue(result.accepted);
+        assert.isFalse(result.completed);
+        assert.isFalse(yield* Ref.get(desktopState.quitting));
+        assert.equal(harness.stopBackendCount(), 0);
+        assert.equal(harness.destroyWindowCount(), 0);
+        assert.equal(harness.quitAndInstallCount(), 0);
+
+        const state = yield* updates.getState;
+        assert.equal(state.status, "downloaded");
+        assert.equal(state.errorContext, "install");
+        assert.equal(
+          state.message,
+          "This copy of T3 Code was renamed after installation. Reinstall it using the app name provided by its disk image before updating.",
+        );
+
+        const changedState = yield* updates.setChannel("nightly");
+        assert.equal(changedState.channel, "nightly");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
 
   it.effect("keeps raw updater event failures out of update state", () => {
     const harness = makeHarness();

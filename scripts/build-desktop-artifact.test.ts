@@ -28,6 +28,7 @@ import {
   MAC_FILE_EXCLUSIONS,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
+  InvalidDesktopDistributionError,
   InvalidMockUpdateServerPortError,
   UnsupportedDesktopBuildArchitectureError,
   isMacPasskeySigningConfigurationError,
@@ -43,6 +44,7 @@ import {
   resolveFffNativeDependencies,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
+  resolveDesktopBuildIdentity,
   resolveDesktopProductName,
   resolveDesktopUpdateChannel,
   resolveDesktopWebAssetBrand,
@@ -253,6 +255,54 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopProductName("0.0.17"), "T3 Code (Alpha)");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
   });
+
+  it.effect("derives an isolated identity for a downstream Nightly distribution", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(
+        yield* resolveDesktopBuildIdentity("0.0.17-nightly.20260413.42", " Fork "),
+        {
+          appId: "com.t3tools.t3code.fork",
+          packageName: "t3code-fork",
+          productName: "T3 Code (Fork Nightly)",
+        },
+      );
+    }),
+  );
+
+  it.effect("rejects unsafe downstream distribution names", () =>
+    Effect.gen(function* () {
+      const error = yield* resolveDesktopBuildIdentity(
+        "0.0.17-nightly.20260413.42",
+        "Fork/Nightly",
+      ).pipe(Effect.flip);
+
+      assert.instanceOf(error, InvalidDesktopDistributionError);
+    }),
+  );
+
+  it.effect("applies a downstream identity to macOS packaging metadata", () =>
+    Effect.gen(function* () {
+      const identity = yield* resolveDesktopBuildIdentity("0.0.17-nightly.20260413.42", "Fork");
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.17-nightly.20260413.42",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        identity,
+      );
+
+      assert.equal(config.appId, "com.t3tools.t3code.fork");
+      assert.equal(config.productName, "T3 Code (Fork Nightly)");
+      assert.equal(
+        (config.dmg as { readonly title: string }).title,
+        "T3 Code (Fork Nightly) 0.0.17-nightly.20260413.42 Installer",
+      );
+    }),
+  );
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {

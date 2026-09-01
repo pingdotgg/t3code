@@ -184,6 +184,27 @@ export class DesktopUpdateUnexpectedActionError extends Schema.TaggedErrorClass<
   }
 }
 
+export class DesktopUpdateRenamedMacAppError extends Schema.TaggedErrorClass<DesktopUpdateRenamedMacAppError>()(
+  "DesktopUpdateRenamedMacAppError",
+  {
+    expectedBundleName: Schema.String,
+    actualBundleName: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "This copy of T3 Code was renamed after installation. Reinstall it using the app name provided by its disk image before updating.";
+  }
+}
+
+export function resolveMacAppBundleName(appPath: string): string | null {
+  const marker = ".app/Contents/";
+  const markerIndex = appPath.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const bundlePath = appPath.slice(0, markerIndex + ".app".length);
+  const separatorIndex = Math.max(bundlePath.lastIndexOf("/"), bundlePath.lastIndexOf("\\"));
+  return bundlePath.slice(separatorIndex + 1, -".app".length);
+}
+
 export type DesktopUpdateConfigureError = never;
 
 export const DesktopUpdateSetChannelError = Schema.Union([
@@ -578,6 +599,26 @@ export const make = Effect.gen(function* () {
       return { accepted: false, completed: false };
     }
 
+    if (environment.platform === "darwin" && environment.isPackaged) {
+      const actualBundleName = resolveMacAppBundleName(environment.appPath);
+      if (actualBundleName !== null && actualBundleName !== environment.displayName) {
+        const error = new DesktopUpdateRenamedMacAppError({
+          expectedBundleName: environment.displayName,
+          actualBundleName,
+        });
+        yield* updateState((current) =>
+          reduceDesktopUpdateStateOnInstallFailure(current, error.message),
+        );
+        yield* logUpdaterError(error.message, {
+          errorTag: error._tag,
+          expectedBundleName: error.expectedBundleName,
+          actualBundleName: error.actualBundleName,
+        });
+        yield* finishUpdateAction("install");
+        return { accepted: true, completed: false };
+      }
+    }
+
     yield* Ref.set(desktopState.quitting, true);
 
     return yield* Effect.gen(function* () {
@@ -594,7 +635,6 @@ export const make = Effect.gen(function* () {
         (instance) => instance.stop({ timeout: Duration.seconds(5) }),
         { concurrency: "unbounded" },
       );
-      yield* electronWindow.destroyAll;
       yield* electronUpdater.quitAndInstall({
         isSilent: true,
         isForceRunAfter: true,

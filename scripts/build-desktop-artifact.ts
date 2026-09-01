@@ -267,6 +267,17 @@ export class InvalidMockUpdateServerPortError extends Schema.TaggedErrorClass<In
   }
 }
 
+export class InvalidDesktopDistributionError extends Schema.TaggedErrorClass<InvalidDesktopDistributionError>()(
+  "InvalidDesktopDistributionError",
+  {
+    distribution: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "Desktop distribution names must start with a letter and contain only letters, numbers, spaces, or hyphens.";
+  }
+}
+
 export class BuildCommandFailedError extends Schema.TaggedErrorClass<BuildCommandFailedError>()(
   "BuildCommandFailedError",
   {
@@ -773,10 +784,12 @@ interface ResolvedBuildOptions {
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
   readonly wslPrebuild: string | undefined;
+  readonly buildIdentity: DesktopBuildIdentity;
 }
 
 interface StagePackageJson {
   readonly name: string;
+  readonly productName: string;
   readonly version: string;
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
@@ -1053,6 +1066,7 @@ function normalizePasskeyRpDomain(value: string): string {
 
 export function resolveMacPasskeySigningConfiguration(
   env: Readonly<Record<string, string | undefined>>,
+  appId = DESKTOP_APP_ID,
 ): MacPasskeySigningConfiguration {
   const teamId = env.T3CODE_APPLE_TEAM_ID?.trim().toUpperCase() ?? "";
   if (!APPLE_TEAM_ID_PATTERN.test(teamId)) {
@@ -1088,7 +1102,7 @@ export function resolveMacPasskeySigningConfiguration(
   }
 
   return {
-    appId: DESKTOP_APP_ID,
+    appId,
     teamId,
     rpDomains: uniqueRpDomains,
     provisioningProfilePath,
@@ -1330,6 +1344,7 @@ const BuildEnvConfig = Config.all({
   // into the staged node-pty so the WSL backend ships a ready binary and never
   // compiles on the user's machine.
   wslPrebuild: Config.string("T3CODE_DESKTOP_WSL_PREBUILD").pipe(Config.option),
+  distribution: Config.string("T3CODE_DESKTOP_DISTRIBUTION").pipe(Config.option),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -1423,6 +1438,10 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
 
   const wslPrebuild =
     Option.getOrUndefined(input.wslPrebuild) ?? Option.getOrUndefined(env.wslPrebuild);
+  const buildIdentity = yield* resolveDesktopBuildIdentity(
+    version ?? desktopPackageJson.version,
+    Option.getOrUndefined(env.distribution),
+  );
 
   return {
     platform,
@@ -1437,6 +1456,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     mockUpdates,
     mockUpdateServerPort,
     wslPrebuild,
+    buildIdentity,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -2122,6 +2142,41 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
+export interface DesktopBuildIdentity {
+  readonly appId: string;
+  readonly packageName: string;
+  readonly productName: string;
+}
+
+const DESKTOP_DISTRIBUTION_PATTERN = /^[A-Za-z][A-Za-z0-9]*(?:[ -][A-Za-z0-9]+)*$/u;
+
+export const resolveDesktopBuildIdentity = Effect.fn("resolveDesktopBuildIdentity")(function* (
+  version: string,
+  distribution: string | undefined,
+) {
+  const normalizedDistribution = distribution?.trim();
+  if (!normalizedDistribution) {
+    return {
+      appId: DESKTOP_APP_ID,
+      packageName: "t3code",
+      productName: resolveDesktopProductName(version),
+    } satisfies DesktopBuildIdentity;
+  }
+  if (!DESKTOP_DISTRIBUTION_PATTERN.test(normalizedDistribution)) {
+    return yield* new InvalidDesktopDistributionError({
+      distribution: normalizedDistribution,
+    });
+  }
+
+  const distributionSlug = normalizedDistribution.toLowerCase().replaceAll(" ", "-");
+  const stageLabel = resolveDesktopUpdateChannel(version) === "nightly" ? "Nightly" : "Alpha";
+  return {
+    appId: `${DESKTOP_APP_ID}.${distributionSlug}`,
+    packageName: `t3code-${distributionSlug}`,
+    productName: `T3 Code (${normalizedDistribution} ${stageLabel})`,
+  } satisfies DesktopBuildIdentity;
+});
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -2139,10 +2194,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   // sidecar staging skips the archive in that case, and listing a resource
   // whose source file was never written fails the electron-builder step.
   wslRuntimeBundled = false,
+  configuredBuildIdentity?: DesktopBuildIdentity,
 ) {
+  const buildIdentity =
+    configuredBuildIdentity ?? (yield* resolveDesktopBuildIdentity(version, undefined));
   const buildConfig: Record<string, unknown> = {
-    appId: DESKTOP_APP_ID,
-    productName: resolveDesktopProductName(version),
+    appId: buildIdentity.appId,
+    productName: buildIdentity.productName,
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [...DESKTOP_FILE_EXCLUSIONS, ...(platform === "mac" ? MAC_FILE_EXCLUSIONS : [])],
@@ -2202,7 +2260,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // Give the themed installer its own Finder volume name. Finder caches
       // DMG window backgrounds by volume name, so reusing a generic name can
       // make a newly built background look unchanged during testing.
-      title: `${resolveDesktopProductName(version)} ${version} Installer`,
+      title: `${buildIdentity.productName} ${version} Installer`,
       background: `dmg/dmg-background-${updateChannel}.png`,
       window: {
         width: 540,
@@ -3117,7 +3175,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const configuredMacPasskeySigning =
     options.platform === "mac" && options.signed
       ? yield* Effect.try({
-          try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
+          try: () =>
+            resolveMacPasskeySigningConfiguration(
+              loadRepoEnv({ repoRoot }),
+              options.buildIdentity.appId,
+            ),
           catch: MacPasskeySigningConfigurationResolutionError.fromCause,
         })
       : undefined;
@@ -3175,7 +3237,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
   const stagePackageJson: StagePackageJson = {
-    name: "t3code",
+    name: options.buildIdentity.packageName,
+    productName: options.buildIdentity.productName,
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
@@ -3198,6 +3261,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
           }
         : undefined,
       bundlesWslRuntime({ arch: options.arch, prebuildPath: options.wslPrebuild }),
+      options.buildIdentity,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -3354,7 +3418,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   if (options.platform === "win") {
     yield* validateWindowsPackagedPayload({
       stageDistDir,
-      appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
+      appExecutableName: `${options.buildIdentity.productName}.exe`,
       targetArch: options.arch,
       expectWslRuntime: bundlesWslRuntime({
         arch: options.arch,
