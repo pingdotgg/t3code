@@ -177,6 +177,9 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "gpt-5.3-spark": "gpt-5.3-codex-spark",
   },
   [CLAUDE_DRIVER_KIND]: {
+    fable: "claude-fable-5-1",
+    "fable-5.1": "claude-fable-5-1",
+    "claude-fable-5.1": "claude-fable-5-1",
     opus: "claude-opus-5",
     "opus-5": "claude-opus-5",
     "claude-opus-5.0": "claude-opus-5",
