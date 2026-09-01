@@ -1010,7 +1010,6 @@ export default function GitActionsControl({
   // Mirrors isCommitDialogOpen so a commit that resolves after the user reopened the dialog can
   // tell "nothing to preserve" from "the user is already typing a new draft".
   const commitDialogOpenRef = useRef(false);
-  const [hasFailedCommitDraft, setHasFailedCommitDraft] = useState(false);
   const setCommitDialogOpen = (open: boolean) => {
     commitDialogOpenRef.current = open;
     setIsCommitDialogOpen(open);
@@ -1019,7 +1018,6 @@ export default function GitActionsControl({
     setDialogCommitMessage("");
     setExcludedFiles(new Set());
     setIsEditingFiles(false);
-    setHasFailedCommitDraft(false);
   };
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
@@ -1562,11 +1560,10 @@ export default function GitActionsControl({
       featureBranch: true,
       skipDefaultBranchPrompt: true,
     });
+    // A failed commit keeps the draft so reopening the dialog restores it.
     if (!committed) {
-      setHasFailedCommitDraft(true);
       return;
     }
-    setHasFailedCommitDraft(false);
     if (!commitDialogOpenRef.current) {
       discardCommitDraft();
     }
@@ -1649,10 +1646,9 @@ export default function GitActionsControl({
       void runGitActionWithToast({ action: "create_pr" });
       return;
     }
-    if (!hasFailedCommitDraft) {
-      setExcludedFiles(new Set());
-      setIsEditingFiles(false);
-    }
+    // No reset here: the draft is cleared at its discard points (manual close, repo
+    // switch, commit success). Resetting on open would race an in-flight commit and
+    // wipe the file selection a rejected hook is about to hand back.
     setCommitDialogOpen(true);
   };
 
@@ -1665,11 +1661,10 @@ export default function GitActionsControl({
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
     });
+    // A failed commit keeps the draft so reopening the dialog restores it.
     if (!committed) {
-      setHasFailedCommitDraft(true);
       return;
     }
-    setHasFailedCommitDraft(false);
     if (!commitDialogOpenRef.current) {
       discardCommitDraft();
     }
