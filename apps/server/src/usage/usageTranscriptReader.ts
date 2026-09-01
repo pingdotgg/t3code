@@ -18,7 +18,6 @@
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeReadline from "node:readline";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
 
