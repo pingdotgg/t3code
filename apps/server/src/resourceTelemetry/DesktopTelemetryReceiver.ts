@@ -19,7 +19,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
@@ -483,8 +482,8 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
           (
             value,
           ): Effect.Effect<
-            Option.Option<DesktopHostTelemetryMessageValue>,
-            DesktopTelemetryProtocolMismatch
+            DesktopHostTelemetryMessageValue,
+            DesktopTelemetryProtocolMismatch | DesktopTelemetryDecodeFailed
           > => {
             const version = messageVersion(value);
             if (version !== undefined && version !== 1) {
@@ -495,24 +494,10 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
                 }),
               );
             }
-            // An undecodable line is logged and skipped instead of failing
-            // the stream: failing would stop desktop telemetry for the
-            // whole process lifetime over one unknown message shape.
             return decodeMessage(value).pipe(
-              Effect.map(Option.some),
-              Effect.catchCause((cause) =>
-                Effect.logWarning("Skipping undecodable desktop telemetry message", {
-                  cause: String(cause),
-                }).pipe(Effect.as(Option.none<DesktopHostTelemetryMessageValue>())),
-              ),
+              Effect.mapError((cause) => new DesktopTelemetryDecodeFailed({ cause })),
             );
           },
-        ),
-        Stream.filterMap(
-          Option.match({
-            onNone: () => Result.failVoid,
-            onSome: Result.succeed,
-          }),
         ),
         Stream.mapError(normalizeReceiverError),
       );

@@ -30,6 +30,16 @@ export interface RemoteDesktopUpdateAttempts {
 export const MAX_REMOTE_UPDATE_CHECKS = 2;
 export const MAX_REMOTE_UPDATE_DOWNLOADS = 3;
 
+/** Same predicate DesktopUpdates.installDownloadedUpdate uses for admission. */
+export function isInstallableDesktopUpdateState(state: DesktopUpdateState): boolean {
+  return (
+    state.downloadedVersion !== null &&
+    (state.status === "downloaded" ||
+      (state.status === "error" &&
+        (state.errorContext === null || state.errorContext === "install")))
+  );
+}
+
 export function nextRemoteDesktopUpdateStep(
   state: DesktopUpdateState,
   attempts: RemoteDesktopUpdateAttempts,
@@ -42,11 +52,12 @@ export function nextRemoteDesktopUpdateStep(
       reason: disabledReason ?? "Automatic updates are disabled on this machine.",
     };
   }
-  // Only "downloaded" is installable: installDownloadedUpdate rejects any
-  // other status. A leftover downloadedVersion on an "error" state (e.g. a
-  // background updater error) must fall through to the error branch instead
-  // of reporting an install that the updater will refuse.
-  if (state.status === "downloaded") {
+  // Mirror installDownloadedUpdate's own admission rule exactly, so the run
+  // never reports an install that the updater then refuses. A download
+  // survives an unrelated background updater error (errorContext null) and
+  // a previous failed install (errorContext "install"); it does not survive
+  // a check or download error, which fall through to the error branch.
+  if (isInstallableDesktopUpdateState(state)) {
     return { action: "install" };
   }
   if (state.status === "downloading" || state.status === "checking") {

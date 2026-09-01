@@ -70,13 +70,28 @@ describe("nextRemoteDesktopUpdateStep", () => {
       ),
       { action: "install" },
     );
-    // A leftover downloadedVersion on an error state (background updater
-    // error) must not report an install the updater refuses: fresh runs
-    // re-check, and post-check it fails.
+    // A download survives an unrelated background updater error, so a run
+    // installs it instead of replaying that error.
+    assert.deepEqual(
+      nextRemoteDesktopUpdateStep(
+        makeState({
+          status: "error",
+          downloadedVersion: "1.2.4",
+          errorContext: null,
+          message: "background updater error",
+        }),
+        NO_ATTEMPTS,
+        null,
+      ),
+      { action: "install" },
+    );
+    // A leftover download behind a check error is not installable: fresh
+    // runs re-check, and post-check the error is terminal.
     const staleError = makeState({
       status: "error",
       downloadedVersion: "1.2.4",
-      message: "background updater error",
+      errorContext: "check",
+      message: "feed unreachable",
     });
     assert.deepEqual(nextRemoteDesktopUpdateStep(staleError, NO_ATTEMPTS, null), {
       action: "check",
@@ -84,7 +99,7 @@ describe("nextRemoteDesktopUpdateStep", () => {
     assert.deepEqual(nextRemoteDesktopUpdateStep(staleError, { checks: 1, downloads: 0 }, null), {
       action: "done",
       outcome: "failed",
-      reason: "background updater error",
+      reason: "feed unreachable",
     });
   });
 
