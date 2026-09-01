@@ -203,12 +203,16 @@ export function readEnvironmentSupportsSnooze(environmentId: EnvironmentId): boo
 }
 
 /** Whether the server persists thread.view / thread.mark-unread. False on
-    older servers, where clients keep view state in local storage. */
-export function readEnvironmentSupportsViewState(environmentId: EnvironmentId): boolean {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadViewState === true
-  );
+    older servers, where clients keep view state in local storage, and
+    undefined until the environment's config has loaded so callers can wait
+    instead of misfiling a server-bound write locally. */
+export function readEnvironmentSupportsViewState(
+  environmentId: EnvironmentId,
+): boolean | undefined {
+  const serverConfig = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
+  return serverConfig === undefined
+    ? undefined
+    : serverConfig.environment.capabilities.threadViewState === true;
 }
 
 /** Whether the environment's server understands thread.pin/unpin.

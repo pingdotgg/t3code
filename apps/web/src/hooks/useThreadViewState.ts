@@ -24,7 +24,11 @@ export function useThreadViewState() {
   // a completion that lands while the thread is open still shows as unread.
   const markViewed = useCallback(
     (threadRef: ScopedThreadRef, viewedThrough: string) => {
-      if (!readEnvironmentSupportsViewState(threadRef.environmentId)) {
+      const supported = readEnvironmentSupportsViewState(threadRef.environmentId);
+      // Config still loading: drop the write rather than misfile a server
+      // ack in local storage. ChatView re-acks once the config lands.
+      if (supported === undefined) return;
+      if (!supported) {
         markThreadVisited(scopedThreadKey(threadRef), viewedThrough);
         return;
       }
@@ -45,7 +49,9 @@ export function useThreadViewState() {
 
   const markUnread = useCallback(
     (threadRef: ScopedThreadRef, latestTurnCompletedAt: string | null | undefined) => {
-      if (!readEnvironmentSupportsViewState(threadRef.environmentId)) {
+      const supported = readEnvironmentSupportsViewState(threadRef.environmentId);
+      if (supported === undefined) return;
+      if (!supported) {
         markThreadUnread(scopedThreadKey(threadRef), latestTurnCompletedAt);
         return;
       }
