@@ -1,4 +1,4 @@
-import { CommandId, type GitManagerServiceError } from "@t3tools/contracts";
+import { CommandId } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -43,84 +43,94 @@ export const make = Effect.gen(function* () {
     const now = DateTime.formatIso(yield* DateTime.now);
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
     const candidates = snapshot.threads.filter((thread) => isAutoSettlementCandidate(thread, now));
-    const lookupByKey = new Map<
-      string,
-      Effect.Effect<
-        SettlementPullRequest | null,
-        GitManagerServiceError | PullRequestService.PullRequestError
-      >
-    >();
+    const lookupKey = (thread: (typeof candidates)[number]) => {
+      if (thread.linkedPullRequest != null) {
+        return JSON.stringify([
+          "linked",
+          thread.linkedPullRequest.projectId,
+          thread.linkedPullRequest.repository,
+          thread.linkedPullRequest.number,
+        ]);
+      }
+      if (thread.branch === null) return JSON.stringify(["none", thread.id]);
+      const project = projects.get(thread.projectId);
+      return JSON.stringify(
+        project === undefined
+          ? ["missing-project", thread.id]
+          : ["branch", project.workspaceRoot, thread.branch],
+      );
+    };
+    const groups = Map.groupBy(candidates, lookupKey);
 
     const pullRequestFor = Effect.fn("ThreadSettlementReactor.pullRequestFor")(function* (
       thread: (typeof candidates)[number],
     ) {
       if (thread.linkedPullRequest != null) {
-        const linkedProject = projects.get(thread.linkedPullRequest.projectId);
-        if (linkedProject === undefined) {
+        if (!projects.has(thread.linkedPullRequest.projectId)) {
           return yield* Effect.die(new Error("linked pull request project not found"));
         }
-        const key = `linked:${thread.linkedPullRequest.projectId}:${thread.linkedPullRequest.repository}:${thread.linkedPullRequest.number}`;
-        let lookup = lookupByKey.get(key);
-        if (lookup === undefined) {
-          lookup = yield* Effect.cached(
-            pullRequests
-              .detail({
-                projectId: thread.linkedPullRequest.projectId,
-                repository: thread.linkedPullRequest.repository,
-                number: thread.linkedPullRequest.number,
-              })
-              .pipe(Effect.map((detail) => ({ state: detail.state, updatedAt: detail.updatedAt }))),
-          );
-          lookupByKey.set(key, lookup);
-        }
-        return yield* lookup;
+        const detail = yield* pullRequests.detail({
+          projectId: thread.linkedPullRequest.projectId,
+          repository: thread.linkedPullRequest.repository,
+          number: thread.linkedPullRequest.number,
+        });
+        return { state: detail.state, updatedAt: detail.updatedAt } satisfies SettlementPullRequest;
       }
       if (thread.branch === null) return null;
       const project = projects.get(thread.projectId);
       if (project === undefined) {
         return yield* Effect.die(new Error("thread project not found"));
       }
-      const cwd = project.workspaceRoot;
-      const key = `branch:${cwd}:${thread.branch}`;
-      let lookup = lookupByKey.get(key);
-      if (lookup === undefined) {
-        lookup = yield* Effect.cached(git.branchPullRequest({ cwd, branch: thread.branch }));
-        lookupByKey.set(key, lookup);
-      }
-      return yield* lookup;
+      return yield* git.branchPullRequest({ cwd: project.workspaceRoot, branch: thread.branch });
     });
 
     yield* Effect.forEach(
-      candidates,
-      (thread) =>
+      groups.values(),
+      (group) =>
         Effect.gen(function* () {
-          const pullRequest = yield* pullRequestFor(thread);
-          const settings = yield* settingsService.getSettings;
-          const decisionNow = DateTime.formatIso(yield* DateTime.now);
-          if (
-            !shouldAutoSettleThread({
-              thread,
-              pullRequest,
-              now: decisionNow,
-              autoSettleAfterDays: settings.sidebarAutoSettleAfterDays,
-              autoSettleOnMerge: settings.sidebarAutoSettleOnMerge,
-            })
-          ) {
-            return;
-          }
-          const uuid = yield* crypto.randomUUIDv4;
-          yield* engine.dispatch({
-            type: "thread.auto-settle",
-            commandId: CommandId.make(`server:auto-settle:${thread.id}:${uuid}`),
-            threadId: thread.id,
-            snapshotSequence: snapshot.snapshotSequence,
-          });
+          const pullRequest = yield* pullRequestFor(group[0]!);
+          yield* Effect.forEach(
+            group,
+            (thread) =>
+              Effect.gen(function* () {
+                const settings = yield* settingsService.getSettings;
+                const decisionNow = DateTime.formatIso(yield* DateTime.now);
+                if (
+                  !shouldAutoSettleThread({
+                    thread,
+                    pullRequest,
+                    now: decisionNow,
+                    autoSettleAfterDays: settings.sidebarAutoSettleAfterDays,
+                    autoSettleOnMerge: settings.sidebarAutoSettleOnMerge,
+                  })
+                ) {
+                  return;
+                }
+                const uuid = yield* crypto.randomUUIDv4;
+                yield* engine.dispatch({
+                  type: "thread.auto-settle",
+                  commandId: CommandId.make(`server:auto-settle:${thread.id}:${uuid}`),
+                  threadId: thread.id,
+                  snapshotSequence: snapshot.snapshotSequence,
+                });
+              }).pipe(
+                Effect.catchCause((cause) =>
+                  Cause.hasInterruptsOnly(cause)
+                    ? Effect.failCause(cause)
+                    : Effect.logWarning("automatic thread settlement skipped", {
+                        threadId: thread.id,
+                        cause: Cause.pretty(cause),
+                      }),
+                ),
+              ),
+            { discard: true },
+          );
         }).pipe(
           Effect.catchCause((cause) =>
             Cause.hasInterruptsOnly(cause)
               ? Effect.failCause(cause)
               : Effect.logWarning("automatic thread settlement skipped", {
-                  threadId: thread.id,
+                  threadIds: group.map((thread) => thread.id),
                   cause: Cause.pretty(cause),
                 }),
           ),

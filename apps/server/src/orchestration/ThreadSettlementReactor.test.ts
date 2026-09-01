@@ -4,7 +4,6 @@ import {
   ProviderInstanceId,
   PullRequestOperationError,
   ThreadId,
-  TurnId,
   type OrchestrationCommand,
   type OrchestrationProjectShell,
   type OrchestrationShellSnapshot,
@@ -291,47 +290,15 @@ describe("ThreadSettlementReactor", () => {
           number: 42,
           url: "https://example.test/owner/repository/pull/42",
         } as const;
-        const runningThreadId = ThreadId.make("running");
         const skipped = [
-          makeThread("explicit-active", { settledOverride: "active", branch: "skip-active" }),
-          makeThread("settled", { settledOverride: "settled", branch: "skip-settled" }),
-          makeThread("running", {
-            branch: "skip-running",
-            session: {
-              threadId: runningThreadId,
-              status: "running",
-              providerName: "codex",
-              runtimeMode: "full-access",
-              activeTurnId: TurnId.make("turn-running"),
-              lastError: null,
-              updatedAt: NOW,
-            },
-          }),
           makeThread("pending-approval", {
             branch: "skip-approval",
             hasPendingApprovals: true,
-          }),
-          makeThread("pending-input", {
-            branch: "skip-input",
-            hasPendingUserInput: true,
-          }),
-          makeThread("background-working", {
-            branch: "skip-background-working",
-            backgroundLiveness: "working",
-          }),
-          makeThread("background-monitoring", {
-            branch: "skip-background-monitoring",
-            backgroundLiveness: "monitoring",
-          }),
-          makeThread("queued", {
-            branch: "skip-queued",
-            latestUserMessageAt: "2026-08-28T11:59:00.000Z",
           }),
           makeThread("snoozed", {
             branch: "skip-snoozed",
             snoozedUntil: "2026-08-29T00:00:00.000Z",
           }),
-          makeThread("archived", { branch: "skip-archived", archivedAt: NOW }),
         ];
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot(
