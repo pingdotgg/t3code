@@ -173,17 +173,23 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
 
-      const checkProvider = modelManifest.refresh.pipe(
-        Effect.flatMap((manifest) =>
-          checkClaudeProviderStatus(
-            effectiveConfig,
-            () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
-            processEnv,
-            cwd,
-            resolveClaudeModelCatalog(manifest),
+      // Start the TTL-gated refresh without delaying provider readiness. The
+      // next check observes a remote manifest after the background fetch lands.
+      const checkProvider = modelManifest.refreshInBackground.pipe(
+        Effect.andThen(
+          modelManifest.current.pipe(
+            Effect.flatMap((manifest) =>
+              checkClaudeProviderStatus(
+                effectiveConfig,
+                () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
+                processEnv,
+                cwd,
+                resolveClaudeModelCatalog(manifest),
+              ),
+            ),
+            Effect.map(stampIdentity),
           ),
         ),
-        Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),

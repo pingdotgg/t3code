@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 
+import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import type { ModelManifestData } from "./ModelManifest.ts";
 import {
   formatClaudeVersionUpgradeMessage,
@@ -78,8 +79,31 @@ describe("Claude model catalog", () => {
   });
 
   it("resolves aliases and declarative adapter mappings", () => {
-    const catalog = resolveClaudeModelCatalog(manifest());
+    const base = manifest();
+    const input: ModelManifestData = {
+      ...base,
+      providers: {
+        ...base.providers,
+        claudeAgent: {
+          ...base.providers!.claudeAgent!,
+          models: [
+            {
+              slug: "claude-synthetic-collision",
+              name: "Claude Synthetic Collision",
+              aliases: ["claude-synthetic-next"],
+              status: "current",
+            },
+            ...base.providers!.claudeAgent!.models,
+          ],
+        },
+      },
+    };
+    const catalog = resolveClaudeModelCatalog(input);
     assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "claude-synthetic-next");
+    assert.strictEqual(
+      resolveClaudeModelSlug(catalog, "claude-synthetic-next"),
+      "claude-synthetic-next",
+    );
     assert.strictEqual(normalizeClaudeCatalogEffort(catalog, "extreme", "synthetic"), "high");
     assert.strictEqual(
       resolveClaudeCatalogApiModelId(catalog, {
@@ -88,5 +112,26 @@ describe("Claude model catalog", () => {
       }),
       "claude-synthetic-next[large]",
     );
+  });
+
+  it("rejects malformed adapter mappings", () => {
+    const base = manifest();
+    const malformed: ModelManifestData = {
+      ...base,
+      providers: {
+        ...base.providers,
+        claudeAgent: {
+          ...base.providers!.claudeAgent!,
+          profiles: {
+            ...base.providers!.claudeAgent!.profiles,
+            synthetic: {
+              ...base.providers!.claudeAgent!.profiles.synthetic!,
+              adapter: { claudeCode: { effortMap: { extreme: 123 } } },
+            },
+          },
+        },
+      },
+    };
+    assert.isFalse(hasValidClaudeManifestAdapters(malformed));
   });
 });

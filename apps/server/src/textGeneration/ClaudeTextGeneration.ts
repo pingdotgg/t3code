@@ -45,6 +45,7 @@ import {
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogEffort,
   resolveClaudeModelSlug,
+  scopeClaudeModelCatalog,
 } from "../provider/ClaudeModelCatalog.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 
@@ -68,6 +69,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+  const scopedModelCatalog = modelCatalog.pipe(
+    Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
+  );
 
   const readStreamAsString = <E>(
     operation: string,
@@ -125,7 +129,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     outputSchemaJson: S;
     modelSelection: ModelSelection;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
-    const catalog = yield* modelCatalog;
+    const catalog = yield* scopedModelCatalog;
     const resolvedModelSelection = {
       ...modelSelection,
       model: resolveClaudeModelSlug(catalog, modelSelection.model),

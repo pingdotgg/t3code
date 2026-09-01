@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderDriverKind, type ServerProviderModel } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
@@ -110,6 +111,48 @@ describe("resolveProviderCatalog", () => {
       profileAdapter: { opaque: true },
     });
   });
+
+  it("rejects invalid catalog references", () => {
+    const invalidCatalog = (input: {
+      readonly models: NonNullable<ModelManifestData["providers"]>[string]["models"];
+      readonly defaultChat?: string;
+    }): ModelManifestData => ({
+      version: 1,
+      currentModels: {},
+      providers: {
+        synthetic: {
+          ...(input.defaultChat ? { defaults: { chat: input.defaultChat } } : {}),
+          profiles: {},
+          models: input.models,
+        },
+      },
+    });
+
+    for (const invalid of [
+      invalidCatalog({
+        models: [
+          { slug: "duplicate", name: "First", status: "current" },
+          { slug: "duplicate", name: "Second", status: "current" },
+        ],
+      }),
+      invalidCatalog({
+        models: [
+          {
+            slug: "missing-profile",
+            name: "Missing Profile",
+            status: "current",
+            profile: "missing",
+          },
+        ],
+      }),
+      invalidCatalog({
+        models: [{ slug: "present", name: "Present", status: "current" }],
+        defaultChat: "absent",
+      }),
+    ]) {
+      assert.isNull(resolveProviderCatalog(invalid, ProviderDriverKind.make("synthetic")));
+    }
+  });
 });
 
 const REMOTE_MANIFEST: ModelManifestData = {
@@ -119,6 +162,80 @@ const REMOTE_MANIFEST: ModelManifestData = {
     claudeAgent: ["remote-agent-model"],
   },
 };
+
+const REMOTE_CLAUDE_MANIFEST: ModelManifestData = {
+  version: 1,
+  currentModels: {},
+  providers: {
+    claudeAgent: {
+      profiles: {
+        synthetic: {
+          adapter: { claudeCode: { effortMap: { extreme: "high" } } },
+        },
+      },
+      models: [
+        {
+          slug: "remote-only-model",
+          name: "Remote Only Model",
+          status: "current",
+          profile: "synthetic",
+        },
+      ],
+    },
+  },
+};
+
+const INVALID_REMOTE_MANIFESTS: ReadonlyArray<ModelManifestData> = [
+  {
+    ...REMOTE_CLAUDE_MANIFEST,
+    providers: {
+      claudeAgent: {
+        profiles: {
+          synthetic: {
+            adapter: { claudeCode: { effortMap: { extreme: 123 } } },
+          },
+        },
+        models: REMOTE_CLAUDE_MANIFEST.providers!.claudeAgent!.models,
+      },
+    },
+  },
+  {
+    ...REMOTE_CLAUDE_MANIFEST,
+    providers: {
+      claudeAgent: {
+        profiles: {},
+        models: REMOTE_CLAUDE_MANIFEST.providers!.claudeAgent!.models,
+      },
+    },
+  },
+  {
+    ...REMOTE_CLAUDE_MANIFEST,
+    providers: {
+      claudeAgent: {
+        profiles: REMOTE_CLAUDE_MANIFEST.providers!.claudeAgent!.profiles,
+        models: [
+          ...REMOTE_CLAUDE_MANIFEST.providers!.claudeAgent!.models,
+          {
+            slug: "remote-only-model",
+            name: "Duplicate Remote Model",
+            status: "current",
+            profile: "synthetic",
+          },
+        ],
+      },
+    },
+  },
+  {
+    ...REMOTE_CLAUDE_MANIFEST,
+    providers: {
+      claudeAgent: {
+        defaults: { chat: "absent-model" },
+        profiles: REMOTE_CLAUDE_MANIFEST.providers!.claudeAgent!.profiles,
+        models: REMOTE_CLAUDE_MANIFEST.providers!.claudeAgent!.models,
+      },
+    },
+  },
+];
 
 const httpClientLayer = (handler: () => Response) =>
   Layer.succeed(
@@ -173,6 +290,33 @@ describe("ModelManifest service", () => {
       ),
     ),
   );
+
+  it.effect("preserves the last-good remote cache when later payloads are invalid", () => {
+    let responseIndex = 0;
+    const responses = [REMOTE_CLAUDE_MANIFEST, ...INVALID_REMOTE_MANIFESTS];
+
+    return Effect.gen(function* () {
+      const service = yield* make;
+      assert.deepStrictEqual(yield* service.refresh, REMOTE_CLAUDE_MANIFEST);
+
+      for (const _invalid of INVALID_REMOTE_MANIFESTS) {
+        yield* TestClock.adjust("1 hour");
+        responseIndex += 1;
+        assert.deepStrictEqual(yield* service.refresh, REMOTE_CLAUDE_MANIFEST);
+      }
+
+      const rebooted = yield* make;
+      assert.deepStrictEqual(yield* rebooted.current, REMOTE_CLAUDE_MANIFEST);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "model-manifest-last-good-test",
+          response: () => Response.json(responses[responseIndex]),
+        }),
+      ),
+    );
+  });
 
   it.live("does not fetch when provider update checks are disabled", () =>
     Effect.gen(function* () {

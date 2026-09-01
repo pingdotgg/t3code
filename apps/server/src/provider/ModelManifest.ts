@@ -31,6 +31,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import bundledManifestJson from "./model-manifest.json" with { type: "json" };
 import type { ServerProviderDraft } from "./providerSnapshot.ts";
 
@@ -79,11 +80,37 @@ const ManifestProviderCatalog = Schema.Struct({
  * `version` gates breaking schema changes. Provider catalogs are additive so
  * clients that only understand `currentModels` keep accepting this v1 file.
  */
-const ModelManifestSchema = Schema.Struct({
+const ModelManifestEnvelopeSchema = Schema.Struct({
   version: Schema.Literal(1),
   currentModels: Schema.Record(Schema.String, Schema.Array(Schema.String)),
   providers: Schema.optional(Schema.Record(Schema.String, ManifestProviderCatalog)),
 });
+
+const hasValidProviderCatalogReferences = (
+  manifest: typeof ModelManifestEnvelopeSchema.Type,
+): boolean =>
+  Object.values(manifest.providers ?? {}).every((catalog) => {
+    const slugs = new Set<string>();
+    const modelsAreValid = catalog.models.every((model) => {
+      if (slugs.has(model.slug)) return false;
+      slugs.add(model.slug);
+      return model.profile === undefined || catalog.profiles[model.profile] !== undefined;
+    });
+    return (
+      modelsAreValid && (catalog.defaults?.chat === undefined || slugs.has(catalog.defaults.chat))
+    );
+  });
+
+const ModelManifestSchema = ModelManifestEnvelopeSchema.pipe(
+  Schema.check(
+    Schema.makeFilter(hasValidProviderCatalogReferences, {
+      expected: "unique model slugs and existing model and profile references",
+    }),
+    Schema.makeFilter(hasValidClaudeManifestAdapters, {
+      expected: "valid Claude adapter metadata",
+    }),
+  ),
+);
 export type ModelManifestData = typeof ModelManifestSchema.Type;
 
 export interface ResolvedManifestModel {
@@ -138,6 +165,8 @@ export function resolveProviderCatalog(
       profileAdapter: profile?.adapter,
     });
   }
+
+  if (catalog.defaults?.chat !== undefined && !seen.has(catalog.defaults.chat)) return null;
 
   return {
     models,

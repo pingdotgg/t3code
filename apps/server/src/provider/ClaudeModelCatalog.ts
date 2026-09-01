@@ -3,17 +3,22 @@ import {
   type ModelSelection,
   ProviderDriverKind,
   type ServerProviderModel,
-  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import {
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
+  normalizeCustomModelSlug,
 } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 
+import {
+  type ClaudeCodeCompatibility,
+  type ClaudeCodeProfile,
+  decodeClaudeModelAdapter,
+  decodeClaudeProfileAdapter,
+} from "./ClaudeModelManifest.ts";
 import {
   BUNDLED_MODEL_MANIFEST,
   type ModelManifestData,
@@ -22,36 +27,6 @@ import {
 
 const CLAUDE = ProviderDriverKind.make("claudeAgent");
 const EMPTY_CAPABILITIES: ModelCapabilities = { optionDescriptors: [] };
-
-const ClaudeCodeProfileSchema = Schema.Struct({
-  effortMap: Schema.optional(
-    Schema.Record(TrimmedNonEmptyString, Schema.NullOr(TrimmedNonEmptyString)),
-  ),
-  modelSuffixes: Schema.optional(
-    Schema.Record(
-      TrimmedNonEmptyString,
-      Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
-    ),
-  ),
-  contextWindowTokens: Schema.optional(Schema.Record(TrimmedNonEmptyString, Schema.Number)),
-  fixedContextWindowTokens: Schema.optional(Schema.Number),
-});
-
-const ClaudeProfileAdapterSchema = Schema.Struct({
-  claudeCode: Schema.optional(ClaudeCodeProfileSchema),
-});
-
-const ClaudeModelAdapterSchema = Schema.Struct({
-  claudeCode: Schema.optional(
-    Schema.Struct({
-      minVersion: Schema.optional(TrimmedNonEmptyString),
-      maxVersionExclusive: Schema.optional(TrimmedNonEmptyString),
-    }),
-  ),
-});
-
-type ClaudeCodeProfile = typeof ClaudeCodeProfileSchema.Type;
-type ClaudeCodeCompatibility = NonNullable<typeof ClaudeModelAdapterSchema.Type.claudeCode>;
 
 export interface ClaudeCatalogModel {
   readonly model: ServerProviderModel;
@@ -63,17 +38,14 @@ export interface ClaudeModelCatalog {
   readonly models: ReadonlyArray<ClaudeCatalogModel>;
 }
 
-const decodeProfileAdapter = Schema.decodeUnknownOption(ClaudeProfileAdapterSchema);
-const decodeModelAdapter = Schema.decodeUnknownOption(ClaudeModelAdapterSchema);
-
 function tryResolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeModelCatalog | null {
   const resolved = resolveProviderCatalog(manifest, CLAUDE);
   if (!resolved) return null;
 
   const models: Array<ClaudeCatalogModel> = [];
   for (const entry of resolved.models) {
-    const profile = decodeProfileAdapter(entry.profileAdapter ?? {});
-    const adapter = decodeModelAdapter(entry.adapter ?? {});
+    const profile = decodeClaudeProfileAdapter(entry.profileAdapter ?? {});
+    const adapter = decodeClaudeModelAdapter(entry.adapter ?? {});
     if (Option.isNone(profile) || Option.isNone(adapter)) return null;
     models.push({
       model: entry.model,
@@ -98,16 +70,46 @@ export function resolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeMo
 
 export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(BUNDLED_MODEL_MANIFEST);
 
+/** Keeps custom model aliases opaque while preserving canonical built-in models and capabilities. */
+export function scopeClaudeModelCatalog(
+  catalog: ClaudeModelCatalog,
+  customModels: ReadonlyArray<string>,
+): ClaudeModelCatalog {
+  const customAliases = new Set(
+    customModels.flatMap((model) => {
+      const slug = normalizeCustomModelSlug(model);
+      return slug ? [slug.toLowerCase()] : [];
+    }),
+  );
+  if (customAliases.size === 0) return catalog;
+
+  return {
+    models: catalog.models.map((entry) => {
+      if (!entry.model.aliases?.some((alias) => customAliases.has(alias.toLowerCase()))) {
+        return entry;
+      }
+      return {
+        ...entry,
+        model: {
+          ...entry.model,
+          aliases: entry.model.aliases.filter((alias) => !customAliases.has(alias.toLowerCase())),
+        },
+      };
+    }),
+  };
+}
+
 export function resolveClaudeCatalogModel(
   catalog: ClaudeModelCatalog,
   slugOrAlias: string | null | undefined,
 ): ClaudeCatalogModel | undefined {
   const value = slugOrAlias?.trim();
   if (!value) return undefined;
-  return catalog.models.find(
-    (entry) =>
-      entry.model.slug === value ||
+  return (
+    catalog.models.find((entry) => entry.model.slug === value) ??
+    catalog.models.find((entry) =>
       entry.model.aliases?.some((alias) => alias.toLowerCase() === value.toLowerCase()),
+    )
   );
 }
 

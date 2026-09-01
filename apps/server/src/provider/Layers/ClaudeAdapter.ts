@@ -89,6 +89,7 @@ import {
   resolveClaudeCatalogContextWindowTokens,
   resolveClaudeCatalogEffort,
   resolveClaudeModelSlug,
+  scopeClaudeModelCatalog,
 } from "../ClaudeModelCatalog.ts";
 import {
   ProviderAdapterProcessError,
@@ -1676,7 +1677,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   options?: ClaudeAdapterLiveOptions,
 ) {
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("claudeAgent");
-  const modelCatalogEffect = options?.modelCatalog ?? Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG);
+  const modelCatalogEffect = (
+    options?.modelCatalog ?? Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG)
+  ).pipe(Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)));
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
