@@ -19,6 +19,7 @@ export type ThreadActionMenuId =
   | "regenerate-title"
   | "mark-unread"
   | "copy"
+  | "copy-link"
   | "copy-path"
   | "copy-branch"
   | "copy-thread-id"
@@ -41,6 +42,8 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  /** False when this client cannot express the thread's address as a URL. */
+  readonly canCopyLink: boolean;
 }
 
 /**
@@ -112,6 +115,7 @@ export function buildThreadActionMenuItems(
       icon: "copy",
       separatorBefore: true,
       children: [
+        ...(state.canCopyLink ? [{ id: "copy-link" as const, label: "Link", icon: "link" }] : []),
         { id: "copy-path", label: "Path", icon: "folder" },
         ...(state.branch
           ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
