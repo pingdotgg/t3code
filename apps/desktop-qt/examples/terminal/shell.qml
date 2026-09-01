@@ -1,50 +1,58 @@
 import QtQuick
-import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import T3.Shell
 import T3.Bricks
 
-// Phosphor: a status bar on top (clock, thread counts, model), a narrow
-// sidebar, sharp corners and mono type everywhere — a terminal rice.
-Window {
+// Terminal: a status line on top (prompt mark, thread counts, model, the
+// palette's sixteen colours, clock), a narrow sidebar, sharp corners and mono
+// type everywhere. theme-from-terminal.mjs next to this file writes a
+// theme.json in the colours of whatever terminal you run it from.
+ShellWindow {
     id: root
 
-    readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
-
-    property date now: new Date()
-
-    readonly property bool settingsActive: Shell.state.settings ? Shell.state.settings.active : false
     readonly property var sidebarState: Shell.state.sidebar ?? null
     readonly property var composerState: Shell.state.composer ?? null
     readonly property color ink: Theme.color("text", "#c8f0d0")
     readonly property color dim: Theme.color("textMuted", "#6f9a7a")
     readonly property color glow: Theme.color("accent", "#3ddc84")
-    readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "Menlo"
+    readonly property color line: Theme.color("border", "#22372a")
+    // The ANSI slots land in the theme when it came from a terminal; a hand-
+    // written theme shows its semantic colours in the same strip instead.
+    readonly property var swatches: [Theme.color("ansiBlack", Theme.color("surfaceRaised", "#182319")), Theme.color("ansiRed", Theme.color("error", "#ff6b6b")), Theme.color("ansiGreen", Theme.color("update", "#3ddc84")), Theme.color("ansiYellow", Theme.color("warning", "#ffd166")), Theme.color("ansiBlue", Theme.color("accent", "#3ddc84")), Theme.color("ansiMagenta", Theme.color("accentSurface", "#163a25")), Theme.color("ansiCyan", Theme.color("info", "#3ddc84")), Theme.color("ansiWhite", Theme.color("text", "#c8f0d0"))]
+
+    property date now: new Date()
 
     width: 1360
     height: 860
-    visible: true
-    title: qsTr("T3 Code")
-    color: Theme.color("canvas", "#0b0f0c")
-    opacity: Theme.windowOpacity
-    flags: Qt.Window | Qt.FramelessWindowHint
 
     Timer {
         interval: 1000
-        running: true
+        running: root.visible
         repeat: true
         onTriggered: root.now = new Date()
+    }
+
+    component Segment: Text {
+        color: root.dim
+        font.family: Theme.fontMono
+        font.pixelSize: 12
+    }
+
+    component Divider: Text {
+        text: "│"
+        color: root.line
+        font.family: Theme.fontMono
+        font.pixelSize: 12
     }
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // Status bar.
-        Rectangle {
+        // Status line.
+        Item {
             Layout.fillWidth: true
-            implicitHeight: 30
-            color: Theme.color("chrome", "#080b09")
+            Layout.preferredHeight: 30
 
             DragHandler {
                 target: null
@@ -52,118 +60,161 @@ Window {
                     root.startSystemMove()
             }
 
+            TapHandler {
+                onDoubleTapped: root.visibility === Window.Maximized ? root.showNormal() : root.showMaximized()
+            }
+
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 12
-                anchors.rightMargin: 8
-                spacing: 18
+                spacing: 10
 
-                Text {
-                    text: "t3code"
+                Segment {
+                    text: "❯"
                     color: root.glow
-                    font.family: root.mono
-                    font.pixelSize: 12
                     font.bold: true
                 }
 
-                Text {
-                    text: root.sidebarState ? qsTr("active %1 · settled %2").arg(root.sidebarState.active.length + root.sidebarState.pinned.length).arg(root.sidebarState.settledTotal) : ""
-                    color: root.dim
-                    font.family: root.mono
-                    font.pixelSize: 12
+                Segment {
+                    text: "t3code"
+                    color: root.ink
+                    font.bold: true
                 }
 
-                Text {
+                Divider {
+                }
+
+                Segment {
+                    text: root.sidebarState ? qsTr("%1 active").arg(root.sidebarState.active.length + root.sidebarState.pinned.length) : qsTr("connecting")
+                }
+
+                Segment {
+                    visible: root.sidebarState !== null
+                    text: root.sidebarState ? qsTr("%1 settled").arg(root.sidebarState.settledTotal) : ""
+                }
+
+                Divider {
+                    visible: modelSegment.visible
+                }
+
+                Segment {
+                    id: modelSegment
+
+                    visible: text.length > 0
                     text: root.composerState && root.composerState.selectedModel ? root.composerState.selectedModel : ""
-                    color: root.dim
-                    font.family: root.mono
-                    font.pixelSize: 12
                 }
 
                 Item {
                     Layout.fillWidth: true
                 }
 
-                Text {
-                    text: Qt.formatDateTime(root.now, "ddd dd MMM  HH:mm:ss")
-                    color: root.ink
-                    font.family: root.mono
-                    font.pixelSize: 12
+                Row {
+                    Layout.alignment: Qt.AlignVCenter
+                    spacing: 3
+
+                    Repeater {
+                        model: root.swatches
+
+                        Rectangle {
+                            required property color modelData
+
+                            width: 8
+                            height: 8
+                            color: modelData
+                        }
+                    }
                 }
 
-                TitleBar {
-                    Layout.preferredWidth: 110
-                    Layout.preferredHeight: 30
+                Divider {
+                }
+
+                Segment {
+                    text: Qt.formatDateTime(root.now, "ddd dd MMM  HH:mm:ss")
+                    color: root.ink
+                }
+
+                WindowControls {
+                    Layout.alignment: Qt.AlignVCenter
                     window: root
-                    color: "transparent"
+                    buttonWidth: 34
+                    buttonHeight: 26
                 }
             }
         }
 
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 1
-            color: Theme.color("border", "#22372a")
+            Layout.preferredHeight: 1
+            color: root.line
         }
 
-        Workspace {
-            Layout.fillWidth: true
-            visible: ready
-            sidebarToggle: root.sidebarCollapsed
-        }
-
-        RowLayout {
+        Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 0
+            color: Theme.color("canvas", "#0b0f0c")
 
-            Sidebar {
-                Layout.preferredWidth: root.sidebarCollapsed ? 0 : 240
-                Layout.minimumWidth: 0
-                Layout.fillHeight: true
-                visible: !root.settingsActive && (!root.sidebarCollapsed || width > 0)
-
-                Behavior on Layout.preferredWidth {
-                    NumberAnimation {
-                        duration: 220
-                        easing.type: Easing.OutCubic
-                    }
-                }
-            }
-
-            SettingsNav {
-                Layout.preferredWidth: 240
-                Layout.fillHeight: true
-                visible: root.settingsActive
-            }
-
-            Rectangle {
-                Layout.preferredWidth: 1
-                Layout.fillHeight: true
-                color: Theme.color("border", "#22372a")
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
+            RowLayout {
+                anchors.fill: parent
                 spacing: 0
 
-                WebSurface {
+                Sidebar {
+                    Layout.preferredWidth: root.sidebarCollapsed ? 0 : 240
+                    Layout.minimumWidth: 0
+                    Layout.fillHeight: true
+                    visible: !root.settingsActive && (!root.sidebarCollapsed || width > 0)
+
+                    Behavior on Layout.preferredWidth {
+                        NumberAnimation {
+                            duration: 220
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+                }
+
+                SettingsNav {
+                    Layout.preferredWidth: 240
+                    Layout.fillHeight: true
+                    visible: root.settingsActive
+                }
+
+                Rectangle {
+                    Layout.preferredWidth: 1
+                    Layout.fillHeight: true
+                    color: root.line
+                }
+
+                ColumnLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    url: Shell.pageUrl
+                    spacing: 0
+
+                    Workspace {
+                        Layout.fillWidth: true
+                        visible: ready
+                        sidebarToggle: root.sidebarCollapsed
+                        panelToggle: rightPanel.available ? rightPanel.open : null
+                    }
+
+                    WebSurface {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        url: Shell.pageUrl
+                    }
+
+                    Composer {
+                        Layout.fillWidth: true
+                        visible: ready
+                    }
                 }
 
-                Composer {
-                    Layout.fillWidth: true
-                    visible: ready
-                }
-            }
+                RightPanel {
+                    id: rightPanel
 
-            RightPanel {
-                Layout.fillHeight: true
-                Layout.preferredWidth: implicitWidth
-                visible: available
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: implicitWidth
+                    ownToggle: false
+                    visible: available
+                }
             }
         }
     }
@@ -173,13 +224,5 @@ Window {
         anchors.right: parent.right
         anchors.bottomMargin: 180
         anchors.rightMargin: 16
-    }
-
-    ContextMenuHost {
-        surfaceId: "shell"
-    }
-
-    ShellErrorOverlay {
-        anchors.fill: parent
     }
 }
