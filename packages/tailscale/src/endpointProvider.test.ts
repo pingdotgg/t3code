@@ -4,10 +4,8 @@ import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import {
-  parseTailscaleMagicDnsName,
-  resolveTailscaleAdvertisedEndpoints,
-} from "./tailscaleEndpointProvider.ts";
+import { resolveTailscaleAdvertisedEndpoints } from "./endpointProvider.ts";
+import { parseTailscaleMagicDnsName } from "./tailscale.ts";
 
 const unusedTailscaleExternalServicesLayer = Layer.mergeAll(
   Layer.succeed(
@@ -37,15 +35,13 @@ describe("tailscale endpoint provider", () => {
     Effect.gen(function* () {
       const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
         port: 3773,
+        source: "desktop-addon",
         networkInterfaces: {
           tailscale0: [
             {
               address: "100.100.100.100",
               family: "IPv4",
               internal: false,
-              netmask: "255.192.0.0",
-              cidr: "100.100.100.100/10",
-              mac: "00:00:00:00:00:00",
             },
           ],
         },
@@ -101,6 +97,7 @@ describe("tailscale endpoint provider", () => {
       let readerCalls = 0;
       const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
         port: 3773,
+        source: "desktop-addon",
         networkInterfaces: {},
         readMagicDnsName: Effect.sync(() => {
           readerCalls += 1;
@@ -121,6 +118,7 @@ describe("tailscale endpoint provider", () => {
       Effect.gen(function* () {
         const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
           port: 3773,
+          source: "desktop-addon",
           networkInterfaces: {},
           statusJson: `{"Self":{"DNSName":"desktop.tail.ts.net."}}`,
           serveEnabled: true,

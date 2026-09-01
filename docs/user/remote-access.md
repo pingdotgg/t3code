@@ -22,6 +22,18 @@ This publishes the server over Tailscale Serve HTTPS (configuring the mapping if
 
 If no server is running, `t3 pair` says so and points you at `npx t3 serve` or `npx t3 connect`.
 
+## Automatic Local Promotion
+
+Environments connected through T3 Connect switch to a direct connection on their own when one is
+available. While connected through the tunnel, the app asks the environment which local addresses
+also reach it, checks them from your device, and reconnects through the local network or tailnet
+route when one works. If that direct route later fails, for example because you leave the network,
+the connection falls back to the tunnel automatically.
+
+No setup is needed beyond the environment being reachable directly: same network, a shared
+tailnet, or Tailscale Serve. Servers only advertise addresses they actually listen on, so a
+loopback-only server does not offer promotion.
+
 ## Recommended Setup
 
 Use a trusted private network that meshes your devices together, such as a tailnet.

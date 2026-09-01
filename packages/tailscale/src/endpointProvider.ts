@@ -1,20 +1,21 @@
 import { createAdvertisedEndpoint } from "@t3tools/shared/advertisedEndpoint";
-import type { AdvertisedEndpoint, AdvertisedEndpointProvider } from "@t3tools/contracts";
+import type {
+  AdvertisedEndpoint,
+  AdvertisedEndpointProvider,
+  AdvertisedEndpointSource,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+
 import {
   buildTailscaleHttpsBaseUrl,
   isTailscaleIpv4Address,
   parseTailscaleMagicDnsName,
   probeTailscaleHttpsEndpoint,
   readTailscaleStatus,
-} from "@t3tools/tailscale";
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-
-import type { NetworkInterfaces } from "./DesktopNetworkInterfaces.ts";
-
-export { isTailscaleIpv4Address, parseTailscaleMagicDnsName } from "@t3tools/tailscale";
+} from "./tailscale.ts";
 
 const TAILSCALE_ENDPOINT_PROVIDER: AdvertisedEndpointProvider = {
   id: "tailscale",
@@ -23,9 +24,22 @@ const TAILSCALE_ENDPOINT_PROVIDER: AdvertisedEndpointProvider = {
   isAddon: true,
 };
 
+/** Minimal shape of a `node:os` networkInterfaces() entry, kept structural so
+ * desktop and server can pass their own readings without a shared service. */
+export interface TailscaleNetworkInterfaceInfo {
+  readonly address: string;
+  readonly family: string | number;
+  readonly internal: boolean;
+}
+
+export type TailscaleNetworkInterfaces = Readonly<
+  Record<string, readonly TailscaleNetworkInterfaceInfo[] | undefined>
+>;
+
 function resolveTailscaleIpAdvertisedEndpoints(input: {
   readonly port: number;
-  readonly networkInterfaces: NetworkInterfaces;
+  readonly source: AdvertisedEndpointSource;
+  readonly networkInterfaces: TailscaleNetworkInterfaces;
 }): readonly AdvertisedEndpoint[] {
   const seen = new Set<string>();
   const endpoints: AdvertisedEndpoint[] = [];
@@ -35,7 +49,7 @@ function resolveTailscaleIpAdvertisedEndpoints(input: {
 
     for (const address of interfaceAddresses) {
       if (address.internal) continue;
-      if (address.family !== "IPv4") continue;
+      if (address.family !== "IPv4" && address.family !== 4) continue;
       if (!isTailscaleIpv4Address(address.address)) continue;
       if (seen.has(address.address)) continue;
       seen.add(address.address);
@@ -43,7 +57,7 @@ function resolveTailscaleIpAdvertisedEndpoints(input: {
       endpoints.push(
         createAdvertisedEndpoint({
           provider: TAILSCALE_ENDPOINT_PROVIDER,
-          source: "desktop-addon",
+          source: input.source,
           id: `tailscale-ip:http://${address.address}:${input.port}`,
           label: "Tailscale IP",
           httpBaseUrl: `http://${address.address}:${input.port}`,
@@ -62,6 +76,7 @@ const resolveTailscaleMagicDnsAdvertisedEndpoint = Effect.fn(
   "resolveTailscaleMagicDnsAdvertisedEndpoint",
 )(function* (input: {
   readonly dnsName: string | null;
+  readonly source: AdvertisedEndpointSource;
   readonly serveEnabled: boolean;
   readonly servePort?: number;
   readonly probe?: (baseUrl: string) => Effect.Effect<boolean, never, HttpClient.HttpClient>;
@@ -84,7 +99,7 @@ const resolveTailscaleMagicDnsAdvertisedEndpoint = Effect.fn(
   return Option.some(
     createAdvertisedEndpoint({
       provider: TAILSCALE_ENDPOINT_PROVIDER,
-      source: "desktop-addon",
+      source: input.source,
       id: `tailscale-magicdns:${httpBaseUrl}`,
       label: "Tailscale HTTPS",
       httpBaseUrl,
@@ -98,12 +113,16 @@ const resolveTailscaleMagicDnsAdvertisedEndpoint = Effect.fn(
   );
 });
 
+/** Synthesizes Tailscale advertised endpoints (per-interface Tailnet IPs plus
+ * the MagicDNS HTTPS endpoint) with stable `tailscale-ip:`/`tailscale-magicdns:`
+ * ids shared by the desktop and server producers. */
 export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAdvertisedEndpoints")(
   function* (input: {
     readonly port: number;
+    readonly source: AdvertisedEndpointSource;
     readonly serveEnabled?: boolean;
     readonly servePort?: number;
-    readonly networkInterfaces: NetworkInterfaces;
+    readonly networkInterfaces: TailscaleNetworkInterfaces;
     readonly statusJson?: string | null;
     readonly readMagicDnsName?: Effect.Effect<
       string | null,
@@ -133,6 +152,7 @@ export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAd
           : null;
     const magicDnsEndpoint = yield* resolveTailscaleMagicDnsAdvertisedEndpoint({
       dnsName,
+      source: input.source,
       serveEnabled: input.serveEnabled === true,
       ...(input.servePort === undefined ? {} : { servePort: input.servePort }),
       ...(input.probe === undefined ? {} : { probe: input.probe }),

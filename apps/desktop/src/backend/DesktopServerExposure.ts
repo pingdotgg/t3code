@@ -9,7 +9,7 @@ import {
   type DesktopServerExposureMode,
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
-import { readTailscaleStatus } from "@t3tools/tailscale";
+import { readTailscaleStatus, resolveTailscaleAdvertisedEndpoints } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -23,7 +23,6 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
-import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider.ts";
 
 const TAILSCALE_STATUS_CACHE_TTL = Duration.seconds(60);
 
@@ -539,6 +538,7 @@ export const make = Effect.gen(function* () {
 
     const tailscaleEndpoints = yield* resolveTailscaleAdvertisedEndpoints({
       port: state.port,
+      source: "desktop-addon",
       serveEnabled: state.tailscaleServeEnabled,
       servePort: state.tailscaleServePort,
       networkInterfaces: currentNetworkInterfaces,

@@ -1,6 +1,7 @@
 import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -149,6 +150,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
   return {
     layer,
     tokens,
+    tokenStore,
     bootstrapCalls,
     proofInputs,
     fetch,
@@ -405,6 +407,66 @@ describe("RemoteEnvironmentAuthorization", () => {
       );
       expect(harness.fetch.calls).toHaveLength(4);
     }),
+  );
+
+  it.effect(
+    "times out a black-holed direct route quickly so the relay fallback keeps its budget",
+    () =>
+      Effect.gen(function* () {
+        const cached = new TokenStore.RemoteDpopAccessToken({
+          environmentId: ENVIRONMENT_ID,
+          label: DESCRIPTOR.label,
+          endpoint: ENDPOINT,
+          accessToken: "cached-access-token",
+          expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+          dpopThumbprint: "thumbprint-1",
+        });
+        // A LAN address that accepts the TCP connection but never answers.
+        const hanging = new Promise<Response>(() => {});
+        const harness = yield* makeHarness({ initialToken: cached, responses: [] });
+        const layer = RemoteEnvironmentAuthorization.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              remoteHttpClientLayer(() => hanging),
+              Layer.succeed(
+                ManagedRelay.ManagedRelayDpopSigner,
+                ManagedRelay.ManagedRelayDpopSigner.of({
+                  thumbprint: Effect.succeed("thumbprint-1"),
+                  createProof: (proofInput) => Effect.succeed(`proof:${proofInput.url}`),
+                }),
+              ),
+              Layer.succeed(TokenStore.RemoteDpopAccessTokenStore, harness.tokenStore),
+              Layer.succeed(
+                ClientCapabilities.ClientPresentation,
+                ClientCapabilities.ClientPresentation.of({
+                  metadata: { label: "T3 Code Test", deviceType: "mobile", os: "test" },
+                  scopes: AuthStandardClientScopes,
+                }),
+              ),
+            ),
+          ),
+        );
+
+        const attempt = yield* Effect.gen(function* () {
+          const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+          return yield* remote.authorizeDpopDirect({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            endpoint: {
+              httpBaseUrl: "http://192.168.1.20:3773",
+              wsBaseUrl: "ws://192.168.1.20:3773",
+            },
+          });
+        }).pipe(Effect.provide(layer), Effect.result, Effect.forkChild);
+
+        // The supervisor's whole establish attempt is capped at 15 seconds, so
+        // the direct probe must give up well inside that, not at the default 10s.
+        yield* TestClock.adjust("3 seconds");
+        const result = yield* Fiber.join(attempt);
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure") {
+          expect(result.failure._tag).toBe("ConnectionTransientError");
+        }
+      }),
   );
 
   it.effect("does not persist a refreshed token until its websocket ticket succeeds", () =>
