@@ -19,7 +19,20 @@ import {
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
+  resolveDesktopUpdateTrack,
 } from "./SettingsPanels.logic";
+
+describe("desktop update track", () => {
+  it("shows Custom for persisted and in-progress custom source selection", () => {
+    expect(resolveDesktopUpdateTrack("nightly", "saphid/t3code")).toBe("custom");
+    expect(resolveDesktopUpdateTrack("latest", null, true)).toBe("custom");
+  });
+
+  it("shows the release channel when no custom source is selected", () => {
+    expect(resolveDesktopUpdateTrack("latest", null)).toBe("latest");
+    expect(resolveDesktopUpdateTrack("nightly", null)).toBe("nightly");
+  });
+});
 
 describe("typography settings restore", () => {
   it("detects family and size changes by font row", () => {

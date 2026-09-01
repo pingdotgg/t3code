@@ -924,7 +924,7 @@ export const make = Effect.gen(function* () {
 
       return yield* Effect.gen(function* () {
         const state = yield* Ref.get(updateStateRef);
-        if (nextChannel === state.channel) {
+        if (nextChannel === state.channel && state.repository === null) {
           return state;
         }
 
@@ -942,7 +942,12 @@ export const make = Effect.gen(function* () {
           createBaseUpdateState(nextChannel, enabled, environment, settings.updateRepository),
         );
 
-        if (!enabled || !(yield* Ref.get(updaterConfiguredRef))) {
+        if (!enabled) {
+          yield* Ref.set(updaterConfiguredRef, false);
+          return yield* Ref.get(updateStateRef);
+        }
+
+        if (!(yield* Ref.get(updaterConfiguredRef))) {
           return yield* Ref.get(updateStateRef);
         }
 
@@ -995,7 +1000,7 @@ export const make = Effect.gen(function* () {
         const enabled = yield* shouldEnableAutoUpdates;
         yield* setState(
           createBaseUpdateState(
-            state.channel,
+            settingsChange.settings.updateChannel,
             enabled,
             environment,
             settingsChange.settings.updateRepository,
@@ -1007,7 +1012,10 @@ export const make = Effect.gen(function* () {
           return yield* Ref.get(updateStateRef);
         }
 
-        yield* enableAutoUpdater(settingsChange.settings.updateRepository, state.channel);
+        yield* enableAutoUpdater(
+          settingsChange.settings.updateRepository,
+          settingsChange.settings.updateChannel,
+        );
         yield* checkForUpdates("repository-change", "held");
         return yield* Ref.get(updateStateRef);
       }).pipe(Effect.ensuring(finishUpdateAction("repository")));

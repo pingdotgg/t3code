@@ -20,6 +20,19 @@ connection will disappear briefly and work that is still running may be interrup
 
 The update does not remove saved threads, settings, or project files.
 
+## Choose a Desktop Update Track
+
+In the desktop app, open **Settings** → **General** and find **Update track** in the About section.
+
+- **Stable** follows full T3 Code releases.
+- **Nightly** follows T3 Code prereleases.
+- **Custom** follows Nightly prereleases from another public GitHub repository. Paste the
+  repository URL or its `owner/repository` name in **Release source**.
+
+Selecting Stable or Nightly clears the custom source. A source-code branch is not an installable
+update feed by itself. Its automation must publish the desktop manifests and installers as GitHub
+Release assets, then Custom can follow that repository.
+
 ## Choose the Action You See
 
 | Action                     | What to do                                                                                                                                                                  |

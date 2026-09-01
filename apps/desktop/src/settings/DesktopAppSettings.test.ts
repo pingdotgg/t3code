@@ -219,10 +219,35 @@ describe("DesktopSettings", () => {
         yield* settings.setUpdateRepository("https://github.com/acme/t3code.git");
 
         assert.equal((yield* settings.get).updateRepository, "acme/t3code");
+        assert.equal((yield* settings.get).updateChannel, "nightly");
+        assert.isTrue((yield* settings.get).updateChannelConfiguredByUser);
         assert.equal((yield* settings.load).updateRepository, "acme/t3code");
 
+        yield* settings.setUpdateChannel("latest");
+        assert.equal((yield* settings.get).updateChannel, "latest");
+        assert.isNull((yield* settings.get).updateRepository);
+
+        yield* settings.setUpdateRepository("acme/t3code");
         yield* settings.setUpdateRepository(null);
         assert.isNull((yield* settings.get).updateRepository);
+      }),
+    ),
+  );
+
+  it.effect("migrates a persisted custom source to the Nightly release channel", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          updateChannel: "latest",
+          updateChannelConfiguredByUser: true,
+          updateRepository: "acme/t3code",
+        });
+
+        const loaded = yield* settings.load;
+        assert.equal(loaded.updateRepository, "acme/t3code");
+        assert.equal(loaded.updateChannel, "nightly");
+        assert.isTrue(loaded.updateChannelConfiguredByUser);
       }),
     ),
   );

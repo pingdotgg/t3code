@@ -158,7 +158,12 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   let testSettings: DesktopAppSettings.DesktopSettings = {
     ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
     ...(options.updateRepository !== undefined
-      ? { updateRepository: options.updateRepository }
+      ? {
+          updateRepository: options.updateRepository,
+          ...(options.updateRepository === null
+            ? {}
+            : { updateChannel: "nightly" as const, updateChannelConfiguredByUser: true }),
+        }
       : {}),
   };
   const setUpdateChannelError = options.setUpdateChannelError;
@@ -178,11 +183,14 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
               : (options.beforeSetUpdateChannel ?? Effect.void).pipe(
                   Effect.andThen(
                     Effect.sync(() => {
-                      const changed = testSettings.updateChannel !== channel;
+                      const changed =
+                        testSettings.updateChannel !== channel ||
+                        testSettings.updateRepository !== null;
                       testSettings = {
                         ...testSettings,
                         updateChannel: channel,
                         updateChannelConfiguredByUser: true,
+                        updateRepository: null,
                       };
                       return { settings: testSettings, changed };
                     }),
@@ -190,10 +198,16 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
                 ),
           setUpdateRepository: (repository) =>
             Effect.sync(() => {
-              const changed = testSettings.updateRepository !== repository;
+              const updateChannel = repository === null ? testSettings.updateChannel : "nightly";
+              const changed =
+                testSettings.updateRepository !== repository ||
+                testSettings.updateChannel !== updateChannel;
               testSettings = {
                 ...testSettings,
                 updateRepository: repository,
+                updateChannel,
+                updateChannelConfiguredByUser:
+                  repository === null ? testSettings.updateChannelConfiguredByUser : true,
               };
               return { settings: testSettings, changed };
             }),
@@ -309,7 +323,7 @@ describe("DesktopUpdates", () => {
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("uses a custom GitHub repository for the selected release channel", () => {
+  it.effect("uses the Nightly release channel for a custom GitHub repository", () => {
     const harness = makeHarness({
       env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
       updateRepository: "acme/t3code",
@@ -325,19 +339,17 @@ describe("DesktopUpdates", () => {
             provider: "github",
             owner: "acme",
             repo: "t3code",
-            releaseType: "release",
+            releaseType: "prerelease",
+            channel: "nightly",
           },
         ]);
-        assert.equal((yield* updates.getState).repository, "acme/t3code");
+        const state = yield* updates.getState;
+        assert.equal(state.repository, "acme/t3code");
+        assert.equal(state.channel, "nightly");
 
-        yield* updates.setChannel("nightly");
-        assert.deepEqual(harness.feedUrls().at(-1), {
-          provider: "github",
-          owner: "acme",
-          repo: "t3code",
-          releaseType: "prerelease",
-          channel: "nightly",
-        });
+        const bundled = yield* updates.setChannel("nightly");
+        assert.isNull(bundled.repository);
+        assert.isFalse(bundled.enabled);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -359,6 +371,7 @@ describe("DesktopUpdates", () => {
         const enabled = yield* updates.setRepository("acme/t3code");
         assert.isTrue(enabled.enabled);
         assert.equal(enabled.repository, "acme/t3code");
+        assert.equal(enabled.channel, "nightly");
         assert.equal(harness.listenerCount(), 6);
         assert.equal(harness.checkCount(), 1);
 

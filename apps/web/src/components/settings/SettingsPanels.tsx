@@ -5,8 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type BackgroundActivityProfile,
-  type DesktopUpdateChannel,
   type DesktopUpdateRepository,
+  normalizeDesktopUpdateRepository,
   ProviderDriverKind,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
@@ -122,6 +122,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
 import {
+  type DesktopUpdateTrack,
   backgroundActivityOverrideSettings,
   backgroundActivitySharedPolicySettings,
   durationToSeconds,
@@ -136,6 +137,7 @@ import {
   readLastEnabledProjectGroupingMode,
   rememberEnabledProjectGroupingMode,
   resolveBackgroundActivityProfileOption,
+  resolveDesktopUpdateTrack,
 } from "./SettingsPanels.logic";
 import {
   PolicyTooltip,
@@ -227,27 +229,36 @@ function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
   const [isChangingUpdateRepository, setIsChangingUpdateRepository] = useState(false);
+  const [draftUpdateTrack, setDraftUpdateTrack] = useState<DesktopUpdateTrack | null>(null);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
   const selectedUpdateRepository = updateState?.repository ?? null;
+  const selectedUpdateTrack =
+    draftUpdateTrack ?? resolveDesktopUpdateTrack(selectedUpdateChannel, selectedUpdateRepository);
   const selectedHostedAppChannel = hasDesktopBridge ? null : HOSTED_APP_CHANNEL;
 
-  const handleUpdateChannelChange = useCallback(
-    (channel: DesktopUpdateChannel) => {
-      const bridge = window.desktopBridge;
-      if (
-        !bridge ||
-        typeof bridge.setUpdateChannel !== "function" ||
-        channel === selectedUpdateChannel
-      ) {
+  const handleUpdateTrackChange = useCallback(
+    (track: DesktopUpdateTrack) => {
+      if (track === "custom") {
+        setDraftUpdateTrack("custom");
         return;
       }
 
+      const bridge = window.desktopBridge;
+      if (!bridge || typeof bridge.setUpdateChannel !== "function") {
+        return;
+      }
+      if (track === selectedUpdateChannel && selectedUpdateRepository === null) {
+        setDraftUpdateTrack(null);
+        return;
+      }
+
+      setDraftUpdateTrack(track);
       setIsChangingUpdateChannel(true);
       void bridge
-        .setUpdateChannel(channel)
+        .setUpdateChannel(track)
         .catch((error: unknown) => {
           toastManager.add(
             stackedThreadToast({
@@ -259,9 +270,10 @@ function AboutVersionSection() {
         })
         .finally(() => {
           setIsChangingUpdateChannel(false);
+          setDraftUpdateTrack(null);
         });
     },
-    [selectedUpdateChannel],
+    [selectedUpdateChannel, selectedUpdateRepository],
   );
 
   const handleUpdateRepositoryChange = useCallback(
@@ -269,12 +281,25 @@ function AboutVersionSection() {
       const bridge = window.desktopBridge;
       if (!bridge || typeof bridge.setUpdateRepository !== "function") return;
 
-      const repository: DesktopUpdateRepository = value.trim() || null;
+      const repository: DesktopUpdateRepository = normalizeDesktopUpdateRepository(value);
+      if (repository === null) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Enter a GitHub release source",
+            description: "Use a public GitHub repository URL or owner/repository.",
+          }),
+        );
+        return;
+      }
       if (repository === selectedUpdateRepository) return;
 
       setIsChangingUpdateRepository(true);
       void bridge
         .setUpdateRepository(repository)
+        .then(() => {
+          setDraftUpdateTrack(null);
+        })
         .catch((error: unknown) => {
           toastManager.add(
             stackedThreadToast({
@@ -423,12 +448,12 @@ function AboutVersionSection() {
         <>
           <SettingsRow
             title="Update track"
-            description="Stable follows full releases. Nightly follows the nightly desktop channel and can switch back to stable immediately."
+            description="Stable follows full releases. Nightly follows T3 Code prereleases. Custom follows Nightly releases from another public GitHub repository."
             control={
               <Select
-                value={selectedUpdateChannel}
+                value={selectedUpdateTrack}
                 onValueChange={(value) => {
-                  handleUpdateChannelChange(value as DesktopUpdateChannel);
+                  handleUpdateTrackChange(value as DesktopUpdateTrack);
                 }}
               >
                 <SelectTrigger
@@ -437,7 +462,11 @@ function AboutVersionSection() {
                   disabled={isChangingUpdateChannel || isChangingUpdateRepository}
                 >
                   <SelectValue>
-                    {selectedUpdateChannel === "nightly" ? "Nightly" : "Stable"}
+                    {selectedUpdateTrack === "custom"
+                      ? "Custom"
+                      : selectedUpdateTrack === "nightly"
+                        ? "Nightly"
+                        : "Stable"}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -447,25 +476,31 @@ function AboutVersionSection() {
                   <SelectItem hideIndicator value="nightly">
                     Nightly
                   </SelectItem>
+                  <SelectItem hideIndicator value="custom">
+                    Custom
+                  </SelectItem>
                 </SelectPopup>
               </Select>
             }
           />
-          <SettingsRow
-            title="Custom release source"
-            description="Optional GitHub owner/repository. Leave empty to use the bundled T3 Code release source."
-            control={
-              <DraftInput
-                className="w-full sm:w-64"
-                aria-label="Custom release source"
-                placeholder="owner/repository"
-                spellCheck={false}
-                value={selectedUpdateRepository ?? ""}
-                disabled={isChangingUpdateRepository || isChangingUpdateChannel}
-                onCommit={handleUpdateRepositoryChange}
-              />
-            }
-          />
+          {selectedUpdateTrack === "custom" ? (
+            <SettingsRow
+              title="Release source"
+              description="Required for Custom. Paste a public GitHub repository URL or owner/repository."
+              control={
+                <DraftInput
+                  autoFocus
+                  className="w-full sm:w-72"
+                  aria-label="Custom release source"
+                  placeholder="https://github.com/owner/repository"
+                  spellCheck={false}
+                  value={selectedUpdateRepository ?? ""}
+                  disabled={isChangingUpdateRepository || isChangingUpdateChannel}
+                  onCommit={handleUpdateRepositoryChange}
+                />
+              }
+            />
+          ) : null}
         </>
       ) : selectedHostedAppChannel ? (
         <SettingsRow

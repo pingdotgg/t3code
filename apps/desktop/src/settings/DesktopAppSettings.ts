@@ -219,8 +219,10 @@ function normalizeDesktopSettingsDocument(
   const defaultSettings = resolveDefaultDesktopSettings(appVersion);
   const mainWindowBounds = normalizeMainWindowBounds(parsed.mainWindowBounds);
   const parsedUpdateChannel = Option.fromNullishOr(parsed.updateChannel);
+  const updateRepository = normalizeDesktopUpdateRepository(parsed.updateRepository);
   const isLegacySettings = parsed.updateChannelConfiguredByUser === undefined;
   const updateChannelConfiguredByUser =
+    updateRepository !== null ||
     parsed.updateChannelConfiguredByUser === true ||
     (isLegacySettings && Option.contains(parsedUpdateChannel, "nightly"));
 
@@ -239,11 +241,14 @@ function normalizeDesktopSettingsDocument(
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
     tailscaleServePort: normalizeTailscaleServePort(parsed.tailscaleServePort),
-    updateChannel: updateChannelConfiguredByUser
-      ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
-      : defaultSettings.updateChannel,
+    updateChannel:
+      updateRepository !== null
+        ? "nightly"
+        : updateChannelConfiguredByUser
+          ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
+          : defaultSettings.updateChannel,
     updateChannelConfiguredByUser,
-    updateRepository: normalizeDesktopUpdateRepository(parsed.updateRepository),
+    updateRepository,
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
     wslOnly: parsed.wslOnly === true,
@@ -345,12 +350,13 @@ function setUpdateChannel(
   settings: DesktopSettings,
   requestedChannel: DesktopUpdateChannel,
 ): DesktopSettings {
-  return settings.updateChannel === requestedChannel
+  return settings.updateChannel === requestedChannel && settings.updateRepository === null
     ? settings
     : {
         ...settings,
         updateChannel: requestedChannel,
         updateChannelConfiguredByUser: true,
+        updateRepository: null,
       };
 }
 
@@ -359,11 +365,18 @@ function setUpdateRepository(
   requestedRepository: DesktopUpdateRepository,
 ): DesktopSettings {
   const repository = normalizeDesktopUpdateRepository(requestedRepository);
-  return settings.updateRepository === repository
+  const updateChannel = repository === null ? settings.updateChannel : "nightly";
+  const updateChannelConfiguredByUser =
+    repository === null ? settings.updateChannelConfiguredByUser : true;
+  return settings.updateRepository === repository &&
+    settings.updateChannel === updateChannel &&
+    settings.updateChannelConfiguredByUser === updateChannelConfiguredByUser
     ? settings
     : {
         ...settings,
         updateRepository: repository,
+        updateChannel,
+        updateChannelConfiguredByUser,
       };
 }
 
