@@ -39,6 +39,7 @@ vi.mock("react", async (importOriginal) => {
 vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../state/usage", () => ({ useUsage: testState.useUsage }));
 vi.mock("../ui/button", () => ({ Button: "button" }));
+vi.mock("../ui/input", () => ({ Input: "input" }));
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
 vi.mock("../ui/select", () => ({
   Select: "div",
@@ -135,6 +136,13 @@ beforeEach(() => {
 });
 
 describe("UsagePage hourly breakdown", () => {
+  it("keeps custom date fields available in both desktop and compact layouts", () => {
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup.match(/aria-label="From day"/g)).toHaveLength(2);
+    expect(markup.match(/aria-label="To day"/g)).toHaveLength(2);
+  });
+
   it("keeps recent activity visible first without empty hourly rows", () => {
     const markup = renderToStaticMarkup(<UsagePage />);
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";

@@ -21,6 +21,7 @@ import {
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
@@ -238,6 +239,12 @@ export function UsagePage() {
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
+            <UsageDateRangeInputs
+              className="mb-4 flex-wrap lg:hidden"
+              sinceDay={window.sinceDay}
+              untilDay={window.untilDay}
+              onChange={selectCustomWindow}
+            />
             {settling ? (
               <>
                 {environments.length > 1 ? <UsageDeviceStrip environments={environments} /> : null}
@@ -509,26 +516,29 @@ export function UsagePage() {
 
 /**
  * Free date-range bounds beside the presets. Native date inputs; committing
- * either bound deselects every preset. Hidden below lg with the rest of the
- * expanded toolbar.
+ * either bound deselects every preset. Compact layouts render the same control
+ * above the page content so custom ranges remain reachable without crowding
+ * the header.
  */
 function UsageDateRangeInputs({
+  className,
   sinceDay,
   untilDay,
   onChange,
 }: {
+  readonly className?: string;
   readonly sinceDay: string;
   readonly untilDay: string;
   readonly onChange: (sinceDay: string, untilDay: string) => void;
 }) {
-  const inputClass =
-    "h-7 rounded-md border border-border bg-transparent px-2 text-xs text-foreground [color-scheme:inherit] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
   return (
-    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-      <input
+    <div className={cn("flex items-center gap-1.5 text-xs text-muted-foreground", className)}>
+      <Input
+        nativeInput
         type="date"
+        size="compact"
         aria-label="From day"
-        className={inputClass}
+        className="w-auto [color-scheme:inherit]"
         value={sinceDay}
         max={untilDay}
         onChange={(event) => {
@@ -536,10 +546,12 @@ function UsageDateRangeInputs({
         }}
       />
       <span>to</span>
-      <input
+      <Input
+        nativeInput
         type="date"
+        size="compact"
         aria-label="To day"
-        className={inputClass}
+        className="w-auto [color-scheme:inherit]"
         value={untilDay}
         min={sinceDay}
         onChange={(event) => {

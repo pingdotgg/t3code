@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { brushSelection, buildDayColumns, niceScale } from "./UsageProviderChart";
+import { brushSelection, buildDayColumns, periodIndexAt, niceScale } from "./UsageProviderChart";
 import { providersWithUsage } from "./usageProviders";
 
 describe("niceScale", () => {
@@ -157,5 +157,12 @@ describe("brushSelection", () => {
 
   it("rejects endpoints outside the day list", () => {
     expect(brushSelection(days, 0, 9)).toBeNull();
+  });
+});
+
+describe("periodIndexAt", () => {
+  it("clamps a captured pointer to either chart edge", () => {
+    expect(periodIndexAt(-50, 100, 400, 5)).toBe(0);
+    expect(periodIndexAt(750, 100, 400, 5)).toBe(4);
   });
 });

@@ -1,5 +1,5 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 
@@ -213,6 +213,20 @@ export function brushSelection(
   return { sinceDay, untilDay };
 }
 
+/** Period index beneath a pointer, clamped when pointer capture moves outside the plot. */
+export function periodIndexAt(
+  clientX: number,
+  plotLeft: number,
+  plotWidth: number,
+  periodCount: number,
+): number | null {
+  if (plotWidth <= 0 || periodCount <= 0) return null;
+  const localX = Math.min(plotWidth, Math.max(0, clientX - plotLeft));
+  const fraction = localX / plotWidth;
+  const index = Math.round(fraction * (periodCount - 1));
+  return Math.min(periodCount - 1, Math.max(0, index));
+}
+
 export function UsageProviderChart({
   onZoomToDays,
   onResetZoom,
@@ -237,6 +251,7 @@ export function UsageProviderChart({
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   // Drag-selection endpoints, as period indices. Only daily windows zoom.
   const [brush, setBrush] = useState<{ readonly start: number; readonly end: number } | null>(null);
+  const brushRef = useRef<{ readonly start: number; readonly end: number } | null>(null);
   const zoomable = resolution === "day" && onZoomToDays !== undefined;
   const plotRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
@@ -342,11 +357,7 @@ export function UsageProviderChart({
       const plot = plotRef.current;
       if (plot === null || periods.length === 0) return null;
       const bounds = plot.getBoundingClientRect();
-      if (bounds.width === 0) return null;
-      const localX = Math.min(bounds.width, Math.max(0, clientX - bounds.left));
-      const fraction = localX / bounds.width;
-      const index = Math.round(fraction * (periods.length - 1));
-      return Math.min(periods.length - 1, Math.max(0, index));
+      return periodIndexAt(clientX, bounds.left, bounds.width, periods.length);
     },
     [periods.length],
   );
@@ -359,9 +370,14 @@ export function UsageProviderChart({
       if (bounds.width === 0) return;
       const index = indexAt(event.clientX);
       if (index === null) return;
-      if (brush !== null) {
+      const activeBrush = brushRef.current;
+      if (activeBrush !== null) {
         // While selecting, the crosshair and tooltip give way to the band.
-        if (index !== brush.end) setBrush({ start: brush.start, end: index });
+        if (index !== activeBrush.end) {
+          const nextBrush = { start: activeBrush.start, end: index };
+          brushRef.current = nextBrush;
+          setBrush(nextBrush);
+        }
         return;
       }
       const localX = Math.min(bounds.width, Math.max(0, event.clientX - bounds.left));
@@ -370,33 +386,45 @@ export function UsageProviderChart({
       positionTooltip();
       setHoverIndex(index);
     },
-    [brush, indexAt, periods.length, positionTooltip],
+    [indexAt, periods.length, positionTooltip],
   );
 
   const beginBrush = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
+    (event: React.PointerEvent<HTMLDivElement>) => {
       if (!zoomable || event.button !== 0) return;
       const index = indexAt(event.clientX);
       if (index === null) return;
       event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
       hoverPositionRef.current = null;
       setHoverIndex(null);
-      setBrush({ start: index, end: index });
+      const nextBrush = { start: index, end: index };
+      brushRef.current = nextBrush;
+      setBrush(nextBrush);
     },
     [indexAt, zoomable],
   );
 
-  // A drag may end anywhere on the page, so the commit listens on the window.
-  useEffect(() => {
-    if (brush === null || onZoomToDays === undefined) return;
-    const commit = () => {
-      const selection = brushSelection(days, brush.start, brush.end);
+  const finishBrush = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const activeBrush = brushRef.current;
+      if (activeBrush === null || onZoomToDays === undefined) return;
+      const end = indexAt(event.clientX) ?? activeBrush.end;
+      const selection = brushSelection(days, activeBrush.start, end);
+      brushRef.current = null;
       setBrush(null);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
       if (selection !== null) onZoomToDays(selection.sinceDay, selection.untilDay);
-    };
-    window.addEventListener("mouseup", commit);
-    return () => window.removeEventListener("mouseup", commit);
-  }, [brush, days, onZoomToDays]);
+    },
+    [days, indexAt, onZoomToDays],
+  );
+
+  const cancelBrush = useCallback(() => {
+    brushRef.current = null;
+    setBrush(null);
+  }, []);
 
   const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];
   const hoveredColumn = hoverIndex === null ? undefined : series[hoverIndex];
@@ -427,7 +455,9 @@ export function UsageProviderChart({
           ref={plotRef}
           className={cn("relative h-56 flex-1", zoomable && "cursor-crosshair")}
           onMouseMove={handleMove}
-          onMouseDown={beginBrush}
+          onPointerDown={beginBrush}
+          onPointerUp={finishBrush}
+          onPointerCancel={cancelBrush}
           onDoubleClick={onResetZoom}
           onMouseLeave={() => {
             hoverPositionRef.current = null;

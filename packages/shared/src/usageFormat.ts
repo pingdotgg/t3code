@@ -14,6 +14,8 @@ const CURRENCY = new Intl.NumberFormat("en-US", {
 });
 
 const INTEGER = new Intl.NumberFormat("en-US");
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_CUSTOM_WINDOW_DAYS = 90;
 
 export function formatUsd(value: number): string {
   return CURRENCY.format(value);
@@ -174,9 +176,18 @@ export function formatRelativeHourShort(
  * A daily window over an explicit inclusive day range, in the viewer's zone.
  * Bounds arrive from date inputs or a chart brush; out-of-order bounds are
  * swapped rather than rejected so callers can pass a drag's raw endpoints.
+ * Typed spans are capped at the same 90 days as the largest preset so day
+ * enumeration remains bounded.
  */
 export function makeCustomWindow(sinceDay: string, untilDay: string): UsageSummaryInput {
-  const [first, last] = sinceDay <= untilDay ? [sinceDay, untilDay] : [untilDay, sinceDay];
+  const [first, requestedLast] = sinceDay <= untilDay ? [sinceDay, untilDay] : [untilDay, sinceDay];
+  const firstMs = Date.parse(`${first}T00:00:00Z`);
+  const requestedLastMs = Date.parse(`${requestedLast}T00:00:00Z`);
+  const maximumLastMs = firstMs + (MAX_CUSTOM_WINDOW_DAYS - 1) * DAY_MS;
+  const last =
+    requestedLastMs > maximumLastMs
+      ? new Date(maximumLastMs).toISOString().slice(0, 10)
+      : requestedLast;
   return {
     sinceDay: UsageDay.make(first),
     untilDay: UsageDay.make(last),

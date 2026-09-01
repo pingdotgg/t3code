@@ -89,4 +89,11 @@ describe("makeCustomWindow", () => {
     expect(window.sinceDay).toBe("2026-08-03");
     expect(window.untilDay).toBe("2026-08-11");
   });
+
+  it("caps typed ranges at the largest supported 90-day window", () => {
+    const window = makeCustomWindow("0001-01-01", "9999-12-31");
+
+    expect(window.sinceDay).toBe("0001-01-01");
+    expect(window.untilDay).toBe("0001-03-31");
+  });
 });
