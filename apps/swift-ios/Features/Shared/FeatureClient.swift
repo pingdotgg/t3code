@@ -1,5 +1,12 @@
 import Foundation
 
+public enum FeatureTitleRegenerationDispatchReceipt: Equatable, Sendable {
+    case regenerating
+    case completed(title: String)
+    case failed
+    case refreshUnavailable
+}
+
 /// The app-owned adapter between the native feature layer and T3's WebSocket/Core runtime.
 /// Implementations are main-actor isolated so UI state never depends on locking.
 @MainActor
@@ -55,7 +62,10 @@ public protocol FeatureClient: AnyObject {
         refresh: Bool
     ) async throws -> [FeatureWorkspaceBranch]
     func renameThread(id: String, title: String) async throws
-    func regenerateThreadTitle(id: String) async throws
+    /// `requestID` is the command identity of the dispatch; the server echoes
+    /// it on the thread's `titleRegeneration`, letting the caller distinguish
+    /// its own request from another client's.
+    func regenerateThreadTitle(id: String, requestID: String) async throws -> FeatureTitleRegenerationDispatchReceipt
     func setThreadArchived(id: String, archived: Bool) async throws
     func setThreadSettled(id: String, settled: Bool) async throws
     func setThreadSnoozed(id: String, until: Date?) async throws
@@ -205,7 +215,7 @@ public extension FeatureClient {
         try await initialSnapshot()
     }
 
-    func regenerateThreadTitle(id _: String) async throws {
+    func regenerateThreadTitle(id _: String, requestID _: String) async throws -> FeatureTitleRegenerationDispatchReceipt {
         throw FeatureCapabilityUnavailable("Thread title regeneration")
     }
 

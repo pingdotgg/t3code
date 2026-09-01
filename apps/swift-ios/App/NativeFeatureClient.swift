@@ -1514,10 +1514,56 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         try? await refresh(client: route.client)
     }
 
-    func regenerateThreadTitle(id: String) async throws {
+    func regenerateThreadTitle(
+        id: String,
+        requestID: String
+    ) async throws -> FeatureTitleRegenerationDispatchReceipt {
         let route = try threadRoute(for: id)
-        _ = try await route.client.regenerateTitle(threadID: route.wireID)
-        try? await refresh(client: route.client)
+        let previousThread = cachedThread(id: route.uiID)
+        let previousTitle = previousThread?.title
+        let dispatch = try await route.client.regenerateTitle(
+            threadID: route.wireID,
+            commandID: requestID
+        )
+        do {
+            try await refresh(
+                client: route.client,
+                includeArchived: previousThread?.isArchived == true
+            )
+            return Self.titleRegenerationDispatchReceipt(
+                previousTitle: previousTitle,
+                dispatchRequestID: requestID,
+                dispatchSequence: dispatch.sequence,
+                refreshedSequence: shellsByEnvironmentID[route.environmentID]?.snapshotSequence,
+                refreshedThread: cachedThread(id: route.uiID)
+            )
+        } catch {
+            return .refreshUnavailable
+        }
+    }
+
+    static func titleRegenerationDispatchReceipt(
+        previousTitle: String?,
+        dispatchRequestID: String,
+        dispatchSequence: Int,
+        refreshedSequence: Int?,
+        refreshedThread: FeatureThread?
+    ) -> FeatureTitleRegenerationDispatchReceipt {
+        guard let previousTitle,
+              let refreshedSequence,
+              refreshedSequence >= dispatchSequence,
+              let refreshedThread else { return .refreshUnavailable }
+        if refreshedThread.isRegeneratingTitle == true {
+            // A different request id means another client's regeneration
+            // replaced this dispatch; the server will never apply ours.
+            return refreshedThread.titleRegenerationRequestID == dispatchRequestID
+                ? .regenerating
+                : .failed
+        }
+        guard refreshedThread.title == previousTitle else {
+            return .completed(title: refreshedThread.title)
+        }
+        return .failed
     }
 
     func setThreadArchived(id: String, archived: Bool) async throws {
@@ -2649,6 +2695,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snoozedUntil: thread.snoozedUntil,
             snoozedAt: thread.snoozedAt,
             pinnedAt: thread.pinnedAt,
+            titleRegeneration: thread.titleRegeneration,
             session: thread.session,
             latestUserMessageAt: thread.latestUserMessageAt,
             hasPendingApprovals: thread.hasPendingApprovals,
@@ -3858,6 +3905,17 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let backgroundWorkIsActive = backgroundLiveness == .working
         let sessionIsLive = shellThread.session?.status == "starting"
             || shellThread.session?.status == "running"
+        let shellIsCurrent = shell.snapshotSequence >= (activeThreadSequence ?? .min)
+        // The shell is the authority for title metadata; the cached detail
+        // keeps whatever the last detail fetch saw. Without this copy every
+        // shell snapshot would republish a stale pre-regeneration title and
+        // revert a freshly regenerated one. A stale shell snapshot must not
+        // overwrite newer detail-stream metadata.
+        if shellIsCurrent {
+            detail.thread.title = shellThread.title
+            detail.thread.isRegeneratingTitle = shellThread.titleRegeneration != nil
+            detail.thread.titleRegenerationRequestID = shellThread.titleRegeneration?.requestId
+        }
         detail.thread.state = Self.resolveThreadState(
             latestTurn: shellThread.latestTurn,
             session: shellThread.session,
@@ -3871,7 +3929,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             backgroundWorkIsActive: backgroundWorkIsActive,
             fallbackUpdatedAt: shellThread.updatedAt
         )
-        if shell.snapshotSequence >= (activeThreadSequence ?? .min) {
+        if shellIsCurrent {
             applySettlementAuthority(from: shellThread, to: &detail.thread)
         }
         detail.backgroundWorkIsActive = backgroundWorkIsActive
@@ -4283,6 +4341,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
             supportsPullRequestLinking: environment.descriptor?.capabilities.threadPullRequestLinking,
+            isRegeneratingTitle: thread.titleRegeneration != nil,
+            titleRegenerationRequestID: thread.titleRegeneration?.requestId,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session
@@ -4364,6 +4424,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
             supportsPullRequestLinking: environment.descriptor?.capabilities.threadPullRequestLinking,
+            isRegeneratingTitle: thread.titleRegeneration != nil,
+            titleRegenerationRequestID: thread.titleRegeneration?.requestId,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session
@@ -4647,6 +4709,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snoozedUntil: loaded.snoozedUntil,
             snoozedAt: loaded.snoozedAt,
             pinnedAt: loaded.pinnedAt,
+            titleRegeneration: loaded.titleRegeneration,
             deletedAt: loaded.deletedAt,
             messages: prependByID(older.messages, loaded.messages),
             activities: prependByID(older.activities, loaded.activities),
@@ -6369,6 +6432,7 @@ enum NativeThreadDetailReducer {
             snoozedUntil: thread.snoozedUntil,
             snoozedAt: thread.snoozedAt,
             pinnedAt: thread.pinnedAt,
+            titleRegeneration: thread.titleRegeneration,
             deletedAt: thread.deletedAt,
             messages: messages ?? thread.messages,
             activities: activities ?? thread.activities,

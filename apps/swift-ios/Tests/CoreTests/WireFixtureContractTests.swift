@@ -114,6 +114,29 @@ final class WireFixtureContractTests: XCTestCase {
         XCTAssertEqual(decodedDetail.thread.unsettledAt, timestamp)
     }
 
+    func testShellSnapshotDecodesTitleRegenerationState() throws {
+        var payload = try XCTUnwrap(try fixtureObject("shell-snapshot") as? [String: Any])
+        var threads = try XCTUnwrap(payload["threads"] as? [[String: Any]])
+        threads[0]["titleRegeneration"] = [
+            "requestId": "command-regenerate-title",
+            "startedAt": "2026-08-07T12:01:00.000Z",
+        ]
+        payload["threads"] = threads
+
+        let snapshot = try JSONDecoder.t3.decode(
+            OrchestrationShellSnapshot.self,
+            from: JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        )
+
+        XCTAssertEqual(
+            snapshot.threads.first?.titleRegeneration,
+            ThreadTitleRegeneration(
+                requestId: "command-regenerate-title",
+                startedAt: "2026-08-07T12:01:00.000Z"
+            )
+        )
+    }
+
     func testUnknownStreamItemsRequestRefreshWithoutEndingDecoding() throws {
         let shell = try JSONDecoder.t3.decode(
             ShellStreamItem.self,

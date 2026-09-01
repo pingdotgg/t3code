@@ -271,6 +271,11 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var supportsPinning: Bool?
     public var supportsTitleRegeneration: Bool?
     public var supportsPullRequestLinking: Bool?
+    public var isRegeneratingTitle: Bool?
+    /// Identity of the server-side regeneration request this thread is
+    /// currently running, so clients can tell their own dispatch from another
+    /// client's.
+    public var titleRegenerationRequestID: String?
     public var attentionAt: Date?
     public var workingStartedAt: Date?
     public var latestTurnCompletedAt: Date?
@@ -310,6 +315,8 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         supportsPinning: Bool? = nil,
         supportsTitleRegeneration: Bool? = nil,
         supportsPullRequestLinking: Bool? = nil,
+        isRegeneratingTitle: Bool? = nil,
+        titleRegenerationRequestID: String? = nil,
         attentionAt: Date? = nil,
         workingStartedAt: Date? = nil,
         latestTurnCompletedAt: Date? = nil,
@@ -348,6 +355,8 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.supportsPinning = supportsPinning
         self.supportsTitleRegeneration = supportsTitleRegeneration
         self.supportsPullRequestLinking = supportsPullRequestLinking
+        self.isRegeneratingTitle = isRegeneratingTitle
+        self.titleRegenerationRequestID = titleRegenerationRequestID
         self.attentionAt = attentionAt
         self.workingStartedAt = workingStartedAt
         self.latestTurnCompletedAt = latestTurnCompletedAt
