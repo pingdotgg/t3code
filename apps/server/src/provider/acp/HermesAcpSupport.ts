@@ -63,21 +63,27 @@ export interface HermesAcpModelSelectionErrorContext {
   readonly cause: EffectAcpErrors.AcpError;
 }
 
-interface HermesAcpModelSelectionRuntime {
-  readonly setModel: (model: string) => Effect.Effect<unknown, EffectAcpErrors.AcpError>;
-}
+type HermesAcpModelSelectionRuntime = Pick<
+  AcpSessionRuntime.AcpSessionRuntime["Service"],
+  "setSessionModel"
+>;
 
 /**
  * Applies a model selection to a live Hermes ACP session. Hermes model ids
  * (e.g. `anthropic:claude-fable-5`) go to `session/set_model` verbatim —
- * there is no trait suffix to strip and no config-option fanout.
+ * there is no trait suffix to strip and no reasoning metadata to attach.
+ *
+ * `session/set_config_option` is not usable here: the real `hermes acp`
+ * binary treats configId `"model"` as a silent no-op (it always returns
+ * `{ configOptions: [] }`, even for invalid values), so model changes must
+ * go through the unstable `session/set_model` capability instead.
  */
 export function applyHermesAcpModelSelection<E>(input: {
   readonly runtime: HermesAcpModelSelectionRuntime;
   readonly model: string;
   readonly mapError: (context: HermesAcpModelSelectionErrorContext) => E;
 }): Effect.Effect<void, E> {
-  return input.runtime.setModel(input.model).pipe(
+  return input.runtime.setSessionModel(input.model).pipe(
     Effect.asVoid,
     Effect.mapError((cause) => input.mapError({ cause })),
   );

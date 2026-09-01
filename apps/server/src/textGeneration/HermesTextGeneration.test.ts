@@ -113,7 +113,12 @@ it.layer(HermesTextGenerationTestLayer)("HermesTextGeneration", (it) => {
             stagedSummary: "M apps/server/src/textGeneration/HermesTextGeneration.ts",
             stagedPatch:
               "diff --git a/apps/server/src/textGeneration/HermesTextGeneration.ts b/apps/server/src/textGeneration/HermesTextGeneration.ts",
-            modelSelection: createModelSelection(ProviderInstanceId.make("hermes"), "composer-2"),
+            // The shared acp-mock-agent only allowlists grok-* ids for
+            // session/set_model, so Hermes tests reuse them.
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("hermes"),
+              "grok-mock-alt",
+            ),
           });
 
           expect(generated.subject).toBe("Add generated commit message");
@@ -136,9 +141,8 @@ it.layer(HermesTextGenerationTestLayer)("HermesTextGeneration", (it) => {
           expect(
             requests.some(
               (request) =>
-                request.method === "session/set_config_option" &&
-                request.params?.configId === "model" &&
-                request.params?.value === "composer-2",
+                request.method === "session/set_model" &&
+                request.params?.modelId === "grok-mock-alt",
             ),
           ).toBe(true);
           expect(
@@ -172,7 +176,7 @@ it.layer(HermesTextGenerationTestLayer)("HermesTextGeneration", (it) => {
             stagedPatch: "diff --git a/README.md b/README.md",
             modelSelection: {
               instanceId: ProviderInstanceId.make("hermes"),
-              model: "default",
+              model: "grok-build",
             },
           });
 
@@ -196,7 +200,7 @@ it.layer(HermesTextGenerationTestLayer)("HermesTextGeneration", (it) => {
             message: "Fix the reconnect spinner after a resumed session.",
             modelSelection: {
               instanceId: ProviderInstanceId.make("hermes"),
-              model: "default",
+              model: "grok-build",
             },
           });
 
@@ -229,7 +233,7 @@ it.layer(HermesTextGenerationTestLayer)("HermesTextGeneration", (it) => {
               "diff --git a/apps/server/src/textGeneration/HermesTextGeneration.ts b/apps/server/src/textGeneration/HermesTextGeneration.ts",
             modelSelection: {
               instanceId: ProviderInstanceId.make("hermes"),
-              model: "default",
+              model: "grok-build",
             },
           });
 

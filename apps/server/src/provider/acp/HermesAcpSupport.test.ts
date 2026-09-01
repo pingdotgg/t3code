@@ -55,9 +55,10 @@ describe("applyHermesAcpModelSelection", () => {
     Effect.gen(function* () {
       const modelCalls: Array<string> = [];
       const runtime = {
-        setModel: (model: string) =>
+        setSessionModel: (modelId: string) =>
           Effect.sync(() => {
-            modelCalls.push(model);
+            modelCalls.push(modelId);
+            return {};
           }),
       };
 
@@ -78,7 +79,7 @@ describe("applyHermesAcpModelSelection", () => {
         cause: new Error("set_model exploded"),
       });
       const runtime = {
-        setModel: () => Effect.fail(acpFailure),
+        setSessionModel: () => Effect.fail(acpFailure),
       };
 
       const failure = yield* Effect.flip(
