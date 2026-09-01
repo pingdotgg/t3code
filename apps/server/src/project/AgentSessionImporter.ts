@@ -213,6 +213,7 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
             branch: null,
             worktreePath: null,
             createdAt: thread.createdAt,
+            historyImport: true,
           });
         }
 

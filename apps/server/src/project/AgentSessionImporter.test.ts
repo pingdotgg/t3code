@@ -205,6 +205,10 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           "thread.create",
           "thread.history.import",
         ]);
+        expect(commands.filter((command) => command.type === "thread.create")).toMatchObject([
+          { historyImport: true },
+          { historyImport: true },
+        ]);
         expect(
           commands
             .filter((command) => command.type === "thread.history.import")

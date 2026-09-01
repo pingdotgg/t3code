@@ -1940,6 +1940,95 @@ it.layer(
     }),
   );
 
+  it.effect("resolves the legacy Codex default instance", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        serverSettings,
+        path,
+        rawProviderInstanceId: "codex",
+        env: undefined,
+      });
+
+      expect(environment.CODEX_HOME).toMatch(/[\\/][.]codex-legacy$/);
+    }).pipe(
+      Effect.provide(
+        ServerSettings.ServerSettingsService.layerTest({
+          providerInstances: {},
+          providers: { codex: { homePath: "~/.codex-legacy" } },
+        }),
+      ),
+    ),
+  );
+
+  it.effect("resolves the legacy Claude default instance", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        serverSettings,
+        path,
+        rawProviderInstanceId: "claudeAgent",
+        env: undefined,
+      });
+
+      expect(environment.CLAUDE_CONFIG_DIR).toMatch(/[\\/][.]claude-legacy$/);
+    }).pipe(
+      Effect.provide(
+        ServerSettings.ServerSettingsService.layerTest({
+          providerInstances: {},
+          providers: { claudeAgent: { homePath: "~/.claude-legacy" } },
+        }),
+      ),
+    ),
+  );
+
+  it.effect("prefers an explicit default instance over legacy provider settings", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        serverSettings,
+        path,
+        rawProviderInstanceId: "codex",
+        env: undefined,
+      });
+
+      expect(environment.CODEX_HOME).toMatch(/[\\/][.]codex-explicit$/);
+    }).pipe(
+      Effect.provide(
+        ServerSettings.ServerSettingsService.layerTest({
+          providers: { codex: { homePath: "~/.codex-legacy" } },
+          providerInstances: {
+            [ProviderInstanceId.make("codex")]: {
+              driver: "codex",
+              config: { homePath: "~/.codex-explicit" },
+            },
+          },
+        }),
+      ),
+    ),
+  );
+
+  it.effect("keeps unknown provider instance ids unavailable after legacy hydration", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const error = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        serverSettings,
+        path,
+        rawProviderInstanceId: "codex_unknown",
+        env: undefined,
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "TerminalProviderInstanceNotFoundError",
+        providerInstanceId: "codex_unknown",
+      });
+    }).pipe(Effect.provide(ServerSettings.ServerSettingsService.layerTest())),
+  );
+
   it.effect("restarts a running terminal when the resolved provider environment changes", () =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("codex_work");

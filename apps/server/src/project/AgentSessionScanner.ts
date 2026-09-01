@@ -58,12 +58,11 @@ const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
 const MAX_TRANSCRIPTS_PER_SOURCE = 5000;
 
 /**
- * Upper bound on `stat` calls per source. Newest-first ordering needs mtimes
- * before the read cap can be applied, so stats get their own larger budget;
- * once it runs out the scan stops rather than walking a pathological home
- * indefinitely.
+ * Upper bound on discovery filesystem operations per source. Newest-first
+ * ordering needs mtimes before the read cap can be applied, so directory reads
+ * and candidate stats share a larger budget. Once it runs out the scan stops.
  */
-const MAX_STATS_PER_SOURCE = MAX_TRANSCRIPTS_PER_SOURCE * 4;
+const MAX_DISCOVERY_OPERATIONS_PER_SOURCE = MAX_TRANSCRIPTS_PER_SOURCE * 4;
 const RECENT_THREAD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_IMPORTED_TRANSCRIPT_BYTES = 16 * 1024 * 1024;
 const MAX_IMPORTED_MESSAGES = 200;
@@ -624,25 +623,35 @@ export const make = Effect.gen(function* () {
   };
 
   const discoverClaudeTranscripts = Effect.fn("AgentSessionScanner.discoverClaudeTranscripts")(
-    function* (homePath: string, providerInstanceId: ProviderInstanceId, statBudget: number) {
+    function* (homePath: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {
       const projectsDir = path.join(homePath, "projects");
-      const projectDirectories = yield* listDirectory(projectsDir);
-      let statsRemaining = statBudget;
+      let operationsRemaining = operationBudget;
+      const readDirectory = (directory: string) => {
+        if (operationsRemaining <= 0) return Effect.succeed<ReadonlyArray<string>>([]);
+        operationsRemaining -= 1;
+        return listDirectory(directory);
+      };
+      const projectDirectories = yield* readDirectory(projectsDir);
       const transcripts: Array<TranscriptCandidate> = [];
 
       for (const projectDirectory of projectDirectories) {
-        if (statsRemaining <= 0) break;
+        if (operationsRemaining <= 0) break;
         const directory = path.join(projectsDir, projectDirectory);
-        const directoryTranscripts = (yield* listDirectory(directory))
+        const directoryTranscripts = (yield* readDirectory(directory))
           .filter((entry) => entry.endsWith(".jsonl"))
           .map((entry) => path.join(directory, entry));
-        if (directoryTranscripts.length === 0) continue;
 
-        const statted = directoryTranscripts.slice(0, statsRemaining);
-        statsRemaining -= statted.length;
-        for (const filePath of statted) {
+        for (const filePath of directoryTranscripts) {
+          if (operationsRemaining <= 0) break;
+          operationsRemaining -= 1;
           const stats = yield* statOption(filePath);
-          if (Option.isNone(stats) || Option.isNone(stats.value.mtime)) continue;
+          if (
+            Option.isNone(stats) ||
+            stats.value.type !== "File" ||
+            Option.isNone(stats.value.mtime)
+          ) {
+            continue;
+          }
           transcripts.push({
             filePath,
             mtimeMs: stats.value.mtime.value.getTime(),
@@ -655,40 +664,49 @@ export const make = Effect.gen(function* () {
   );
 
   const discoverCodexTranscripts = Effect.fn("AgentSessionScanner.discoverCodexTranscripts")(
-    function* (homePath: string, providerInstanceId: ProviderInstanceId, statBudget: number) {
+    function* (homePath: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {
       const sessionsDir = path.join(homePath, "sessions");
 
       const transcripts: Array<TranscriptCandidate> = [];
-      let statsRemaining = statBudget;
+      let operationsRemaining = operationBudget;
+      const readDirectory = (directory: string) => {
+        if (operationsRemaining <= 0) return Effect.succeed<ReadonlyArray<string>>([]);
+        operationsRemaining -= 1;
+        return listDirectory(directory);
+      };
       // Date-partitioned directories sort chronologically, so walking them in
-      // reverse spends each home's share of the stat budget on recent sessions.
-      for (const year of (yield* listDirectory(sessionsDir)).toSorted().toReversed()) {
-        for (const month of (yield* listDirectory(path.join(sessionsDir, year)))
+      // reverse spends each home's share of the operation budget on recent sessions.
+      for (const year of (yield* readDirectory(sessionsDir)).toSorted().toReversed()) {
+        for (const month of (yield* readDirectory(path.join(sessionsDir, year)))
           .toSorted()
           .toReversed()) {
-          for (const day of (yield* listDirectory(path.join(sessionsDir, year, month)))
+          for (const day of (yield* readDirectory(path.join(sessionsDir, year, month)))
             .toSorted()
             .toReversed()) {
             const directory = path.join(sessionsDir, year, month, day);
-            for (const entry of (yield* listDirectory(directory)).toSorted().toReversed()) {
+            for (const entry of (yield* readDirectory(directory)).toSorted().toReversed()) {
               if (!entry.startsWith("rollout-") || !entry.endsWith(".jsonl")) continue;
+              if (operationsRemaining <= 0) break;
               const filePath = path.join(directory, entry);
-              statsRemaining -= 1;
+              operationsRemaining -= 1;
               const stats = yield* statOption(filePath);
-              if (Option.isSome(stats) && Option.isSome(stats.value.mtime)) {
+              if (
+                Option.isSome(stats) &&
+                stats.value.type === "File" &&
+                Option.isSome(stats.value.mtime)
+              ) {
                 transcripts.push({
                   filePath,
                   mtimeMs: stats.value.mtime.value.getTime(),
                   providerInstanceId,
                 });
               }
-              if (statsRemaining <= 0) break;
             }
-            if (statsRemaining <= 0) break;
+            if (operationsRemaining <= 0) break;
           }
-          if (statsRemaining <= 0) break;
+          if (operationsRemaining <= 0) break;
         }
-        if (statsRemaining <= 0) break;
+        if (operationsRemaining <= 0) break;
       }
       return transcripts;
     },
@@ -813,15 +831,17 @@ export const make = Effect.gen(function* () {
       }
 
       const transcriptCandidates: Array<TranscriptCandidate> = [];
-      const baseStatBudget = Math.floor(MAX_STATS_PER_SOURCE / Math.max(1, homes.length));
-      const extraStatBudgets = MAX_STATS_PER_SOURCE % Math.max(1, homes.length);
+      const baseOperationBudget = Math.floor(
+        MAX_DISCOVERY_OPERATIONS_PER_SOURCE / Math.max(1, homes.length),
+      );
+      const extraOperationBudgets = MAX_DISCOVERY_OPERATIONS_PER_SOURCE % Math.max(1, homes.length);
       for (const [index, home] of homes.entries()) {
-        const statBudget = baseStatBudget + (index < extraStatBudgets ? 1 : 0);
-        if (statBudget === 0) continue;
+        const operationBudget = baseOperationBudget + (index < extraOperationBudgets ? 1 : 0);
+        if (operationBudget === 0) continue;
         transcriptCandidates.push(
           ...(yield* source === "claudeAgent"
-            ? discoverClaudeTranscripts(home.homePath, home.providerInstanceId, statBudget)
-            : discoverCodexTranscripts(home.homePath, home.providerInstanceId, statBudget)),
+            ? discoverClaudeTranscripts(home.homePath, home.providerInstanceId, operationBudget)
+            : discoverCodexTranscripts(home.homePath, home.providerInstanceId, operationBudget)),
         );
       }
 
@@ -1004,7 +1024,7 @@ export const make = Effect.gen(function* () {
       Stream.mapEffect(({ candidate, transcript }) =>
         Effect.gen(function* () {
           const stats = yield* statOption(transcript.filePath);
-          if (Option.isNone(stats)) {
+          if (Option.isNone(stats) || stats.value.type !== "File") {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           const contents = yield* readTranscript(transcript.filePath, stats.value.size);

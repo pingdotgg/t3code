@@ -244,6 +244,79 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect.each(["claudeAgent", "codex"] as const)(
+      "does not open a non-file %s transcript",
+      (source) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const transcriptPath =
+            source === "claudeAgent"
+              ? path.join(claudeHomePath, "projects", "-slug", "session.jsonl")
+              : path.join(codexHomePath, "sessions", "2026", "08", "24", "rollout-session.jsonl");
+          yield* fileSystem.makeDirectory(transcriptPath, { recursive: true });
+
+          let transcriptOpenCount = 0;
+          const simulatedFileSystem = FileSystem.FileSystem.of({
+            ...fileSystem,
+            open: (filePath, options) => {
+              if (filePath === transcriptPath) transcriptOpenCount += 1;
+              return fileSystem.open(filePath, options);
+            },
+          });
+
+          const result = yield* runScan({ claudeHomePath, codexHomePath }).pipe(
+            Effect.provideService(FileSystem.FileSystem, simulatedFileSystem),
+          );
+
+          expect(result.candidates).toEqual([]);
+          expect(transcriptOpenCount).toBe(0);
+        }),
+    );
+
+    it.effect.each(["claudeAgent", "codex"] as const)(
+      "stops %s directory reads at the discovery operation budget",
+      (source) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const discoveryRoot =
+            source === "claudeAgent"
+              ? path.join(claudeHomePath, "projects")
+              : path.join(codexHomePath, "sessions");
+          const emptyDirectories = Array.from(
+            { length: 20_001 },
+            (_, index) => `empty-${index.toString().padStart(5, "0")}`,
+          );
+          let directoryReadCount = 0;
+          const simulatedFileSystem = FileSystem.FileSystem.of({
+            ...fileSystem,
+            readDirectory: (directory, options) => {
+              if (directory === discoveryRoot) {
+                directoryReadCount += 1;
+                return Effect.succeed(emptyDirectories);
+              }
+              if (path.dirname(directory) === discoveryRoot) {
+                directoryReadCount += 1;
+                return Effect.succeed([]);
+              }
+              return fileSystem.readDirectory(directory, options);
+            },
+          });
+
+          const result = yield* runScan({ claudeHomePath, codexHomePath }).pipe(
+            Effect.provideService(FileSystem.FileSystem, simulatedFileSystem),
+          );
+
+          expect(result.candidates).toEqual([]);
+          expect(directoryReadCount).toBe(20_000);
+        }),
+    );
+
     it.effect("merges the same cwd seen by both agents and flags imported projects", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -1249,6 +1322,66 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         }).pipe(Effect.provideService(FileSystem.FileSystem, simulatedFileSystem));
 
         expect(outcomes).toEqual([{ _tag: "Skipped" }, { _tag: "Skipped" }, { _tag: "Skipped" }]);
+      }),
+    );
+
+    it.effect("does not reopen a transcript that becomes a non-file after discovery", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const nonFilePath = yield* makeTempDir("t3code-non-file-");
+        const transcriptPath = path.join(
+          codexHomePath,
+          "sessions",
+          "2026",
+          "08",
+          "24",
+          "rollout-changed.jsonl",
+        );
+        yield* writeTranscript({
+          filePath: transcriptPath,
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: "changed-session", cwd: workspace },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: { type: "user_message", message: "Do not import this session" },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+
+        let transcriptStatCount = 0;
+        let transcriptOpenCount = 0;
+        const simulatedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          stat: (filePath) => {
+            if (filePath !== transcriptPath) return fileSystem.stat(filePath);
+            transcriptStatCount += 1;
+            return fileSystem.stat(transcriptStatCount === 1 ? transcriptPath : nonFilePath);
+          },
+          open: (filePath, options) => {
+            if (filePath === transcriptPath) transcriptOpenCount += 1;
+            return fileSystem.open(filePath, options);
+          },
+        });
+
+        const outcomes = yield* runRecentThreadOutcomes({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, simulatedFileSystem));
+
+        expect(transcriptStatCount).toBe(2);
+        expect(transcriptOpenCount).toBe(1);
+        expect(outcomes).toEqual([{ _tag: "Skipped" }]);
       }),
     );
 

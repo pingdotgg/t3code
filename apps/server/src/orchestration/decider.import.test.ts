@@ -15,6 +15,66 @@ import { decideOrchestrationCommand } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
 it.layer(NodeServices.layer)("thread history import", (it) => {
+  it.effect("marks imported thread creation without changing live creation", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-08-24T10:00:00.000Z";
+      const projectId = ProjectId.make("project-1");
+      const readModel = yield* projectEvent(createEmptyReadModel(createdAt), {
+        sequence: 1,
+        eventId: EventId.make("event-project-created"),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        type: "project.created",
+        occurredAt: createdAt,
+        commandId: CommandId.make("command-project-created"),
+        causationEventId: null,
+        correlationId: CommandId.make("command-project-created"),
+        metadata: {},
+        payload: {
+          projectId,
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+      const makeCreateCommand = (threadId: ThreadId) => ({
+        type: "thread.create" as const,
+        commandId: CommandId.make(`command-create-${threadId}`),
+        threadId,
+        projectId,
+        title: "Imported thread",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+
+      const imported = yield* decideOrchestrationCommand({
+        command: {
+          ...makeCreateCommand(ThreadId.make("import:codex:session-1")),
+          historyImport: true,
+        },
+        readModel,
+      });
+      const live = yield* decideOrchestrationCommand({
+        command: makeCreateCommand(ThreadId.make("live-thread")),
+        readModel,
+      });
+
+      expect(imported).toMatchObject({
+        type: "thread.created",
+        metadata: { historyImport: true },
+      });
+      expect(live).toMatchObject({ type: "thread.created" });
+      expect(live).not.toMatchObject({ metadata: { historyImport: true } });
+    }),
+  );
+
   it.effect("settles imported messages at the latest absolute timestamp", () =>
     Effect.gen(function* () {
       const createdAt = "2026-08-24T10:30:00.000+02:00";
