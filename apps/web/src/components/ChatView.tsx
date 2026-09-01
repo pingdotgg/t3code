@@ -285,9 +285,8 @@ import {
   formatCodexGoalDescription,
   formatCodexGoalError,
   formatCodexGoalStatus,
-  parseCodexGoalCommand,
-  toCodexGoalSetInput,
 } from "@t3tools/client-runtime/state/threads";
+import { parseCodexGoalCommand, toCodexGoalSetInput } from "@t3tools/client-runtime/state/threads";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
