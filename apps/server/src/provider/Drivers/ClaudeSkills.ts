@@ -2,9 +2,10 @@
  * ClaudeSkills — filesystem discovery of Claude Code skills for the `$` picker.
  *
  * Claude Code loads skills from `<config dir>/skills` (user scope), then
- * `<cwd>/.agents/skills` and `<cwd>/.claude/skills` (project scope), one
- * directory per skill with a `SKILL.md` carrying YAML frontmatter. Later roots
- * win on name collisions, so precedence is user, `.agents`, then `.claude`.
+ * `<cwd>/.claude/skills` and `<cwd>/.agents/skills` (project scope), one
+ * directory per skill with a `SKILL.md` carrying YAML frontmatter. The first
+ * root wins on name collisions, so precedence is user, `.claude`, then
+ * `.agents`, matching the CLI.
  * The Agent SDK init handshake surfaces skills only as slash commands without
  * their filesystem paths, so the provider snapshot scans the same locations
  * directly, mirroring how the Codex app-server reports its skills.

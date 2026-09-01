@@ -150,6 +150,15 @@ same `$name` skill token to your message. The original skill name remains search
 also reports that skill as a native slash command, T3 Code hides the duplicate native entry and keeps
 the `/skill:Skill Name` label.
 
+A skill token runs the skill wherever it sits in your message. T3 Code sends it to each provider in
+the form that provider runs, so the text before and after the token is kept. Skills that only you may
+start, and never the agent on its own, work the same way. A skill you switched off in the provider's
+settings does not appear in either menu.
+
+Provider commands such as `/compact` only run when they open the message, so the `/` menu offers
+them only there. T3 Code's own commands, such as `/model` and `/plan`, and skills stay available on
+any line.
+
 On desktop, press `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux from a new thread to
 start it in the background. T3 Code opens another new thread and shows an **Open** action for the
 thread that started. The new thread keeps the selected workspace mode and base branch. If **New
