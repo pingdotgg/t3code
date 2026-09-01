@@ -6895,7 +6895,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           projectionSnapshotQuery: {
             getThreadDetailSnapshot: () =>
               Effect.gen(function* () {
-                yield* Effect.sleep("25 millis");
+                // Publish during the snapshot load, with no sleep. Effect 4
+                // schedules forkScoped work on a later tick unless
+                // startImmediately is set, so a delay here would hide a lost
+                // event.
                 yield* PubSub.publish(liveEvents, messageEvent);
                 return Option.some({ snapshotSequence: 1, thread });
               }),
