@@ -285,11 +285,10 @@ import {
   formatCodexGoalDescription,
   formatCodexGoalError,
   formatCodexGoalStatus,
-} from "@t3tools/client-runtime/state/threads";
-import { parseCodexGoalCommand, toCodexGoalSetInput } from "@t3tools/client-runtime/state/threads";
-import {
+  parseCodexGoalCommand,
   requestOlderThreadTurns,
   threadHasOlderTurns,
+  toCodexGoalSetInput,
 } from "@t3tools/client-runtime/state/threads";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";

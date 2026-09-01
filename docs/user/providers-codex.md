@@ -87,21 +87,15 @@ app. Some tools also offer approval for the current session or permanent approva
 
 ## Manage A Codex Goal
 
-After starting a Codex thread, use `/goal` in the composer to manage that thread's native Codex
-Goal:
+Use these commands in a started Codex thread:
 
 ```text
-/goal create <objective>
-/goal status
-/goal steer <updated objective>
-/goal pause
-/goal resume
-/goal clear
+/goal create <objective> | /goal status | /goal steer <updated objective>
+/goal pause | /goal resume | /goal clear | /goal reset
 ```
 
-`/goal <objective>` is shorthand for create, and `/goal reset` is an alias for clear. Goal status
-and usage come directly from Codex and stay synchronized when Codex updates them in the background.
-Goal commands are only available on Codex threads.
+`/goal <objective>` creates a Goal. Status and usage stay synchronized with Codex; commands only
+work on Codex threads.
 
 ## I Want Work And Personal Codex Accounts
 
