@@ -4,7 +4,8 @@ import {
   formatDuration,
   timelineEntryIsPersistentResourceCard,
   workEntryDisplayIndicatesToolFailure,
-  workEntryIndicatesToolNeutralStatus,
+  workEntryIsExecuting,
+  workEntryShouldRenderInWorkLog,
   workLogEntryIsToolLike,
   type TimelineEntry,
   type TurnPlanEntry,
@@ -53,7 +54,7 @@ export function workEntryIsVisibleInGroup(
 ): boolean {
   return (
     (expandedToolGroupEntry && entry.toolLifecycleStatus === "inProgress") ||
-    !workEntryIndicatesToolNeutralStatus(entry)
+    workEntryShouldRenderInWorkLog(entry)
   );
 }
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
@@ -61,6 +62,38 @@ export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
 export const TIMELINE_CONTENT_MAX_WIDTH = 768;
 export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
+
+/**
+ * Collapsed work-group selection. Keeps source order and naturally dedupes by
+ * entry id. Pins every genuinely executing tool and every stopped tool, plus
+ * the latest ordinary density-budget row(s) among the remaining non-pinned
+ * rows. Does not pin pending/waiting rows merely because projected lifecycle
+ * is the aggregate `inProgress`.
+ */
+export function selectCollapsedWorkLogEntries(
+  nonEmptyEntries: readonly WorkLogEntry[],
+): WorkLogEntry[] {
+  if (nonEmptyEntries.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
+    return nonEmptyEntries.slice();
+  }
+
+  const keepIds = new Set<string>();
+  const ordinaryIds: string[] = [];
+  for (const entry of nonEmptyEntries) {
+    if (workEntryIsExecuting(entry) || entry.toolLifecycleStatus === "stopped") {
+      keepIds.add(entry.id);
+      continue;
+    }
+    ordinaryIds.push(entry.id);
+  }
+
+  const ordinaryKeepStart = Math.max(0, ordinaryIds.length - MAX_VISIBLE_WORK_LOG_ENTRIES);
+  for (const id of ordinaryIds.slice(ordinaryKeepStart)) {
+    keepIds.add(id);
+  }
+
+  return nonEmptyEntries.filter((entry) => keepIds.has(entry.id));
+}
 
 export interface TimelineEndState {
   readonly isAtEnd?: boolean;
@@ -654,6 +687,14 @@ function timelineEntryFoldRunId(entry: TimelineEntry): RunId | null {
   return null;
 }
 
+function timelineEntryIsTerminalError(entry: TimelineEntry): boolean {
+  return (
+    entry.kind === "work" &&
+    entry.entry.itemType === "error" &&
+    entry.entry.toolLifecycleStatus === "failed"
+  );
+}
+
 /**
  * Settled turns fold their commentary and tool activity behind a
  * "Worked for ..." row anchored at the turn's first foldable entry; the
@@ -736,7 +777,11 @@ function deriveTurnFolds(input: {
     }
     const hiddenEntryIds = new Set<string>();
     for (const entry of group.entries) {
-      if (entry.id !== group.terminalEntry?.id && !timelineEntryIsPersistentResourceCard(entry)) {
+      if (
+        entry.id !== group.terminalEntry?.id &&
+        !timelineEntryIsPersistentResourceCard(entry) &&
+        !timelineEntryIsTerminalError(entry)
+      ) {
         hiddenEntryIds.add(entry.id);
       }
     }
