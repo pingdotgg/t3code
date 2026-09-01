@@ -192,6 +192,7 @@ import {
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { useSidebarActiveThreadScroll } from "./sidebar/useSidebarActiveThreadScroll";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import {
@@ -1246,6 +1247,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
+        data-sidebar-thread-key={threadKey}
         className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
       >
         <Tooltip>
@@ -1394,6 +1396,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   return (
     <li
       data-thread-item
+      data-sidebar-thread-key={threadKey}
       ref={sortable?.setNodeRef}
       style={
         sortable
@@ -1674,8 +1677,9 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
     threadId: thread.id,
   });
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
+  const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
   return (
-    <li role="presentation" className="list-none">
+    <li role="presentation" className="list-none" data-sidebar-thread-key={threadKey}>
       <Tooltip>
         <TooltipTrigger
           render={
@@ -1847,6 +1851,10 @@ export default function Sidebar() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  const markSidebarThreadNavigation = useSidebarActiveThreadScroll({
+    hasThreadRoute: routeTarget !== null,
+    routeThreadKey,
+  });
   const routeTargetRef = useRef(routeTarget);
   routeTargetRef.current = routeTarget;
   // Post-settle navigation validates against the CURRENT route, not the one
@@ -2092,7 +2100,8 @@ export default function Sidebar() {
       (thread) =>
         thread.archivedAt === null &&
         (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`) ||
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey),
     );
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
@@ -2168,6 +2177,7 @@ export default function Sidebar() {
     autoSettleOnMerge,
     changeRequestSnapshotByKey,
     nowMinute,
+    routeThreadKey,
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
@@ -2387,6 +2397,13 @@ export default function Sidebar() {
     },
     [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
   );
+  const navigateToThreadFromSidebar = useCallback(
+    (threadRef: ScopedThreadRef) => {
+      markSidebarThreadNavigation(scopedThreadKey(threadRef));
+      navigateToThread(threadRef);
+    },
+    [markSidebarThreadNavigation, navigateToThread],
+  );
 
   const navigateToDraft = useCallback(
     (draftId: DraftId) => {
@@ -2508,9 +2525,9 @@ export default function Sidebar() {
       if (isTrailingDoubleClick(event.detail)) {
         return;
       }
-      navigateToThread(threadRef);
+      navigateToThreadFromSidebar(threadRef);
     },
-    [navigateToThread, rangeSelectTo, toggleThreadSelection],
+    [navigateToThreadFromSidebar, rangeSelectTo, toggleThreadSelection],
   );
 
   // A settle per thread at a time: double clicks and repeated menu picks
@@ -3840,7 +3857,7 @@ export default function Sidebar() {
                         }
                         timestampFormat={timestampFormat}
                         onThreadClick={handleThreadClick}
-                        onThreadActivate={navigateToThread}
+                        onThreadActivate={navigateToThreadFromSidebar}
                         onStartRename={startThreadRename}
                         onRenameTitleChange={setRenamingTitle}
                         onCommitRename={commitThreadRename}
