@@ -526,6 +526,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
         : []),
+      ...(settings.cleanWorktreeArtifactsOnSettle !==
+      DEFAULT_UNIFIED_SETTINGS.cleanWorktreeArtifactsOnSettle
+        ? ["Clean settled worktrees"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -564,6 +568,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
+      settings.cleanWorktreeArtifactsOnSettle,
       settings.diffIgnoreWhitespace,
       settings.environmentIdentificationMode,
       settings.fontFamilyCode,
@@ -672,6 +677,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+      cleanWorktreeArtifactsOnSettle: DEFAULT_UNIFIED_SETTINGS.cleanWorktreeArtifactsOnSettle,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -2301,6 +2307,34 @@ export function GeneralSettingsPanel() {
             }
           />
         ) : null}
+
+        <SettingsRow
+          {...searchableSetting("clean-settled-worktrees")}
+          description="When a worktree thread settles, deletes regenerable build artifacts (node_modules, Rust target, framework caches) to reclaim disk."
+          resetAction={
+            settings.cleanWorktreeArtifactsOnSettle !==
+            DEFAULT_UNIFIED_SETTINGS.cleanWorktreeArtifactsOnSettle ? (
+              <SettingResetButton
+                label="clean settled worktrees"
+                onClick={() =>
+                  updateSettings({
+                    cleanWorktreeArtifactsOnSettle:
+                      DEFAULT_UNIFIED_SETTINGS.cleanWorktreeArtifactsOnSettle,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.cleanWorktreeArtifactsOnSettle}
+              onCheckedChange={(checked) =>
+                updateSettings({ cleanWorktreeArtifactsOnSettle: Boolean(checked) })
+              }
+              aria-label="Clean build artifacts from settled worktrees"
+            />
+          }
+        />
 
         <SettingsRow
           {...searchableSetting("add-project-starts-in")}
