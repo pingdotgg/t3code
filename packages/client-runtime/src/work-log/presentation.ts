@@ -4,9 +4,11 @@ import {
   type ThreadId,
   type ToolLifecycleItemType,
 } from "@t3tools/contracts";
+import {
+  classifyMarkdownImageSource,
+  markdownImageSourceFragment,
+} from "@t3tools/client-runtime/markdown-images";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
-
-import { classifyMarkdownImageSource, markdownImageSourceFragment } from "../markdownImages.js";
 
 export function isWorktreeSetupActivity(kind: string): boolean {
   return kind === "setup-script.requested" || kind === "setup-script.started";
