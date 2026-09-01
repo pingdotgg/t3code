@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   open: vi.fn(),
   size: vi.fn(),
   readBase64: vi.fn(),
+  write: vi.fn(),
 }));
 
 vi.mock("expo-file-system", () => {
@@ -61,6 +62,10 @@ vi.mock("expo-file-system", () => {
       return mocks.readBase64(this.uri);
     }
 
+    async write(data: string, options?: { readonly encoding?: string }): Promise<void> {
+      mocks.write(this.uri, data, options);
+    }
+
     delete(): void {
       mocks.delete(this.uri);
     }
@@ -102,6 +107,7 @@ describe("composer file attachments", () => {
     mocks.open.mockReset();
     mocks.size.mockReset();
     mocks.readBase64.mockReset();
+    mocks.write.mockReset();
     mocks.size.mockImplementation((uri: string) => (uri.startsWith("content:") ? null : 42));
   });
 
@@ -136,7 +142,9 @@ describe("composer file attachments", () => {
 
         const result = await pickComposerImages({ existingCount: 0 });
 
-        expect(mocks.pickMedia).toHaveBeenCalledWith(expect.not.objectContaining({ base64: true }));
+        expect(mocks.pickMedia).toHaveBeenCalledWith(
+          expect.objectContaining({ base64: true, quality: 1 }),
+        );
         const fileUri = "file:///documents/t3-composer-attachments/attachment-id-photo.jpg";
         expect(result).toEqual({
           images: [
@@ -194,7 +202,36 @@ describe("composer file attachments", () => {
       );
     });
 
-    it("does not relabel unconverted HEIC bytes as JPEG", async () => {
+    it("lands the picker's JPEG export for an unconverted HEIC photo", async () => {
+      mocks.open.mockImplementation(() => otherMagic());
+      mocks.pickMedia.mockResolvedValue({
+        canceled: false,
+        assets: [{ ...photo, base64: "aGVpYy1hcy1qcGVn" }],
+      });
+
+      const result = await pickComposerImages({ existingCount: 0 });
+
+      const fileUri = "file:///documents/t3-composer-attachments/attachment-id-photo.jpg";
+      expect(result).toEqual({
+        images: [
+          expect.objectContaining({
+            name: "photo.jpg",
+            mimeType: "image/jpeg",
+            fileUri,
+            previewUri: fileUri,
+            sizeBytes: 42,
+          }),
+        ],
+        error: null,
+      });
+      // The JPEG export is written once; the HEIC original is never copied.
+      expect(mocks.write).toHaveBeenCalledWith(fileUri, "aGVpYy1hcy1qcGVn", {
+        encoding: "base64",
+      });
+      expect(mocks.copy).not.toHaveBeenCalled();
+    });
+
+    it("rejects unconverted HEIC when the picker supplied no JPEG export", async () => {
       mocks.open.mockImplementation(() => otherMagic());
       mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [photo] });
 

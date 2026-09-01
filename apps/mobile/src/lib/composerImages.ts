@@ -259,20 +259,15 @@ async function createComposerFileAttachment(input: {
   }
 }
 
-/** Copies a picked or pasted image into app-owned storage, validating the stored bytes. */
-async function createComposerImageAttachment(input: {
-  readonly uri: string;
+/** Validates an already-owned image copy and builds its attachment; deletes the copy on failure. */
+async function ownedComposerImageAttachment(input: {
+  readonly fileUri: string;
   readonly name: string;
   readonly mimeType: string;
 }): Promise<DraftComposerImageAttachment> {
   const { File } = await import("expo-file-system");
-  const fileUri = await persistComposerAttachmentFile(
-    input.uri,
-    input.name,
-    PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-  );
   try {
-    const sizeBytes = new File(fileUri).size ?? 0;
+    const sizeBytes = new File(input.fileUri).size ?? 0;
     if (sizeBytes <= 0) {
       throw new Error(`'${input.name}' is empty or could not be read.`);
     }
@@ -287,13 +282,27 @@ async function createComposerImageAttachment(input: {
       name: input.name,
       mimeType: input.mimeType,
       sizeBytes,
-      fileUri,
-      previewUri: fileUri,
+      fileUri: input.fileUri,
+      previewUri: input.fileUri,
     };
   } catch (error) {
-    await removePersistedComposerAttachmentFile(fileUri);
+    await removePersistedComposerAttachmentFile(input.fileUri);
     throw error;
   }
+}
+
+/** Copies a picked or pasted image into app-owned storage, validating the stored bytes. */
+async function createComposerImageAttachment(input: {
+  readonly uri: string;
+  readonly name: string;
+  readonly mimeType: string;
+}): Promise<DraftComposerImageAttachment> {
+  const fileUri = await persistComposerAttachmentFile(
+    input.uri,
+    input.name,
+    PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  );
+  return ownedComposerImageAttachment({ fileUri, name: input.name, mimeType: input.mimeType });
 }
 
 /** Reads only the file's magic number; picker exports can be many megabytes. */
@@ -445,6 +454,12 @@ export async function pickComposerMedia(input: {
       allowsMultipleSelection: true,
       selectionLimit: remainingSlots,
       shouldDownloadFromNetwork: true,
+      // The picker's file copy keeps HEIC-family originals as HEIC on every
+      // path, so its JPEG base64 export is the only supported-bytes source
+      // for them. quality 1 keeps the fast original-file copy path; the
+      // base64 string stays transient and is never persisted.
+      base64: true,
+      quality: 1,
     });
   } catch (error) {
     return {
@@ -510,7 +525,26 @@ export async function pickComposerMedia(input: {
       }
     }
     if (!mimeType || !isProviderSendTurnSupportedImageMimeType(mimeType)) {
-      error = `'${name}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.`;
+      // HEIC and friends: providers cannot accept the original bytes, so land
+      // the picker's JPEG export in the owned directory instead of rejecting
+      // the photo. iPhone camera-roll photos are HEIC by default.
+      if (!asset.base64) {
+        error = `'${name}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.`;
+        continue;
+      }
+      const jpegName = /\.jpe?g$/i.test(name) ? name : `${name.replace(/\.[^.]+$/, "")}.jpg`;
+      try {
+        const jpegUri = await persistComposerImageBase64(asset.base64, jpegName);
+        attachments.push(
+          await ownedComposerImageAttachment({
+            fileUri: jpegUri,
+            name: jpegName,
+            mimeType: "image/jpeg",
+          }),
+        );
+      } catch (cause) {
+        error = cause instanceof Error ? cause.message : `Failed to read '${name}'.`;
+      }
       continue;
     }
 
