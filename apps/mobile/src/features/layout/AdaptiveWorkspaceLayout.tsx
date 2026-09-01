@@ -463,6 +463,16 @@ function AdaptiveWorkspaceLayoutContent(
     [navigation],
   );
 
+  const handleSnoozeFor = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      navigation.navigate("SnoozeFor", {
+        environmentId: String(thread.environmentId),
+        threadId: String(thread.id),
+      });
+    },
+    [navigation],
+  );
+
   const renderedSidebarWidth = useSharedValue(
     panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0,
   );
@@ -543,6 +553,7 @@ function AdaptiveWorkspaceLayoutContent(
                     onOpenSettings={handleOpenSettings}
                     onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
                     onNewThreadInProject={handleNewThreadInProject}
+                    onSnoozeFor={handleSnoozeFor}
                     onSelectThread={handleSelectThread}
                     onSearchQueryChange={setPrimarySidebarSearchQuery}
                     searchQuery={primarySidebarSearchQuery}

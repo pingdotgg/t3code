@@ -168,6 +168,8 @@ export function threadWokeAt(
 }
 
 const HOUR_MS = 60 * 60 * 1_000;
+const MINUTE_MS = 60 * 1_000;
+const SNOOZE_FOR_STEP_MS = 15 * 60 * 1_000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;
 
@@ -181,6 +183,95 @@ export interface SnoozePreset {
   readonly whenLabel: string;
   /** ISO wake time. */
   readonly snoozedUntil: string;
+}
+
+export interface SnoozeWallTime {
+  readonly year: number;
+  /** One-based calendar month. */
+  readonly month: number;
+  readonly day: number;
+  readonly hour: number;
+  readonly minute: number;
+}
+
+export type SnoozeWallTimeResult =
+  | { readonly ok: true; readonly value: Date }
+  | { readonly ok: false; readonly error: string };
+
+/**
+ * Initial value for a custom snooze. Rounding the absolute instant avoids
+ * manufacturing a nonexistent local wall time at a daylight-saving edge.
+ */
+export function resolveSnoozeForDefault(now: Date): Date {
+  return new Date(Math.ceil((now.getTime() + HOUR_MS) / SNOOZE_FOR_STEP_MS) * SNOOZE_FOR_STEP_MS);
+}
+
+/** Shared validation copy for custom snooze forms on every client. */
+export function snoozeForTimeError(value: Date, options: { readonly now: Date }): string | null {
+  if (Number.isNaN(value.getTime())) return "Choose a valid date and time.";
+  if (value.getTime() <= options.now.getTime()) return "Choose a time in the future.";
+  return null;
+}
+
+export function snoozeWallTimeFromDate(value: Date): SnoozeWallTime {
+  return {
+    year: value.getFullYear(),
+    month: value.getMonth() + 1,
+    day: value.getDate(),
+    hour: value.getHours(),
+    minute: value.getMinutes(),
+  };
+}
+
+function matchesSnoozeWallTime(value: Date, wallTime: SnoozeWallTime): boolean {
+  return (
+    value.getFullYear() === wallTime.year &&
+    value.getMonth() === wallTime.month - 1 &&
+    value.getDate() === wallTime.day &&
+    value.getHours() === wallTime.hour &&
+    value.getMinutes() === wallTime.minute
+  );
+}
+
+/**
+ * Resolves local calendar fields without accepting Date's DST-gap normalization.
+ * When clocks repeat, the latest still-future occurrence wins.
+ */
+export function resolveSnoozeWallTime(
+  wallTime: SnoozeWallTime,
+  options: { readonly now: Date },
+): SnoozeWallTimeResult {
+  const initial = new Date(
+    wallTime.year,
+    wallTime.month - 1,
+    wallTime.day,
+    wallTime.hour,
+    wallTime.minute,
+    0,
+    0,
+  );
+  if (!matchesSnoozeWallTime(initial, wallTime)) {
+    return { ok: false, error: "Choose a valid date and time." };
+  }
+
+  const initialOffset = initial.getTimezoneOffset();
+  const nearbyOffsets = new Set(
+    [-2, -1, 0, 1, 2].map((dayDelta) =>
+      new Date(initial.getTime() + dayDelta * DAY_MS).getTimezoneOffset(),
+    ),
+  );
+  const candidates = [...nearbyOffsets]
+    .map((offset) => new Date(initial.getTime() + (offset - initialOffset) * MINUTE_MS))
+    .filter((candidate) => matchesSnoozeWallTime(candidate, wallTime))
+    .toSorted((left, right) => left.getTime() - right.getTime());
+  const future = candidates.findLast(
+    (candidate) => snoozeForTimeError(candidate, options) === null,
+  );
+  if (future) return { ok: true, value: future };
+  return {
+    ok: false,
+    error: snoozeForTimeError(initial, options) ?? "Choose a valid date and time.",
+  };
 }
 
 function snoozeTimeOfDayLabel(date: Date): string {
