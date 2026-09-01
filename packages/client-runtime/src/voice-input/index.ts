@@ -12,6 +12,10 @@ export {
   type VoiceRecorderStatus,
 } from "./controller.ts";
 export {
+  createEnvironmentVoiceTranscriber,
+  type EnvironmentVoiceTranscriptionTransport,
+} from "./environmentTranscriber.ts";
+export {
   VoiceTranscriptionError,
   throwIfVoiceTranscriptionAborted,
   type PreparedVoiceTranscription,

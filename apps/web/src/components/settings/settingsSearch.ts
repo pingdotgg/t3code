@@ -245,6 +245,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
+    id: "openai-transcription-key",
+    title: "OpenAI transcription API key",
+    to: "/settings/general",
+    searchTerms: ["voice input speech audio mobile credential"],
+  },
+  {
+    id: "openai-transcription-model",
+    title: "OpenAI transcription model",
+    to: "/settings/general",
+    searchTerms: ["voice input speech audio mobile"],
+  },
+  {
     id: "diagnostics",
     title: "Diagnostics",
     to: "/settings/general",

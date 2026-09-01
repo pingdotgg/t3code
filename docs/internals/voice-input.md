@@ -1,10 +1,8 @@
 # Voice input
 
-> For maintainers. Using T3 Code? See [voice input on iPhone](../user/composer.md#voice-input-on-iphone).
+> For maintainers. Using T3 Code? See [voice input on mobile](../user/composer.md#voice-input-on-mobile).
 
-Voice input produces editable composer text. The current implementation records on the client and
-transcribes locally with Apple's `SpeechAnalyzer` and `SpeechTranscriber` on supported iOS 26+
-devices. Environment-provided transcription and transcription on web and desktop are not implemented.
+Voice input produces editable composer text. Mobile records on the client and transcribes either locally with Apple's `SpeechAnalyzer` and `SpeechTranscriber` on supported iOS 26+ devices or through an environment-provided OpenAI service. Web and desktop do not capture voice.
 
 ## Current boundaries
 
@@ -20,13 +18,7 @@ at the start of an operation, before asking for microphone permission. Preparati
 locale and a bound `transcribe` function. The controller retains that result for the recording, so a
 selection change cannot prepare with one implementation and transcribe with another.
 
-[`useVoiceInputController`][hook] supplies Expo audio capture, microphone permissions, audio-session
-management, waveform samples, and app and navigation lifecycle handling. It normalizes Expo's
-`mediaServicesDidReset` into a generic recorder error. [`voiceTranscription.ios.ts`][ios] adapts
-`@react-native-ai/apple` through `getLocalVoiceTranscriber()`, capturing the requested device locale
-and binding the prepared transcriber to Apple's resolved locale. The other-platform binding returns
-no local transcriber. That result describes the local implementation, not whether a client could use
-an environment's transcription service.
+[`useVoiceInputController`][hook] supplies Expo audio capture, microphone permissions, audio-session management, waveform samples, and app and navigation lifecycle handling. It normalizes Expo's `mediaServicesDidReset` into a generic recorder error and resolves the device's per-environment transcription preference. [`voiceTranscription.ios.ts`][ios] adapts `@react-native-ai/apple` through `getLocalVoiceTranscriber()`, capturing the requested device locale and binding the prepared transcriber to Apple's resolved locale. The other-platform binding returns no local transcriber. The shared environment transcriber mints a short-lived signed URL, uploads the temporary recording to the selected environment, and receives text in the same request.
 
 Mobile's [`voiceInputPresentation.ts`][presentation] maps shared state to toolbar labels and actions.
 Waveform and toolbar rendering stay in mobile. The composer edits draft text without selecting a
@@ -82,11 +74,7 @@ The [attachment upload contracts][uploads] and [shared upload operations][attach
 pattern for authorized binary uploads through an environment, including remote connections. Their
 existing chat-attachment retention is not a transcription cleanup policy.
 
-Future service selection and environment requests belong alongside the controller in
-`packages/client-runtime`, with wire contracts in `packages/contracts`. Capture and native local
-recognition remain client-specific. An environment-backed transcriber implements the same shared
-contract, with its environment and service bound when selected. The controller does not own service
-credentials, provider SDKs, or transport selection.
+Service selection and environment requests live alongside the controller in `packages/client-runtime`, with wire contracts in `packages/contracts`. Capture and native local recognition remain client-specific. The environment-backed transcriber implements the same shared contract, with its environment and service bound when selected. The controller does not own service credentials, provider SDKs, or transport selection.
 
 [controller]: ../../packages/client-runtime/src/voice-input/controller.ts
 [voice-input]: ../../packages/client-runtime/src/voice-input/index.ts

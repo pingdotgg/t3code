@@ -72,22 +72,13 @@ uploaded. Stashed files stay uploaded on the server for 24 hours. If you restore
 that, the file comes back with **Attach again** next to it. Attach the file again or remove it, then
 send.
 
-## Voice input on iPhone
+## Voice input on mobile
 
-On supported iPhones with iOS 26 or later, tap the microphone in the composer to record a message.
-An expanded composer keeps your draft visible and flips its bottom toolbar into recording controls
-with waves that respond to your voice. A collapsed composer flips into a compact recording strip
-without changing height. Tap the checkmark to finish and transcribe on your device. The waves fade
-into a transcription status, then the usual
-controls return with the text inserted at the selection where recording started. If the keyboard
-is open when you start, it stays open during voice input. You can review and edit the text before
-you send it.
+Tap the microphone in the composer to record a message. An expanded composer keeps your draft visible and changes its bottom toolbar to recording controls with waves that respond to your voice. A collapsed composer becomes a compact recording strip without changing height. Tap the checkmark to finish. The waves fade into a transcription status, then the usual controls return with the text inserted where recording started. You can review and edit the text before sending it.
 
-The first use can download Apple's speech model and needs a network connection. Later transcription
-works offline for that language. A recording can be up to five minutes long. Canceling voice input,
-leaving the screen, or an audio interruption discards the new recording and keeps the existing draft
-and attachments. T3 Code deletes the local audio file after transcription or cancellation. It sends
-only the normal message text when you submit the draft.
+Supported iPhones with iOS 26 or later can transcribe on the device. The first use can download Apple's speech model and needs a network connection; later transcription works offline for that language. If the environment has an OpenAI transcription API key, choose OpenAI in the environment's mobile settings. This option works on Android and older iOS versions. The app sends the recording to the selected environment, which sends it to OpenAI. Neither T3 Code nor the environment stores the audio.
+
+A recording can be up to five minutes long. Canceling voice input, leaving the screen, or an audio interruption discards the recording and keeps the existing draft and attachments. T3 Code deletes the local audio file after transcription or cancellation. It sends only the normal message text when you submit the draft.
 
 ## Commands and skills
 

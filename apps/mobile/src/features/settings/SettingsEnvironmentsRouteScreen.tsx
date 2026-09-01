@@ -1,12 +1,15 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
-import { Platform, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
@@ -14,6 +17,9 @@ import { splitEnvironmentSections } from "../connection/environmentSections";
 import { cn } from "../../lib/cn";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { serverEnvironment } from "../../state/server";
 import {
   applyShowcaseLocalEnvironmentDisplayUrls,
   resolveShowcaseEnvironmentUpdateDisplayUrl,
@@ -171,7 +177,89 @@ export function SettingsEnvironmentsRouteScreen() {
               }
             : {})}
         />
+        {[...localEnvironments, ...connectedCloudEnvironments].map((environment) => (
+          <EnvironmentTranscriptionRow
+            key={`transcription-${environment.environmentId}`}
+            environmentId={environment.environmentId}
+            environmentLabel={environment.environmentLabel}
+          />
+        ))}
       </ScrollView>
     </View>
+  );
+}
+
+function EnvironmentTranscriptionRow(props: {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+}) {
+  const services = useAtomValue(
+    serverEnvironment.transcriptionServicesValueAtom(props.environmentId),
+  );
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  if (services.length === 0) return null;
+
+  const localAvailable = getLocalVoiceTranscriber() !== null;
+  const savedSource = AsyncResult.isSuccess(preferences)
+    ? preferences.value.voiceTranscriptionSources?.[props.environmentId]
+    : undefined;
+  const selectedSource = savedSource ?? (localAvailable ? "local" : services[0]?.id);
+  const selectedLabel =
+    selectedSource === "local"
+      ? "On this device"
+      : (services.find((service) => service.id === selectedSource)?.label ?? "Unavailable");
+  const actions = [
+    ...(localAvailable
+      ? [
+          {
+            id: "local",
+            title: "On this device",
+            state: selectedSource === "local" ? ("on" as const) : ("off" as const),
+          },
+        ]
+      : []),
+    ...services.map((service) => ({
+      id: service.id,
+      title: service.label,
+      state: selectedSource === service.id ? ("on" as const) : ("off" as const),
+    })),
+  ];
+
+  return (
+    <ControlPillMenu
+      actions={actions}
+      onPressAction={({ nativeEvent }) => {
+        const current = AsyncResult.isSuccess(preferences)
+          ? (preferences.value.voiceTranscriptionSources ?? {})
+          : {};
+        savePreferences({
+          voiceTranscriptionSources: {
+            ...current,
+            [props.environmentId]: nativeEvent.event,
+          },
+        });
+      }}
+    >
+      <Pressable
+        accessibilityLabel={`${props.environmentLabel} voice transcription: ${selectedLabel}`}
+        accessibilityRole="button"
+        className="mt-3 flex-row items-center justify-between rounded-[24px] bg-card px-4 py-3"
+      >
+        <View className="flex-row items-center gap-3">
+          <SymbolView
+            name="waveform"
+            size={18}
+            tintColorClassName="accent-icon-muted"
+            type="monochrome"
+          />
+          <View>
+            <Text className="text-sm text-foreground">Voice transcription</Text>
+            <Text className="text-xs text-foreground-muted">{props.environmentLabel}</Text>
+          </View>
+        </View>
+        <Text className="text-sm text-foreground-muted">{selectedLabel}</Text>
+      </Pressable>
+    </ControlPillMenu>
   );
 }

@@ -61,6 +61,7 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const TRANSCRIPTION_OPENAI_API_KEY_SECRET_NAME = "transcription-openai-api-key";
 
 /**
  * Fold the legacy in-config `enabled` flag into the envelope-level
@@ -159,7 +160,18 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  const openAiApiKey = settings.transcription.openAiApiKey;
+  return {
+    ...settings,
+    providerInstances,
+    transcription: {
+      ...settings.transcription,
+      openAiApiKey:
+        openAiApiKey.value.length > 0 || openAiApiKey.valueRedacted
+          ? { ...openAiApiKey, value: "", valueRedacted: true }
+          : { value: "", sensitive: true },
+    },
+  };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -512,9 +524,28 @@ const make = Effect.gen(function* () {
           environment,
         } satisfies ProviderInstanceConfig;
       }
+      const openAiApiKey = settings.transcription.openAiApiKey;
+      const materializedOpenAiApiKey = openAiApiKey.valueRedacted
+        ? yield* secretStore.get(TRANSCRIPTION_OPENAI_API_KEY_SECRET_NAME).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "read-secret",
+                  environmentVariable: "OPENAI_API_KEY",
+                  cause,
+                }),
+            ),
+            Effect.map((secret) => (Option.isSome(secret) ? textDecoder.decode(secret.value) : "")),
+          )
+        : openAiApiKey.value;
       return {
         ...settings,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
+        transcription: {
+          ...settings.transcription,
+          openAiApiKey: { ...openAiApiKey, value: materializedOpenAiApiKey },
+        },
       };
     });
 
@@ -630,9 +661,42 @@ const make = Effect.gen(function* () {
         }
       }
 
+      const openAiApiKey = next.transcription.openAiApiKey;
+      if (!openAiApiKey.valueRedacted) {
+        const operation = openAiApiKey.value.length > 0 ? "write-secret" : "remove-secret";
+        yield* (
+          openAiApiKey.value.length > 0
+            ? secretStore.set(
+                TRANSCRIPTION_OPENAI_API_KEY_SECRET_NAME,
+                textEncoder.encode(openAiApiKey.value),
+              )
+            : secretStore.remove(TRANSCRIPTION_OPENAI_API_KEY_SECRET_NAME)
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath,
+                operation,
+                environmentVariable: "OPENAI_API_KEY",
+                cause,
+              }),
+          ),
+        );
+      }
+
       return {
         ...next,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
+        transcription: {
+          ...next.transcription,
+          openAiApiKey: {
+            value: "",
+            sensitive: true,
+            ...(openAiApiKey.value.length > 0 || openAiApiKey.valueRedacted
+              ? { valueRedacted: true }
+              : {}),
+          },
+        },
       };
     });
 

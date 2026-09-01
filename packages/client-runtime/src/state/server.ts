@@ -315,6 +315,9 @@ export function applyServerConfigProjection(
         config: {
           ...projection.config,
           settings: event.payload.settings,
+          ...(event.payload.transcriptionServices === undefined
+            ? {}
+            : { transcriptionServices: event.payload.transcriptionServices }),
         },
         latestEvent: event,
         source: "live",
@@ -739,12 +742,25 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:providers:${environmentId}`),
     ),
   );
+  const transcriptionServicesValueAtom = Atom.family((environmentId: EnvironmentId | null) =>
+    environmentId === null
+      ? Atom.make<NonNullable<ServerConfig["transcriptionServices"]>>([]).pipe(
+          Atom.withLabel("environment-data:server:transcription-services:empty"),
+        )
+      : Atom.make((get) => {
+          const config = get(configValueAtom(environmentId));
+          return config?.environment.capabilities.transcription === true
+            ? (config.transcriptionServices ?? [])
+            : [];
+        }).pipe(Atom.withLabel(`environment-data:server:transcription-services:${environmentId}`)),
+  );
 
   return {
     configValueAtom,
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
+    transcriptionServicesValueAtom,
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,

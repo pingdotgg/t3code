@@ -8,6 +8,10 @@ import {
 } from "expo-audio";
 import { File } from "expo-file-system";
 import { useFocusEffect } from "@react-navigation/native";
+import { useAtomValue } from "@effect/atom-react";
+import type { EnvironmentId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
@@ -15,6 +19,7 @@ import { useSharedValue } from "react-native-reanimated";
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
 import {
+  createEnvironmentVoiceTranscriber,
   VoiceInputController,
   VOICE_RECORDING_LIMIT_SECONDS,
   voiceInputBlocksSubmission,
@@ -22,7 +27,14 @@ import {
   type VoiceDraftSnapshot,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
+import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import { environmentVoiceTransport } from "./environmentVoiceTransport";
 import { normalizeVoiceInputDecibels, VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { mobilePreferencesAtom } from "../../state/preferences";
+import { serverEnvironment } from "../../state/server";
+import { environmentSession } from "../../state/session";
+import { transcriptionEnvironment } from "../../state/transcription";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const VOICE_METERING_INTERVAL_MS = 80;
@@ -61,6 +73,7 @@ async function configureVoiceRecordingAudio(): Promise<void> {
 }
 
 export function useVoiceInputController(input: {
+  readonly environmentId: EnvironmentId | null;
   readonly ownerKey: string | null;
   readonly draftMessage: string;
   readonly selection: ComposerEditorSelection;
@@ -70,6 +83,27 @@ export function useVoiceInputController(input: {
 }) {
   const [state, setState] = useState<VoiceInputState>(INITIAL_STATE);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const services = useAtomValue(
+    serverEnvironment.transcriptionServicesValueAtom(input.environmentId),
+  );
+  const localTranscriber = getLocalVoiceTranscriber();
+  const selectedSource =
+    input.environmentId !== null && AsyncResult.isSuccess(preferences)
+      ? preferences.value.voiceTranscriptionSources?.[input.environmentId]
+      : undefined;
+  const voiceSelectionRef = useRef({
+    environmentId: input.environmentId,
+    services,
+    localTranscriber,
+    selectedSource,
+  });
+  voiceSelectionRef.current = {
+    environmentId: input.environmentId,
+    services,
+    localTranscriber,
+    selectedSource,
+  };
   const elapsedSecondsRef = useRef(0);
   const audioLevelsRef = useRef(Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0));
   const audioLevels = useSharedValue(audioLevelsRef.current);
@@ -99,7 +133,38 @@ export function useVoiceInputController(input: {
   if (!controllerRef.current) {
     controllerRef.current = new VoiceInputController({
       recorder,
-      getTranscriber: getLocalVoiceTranscriber,
+      getTranscriber: () => {
+        const selection = voiceSelectionRef.current;
+        const source =
+          selection.selectedSource ??
+          (selection.localTranscriber !== null ? "local" : selection.services[0]?.id);
+        if (source === "local" || source === undefined) return selection.localTranscriber;
+        if (selection.environmentId === null) return null;
+        const environmentId = selection.environmentId;
+        return createEnvironmentVoiceTranscriber({
+          environmentId,
+          serviceId: source,
+          locale: Intl.DateTimeFormat().resolvedOptions().locale,
+          mimeType: "audio/mp4",
+          transport: environmentVoiceTransport,
+          registry: appAtomRegistry,
+          environment: transcriptionEnvironment,
+          getServices: () =>
+            appAtomRegistry.get(serverEnvironment.transcriptionServicesValueAtom(environmentId)),
+          isConnected: () =>
+            Option.isSome(
+              appAtomRegistry.get(environmentSession.preparedConnectionValueAtom(environmentId)),
+            ),
+          resolveUrl: (relativeUrl) => {
+            const connection = appAtomRegistry.get(
+              environmentSession.preparedConnectionValueAtom(environmentId),
+            );
+            return Option.isSome(connection)
+              ? resolveAssetUrl(connection.value.httpBaseUrl, relativeUrl)
+              : null;
+          },
+        });
+      },
       requestPermission: async () => {
         const permission = await requestRecordingPermissionsAsync();
         return { granted: permission.granted, canAskAgain: permission.canAskAgain };
@@ -203,7 +268,7 @@ export function useVoiceInputController(input: {
   const cancel = useCallback(() => controller.cancel(), [controller]);
 
   return {
-    isAvailable: getLocalVoiceTranscriber() !== null,
+    isAvailable: localTranscriber !== null || services.length > 0,
     state,
     audioLevels,
     elapsedSeconds,

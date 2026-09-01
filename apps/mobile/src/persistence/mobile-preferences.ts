@@ -46,6 +46,8 @@ export interface Preferences {
   readonly threadListV2SettledShelfExpanded?: boolean;
   /** Undefined preserves the default collapsed Snoozed shelf. */
   readonly threadListV2SnoozedShelfExpanded?: boolean;
+  /** Selected voice transcription source by stable environment id. */
+  readonly voiceTranscriptionSources?: Readonly<Record<string, string>>;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -106,6 +108,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     planModeEnabled?: boolean;
     threadListV2SettledShelfExpanded?: boolean;
     threadListV2SnoozedShelfExpanded?: boolean;
+    voiceTranscriptionSources?: Readonly<Record<string, string>>;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -181,6 +184,18 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.threadListV2SnoozedShelfExpanded === "boolean") {
     preferences.threadListV2SnoozedShelfExpanded = parsed.threadListV2SnoozedShelfExpanded;
+  }
+  if (
+    typeof parsed.voiceTranscriptionSources === "object" &&
+    parsed.voiceTranscriptionSources !== null &&
+    !Array.isArray(parsed.voiceTranscriptionSources)
+  ) {
+    preferences.voiceTranscriptionSources = Object.fromEntries(
+      Object.entries(parsed.voiceTranscriptionSources).filter(
+        (entry): entry is [string, string] =>
+          entry[0].length > 0 && typeof entry[1] === "string" && entry[1].length > 0,
+      ),
+    );
   }
   return preferences;
 }

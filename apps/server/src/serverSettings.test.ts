@@ -118,6 +118,38 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(settingsLayer));
   });
 
+  it.effect("persists and redacts the OpenAI transcription key", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      const updated = yield* serverSettings.updateSettings({
+        transcription: {
+          openAiApiKey: {
+            value: "sk-test-secret",
+            sensitive: true,
+            valueRedacted: false,
+          },
+        },
+      });
+      assert.strictEqual(updated.transcription.openAiApiKey.value, "sk-test-secret");
+      assert.deepEqual(
+        ServerSettingsModule.redactServerSettingsForClient(updated).transcription.openAiApiKey,
+        { value: "", sensitive: true, valueRedacted: true },
+      );
+
+      assert.notInclude(yield* fileSystem.readFileString(config.settingsPath), "sk-test-secret");
+
+      yield* serverSettings.updateSettings({
+        transcription: {
+          openAiApiKey: { value: "", sensitive: true, valueRedacted: false },
+        },
+      });
+      assert.strictEqual((yield* serverSettings.getSettings).transcription.openAiApiKey.value, "");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("identifies provider history query failures", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

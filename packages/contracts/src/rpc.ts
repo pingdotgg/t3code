@@ -205,6 +205,12 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  TranscriptionCreateUrlInput,
+  TranscriptionCreateUrlResult,
+  TranscriptionSigningKeyError,
+  TranscriptionUnavailableError,
+} from "./transcription.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -225,6 +231,7 @@ export const WS_METHODS = {
   assetsCreateUrl: "assets.createUrl",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
   attachmentsDelete: "attachments.delete",
+  transcriptionCreateUrl: "transcription.createUrl",
 
   // Provider methods
   providerUploadFeedback: "provider.uploadFeedback",
@@ -694,6 +701,17 @@ export const WsAttachmentsDeleteRpc = Rpc.make(WS_METHODS.attachmentsDelete, {
   error: EnvironmentAuthorizationError,
 });
 
+export const WsTranscriptionCreateUrlRpc = Rpc.make(WS_METHODS.transcriptionCreateUrl, {
+  payload: TranscriptionCreateUrlInput,
+  success: TranscriptionCreateUrlResult,
+  error: Schema.Union([
+    TranscriptionSigningKeyError,
+    TranscriptionUnavailableError,
+    ServerSettingsError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
 export const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, {
   payload: ProviderUploadFeedbackInput,
   success: ProviderUploadFeedbackResult,
@@ -1080,6 +1098,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssetsCreateUrlRpc,
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,
+  WsTranscriptionCreateUrlRpc,
   WsProviderUploadFeedbackRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,

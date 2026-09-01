@@ -35,6 +35,12 @@ import {
   validateAttachmentUploadToken,
 } from "./assets/AttachmentUpload.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
+import {
+  TRANSCRIPTION_ROUTE_PREFIX,
+  readTranscriptionBody,
+  transcribeWithOpenAi,
+  validateTranscriptionToken,
+} from "./transcription/Transcription.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
 import {
@@ -380,6 +386,37 @@ export const attachmentUploadRouteLayer = HttpRouter.add(
     return stored.ok
       ? HttpServerResponse.empty({ status: 204 })
       : HttpServerResponse.text(stored.detail, { status: stored.status });
+  }),
+);
+
+export const transcriptionRouteLayer = HttpRouter.add(
+  "POST",
+  `${TRANSCRIPTION_ROUTE_PREFIX}/*`,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
+
+    const token = url.value.pathname.slice(`${TRANSCRIPTION_ROUTE_PREFIX}/`.length);
+    const claims = token ? yield* validateTranscriptionToken(token) : null;
+    if (!claims) return HttpServerResponse.text("Not Found", { status: 404 });
+
+    const contentLength = request.headers["content-length"];
+    if (
+      contentLength !== undefined &&
+      (!Number.isInteger(Number(contentLength)) || Number(contentLength) !== claims.sizeBytes)
+    ) {
+      return HttpServerResponse.text("Content-Length must match the transcription size.", {
+        status: 400,
+      });
+    }
+
+    const body = yield* readTranscriptionBody(claims, request.stream);
+    if (!body.ok) return HttpServerResponse.text(body.detail, { status: 400 });
+    const result = yield* transcribeWithOpenAi(claims, body.body);
+    return result.ok
+      ? HttpServerResponse.jsonUnsafe({ text: result.text })
+      : HttpServerResponse.text(result.detail, { status: result.status });
   }),
 );
 

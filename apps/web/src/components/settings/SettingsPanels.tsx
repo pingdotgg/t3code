@@ -1866,6 +1866,13 @@ export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
+  const [transcriptionKeyDraft, setTranscriptionKeyDraft] = useState("");
+  const [transcriptionModelDraft, setTranscriptionModelDraft] = useState(
+    settings.transcription.model,
+  );
+  useEffect(() => {
+    setTranscriptionModelDraft(settings.transcription.model);
+  }, [settings.transcription.model]);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
@@ -2504,6 +2511,70 @@ export function GeneralSettingsPanel() {
                 }}
               />
             </div>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Voice input">
+        <SettingsRow
+          {...searchableSetting("openai-transcription-key")}
+          description="Used by this environment to transcribe mobile voice recordings with OpenAI. The key stays on the server."
+          control={
+            <div className="flex w-full max-w-sm gap-2">
+              <Input
+                aria-label="OpenAI transcription API key"
+                autoComplete="off"
+                className="min-w-0 flex-1"
+                onChange={(event) => setTranscriptionKeyDraft(event.target.value)}
+                placeholder={
+                  settings.transcription.openAiApiKey.valueRedacted ? "Key configured" : "sk-..."
+                }
+                type="password"
+                value={transcriptionKeyDraft}
+              />
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => {
+                  updateSettings({
+                    transcription: {
+                      openAiApiKey: {
+                        value: transcriptionKeyDraft,
+                        sensitive: true,
+                        valueRedacted: false,
+                      },
+                    },
+                  });
+                  setTranscriptionKeyDraft("");
+                }}
+              >
+                {transcriptionKeyDraft.length > 0
+                  ? "Save"
+                  : settings.transcription.openAiApiKey.valueRedacted
+                    ? "Clear"
+                    : "Save"}
+              </Button>
+            </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("openai-transcription-model")}
+          description="OpenAI transcription model."
+          control={
+            <Input
+              aria-label="OpenAI transcription model"
+              className="w-full max-w-sm"
+              onBlur={() => {
+                const model = transcriptionModelDraft.trim();
+                if (model && model !== settings.transcription.model) {
+                  updateSettings({ transcription: { model } });
+                } else {
+                  setTranscriptionModelDraft(settings.transcription.model);
+                }
+              }}
+              onChange={(event) => setTranscriptionModelDraft(event.target.value)}
+              value={transcriptionModelDraft}
+            />
           }
         />
       </SettingsSection>
