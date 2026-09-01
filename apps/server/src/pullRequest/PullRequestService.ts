@@ -912,11 +912,14 @@ export const make = Effect.gen(function* () {
        * One repository asked on its own. What every host without a search across repositories
        * does, and what a batched read falls back to for a repository it could not answer for.
        */
-      const readRepository = (project: SupportedProject): Effect.Effect<RepositoryBatch> => {
+      const readRepository = (
+        project: SupportedProject,
+        options?: { readonly fromStart: boolean },
+      ): Effect.Effect<RepositoryBatch> => {
         {
           const viewer = viewers[project.host]!;
           const key = listCursorKey(project.host, project.repository);
-          const cursor = cursorOf(project);
+          const cursor = options?.fromStart === true ? undefined : cursorOf(project);
           return project.api
             .listChangeRequests({
               cwd: project.project.workspaceRoot,
@@ -1000,7 +1003,9 @@ export const make = Effect.gen(function* () {
         const first = chunk[0]!;
         const readAcross = first.api.listChangeRequestsAcross;
         const separately = () =>
-          Effect.forEach(chunk, readRepository, { concurrency: REPOSITORY_CONCURRENCY });
+          Effect.forEach(chunk, (project) => readRepository(project), {
+            concurrency: REPOSITORY_CONCURRENCY,
+          });
         if (readAcross === undefined) return separately();
         const viewer = viewers[first.host]!;
         const cursor = cursorOf(first);
@@ -1037,18 +1042,27 @@ export const make = Effect.gen(function* () {
               chunk,
               (project): Effect.Effect<RepositoryBatch> => {
                 const fetched = rows.get(project.repository.trim().toLowerCase()) ?? [];
-                // GitHub does not index every repository for search — a renamed one answers for
-                // its old name with silence rather than with an error — so a repository the
-                // search said nothing at all about is read on its own, once, before it is
-                // believed. Only on its first slice: after that it has a boundary to carry on
-                // from, and silence past one means the rows are older rather than absent. That
-                // keeps a search-invisible repository from disappearing on a busy host, at the
-                // price of one request per repository with nothing in the first slice — which
-                // run together, and only there.
-                if (fetched.length === 0 && cursorOf(project) === undefined) {
-                  return readRepository(project);
-                }
                 const cursorHere = cursorOf(project);
+                // GitHub does not index every repository for search. A renamed repository can
+                // answer with silence rather than an error, so a repository that never appeared
+                // is eventually read on its own before that silence is believed.
+                //
+                // A full cross-repository slice cannot make that claim yet: the repository's
+                // newest row may simply be older than the slice. Reading every absent repository
+                // here turned one fast host search into one CLI call per quiet repository. Carry
+                // all of them to the slice boundary instead, and verify only the repositories
+                // still unseen once the search reaches its end. A truncated page with no decoded
+                // boundary cannot be continued safely, so it keeps the fallback.
+                if (
+                  fetched.length === 0 &&
+                  (cursorHere?.delivered ?? 0) === 0 &&
+                  (!page.truncated || boundary === null)
+                ) {
+                  // This verifies whether the repository was absent from search, not whether it
+                  // has rows older than the batch boundary. Start at its head so an index gap
+                  // cannot hide newer rows behind the cursor that brought the batch here.
+                  return readRepository(project, { fromStart: true });
+                }
                 const items =
                   cursorHere === undefined
                     ? fetched
