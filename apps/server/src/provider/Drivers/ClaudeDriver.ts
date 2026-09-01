@@ -12,13 +12,19 @@
  *
  * @module provider/Drivers/ClaudeDriver
  */
-import { ClaudeSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import {
+  ClaudeSettings,
+  ProviderDriverKind,
+  type ServerProvider,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -146,6 +152,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const harnessModelCatalog = yield* readClaudeHarnessModelCatalog(effectiveConfig).pipe(
         Effect.orElseSucceed(() => undefined),
       );
+      const harnessModelCatalogRef = yield* Ref.make<
+        ReadonlyArray<ServerProviderModel> | undefined
+      >(harnessModelCatalog);
+      const getHarnessModelCatalog = () => Ref.get(harnessModelCatalogRef);
       // The harness launcher refreshes its OpenCode catalog before every
       // invocation. T3's periodic health probe must stay lightweight, so use
       // the native Claude executable against the already-synced isolated
@@ -169,10 +179,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const adapterOptions = {
         instanceId,
         environment: processEnv,
+        getHarnessModelCatalog,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       };
       const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
-      const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, processEnv);
+      const textGeneration = yield* makeClaudeTextGeneration(
+        effectiveConfig,
+        processEnv,
+        getHarnessModelCatalog,
+      );
 
       // Per-instance capabilities cache: keyed on binary + resolved HOME so
       // account-specific probes never share auth metadata across instances.
@@ -196,18 +211,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           ),
         ),
         Effect.flatMap((latestHarnessModelCatalog) =>
-          Effect.zipWith(
-            checkClaudeProviderStatus(
-              healthConfig,
-              () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
-              processEnv,
-              cwd,
-              latestHarnessModelCatalog,
+          Ref.set(harnessModelCatalogRef, latestHarnessModelCatalog).pipe(
+            Effect.andThen(
+              Effect.zipWith(
+                checkClaudeProviderStatus(
+                  healthConfig,
+                  () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
+                  processEnv,
+                  cwd,
+                  latestHarnessModelCatalog,
+                ),
+                modelManifest.current,
+                (draft, manifest) =>
+                  stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
+                { concurrent: true },
+              ),
             ),
-            modelManifest.current,
-            (draft, manifest) =>
-              stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
-            { concurrent: true },
           ),
         ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

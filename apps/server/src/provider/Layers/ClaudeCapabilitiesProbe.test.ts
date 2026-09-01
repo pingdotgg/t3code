@@ -66,9 +66,9 @@ it("collapses Clauded effort aliases into one T3 model row", () => {
   const commandCode = models[2];
   assert.ok(commandCode);
   assert.ok(commandCode.capabilities);
-  assert.equal(normalizeClaudeCliEffort("ultracode", muse.slug), "xhigh");
-  assert.equal(normalizeClaudeCliEffort("ultracode", ling.slug), "high");
-  assert.equal(normalizeClaudeCliEffort("xhigh", ling.slug), "high");
+  assert.equal(normalizeClaudeCliEffort("ultracode", muse.slug, models), "xhigh");
+  assert.equal(normalizeClaudeCliEffort("ultracode", ling.slug, models), "high");
+  assert.equal(normalizeClaudeCliEffort("xhigh", ling.slug, models), "high");
   assert.equal(commandCode.capabilities.optionDescriptors?.length, 0);
 });
 

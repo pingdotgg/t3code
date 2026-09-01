@@ -330,8 +330,6 @@ const CLAUDE_MODEL_CATALOG: ReadonlyArray<ServerProviderModel> = [
 // so the catalog itself carries no `isLegacy` flags.
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = CLAUDE_MODEL_CATALOG;
 
-/** Model capabilities discovered from a Clauded modelPicker configuration. */
-const CLAUDED_MODEL_CAPABILITIES = new Map<string, ModelCapabilities>();
 const CLAUDED_MODEL_SUFFIX = /--effort-[a-z0-9-]+$/iu;
 const CLAUDED_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
 const CLAUDED_EFFORT_RANK = new Map([
@@ -436,7 +434,6 @@ export function parseClaudeHarnessModelPicker(input: unknown): ReadonlyArray<Ser
           ],
         })
       : DEFAULT_CLAUDE_MODEL_CAPABILITIES;
-    CLAUDED_MODEL_CAPABILITIES.set(slug, capabilities);
     seen.add(slug);
     models.push({
       slug,
@@ -539,10 +536,15 @@ function formatClaudeOpus47UpgradeMessage(version: string | null): string {
   return `Claude Code ${versionLabel} is too old for Claude Opus 4.7. Upgrade to v${MINIMUM_CLAUDE_OPUS_4_7_VERSION} or newer to access it.`;
 }
 
-export function getClaudeModelCapabilities(model: string | null | undefined): ModelCapabilities {
+export function getClaudeModelCapabilities(
+  model: string | null | undefined,
+  harnessModelCatalog?: ReadonlyArray<ServerProviderModel>,
+): ModelCapabilities {
   const slug = model?.trim();
   return (
-    (slug ? CLAUDED_MODEL_CAPABILITIES.get(slug) : undefined) ??
+    (slug
+      ? harnessModelCatalog?.find((candidate) => candidate.slug === slug)?.capabilities
+      : undefined) ??
     BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
     DEFAULT_CLAUDE_MODEL_CAPABILITIES
   );
@@ -574,13 +576,15 @@ export function resolveClaudeEffort(
 export function normalizeClaudeCliEffort(
   effort: string | null | undefined,
   model: string | null | undefined,
+  harnessModelCatalog?: ReadonlyArray<ServerProviderModel>,
 ): string | undefined {
   if (!effort || effort === "ultrathink") {
     return undefined;
   }
-  const dynamicEfforts = (
-    model ? CLAUDED_MODEL_CAPABILITIES.get(model) : undefined
-  )?.optionDescriptors?.find(
+  const dynamicModel = model
+    ? harnessModelCatalog?.find((candidate) => candidate.slug === model)
+    : undefined;
+  const dynamicEfforts = dynamicModel?.capabilities?.optionDescriptors?.find(
     (descriptor) => descriptor.id === "effort" && descriptor.type === "select",
   );
   if (effort === "ultracode") {
@@ -631,8 +635,9 @@ export function isClaudeUltracodeEffort(effort: string | null | undefined): bool
 
 export function resolveClaudeContextWindow(
   modelSelection: ModelSelection | undefined,
+  harnessModelCatalog?: ReadonlyArray<ServerProviderModel>,
 ): string | undefined {
-  const caps = getClaudeModelCapabilities(modelSelection?.model);
+  const caps = getClaudeModelCapabilities(modelSelection?.model, harnessModelCatalog);
   const raw = getModelSelectionStringOptionValue(modelSelection, "contextWindow");
   const descriptors = getProviderOptionDescriptors({
     caps,
@@ -643,8 +648,11 @@ export function resolveClaudeContextWindow(
   return typeof value === "string" ? value : undefined;
 }
 
-export function resolveClaudeApiModelId(modelSelection: ModelSelection): string {
-  switch (resolveClaudeContextWindow(modelSelection)) {
+export function resolveClaudeApiModelId(
+  modelSelection: ModelSelection,
+  harnessModelCatalog?: ReadonlyArray<ServerProviderModel>,
+): string {
+  switch (resolveClaudeContextWindow(modelSelection, harnessModelCatalog)) {
     case "1m":
       return `${modelSelection.model}[1m]`;
     default:
