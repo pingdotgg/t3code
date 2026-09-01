@@ -15,6 +15,7 @@
  *
  * @module usageTranscriptReader
  */
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -326,6 +327,7 @@ const NOT_TITLE_PREFIXES = [
 
 const TITLE_MAX_LENGTH = 80;
 const TITLE_MAX_LINES = 400;
+const TITLE_MAX_BYTES = 1024 * 1024;
 
 function cleanTitle(text: unknown): string | null {
   if (typeof text !== "string") return null;
@@ -397,28 +399,36 @@ export async function readTranscriptTitle(
   provider: UsageProviderKind,
 ): Promise<string | null> {
   if (provider === "grok") return null;
+  const titleFromLine = provider === "claude" ? claudeTitleFromLine : codexTitleFromLine;
+  let stream: NodeFS.ReadStream | null = null;
   try {
-    const stream = NodeFS.createReadStream(filePath, { encoding: "utf8" });
-    const lines = NodeReadline.createInterface({
-      input: stream,
-      crlfDelay: Infinity,
-    });
-    try {
-      let seen = 0;
-      for await (const line of lines) {
+    stream = NodeFS.createReadStream(filePath, { encoding: "utf8" });
+    let pending = "";
+    let seen = 0;
+    let bytesRead = 0;
+    for await (const chunk of stream) {
+      const text = String(chunk);
+      bytesRead += Buffer.byteLength(text);
+      pending += text;
+      for (;;) {
+        const newline = pending.indexOf("\n");
+        if (newline === -1) break;
+        const line = pending.slice(0, newline).replace(/\r$/, "");
+        pending = pending.slice(newline + 1);
         seen += 1;
-        if (seen > TITLE_MAX_LINES) break;
+        if (seen > TITLE_MAX_LINES) return null;
         const gate = provider === "claude" ? '"user"' : '"message"';
         if (!line.includes(gate)) continue;
-        const title = provider === "claude" ? claudeTitleFromLine(line) : codexTitleFromLine(line);
+        const title = titleFromLine(line);
         if (title !== null) return title;
       }
-    } finally {
-      lines.close();
-      stream.destroy();
+      if (bytesRead >= TITLE_MAX_BYTES) return null;
     }
+    if (pending.length > 0 && seen < TITLE_MAX_LINES) return titleFromLine(pending);
   } catch {
     return null;
+  } finally {
+    stream?.destroy();
   }
   return null;
 }

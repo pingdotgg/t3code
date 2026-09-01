@@ -1,9 +1,10 @@
-import type {
-  EnvironmentId,
-  UsageDay,
-  UsageProviderKind,
-  UsageThreadBreakdown,
-  UsageThreadRow,
+import {
+  USAGE_CONTRACT_VERSION,
+  type EnvironmentId,
+  type UsageDay,
+  type UsageProviderKind,
+  type UsageThreadBreakdown,
+  type UsageThreadRow,
 } from "@t3tools/contracts";
 import type { EnvironmentProviderContribution } from "@t3tools/shared/usageMerge";
 import { describe, expect, it } from "vite-plus/test";
@@ -49,8 +50,16 @@ describe("mergeUsageThreadBreakdowns", () => {
     const environmentA = "env-a" as EnvironmentId;
     const environmentB = "env-b" as EnvironmentId;
     const contributions: readonly EnvironmentProviderContribution[] = [
-      { environmentId: environmentA, providers: ["claude"] },
-      { environmentId: environmentB, providers: ["codex"] },
+      {
+        environmentId: environmentA,
+        contractVersion: USAGE_CONTRACT_VERSION,
+        providers: ["claude"],
+      },
+      {
+        environmentId: environmentB,
+        contractVersion: USAGE_CONTRACT_VERSION,
+        providers: ["codex"],
+      },
     ];
     const merged = mergeUsageThreadBreakdowns(
       [
@@ -93,8 +102,9 @@ describe("makeThreadBreakdownInput", () => {
           sinceTime: "2026-08-07T12:00:00.000Z",
           untilTime: "2026-08-08T12:00:00.000Z",
         },
-        "id:project-one",
+        JSON.stringify(["env-a", "id:project-one"]),
         ["claude"],
+        "env-a" as EnvironmentId,
       ),
     ).toEqual({
       sinceDay: "2026-08-07",

@@ -9,6 +9,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   USAGE_CONTRACT_VERSION,
+  USAGE_THREAD_BREAKDOWN_SINCE,
   type EnvironmentId,
   type UsageSummary,
   type UsageSummaryInput,
@@ -23,6 +24,7 @@ import { useCallback, useMemo } from "react";
 
 import {
   mergeUsage,
+  projectFilterForEnvironment,
   type EnvironmentProviderContribution,
   type EnvironmentUsage,
   type MergedUsage,
@@ -137,10 +139,16 @@ export function useUsage(
       );
     }
     for (const contribution of merged.providerContributions) {
+      if (contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE) continue;
       appAtomRegistry.refresh(
         serverEnvironment.usageThreadBreakdown({
           environmentId: contribution.environmentId,
-          input: makeThreadBreakdownInput(input, projectFilter, contribution.providers),
+          input: makeThreadBreakdownInput(
+            input,
+            projectFilter,
+            contribution.providers,
+            contribution.environmentId,
+          ),
         }),
       );
     }
@@ -181,6 +189,7 @@ export function makeThreadBreakdownInput(
   input: UsageSummaryInput,
   projectFilter: string | null | undefined,
   providers: readonly UsageProviderKind[],
+  environmentId: EnvironmentId,
 ): UsageThreadBreakdownInput {
   return {
     sinceDay: input.sinceDay,
@@ -188,7 +197,9 @@ export function makeThreadBreakdownInput(
     timeZone: input.timeZone,
     ...(input.sinceTime === undefined ? {} : { sinceTime: input.sinceTime }),
     ...(input.untilTime === undefined ? {} : { untilTime: input.untilTime }),
-    ...(projectFilter === undefined ? {} : { projectKey: projectFilter }),
+    ...(projectFilter === undefined
+      ? {}
+      : { projectKey: projectFilterForEnvironment(projectFilter, environmentId) }),
     providers: [...providers],
   };
 }
@@ -233,13 +244,23 @@ const usageThreadsAtom = Atom.family((requestKey: string) =>
 
     const breakdowns: EnvironmentUsageThreadBreakdown[] = [];
     let pending = 0;
-    let failed = 0;
+    let failed = providerContributions.filter(
+      (contribution) => contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE,
+    ).length;
     for (const contribution of providerContributions) {
+      if (contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE) continue;
       const { environmentId } = contribution;
+      const environmentInput =
+        input.projectKey === undefined
+          ? input
+          : {
+              ...input,
+              projectKey: projectFilterForEnvironment(input.projectKey, environmentId),
+            };
       const result = get(
         serverEnvironment.usageThreadBreakdown({
           environmentId,
-          input: withOwnedProviders(input, contribution.providers),
+          input: withOwnedProviders(environmentInput, contribution.providers),
         }),
       );
       if (result.waiting) pending += 1;

@@ -237,4 +237,8 @@ describe("readTranscriptTitle", () => {
 
     assert.strictEqual(await readTranscriptTitle(file, "claude"), "Fix the real bug");
   });
+
+  it("returns null when the title stream cannot be read", async () => {
+    assert.isNull(await readTranscriptTitle(NodePath.join(dir, "missing.jsonl"), "claude"));
+  });
 });

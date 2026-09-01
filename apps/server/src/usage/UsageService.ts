@@ -789,6 +789,10 @@ export const make = Effect.gen(function* () {
       }
     }
 
+    // A thread-only client must warm the same durable cache as the summary
+    // RPC, otherwise every server restart repeats the full transcript parse.
+    yield* persistScanCache();
+
     const attribution = yield* loadThreadAttribution();
     const folded = foldThreadRows(accumulator.finish(), attribution, {
       cap: THREAD_ROW_CAP,
