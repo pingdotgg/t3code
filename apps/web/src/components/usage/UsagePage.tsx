@@ -348,7 +348,9 @@ export function UsagePage() {
                           const scope = sessionsKnown
                             ? `${formatCount(merged.sessions)} sessions`
                             : (selectedProjectLabel ?? "Outside projects");
-                          return metric === "cost" ? `${scope} · API estimate` : scope;
+                          return metric === "cost"
+                            ? `${scope} · local public-list estimate`
+                            : scope;
                         })()}
                       </span>
                     </div>
@@ -443,7 +445,7 @@ export function UsagePage() {
                     />
                     <Metric label="Output" value={formatTokens(merged.outputTokens)} />
                     <Metric
-                      label="Estimated cache writes"
+                      label="Cache writes, estimated"
                       value={
                         merged.costQuality.cacheWriteUsd === null
                           ? "Unavailable"
@@ -451,7 +453,7 @@ export function UsagePage() {
                       }
                       {...(merged.costUsd > 0 && merged.costQuality.cacheWriteUsd !== null
                         ? {
-                            detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of cost`,
+                            detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of estimate · not an expiry measure`,
                           }
                         : {})}
                     />
@@ -1001,7 +1003,7 @@ function UsageSkeleton() {
             "Cached input",
             "Uncached input",
             "Output",
-            "Estimated cache writes",
+            "Cache writes, estimated",
             "Cache savings",
           ].map((label) => (
             <div key={label} className="flex flex-col gap-0.5">

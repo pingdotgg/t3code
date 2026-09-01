@@ -18,13 +18,14 @@
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeReadline from "node:readline";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
 
 import {
   initialCodexScanState,
   mightCarryUsage,
-  parseClaudeLine,
+  parseClaudeLineRecords,
   parseCodexLine,
   parseGrokLine,
   type CodexScanState,
@@ -236,8 +237,7 @@ export async function readTranscriptRecords(
         for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
         return;
       }
-      const record = parseClaudeLine(line);
-      if (record !== null) out.push(record);
+      for (const record of parseClaudeLineRecords(line)) out.push(record);
     };
 
     const toLineString = (lineBuffer: Buffer): string => {

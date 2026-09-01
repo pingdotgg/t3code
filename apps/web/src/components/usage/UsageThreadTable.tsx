@@ -260,8 +260,9 @@ const CHART_WIDTH = 760;
 const CHART_HEIGHT = 96;
 
 /**
- * One thread's daily model-priced cost split into cache writes, cache reads,
- * and fresh input plus output. Static SVG, no animation.
+ * One thread's daily model-priced cost stacked by component: cache writes,
+ * cache reads, and fresh input plus output. Cache writes are a billing
+ * category, not an inferred cause. Static SVG, no animation.
  */
 export function UsageThreadDailyChart({
   daily,

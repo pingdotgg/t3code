@@ -204,14 +204,14 @@ function ChartCard(props: {
       <View className="flex-row items-start justify-between gap-3">
         <View className="min-w-0 flex-1 gap-0.5">
           <Text className="text-sm text-foreground-muted">
-            {metric === "cost" ? "Raw token cost" : "Processed tokens"}
+            {metric === "cost" ? "Local public-list estimate" : "Processed tokens"}
           </Text>
           <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
             {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
           </Text>
           <Text className="text-sm text-foreground-muted">
             {metric === "cost"
-              ? "* if billed at full API rate"
+              ? "* estimated from local transcripts at public list rates"
               : `Across ${formatCount(merged.sessions)} sessions`}
           </Text>
         </View>
@@ -382,7 +382,16 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
         <MetricCell
           label="Uncached input"
           value={formatTokens(merged.uncachedInputTokens)}
-          detail={`${formatTokens(merged.cacheCreationTokens)} cache writes`}
+          detail="fresh input tokens"
+        />
+        <MetricCell
+          label="Cache writes, estimated"
+          value={
+            merged.costQuality.cacheWriteUsd === null
+              ? "Unavailable"
+              : formatUsd(merged.costQuality.cacheWriteUsd)
+          }
+          detail={`${formatTokens(merged.cacheCreationTokens)} tokens · not an expiry measure`}
         />
         <MetricCell
           label="Output"
