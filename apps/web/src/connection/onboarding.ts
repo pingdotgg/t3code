@@ -3,7 +3,7 @@ import {
   createAtomCommandScheduler,
   createRuntimeCommand,
 } from "@t3tools/client-runtime/state/runtime";
-import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
+import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { connectionAtomRuntime } from "./runtime";
@@ -35,4 +35,20 @@ export const connectSshEnvironment = createRuntimeCommand(connectionAtomRuntime,
   },
   execute: (input: { readonly target: DesktopSshEnvironmentTarget; readonly label?: string }) =>
     ConnectionOnboarding.pipe(Effect.flatMap((onboarding) => onboarding.registerSsh(input))),
+});
+
+export const updateSshEnvironmentVariables = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:connection:update-ssh-environment-variables",
+  scheduler: onboardingScheduler,
+  concurrency: {
+    mode: "serial",
+    key: (input: { readonly environmentId: EnvironmentId }) => input.environmentId,
+  },
+  execute: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly environmentVariables?: DesktopSshEnvironmentTarget["environmentVariables"];
+  }) =>
+    ConnectionOnboarding.pipe(
+      Effect.flatMap((onboarding) => onboarding.updateSshEnvironmentVariables(input)),
+    ),
 });

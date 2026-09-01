@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -97,6 +98,12 @@ const testNetService = NetService.NetService.of({
 
 function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
   return command._tag === "StandardCommand" ? command.args : [];
+}
+
+function commandEnvironment(
+  command: ChildProcess.Command,
+): Readonly<Record<string, string | undefined>> | undefined {
+  return command._tag === "StandardCommand" ? command.options.env : undefined;
 }
 
 describe("ssh tunnel scripts", () => {
@@ -443,4 +450,292 @@ describe("ssh tunnel scripts", () => {
       assert.equal(tunnelKillCount, 1);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
+
+  it.effect("replaces a live tunnel when its local SSH environment changes", () => {
+    const tunnelEnvironments: Array<Readonly<Record<string, string | undefined>> | undefined> = [];
+    let tunnelKillCount = 0;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-G")) {
+          return makeSuccessfulProcess("sendenv TOKEN\n");
+        }
+        if (args.includes("-N")) {
+          tunnelEnvironments.push(commandEnvironment(command));
+          return makeRunningProcess(() => {
+            tunnelKillCount += 1;
+          });
+        }
+        if (args.includes("sh") && args.includes("--")) {
+          return makeSuccessfulProcess('{"remotePort":3773}\n');
+        }
+        if (args.includes("sh")) {
+          return makeSuccessfulProcess('{"stopped":true}\n');
+        }
+        return makeSuccessfulProcess("\n");
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshPasswordPrompt.disabledLayer,
+      SshEnvironmentManager.layer(),
+    );
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+
+    return Effect.gen(function* () {
+      const manager = yield* SshEnvironmentManager;
+      yield* manager.ensureEnvironment({
+        ...target,
+        environmentVariables: { TOKEN: "old-value" },
+      });
+      yield* manager.ensureEnvironment({
+        ...target,
+        environmentVariables: { TOKEN: "new-value" },
+      });
+
+      assert.equal(tunnelEnvironments.length, 2);
+      assert.equal(tunnelEnvironments[0]?.TOKEN, "old-value");
+      assert.equal(tunnelEnvironments[1]?.TOKEN, "new-value");
+      assert.equal(tunnelKillCount, 1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("waits for an in-flight ensure before replacing its environment", () =>
+    Effect.gen(function* () {
+      const pairingStarted = yield* Deferred.make<void>();
+      const releasePairing = yield* Deferred.make<void>();
+      const secondResolveStarted = yield* Deferred.make<void>();
+      const tunnelEnvironments: Array<Readonly<Record<string, string | undefined>> | undefined> =
+        [];
+      let tunnelKillCount = 0;
+      let shellCommandCount = 0;
+      let resolveCount = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const args = commandArgs(command);
+          const environment = commandEnvironment(command);
+          if (args.includes("-G")) {
+            resolveCount += 1;
+            if (resolveCount % 2 === 1) {
+              assert.isUndefined(environment?.TOKEN);
+            } else {
+              assert.isDefined(environment?.TOKEN);
+            }
+            if (resolveCount === 3) {
+              yield* Deferred.succeed(secondResolveStarted, undefined).pipe(Effect.ignore);
+            }
+            return makeSuccessfulProcess("sendenv TOKEN\n");
+          }
+          if (args.includes("-N")) {
+            tunnelEnvironments.push(environment);
+            return makeRunningProcess(() => {
+              tunnelKillCount += 1;
+            });
+          }
+          if (args.includes("sh") && args.includes("--")) {
+            return makeSuccessfulProcess('{"remotePort":3773}\n');
+          }
+          if (args.includes("sh")) {
+            shellCommandCount += 1;
+            if (shellCommandCount === 1) {
+              yield* Deferred.succeed(pairingStarted, undefined).pipe(Effect.ignore);
+              const process = makeSuccessfulProcess('{"credential":"PAIRING-CODE"}\n');
+              return {
+                ...process,
+                exitCode: Deferred.await(releasePairing).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(0)),
+                ),
+              };
+            }
+            return makeSuccessfulProcess('{"stopped":true}\n');
+          }
+          return makeSuccessfulProcess("\n");
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshPasswordPrompt.disabledLayer,
+        SshEnvironmentManager.layer(),
+      );
+      const target = {
+        alias: "devbox",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 2222,
+      } as const;
+
+      yield* Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        const firstFiber = yield* Effect.forkChild(
+          manager.ensureEnvironment(
+            { ...target, environmentVariables: { TOKEN: "old-value" } },
+            { issuePairingToken: true },
+          ),
+        );
+        yield* Deferred.await(pairingStarted);
+
+        const secondFiber = yield* Effect.forkChild(
+          manager.ensureEnvironment({
+            ...target,
+            environmentVariables: { TOKEN: "new-value" },
+          }),
+        );
+        yield* Deferred.await(secondResolveStarted);
+        yield* Effect.yieldNow;
+
+        assert.equal(tunnelKillCount, 0);
+        yield* Deferred.succeed(releasePairing, undefined);
+
+        const first = yield* Fiber.join(firstFiber);
+        yield* Fiber.join(secondFiber);
+        assert.equal(first.pairingToken, "PAIRING-CODE");
+        assert.equal(tunnelKillCount, 1);
+        assert.equal(tunnelEnvironments.length, 2);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("replaces the existing profile tunnel when SSH config resolves differently", () => {
+    let resolveCount = 0;
+    let tunnelKillCount = 0;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-G")) {
+          resolveCount += 1;
+          return makeSuccessfulProcess(
+            [`hostname devbox-${resolveCount}.example.com`, "user julius", "port 2222", ""].join(
+              "\n",
+            ),
+          );
+        }
+        if (args.includes("-N")) {
+          return makeRunningProcess(() => {
+            tunnelKillCount += 1;
+          });
+        }
+        if (args.includes("sh") && args.includes("--")) {
+          return makeSuccessfulProcess('{"remotePort":3773}\n');
+        }
+        if (args.includes("sh")) {
+          return makeSuccessfulProcess('{"stopped":true}\n');
+        }
+        return makeSuccessfulProcess("\n");
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshPasswordPrompt.disabledLayer,
+      SshEnvironmentManager.layer(),
+    );
+    const requestedTarget = {
+      alias: "devbox",
+      hostname: "devbox",
+      username: null,
+      port: null,
+    } as const;
+
+    return Effect.gen(function* () {
+      const manager = yield* SshEnvironmentManager;
+      const first = yield* manager.ensureEnvironment(requestedTarget);
+      const second = yield* manager.ensureEnvironment(first.target);
+
+      assert.equal(first.target.hostname, "devbox-1.example.com");
+      assert.equal(second.target.hostname, "devbox-2.example.com");
+      assert.equal(tunnelKillCount, 1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("does not block unrelated hosts behind an in-flight ensure", () =>
+    Effect.gen(function* () {
+      const pairingStarted = yield* Deferred.make<void>();
+      const releasePairing = yield* Deferred.make<void>();
+      const tunnelAliases: Array<string> = [];
+      let shellCommandCount = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const args = commandArgs(command);
+          if (args.includes("-G")) {
+            return makeSuccessfulProcess("\n");
+          }
+          if (args.includes("-N")) {
+            tunnelAliases.push(args.at(-1) ?? "");
+            return makeRunningProcess(() => undefined);
+          }
+          if (args.includes("sh") && args.includes("--")) {
+            return makeSuccessfulProcess('{"remotePort":3773}\n');
+          }
+          if (args.includes("sh")) {
+            shellCommandCount += 1;
+            if (shellCommandCount === 1) {
+              yield* Deferred.succeed(pairingStarted, undefined).pipe(Effect.ignore);
+              const process = makeSuccessfulProcess('{"credential":"PAIRING-CODE"}\n');
+              return {
+                ...process,
+                exitCode: Deferred.await(releasePairing).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(0)),
+                ),
+              };
+            }
+          }
+          return makeSuccessfulProcess("\n");
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshPasswordPrompt.disabledLayer,
+        SshEnvironmentManager.layer(),
+      );
+
+      yield* Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        const firstFiber = yield* Effect.forkChild(
+          manager.ensureEnvironment(
+            {
+              alias: "first-host",
+              hostname: "first.example.com",
+              username: "julius",
+              port: 2222,
+            },
+            { issuePairingToken: true },
+          ),
+        );
+        yield* Deferred.await(pairingStarted);
+
+        const second = yield* manager.ensureEnvironment({
+          alias: "second-host",
+          hostname: "second.example.com",
+          username: "julius",
+          port: 2222,
+        });
+        assert.equal(second.target.alias, "second-host");
+        assert.isTrue(tunnelAliases.some((alias) => alias.endsWith("@second-host")));
+
+        yield* Deferred.succeed(releasePairing, undefined);
+        const first = yield* Fiber.join(firstFiber);
+        assert.equal(first.pairingToken, "PAIRING-CODE");
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(releasePairing, undefined).pipe(Effect.ignore)),
+        Effect.provide(layer),
+        Effect.scoped,
+      );
+    }),
+  );
 });

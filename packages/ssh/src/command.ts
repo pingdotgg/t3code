@@ -69,8 +69,65 @@ export function parseSshResolveOutput(alias: string, stdout: string): DesktopSsh
   };
 }
 
+export function parseSshSendEnvironmentPatterns(stdout: string): ReadonlyArray<string> {
+  return stdout.split(/\r?\n/u).flatMap((line) => {
+    const trimmed = line.trim();
+    if (!trimmed.toLowerCase().startsWith("sendenv ")) {
+      return [];
+    }
+    return trimmed.slice("sendenv ".length).trim().split(/\s+/u).filter(Boolean);
+  });
+}
+
+function sshEnvironmentNameMatchesPattern(name: string, pattern: string): boolean {
+  const source = pattern
+    .replace(/[.+^${}()|[\]\\]/gu, "\\$&")
+    .replace(/\*/gu, ".*")
+    .replace(/\?/gu, ".");
+  return new RegExp(`^${source}$`, "u").test(name);
+}
+
+export function isSshEnvironmentNameConfiguredForSend(
+  name: string,
+  patterns: ReadonlyArray<string>,
+): boolean {
+  let configured = false;
+  for (const rawPattern of patterns) {
+    const removesPattern = rawPattern.startsWith("-");
+    const pattern = removesPattern ? rawPattern.slice(1) : rawPattern;
+    if (pattern.length > 0 && sshEnvironmentNameMatchesPattern(name, pattern)) {
+      configured = !removesPattern;
+    }
+  }
+  return configured;
+}
+
+function unsupportedSshEnvironmentNames(
+  environmentVariables: NonNullable<DesktopSshEnvironmentTarget["environmentVariables"]>,
+  resolvedConfigOutput: string,
+): ReadonlyArray<string> {
+  const patterns = parseSshSendEnvironmentPatterns(resolvedConfigOutput);
+  return Object.keys(environmentVariables).filter(
+    (name) => !isSshEnvironmentNameConfiguredForSend(name, patterns),
+  );
+}
+
 export function targetConnectionKey(target: DesktopSshEnvironmentTarget): string {
   return `${target.alias}\u0000${target.hostname}\u0000${target.username ?? ""}\u0000${target.port ?? ""}`;
+}
+
+export function sshEnvironmentVariablesEqual(
+  left: DesktopSshEnvironmentTarget["environmentVariables"],
+  right: DesktopSshEnvironmentTarget["environmentVariables"],
+): boolean {
+  const leftEntries = Object.entries(left ?? {});
+  const rightEnvironment = right ?? {};
+  return (
+    leftEntries.length === Object.keys(rightEnvironment).length &&
+    leftEntries.every(
+      ([name, value]) => Object.hasOwn(rightEnvironment, name) && rightEnvironment[name] === value,
+    )
+  );
 }
 
 export function remoteStateKey(target: DesktopSshEnvironmentTarget): string {
@@ -181,6 +238,7 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
 > {
   const hostSpec = yield* buildSshHostSpecEffect(target);
   const environment = yield* buildSshChildEnvironment({
+    ...(target.environmentVariables === undefined ? {} : { baseEnv: target.environmentVariables }),
     ...(input.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
     ...(input.authSecret === undefined ? {} : { authSecret: input.authSecret }),
   }).pipe(
@@ -327,6 +385,7 @@ export const runSshCommand = Effect.fn("ssh/command.runSshCommand")(function* (
 
 export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(function* (
   alias: string,
+  environmentVariables?: DesktopSshEnvironmentTarget["environmentVariables"],
 ): Effect.fn.Return<
   DesktopSshEnvironmentTarget,
   SshCommandError | SshInvalidTargetError,
@@ -338,30 +397,61 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
   }
 
   yield* Effect.logDebug("ssh.target.resolve.start", { alias: trimmedAlias });
-  return yield* runSshCommand(
-    {
-      alias: trimmedAlias,
-      hostname: trimmedAlias,
-      username: null,
-      port: null,
-    },
-    { preHostArgs: ["-G"] },
-  ).pipe(
-    Effect.map((result) => parseSshResolveOutput(trimmedAlias, result.stdout)),
-    Effect.tap((target) =>
-      Effect.logDebug("ssh.target.resolve.succeeded", sshTargetLogFields(target)),
-    ),
+  const unresolvedTarget: DesktopSshEnvironmentTarget = {
+    alias: trimmedAlias,
+    hostname: trimmedAlias,
+    username: null,
+    port: null,
+  };
+  const baselineResult = yield* runSshCommand(unresolvedTarget, { preHostArgs: ["-G"] }).pipe(
     Effect.catch((cause) =>
-      Effect.logDebug("ssh.target.resolve.fallback", { alias: trimmedAlias, cause }).pipe(
-        Effect.as({
-          alias: trimmedAlias,
-          hostname: trimmedAlias,
-          username: null,
-          port: null,
-        }),
-      ),
+      environmentVariables === undefined
+        ? Effect.logDebug("ssh.target.resolve.fallback", { alias: trimmedAlias, cause }).pipe(
+            Effect.as(null),
+          )
+        : Effect.fail(cause),
     ),
   );
+  if (baselineResult === null) {
+    return unresolvedTarget;
+  }
+
+  if (environmentVariables !== undefined) {
+    const unsupportedNames = unsupportedSshEnvironmentNames(
+      environmentVariables,
+      baselineResult.stdout,
+    );
+    if (unsupportedNames.length > 0) {
+      return yield* new SshInvalidTargetError({
+        message: `Add ${unsupportedNames.join(", ")} to SendEnv for ${trimmedAlias} in your SSH config before forwarding ${unsupportedNames.length === 1 ? "it" : "them"}.`,
+      });
+    }
+  }
+
+  const resolvedResult =
+    environmentVariables === undefined
+      ? baselineResult
+      : yield* runSshCommand(
+          { ...unresolvedTarget, environmentVariables },
+          { preHostArgs: ["-G"] },
+        );
+  if (environmentVariables !== undefined) {
+    const unsupportedNames = unsupportedSshEnvironmentNames(
+      environmentVariables,
+      resolvedResult.stdout,
+    );
+    if (unsupportedNames.length > 0) {
+      return yield* new SshInvalidTargetError({
+        message: `SendEnv for ${trimmedAlias} no longer selects ${unsupportedNames.join(", ")} after applying the saved local SSH environment.`,
+      });
+    }
+  }
+  const resolvedTarget = {
+    ...parseSshResolveOutput(trimmedAlias, resolvedResult.stdout),
+    ...(environmentVariables === undefined ? {} : { environmentVariables }),
+  };
+  yield* Effect.logDebug("ssh.target.resolve.succeeded", sshTargetLogFields(resolvedTarget));
+  return resolvedTarget;
 });
 
 export function resolveRemoteT3CliPackageSpec(input: {

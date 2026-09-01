@@ -218,6 +218,10 @@ describe("ConnectionCatalogDocument", () => {
         hostname: "devbox.example.test",
         username: "developer",
         port: 22,
+        environmentVariables: {
+          AWS_PROFILE: "production",
+          FORWARDED_SECRET: "secret-value",
+        },
       },
     });
     const document = registerConnectionInCatalog(

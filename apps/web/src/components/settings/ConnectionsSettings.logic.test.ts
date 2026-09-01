@@ -4,8 +4,54 @@ import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
+  parseSshEnvironmentVariables,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
+
+describe("parseSshEnvironmentVariables", () => {
+  it("trims names, preserves values, and ignores empty rows", () => {
+    expect(
+      parseSshEnvironmentVariables([
+        { name: " AWS_PROFILE ", value: "production" },
+        { name: "", value: "" },
+        { name: "TOKEN", value: "  keep spaces  " },
+      ]),
+    ).toEqual({ AWS_PROFILE: "production", TOKEN: "  keep spaces  " });
+  });
+
+  it("preserves names that overlap with object prototype properties", () => {
+    const environment = parseSshEnvironmentVariables([{ name: "__proto__", value: "value" }]);
+    expect(environment?.["__proto__"]).toBe("value");
+    expect(Object.hasOwn(environment ?? {}, "__proto__")).toBe(true);
+  });
+
+  it("rejects missing, invalid, and duplicate names", () => {
+    expect(() => parseSshEnvironmentVariables([{ name: "", value: "secret" }])).toThrow(
+      "needs a name",
+    );
+    expect(() => parseSshEnvironmentVariables([{ name: "BAD-NAME", value: "value" }])).toThrow(
+      "invalid name",
+    );
+    expect(() =>
+      parseSshEnvironmentVariables([
+        { name: "TOKEN", value: "one" },
+        { name: " TOKEN ", value: "two" },
+      ]),
+    ).toThrow("listed more than once");
+    expect(() => parseSshEnvironmentVariables([{ name: "TOKEN", value: "bad\0value" }])).toThrow(
+      "NUL character",
+    );
+  });
+
+  it("rejects names that can alter the local SSH process", () => {
+    expect(() => parseSshEnvironmentVariables([{ name: "path", value: "/tmp/bin" }])).toThrow(
+      "local SSH process",
+    );
+    expect(() =>
+      parseSshEnvironmentVariables([{ name: "DYLD_INSERT_LIBRARIES", value: "/tmp/payload" }]),
+    ).toThrow("local SSH process");
+  });
+});
 
 const baseWslState: DesktopWslState = {
   enabled: false,

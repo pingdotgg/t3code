@@ -1,8 +1,18 @@
-import { ChevronsLeftRightEllipsisIcon, PlusIcon, QrCodeIcon, TerminalIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ChevronsLeftRightEllipsisIcon,
+  PlusIcon,
+  QrCodeIcon,
+  RefreshCwIcon,
+  TerminalIcon,
+  XIcon,
+} from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  type Dispatch,
   type KeyboardEvent,
   type ReactNode,
+  type SetStateAction,
   memo,
   useCallback,
   useEffect,
@@ -50,7 +60,9 @@ import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
+  parseSshEnvironmentVariables,
   selectQrEndpointOption,
+  type SshEnvironmentVariableDraft,
 } from "./ConnectionsSettings.logic";
 import {
   SettingsPageContainer,
@@ -103,6 +115,7 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { AnimatedHeight } from "../AnimatedHeight";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { Textarea } from "../ui/textarea";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
 import { readHostedPairingRequest } from "../../hostedPairing";
@@ -131,6 +144,7 @@ import { environmentCatalog } from "~/connection/catalog";
 import {
   connectPairing as connectPairingAtom,
   connectSshEnvironment as connectSshEnvironmentAtom,
+  updateSshEnvironmentVariables as updateSshEnvironmentVariablesAtom,
 } from "~/connection/onboarding";
 import { useEnvironmentQuery } from "~/state/query";
 import {
@@ -160,6 +174,102 @@ import {
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
+
+type SshEnvironmentVariableDraftRow = SshEnvironmentVariableDraft & { readonly id: number };
+
+function SshEnvironmentVariableEditor({
+  rows,
+  setRows,
+  disabled,
+}: {
+  readonly rows: ReadonlyArray<SshEnvironmentVariableDraftRow>;
+  readonly setRows: Dispatch<SetStateAction<ReadonlyArray<SshEnvironmentVariableDraftRow>>>;
+  readonly disabled: boolean;
+}) {
+  return (
+    <div className="space-y-3">
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        Added to the local SSH process and inherited by the remote T3 server. Each name must match
+        <code> SendEnv</code> for this host in your SSH config. Only add variables you trust; they
+        can affect advanced SSH config such as <code>Match exec</code>. Values are saved in
+        Desktop's protected connection storage.
+      </p>
+      <div className="space-y-2">
+        {rows.map((entry, index) => (
+          <div
+            key={entry.id}
+            className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_2rem] gap-2"
+          >
+            <Input
+              value={entry.name}
+              onChange={(event) => {
+                const name = event.target.value;
+                setRows((current) =>
+                  current.map((item, itemIndex) =>
+                    itemIndex === index ? { ...item, name } : item,
+                  ),
+                );
+              }}
+              placeholder="VARIABLE_NAME"
+              aria-label={`SSH environment variable ${index + 1} name`}
+              disabled={disabled}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              maxLength={128}
+            />
+            <Input
+              type="password"
+              value={entry.value}
+              onChange={(event) => {
+                const value = event.target.value;
+                setRows((current) =>
+                  current.map((item, itemIndex) =>
+                    itemIndex === index ? { ...item, value } : item,
+                  ),
+                );
+              }}
+              placeholder="Value"
+              aria-label={`SSH environment variable ${index + 1} value`}
+              disabled={disabled}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              maxLength={8_192}
+            />
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label={`Remove SSH environment variable ${index + 1}`}
+              disabled={disabled}
+              onClick={() =>
+                setRows((current) => current.filter((_, itemIndex) => itemIndex !== index))
+              }
+            >
+              <XIcon className="size-3.5" />
+            </Button>
+          </div>
+        ))}
+      </div>
+      <Button
+        type="button"
+        size="xs"
+        variant="ghost"
+        disabled={disabled}
+        onClick={() =>
+          setRows((current) => {
+            const nextId = current.reduce((highest, entry) => Math.max(highest, entry.id), -1) + 1;
+            return [...current, { id: nextId, name: "", value: "" }];
+          })
+        }
+      >
+        <PlusIcon className="size-3.5" />
+        Add variable
+      </Button>
+    </div>
+  );
+}
 
 // Sentinels for the consolidated WSL backend picker. The colon is
 // rejected by DISTRO_NAME_PATTERN (validated on the desktop side) so
@@ -1396,6 +1506,11 @@ type SavedBackendListRowProps = {
   environment: EnvironmentPresentation;
   removingEnvironmentId: EnvironmentId | null;
   onConnect: (environmentId: EnvironmentId) => void;
+  onEditSshEnvironment: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    readonly target: DesktopSshEnvironmentTarget;
+  }) => void;
   onRemove: (environmentId: EnvironmentId) => void;
 };
 
@@ -1403,6 +1518,7 @@ function SavedBackendListRow({
   environment,
   removingEnvironmentId,
   onConnect,
+  onEditSshEnvironment,
   onRemove,
 }: SavedBackendListRowProps) {
   const environmentId = environment.environmentId;
@@ -1567,6 +1683,22 @@ function SavedBackendListRow({
             </Tooltip>
           ) : (
             <>
+              {sshTarget ? (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={removingEnvironmentId === environmentId}
+                  onClick={() =>
+                    onEditSshEnvironment({
+                      environmentId,
+                      label: environment.label,
+                      target: sshTarget,
+                    })
+                  }
+                >
+                  Edit SSH env
+                </Button>
+              ) : null}
               {!isConnected ? (
                 <Button
                   size="xs"
@@ -1776,6 +1908,9 @@ export function ConnectionsSettings() {
   const connectSshEnvironment = useAtomCommand(connectSshEnvironmentAtom, {
     reportFailure: false,
   });
+  const updateSshEnvironmentVariables = useAtomCommand(updateSshEnvironmentVariablesAtom, {
+    reportFailure: false,
+  });
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
@@ -1840,6 +1975,20 @@ export function ConnectionsSettings() {
   const [sshHostSuggestionsOpen, setSshHostSuggestionsOpen] = useState(false);
   // Tracks the arrow-key/hover highlight so Enter selects it instead of submitting the typed text.
   const highlightedSshHostRef = useRef<DesktopDiscoveredSshHost | undefined>(undefined);
+  const [savedBackendSshEnvironmentOpen, setSavedBackendSshEnvironmentOpen] = useState(false);
+  const [savedBackendSshEnvironmentVariables, setSavedBackendSshEnvironmentVariables] = useState<
+    ReadonlyArray<SshEnvironmentVariableDraftRow>
+  >([]);
+  const [editingSshEnvironment, setEditingSshEnvironment] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    readonly target: DesktopSshEnvironmentTarget;
+  } | null>(null);
+  const [editingSshEnvironmentVariables, setEditingSshEnvironmentVariables] = useState<
+    ReadonlyArray<SshEnvironmentVariableDraftRow>
+  >([]);
+  const [editingSshEnvironmentError, setEditingSshEnvironmentError] = useState<string | null>(null);
+  const [isSavingSshEnvironment, setIsSavingSshEnvironment] = useState(false);
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
@@ -2185,6 +2334,8 @@ export function ConnectionsSettings() {
       setSavedBackendSshHost("");
       setSavedBackendSshUsername("");
       setSavedBackendSshPort("");
+      setSavedBackendSshEnvironmentOpen(false);
+      setSavedBackendSshEnvironmentVariables([]);
       setAddBackendDialogOpen(false);
       toastManager.add({
         type: "success",
@@ -2273,6 +2424,7 @@ export function ConnectionsSettings() {
     savedBackendMode,
     savedBackendPairingCode,
     savedBackendSshHost,
+    savedBackendSshEnvironmentVariables,
     savedBackendSshPort,
     savedBackendSshUsername,
   ]);
@@ -2403,6 +2555,123 @@ export function ConnectionsSettings() {
       }
     },
     [removeEnvironment],
+  );
+
+  const handleOpenEditSshEnvironment = useCallback(
+    (input: {
+      readonly environmentId: EnvironmentId;
+      readonly label: string;
+      readonly target: DesktopSshEnvironmentTarget;
+    }) => {
+      const rows = Object.entries(input.target.environmentVariables ?? {}).map(
+        ([name, value], id) => ({ id, name, value }),
+      );
+      setEditingSshEnvironment(input);
+      setEditingSshEnvironmentVariables(rows.length > 0 ? rows : [{ id: 0, name: "", value: "" }]);
+      setEditingSshEnvironmentError(null);
+    },
+    [],
+  );
+
+  const handleSaveSshEnvironment = useCallback(async () => {
+    if (editingSshEnvironment === null) {
+      return;
+    }
+
+    let environmentVariables: Readonly<Record<string, string>> | undefined;
+    try {
+      environmentVariables = parseSshEnvironmentVariables(editingSshEnvironmentVariables);
+    } catch (error) {
+      setEditingSshEnvironmentError(formatDesktopSshConnectionError(error));
+      return;
+    }
+
+    setIsSavingSshEnvironment(true);
+    setEditingSshEnvironmentError(null);
+    const result = await updateSshEnvironmentVariables({
+      environmentId: editingSshEnvironment.environmentId,
+      ...(environmentVariables === undefined ? {} : { environmentVariables }),
+    });
+    setIsSavingSshEnvironment(false);
+
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        setEditingSshEnvironmentError(
+          formatDesktopSshConnectionError(squashAtomCommandFailure(result)),
+        );
+      }
+      return;
+    }
+
+    setEditingSshEnvironment(null);
+    setEditingSshEnvironmentVariables([]);
+    toastManager.add({
+      type: "success",
+      title: "SSH environment saved",
+      description: `${editingSshEnvironment.label} is reconnecting with the updated local environment.`,
+    });
+  }, [editingSshEnvironment, editingSshEnvironmentVariables, updateSshEnvironmentVariables]);
+
+  const handleConnectSshHost = useCallback(
+    async (target: DesktopSshEnvironmentTarget, label?: string) => {
+      let targetWithEnvironment = target;
+      if (savedBackendMode === "ssh") {
+        try {
+          const environmentVariables = parseSshEnvironmentVariables(
+            savedBackendSshEnvironmentVariables,
+          );
+          targetWithEnvironment = {
+            ...target,
+            ...(environmentVariables === undefined ? {} : { environmentVariables }),
+          };
+        } catch (error) {
+          setSavedBackendError(formatDesktopSshConnectionError(error));
+          return;
+        }
+      }
+      setConnectingSshHostAlias(target.alias);
+      if (savedBackendMode === "ssh") {
+        setSavedBackendError(null);
+      } else {
+        setSshConnectionError(null);
+      }
+      const result = await connectSshEnvironment({
+        target: targetWithEnvironment,
+        ...(label === undefined ? {} : { label }),
+      });
+      setConnectingSshHostAlias(null);
+      if (result._tag === "Success") {
+        setSavedBackendSshHost("");
+        setSavedBackendSshUsername("");
+        setSavedBackendSshPort("");
+        setSavedBackendSshEnvironmentOpen(false);
+        setSavedBackendSshEnvironmentVariables([]);
+        setAddBackendDialogOpen(false);
+        toastManager.add({
+          type: "success",
+          title: savedDesktopSshEnvironmentsByAlias[target.alias]
+            ? "Environment reconnected"
+            : "Environment connected",
+          description: `${label?.trim() || target.alias} is ready over an SSH-managed tunnel.`,
+        });
+        return;
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        const message = formatDesktopSshConnectionError(error);
+        if (savedBackendMode === "ssh") {
+          setSavedBackendError(message);
+        } else {
+          setSshConnectionError(message);
+        }
+      }
+    },
+    [
+      connectSshEnvironment,
+      savedBackendMode,
+      savedBackendSshEnvironmentVariables,
+      savedDesktopSshEnvironmentsByAlias,
+    ],
   );
 
   const visibleDesktopPairingLinks = desktopPairingLinks;
@@ -2652,6 +2921,45 @@ export function ConnectionsSettings() {
             />
           </label>
         </div>
+        <Collapsible
+          open={savedBackendSshEnvironmentOpen}
+          onOpenChange={(open) => {
+            setSavedBackendSshEnvironmentOpen(open);
+            if (open && savedBackendSshEnvironmentVariables.length === 0) {
+              setSavedBackendSshEnvironmentVariables([{ id: 0, name: "", value: "" }]);
+            }
+          }}
+          className="overflow-hidden rounded-lg border border-border/60"
+        >
+          <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs text-muted-foreground hover:bg-muted/30 hover:text-foreground">
+            <ChevronDownIcon
+              className={cn(
+                "size-3.5 shrink-0 transition-transform",
+                savedBackendSshEnvironmentOpen && "rotate-180",
+              )}
+            />
+            <span className="font-medium">Local SSH environment</span>
+            {savedBackendSshEnvironmentVariables.some((entry) => entry.name.trim().length > 0) ? (
+              <span className="ml-auto text-[11px] tabular-nums">
+                {
+                  savedBackendSshEnvironmentVariables.filter(
+                    (entry) => entry.name.trim().length > 0,
+                  ).length
+                }{" "}
+                configured
+              </span>
+            ) : null}
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="border-t border-border/60 px-3 py-3">
+              <SshEnvironmentVariableEditor
+                rows={savedBackendSshEnvironmentVariables}
+                setRows={setSavedBackendSshEnvironmentVariables}
+                disabled={isAddingSavedBackend}
+              />
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
         {savedBackendError || discoveredSshHostsError ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
             {savedBackendError ?? discoveredSshHostsError}
@@ -3127,6 +3435,58 @@ export function ConnectionsSettings() {
 
   return (
     <SettingsPageContainer>
+      <Dialog
+        open={editingSshEnvironment !== null}
+        onOpenChange={(open) => {
+          if (!open && !isSavingSshEnvironment) {
+            setEditingSshEnvironment(null);
+            setEditingSshEnvironmentVariables([]);
+            setEditingSshEnvironmentError(null);
+          }
+        }}
+      >
+        <DialogPopup className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit local SSH environment</DialogTitle>
+            <DialogDescription>
+              {editingSshEnvironment
+                ? `Update variables for ${editingSshEnvironment.label}. Saving restarts this SSH connection so new values reach the local SSH process.`
+                : "Update variables for this saved SSH connection."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-4">
+            <SshEnvironmentVariableEditor
+              rows={editingSshEnvironmentVariables}
+              setRows={setEditingSshEnvironmentVariables}
+              disabled={isSavingSshEnvironment}
+            />
+            {editingSshEnvironmentError ? (
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                {editingSshEnvironmentError}
+              </div>
+            ) : null}
+          </DialogPanel>
+          <DialogFooter variant="bare">
+            <Button
+              variant="outline"
+              disabled={isSavingSshEnvironment}
+              onClick={() => {
+                setEditingSshEnvironment(null);
+                setEditingSshEnvironmentVariables([]);
+                setEditingSshEnvironmentError(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={isSavingSshEnvironment}
+              onClick={() => void handleSaveSshEnvironment()}
+            >
+              {isSavingSshEnvironment ? "Saving…" : "Save and reconnect"}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
       {canManageLocalBackend ? (
         <>
           <SettingsSection {...searchableSetting("connections-environment")}>
@@ -3583,6 +3943,7 @@ export function ConnectionsSettings() {
             environment={environment}
             removingEnvironmentId={removingSavedEnvironmentId}
             onConnect={handleConnectSavedBackend}
+            onEditSshEnvironment={handleOpenEditSshEnvironment}
             onRemove={handleRemoveSavedBackend}
           />
         ))}

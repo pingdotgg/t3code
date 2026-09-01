@@ -306,11 +306,83 @@ export const DesktopEnvironmentBootstrapSchema = Schema.Struct({
   bootstrapToken: Schema.optionalKey(Schema.String),
 });
 
+const UNSAFE_DESKTOP_SSH_ENVIRONMENT_VARIABLE_NAMES = new Set([
+  "BASH_ENV",
+  "CDPATH",
+  "COMSPEC",
+  "ENV",
+  "GCONV_PATH",
+  "GSS_MECH_CONFIG",
+  "HOME",
+  "KRB5_CONFIG",
+  "KRB5_KTNAME",
+  "KRB5_PLUGIN_DIR",
+  "LIBPATH",
+  "LOCPATH",
+  "NODE_OPTIONS",
+  "NODE_PATH",
+  "PATH",
+  "PATHEXT",
+  "PERL5LIB",
+  "PERL5OPT",
+  "PYTHONHOME",
+  "PYTHONINSPECT",
+  "PYTHONPATH",
+  "PYTHONSTARTUP",
+  "PROGRAMDATA",
+  "RUBYLIB",
+  "RUBYOPT",
+  "SHELLOPTS",
+  "SHLIB_PATH",
+  "T3_SSH_AUTH_SECRET",
+  "USERPROFILE",
+]);
+
+/** Block high-risk process overrides before target-specific SendEnv validation. */
+export function isSafeDesktopSshEnvironmentVariableName(name: string): boolean {
+  const normalized = name.toUpperCase();
+  return (
+    !UNSAFE_DESKTOP_SSH_ENVIRONMENT_VARIABLE_NAMES.has(normalized) &&
+    !normalized.startsWith("DYLD_") &&
+    !normalized.startsWith("LD_") &&
+    !normalized.startsWith("OPENSSL_") &&
+    !normalized.startsWith("SSH_")
+  );
+}
+
+export const DesktopSshEnvironmentVariablesSchema = Schema.Record(
+  Schema.String,
+  Schema.String.check(
+    Schema.isMaxLength(8_192),
+    Schema.makeFilter((value) =>
+      value.includes("\0") ? "SSH environment variable values cannot contain NUL" : undefined,
+    ),
+  ),
+).check(
+  Schema.makeFilter((environmentVariables) =>
+    Object.keys(environmentVariables).flatMap((name) =>
+      /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name) && name.length <= 128
+        ? isSafeDesktopSshEnvironmentVariableName(name)
+          ? []
+          : [
+              {
+                path: [name],
+                issue: "SSH environment variable can affect the local SSH process",
+              },
+            ]
+        : [{ path: [name], issue: "Invalid SSH environment variable name" }],
+    ),
+  ),
+  Schema.isMaxProperties(128),
+);
+export type DesktopSshEnvironmentVariables = typeof DesktopSshEnvironmentVariablesSchema.Type;
+
 export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
   alias: Schema.String,
   hostname: Schema.String,
   username: Schema.NullOr(Schema.String),
   port: Schema.NullOr(Schema.Number),
+  environmentVariables: Schema.optionalKey(DesktopSshEnvironmentVariablesSchema),
 });
 export type DesktopSshEnvironmentTarget = typeof DesktopSshEnvironmentTargetSchema.Type;
 

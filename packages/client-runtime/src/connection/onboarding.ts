@@ -43,6 +43,11 @@ export interface SshConnectionInput {
   readonly label?: string;
 }
 
+export interface SshEnvironmentVariablesUpdateInput {
+  readonly environmentId: EnvironmentId;
+  readonly environmentVariables?: DesktopSshEnvironmentTarget["environmentVariables"];
+}
+
 export interface BearerConnectionUpdateInput {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -64,6 +69,9 @@ export class ConnectionOnboarding extends Context.Service<
       EnvironmentId,
       ConnectionAttemptError | Persistence.ConnectionPersistenceError
     >;
+    readonly updateSshEnvironmentVariables: (
+      input: SshEnvironmentVariablesUpdateInput,
+    ) => Effect.Effect<void, ConnectionAttemptError | Persistence.ConnectionPersistenceError>;
     readonly updateBearer: (
       input: BearerConnectionUpdateInput,
     ) => Effect.Effect<void, ConnectionAttemptError | Persistence.ConnectionPersistenceError>;
@@ -129,6 +137,7 @@ export const registerPairingConnection = Effect.fn(
 
 const isBearerCredential = Schema.is(BearerConnectionCredential);
 const isBearerProfile = Schema.is(BearerConnectionProfile);
+const isSshProfile = Schema.is(SshConnectionProfile);
 
 export const updateBearerConnection = Effect.fn(
   "clientRuntime.connection.onboarding.updateBearerConnection",
@@ -242,6 +251,57 @@ export const registerSshConnection = Effect.fn(
   return registration.target.environmentId;
 });
 
+export const prepareSshEnvironmentVariablesUpdate = Effect.fn(
+  "clientRuntime.connection.onboarding.prepareSshEnvironmentVariablesUpdate",
+)(function* (options: {
+  readonly input: SshEnvironmentVariablesUpdateInput;
+  readonly entry: Option.Option<ConnectionCatalogEntry>;
+}) {
+  const entry = Option.getOrNull(options.entry);
+  if (
+    entry === null ||
+    entry.target._tag !== "SshConnectionTarget" ||
+    Option.isNone(entry.profile) ||
+    !isSshProfile(entry.profile.value)
+  ) {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail: "Only saved SSH environments can update their local environment variables.",
+    });
+  }
+
+  const profile = entry.profile.value;
+  const { environmentVariables: _currentEnvironmentVariables, ...baseTarget } = profile.target;
+  const target: DesktopSshEnvironmentTarget = {
+    ...baseTarget,
+    ...(options.input.environmentVariables === undefined
+      ? {}
+      : { environmentVariables: options.input.environmentVariables }),
+  };
+
+  return new SshConnectionRegistration({
+    target: entry.target,
+    profile: new SshConnectionProfile({
+      connectionId: profile.connectionId,
+      environmentId: profile.environmentId,
+      label: profile.label,
+      target,
+    }),
+  });
+});
+
+export const updateSshEnvironmentVariables = Effect.fn(
+  "clientRuntime.connection.onboarding.updateSshEnvironmentVariables",
+)(function* (input: SshEnvironmentVariablesUpdateInput) {
+  const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  const entry = (yield* SubscriptionRef.get(registry.entries)).get(input.environmentId);
+  const registration = yield* prepareSshEnvironmentVariablesUpdate({
+    input,
+    entry: Option.fromUndefinedOr(entry),
+  });
+  yield* registry.register(registration);
+});
+
 export const make = Effect.gen(function* () {
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const presentation = yield* ClientCapabilities.ClientPresentation;
@@ -260,6 +320,10 @@ export const make = Effect.gen(function* () {
       registerSshConnection(input).pipe(
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
         Effect.provideService(ClientCapabilities.SshEnvironmentGateway, ssh),
+      ),
+    updateSshEnvironmentVariables: (input) =>
+      updateSshEnvironmentVariables(input).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
       ),
     updateBearer: (input) =>
       updateBearerConnection(input).pipe(

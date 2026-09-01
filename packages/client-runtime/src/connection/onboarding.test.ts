@@ -6,11 +6,16 @@ import * as Option from "effect/Option";
 
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import { ClientPresentation, SshEnvironmentGateway } from "../platform/capabilities.ts";
-import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
-import { BearerConnectionTarget } from "./model.ts";
+import {
+  BearerConnectionCredential,
+  BearerConnectionProfile,
+  SshConnectionProfile,
+} from "./catalog.ts";
+import { BearerConnectionTarget, SshConnectionTarget } from "./model.ts";
 import {
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
+  prepareSshEnvironmentVariablesUpdate,
   prepareSshRegistration,
 } from "./onboarding.ts";
 
@@ -251,6 +256,71 @@ describe("connection onboarding", () => {
           connectionId: "ssh:environment-ssh",
           target,
         },
+      });
+    }),
+  );
+
+  it.effect("updates and clears saved SSH environment variables without changing identity", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("environment-ssh");
+      const entry = Option.some({
+        target: new SshConnectionTarget({
+          environmentId,
+          label: "Remote development box",
+          connectionId: "ssh:environment-ssh",
+        }),
+        profile: Option.some(
+          new SshConnectionProfile({
+            connectionId: "ssh:environment-ssh",
+            environmentId,
+            label: "Remote development box",
+            target: {
+              alias: "devbox",
+              hostname: "devbox.example.test",
+              username: "developer",
+              port: 22,
+              environmentVariables: { TOKEN: "old-value" },
+            },
+          }),
+        ),
+      });
+
+      const updated = yield* prepareSshEnvironmentVariablesUpdate({
+        input: {
+          environmentId,
+          environmentVariables: { TOKEN: "new-value", EMPTY: "" },
+        },
+        entry,
+      });
+      expect(updated).toMatchObject({
+        target: {
+          environmentId,
+          label: "Remote development box",
+          connectionId: "ssh:environment-ssh",
+        },
+        profile: {
+          connectionId: "ssh:environment-ssh",
+          environmentId,
+          label: "Remote development box",
+          target: {
+            alias: "devbox",
+            hostname: "devbox.example.test",
+            username: "developer",
+            port: 22,
+            environmentVariables: { TOKEN: "new-value", EMPTY: "" },
+          },
+        },
+      });
+
+      const cleared = yield* prepareSshEnvironmentVariablesUpdate({
+        input: { environmentId },
+        entry: Option.some({ target: updated.target, profile: Option.some(updated.profile) }),
+      });
+      expect(cleared.profile.target).toEqual({
+        alias: "devbox",
+        hostname: "devbox.example.test",
+        username: "developer",
+        port: 22,
       });
     }),
   );

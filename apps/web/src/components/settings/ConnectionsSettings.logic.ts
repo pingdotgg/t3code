@@ -1,4 +1,67 @@
-import type { AdvertisedEndpoint, DesktopBridge, DesktopWslState } from "@t3tools/contracts";
+import {
+  isSafeDesktopSshEnvironmentVariableName,
+  type AdvertisedEndpoint,
+  type DesktopBridge,
+  type DesktopWslState,
+} from "@t3tools/contracts";
+
+export interface SshEnvironmentVariableDraft {
+  readonly name: string;
+  readonly value: string;
+}
+
+const SSH_ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/u;
+const SSH_ENVIRONMENT_VARIABLE_MAX_COUNT = 128;
+const SSH_ENVIRONMENT_VARIABLE_NAME_MAX_LENGTH = 128;
+const SSH_ENVIRONMENT_VARIABLE_VALUE_MAX_LENGTH = 8_192;
+
+export function parseSshEnvironmentVariables(
+  drafts: ReadonlyArray<SshEnvironmentVariableDraft>,
+): Readonly<Record<string, string>> | undefined {
+  if (drafts.length > SSH_ENVIRONMENT_VARIABLE_MAX_COUNT) {
+    throw new Error(
+      `SSH environment variables are limited to ${SSH_ENVIRONMENT_VARIABLE_MAX_COUNT}.`,
+    );
+  }
+  const environmentVariables: Record<string, string> = Object.create(null) as Record<
+    string,
+    string
+  >;
+
+  for (const draft of drafts) {
+    const name = draft.name.trim();
+    if (name.length === 0 && draft.value.length === 0) {
+      continue;
+    }
+    if (!SSH_ENVIRONMENT_VARIABLE_NAME_PATTERN.test(name)) {
+      throw new Error(
+        name.length === 0
+          ? "Each SSH environment variable needs a name."
+          : `SSH environment variable '${name}' has an invalid name.`,
+      );
+    }
+    if (name.length > SSH_ENVIRONMENT_VARIABLE_NAME_MAX_LENGTH) {
+      throw new Error(`SSH environment variable '${name}' has a name longer than 128 characters.`);
+    }
+    if (!isSafeDesktopSshEnvironmentVariableName(name)) {
+      throw new Error(
+        `SSH environment variable '${name}' can affect the local SSH process and is not allowed.`,
+      );
+    }
+    if (draft.value.length > SSH_ENVIRONMENT_VARIABLE_VALUE_MAX_LENGTH) {
+      throw new Error(`SSH environment variable '${name}' has a value larger than 8 KiB.`);
+    }
+    if (draft.value.includes("\0")) {
+      throw new Error(`SSH environment variable '${name}' contains a NUL character.`);
+    }
+    if (Object.hasOwn(environmentVariables, name)) {
+      throw new Error(`SSH environment variable '${name}' is listed more than once.`);
+    }
+    environmentVariables[name] = draft.value;
+  }
+
+  return Object.keys(environmentVariables).length === 0 ? undefined : environmentVariables;
+}
 
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;
 
