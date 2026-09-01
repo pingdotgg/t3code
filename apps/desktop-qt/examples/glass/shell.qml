@@ -1,126 +1,51 @@
 import QtQuick
-import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import T3.Shell
 import T3.Bricks
 
-// Midnight glass: a transparent window (let the compositor blur it), a big
-// clock in the top bar, and every brick floating in its own translucent card.
-Window {
+// Graphite glass: one rounded window with a hairline edge, traffic lights in
+// the corner, a translucent sidebar for the compositor to blur behind, and
+// an opaque content column with a unified toolbar — the shape of a Mac app.
+ShellWindow {
     id: root
 
-    readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
+    readonly property color canvas: Theme.color("canvas", "#1e1e1e")
+    readonly property color line: Theme.color("border", "#ffffff14")
+    readonly property real corner: Theme.radius
+    // How far the toolbar's leading edge stays clear of the traffic lights
+    // once the sidebar folds away and they end up over the content column.
+    readonly property real lightsInset: root.sidebarCollapsed && !root.settingsActive ? 66 : 0
 
-    property date now: new Date()
+    width: 1360
+    height: 860
 
-    readonly property bool settingsActive: Shell.state.settings ? Shell.state.settings.active : false
-    readonly property color glass: Qt.rgba(Theme.color("surface", "#1b2033").r, Theme.color("surface", "#1b2033").g, Theme.color("surface", "#1b2033").b, 0.6)
-    readonly property color line: Qt.rgba(1, 1, 1, 0.08)
+    Rectangle {
+        id: frame
 
-    width: 1400
-    height: 880
-    visible: true
-    title: qsTr("T3 Code")
-    // macOS blurs in proportion to alpha, so the gaps keep a faint tint
-    // instead of going fully clear.
-    color: Theme.windowTransparent ? Qt.rgba(Theme.color("canvas", "#141826").r, Theme.color("canvas", "#141826").g, Theme.color("canvas", "#141826").b, 0.3) : Theme.color("canvas", "#141826")
-    opacity: Theme.windowOpacity
-    flags: Qt.Window | Qt.FramelessWindowHint
-
-    Timer {
-        interval: 1000
-        running: true
-        repeat: true
-        onTriggered: root.now = new Date()
-    }
-
-    component Glass: Rectangle {
-        default property alias content: inner.data
-
-        radius: Theme.radius
-        color: root.glass
+        anchors.fill: parent
+        radius: root.corner
+        color: "transparent"
         border.color: root.line
         border.width: 1
-        clip: true
 
-        Item {
-            id: inner
-
+        RowLayout {
             anchors.fill: parent
             anchors.margins: 1
-        }
-    }
+            spacing: 0
 
-    ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: 18
-        spacing: 14
+            // Sidebar column: the theme's sidebar colour carries the alpha, so
+            // the desktop shows through the blur; the band under the lights
+            // drags the window.
+            Rectangle {
+                id: sidebarColumn
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 14
-
-            Glass {
-                Layout.preferredWidth: 300
-                Layout.preferredHeight: 64
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 16
-                    spacing: 14
-
-                    Text {
-                        text: Qt.formatTime(root.now, "H:mm:ss")
-                        color: Theme.color("text", "#e7e9f5")
-                        font.pixelSize: 28
-                        font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "Menlo"
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: Qt.formatDate(root.now, "dddd d MMMM").toUpperCase()
-                        color: Theme.color("textMuted", "#8f95b3")
-                        font.pixelSize: 11
-                        font.letterSpacing: 1.5
-                    }
-                }
-            }
-
-            Glass {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 64
-
-                Workspace {
-                    anchors.fill: parent
-                    anchors.leftMargin: 8
-                    visible: ready
-                    sidebarToggle: root.sidebarCollapsed
-                    color: "transparent"
-                }
-            }
-
-            Glass {
-                Layout.preferredWidth: 130
-                Layout.preferredHeight: 64
-
-                TitleBar {
-                    anchors.fill: parent
-                    window: root
-                    color: "transparent"
-                }
-            }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: 14
-
-            Glass {
-                Layout.preferredWidth: root.sidebarCollapsed ? 0 : 290
-                Layout.minimumWidth: 0
                 Layout.fillHeight: true
-                visible: !root.sidebarCollapsed || width > 0
+                Layout.preferredWidth: root.sidebarCollapsed && !root.settingsActive ? 0 : 248
+                Layout.minimumWidth: 0
+                visible: !(root.sidebarCollapsed && !root.settingsActive) || width > 0
+                color: Theme.color("sidebar", "#202020b8")
+                topLeftRadius: root.corner - 1
+                bottomLeftRadius: root.corner - 1
                 clip: true
 
                 Behavior on Layout.preferredWidth {
@@ -130,69 +55,167 @@ Window {
                     }
                 }
 
-                Sidebar {
-                    anchors.fill: parent
-                    visible: !root.settingsActive
-                    color: "transparent"
+                Item {
+                    width: 248
+                    height: parent.height
+
+                    Item {
+                        id: lightsBand
+
+                        width: parent.width
+                        height: 52
+
+                        DragHandler {
+                            target: null
+                            onActiveChanged: if (active)
+                                root.startSystemMove()
+                        }
+
+                        TapHandler {
+                            onDoubleTapped: root.visibility === Window.Maximized ? root.showNormal() : root.showMaximized()
+                        }
+                    }
+
+                    Sidebar {
+                        anchors.fill: parent
+                        anchors.topMargin: lightsBand.height
+                        visible: !root.settingsActive
+                        color: "transparent"
+                    }
+
+                    SettingsNav {
+                        anchors.fill: parent
+                        anchors.topMargin: lightsBand.height
+                        visible: root.settingsActive
+                        color: "transparent"
+                    }
                 }
 
-                SettingsNav {
-                    anchors.fill: parent
-                    visible: root.settingsActive
-                    color: "transparent"
+                Rectangle {
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: 1
+                    color: root.line
                 }
             }
 
-            Glass {
+            // Content column: toolbar, page, composer, all on one opaque
+            // canvas so text stays crisp over whatever the desktop shows.
+            Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                color: root.canvas
+                topLeftRadius: sidebarColumn.visible ? 0 : root.corner - 1
+                bottomLeftRadius: sidebarColumn.visible ? 0 : root.corner - 1
+                topRightRadius: panelColumn.visible ? 0 : root.corner - 1
+                bottomRightRadius: panelColumn.visible ? 0 : root.corner - 1
 
-                WebSurface {
+                ColumnLayout {
                     anchors.fill: parent
-                    url: Shell.pageUrl
+                    spacing: 0
+
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 52
+
+                        DragHandler {
+                            target: null
+                            onActiveChanged: if (active)
+                                root.startSystemMove()
+                        }
+
+                        Workspace {
+                            anchors.fill: parent
+                            anchors.leftMargin: root.lightsInset
+                            visible: ready
+                            color: "transparent"
+                            sidebarToggle: root.sidebarCollapsed
+                            panelToggle: rightPanel.available ? rightPanel.open : null
+
+                            Behavior on anchors.leftMargin {
+                                NumberAnimation {
+                                    duration: 220
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: root.line
+                    }
+
+                    WebSurface {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        url: Shell.pageUrl
+                        backgroundColor: root.canvas
+                    }
+
+                    Composer {
+                        Layout.fillWidth: true
+                        visible: ready
+                        color: "transparent"
+                    }
                 }
             }
 
-            Glass {
-                Layout.preferredWidth: panel.implicitWidth
+            Rectangle {
+                id: panelColumn
+
                 Layout.fillHeight: true
-                visible: panel.available
+                Layout.preferredWidth: rightPanel.implicitWidth
+                visible: rightPanel.available && rightPanel.implicitWidth > 0
+                clip: true
+                color: Theme.color("chrome", "#262626")
+                topRightRadius: root.corner - 1
+                bottomRightRadius: root.corner - 1
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: 1
+                    color: root.line
+                }
 
                 RightPanel {
-                    id: panel
+                    id: rightPanel
 
                     anchors.fill: parent
+                    anchors.leftMargin: 1
+                    ownToggle: false
                     color: "transparent"
                 }
             }
         }
 
-        Glass {
-            Layout.fillWidth: true
-            Layout.preferredHeight: composer.implicitHeight
-            visible: composer.ready
+        // Inner highlight along the top edge, the way a Mac window catches light.
+        Rectangle {
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.margins: 1
+            height: 1
+            color: Qt.rgba(1, 1, 1, 0.06)
+        }
 
-            Composer {
-                id: composer
-
-                anchors.fill: parent
-                color: "transparent"
-            }
+        WindowControls {
+            x: 14
+            y: 20
+            window: root
+            trafficLights: true
+            order: ["close", "minimize", "maximize"]
         }
     }
 
     Notifications {
         anchors.top: parent.top
         anchors.right: parent.right
-        anchors.topMargin: 96
-        anchors.rightMargin: 24
-    }
-
-    ContextMenuHost {
-        surfaceId: "shell"
-    }
-
-    ShellErrorOverlay {
-        anchors.fill: parent
+        anchors.topMargin: 64
+        anchors.rightMargin: 20
     }
 }
