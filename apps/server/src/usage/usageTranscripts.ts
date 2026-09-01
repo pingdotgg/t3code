@@ -194,7 +194,9 @@ export function parseClaudeLineRecords(line: string): readonly UsageRecord[] {
             ? cost
             : null,
         dedupeKey:
-          dedupeKey === null || iterations.length === 0 ? dedupeKey : `${dedupeKey}:${index}`,
+          dedupeKey === null || iterations.length === 0 || isServingIteration
+            ? dedupeKey
+            : `${dedupeKey}:${index}`,
       },
     ];
   });

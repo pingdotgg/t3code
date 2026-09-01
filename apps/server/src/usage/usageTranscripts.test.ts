@@ -138,7 +138,41 @@ describe("parseClaudeLine", () => {
     });
     expect(records.map((record) => record.dedupeKey)).toEqual([
       "msg_fallback:req_fallback:0",
-      "msg_fallback:req_fallback:1",
+      "msg_fallback:req_fallback",
+    ]);
+  });
+
+  it("replaces a progressive Claude snapshot with its final serving iteration", () => {
+    const partial = parseClaudeLineRecords(
+      claudeLine({
+        messageId: "msg_progressive",
+        requestId: "req_progressive",
+        contentType: "text",
+      }),
+    );
+    const complete = parseClaudeLineRecords(
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-08-18T01:13:44.675Z",
+        requestId: "req_progressive",
+        message: {
+          id: "msg_progressive",
+          model: "claude-opus-5",
+          usage: {
+            output_tokens: 300,
+            iterations: [
+              { model: "claude-fable-5", output_tokens: 100 },
+              { model: "claude-opus-5", output_tokens: 300 },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(partial[0]?.dedupeKey).toBe("msg_progressive:req_progressive");
+    expect(complete.map((record) => record.dedupeKey)).toEqual([
+      "msg_progressive:req_progressive:0",
+      "msg_progressive:req_progressive",
     ]);
   });
 
