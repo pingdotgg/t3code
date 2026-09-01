@@ -5,19 +5,10 @@ import T3.Bricks
 
 // Copy to ~/.t3/shell/shell.qml and edit; the app reloads on save.
 // Bricks come from T3.Bricks, data from the T3.Shell singletons
-// (Shell.state, Shell.dispatch, Theme.*, Runtime.*).
-Window {
+// (Shell.state, Shell.dispatch, Theme.*, Runtime.*). ShellWindow brings the
+// window boilerplate, the error overlay and the page's window commands.
+ShellWindow {
     id: root
-
-    readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
-
-    width: 1280
-    height: 820
-    visible: true
-    title: qsTr("T3 Code")
-    color: Theme.windowTransparent ? "transparent" : Theme.color("chrome", "#0b0b0d")
-    opacity: Theme.windowOpacity
-    flags: Theme.frameless ? Qt.Window | Qt.FramelessWindowHint : Qt.Window
 
     ColumnLayout {
         anchors.fill: parent
@@ -30,9 +21,11 @@ Window {
 
             Sidebar {
                 Layout.fillHeight: true
-                Layout.preferredWidth: root.sidebarCollapsed ? 0 : 260
-                visible: (!settingsNav.active) && (!root.sidebarCollapsed || width > 0)
+                Layout.preferredWidth: root.sidebarCollapsed ? 0 : 256
                 Layout.minimumWidth: 0
+                visible: !root.settingsActive && (!root.sidebarCollapsed || width > 0)
+                showBrand: true
+                window: root
 
                 Behavior on Layout.preferredWidth {
                     NumberAnimation {
@@ -43,11 +36,9 @@ Window {
             }
 
             SettingsNav {
-                id: settingsNav
-
                 Layout.fillHeight: true
-                Layout.preferredWidth: 260
-                visible: active
+                Layout.preferredWidth: 256
+                visible: root.settingsActive
             }
 
             ColumnLayout {
@@ -56,10 +47,10 @@ Window {
                 spacing: 0
 
                 Workspace {
-
-                    sidebarToggle: root.sidebarCollapsed
                     Layout.fillWidth: true
                     visible: ready
+                    sidebarToggle: root.sidebarCollapsed
+                    panelToggle: rightPanel.available ? rightPanel.open : null
                 }
 
                 WebSurface {
@@ -75,8 +66,11 @@ Window {
             }
 
             RightPanel {
+                id: rightPanel
+
                 Layout.fillHeight: true
                 Layout.preferredWidth: implicitWidth
+                ownToggle: false
                 visible: available
             }
         }
@@ -94,13 +88,5 @@ Window {
         anchors.right: parent.right
         anchors.bottomMargin: 180
         anchors.rightMargin: 16
-    }
-
-    ContextMenuHost {
-        surfaceId: "shell"
-    }
-
-    ShellErrorOverlay {
-        anchors.fill: parent
     }
 }
