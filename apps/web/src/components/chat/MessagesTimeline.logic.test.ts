@@ -1579,9 +1579,53 @@ describe("deriveMessagesTimelineRows", () => {
       "turn-fold:turn-1",
       "assistant-final-entry",
       "user-followup-entry",
+      "working-indicator-row",
+      "thinking-indicator-row",
     ]);
     const finalRow = rows.find((row) => row.id === "assistant-final-entry");
     expect(finalRow?.kind === "message" && finalRow.showAssistantMeta).toBe(true);
+    expect(rows.at(-1)).toMatchObject({ kind: "thinking" });
+  });
+
+  it("keeps the settled tool visible and shows thinking between actions", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "work-entry-1",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:08Z",
+          entry: {
+            id: "work-1",
+            createdAt: "2026-01-01T00:00:08Z",
+            runId: "turn-1" as never,
+            label: "Ran command",
+            command: "vp test run",
+            tone: "tool" as const,
+            itemType: "command_execution" as const,
+            toolLifecycleStatus: "completed" as const,
+          },
+        },
+      ],
+      latestRun: {
+        runId: "turn-1" as never,
+        status: "running",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    // The settled tool stays visible in past tense instead of vanishing, and
+    // the thinking indicator marks that the turn itself is still running.
+    expect(rows.map((row) => row.kind)).toEqual(["working", "work-live", "thinking"]);
+    expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
+      active: false,
+      entry: { id: "work-1" },
+    });
+    expect(rows.at(-1)).toMatchObject({ kind: "thinking" });
   });
 
   it("does not fold the active in-progress turn", () => {
@@ -1629,6 +1673,7 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
     expect(rows.map((row) => row.id)).toEqual([
+      "working-indicator-row",
       "assistant-thought-entry",
       "work-live:work-entry-1",
     ]);
@@ -1857,6 +1902,59 @@ describe("deriveMessagesTimelineRows", () => {
 });
 
 describe("computeStableMessagesTimelineRows", () => {
+  it.each(["", " \n"])("keeps Thinking after assistant content grows from %j", (text) => {
+    const startedAt = "2026-01-01T00:00:00Z";
+    const runId = RunId.make("run-1");
+    const input = {
+      latestRun: {
+        runId,
+        status: "running" as const,
+        startedAt,
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: startedAt,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    };
+    const assistantEntry = {
+      id: "assistant-entry",
+      kind: "message" as const,
+      createdAt: startedAt,
+      message: {
+        id: "assistant-1" as never,
+        role: "assistant" as const,
+        text,
+        runId,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+        streaming: true,
+      },
+    };
+    const initial = computeStableMessagesTimelineRows(
+      deriveMessagesTimelineRows({ ...input, timelineEntries: [assistantEntry] }),
+      { byId: new Map(), result: [] },
+    );
+    const updated = computeStableMessagesTimelineRows(
+      deriveMessagesTimelineRows({
+        ...input,
+        timelineEntries: [
+          {
+            ...assistantEntry,
+            message: { ...assistantEntry.message, text: "I will inspect the repository." },
+          },
+        ],
+      }),
+      initial,
+    );
+
+    const initialThinking = initial.byId.get("thinking-indicator-row");
+    const updatedThinking = updated.byId.get("thinking-indicator-row");
+    expect(initialThinking).toMatchObject({ kind: "thinking" });
+    expect(updatedThinking).toBe(initialThinking);
+    expect(updated.result.at(-1)).toBe(updatedThinking);
+  });
+
   it("returns the previous result when row order and content are unchanged", () => {
     const firstUserMessage = {
       id: "user-1" as never,
