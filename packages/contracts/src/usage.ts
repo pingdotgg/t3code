@@ -32,6 +32,8 @@ export const USAGE_CONTRACT_VERSION = 7 as const;
  * treating every older server as stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
+/** First contract version whose absent project fields mean outside all projects. */
+export const USAGE_PROJECT_ATTRIBUTION_SINCE = 6 as const;
 
 export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;

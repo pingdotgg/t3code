@@ -1,6 +1,6 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import type { DailyTotals, HourlyTotals, ProjectTotals } from "@t3tools/shared/usageMerge";
 
@@ -103,11 +103,18 @@ export function UsagePage() {
         )
       : scoped;
   }, [merged.projects, metric, projectFilter]);
+  const projectLabelsRef = useRef(new Map<string, string>());
+  for (const project of merged.projects) {
+    if (project.projectKey !== null && project.project !== null) {
+      projectLabelsRef.current.set(project.projectKey, project.project);
+    }
+  }
   const selectedProjectLabel =
     projectFilter === undefined
       ? null
-      : (merged.projects.find((project) => project.projectKey === projectFilter)?.project ??
-        "Outside projects");
+      : projectFilter === null
+        ? "Outside projects"
+        : (projectLabelsRef.current.get(projectFilter) ?? "Selected project");
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
   // Session figures are per transcript directory; a project filter cannot
@@ -170,6 +177,7 @@ export function UsagePage() {
           <UsageProjectSelect
             projects={merged.projects}
             filter={projectFilter}
+            selectedLabel={selectedProjectLabel}
             onChange={setProjectFilter}
           />
         ) : null}
@@ -217,6 +225,7 @@ export function UsagePage() {
           <UsageProjectSelect
             projects={merged.projects}
             filter={projectFilter}
+            selectedLabel={selectedProjectLabel}
             onChange={setProjectFilter}
           />
         ) : null}
@@ -697,16 +706,15 @@ function projectFilterFromValue(value: string): string | null | undefined {
 function UsageProjectSelect({
   projects,
   filter,
+  selectedLabel,
   onChange,
 }: {
   readonly projects: readonly ProjectTotals[];
   readonly filter: string | null | undefined;
+  readonly selectedLabel: string | null;
   readonly onChange: (filter: string | null | undefined) => void;
 }) {
-  const label =
-    filter === undefined
-      ? "All projects"
-      : (projects.find((project) => project.projectKey === filter)?.project ?? "Outside projects");
+  const label = filter === undefined ? "All projects" : (selectedLabel ?? "Selected project");
   return (
     <Select
       value={projectFilterValue(filter)}

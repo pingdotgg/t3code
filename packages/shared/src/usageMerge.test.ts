@@ -1,6 +1,7 @@
 import {
   USAGE_CONTRACT_VERSION,
   USAGE_MERGE_COMPATIBLE_SINCE,
+  USAGE_PROJECT_ATTRIBUTION_SINCE,
   ProjectId,
   type EnvironmentId,
   type UsageBucket,
@@ -10,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+import { mergeUsage, projectFilterForEnvironment, type EnvironmentUsage } from "./usageMerge.ts";
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
@@ -413,9 +414,10 @@ describe("mergeUsage", () => {
       ),
     ];
 
-    const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, {
-      projectFilter: "title:App",
-    });
+    const unfiltered = mergeUsage(environments, USAGE_CONTRACT_VERSION);
+    const appKey = unfiltered.projects.find((project) => project.project === "App")?.projectKey;
+    if (appKey === undefined || appKey === null) throw new Error("app project key missing");
+    const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, { projectFilter: appKey });
     expect(filtered.costUsd).toBe(6);
     expect(filtered.providers.map((provider) => provider.provider)).toEqual(["claude"]);
     // Session counts are per source directory and cannot be split by project.
@@ -426,5 +428,54 @@ describe("mergeUsage", () => {
     const outside = mergeUsage(environments, USAGE_CONTRACT_VERSION, { projectFilter: null });
     expect(outside.costUsd).toBe(2);
     expect(outside.providers.map((provider) => provider.provider)).toEqual(["codex"]);
+  });
+
+  it("namespaces stable project ids by environment", () => {
+    const sharedId = ProjectId.make("cloned-project");
+    const environments = [
+      environment(
+        "env-a",
+        summary(
+          [bucket({ projectId: sharedId, project: "App", costUsd: 6 })],
+          [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+        ),
+      ),
+      environment(
+        "env-b",
+        summary(
+          [bucket({ projectId: sharedId, project: "App", costUsd: 2 })],
+          [{ provider: "claude", hostId: "linux", homePath: "/b/.claude" }],
+        ),
+      ),
+    ];
+
+    const merged = mergeUsage(environments, USAGE_CONTRACT_VERSION);
+    expect(merged.projects.map((project) => project.costUsd)).toEqual([6, 2]);
+    const firstKey = merged.projects[0]?.projectKey;
+    if (firstKey === undefined || firstKey === null) throw new Error("project key missing");
+    expect(projectFilterForEnvironment(firstKey, "env-a" as EnvironmentId)).toBe(`id:${sharedId}`);
+    expect(projectFilterForEnvironment(firstKey, "env-b" as EnvironmentId)).toBe(
+      "environment-mismatch:",
+    );
+  });
+
+  it("does not treat unknown attribution from old summaries as outside projects", () => {
+    const oldEnvironment = environment(
+      "env-old",
+      summary(
+        [bucket({ costUsd: 4 })],
+        [{ provider: "claude", hostId: "mac", homePath: "/old/.claude" }],
+        USAGE_PROJECT_ATTRIBUTION_SINCE - 1,
+      ),
+    );
+
+    const unfiltered = mergeUsage([oldEnvironment], USAGE_CONTRACT_VERSION);
+    expect(unfiltered.costUsd).toBe(4);
+    expect(unfiltered.projects).toEqual([]);
+
+    const outside = mergeUsage([oldEnvironment], USAGE_CONTRACT_VERSION, {
+      projectFilter: null,
+    });
+    expect(outside.costUsd).toBe(0);
   });
 });

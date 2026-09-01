@@ -8,6 +8,7 @@
  */
 import {
   USAGE_MERGE_COMPATIBLE_SINCE,
+  USAGE_PROJECT_ATTRIBUTION_SINCE,
   type EnvironmentId,
   type ProjectId,
   type UsageBucket,
@@ -233,10 +234,36 @@ export interface MergeUsageOptions {
   readonly projectFilter?: string | null;
 }
 
-function bucketProjectKey(bucket: UsageBucket): string | null {
+function localBucketProjectKey(bucket: UsageBucket): string | null {
   if (bucket.projectId !== undefined) return `id:${bucket.projectId}`;
   if (bucket.project !== undefined) return `title:${bucket.project}`;
   return null;
+}
+
+function namespacedProjectKey(environmentId: EnvironmentId, localKey: string): string {
+  return JSON.stringify([environmentId, localKey]);
+}
+
+/** Converts a merged project key back to the key understood by one server. */
+export function projectFilterForEnvironment(
+  filter: string | null | undefined,
+  environmentId: EnvironmentId,
+): string | null | undefined {
+  if (filter === undefined || filter === null) return filter;
+  try {
+    const parsed: unknown = JSON.parse(filter);
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 2 &&
+      parsed[0] === environmentId &&
+      typeof parsed[1] === "string"
+    ) {
+      return parsed[1];
+    }
+  } catch {
+    // A malformed or foreign key must select nothing in this environment.
+  }
+  return "environment-mismatch:";
 }
 
 /**
@@ -347,22 +374,35 @@ export function mergeUsage(
       const tokens = bucketTokens(bucket);
 
       unfilteredCostUsd += bucket.costUsd;
-      const projectKey = bucketProjectKey(bucket);
-      const accumulatorKey = projectKey ?? "\0";
-      const project = projectAccumulator.get(accumulatorKey) ?? {
-        projectId: bucket.projectId ?? null,
-        projectKey,
-        project: bucket.project ?? null,
-        costUsd: 0,
-        totalTokens: 0,
-        records: 0,
-      };
-      project.costUsd += bucket.costUsd;
-      project.totalTokens += tokens;
-      project.records += bucket.records;
-      projectAccumulator.set(accumulatorKey, project);
+      const localProjectKey = localBucketProjectKey(bucket);
+      const projectKey =
+        localProjectKey === null
+          ? environment.summary.contractVersion >= USAGE_PROJECT_ATTRIBUTION_SINCE
+            ? null
+            : undefined
+          : namespacedProjectKey(environment.environmentId, localProjectKey);
+      // Pre-project contracts cannot distinguish an outside-project bucket
+      // from one whose attribution is simply unavailable. Keep its usage in
+      // unfiltered totals, but never claim it belongs to the Outside slice.
+      if (projectKey === undefined) {
+        if (projectFilter !== undefined) continue;
+      } else {
+        const accumulatorKey = projectKey ?? "\0";
+        const project = projectAccumulator.get(accumulatorKey) ?? {
+          projectId: bucket.projectId ?? null,
+          projectKey,
+          project: bucket.project ?? null,
+          costUsd: 0,
+          totalTokens: 0,
+          records: 0,
+        };
+        project.costUsd += bucket.costUsd;
+        project.totalTokens += tokens;
+        project.records += bucket.records;
+        projectAccumulator.set(accumulatorKey, project);
 
-      if (projectFilter !== undefined && projectKey !== projectFilter) continue;
+        if (projectFilter !== undefined && projectKey !== projectFilter) continue;
+      }
 
       costUsd += bucket.costUsd;
       cacheSavingsUsd += bucket.cacheSavingsUsd;
