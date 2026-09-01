@@ -12,6 +12,71 @@ const layer = it.layer(
 );
 
 layer("ProjectionThreadMessageRepository", (it) => {
+  it.effect("appends streaming text and applies attachment updates", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-streaming-append");
+      const messageId = MessageId.make("message-streaming-append");
+      const createdAt = "2026-02-28T19:05:00.000Z";
+      const attachments = [
+        {
+          type: "image" as const,
+          id: "thread-streaming-append-att-1",
+          name: "example.png",
+          mimeType: "image/png",
+          sizeBytes: 5,
+        },
+      ];
+
+      yield* repository.appendStreaming({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "assistant",
+        text: "hello",
+        attachments,
+        createdAt,
+        updatedAt: createdAt,
+      });
+      yield* repository.appendStreaming({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "assistant",
+        text: " world",
+        createdAt: "2026-02-28T19:05:01.000Z",
+        updatedAt: "2026-02-28T19:05:01.000Z",
+      });
+
+      const rowWithPreservedAttachments = yield* repository.getByMessageId({ messageId });
+      assert.equal(rowWithPreservedAttachments._tag, "Some");
+      if (rowWithPreservedAttachments._tag === "Some") {
+        assert.deepEqual(rowWithPreservedAttachments.value.attachments, attachments);
+      }
+
+      yield* repository.appendStreaming({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "assistant",
+        text: "",
+        attachments: [],
+        createdAt: "2026-02-28T19:05:02.000Z",
+        updatedAt: "2026-02-28T19:05:02.000Z",
+      });
+
+      const row = yield* repository.getByMessageId({ messageId });
+      assert.equal(row._tag, "Some");
+      if (row._tag === "Some") {
+        assert.equal(row.value.text, "hello world");
+        assert.deepEqual(row.value.attachments, []);
+        assert.equal(row.value.createdAt, createdAt);
+        assert.equal(row.value.updatedAt, "2026-02-28T19:05:02.000Z");
+        assert.isTrue(row.value.isStreaming);
+      }
+    }),
+  );
+
   it.effect("preserves existing attachments when upsert omits attachments", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionThreadMessageRepository;
