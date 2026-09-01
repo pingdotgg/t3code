@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { HostPowerSnapshot } from "./background.ts";
+import { DesktopUpdateStateSchema } from "./ipc.ts";
 
 export const RESOURCE_MONITOR_PROTOCOL_VERSION = 2 as const;
 
@@ -244,9 +245,33 @@ export const DesktopHostTelemetryHello = Schema.Struct({
 });
 export type DesktopHostTelemetryHello = typeof DesktopHostTelemetryHello.Type;
 
+/** Terminal marker for a server-triggered desktop update run. */
+export const DesktopUpdateRemoteOutcome = Schema.Literals(["installing", "up-to-date", "failed"]);
+export type DesktopUpdateRemoteOutcome = typeof DesktopUpdateRemoteOutcome.Type;
+
+/**
+ * Desktop main -> server: the desktop app's update state. Sent once when the
+ * backend attaches and again on every state change, so the server always
+ * knows whether the app on its machine can be updated and how a
+ * server-triggered run is progressing.
+ */
+export const DesktopUpdateStatusReport = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("desktopUpdateStatus"),
+  // Set while a server-triggered run owns the flow; absent for the attach
+  // snapshot and for locally driven update activity.
+  requestId: Schema.optionalKey(TrimmedNonEmptyString),
+  // Terminal marker for a server-triggered run; absent while it is working.
+  outcome: Schema.optionalKey(DesktopUpdateRemoteOutcome),
+  reason: Schema.optionalKey(TrimmedNonEmptyString),
+  state: DesktopUpdateStateSchema,
+});
+export type DesktopUpdateStatusReport = typeof DesktopUpdateStatusReport.Type;
+
 export const DesktopHostTelemetryMessage = Schema.Union([
   DesktopHostTelemetryHello,
   DesktopHostTelemetrySnapshot,
+  DesktopUpdateStatusReport,
 ]);
 export type DesktopHostTelemetryMessage = typeof DesktopHostTelemetryMessage.Type;
 
@@ -266,9 +291,22 @@ export const DesktopTelemetrySetHostPowerIntervals = Schema.Struct({
 export type DesktopTelemetrySetHostPowerIntervals =
   typeof DesktopTelemetrySetHostPowerIntervals.Type;
 
+/**
+ * Server -> desktop main: run the app's own update flow now (check ->
+ * download -> quit-and-install) with no local confirmation. The remote click
+ * on the machine that sent the RPC is the consent.
+ */
+export const DesktopTelemetryRequestDesktopUpdate = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("requestDesktopUpdate"),
+  requestId: TrimmedNonEmptyString,
+});
+export type DesktopTelemetryRequestDesktopUpdate = typeof DesktopTelemetryRequestDesktopUpdate.Type;
+
 export const DesktopTelemetryControlMessage = Schema.Union([
   DesktopTelemetrySetDiagnosticsDemand,
   DesktopTelemetrySetHostPowerIntervals,
+  DesktopTelemetryRequestDesktopUpdate,
 ]);
 export type DesktopTelemetryControlMessage = typeof DesktopTelemetryControlMessage.Type;
 
