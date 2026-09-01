@@ -19,6 +19,7 @@ import {
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import type { MediaActionSource } from "../media/MediaActions";
+import { resolveProtocolRelativeMediaUrl } from "../media/mediaContent";
 
 export interface ExpandedImageItem {
   src: string;
@@ -78,7 +79,7 @@ export async function resolveMarkdownMediaPreview(input: {
   let src: string;
   let asset: MediaActionSource["asset"];
   if (source._tag === "Direct") {
-    src = source.uri;
+    src = resolveProtocolRelativeMediaUrl(source.uri);
   } else {
     if (!input.threadRef || !input.httpBaseUrl) {
       throw new Error("Reconnect to this environment and open the media again.");
@@ -102,8 +103,8 @@ export async function resolveMarkdownMediaPreview(input: {
         src,
         name: name || kind,
         ...(kind === "video" ? { type: "video", autoPlay: false } : {}),
-        ...(source._tag === "Direct" && resolveExternalWebLinkHost(src) !== null
-          ? { originalUrl: src }
+        ...(source._tag === "Direct" && resolveExternalWebLinkHost(source.uri) !== null
+          ? { originalUrl: source.uri }
           : {}),
         actionsSource: {
           kind,

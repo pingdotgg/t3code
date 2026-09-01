@@ -86,6 +86,7 @@ import {
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { MediaVideoPlayer } from "./media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "./media/MediaActions";
+import { resolveProtocolRelativeMediaUrl } from "./media/mediaContent";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
@@ -2611,19 +2612,20 @@ function ChatMarkdown({
         const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
         const kind = mediaKindFromPath(classifiedSrc) ?? "image";
         if (imageSource._tag === "Direct") {
+          const mediaSrc = resolveProtocolRelativeMediaUrl(imageSource.uri);
           const originalUrl =
             resolveExternalWebLinkHost(imageSource.uri) !== null ? imageSource.uri : undefined;
           const reference = mediaUrlReference(imageSource.uri);
           const actionsSource: MediaActionSource = {
             kind,
             name: altText || kind,
-            src: imageSource.uri,
+            src: mediaSrc,
             ...(reference ? { reference } : {}),
           };
           if (kind === "video") {
             return (
               <ChatMarkdownVideo
-                src={imageSource.uri}
+                src={mediaSrc}
                 alt={altText}
                 copyMarkdown={copyMarkdown}
                 originalUrl={originalUrl}
@@ -2637,7 +2639,7 @@ function ChatMarkdown({
             <MediaActions source={actionsSource}>
               <img
                 {...props}
-                src={imageSource.uri}
+                src={mediaSrc}
                 alt={altText}
                 loading="lazy"
                 className={cn(
@@ -2648,7 +2650,7 @@ function ChatMarkdown({
                 style={authoredSizeStyle}
                 {...expandableMarkdownImageProps(
                   imageExpand,
-                  imageSource.uri,
+                  mediaSrc,
                   altText,
                   originalUrl,
                   actionsSource,

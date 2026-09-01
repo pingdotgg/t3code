@@ -1,3 +1,11 @@
+/** Resolves web references without inheriting the desktop renderer's custom app scheme. */
+export function resolveProtocolRelativeMediaUrl(src: string): string {
+  if (!src.startsWith("//")) return src;
+  const protocol =
+    typeof window !== "undefined" && window.location.protocol === "http:" ? "http:" : "https:";
+  return `${protocol}${src}`;
+}
+
 /** Reads media only for an explicit save/copy action; remote hosts must allow browser CORS. */
 async function readMediaBlob(src: string): Promise<Blob> {
   let response: Response;

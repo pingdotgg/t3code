@@ -2,6 +2,7 @@ import { DownloadIcon, ExternalLinkIcon } from "lucide-react";
 
 import { resolveExternalWebLinkHost } from "../chat/externalLinkContextMenu";
 import { Button } from "../ui/button";
+import { resolveProtocolRelativeMediaUrl } from "./mediaContent";
 
 /** Navigates directly so the browser handles video playback and downloads, without fetching bytes. */
 export function OpenMediaLink(props: {
@@ -12,16 +13,11 @@ export function OpenMediaLink(props: {
 }) {
   const originalUrl =
     resolveExternalWebLinkHost(props.originalUrl) !== null ? props.originalUrl : undefined;
-  let url = originalUrl ?? props.src;
-  if (!url) return null;
+  const source = originalUrl ?? props.src;
+  if (!source) return null;
+  const url = resolveProtocolRelativeMediaUrl(source);
   let isBlob = false;
   try {
-    // A desktop renderer's app scheme must not leak into protocol-relative web links.
-    if (url.startsWith("//")) {
-      const protocol =
-        typeof window !== "undefined" && window.location.protocol === "http:" ? "http:" : "https:";
-      url = `${protocol}${url}`;
-    }
     const protocol = new URL(url).protocol;
     if (protocol !== "http:" && protocol !== "https:" && protocol !== "blob:") return null;
     isBlob = protocol === "blob:";
