@@ -13,6 +13,7 @@ import {
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
+import { formatWorkingTimerNow } from "./ComposerActivityStatus";
 import {
   resolveViewedImageAsset,
   workEntryViewedImagePath,
@@ -197,6 +198,7 @@ interface TimelineRowActivityState {
   isWorking: boolean;
   isRevertingCheckpoint: boolean;
   activeTurnInProgress: boolean;
+  isPreparingWorktree: boolean;
   latestRunId: RunId | null;
 }
 
@@ -233,6 +235,8 @@ export interface MessagesTimelineHistoryControls {
 interface MessagesTimelineProps {
   isWorking: boolean;
   activeTurnInProgress: boolean;
+  activeTurnStartedAt?: string | null;
+  isPreparingWorktree?: boolean;
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestRun: TimelineLatestRun | null;
@@ -292,6 +296,8 @@ interface MessagesTimelineProps {
 export const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
   activeTurnInProgress,
+  activeTurnStartedAt = null,
+  isPreparingWorktree = false,
   listRef,
   timelineEntries,
   latestRun,
@@ -468,6 +474,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         expandedAttemptIds,
         expandedWorkGroupIds,
         isWorking,
+        activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
       }),
@@ -478,6 +485,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       expandedAttemptIds,
       expandedWorkGroupIds,
       isWorking,
+      activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
     ],
@@ -644,9 +652,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isWorking,
       isRevertingCheckpoint,
       activeTurnInProgress,
+      isPreparingWorktree,
       latestRunId: latestRun?.runId ?? null,
     }),
-    [activeTurnInProgress, isRevertingCheckpoint, isWorking, latestRun?.runId],
+    [activeTurnInProgress, isPreparingWorktree, isRevertingCheckpoint, isWorking, latestRun?.runId],
   );
   const listHeader = useMemo(() => {
     const leadingContent =
@@ -1109,17 +1118,19 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
             ? "pb-0"
             : row.kind === "turn-fold"
               ? "pb-0"
-              : (row.kind === "message" &&
-                    row.message.role === "assistant" &&
-                    !row.showAssistantMeta) ||
-                  row.kind === "work" ||
-                  row.kind === "work-live" ||
-                  row.kind === "work-toggle" ||
-                  row.kind === "turn-plan" ||
-                  row.kind === "event" ||
-                  row.kind === "attempt-fold"
-                ? "pb-2"
-                : "pb-4",
+              : row.kind === "working" || row.kind === "thinking"
+                ? "pb-1.5"
+                : (row.kind === "message" &&
+                      row.message.role === "assistant" &&
+                      !row.showAssistantMeta) ||
+                    row.kind === "work" ||
+                    row.kind === "work-live" ||
+                    row.kind === "work-toggle" ||
+                    row.kind === "turn-plan" ||
+                    row.kind === "event" ||
+                    row.kind === "attempt-fold"
+                  ? "pb-2"
+                  : "pb-4",
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
       )}
       data-timeline-row-id={row.id}
@@ -1142,6 +1153,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         <AssistantTimelineRow row={row} />
       ) : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
+      {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
+      {row.kind === "thinking" ? <ThinkingTimelineRow /> : null}
       {row.kind === "turn-plan" ? <TurnPlanTimelineRow row={row} /> : null}
       {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
     </div>
@@ -2012,6 +2025,78 @@ const WorkGroupSection = memo(function WorkGroupSection({
   );
 });
 
+function WorkingTimer({ createdAt }: { createdAt: string }) {
+  const textRef = useRef<HTMLSpanElement>(null);
+  const initialText = formatWorkingTimerNow(createdAt);
+
+  useEffect(() => {
+    const updateText = () => {
+      if (textRef.current) {
+        textRef.current.textContent = formatWorkingTimerNow(createdAt);
+      }
+    };
+    updateText();
+    const id = setInterval(updateText, 1000);
+    return () => clearInterval(id);
+  }, [createdAt]);
+
+  return (
+    <span ref={textRef} className="tabular-nums">
+      {initialText}
+    </span>
+  );
+}
+
+function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
+  return (
+    <span
+      aria-hidden
+      className="live-activity-focus pointer-events-none absolute inset-y-0 select-none"
+    >
+      <span className="live-activity-focus-counter block">
+        <span className="live-activity-focus-aligned block text-foreground">{children}</span>
+      </span>
+    </span>
+  );
+}
+
+function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
+  const { isPreparingWorktree } = use(TimelineRowActivityCtx);
+  return (
+    <div className="border-b border-border/60 pb-2 pt-1">
+      <div className="flex h-6 min-w-0 items-baseline px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
+        <span
+          key={isPreparingWorktree ? "setup" : "working"}
+          className="relative shrink-0 overflow-hidden whitespace-nowrap transition-opacity duration-150 starting:opacity-0 motion-reduce:transition-none"
+        >
+          {isPreparingWorktree ? (
+            <>
+              Setting up worktree…
+              <ActivityShimmerOverlay>Setting up worktree…</ActivityShimmerOverlay>
+            </>
+          ) : row.createdAt ? (
+            <>
+              Working for <WorkingTimer createdAt={row.createdAt} />
+            </>
+          ) : (
+            "Working..."
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ThinkingTimelineRow() {
+  const { isPreparingWorktree } = use(TimelineRowActivityCtx);
+  // Reserve the activity row during setup so the handoff keeps the same height.
+  return (
+    <div className="min-h-7">
+      {isPreparingWorktree ? null : <LiveActivityRow label="Thinking" />}
+    </div>
+  );
+}
+
 function LiveActivityRow({
   label,
   iconName,
@@ -2088,7 +2173,7 @@ function LiveActivityContent({
 
 function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
   const ctx = use(TimelineRowCtx);
-  const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot);
+  const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
 
   return (
@@ -2099,7 +2184,18 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     >
-      <LiveActivityRow label={label} iconName={workEntryIconName(row.entry)} failed={failed} />
+      {row.active ? (
+        <LiveActivityRow label={label} iconName={workEntryIconName(row.entry)} failed={failed} />
+      ) : (
+        <div className="min-h-6 w-fit max-w-full min-w-0 overflow-hidden rounded-md text-sm leading-relaxed">
+          <LiveActivityContent
+            label={label}
+            iconName={workEntryIconName(row.entry)}
+            failed={failed}
+            announceFailure={failed}
+          />
+        </div>
+      )}
     </button>
   );
 }
@@ -2854,14 +2950,18 @@ const toolCallExpandedBodyClassName =
 function liveWorkEntryLabel(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,
+  active: boolean,
 ): string {
   const command = workEntry.command?.trim();
   if (command) {
-    // This row describes the active tool run, not the command lifecycle.
-    // Keep its live "Running" copy until the contiguous tool run settles.
     const program = commandProgramName(command);
-    if (program) return `Running ${program}`;
-    return "Running command";
+    const verb = active
+      ? "Running"
+      : workEntry.toolLifecycleStatus === "declined"
+        ? "Declined"
+        : "Ran";
+    if (program) return `${verb} ${program}`;
+    return `${verb} command`;
   }
 
   return workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);

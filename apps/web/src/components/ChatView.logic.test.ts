@@ -30,6 +30,7 @@ import {
   loadVideoPreviewUrl,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveDraftPromotionNavigationTarget,
   resolveEffectiveInteractionMode,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
@@ -307,6 +308,62 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+describe("resolveDraftPromotionNavigationTarget", () => {
+  const serverThreadRef = { environmentId, threadId };
+  const preparingRun = {
+    ...completedTurn,
+    status: "preparing" as const,
+    startedAt: null,
+    completedAt: null,
+  };
+
+  it("stays on the draft while the workspace is still preparing", () => {
+    expect(
+      resolveDraftPromotionNavigationTarget({
+        serverThreadRef,
+        serverThread: makeThread({ latestRun: preparingRun }),
+        backgroundSubmissionPending: false,
+      }),
+    ).toBeNull();
+    expect(
+      resolveDraftPromotionNavigationTarget({
+        serverThreadRef,
+        serverThread: makeThread(),
+        backgroundSubmissionPending: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("navigates once the run starts or startup stops", () => {
+    expect(
+      resolveDraftPromotionNavigationTarget({
+        serverThreadRef,
+        serverThread: makeThread({ latestRun: completedTurn }),
+        backgroundSubmissionPending: false,
+      }),
+    ).toBe(serverThreadRef);
+    expect(
+      resolveDraftPromotionNavigationTarget({
+        serverThreadRef,
+        serverThread: makeThread({
+          latestRun: { ...preparingRun, status: "failed" as const },
+        }),
+        backgroundSubmissionPending: false,
+      }),
+    ).toBe(serverThreadRef);
+  });
+
+  it("defers while a background submission is pending", () => {
+    expect(
+      resolveDraftPromotionNavigationTarget({
+        serverThreadRef,
+        serverThread: makeThread({ latestRun: completedTurn }),
+        backgroundSubmissionPending: true,
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("resolveEffectiveInteractionMode", () => {
   it("forces build mode when legacy plan mode is disabled", () => {

@@ -43,6 +43,24 @@ import {
   type T3McpToolSummaryAction,
 } from "@t3tools/shared/t3McpToolPresentation";
 
+function timelineEntryRunId(entry: TimelineEntry): RunId | null {
+  if (entry.kind === "message") {
+    return entry.message.role === "assistant" ? (entry.message.runId ?? null) : null;
+  }
+  if (entry.kind === "proposed-plan") {
+    return entry.proposedPlan.runId;
+  }
+  return entry.kind === "work" ? (entry.entry.runId ?? null) : null;
+}
+
+/** Whether the entry still represents live activity, not a settled result. */
+function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
+  return (
+    entry.toolLifecycleStatus === "inProgress" ||
+    (entry.toolLifecycleStatus === undefined && workLogEntryIsToolLike(entry))
+  );
+}
+
 export function workEntryIsVisibleInGroup(
   entry: WorkLogEntry,
   expandedToolGroupEntry = false,
@@ -223,6 +241,17 @@ export type MessagesTimelineRow =
       groupedEntries: WorkLogEntry[];
       groupId: string;
       expanded: boolean;
+      active: boolean;
+    }
+  | {
+      kind: "working";
+      id: string;
+      createdAt: string | null;
+    }
+  | {
+      kind: "thinking";
+      id: string;
+      createdAt: string | null;
     }
   | {
       kind: "work-toggle";
@@ -788,6 +817,7 @@ export function deriveMessagesTimelineRows(input: {
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
+  activeTurnStartedAt?: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
@@ -826,10 +856,119 @@ export function deriveMessagesTimelineRows(input: {
     entry.toolLifecycleStatus === "inProgress" &&
     entry.runId === unsettledRunId;
 
+  // The active run's header row ("Working for ...") anchors right after the
+  // latest user message, or at the run's first owned work entry when one
+  // already rendered above it.
+  let activeTurnHeaderIndex = input.timelineEntries.length;
+  if (input.isWorking) {
+    const latestUserMessageIndex = input.timelineEntries.findLastIndex(
+      (entry) => entry.kind === "message" && entry.message.role === "user",
+    );
+    const firstOwnedAfterUser =
+      unsettledRunId === null
+        ? -1
+        : input.timelineEntries.findIndex(
+            (entry, index) =>
+              index > latestUserMessageIndex && timelineEntryRunId(entry) === unsettledRunId,
+          );
+    activeTurnHeaderIndex =
+      firstOwnedAfterUser >= 0 ? firstOwnedAfterUser : latestUserMessageIndex + 1;
+  }
+
+  // Contiguous trailing work entries of the active run collapse into one live
+  // row that survives between actions: while a tool runs it shows that tool,
+  // and once everything settles it keeps the latest tool in past tense
+  // instead of vanishing (#8984).
+  const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
+  if (input.isWorking && unsettledRunId !== null) {
+    let tailAttemptId: string | null | undefined;
+    for (let index = input.timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
+      const entry = input.timelineEntries[index]!;
+      if (
+        entry.kind !== "work" ||
+        entry.entry.tone === "error" ||
+        (entry.entry.runId ?? null) !== unsettledRunId ||
+        collapsedEntryIds.has(entry.id) ||
+        collapsedSupersededEntryIds.has(entry.id) ||
+        foldsByAnchorEntryId.has(entry.id) ||
+        supersededFoldsByAnchorEntryId.has(entry.id)
+      ) {
+        break;
+      }
+      if (tailAttemptId === undefined) {
+        tailAttemptId = entry.attempt?.id ?? null;
+      } else if ((entry.attempt?.id ?? null) !== tailAttemptId) {
+        break;
+      }
+      activeToolEntries.unshift(entry);
+    }
+  }
+  const visibleActiveToolEntries = activeToolEntries.filter((entry) =>
+    workEntryIsVisibleInGroup(entry.entry, true),
+  );
+  const activeWorkAnchor = activeToolEntries[0];
+  const latestVisibleToolEntry = visibleActiveToolEntries.at(-1);
+  const latestRunningToolEntry = visibleActiveToolEntries.findLast((entry) =>
+    workEntryIsActiveTurnActivity(entry.entry),
+  );
+  const displayedToolEntry = latestRunningToolEntry ?? latestVisibleToolEntry;
+  const activeWorkPlacementEntryId = latestVisibleToolEntry?.id;
+  const activeWorkRow =
+    activeWorkAnchor && displayedToolEntry
+      ? (() => {
+          const groupId = workGroupId(activeWorkAnchor.id);
+          return {
+            kind: "work-live" as const,
+            id: `work-live:${activeWorkAnchor.id}`,
+            createdAt: activeWorkAnchor.createdAt,
+            entry: displayedToolEntry.entry,
+            groupedEntries: visibleActiveToolEntries.map((entry) => entry.entry),
+            groupId,
+            expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
+            active: latestRunningToolEntry !== undefined,
+          };
+        })()
+      : null;
+  const activeWorkEntryIds = new Set(
+    activeWorkRow === null ? [] : activeToolEntries.map((entry) => entry.id),
+  );
+  const appendWorkingRow = () => {
+    nextRows.push({
+      kind: "working",
+      id: "working-indicator-row",
+      createdAt: input.activeTurnStartedAt ?? null,
+    });
+  };
+  let hasLiveWorkRow = false;
+  const appendActiveWorkRows = () => {
+    if (activeWorkRow === null) return;
+    nextRows.push(activeWorkRow);
+    hasLiveWorkRow ||= activeWorkRow.active;
+    if (!activeWorkRow.expanded) return;
+    for (const [entryIndex, workEntry] of activeWorkRow.groupedEntries.entries()) {
+      nextRows.push({
+        kind: "work",
+        id: workEntry.id,
+        createdAt: workEntry.createdAt,
+        groupedEntries: [workEntry],
+        isExpandedToolGroupEntry: true,
+        isLastExpandedToolGroupEntry: entryIndex === activeWorkRow.groupedEntries.length - 1,
+      });
+    }
+  };
+
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
     const timelineEntry = input.timelineEntries[index];
     if (!timelineEntry) {
       continue;
+    }
+
+    if (input.isWorking && index === activeTurnHeaderIndex) {
+      appendWorkingRow();
+    }
+
+    if (timelineEntry.id === activeWorkPlacementEntryId) {
+      appendActiveWorkRows();
     }
 
     // The terminal interrupt result is the useful timeline marker. The
@@ -874,6 +1013,10 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (activeWorkEntryIds.has(timelineEntry.id)) {
+      continue;
+    }
+
     if (timelineEntry.kind === "work") {
       if (timelineEntry.entry.tone === "error") {
         nextRows.push({
@@ -894,6 +1037,7 @@ export function deriveMessagesTimelineRows(input: {
           !nextEntry ||
           nextEntry.kind !== "work" ||
           nextEntry.entry.tone === "error" ||
+          activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||
           collapsedSupersededEntryIds.has(nextEntry.id) ||
           foldsByAnchorEntryId.has(nextEntry.id) ||
@@ -906,22 +1050,16 @@ export function deriveMessagesTimelineRows(input: {
         groupedEntries.push(nextEntry.entry);
         cursor += 1;
       }
-      const isActiveTail =
-        input.isWorking &&
-        unsettledRunId !== null &&
-        timelineEntry.entry.runId === unsettledRunId &&
-        cursor === input.timelineEntries.length;
       const visibleGroupedEntries = groupedEntries.filter((entry) =>
-        workEntryIsVisibleInGroup(entry, isActiveTail || workEntryIsInActiveRun(entry)),
+        workEntryIsVisibleInGroup(entry, workEntryIsInActiveRun(entry)),
       );
       if (visibleGroupedEntries.length > 0) {
         const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
-        if (isActiveTail || activeInProgressToolEntries.length > 0) {
+        if (activeInProgressToolEntries.length > 0) {
           const groupId = workGroupId(timelineEntry.id);
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
-          const latestActiveToolEntry = (
-            isActiveTail ? visibleGroupedEntries : activeInProgressToolEntries
-          ).at(-1)!;
+          const latestActiveToolEntry = activeInProgressToolEntries.at(-1)!;
+          hasLiveWorkRow = true;
           nextRows.push({
             kind: "work-live",
             id: `work-live:${timelineEntry.id}`,
@@ -930,6 +1068,7 @@ export function deriveMessagesTimelineRows(input: {
             groupedEntries: visibleGroupedEntries,
             groupId,
             expanded,
+            active: true,
           });
           if (expanded) {
             for (const [entryIndex, workEntry] of visibleGroupedEntries.entries()) {
@@ -1050,6 +1189,17 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
+  if (input.isWorking && activeTurnHeaderIndex === input.timelineEntries.length) {
+    appendWorkingRow();
+  }
+  if (input.isWorking && !hasLiveWorkRow) {
+    nextRows.push({
+      kind: "thinking",
+      id: "thinking-indicator-row",
+      createdAt: input.activeTurnStartedAt ?? null,
+    });
+  }
+
   return nextRows;
 }
 
@@ -1131,6 +1281,10 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.kind !== b.kind || a.id !== b.id) return false;
 
   switch (a.kind) {
+    case "working":
+    case "thinking":
+      return a.createdAt === (b as typeof a).createdAt;
+
     case "turn-fold": {
       const bf = b as typeof a;
       return a.createdAt === bf.createdAt && a.label === bf.label && a.expanded === bf.expanded;
@@ -1178,6 +1332,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.createdAt === bw.createdAt &&
         a.groupId === bw.groupId &&
         a.expanded === bw.expanded &&
+        a.active === bw.active &&
         Equal.equals(a.entry, bw.entry) &&
         Equal.equals(a.groupedEntries, bw.groupedEntries)
       );
