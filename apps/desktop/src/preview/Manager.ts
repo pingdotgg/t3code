@@ -3907,9 +3907,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const performAutomationEvaluate = Effect.fn("PreviewManager.performAutomationEvaluate")(
     function* (tabId: string, input: PreviewAutomationEvaluateInput, send: SendCommand) {
       yield* send("Runtime.enable");
-      // Always by value: the result crosses the IPC boundary and the debugger
-      // session closes with the call, so a remote object handle would be dead
-      // on arrival. See the `returnByValue` note on PreviewAutomationEvaluate.
+      // Always by value: this tool returns JSON values and has no API for
+      // dereferencing a CDP objectId. See the `returnByValue` note on
+      // PreviewAutomationEvaluate.
       const value = yield* evaluateWithDebugger(
         tabId,
         send,
