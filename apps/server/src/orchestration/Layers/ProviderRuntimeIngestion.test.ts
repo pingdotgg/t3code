@@ -226,6 +226,7 @@ describe("ProviderRuntimeIngestion", () => {
   async function createHarness(options?: {
     serverSettings?: Partial<ServerSettings>;
     threadTitle?: string;
+    failThreadDetailReads?: boolean;
   }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
@@ -242,9 +243,23 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const ingestionProjectionSnapshotLayer =
+      options?.failThreadDetailReads === true
+        ? Layer.effect(
+            ProjectionSnapshotQuery,
+            Effect.gen(function* () {
+              const query = yield* ProjectionSnapshotQuery;
+              return ProjectionSnapshotQuery.of({
+                ...query,
+                getThreadDetailById: () =>
+                  Effect.die("provider runtime ingestion must not hydrate thread detail"),
+              });
+            }),
+          ).pipe(Layer.provide(projectionSnapshotLayer))
+        : projectionSnapshotLayer;
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(orchestrationLayer),
-      Layer.provideMerge(projectionSnapshotLayer),
+      Layer.provideMerge(ingestionProjectionSnapshotLayer),
       // Single shared liveness instance across ingestion (writer), the
       // engine, and the snapshot query (reader).
       Layer.provideMerge(ThreadBackgroundLiveness.layer),
@@ -974,7 +989,7 @@ describe("ProviderRuntimeIngestion", () => {
   });
 
   it("maps canonical content delta/item completed into finalized assistant messages", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({ failThreadDetailReads: true });
     const now = "2026-01-01T00:00:00.000Z";
 
     harness.emit({
@@ -1824,7 +1839,7 @@ describe("ProviderRuntimeIngestion", () => {
   });
 
   it("finalizes buffered proposed-plan deltas into a first-class proposed plan on turn completion", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({ failThreadDetailReads: true });
     const now = "2026-01-01T00:00:00.000Z";
 
     harness.emit({
