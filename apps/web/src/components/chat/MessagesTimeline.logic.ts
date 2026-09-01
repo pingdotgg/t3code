@@ -193,6 +193,7 @@ export type MessagesTimelineRow =
       groupedEntries: WorkLogEntry[];
       groupId: string;
       expanded: boolean;
+      active: boolean;
     }
   | {
       kind: "work-toggle";
@@ -235,7 +236,11 @@ export type MessagesTimelineRow =
       kind: "working";
       id: string;
       createdAt: string | null;
-      showThinking: boolean;
+    }
+  | {
+      kind: "thinking";
+      id: string;
+      createdAt: string | null;
     };
 
 export interface StableMessagesTimelineRowsState {
@@ -512,6 +517,14 @@ function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
   return entry.kind === "work" ? (entry.entry.turnId ?? null) : null;
 }
 
+function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
+  return (
+    entry.toolLifecycleStatus === "inProgress" ||
+    entry.sourceActivityKind === "task.progress" ||
+    (entry.toolLifecycleStatus === undefined && workLogEntryIsToolLike(entry))
+  );
+}
+
 /**
  * Settled turns keep only their terminal assistant message visible.
  * Everything before it folds behind a "Worked for ..." row anchored at the
@@ -702,24 +715,6 @@ export function deriveMessagesTimelineRows(input: {
     unsettledTurnId !== null &&
     entry.toolLifecycleStatus === "inProgress" &&
     entry.turnId === unsettledTurnId;
-  const activeEntries = input.isWorking
-    ? input.timelineEntries.filter((entry, index) => entryBelongsToActiveTurn(entry, index))
-    : [];
-  const activeTurnHasVisibleContent = activeEntries.some((entry) => {
-    if (entry.kind === "message") {
-      return entry.message.role === "assistant" && (entry.message.text?.trim().length ?? 0) > 0;
-    }
-    if (entry.kind === "work") {
-      return (
-        entry.entry.agentSpawn === undefined &&
-        workLogEntryIsToolLike(entry.entry) &&
-        entry.entry.toolLifecycleStatus === "inProgress"
-      );
-    }
-    if (entry.kind === "proposed-plan") return true;
-    return false;
-  });
-
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
   for (let index = input.timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
     const entry = input.timelineEntries[index]!;
@@ -733,40 +728,48 @@ export function deriveMessagesTimelineRows(input: {
     }
     activeToolEntries.unshift(entry);
   }
-  const activeWorkEntryIds = new Set(activeToolEntries.map((entry) => entry.id));
   const visibleActiveToolEntries = omitSupersededLifecycleMarkers(
     activeToolEntries.filter((entry) => workEntryIsVisibleInGroup(entry.entry, true)),
     (entry) => entry.entry,
   );
   const activeWorkAnchor = activeToolEntries[0];
-  const latestActiveToolEntry = visibleActiveToolEntries.at(-1);
-  const activeWorkPlacementEntryId = latestActiveToolEntry?.id;
+  const latestVisibleToolEntry = visibleActiveToolEntries.at(-1);
+  const latestRunningToolEntry = visibleActiveToolEntries.findLast((entry) =>
+    workEntryIsActiveTurnActivity(entry.entry),
+  );
+  const displayedToolEntry = latestRunningToolEntry ?? latestVisibleToolEntry;
+  const activeWorkPlacementEntryId = latestVisibleToolEntry?.id;
   const activeWorkRow =
-    activeWorkAnchor && latestActiveToolEntry
+    activeWorkAnchor && displayedToolEntry
       ? (() => {
           const groupId = workGroupId(activeWorkAnchor.id, activeWorkAnchor.entry);
           return {
             kind: "work-live" as const,
             id: `work-live:${workGroupIdentity(activeWorkAnchor.id, activeWorkAnchor.entry)}`,
             createdAt: activeWorkAnchor.createdAt,
-            entry: latestActiveToolEntry.entry,
+            entry: displayedToolEntry.entry,
             groupedEntries: visibleActiveToolEntries.map((entry) => entry.entry),
             groupId,
             expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
+            active: latestRunningToolEntry !== undefined,
           };
         })()
       : null;
+  const activeWorkEntryIds = new Set(
+    activeWorkRow === null ? [] : activeToolEntries.map((entry) => entry.id),
+  );
   const appendWorkingRow = () => {
     nextRows.push({
       kind: "working",
       id: "working-indicator-row",
       createdAt: input.activeTurnStartedAt,
-      showThinking: activeWorkRow === null && !activeTurnHasVisibleContent,
     });
   };
+  let hasLiveWorkRow = false;
   const appendActiveWorkRows = () => {
     if (activeWorkRow === null) return;
     nextRows.push(activeWorkRow);
+    hasLiveWorkRow ||= activeWorkRow.active;
     if (!activeWorkRow.expanded) return;
     for (const [entryIndex, workEntry] of activeWorkRow.groupedEntries.entries()) {
       nextRows.push({
@@ -864,7 +867,9 @@ export function deriveMessagesTimelineRows(input: {
             groupedEntries: visibleGroupedEntries,
             groupId,
             expanded,
+            active: true,
           });
+          hasLiveWorkRow = true;
           if (expanded) {
             for (const [entryIndex, workEntry] of visibleGroupedEntries.entries()) {
               nextRows.push({
@@ -966,6 +971,13 @@ export function deriveMessagesTimelineRows(input: {
   if (input.isWorking && activeTurnHeaderIndex === input.timelineEntries.length) {
     appendWorkingRow();
   }
+  if (input.isWorking && !hasLiveWorkRow) {
+    nextRows.push({
+      kind: "thinking",
+      id: "thinking-indicator-row",
+      createdAt: input.activeTurnStartedAt,
+    });
+  }
 
   return nextRows;
 }
@@ -996,9 +1008,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
   switch (a.kind) {
     case "working":
-      return (
-        a.createdAt === (b as typeof a).createdAt && a.showThinking === (b as typeof a).showThinking
-      );
+    case "thinking":
+      return a.createdAt === (b as typeof a).createdAt;
 
     case "turn-fold": {
       const bf = b as typeof a;
@@ -1023,6 +1034,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.createdAt === bw.createdAt &&
         a.groupId === bw.groupId &&
         a.expanded === bw.expanded &&
+        a.active === bw.active &&
         Equal.equals(a.entry, bw.entry) &&
         Equal.equals(a.groupedEntries, bw.groupedEntries)
       );
