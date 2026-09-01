@@ -10,6 +10,13 @@ export interface ProviderEnvironmentOptionLike {
   readonly label: string;
 }
 
+export function isProviderSettingsEnvironmentAvailable(input: {
+  readonly connectionPhase: EnvironmentConnectionPhase;
+  readonly hasServerConfig: boolean;
+}): boolean {
+  return input.connectionPhase === "connected" && input.hasServerConfig;
+}
+
 export function buildProviderEnvironmentOptions<T extends ProviderEnvironmentOptionLike>(
   environments: ReadonlyArray<T>,
   primaryEnvironmentId: EnvironmentId | null,
