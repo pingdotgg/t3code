@@ -650,7 +650,7 @@ export const make = Effect.gen(function* () {
       (!hasAuthorization && devCookieToken !== undefined
         ? { token: devCookieToken, source: "dev-cookie" as const }
         : undefined);
-    if (!credential) {
+    if (!credential?.token) {
       return Effect.fail(new ServerAuthMissingCredentialError({}));
     }
     return authenticateToken(credential.token).pipe(

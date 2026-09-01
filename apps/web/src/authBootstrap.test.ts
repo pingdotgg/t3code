@@ -449,6 +449,145 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(testApi.calls.session).toBe(1);
   });
 
+  it("exchanges a URL token when the browser already has a session", async () => {
+    const testApi = await installAuthApi({
+      session: () => authenticatedSession(LOOPBACK_AUTH),
+      browserSession: () => Effect.succeed(browserSession(["orchestration:read", "access:write"])),
+    });
+    const testWindow = installTestBrowser("http://localhost/#token=reusable-token");
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "authenticated",
+    });
+
+    expect(testApi.calls.browserSession).toEqual([{ credential: "reusable-token" }]);
+    expect(testWindow.location.hash).toBe("");
+  });
+
+  it("exchanges an explicit pair link after caching an authenticated state", async () => {
+    const testApi = await installAuthApi({
+      session: () => authenticatedSession(LOOPBACK_AUTH),
+      browserSession: () => Effect.succeed(browserSession(["orchestration:read", "access:write"])),
+    });
+    const testWindow = installTestBrowser("http://localhost/");
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "authenticated",
+    });
+    testWindow.location = new URL("http://localhost/pair#token=reusable-token");
+
+    await Promise.all([resolveInitialServerAuthGateState(), resolveInitialServerAuthGateState()]);
+
+    expect(testApi.calls.browserSession).toEqual([{ credential: "reusable-token" }]);
+    expect(testApi.calls.session).toBe(3);
+  });
+
+  it("makes later callers wait for a URL token that arrives during bootstrap", async () => {
+    let releaseExchange!: () => void;
+    const exchangeRelease = new Promise<void>((resolve) => {
+      releaseExchange = resolve;
+    });
+    let markExchangeStarted!: () => void;
+    const exchangeStarted = new Promise<void>((resolve) => {
+      markExchangeStarted = resolve;
+    });
+    const nextSession = sequence(
+      authenticatedSession(LOOPBACK_AUTH),
+      authenticatedSession(LOOPBACK_AUTH),
+    );
+    const testApi = await installAuthApi({
+      session: nextSession,
+      browserSession: () => {
+        markExchangeStarted();
+        return Effect.promise(() => exchangeRelease).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new EnvironmentAuthInvalidError({
+                code: "auth_invalid",
+                reason: "invalid_credential",
+                traceId: "trace-rejected-queued-credential",
+              }),
+            ),
+          ),
+        );
+      },
+    });
+    const testWindow = installTestBrowser("http://localhost/");
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    const initialBootstrap = resolveInitialServerAuthGateState();
+    testWindow.location = new URL("http://localhost/pair#token=reusable-token");
+    const explicitPairing = resolveInitialServerAuthGateState();
+    const laterCaller = resolveInitialServerAuthGateState();
+    let laterCallerSettled = false;
+    void laterCaller.then(() => {
+      laterCallerSettled = true;
+    });
+
+    try {
+      await expect(initialBootstrap).resolves.toEqual({ status: "authenticated" });
+      await exchangeStarted;
+      expect(laterCallerSettled).toBe(false);
+    } finally {
+      releaseExchange();
+    }
+
+    const rejectedState = {
+      status: "requires-auth",
+      auth: LOOPBACK_AUTH,
+      errorMessage: "Invalid pairing token. Check the token and try again.",
+    } as const;
+    await expect(explicitPairing).resolves.toEqual(rejectedState);
+    await expect(laterCaller).resolves.toEqual(rejectedState);
+    expect(testApi.calls.browserSession).toEqual([{ credential: "reusable-token" }]);
+    expect(testApi.calls.session).toBe(2);
+  });
+
+  it("does not exchange a token during an ordinary authenticated load", async () => {
+    const testApi = await installAuthApi({
+      session: () => authenticatedSession(LOOPBACK_AUTH),
+      browserSession: () => Effect.succeed(browserSession(["orchestration:read"])),
+    });
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "authenticated",
+    });
+
+    expect(testApi.calls.browserSession).toEqual([]);
+  });
+
+  it("reports a rejected URL token without caching false success", async () => {
+    const cause = new EnvironmentAuthInvalidError({
+      code: "auth_invalid",
+      reason: "invalid_credential",
+      traceId: "trace-invalid-url-credential",
+    });
+    const nextSession = sequence(
+      authenticatedSession(LOOPBACK_AUTH),
+      unauthenticatedSession(LOOPBACK_AUTH),
+    );
+    const testApi = await installAuthApi({
+      session: nextSession,
+      browserSession: () => Effect.fail(cause),
+    });
+    installTestBrowser("http://localhost/#token=rejected-token");
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "requires-auth",
+      auth: LOOPBACK_AUTH,
+      errorMessage: "Invalid pairing token. Check the token and try again.",
+    });
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "requires-auth",
+      auth: LOOPBACK_AUTH,
+    });
+    expect(testApi.calls.browserSession).toEqual([{ credential: "rejected-token" }]);
+  });
+
   it("creates a pairing credential from the authenticated auth endpoint", async () => {
     const testApi = await installAuthApi({
       pairingCredential: (payload) =>

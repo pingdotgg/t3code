@@ -316,13 +316,13 @@ function isTransientBootstrapError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
-  const bootstrapCredential = getDesktopBootstrapCredential();
+async function bootstrapServerAuth(urlCredential: string | null): Promise<ServerAuthGateState> {
   const currentSession = await fetchSessionState();
-  if (currentSession.authenticated) {
+  if (currentSession.authenticated && !urlCredential) {
     return { status: "authenticated" };
   }
 
+  const bootstrapCredential = urlCredential ?? getDesktopBootstrapCredential();
   if (!bootstrapCredential) {
     return {
       status: "requires-auth",
@@ -505,19 +505,32 @@ export async function revokeOtherServerClientSessions(): Promise<number> {
 }
 
 export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
-  if (resolvedAuthenticatedGateState?.status === "authenticated") {
-    return resolvedAuthenticatedGateState;
+  const urlCredential = takePairingTokenFromUrl();
+  const previousPromise = bootstrapPromise;
+  if (urlCredential) {
+    resolvedAuthenticatedGateState = null;
+  } else {
+    if (previousPromise) {
+      return previousPromise;
+    }
+
+    if (resolvedAuthenticatedGateState?.status === "authenticated") {
+      return resolvedAuthenticatedGateState;
+    }
   }
 
-  if (bootstrapPromise) {
-    return bootstrapPromise;
-  }
-
-  const nextPromise = bootstrapServerAuth();
+  const nextPromise = previousPromise
+    ? previousPromise
+        .catch(() => undefined)
+        .then(() => {
+          resolvedAuthenticatedGateState = null;
+          return bootstrapServerAuth(urlCredential);
+        })
+    : bootstrapServerAuth(urlCredential);
   bootstrapPromise = nextPromise;
   return nextPromise
     .then((result) => {
-      if (result.status === "authenticated") {
+      if (bootstrapPromise === nextPromise && result.status === "authenticated") {
         resolvedAuthenticatedGateState = result;
       }
       return result;
