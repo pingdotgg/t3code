@@ -44,6 +44,7 @@ interface MutableAgentSlice {
   totals: UsageTokenTotals;
   costUsd: number;
   cacheWriteUsd: number;
+  cacheWriteComplete: boolean;
 }
 
 export interface SessionUsageGroup {
@@ -57,6 +58,7 @@ export interface SessionUsageGroup {
   readonly totals: UsageTokenTotals;
   readonly costUsd: number;
   readonly cacheWriteUsd: number;
+  readonly cacheWriteComplete: boolean;
   readonly daily: ReadonlyMap<string, MutableComponentCosts>;
   readonly agents: ReadonlyMap<string, MutableAgentSlice>;
 }
@@ -72,6 +74,7 @@ interface MutableSessionGroup {
   totals: UsageTokenTotals;
   costUsd: number;
   cacheWriteUsd: number;
+  cacheWriteComplete: boolean;
   daily: Map<string, MutableComponentCosts>;
   agents: Map<string, MutableAgentSlice>;
 }
@@ -149,6 +152,7 @@ export class ThreadUsageAccumulator {
         totals: EMPTY_TOTALS,
         costUsd: 0,
         cacheWriteUsd: 0,
+        cacheWriteComplete: true,
         daily: new Map(),
         agents: new Map(),
       };
@@ -161,30 +165,44 @@ export class ThreadUsageAccumulator {
       record.totals,
       record.reportedCostUsd,
     );
-    const writeUsd = cacheWriteUsd(this.#options.rates, record.model, record.totals);
+    const cacheWriteComplete =
+      priced.costSource === "modelPriced" || record.totals.cacheCreationTokens === 0;
+    const writeUsd =
+      priced.costSource === "modelPriced"
+        ? cacheWriteUsd(this.#options.rates, record.model, record.totals)
+        : 0;
     group.totals = addTotals(group.totals, record.totals);
     group.costUsd += priced.costUsd;
     group.cacheWriteUsd += writeUsd;
+    group.cacheWriteComplete &&= cacheWriteComplete;
 
-    const components = usageComponentCosts(this.#options.rates, record.model, record.totals);
-    let dayEntry = group.daily.get(day);
-    if (dayEntry === undefined) {
-      dayEntry = { cacheWriteUsd: 0, cacheReadUsd: 0, freshUsd: 0 };
-      group.daily.set(day, dayEntry);
+    if (priced.costSource === "modelPriced") {
+      const components = usageComponentCosts(this.#options.rates, record.model, record.totals);
+      let dayEntry = group.daily.get(day);
+      if (dayEntry === undefined) {
+        dayEntry = { cacheWriteUsd: 0, cacheReadUsd: 0, freshUsd: 0 };
+        group.daily.set(day, dayEntry);
+      }
+      dayEntry.cacheWriteUsd += components.cacheWriteUsd;
+      dayEntry.cacheReadUsd += components.cacheReadUsd;
+      dayEntry.freshUsd += components.freshUsd;
     }
-    dayEntry.cacheWriteUsd += components.cacheWriteUsd;
-    dayEntry.cacheReadUsd += components.cacheReadUsd;
-    dayEntry.freshUsd += components.freshUsd;
 
     if (context.agentId !== null) {
       let agent = group.agents.get(context.agentId);
       if (agent === undefined) {
-        agent = { totals: EMPTY_TOTALS, costUsd: 0, cacheWriteUsd: 0 };
+        agent = {
+          totals: EMPTY_TOTALS,
+          costUsd: 0,
+          cacheWriteUsd: 0,
+          cacheWriteComplete: true,
+        };
         group.agents.set(context.agentId, agent);
       }
       agent.totals = addTotals(agent.totals, record.totals);
       agent.costUsd += priced.costUsd;
       agent.cacheWriteUsd += writeUsd;
+      agent.cacheWriteComplete &&= cacheWriteComplete;
     }
     return true;
   }
@@ -201,6 +219,7 @@ export class ThreadUsageAccumulator {
       totals: group.totals,
       costUsd: group.costUsd,
       cacheWriteUsd: group.cacheWriteUsd,
+      cacheWriteComplete: group.cacheWriteComplete,
       daily: group.daily,
       agents: group.agents,
     }));
@@ -243,6 +262,7 @@ interface MutableThreadRow {
   costUsd: number;
   sessionKeys: Set<string>;
   cacheWriteUsd: number;
+  cacheWriteComplete: boolean;
   groupedRows: number;
   daily: Map<string, MutableComponentCosts>;
   agents: Map<string, MutableAgentSlice>;
@@ -313,7 +333,7 @@ function toAgentRow([agentId, slice]: readonly [string, MutableAgentSlice]): Usa
     agentId,
     totals: slice.totals,
     costUsd: slice.costUsd,
-    cacheWriteUsd: slice.cacheWriteUsd,
+    cacheWriteUsd: slice.cacheWriteComplete ? slice.cacheWriteUsd : null,
   };
 }
 
@@ -336,11 +356,13 @@ function boundedAgentRows(
       totals: addTotals(combined.totals, slice.totals),
       costUsd: combined.costUsd + slice.costUsd,
       cacheWriteUsd: combined.cacheWriteUsd + slice.cacheWriteUsd,
+      cacheWriteComplete: combined.cacheWriteComplete && slice.cacheWriteComplete,
     }),
     {
       totals: EMPTY_TOTALS,
       costUsd: 0,
       cacheWriteUsd: 0,
+      cacheWriteComplete: true,
     },
   );
   return [...kept.map(toAgentRow), toAgentRow([`Other subagents (${omitted.length})`, overflow])];
@@ -387,6 +409,7 @@ export function foldThreadRows(
         costUsd: 0,
         sessionKeys: new Set(),
         cacheWriteUsd: 0,
+        cacheWriteComplete: true,
         groupedRows: 0,
         daily: new Map(),
         agents: new Map(),
@@ -399,16 +422,23 @@ export function foldThreadRows(
     row.costUsd += group.costUsd;
     row.sessionKeys.add(group.sessionKey);
     row.cacheWriteUsd += group.cacheWriteUsd;
+    row.cacheWriteComplete &&= group.cacheWriteComplete;
     addDailyCosts(row.daily, group.daily);
     for (const [agentId, slice] of group.agents) {
       let agent = row.agents.get(agentId);
       if (agent === undefined) {
-        agent = { totals: EMPTY_TOTALS, costUsd: 0, cacheWriteUsd: 0 };
+        agent = {
+          totals: EMPTY_TOTALS,
+          costUsd: 0,
+          cacheWriteUsd: 0,
+          cacheWriteComplete: true,
+        };
         row.agents.set(agentId, agent);
       }
       agent.totals = addTotals(agent.totals, slice.totals);
       agent.costUsd += slice.costUsd;
       agent.cacheWriteUsd += slice.cacheWriteUsd;
+      agent.cacheWriteComplete &&= slice.cacheWriteComplete;
     }
   }
 
@@ -461,6 +491,7 @@ export function foldThreadRows(
         costUsd: 0,
         sessionKeys: new Set(),
         cacheWriteUsd: 0,
+        cacheWriteComplete: true,
         groupedRows: 0,
         daily: new Map(),
         agents: new Map(),
@@ -473,16 +504,23 @@ export function foldThreadRows(
     remainder.costUsd += omittedRow.costUsd;
     for (const sessionKey of omittedRow.sessionKeys) remainder.sessionKeys.add(sessionKey);
     remainder.cacheWriteUsd += omittedRow.cacheWriteUsd;
+    remainder.cacheWriteComplete &&= omittedRow.cacheWriteComplete;
     addDailyCosts(remainder.daily, omittedRow.daily);
     for (const [agentId, slice] of omittedRow.agents) {
       let agent = remainder.agents.get(agentId);
       if (agent === undefined) {
-        agent = { totals: EMPTY_TOTALS, costUsd: 0, cacheWriteUsd: 0 };
+        agent = {
+          totals: EMPTY_TOTALS,
+          costUsd: 0,
+          cacheWriteUsd: 0,
+          cacheWriteComplete: true,
+        };
         remainder.agents.set(agentId, agent);
       }
       agent.totals = addTotals(agent.totals, slice.totals);
       agent.costUsd += slice.costUsd;
       agent.cacheWriteUsd += slice.cacheWriteUsd;
+      agent.cacheWriteComplete &&= slice.cacheWriteComplete;
     }
   }
 
@@ -510,7 +548,7 @@ export function foldThreadRows(
       ...(row.project === "" ? {} : { project: row.project }),
       totals: row.totals,
       costUsd: row.costUsd,
-      cacheWriteUsd: row.cacheWriteUsd,
+      cacheWriteUsd: row.cacheWriteComplete ? row.cacheWriteUsd : null,
       sessions: row.sessionKeys.size,
       ...(row.groupedRows === 0 ? {} : { groupedRows: row.groupedRows }),
       agents: boundedAgentRows(row.agents, options.cap),

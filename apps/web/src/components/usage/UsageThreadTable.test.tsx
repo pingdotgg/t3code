@@ -89,6 +89,7 @@ describe("UsageThreadTable", () => {
             reasoningTokens: 0,
           },
           costUsd: 1,
+          cacheWriteUsd: 0.25,
           sessions: 1,
           agents: [
             {

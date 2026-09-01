@@ -257,14 +257,16 @@ export const UsageAgentRow = Schema.Struct({
   agentId: TrimmedNonEmptyString,
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
-  cacheWriteUsd: Schema.Number,
+  /** `null` when cache-creation tokens lack a model-priced estimate. */
+  cacheWriteUsd: Schema.NullOr(Schema.Number),
 });
 export type UsageAgentRow = typeof UsageAgentRow.Type;
 
 /**
  * One day of a thread's model-priced cost split by component. Days the thread
  * was idle are omitted. Unpriced records contribute tokens to the row totals
- * but nothing here.
+ * but nothing here. Provider-reported totals also stay out because an
+ * estimated split could disagree with the provider's authoritative total.
  */
 export const UsageThreadDayCost = Schema.Struct({
   day: UsageDay,
@@ -293,7 +295,8 @@ export const UsageThreadRow = Schema.Struct({
   project: Schema.optional(TrimmedNonEmptyString),
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
-  cacheWriteUsd: Schema.Number,
+  /** `null` when cache-creation tokens lack a model-priced estimate. */
+  cacheWriteUsd: Schema.NullOr(Schema.Number),
   /** Distinct transcript sessions folded into this row. */
   sessions: NonNegativeInt,
   /** Lower-cost thread rows represented by this grouped remainder row. */

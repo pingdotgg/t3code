@@ -215,7 +215,7 @@ function ThreadRowGroup({
         </td>
         <td className="py-2 text-right text-foreground tabular-nums">{formatUsd(row.costUsd)}</td>
         <td className="py-2 text-right text-muted-foreground tabular-nums">
-          {row.totals.cacheCreationTokens === 0 ? "-" : formatUsd(row.cacheWriteUsd)}
+          {formatCacheWriteCost(row.totals.cacheCreationTokens, row.cacheWriteUsd)}
         </td>
         <td className="py-2 text-right text-muted-foreground tabular-nums">
           {formatPercent(share)}
@@ -256,6 +256,11 @@ function ThreadRowGroup({
       ) : null}
     </>
   );
+}
+
+function formatCacheWriteCost(cacheWriteTokens: number, cacheWriteUsd: number | null): string {
+  if (cacheWriteTokens === 0) return "-";
+  return cacheWriteUsd === null ? "Unavailable" : formatUsd(cacheWriteUsd);
 }
 
 const CHART_WIDTH = 760;

@@ -316,6 +316,24 @@ describe("UsagePage model breakdown", () => {
     expect(body).toMatch(/token-heavy-model.*>-</);
   });
 
+  it("does not present an incomplete cache-write estimate as zero", () => {
+    testState.breakdown = "model";
+    const usage = testState.useUsage();
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      merged: {
+        ...usage.merged,
+        models: [{ ...modelTotals[0], cacheWriteUsd: null }],
+        costQuality: { ...usage.merged.costQuality, cacheWriteUsd: null },
+      },
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup.match(/Unavailable/g)).toHaveLength(2);
+    expect(markup).not.toContain("NaN%");
+  });
+
   it("sorts models by token usage when the token metric is selected", () => {
     testState.metric = "tokens";
     testState.breakdown = "model";

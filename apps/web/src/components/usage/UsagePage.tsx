@@ -430,8 +430,12 @@ export function UsagePage() {
                     <Metric label="Output" value={formatTokens(merged.outputTokens)} />
                     <Metric
                       label="Estimated cache writes"
-                      value={formatUsd(merged.costQuality.cacheWriteUsd)}
-                      {...(merged.costUsd > 0
+                      value={
+                        merged.costQuality.cacheWriteUsd === null
+                          ? "Unavailable"
+                          : formatUsd(merged.costQuality.cacheWriteUsd)
+                      }
+                      {...(merged.costUsd > 0 && merged.costQuality.cacheWriteUsd !== null
                         ? {
                             detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of cost`,
                           }
@@ -864,13 +868,18 @@ function CacheWriteCell({
   cacheWriteUsd,
 }: {
   readonly cacheWriteTokens: number;
-  readonly cacheWriteUsd: number;
+  readonly cacheWriteUsd: number | null;
 }) {
   return (
     <td className="py-2 text-right text-muted-foreground tabular-nums">
-      {cacheWriteTokens === 0 ? "-" : formatUsd(cacheWriteUsd)}
+      {formatCacheWriteCost(cacheWriteTokens, cacheWriteUsd)}
     </td>
   );
+}
+
+function formatCacheWriteCost(cacheWriteTokens: number, cacheWriteUsd: number | null): string {
+  if (cacheWriteTokens === 0) return "-";
+  return cacheWriteUsd === null ? "Unavailable" : formatUsd(cacheWriteUsd);
 }
 
 /**

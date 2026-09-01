@@ -460,7 +460,7 @@ describe("mergeUsage", () => {
     }
   });
 
-  it("sums cache-write cost overall and per model, tolerating summaries without it", () => {
+  it("marks cache-write cost unavailable when a cache-creating bucket omits it", () => {
     const merged = mergeUsage(
       [
         environment(
@@ -469,9 +469,28 @@ describe("mergeUsage", () => {
             [
               bucket({ cacheWriteUsd: 3 }),
               bucket({ cacheWriteUsd: 1, model: "claude-opus-5" }),
-              // A summary written before the field existed contributes nothing.
+              // A summary written before the field existed makes the estimate incomplete.
               bucket({ model: "claude-opus-5" }),
             ],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costQuality.cacheWriteUsd).toBeNull();
+    const opus = merged.models.find((model) => model.model === "claude-opus-5");
+    expect(opus?.cacheWriteUsd).toBeNull();
+  });
+
+  it("sums cache-write cost when every cache-creating bucket reports it", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ cacheWriteUsd: 3 }), bucket({ cacheWriteUsd: 1, model: "claude-opus-5" })],
             [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
           ),
         ),
