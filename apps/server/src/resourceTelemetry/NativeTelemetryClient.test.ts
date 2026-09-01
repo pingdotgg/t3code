@@ -44,7 +44,7 @@ describe("resolveNativeSampleIntervalMs", () => {
     expect(resolveNativeSampleIntervalMs({ ...basePower, onBattery: "true" }, 1)).toBe(5_000);
   });
 
-  it("keeps unknown background telemetry cheap but serves live diagnostics at 1Hz", () => {
+  it("slows background telemetry and serves live diagnostics at 1Hz", () => {
     const unknown: HostPowerSnapshot = {
       ...basePower,
       source: "unknown",
@@ -58,7 +58,8 @@ describe("resolveNativeSampleIntervalMs", () => {
         0,
       ),
     ).toBe(5_000);
-    expect(resolveNativeSampleIntervalMs(basePower, 0)).toBe(1_000);
+    expect(resolveNativeSampleIntervalMs(basePower, 0)).toBe(5_000);
+    expect(resolveNativeSampleIntervalMs(basePower, 1)).toBe(1_000);
   });
 });
 

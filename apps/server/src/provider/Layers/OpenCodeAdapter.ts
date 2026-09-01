@@ -565,9 +565,13 @@ export function mergeOpenCodeAssistantText(
   readonly deltaToEmit: string;
 } {
   const latestText = resolveLatestAssistantText(previousText, nextText);
+  const previous = previousText ?? "";
+  const prefixLength = latestText.startsWith(previous)
+    ? previous.length
+    : commonPrefixLength(previous, latestText);
   return {
     latestText,
-    deltaToEmit: latestText.slice(commonPrefixLength(previousText ?? "", latestText)),
+    deltaToEmit: latestText.slice(prefixLength),
   };
 }
 

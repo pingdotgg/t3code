@@ -475,6 +475,7 @@ function trace2ChildKey(record: Record<string, unknown>): string | null {
 }
 
 const Trace2Record = Schema.Record(Schema.String, Schema.Unknown);
+const decodeTrace2Record = decodeJsonResult(Trace2Record);
 
 const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
   input: Pick<GitVcsDriver.ExecuteGitInput, "operation" | "cwd" | "args">,
@@ -509,7 +510,7 @@ const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
       return;
     }
 
-    const traceRecord = decodeJsonResult(Trace2Record)(trimmedLine);
+    const traceRecord = decodeTrace2Record(trimmedLine);
     if (Result.isFailure(traceRecord)) {
       yield* Effect.logDebug(
         `GitVcsDriver.trace2: failed to parse trace line for ${input.operation} in ${input.cwd} (${input.args.length} arguments)`,

@@ -103,9 +103,9 @@ power-adaptive interval selected by the server. It collects:
 - resident and virtual memory;
 - cumulative process I/O counters.
 
-On Linux, task/thread enumeration is disabled. Command lines are loaded only
-when first needed. This avoids the expensive default behavior of walking every
-`/proc/<pid>/task/<tid>` directory on each refresh.
+On Linux, task/thread enumeration is disabled. Command lines are refreshed with
+each sample so process replacements remain visible. Disabling task enumeration
+avoids walking every `/proc/<pid>/task/<tid>` directory on each refresh.
 
 ### Process-tree selection
 
@@ -142,7 +142,8 @@ The server adjusts native sampling without restarting the sidecar:
 
 - suspended, locked, low-power, or serious/critical thermal state: 15 seconds;
 - battery: 5 seconds;
-- normal AC: 1 second;
+- normal AC: 5 seconds in the background and 1 second while live diagnostics is
+  open;
 - unknown or stale power: 5 seconds in the background and 1 second while live
   diagnostics is open.
 
