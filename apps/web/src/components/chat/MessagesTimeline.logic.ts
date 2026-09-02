@@ -90,6 +90,15 @@ export function liveWorkEntryLabel(
   return workEntryDisplayLabel(entry, workspaceRoot);
 }
 
+/**
+ * Rows that preview an image the agent viewed or produced. They stay out of
+ * tool groups and out of the settled-turn fold: the image is the answer the
+ * user asked for, not tool noise to hide behind "Worked for ...".
+ */
+function workEntryRendersImagePreview(entry: WorkLogEntry): boolean {
+  return workEntryViewedImagePath(entry) !== null;
+}
+
 export function workEntryIsVisibleInGroup(
   entry: WorkLogEntry,
   expandedToolGroupEntry = false,
@@ -98,6 +107,9 @@ export function workEntryIsVisibleInGroup(
     (expandedToolGroupEntry &&
       (entry.toolLifecycleStatus === "inProgress" ||
         entry.sourceActivityKind === "task.progress")) ||
+    // An image row stands alone outside any group, so the neutral filter
+    // would leave an empty gap while its tool is still in progress.
+    workEntryRendersImagePreview(entry) ||
     !workEntryIndicatesToolNeutralStatus(entry)
   );
 }
@@ -129,15 +141,6 @@ export function shouldFollowWorkGroupAppend(
     distanceFromEnd <= 1 &&
     previous.every((entry, index) => entry.id === entries[index]?.id)
   );
-}
-
-/**
- * Rows that preview an image the agent viewed or produced. They stay out of
- * tool groups and out of the settled-turn fold: the image is the answer the
- * user asked for, not tool noise to hide behind "Worked for ...".
- */
-function workEntryRendersImagePreview(entry: WorkLogEntry): boolean {
-  return workEntryViewedImagePath(entry) !== null;
 }
 
 export interface TimelineEndState {
