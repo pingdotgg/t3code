@@ -13,6 +13,7 @@ import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -211,6 +212,34 @@ export function waitForNextEnvironmentReconnect<E>(
     Effect.asVoid,
   );
 }
+
+export const runDesktopCommitWithReconnectObserver = Effect.fn(
+  "runDesktopCommitWithReconnectObserver",
+)(function* <EState, ECommit>(
+  stateChanges: Stream.Stream<{ readonly phase: string }, EState>,
+  commit: Effect.Effect<void, ECommit>,
+) {
+  const armed = yield* Deferred.make<void>();
+  const reconnected = yield* Deferred.make<void>();
+  const observer = yield* stateChanges.pipe(
+    Stream.tap(() => Deferred.succeed(armed, undefined)),
+    waitForNextEnvironmentReconnect,
+    Effect.andThen(Deferred.succeed(reconnected, undefined)),
+    Effect.forkChild,
+  );
+  yield* Deferred.await(armed);
+  const commitExit = yield* commit.pipe(Effect.exit);
+  if (Exit.isSuccess(commitExit)) {
+    yield* Fiber.interrupt(observer);
+    return;
+  }
+  if (!isLegacyUpdateHandoffLoss(commitExit.cause)) {
+    yield* Fiber.interrupt(observer);
+    return yield* Effect.failCause(commitExit.cause);
+  }
+  yield* Deferred.await(reconnected).pipe(Effect.timeout(SERVER_UPDATE_RESUME_TIMEOUT));
+  return yield* Effect.failCause(commitExit.cause);
+});
 
 export const waitForDesktopUpdateTarget = Effect.fn("waitForDesktopUpdateTarget")(function* <
   EReady,
@@ -713,31 +742,17 @@ export function createServerEnvironmentAtoms<R, E>(
             ? yield* waitForDesktopUpdateTarget(
                 result.targetVersion,
                 nextReady,
-                Effect.gen(function* () {
-                  const reconnected = yield* Deferred.make<void>();
-                  yield* waitForNextEnvironmentReconnect(
-                    environmentRegistry.stateChanges(target.environmentId),
-                  ).pipe(
-                    Effect.andThen(Deferred.succeed(reconnected, undefined)),
-                    Effect.forkChild,
-                  );
-                  const retryExit = yield* environmentRegistry
+                runDesktopCommitWithReconnectObserver(
+                  environmentRegistry.stateChanges(target.environmentId),
+                  environmentRegistry
                     .run(
                       target.environmentId,
                       request(WS_METHODS.serverCommitDesktopUpdate, {
                         requestId: desktopUpdateToken,
                       }),
                     )
-                    .pipe(Effect.exit);
-                  if (Exit.isSuccess(retryExit)) return;
-                  if (!isLegacyUpdateHandoffLoss(retryExit.cause)) {
-                    return yield* Effect.failCause(retryExit.cause);
-                  }
-                  yield* Deferred.await(reconnected).pipe(
-                    Effect.timeout(SERVER_UPDATE_RESUME_TIMEOUT),
-                  );
-                  return yield* Effect.failCause(retryExit.cause);
-                }),
+                    .pipe(Effect.asVoid),
+                ),
               )
             : yield* nextReady;
         yield* validateServerUpdateReadyEvent(result, resumed);

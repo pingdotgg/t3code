@@ -47,6 +47,7 @@ import {
 
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
+const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
 
 type UpdateAction = "check" | "download" | "install" | "channel";
 
@@ -280,6 +281,7 @@ export const make = Effect.gen(function* () {
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
+  const finishedUpdateActions = yield* PubSub.unbounded<UpdateAction>();
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const updateStateRef = yield* Ref.make<DesktopUpdateState>(
@@ -358,8 +360,13 @@ export const make = Effect.gen(function* () {
   );
 
   const finishUpdateAction = (action: UpdateAction): Effect.Effect<void> =>
-    Ref.update(activeUpdateActionRef, (activeAction) =>
-      Option.isSome(activeAction) && activeAction.value === action ? Option.none() : activeAction,
+    Ref.modify(activeUpdateActionRef, (activeAction) => {
+      const finished = Option.isSome(activeAction) && activeAction.value === action;
+      return [finished, finished ? Option.none() : activeAction] as const;
+    }).pipe(
+      Effect.flatMap((finished) =>
+        finished ? PubSub.publish(finishedUpdateActions, action).pipe(Effect.asVoid) : Effect.void,
+      ),
     );
 
   const applyAutoUpdaterChannel = Effect.fn("desktop.updates.applyAutoUpdaterChannel")(function* (
@@ -509,83 +516,107 @@ export const make = Effect.gen(function* () {
   });
 
   const installDownloadedUpdate = (expectedVersion?: string) =>
-    Effect.gen(function* () {
-      const admitted = yield* stateMutex.withPermits(1)(
-        Effect.gen(function* () {
-          const state = yield* Ref.get(updateStateRef);
-          const hasInstallableDownload =
-            state.downloadedVersion !== null &&
-            (state.status === "downloaded" ||
-              (state.status === "error" &&
-                (state.errorContext === null || state.errorContext === "install")));
-          if (
-            (yield* Ref.get(desktopState.quitting)) ||
-            !(yield* Ref.get(updaterConfiguredRef)) ||
-            (expectedVersion !== undefined && state.downloadedVersion !== expectedVersion) ||
-            !hasInstallableDownload
-          ) {
-            return false;
+    Effect.scoped(
+      Effect.gen(function* () {
+        const actionCompletions = yield* PubSub.subscribe(finishedUpdateActions);
+        let admission: "admitted" | "refused" | "wait-for-check" = "wait-for-check";
+        while (admission === "wait-for-check") {
+          admission = yield* stateMutex.withPermits(1)(
+            Effect.gen(function* () {
+              const state = yield* Ref.get(updateStateRef);
+              const activeAction = yield* Ref.get(activeUpdateActionRef);
+              const hasExpectedDownload =
+                state.downloadedVersion !== null &&
+                (expectedVersion === undefined || state.downloadedVersion === expectedVersion);
+              if (
+                (yield* Ref.get(desktopState.quitting)) ||
+                !(yield* Ref.get(updaterConfiguredRef)) ||
+                !hasExpectedDownload
+              ) {
+                return "refused" as const;
+              }
+              if (Option.isSome(activeAction)) {
+                return activeAction.value === "check" && expectedVersion !== undefined
+                  ? ("wait-for-check" as const)
+                  : ("refused" as const);
+              }
+              const hasInstallableDownload =
+                state.status === "downloaded" ||
+                (state.status === "error" &&
+                  (state.errorContext === null || state.errorContext === "install"));
+              if (!hasInstallableDownload) return "refused" as const;
+              return (yield* tryStartUpdateAction("install"))
+                ? ("admitted" as const)
+                : ("refused" as const);
+            }),
+          );
+          if (admission === "wait-for-check") {
+            const finishedAction = yield* PubSub.take(actionCompletions).pipe(
+              Effect.timeoutOption(PREPARED_INSTALL_CHECK_WAIT),
+            );
+            if (Option.isNone(finishedAction)) {
+              admission = "refused";
+            }
           }
-          return yield* tryStartUpdateAction("install");
-        }),
-      );
-      if (!admitted) {
-        return { accepted: false, completed: false, failed: false };
-      }
+        }
+        if (admission === "refused") {
+          return { accepted: false, completed: false, failed: false };
+        }
 
-      yield* Ref.set(desktopState.quitting, true);
+        yield* Ref.set(desktopState.quitting, true);
 
-      return yield* Effect.gen(function* () {
-        // Stop every backend in the pool, not just the primary. With
-        // parallel WSL + Windows backends, leaving the WSL instance up
-        // means quitAndInstall's app.quit() exits before the pool's
-        // scope cascade has a chance to run its stop finalizer, so the
-        // WSL child gets hard-killed by the OS instead of receiving
-        // SIGTERM + grace. Stops run concurrently with the same 5s
-        // budget the primary had on its own.
-        const instances = yield* pool.list;
-        yield* Effect.forEach(
-          instances,
-          (instance) => instance.stop({ timeout: Duration.seconds(5) }),
-          { concurrency: "unbounded" },
-        );
-        yield* electronUpdater.quitAndInstall({
-          isSilent: true,
-          isForceRunAfter: true,
-        });
-        return { accepted: true, completed: false, failed: false };
-      }).pipe(
-        Effect.catchTags({
-          ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
-            function* (error) {
+        return yield* Effect.gen(function* () {
+          // Stop every backend in the pool, not just the primary. With
+          // parallel WSL + Windows backends, leaving the WSL instance up
+          // means quitAndInstall's app.quit() exits before the pool's
+          // scope cascade has a chance to run its stop finalizer, so the
+          // WSL child gets hard-killed by the OS instead of receiving
+          // SIGTERM + grace. Stops run concurrently with the same 5s
+          // budget the primary had on its own.
+          const instances = yield* pool.list;
+          yield* Effect.forEach(
+            instances,
+            (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+            { concurrency: "unbounded" },
+          );
+          yield* electronUpdater.quitAndInstall({
+            isSilent: true,
+            isForceRunAfter: true,
+          });
+          return { accepted: true, completed: false, failed: false };
+        }).pipe(
+          Effect.catchTags({
+            ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
+              function* (error) {
+                yield* recoverFailedInstall(error.message);
+                yield* logUpdaterError(error.message, {
+                  errorTag: error._tag,
+                  channel: error.channel,
+                  isSilent: error.isSilent,
+                  isForceRunAfter: error.isForceRunAfter,
+                });
+                return { accepted: true, completed: false, failed: true };
+              },
+            ),
+          }),
+          Effect.onInterrupt(() => resetInstallAction),
+          Effect.catchCause((cause) =>
+            Effect.gen(function* () {
+              if (Cause.hasInterruptsOnly(cause)) {
+                return yield* Effect.failCause(cause);
+              }
+              const error = new DesktopUpdateUnexpectedActionError({ action: "install", cause });
               yield* recoverFailedInstall(error.message);
               yield* logUpdaterError(error.message, {
                 errorTag: error._tag,
-                channel: error.channel,
-                isSilent: error.isSilent,
-                isForceRunAfter: error.isForceRunAfter,
+                action: error.action,
               });
               return { accepted: true, completed: false, failed: true };
-            },
+            }),
           ),
-        }),
-        Effect.onInterrupt(() => resetInstallAction),
-        Effect.catchCause((cause) =>
-          Effect.gen(function* () {
-            if (Cause.hasInterruptsOnly(cause)) {
-              return yield* Effect.failCause(cause);
-            }
-            const error = new DesktopUpdateUnexpectedActionError({ action: "install", cause });
-            yield* recoverFailedInstall(error.message);
-            yield* logUpdaterError(error.message, {
-              errorTag: error._tag,
-              action: error.action,
-            });
-            return { accepted: true, completed: false, failed: true };
-          }),
-        ),
-      );
-    }).pipe(Effect.withSpan("desktop.updates.installDownloadedUpdate"));
+        );
+      }),
+    ).pipe(Effect.withSpan("desktop.updates.installDownloadedUpdate"));
 
   const installWithExpectedVersion = (expectedVersion?: string) =>
     Effect.gen(function* () {

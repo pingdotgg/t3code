@@ -8,6 +8,7 @@ import type {
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -372,6 +373,115 @@ describe("DesktopRemoteUpdates", () => {
         yield* settle;
 
         assert.equal(harness.quitAndInstalls(), 1);
+      }),
+    );
+  });
+
+  it.effect("waits for a background check before installing a prepared update", () => {
+    const backgroundCheckStarted = Deferred.makeUnsafe<void>();
+    const releaseBackgroundCheck = Deferred.makeUnsafe<void>();
+    let checks = 0;
+    const harness = makeHarness({
+      checkForUpdates: Effect.suspend(() => {
+        checks += 1;
+        return checks === 2
+          ? Deferred.succeed(backgroundCheckStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseBackgroundCheck)),
+            )
+          : Effect.void;
+      }),
+    });
+
+    return runRemoteUpdatesTest(harness, ({ requests, commits }) =>
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* Queue.offer(requests, request("req-background-check"));
+        yield* settle;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* settle;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* settle;
+
+        const backgroundCheck = yield* updates.check("poll").pipe(Effect.forkChild);
+        yield* Deferred.await(backgroundCheckStarted);
+        assert.equal((yield* updates.getState).status, "checking");
+
+        yield* Queue.offer(commits, {
+          version: 1,
+          type: "commitDesktopUpdate",
+          requestId: "req-background-check",
+        });
+        yield* settle;
+        assert.equal(harness.quitAndInstalls(), 0);
+
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* Deferred.succeed(releaseBackgroundCheck, undefined);
+        yield* Fiber.join(backgroundCheck);
+        yield* settle;
+        assert.equal(harness.quitAndInstalls(), 1);
+      }),
+    );
+  });
+
+  it.effect("fails a prepared install when its background check stays blocked", () => {
+    const backgroundCheckStarted = Deferred.makeUnsafe<void>();
+    const releaseBackgroundCheck = Deferred.makeUnsafe<void>();
+    let checks = 0;
+    const harness = makeHarness({
+      checkForUpdates: Effect.suspend(() => {
+        checks += 1;
+        return checks === 2
+          ? Deferred.succeed(backgroundCheckStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseBackgroundCheck)),
+            )
+          : Effect.void;
+      }),
+    });
+
+    return runRemoteUpdatesTest(harness, ({ reports, requests, commits }) =>
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* Queue.offer(requests, request("req-blocked-background-check"));
+        yield* settle;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* settle;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* settle;
+
+        const backgroundCheck = yield* updates.check("poll").pipe(Effect.forkChild);
+        yield* Deferred.await(backgroundCheckStarted);
+        const commit = {
+          version: 1,
+          type: "commitDesktopUpdate",
+          requestId: "req-blocked-background-check",
+        } as const;
+        yield* Queue.offer(commits, commit);
+        yield* settle;
+        yield* TestClock.adjust(Duration.seconds(91));
+        yield* settle;
+
+        assert.equal(harness.quitAndInstalls(), 0);
+        assert.deepEqual(
+          terminalReports(reports)
+            .filter((report) => report.requestId === "req-blocked-background-check")
+            .map((report) => report.outcome),
+          ["ready-to-install", "failed"],
+        );
+
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* Deferred.succeed(releaseBackgroundCheck, undefined);
+        yield* Fiber.join(backgroundCheck);
+        yield* settle;
+        assert.equal(harness.quitAndInstalls(), 0);
+
+        yield* Queue.offer(commits, commit);
+        yield* settle;
+        assert.deepEqual(
+          terminalReports(reports)
+            .filter((report) => report.requestId === "req-blocked-background-check")
+            .map((report) => report.outcome),
+          ["ready-to-install", "failed", "failed"],
+        );
       }),
     );
   });

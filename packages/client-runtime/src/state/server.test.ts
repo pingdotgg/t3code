@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -42,6 +43,7 @@ import {
   validateServerUpdateReadyEvent,
   waitForNextEnvironmentReconnect,
   waitForDesktopUpdateTarget,
+  runDesktopCommitWithReconnectObserver,
 } from "./server.ts";
 import { applyServerConfigProjection } from "./serverConfigProjection.ts";
 
@@ -126,6 +128,38 @@ describe("update restart reconnect nudges", () => {
       ]);
 
       yield* Fiber.join(reconnected);
+    }),
+  );
+  it.effect("arms the retry observer before a commit can disconnect", () =>
+    Effect.gen(function* () {
+      const allowSubscription = yield* Deferred.make<void>();
+      const subscriptionStarted = yield* Deferred.make<void>();
+      const states = yield* Queue.unbounded<{ readonly phase: string }>();
+      const commits = yield* Ref.make(0);
+      const disconnect = new RpcClientError.RpcClientError({
+        reason: new Socket.SocketCloseError({ code: 1006 }),
+      });
+      const stateChanges = Stream.unwrap(
+        Deferred.succeed(subscriptionStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowSubscription)),
+          Effect.as(Stream.fromQueue(states)),
+        ),
+      );
+      const retry = yield* runDesktopCommitWithReconnectObserver(
+        stateChanges,
+        Ref.update(commits, (count) => count + 1).pipe(
+          Effect.andThen(Queue.offerAll(states, [{ phase: "backoff" }, { phase: "connected" }])),
+          Effect.andThen(Effect.fail(disconnect)),
+        ),
+      ).pipe(Effect.flip, Effect.forkChild);
+
+      yield* Deferred.await(subscriptionStarted);
+      expect(yield* Ref.get(commits)).toBe(0);
+      yield* Deferred.succeed(allowSubscription, undefined);
+      yield* Queue.offer(states, { phase: "connected" });
+
+      expect(yield* Fiber.join(retry)).toBe(disconnect);
+      expect(yield* Ref.get(commits)).toBe(1);
     }),
   );
   it.effect("retries once per backoff entry instead of only the first", () =>
