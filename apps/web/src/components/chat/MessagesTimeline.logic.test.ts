@@ -152,30 +152,35 @@ describe("work entry labels", () => {
     },
   );
 
-  it("gives a completed browser group its own count and summary icon category", () => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        {
-          id: "browser-entry",
-          kind: "work",
-          createdAt: entry.createdAt,
-          entry: {
-            ...entry,
-            itemType: "mcp_tool_call",
-            toolLifecycleStatus: "completed",
-            toolData: { server: "t3-code", tool: "preview_click" },
+  it.each([
+    ["preview_click", "Clicked in the preview browser", "browser"],
+    ["task_status", "Got delegated task status", "t3-code"],
+  ] as const)(
+    "uses the completed %s call presentation for a settled legacy tool",
+    (tool, summary, summaryToolIcon) => {
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: [
+          {
+            id: "browser-entry",
+            kind: "work",
+            createdAt: entry.createdAt,
+            entry: {
+              ...entry,
+              itemType: "mcp_tool_call",
+              toolData: { server: "t3-code", tool },
+            },
           },
-        },
-      ],
-      isWorking: false,
-      activeTurnStartedAt: null,
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-    expect(rows).toMatchObject([
-      { kind: "work-toggle", summary: "Used browser 1 time", summaryKind: "browser" },
-    ]);
-  });
+        ],
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaryByAssistantMessageId: new Map(),
+        revertTurnCountByUserMessageId: new Map(),
+      });
+      expect(rows).toMatchObject([
+        { kind: "work-toggle", hiddenCount: 1, summary, summaryToolIcon },
+      ]);
+    },
+  );
 });
 
 describe("shouldPreserveAssistantLineBreaks", () => {
@@ -1126,7 +1131,7 @@ describe("deriveMessagesTimelineRows", () => {
     });
   });
 
-  it("summarizes a tool run after commentary starts a new run", () => {
+  it("labels a single completed tool call without summarizing it", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
@@ -1189,7 +1194,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.map((row) => row.kind)).toEqual(["working", "work-toggle", "message", "work-live"]);
     expect(rows.find((row) => row.kind === "work-toggle")).toMatchObject({
       hiddenCount: 1,
-      summary: "Ran 1 command",
+      summary: "rg toolCall",
     });
   });
 

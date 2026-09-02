@@ -1851,7 +1851,7 @@ function WorkGroupToggleTimelineRow({
     >
       <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
         <WorkEntryIcon
-          name={toolGroupSummaryIconName(row.summaryKind)}
+          name={row.summaryToolIcon ?? toolGroupSummaryIconName(row.summaryKind)}
           className="size-4 shrink-0 stroke-[1.8] opacity-70"
         />
       </span>
