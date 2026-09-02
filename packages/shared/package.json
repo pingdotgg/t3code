@@ -246,6 +246,10 @@
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",
       "import": "./src/claudeCompaction.ts"
+    },
+    "./nodeSqliteClient": {
+      "types": "./src/nodeSqliteClient.ts",
+      "import": "./src/nodeSqliteClient.ts"
     }
   },
   "scripts": {
