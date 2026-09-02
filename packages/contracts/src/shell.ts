@@ -36,6 +36,14 @@ export const ShellSidebarThread = Schema.Struct({
   updatedAt: Schema.String,
   pinned: Schema.Boolean,
   snoozedUntil: Schema.NullOr(Schema.String),
+  /** "2h" / "3d" while snoozed, for the row's trailing slot. */
+  wakeLabel: Schema.NullOr(Schema.String),
+  /** Set once a snooze has elapsed (or the thread raised its hand) and the user has not visited since. */
+  wokeAt: Schema.NullOr(Schema.String),
+  /** The environment supports settlement, so the row can offer settle / un-settle. */
+  canSettle: Schema.Boolean,
+  /** Snooze is supported and the thread is snoozable right now (no pending approval or question). */
+  canSnooze: Schema.Boolean,
 });
 export type ShellSidebarThread = typeof ShellSidebarThread.Type;
 
@@ -406,9 +414,54 @@ export const ShellGitState = Schema.Struct({
 });
 export type ShellGitState = typeof ShellGitState.Type;
 
+/**
+ * Published under the `keybindings` key: the page's shortcuts that need a
+ * modifier, as Qt key sequences. The shell fires them while native chrome has
+ * focus and sends `keybinding.press` back; the page replays that as a
+ * keydown so its own handlers (and the user's `when` clauses) decide.
+ */
+export const ShellKeybinding = Schema.Struct({
+  /** Portable Qt sequence, e.g. "Ctrl+Shift+]" ("Ctrl" is Command on macOS). */
+  sequence: Schema.String,
+  /** KeyboardEvent.key the page replays, lowercased. */
+  key: Schema.String,
+  ctrlKey: Schema.Boolean,
+  metaKey: Schema.Boolean,
+  shiftKey: Schema.Boolean,
+  altKey: Schema.Boolean,
+});
+export type ShellKeybinding = typeof ShellKeybinding.Type;
+
+export const ShellKeybindingsState = Schema.Array(ShellKeybinding);
+export type ShellKeybindingsState = typeof ShellKeybindingsState.Type;
+
 /** Actions the shell's chrome dispatches; `type` is the action name on the wire. */
 export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("thread.open"), key: Schema.String }),
+  /** Row actions; the page runs the same mutations as its sidebar and toasts failures. */
+  Schema.Struct({ type: Schema.Literal("thread.settle"), key: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("thread.unsettle"), key: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("thread.unsnooze"), key: Schema.String }),
+  /** Open the snooze presets at window coordinates; picking one snoozes the thread. */
+  Schema.Struct({
+    type: Schema.Literal("thread.snoozeMenu"),
+    key: Schema.String,
+    x: Schema.Number,
+    y: Schema.Number,
+  }),
+  /** Clear the "Woke" indicator without opening the thread. */
+  Schema.Struct({ type: Schema.Literal("thread.wokeDismiss"), key: Schema.String }),
+  /** A published keybinding fired while native chrome had focus. */
+  Schema.Struct({
+    type: Schema.Literal("keybinding.press"),
+    key: Schema.String,
+    ctrlKey: Schema.Boolean,
+    metaKey: Schema.Boolean,
+    shiftKey: Schema.Boolean,
+    altKey: Schema.Boolean,
+  }),
+  /** Page → shell: the `modelPicker.toggle` command opens the native picker. */
+  Schema.Struct({ type: Schema.Literal("composer.modelPicker.toggle") }),
   Schema.Struct({ type: Schema.Literal("draft.open"), draftId: Schema.String }),
   Schema.Struct({ type: Schema.Literal("thread.new"), projectKey: Schema.optional(Schema.String) }),
   Schema.Struct({

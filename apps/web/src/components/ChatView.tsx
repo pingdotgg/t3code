@@ -6077,7 +6077,10 @@ function ChatViewContent(props: ChatViewProps) {
       if (command === "modelPicker.toggle") {
         event.preventDefault();
         event.stopPropagation();
-        composerRef.current?.toggleModelPicker();
+        // The shell's native picker replaces the HTML one, so the toggle
+        // goes to it instead of to the composer.
+        if (shellHostsChrome) void window.t3Shell?.dispatch("composer.modelPicker.toggle");
+        else composerRef.current?.toggleModelPicker();
         return;
       }
 

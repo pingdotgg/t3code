@@ -82,7 +82,13 @@ describe("buildShellSidebarState", () => {
         latestTurn: { completedAt: "2026-03-09T12:00:00.000Z" } as never,
       }),
     ],
-    snoozedThreads: [],
+    snoozedThreads: [
+      makeThread({
+        id: ThreadId.make("napping"),
+        snoozedAt: "2026-03-09T11:30:00.000Z",
+        snoozedUntil: "2026-03-09T13:30:00.000Z",
+      }),
+    ],
     settledThreads: Array.from({ length: SHELL_SIDEBAR_SETTLED_LIMIT + 5 }, (_, index) =>
       makeThread({ id: ThreadId.make(`settled-${index}`) }),
     ),
@@ -94,6 +100,7 @@ describe("buildShellSidebarState", () => {
       projectGroups: [makeProjectGroup()],
       scopeProjectKey: null,
       partition,
+      capabilitiesFor: () => ({ threadSettlement: true, threadSnooze: true }),
       threadCountByLogicalKey: new Map([["logical:t3code", 3]]),
       lastVisitedAtByKey: { [`${environmentId}:working`]: "2026-03-09T11:00:00.000Z" },
       drafts: [],
@@ -116,7 +123,12 @@ describe("buildShellSidebarState", () => {
       projectKey: "logical:t3code",
       pinned: true,
       status: "ready",
+      canSettle: true,
+      canSnooze: true,
+      wakeLabel: null,
+      wokeAt: null,
     });
+    expect(state.snoozed[0]).toMatchObject({ key: `${environmentId}:napping`, wakeLabel: "2h" });
     expect(state.active[0]).toMatchObject({
       key: `${environmentId}:working`,
       title: "Working thread",
@@ -133,16 +145,42 @@ describe("buildShellSidebarState", () => {
       projectGroups: [makeProjectGroup()],
       scopeProjectKey: "logical:t3code",
       partition,
+      capabilitiesFor: () => undefined,
       threadCountByLogicalKey: new Map(),
       lastVisitedAtByKey: {},
       drafts: [{ draftId: "draft-1", projectKey: "logical:t3code", label: "Draft" }],
       activeThreadKey: null,
       activeDraftId: "draft-1",
     });
+    expect(state.pinned[0]).toMatchObject({ canSettle: false, canSnooze: false });
     expect(state.settled).toHaveLength(SHELL_SIDEBAR_SETTLED_LIMIT);
     expect(state.settledTotal).toBe(SHELL_SIDEBAR_SETTLED_LIMIT + 5);
     expect(state.scopeProjectKey).toBe("logical:t3code");
     expect(state.drafts).toHaveLength(1);
     expect(state.activeDraftId).toBe("draft-1");
+  });
+
+  it("keeps the woke signal until the user visits after the wake", () => {
+    const woke = makeThread({
+      id: ThreadId.make("woke"),
+      snoozedAt: "2026-03-09T09:00:00.000Z",
+      snoozedUntil: "2026-03-09T11:00:00.000Z",
+    });
+    const build = (lastVisitedAt: string | undefined) =>
+      buildShellSidebarState({
+        projectGroups: [makeProjectGroup()],
+        scopeProjectKey: null,
+        partition: { ...partition, activeThreads: [woke] },
+        capabilitiesFor: () => ({ threadSnooze: true }),
+        threadCountByLogicalKey: new Map(),
+        lastVisitedAtByKey: { [`${environmentId}:woke`]: lastVisitedAt },
+        drafts: [],
+        activeThreadKey: null,
+        activeDraftId: null,
+      });
+    expect(build(undefined).active[0]?.wokeAt).toBe("2026-03-09T11:00:00.000Z");
+    expect(build("2026-03-09T10:00:00.000Z").active[0]?.wokeAt).toBe("2026-03-09T11:00:00.000Z");
+    expect(build("2026-03-09T11:30:00.000Z").active[0]?.wokeAt).toBeNull();
+    expect(build(undefined).active[0]).toMatchObject({ canSettle: false, canSnooze: true });
   });
 });

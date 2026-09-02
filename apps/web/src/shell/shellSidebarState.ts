@@ -1,5 +1,11 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  canSnooze,
+  snoozeWakeLabel,
+  threadWokeAt,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type {
   ShellSidebarDraft,
   ShellSidebarState,
@@ -10,6 +16,7 @@ import {
   hasUnseenCompletion,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
+  type SidebarThreadCapabilities,
   type SidebarThreadPartition,
 } from "../components/Sidebar.logic";
 import type { SidebarProjectSnapshot } from "../sidebarProjectGrouping";
@@ -21,6 +28,7 @@ export interface ShellSidebarStateInput {
   readonly projectGroups: ReadonlyArray<SidebarProjectSnapshot>;
   readonly scopeProjectKey: string | null;
   readonly partition: SidebarThreadPartition;
+  readonly capabilitiesFor: (environmentId: EnvironmentId) => SidebarThreadCapabilities | undefined;
   readonly threadCountByLogicalKey: ReadonlyMap<string, number>;
   readonly lastVisitedAtByKey: Readonly<Record<string, string | undefined>>;
   readonly drafts: ReadonlyArray<ShellSidebarDraft>;
@@ -41,20 +49,49 @@ export function buildLogicalProjectKeyMap(
   return map;
 }
 
+interface ToShellThreadOptions {
+  readonly logicalKeyByPhysicalKey: ReadonlyMap<string, string>;
+  readonly lastVisitedAtByKey: Readonly<Record<string, string | undefined>>;
+  readonly capabilitiesFor: (environmentId: EnvironmentId) => SidebarThreadCapabilities | undefined;
+  /** The partition's clock, so wake times agree with which shelf the row landed on. */
+  readonly now: string;
+  /** Rows on the snoozed shelf carry their wake label; woken rows elsewhere do not. */
+  readonly snoozed: boolean;
+}
+
+/**
+ * The woke indicator survives until the user re-engages after the wake, the
+ * same rule the HTML row applies: an unparseable visit counts as never
+ * visited, and a thread settled by hand has nothing left to wake for.
+ */
+function visibleWokeAt(
+  thread: EnvironmentThreadShell,
+  lastVisitedAt: string | undefined,
+  now: string,
+): string | null {
+  if (thread.settledOverride === "settled") return null;
+  const wokeAt = threadWokeAt(thread, { now });
+  if (wokeAt === null) return null;
+  if (lastVisitedAt === undefined) return wokeAt;
+  const visitedMs = Date.parse(lastVisitedAt);
+  if (Number.isNaN(visitedMs) || visitedMs < Date.parse(wokeAt)) return wokeAt;
+  return null;
+}
+
 function toShellThread(
   thread: EnvironmentThreadShell,
-  logicalKeyByPhysicalKey: ReadonlyMap<string, string>,
-  lastVisitedAtByKey: Readonly<Record<string, string | undefined>>,
+  options: ToShellThreadOptions,
 ): ShellSidebarThread {
   const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-  const lastVisitedAt = lastVisitedAtByKey[key];
+  const lastVisitedAt = options.lastVisitedAtByKey[key];
   const statusInput = { ...thread, lastVisitedAt };
+  const capabilities = options.capabilitiesFor(thread.environmentId);
   return {
     key,
     threadId: thread.id,
     environmentId: thread.environmentId,
     projectKey:
-      logicalKeyByPhysicalKey.get(`${thread.environmentId}:${thread.projectId}`) ??
+      options.logicalKeyByPhysicalKey.get(`${thread.environmentId}:${thread.projectId}`) ??
       `${thread.environmentId}:${thread.projectId}`,
     title: thread.title,
     status: resolveSidebarThreadStatus(thread),
@@ -64,14 +101,27 @@ function toShellThread(
     updatedAt: thread.updatedAt,
     pinned: thread.pinnedAt != null,
     snoozedUntil: thread.snoozedUntil ?? null,
+    wakeLabel:
+      options.snoozed && thread.snoozedUntil != null
+        ? snoozeWakeLabel(thread.snoozedUntil, { now: options.now })
+        : null,
+    wokeAt: visibleWokeAt(thread, lastVisitedAt, options.now),
+    canSettle: capabilities?.threadSettlement === true,
+    canSnooze: capabilities?.threadSnooze === true && canSnooze(thread, { now: options.now }),
   };
 }
 
 export function buildShellSidebarState(input: ShellSidebarStateInput): ShellSidebarState {
   const logicalKeyByPhysicalKey = buildLogicalProjectKeyMap(input.projectGroups);
-  const convert = (threads: ReadonlyArray<EnvironmentThreadShell>) =>
+  const convert = (threads: ReadonlyArray<EnvironmentThreadShell>, snoozed = false) =>
     threads.map((thread) =>
-      toShellThread(thread, logicalKeyByPhysicalKey, input.lastVisitedAtByKey),
+      toShellThread(thread, {
+        logicalKeyByPhysicalKey,
+        lastVisitedAtByKey: input.lastVisitedAtByKey,
+        capabilitiesFor: input.capabilitiesFor,
+        now: input.partition.snoozeNow,
+        snoozed,
+      }),
     );
   return {
     projects: input.projectGroups.map((group) => ({
@@ -85,7 +135,7 @@ export function buildShellSidebarState(input: ShellSidebarStateInput): ShellSide
     scopeProjectKey: input.scopeProjectKey,
     pinned: convert(input.partition.pinnedThreads),
     active: convert(input.partition.activeThreads),
-    snoozed: convert(input.partition.snoozedThreads),
+    snoozed: convert(input.partition.snoozedThreads, true),
     settled: convert(input.partition.settledThreads.slice(0, SHELL_SIDEBAR_SETTLED_LIMIT)),
     settledTotal: input.partition.settledThreads.length,
     drafts: input.drafts,

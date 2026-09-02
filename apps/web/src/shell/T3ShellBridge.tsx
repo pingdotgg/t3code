@@ -2,27 +2,38 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   parseScopedThreadKey,
   scopeProjectRef,
+  scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
+import type { EnvironmentId } from "@t3tools/contracts";
 import type { ShellSidebarDraft, ShellSidebarState } from "@t3tools/contracts/shell";
 import { useParams, useRouter } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { partitionSidebarThreads } from "../components/Sidebar.logic";
+import { partitionSidebarThreads, resolveAdjacentThreadId } from "../components/Sidebar.logic";
 import { openCommandPalette } from "../commandPaletteBus";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { isT3ShellEmbed } from "../env";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
+import {
+  resolveShortcutCommand,
+  threadJumpIndexFromCommand,
+  threadTraversalDirectionFromCommand,
+} from "../keybindings";
+import { isTerminalFocused } from "../lib/terminalFocus";
 import { requestShellRename } from "./shellRenameRequest";
-import { environmentServerConfigsAtom } from "../state/server";
+import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { useThreadShells } from "../state/entities";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
+import { buildShellKeybindings } from "./shellKeybindings";
 import { buildLogicalProjectKeyMap, buildShellSidebarState } from "./shellSidebarState";
 import { useShellActions } from "./useShellActions";
 import { useShellPublish } from "./useShellPublish";
+import { useShellThreadRowActions } from "./useShellThreadRowActions";
 
 /**
  * Feeds the native shell (window.t3Shell) the sidebar view model and turns
@@ -36,6 +47,7 @@ export function T3ShellBridge() {
   const threads = useThreadShells();
   const { projectGroups } = useSidebarProjectGroups(threads);
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const nowMinute = useNowMinute();
   const lastVisitedAtByKey = useUiStateStore((store) => store.threadLastVisitedAtById);
   const handleNewThread = useNewThreadHandler();
@@ -44,6 +56,10 @@ export function T3ShellBridge() {
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
   });
+  const activeThreadKey =
+    routeTarget?.kind === "server"
+      ? `${routeTarget.threadRef.environmentId}:${routeTarget.threadRef.threadId}`
+      : null;
   const [menuTarget, setMenuTarget] = useState<{
     key: string;
     x: number;
@@ -120,18 +136,22 @@ export function T3ShellBridge() {
     }
   }, [scopeProjectKey, scopedGroup]);
 
+  const capabilitiesFor = useCallback(
+    (environmentId: EnvironmentId) => serverConfigs.get(environmentId)?.environment.capabilities,
+    [serverConfigs],
+  );
   const partition = useMemo(
     () =>
       partitionSidebarThreads({
         threads,
         scopedProjectKeys,
-        capabilitiesFor: (environmentId) =>
-          serverConfigs.get(environmentId)?.environment.capabilities,
+        capabilitiesFor,
         preciseNow: new Date().toISOString(),
       }),
     // nowMinute re-runs the partition so snoozed threads wake on time.
-    [nowMinute, scopedProjectKeys, serverConfigs, threads],
+    [capabilitiesFor, nowMinute, scopedProjectKeys, threads],
   );
+  const rowActions = useShellThreadRowActions({ partition, activeThreadKey });
 
   const threadCountByLogicalKey = useMemo(() => {
     const logicalKeyByPhysicalKey = buildLogicalProjectKeyMap(projectGroups);
@@ -168,16 +188,16 @@ export function T3ShellBridge() {
         projectGroups,
         scopeProjectKey,
         partition,
+        capabilitiesFor,
         threadCountByLogicalKey,
         lastVisitedAtByKey,
         drafts,
-        activeThreadKey:
-          routeTarget?.kind === "server"
-            ? `${routeTarget.threadRef.environmentId}:${routeTarget.threadRef.threadId}`
-            : null,
+        activeThreadKey,
         activeDraftId: routeTarget?.kind === "draft" ? routeTarget.draftId : null,
       }),
     [
+      activeThreadKey,
+      capabilitiesFor,
       drafts,
       lastVisitedAtByKey,
       partition,
@@ -189,6 +209,56 @@ export function T3ShellBridge() {
   );
 
   useShellPublish("sidebar", state);
+
+  const shellKeybindings = useMemo(
+    () => buildShellKeybindings(keybindings, navigator.platform),
+    [keybindings],
+  );
+  useShellPublish("keybindings", shellKeybindings);
+
+  // The HTML sidebar owns thread traversal and is not mounted under the
+  // shell, so the same keydown handling lives here, over the same order the
+  // native rows render in.
+  const orderedThreadKeys = useMemo(
+    () =>
+      [
+        ...partition.pinnedThreads,
+        ...partition.activeThreads,
+        ...partition.snoozedThreads,
+        ...partition.settledThreads,
+      ].map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+    [partition],
+  );
+  useEffect(() => {
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return;
+      const command = resolveShortcutCommand(event, keybindings, {
+        platform: navigator.platform,
+        context: { terminalFocus: isTerminalFocused() },
+      });
+      const direction = threadTraversalDirectionFromCommand(command);
+      const jumpIndex = threadJumpIndexFromCommand(command ?? "");
+      if (direction === null && jumpIndex === null) return;
+      const targetKey =
+        direction !== null
+          ? resolveAdjacentThreadId({
+              threadIds: orderedThreadKeys,
+              currentThreadId: activeThreadKey,
+              direction,
+            })
+          : (orderedThreadKeys[jumpIndex ?? -1] ?? null);
+      const threadRef = targetKey === null ? null : parseScopedThreadKey(targetKey);
+      if (threadRef === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void router.navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(threadRef),
+      });
+    };
+    window.addEventListener("keydown", onWindowKeyDown);
+    return () => window.removeEventListener("keydown", onWindowKeyDown);
+  }, [activeThreadKey, keybindings, orderedThreadKeys, router]);
 
   useShellActions((action) => {
     switch (action.type) {
@@ -232,6 +302,39 @@ export function T3ShellBridge() {
           seq: (prev?.seq ?? 0) + 1,
         }));
         return;
+      case "thread.settle":
+        rowActions.settle(action.key);
+        return;
+      case "thread.unsettle":
+        rowActions.unsettle(action.key);
+        return;
+      case "thread.unsnooze":
+        rowActions.unsnooze(action.key);
+        return;
+      case "thread.snoozeMenu":
+        rowActions.openSnoozeMenu(action.key, { x: action.x, y: action.y });
+        return;
+      case "thread.wokeDismiss":
+        rowActions.dismissWoke(action.key);
+        return;
+      case "keybinding.press": {
+        // Native chrome had focus, so the page never saw the keydown. Replay
+        // it on the document: every shortcut handler listens on window, and
+        // a body target reads as "not typing" to all of them.
+        if (isT3ShellEmbed) return;
+        document.body.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: action.key,
+            ctrlKey: action.ctrlKey,
+            metaKey: action.metaKey,
+            shiftKey: action.shiftKey,
+            altKey: action.altKey,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        return;
+      }
       case "project.add":
         openCommandPalette({ open: "add-project" });
         return;
