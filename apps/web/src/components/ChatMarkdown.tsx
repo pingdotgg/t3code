@@ -25,7 +25,6 @@ import type {
   AssetResource,
   EnvironmentId,
   ScopedThreadRef,
-  ServerProviderSkill,
   ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import {
@@ -80,7 +79,7 @@ import {
   remarkCodexDirectives,
   renderCodexFileCitationsAsMarkdown,
 } from "@t3tools/client-runtime/codex-markdown-directives";
-import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
+import { renderSkillInlineMarkdownChildren, type InlineSkill } from "./chat/SkillInlineText";
 import {
   resolveMarkdownMediaPreview,
   type ExpandedImagePreview,
@@ -186,7 +185,7 @@ interface ChatMarkdownProps {
   environmentId?: EnvironmentId | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   isStreaming?: boolean;
-  skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  skills?: ReadonlyArray<InlineSkill>;
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
@@ -236,7 +235,7 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
   );
 }
 
-const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<InlineSkill> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
