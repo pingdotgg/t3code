@@ -140,6 +140,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["long lines code blocks tables diffs file previews"],
   },
   {
+    id: "wider-scrollbars",
+    title: "Wider scrollbars",
+    to: "/settings/appearance",
+    searchTerms: ["accessibility increase width easier grab scrolling"],
+  },
+  {
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",

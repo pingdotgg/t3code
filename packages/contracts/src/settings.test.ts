@@ -191,6 +191,16 @@ describe("ClientSettings sidebar", () => {
   });
 });
 
+describe("ClientSettings accessibility", () => {
+  it("keeps wider scrollbars opt-in", () => {
+    expect(decodeClientSettings({}).widerScrollbarsEnabled).toBe(false);
+    expect(decodeClientSettingsPatch({ widerScrollbarsEnabled: true }).widerScrollbarsEnabled).toBe(
+      true,
+    );
+    expect(() => decodeClientSettingsPatch({ widerScrollbarsEnabled: "yes" })).toThrow();
+  });
+});
+
 describe("ClientSettings context window meter", () => {
   it("defaults off and preserves an explicit legacy opt-in", () => {
     expect(decodeClientSettings({}).contextWindowMeterEnabled).toBe(false);

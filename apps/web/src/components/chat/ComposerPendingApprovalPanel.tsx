@@ -43,7 +43,7 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
       ) : null}
       <code
         aria-label={detailAriaLabel}
-        className="block max-h-20 min-w-0 flex-1 overflow-auto whitespace-pre font-mono text-[11px] text-foreground/85 [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 [&::-webkit-scrollbar]:h-1.5"
+        className="block max-h-20 min-w-0 flex-1 overflow-auto whitespace-pre font-mono text-[11px] text-foreground/85 [scrollbar-width:var(--app-scrollbar-firefox-width)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 [&::-webkit-scrollbar]:h-[var(--app-scrollbar-width)]"
         data-approval-detail="complete"
         tabIndex={0}
       >

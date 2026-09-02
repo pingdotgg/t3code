@@ -36,6 +36,7 @@ import {
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
+import { applyAppearanceScrollbarWidth } from "~/appearanceScrollbar";
 import { useClientSettings } from "../hooks/useSettings";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
 import {
@@ -138,6 +139,7 @@ function RootRouteView() {
       <AnchoredToastProvider>
         <DocumentTitleSync />
         <ContrastAppearanceSync />
+        <ScrollbarAppearanceSync />
         <EnvironmentThemeSync />
         <GlassAppearanceSync />
         <FontAppearanceSync />
@@ -176,6 +178,16 @@ function ContrastAppearanceSync() {
   useEffect(() => {
     applyAppearanceContrast(document.documentElement, appearanceContrast);
   }, [appearanceContrast]);
+
+  return null;
+}
+
+function ScrollbarAppearanceSync() {
+  const widerScrollbarsEnabled = useClientSettings((settings) => settings.widerScrollbarsEnabled);
+
+  useEffect(() => {
+    applyAppearanceScrollbarWidth(document.documentElement, widerScrollbarsEnabled);
+  }, [widerScrollbarsEnabled]);
 
   return null;
 }
