@@ -424,15 +424,24 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
     Effect.result,
   );
-  const cliModels: GrokModelsCliOutput =
-    Result.isSuccess(modelsResult) && Option.isSome(modelsResult.success)
-      ? parseGrokModelsCliOutput(
-          `${modelsResult.success.value.stdout}\n${modelsResult.success.value.stderr}`,
-        )
-      : { authenticated: null, models: [] };
-  if (Result.isFailure(modelsResult) || Option.isNone(modelsResult.success)) {
+  // Only a clean exit is parsed. Failed invocations print help or error text that
+  // must not be read as model slugs or as a login verdict.
+  const modelsOutput =
+    Result.isSuccess(modelsResult) &&
+    Option.isSome(modelsResult.success) &&
+    modelsResult.success.value.code === 0
+      ? modelsResult.success.value
+      : undefined;
+  const cliModels: GrokModelsCliOutput = modelsOutput
+    ? parseGrokModelsCliOutput(`${modelsOutput.stdout}\n${modelsOutput.stderr}`)
+    : { authenticated: null, models: [] };
+  if (!modelsOutput) {
     yield* Effect.logWarning("Grok CLI model listing failed or timed out.", {
-      errorTag: Result.isFailure(modelsResult) ? modelsResult.failure._tag : "Timeout",
+      errorTag: Result.isFailure(modelsResult)
+        ? modelsResult.failure._tag
+        : Option.isNone(modelsResult.success)
+          ? "Timeout"
+          : `ExitCode${modelsResult.success.value.code}`,
     });
   }
 
