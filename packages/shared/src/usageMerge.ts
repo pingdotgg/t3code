@@ -21,6 +21,22 @@ export interface EnvironmentUsage {
   readonly summary: UsageSummary;
 }
 
+/**
+ * Identifies the exact per-environment snapshots currently visible to a
+ * client. Passing a changed value back to the server requests one source
+ * update without relying on clocks shared across environments.
+ */
+export function makeUsageRefreshToken(
+  environments: readonly EnvironmentUsage[],
+): string | undefined {
+  if (environments.length === 0) return undefined;
+  return JSON.stringify(
+    environments
+      .map(({ environmentId, summary }) => [environmentId, summary.readAt] as const)
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
 export interface ProviderTotals {
   readonly provider: UsageProviderKind;
   readonly costUsd: number;

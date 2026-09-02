@@ -360,6 +360,7 @@ export const make = Effect.gen(function* () {
   }
 
   let sourceSnapshot: SourceSnapshot | null = null;
+  let lastRefreshToken: string | null = null;
   const sourceScanSemaphore = yield* Semaphore.make(1);
 
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (windowStartMs: number) {
@@ -391,6 +392,7 @@ export const make = Effect.gen(function* () {
 
   const getSourceSnapshot = Effect.fn("UsageService.getSourceSnapshot")(function* (
     windowStartMs: number,
+    refreshToken: string | undefined,
   ) {
     return yield* sourceScanSemaphore.withPermits(1)(
       Effect.gen(function* () {
@@ -402,8 +404,10 @@ export const make = Effect.gen(function* () {
             : startedAtMs - currentSnapshot.completedAtMs;
         const snapshotCoversWindow =
           currentSnapshot !== null && currentSnapshot.windowStartMs <= windowStartMs;
+        const manualRefresh = refreshToken !== undefined && refreshToken !== lastRefreshToken;
 
         if (
+          !manualRefresh &&
           currentSnapshot !== null &&
           snapshotCoversWindow &&
           snapshotAgeMs < SOURCE_SCAN_TTL_MS
@@ -425,13 +429,15 @@ export const make = Effect.gen(function* () {
         const [, dirs] = yield* Effect.all([ensureRates(), collectDirs(scanWindowStartMs)], {
           concurrency: 2,
         });
-        const completedAtMs = yield* Clock.currentTimeMillis;
+        const now = yield* Clock.currentTimeMillis;
+        const completedAtMs = Math.max(now, (currentSnapshot?.completedAtMs ?? now - 1) + 1);
         const nextSnapshot = {
           completedAtMs,
           windowStartMs: scanWindowStartMs,
           dirs,
         } satisfies SourceSnapshot;
         sourceSnapshot = nextSnapshot;
+        if (refreshToken !== undefined) lastRefreshToken = refreshToken;
         return nextSnapshot;
       }),
     );
@@ -482,7 +488,7 @@ export const make = Effect.gen(function* () {
     }
     const windowStartMs =
       (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
-    const currentSnapshot = yield* getSourceSnapshot(windowStartMs);
+    const currentSnapshot = yield* getSourceSnapshot(windowStartMs, input.refreshToken);
     const scannedDirs = currentSnapshot.dirs;
     const sourceReadAtMs = currentSnapshot.completedAtMs;
 
@@ -595,6 +601,7 @@ export const make = Effect.gen(function* () {
       input.resolution ?? "day",
       input.sinceTime ?? null,
       input.untilTime ?? null,
+      input.refreshToken ?? null,
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {

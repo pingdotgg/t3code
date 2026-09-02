@@ -185,6 +185,12 @@ export const UsageSummaryInput = Schema.Struct({
   sinceTime: Schema.optional(TrimmedNonEmptyString),
   /** Exclusive UTC instant for an hourly rolling window. */
   untilTime: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Opaque identity of the source snapshots visible when the user explicitly
+   * requested a refresh. A new value bypasses the short-lived source cache
+   * once; repeated reads with the same value may reuse the updated snapshot.
+   */
+  refreshToken: Schema.optional(TrimmedNonEmptyString),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 

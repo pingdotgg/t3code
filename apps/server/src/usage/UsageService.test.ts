@@ -177,6 +177,40 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("updates fresh source data for a new manual refresh token", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      let ratesFetches = 0;
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-manual-refresh-test",
+            home,
+            settings,
+            onRatesFetch: () => {
+              ratesFetches += 1;
+            },
+          }),
+        ),
+      );
+
+      const first = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(first), 5);
+
+      yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+      const refreshedInput = { ...WINDOW, refreshToken: "manual-refresh-1" };
+      const refreshed = yield* service.readSummary(refreshedInput);
+
+      assert.strictEqual(totalOutputTokens(refreshed), 12);
+      assert.strictEqual(ratesFetches, 2);
+
+      yield* service.readSummary(refreshedInput);
+      assert.strictEqual(ratesFetches, 2);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("does not orphan an in-flight scan when its first caller is interrupted", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;

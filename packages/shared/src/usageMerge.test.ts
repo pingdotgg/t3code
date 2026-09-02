@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+import { makeUsageRefreshToken, mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
@@ -337,5 +337,25 @@ describe("mergeUsage", () => {
     ]);
     expect(merged.daily).toHaveLength(1);
     expect(merged.daily[0]?.costUsd).toBe(10);
+  });
+});
+
+describe("makeUsageRefreshToken", () => {
+  it("changes when an environment returns a newer source snapshot", () => {
+    const first = environment("env-a", summary([], []));
+    const second = {
+      ...first,
+      summary: { ...first.summary, readAt: "2026-08-07T00:01:00.000Z" },
+    };
+
+    expect(makeUsageRefreshToken([second])).not.toBe(makeUsageRefreshToken([first]));
+  });
+
+  it("is stable when environment order changes", () => {
+    const first = environment("env-a", summary([], []));
+    const second = environment("env-b", summary([], []));
+
+    expect(makeUsageRefreshToken([first, second])).toBe(makeUsageRefreshToken([second, first]));
+    expect(makeUsageRefreshToken([])).toBeUndefined();
   });
 });
