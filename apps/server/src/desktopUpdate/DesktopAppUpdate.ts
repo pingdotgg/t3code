@@ -49,11 +49,16 @@ export class DesktopAppUpdate extends Context.Service<
     /** Checks and downloads through the desktop app, then returns a token
         while this server is still connected. `commit` starts installation. */
     readonly run: (
-      reportProgress: (stage: ServerSelfUpdateProgressStage) => Effect.Effect<void>,
+      reportProgress: (
+        stage: ServerSelfUpdateProgressStage,
+      ) => Effect.Effect<void, ServerSelfUpdateError>,
     ) => Effect.Effect<ServerSelfUpdateResult, ServerSelfUpdateError>;
     /** Starts the prepared install. Success stops this server, so this effect
         returns only when installation fails or times out. */
-    readonly commit: (requestId: string) => Effect.Effect<never, ServerSelfUpdateError>;
+    readonly commit: (
+      requestId: string,
+      onHandoffAccepted?: () => Effect.Effect<void>,
+    ) => Effect.Effect<never, ServerSelfUpdateError>;
   }
 >()("t3/desktopUpdate/DesktopAppUpdate") {}
 
@@ -72,11 +77,15 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
   const consumeReports = (
     requestId: string,
     changes: Stream.Stream<DesktopUpdateStatusReport>,
-    reportProgress: (stage: ServerSelfUpdateProgressStage) => Effect.Effect<void>,
+    reportProgress: (
+      stage: ServerSelfUpdateProgressStage,
+    ) => Effect.Effect<void, ServerSelfUpdateError>,
   ) =>
     Effect.gen(function* () {
       const lastStage = yield* Ref.make<ServerSelfUpdateProgressStage | null>(null);
-      const emitStage = (stage: ServerSelfUpdateProgressStage | null): Effect.Effect<void> =>
+      const emitStage = (
+        stage: ServerSelfUpdateProgressStage | null,
+      ): Effect.Effect<void, ServerSelfUpdateError> =>
         stage === null
           ? Effect.void
           : Ref.get(lastStage).pipe(
@@ -90,7 +99,9 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
       const terminal = yield* changes.pipe(
         Stream.filter((report) => report.requestId === requestId),
         Stream.mapEffect(
-          (report): Effect.Effect<Option.Option<DesktopUpdateStatusReport>> =>
+          (
+            report,
+          ): Effect.Effect<Option.Option<DesktopUpdateStatusReport>, ServerSelfUpdateError> =>
             report.outcome === undefined
               ? emitStage(desktopUpdateProgressStage(report.state)).pipe(
                   Effect.as(Option.none<DesktopUpdateStatusReport>()),
@@ -176,7 +187,7 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
 
   const commit: DesktopAppUpdate["Service"]["commit"] = Effect.fn(
     "desktopUpdate.desktopAppUpdate.commit",
-  )(function* (requestId) {
+  )(function* (requestId, onHandoffAccepted = () => Effect.void) {
     if (!available) {
       return yield* failWith("This server cannot commit a desktop app update.");
     }
@@ -187,11 +198,12 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
           onNone: () => changes,
           onSome: (report) => Stream.concat(Stream.make(report), changes),
         });
-        yield* receiver
-          .commitDesktopUpdate(requestId)
-          .pipe(
+        yield* Effect.uninterruptible(
+          receiver.commitDesktopUpdate(requestId).pipe(
             Effect.mapError((error) => failWith("Could not reach the T3 Code desktop app.", error)),
-          );
+            Effect.tap(() => onHandoffAccepted()),
+          ),
+        );
         return yield* reports.pipe(
           Stream.filter((report) => report.requestId === requestId && report.outcome === "failed"),
           Stream.runHead,

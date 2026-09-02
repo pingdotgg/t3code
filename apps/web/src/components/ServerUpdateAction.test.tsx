@@ -8,10 +8,16 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 const testState = vi.hoisted(() => ({
   updateServer: vi.fn(),
   toast: vi.fn(),
+  continueThreadsAfterServerUpdate: false,
 }));
 
 vi.mock("~/hooks/useCopyToClipboard", () => ({
   useCopyToClipboard: () => ({ copyToClipboard: vi.fn() }),
+}));
+vi.mock("~/hooks/useSettings", () => ({
+  useClientSettings: (
+    selector: (settings: { continueThreadsAfterServerUpdate: boolean }) => unknown,
+  ) => selector({ continueThreadsAfterServerUpdate: testState.continueThreadsAfterServerUpdate }),
 }));
 vi.mock("~/state/server", () => ({
   serverEnvironment: { updateServer: Symbol("updateServer") },
@@ -47,6 +53,7 @@ describe("ServerUpdateAction", () => {
   beforeEach(() => {
     testState.updateServer.mockReset();
     testState.toast.mockReset();
+    testState.continueThreadsAfterServerUpdate = false;
   });
 
   it("reports success only after the shared update flow reconnects", async () => {
@@ -139,6 +146,49 @@ describe("ServerUpdateAction", () => {
       type: "success",
       title: "Test server updated",
       description: "Desktop app relaunched on 0.0.34.",
+    });
+  });
+
+  it("leaves thread continuation off by default", async () => {
+    testState.updateServer.mockResolvedValue(
+      AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
+    );
+    const action = ServerUpdateAction({
+      environmentId: "env-test" as EnvironmentId,
+      serverLabel: "Test server",
+      selfUpdate: "boot-service",
+      threadContinuation: true,
+      targetVersion: "0.0.31",
+    }) as ActionElement;
+
+    action.props.onClick?.();
+    await flushPromises();
+
+    expect(testState.updateServer).toHaveBeenCalledWith({
+      environmentId: "env-test",
+      input: { targetVersion: "0.0.31" },
+    });
+  });
+
+  it("applies the saved thread continuation preference automatically", async () => {
+    testState.updateServer.mockResolvedValue(
+      AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
+    );
+    testState.continueThreadsAfterServerUpdate = true;
+    const action = ServerUpdateAction({
+      environmentId: "env-test" as EnvironmentId,
+      serverLabel: "Test server",
+      selfUpdate: "boot-service",
+      threadContinuation: true,
+      targetVersion: "0.0.31",
+    }) as ActionElement;
+
+    action.props.onClick?.();
+    await flushPromises();
+
+    expect(testState.updateServer).toHaveBeenCalledWith({
+      environmentId: "env-test",
+      input: { targetVersion: "0.0.31", continueRunningThreads: true },
     });
   });
 });

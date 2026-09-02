@@ -8,6 +8,7 @@ import type { ComponentProps } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useClientSettings } from "~/hooks/useSettings";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { manualServerUpdateCommand } from "~/versionSkew";
@@ -78,6 +79,7 @@ export function ServerUpdateAction({
   serverLabel,
   selfUpdate,
   desktopAppUpdate = false,
+  threadContinuation = false,
   targetVersion,
   label = "Update",
   variant = "outline",
@@ -88,11 +90,16 @@ export function ServerUpdateAction({
   /** The desktop app supervising this server accepts remote update
       requests (capabilities.desktopAppUpdate). */
   readonly desktopAppUpdate?: boolean;
+  /** The server can durably continue running provider turns after updating. */
+  readonly threadContinuation?: boolean;
   readonly targetVersion: string;
   readonly label?: string;
   readonly variant?: ComponentProps<typeof Button>["variant"];
 }) {
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
+  const continueThreadsAfterServerUpdate = useClientSettings(
+    (settings) => settings.continueThreadsAfterServerUpdate,
+  );
   const updateServer = useAtomCommand(serverEnvironment.updateServer, {
     reportFailure: false,
   });
@@ -137,7 +144,12 @@ export function ServerUpdateAction({
     try {
       const result = await updateServer({
         environmentId,
-        input: { targetVersion },
+        input: {
+          targetVersion,
+          ...(threadContinuation && continueThreadsAfterServerUpdate
+            ? { continueRunningThreads: true }
+            : {}),
+        },
       });
       if (result._tag === "Failure") {
         if (isAtomCommandInterrupted(result)) {
