@@ -15,13 +15,15 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import {
   makeUsageRefreshToken,
   mergeUsage,
+  retainUsageStatuses,
   type EnvironmentUsage,
   type MergedUsage,
+  type SettledUsageStatuses,
 } from "@t3tools/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
@@ -78,6 +80,25 @@ export interface UsageView {
 
 export function useUsage(input: UsageSummaryInput): UsageView {
   const [refreshToken, setRefreshToken] = useState<string>();
+  const rangeKey = useMemo(
+    () =>
+      JSON.stringify({
+        sinceDay: input.sinceDay,
+        untilDay: input.untilDay,
+        timeZone: input.timeZone,
+        resolution: input.resolution,
+        sinceTime: input.sinceTime,
+        untilTime: input.untilTime,
+      }),
+    [
+      input.sinceDay,
+      input.untilDay,
+      input.timeZone,
+      input.resolution,
+      input.sinceTime,
+      input.untilTime,
+    ],
+  );
   const windowKey = useMemo(
     () =>
       JSON.stringify({
@@ -100,7 +121,11 @@ export function useUsage(input: UsageSummaryInput): UsageView {
     ],
   );
   const atom = usageByWindowAtom(windowKey);
-  const environments = useAtomValue(atom);
+  const currentEnvironments = useAtomValue(atom);
+  const settledStatuses = useRef<SettledUsageStatuses<EnvironmentUsageStatus> | null>(null);
+  const retained = retainUsageStatuses(rangeKey, currentEnvironments, settledStatuses.current);
+  settledStatuses.current = retained.settled;
+  const environments = retained.visible;
 
   const answered = useMemo<readonly EnvironmentUsage[]>(
     () =>

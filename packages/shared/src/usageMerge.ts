@@ -21,6 +21,50 @@ export interface EnvironmentUsage {
   readonly summary: UsageSummary;
 }
 
+export interface RetainableUsageStatus {
+  readonly environmentId: EnvironmentId;
+  readonly error: string | null;
+  readonly summary: UsageSummary | null;
+}
+
+export interface SettledUsageStatuses<T extends RetainableUsageStatus> {
+  readonly rangeKey: string;
+  readonly statuses: readonly T[];
+}
+
+/**
+ * Keeps each environment's last value visible while a token-bearing query for
+ * the same date range starts cold. New answers replace retained values one at
+ * a time; failures and date-range changes never inherit old data.
+ */
+export function retainUsageStatuses<T extends RetainableUsageStatus>(
+  rangeKey: string,
+  current: readonly T[],
+  previous: SettledUsageStatuses<T> | null,
+): {
+  readonly visible: readonly T[];
+  readonly settled: SettledUsageStatuses<T> | null;
+} {
+  const previousByEnvironment =
+    previous?.rangeKey === rangeKey
+      ? new Map(previous.statuses.map((status) => [status.environmentId, status] as const))
+      : null;
+  let retainedAny = false;
+  const withRetained = current.map((status) => {
+    if (status.summary !== null || status.error !== null) return status;
+    const settledStatus = previousByEnvironment?.get(status.environmentId);
+    if (settledStatus?.summary === null || settledStatus === undefined) return status;
+    retainedAny = true;
+    return Object.assign({}, status, { summary: settledStatus.summary });
+  });
+  const visible = retainedAny ? withRetained : current;
+  const settled = visible.some((status) => status.summary !== null)
+    ? { rangeKey, statuses: visible }
+    : previous;
+
+  return { visible, settled };
+}
+
 /**
  * Identifies the exact per-environment snapshots currently visible to a
  * client. Passing a changed value back to the server requests one source
