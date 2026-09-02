@@ -124,12 +124,15 @@ export function refreshedSourceProfileDirectory(
 
 /**
  * Whether retrying could clear a failure. The keychain prompt can be approved
- * on a second try, and a read or session error may be transient; a missing key
- * or an unsupported browser will not change, so those get no retry button.
+ * on a second try, a missing key appears once the user signs in to the
+ * browser (which is what its copy asks for), and a read or session error may
+ * be transient; an unsupported browser will not change, so it gets no retry
+ * button.
  */
 export function isRetryableReason(reason: BrowserImportFailureReason): boolean {
   switch (reason) {
     case "needsKeychainApproval":
+    case "keychainItemMissing":
     case "readFailed":
     case "sessionUnavailable":
       return true;

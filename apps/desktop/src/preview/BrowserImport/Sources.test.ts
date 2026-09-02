@@ -199,6 +199,26 @@ describe("isSourceInstalled", () => {
 });
 
 describe("listSourceProfiles", () => {
+  it.effect("ignores a profile whose Cookies entry is not a file", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const paths = yield* withSourceHome();
+        const root = helium.userDataDirectory(paths);
+        // A directory named `Cookies` would list as importable and then fail
+        // the SQLite open, so only a regular file counts as a database.
+        yield* fileSystem.makeDirectory(`${root}/Broken/Cookies`, { recursive: true });
+        yield* fileSystem.makeDirectory(`${root}/Real`, { recursive: true });
+        yield* fileSystem.writeFileString(`${root}/Real/Cookies`, "db");
+
+        assert.deepEqual(yield* listSourceProfiles(helium, paths), [
+          { directory: "Real", name: "Real" },
+        ]);
+        assert.isTrue(yield* isSourceInstalled(helium, paths));
+      }),
+    ),
+  );
+
   it.effect("discovers profiles by their cookie database when Local State is absent", () =>
     run(
       Effect.gen(function* () {

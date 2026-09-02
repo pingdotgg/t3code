@@ -166,7 +166,7 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
     .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
   const candidates = entries.filter(isSafeProfileDirectory);
   const found = yield* Effect.forEach(candidates, (directory) =>
-    entryExists(cookieDatabasePath(definition, paths, directory)).pipe(
+    databaseFileExists(cookieDatabasePath(definition, paths, directory)).pipe(
       Effect.map((exists) => (exists ? { directory, name: directory } : undefined)),
     ),
   );
@@ -188,6 +188,19 @@ const entryExists = Effect.fnUntraced(function* (path: string) {
   return yield* fileSystem.stat(path).pipe(
     Effect.catch(() => fileSystem.readLink(path)),
     Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
+/**
+ * Whether a cookie database candidate is a regular file. Presence alone is
+ * not enough: a directory at the path would list as an importable profile and
+ * then fail the SQLite open, so anything but a file is treated as absent.
+ */
+const databaseFileExists = Effect.fnUntraced(function* (path: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.stat(path).pipe(
+    Effect.map((info) => info.type === "File"),
     Effect.orElseSucceed(() => false),
   );
 });
@@ -282,7 +295,7 @@ export const isSourceInstalled = Effect.fn("BrowserImportSources.isSourceInstall
 ) {
   const profiles = yield* listSourceProfiles(definition, paths);
   const found = yield* Effect.forEach(profiles, (profile) =>
-    entryExists(cookieDatabasePath(definition, paths, profile.directory)),
+    databaseFileExists(cookieDatabasePath(definition, paths, profile.directory)),
   );
   return found.some(Boolean);
 });

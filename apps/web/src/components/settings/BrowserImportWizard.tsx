@@ -296,7 +296,16 @@ function ConfigureStep({
         <Button variant="outline" onClick={onCancel}>
           Cancel
         </Button>
-        <Button disabled={sourceProfileDirectory === "" || targetMissing} onClick={onImport}>
+        <Button
+          disabled={
+            sourceProfileDirectory === "" ||
+            targetMissing ||
+            // A "new" target chosen before the profile cap was reached must
+            // not slip past it once it is.
+            (target.kind === "new" && !canCreateProfile)
+          }
+          onClick={onImport}
+        >
           Import
         </Button>
       </DialogFooter>
