@@ -56,6 +56,17 @@ is unavailable or has changed, the saved quote remains readable.
 Mobile displays saved quotes and comments, but does not create citations or
 navigate to their sources.
 
+## Recall a sent prompt
+
+Press `ArrowUp` in an empty composer to bring back the last prompt you sent in this thread. Press
+`ArrowUp` again to go further back, and `ArrowDown` to come forward. Moving forward past the newest
+prompt clears the composer. Recall walks the prompts loaded in the thread. Attachments, terminal
+context, and other extras from the original message are not restored, only the text you typed.
+
+When the composer has text, the arrow keys move the caret as usual. Recall takes over only when
+the caret is on the first line and the text is an unedited recalled prompt. Editing a recalled
+prompt turns it into a normal draft.
+
 ## Prompt stash
 
 On web and desktop, press `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux to save
