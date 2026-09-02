@@ -21,6 +21,8 @@ WebEngineView {
 
     profile: WebProfile
     lifecycleState: sleepsWhenHidden && !visible && !loading ? WebEngineView.LifecycleState.Frozen : WebEngineView.LifecycleState.Active
+    settings.javascriptCanAccessClipboard: true
+    settings.javascriptCanPaste: true
 
     webChannel: WebChannel {
         id: channel
@@ -65,6 +67,17 @@ WebEngineView {
 
     onNewWindowRequested: function (request) {
         Shell.openExternal(request.requestedUrl);
+    }
+
+    // The app's copy buttons and paste handlers use the async clipboard API.
+    // Nothing else (notifications, media, location) is granted: the page has
+    // no presenter for them here and falls back to its in-app affordances.
+    onPermissionRequested: function (permission) {
+        if (permission.permissionType === WebEnginePermission.PermissionType.ClipboardReadWrite) {
+            permission.grant();
+        } else {
+            permission.deny();
+        }
     }
 
     Connections {
