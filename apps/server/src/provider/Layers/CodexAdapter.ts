@@ -193,6 +193,19 @@ function normalizeCodexTokenUsage(
   };
 }
 
+/**
+ * Codex reports plan windows, Business workspace credits, and spend caps alike
+ * as `usageLimitExceeded`: the account is out of quota, nothing malfunctioned.
+ * Such a stop surfaces as a warning row carrying Codex's own sentence (which
+ * names the reset time or the workspace owner), and the turn it ends is
+ * cancelled rather than failed, so the thread never turns red over quota.
+ */
+function isCodexUsageLimitError(
+  error: { readonly codexErrorInfo?: unknown } | null | undefined,
+): boolean {
+  return error?.codexErrorInfo === "usageLimitExceeded";
+}
+
 function toTurnStatus(
   value: EffectCodexSchema.V2TurnCompletedNotification["turn"]["status"] | "cancelled",
 ): "completed" | "failed" | "cancelled" | "interrupted" {
@@ -1061,13 +1074,15 @@ function mapToRuntimeEvents(
     if (!payload) {
       return [];
     }
-    const errorMessage = trimText(payload.turn.error?.message);
+    // The usage-limit warning row already told the user why the turn ended.
+    const usageLimited = isCodexUsageLimitError(payload.turn.error);
+    const errorMessage = usageLimited ? undefined : trimText(payload.turn.error?.message);
     return [
       {
         ...runtimeEventBase(event, canonicalThreadId),
         type: "turn.completed",
         payload: {
-          state: toTurnStatus(payload.turn.status),
+          state: usageLimited ? "cancelled" : toTurnStatus(payload.turn.status),
           ...(errorMessage ? { errorMessage } : {}),
         },
       },
@@ -1540,6 +1555,18 @@ function mapToRuntimeEvents(
     const payload = readPayload(EffectCodexSchema.V2ErrorNotification, event.payload);
     const message = payload?.error.message ?? event.message ?? "Provider runtime error";
     const willRetry = payload?.willRetry === true;
+    if (isCodexUsageLimitError(payload?.error)) {
+      return [
+        {
+          type: "runtime.warning",
+          ...runtimeEventBase(event, canonicalThreadId),
+          payload: {
+            message,
+            ...(event.payload !== undefined ? { detail: event.payload } : {}),
+          },
+        },
+      ];
+    }
     return [
       {
         type: willRetry ? "runtime.warning" : "runtime.error",

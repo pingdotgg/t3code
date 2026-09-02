@@ -970,6 +970,175 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  const usageLimitErrorCases = [
+    ["plan-limit", "You've hit your usage limit. Your limit will reset at 6:00 PM."],
+    [
+      "workspace-credits",
+      "Your workspace is out of credits. Ask your workspace owner to refill in order to continue.",
+    ],
+  ] as const;
+
+  for (const [label, message] of usageLimitErrorCases) {
+    it.effect(
+      `maps a ${label} usage-limit error to runtime.warning with the provider message`,
+      () =>
+        Effect.gen(function* () {
+          const { adapter, runtime } = yield* startLifecycleRuntime();
+          const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(
+            Effect.forkChild,
+          );
+
+          yield* runtime.emit({
+            id: asEventId(`evt-usage-limit-${label}`),
+            kind: "notification",
+            provider: ProviderDriverKind.make("codex"),
+            threadId: asThreadId("thread-1"),
+            createdAt: "2026-01-01T00:00:00.000Z",
+            method: "error",
+            turnId: asTurnId("turn-1"),
+            payload: {
+              threadId: "thread-1",
+              turnId: "turn-1",
+              error: { message, codexErrorInfo: "usageLimitExceeded" },
+              willRetry: false,
+            },
+          } satisfies ProviderEvent);
+
+          const firstEvent = yield* Fiber.join(firstEventFiber);
+
+          NodeAssert.equal(firstEvent._tag, "Some");
+          if (firstEvent._tag !== "Some") {
+            return;
+          }
+          NodeAssert.equal(firstEvent.value.type, "runtime.warning");
+          if (firstEvent.value.type !== "runtime.warning") {
+            return;
+          }
+          NodeAssert.equal(firstEvent.value.turnId, "turn-1");
+          NodeAssert.equal(firstEvent.value.payload.message, message);
+        }),
+    );
+  }
+
+  it.effect("keeps non-usage-limit Codex error notifications as runtime.error", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-provider-error"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "error",
+        turnId: asTurnId("turn-1"),
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          error: { message: "Stream disconnected", codexErrorInfo: "internalServerError" },
+          willRetry: false,
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.type, "runtime.error");
+      if (firstEvent.value.type !== "runtime.error") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.class, "provider_error");
+      NodeAssert.equal(firstEvent.value.payload.message, "Stream disconnected");
+    }),
+  );
+
+  it.effect("ends a usage-limited turn as cancelled without an error message", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-usage-limit-turn-completed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "turn/completed",
+        turnId: asTurnId("turn-1"),
+        payload: {
+          threadId: "thread-1",
+          turn: {
+            id: "turn-1",
+            status: "failed",
+            items: [],
+            error: {
+              message:
+                "Your workspace is out of credits. Ask your workspace owner to refill in order to continue.",
+              codexErrorInfo: "usageLimitExceeded",
+            },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.type, "turn.completed");
+      if (firstEvent.value.type !== "turn.completed") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.turnId, "turn-1");
+      NodeAssert.equal(firstEvent.value.payload.state, "cancelled");
+      NodeAssert.equal(firstEvent.value.payload.errorMessage, undefined);
+    }),
+  );
+
+  it.effect("keeps other failed turns failed with their error message", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-failed-turn-completed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "turn/completed",
+        turnId: asTurnId("turn-1"),
+        payload: {
+          threadId: "thread-1",
+          turn: {
+            id: "turn-1",
+            status: "failed",
+            items: [],
+            error: { message: "Stream disconnected", codexErrorInfo: "internalServerError" },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.type, "turn.completed");
+      if (firstEvent.value.type !== "turn.completed") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.state, "failed");
+      NodeAssert.equal(firstEvent.value.payload.errorMessage, "Stream disconnected");
+    }),
+  );
+
   it.effect("maps retryable Codex error notifications to runtime.warning", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

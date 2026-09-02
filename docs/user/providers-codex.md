@@ -28,6 +28,18 @@ Log in with Codex normally:
 codex login
 ```
 
+## Codex Says I Hit A Limit Or My Workspace Is Out Of Credits
+
+When Codex refuses a turn because the account is out of quota, the thread shows a warning line
+with Codex's own message and the turn ends. Nothing broke, so the thread does not show an error.
+
+What the message means depends on the account:
+
+- On a personal plan, it names when the limit resets. Wait for the reset, or switch to another
+  Codex account for the next turn.
+- On a Business or Enterprise workspace, it says the workspace is out of credits or hit its spend
+  cap. Ask the workspace owner to add credits or raise the cap, then send your message again.
+
 ## Send feedback to OpenAI
 
 In an existing Codex thread, send `/feedback` or `/feedback` followed by a description of the
