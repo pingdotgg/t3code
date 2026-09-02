@@ -163,6 +163,8 @@ export class DesktopUpdates extends Context.Service<
     /** True while a check, download, install, or channel change holds the
         updater's single action reservation. */
     readonly isActionActive: Effect.Effect<boolean>;
+    /** True only while an install owns the updater action reservation. */
+    readonly isInstallActive: Effect.Effect<boolean>;
     /** Current state plus a stream of every later state change. */
     readonly subscribe: Effect.Effect<
       {
@@ -825,6 +827,9 @@ export const make = Effect.gen(function* () {
   return DesktopUpdates.of({
     getState: Ref.get(updateStateRef),
     isActionActive: activeUpdateAction.pipe(Effect.map(Option.isSome)),
+    isInstallActive: activeUpdateAction.pipe(
+      Effect.map((action) => Option.isSome(action) && action.value === "install"),
+    ),
     subscribe: stateMutex.withPermits(1)(
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(stateChanges);
