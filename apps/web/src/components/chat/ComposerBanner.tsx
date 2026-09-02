@@ -133,7 +133,13 @@ function Column({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-slot="composer-banner-column"
-      className={cn("flex min-w-0 flex-1 flex-col empty:hidden", className)}
+      className={cn(
+        "flex min-w-0 flex-1 flex-col empty:hidden",
+        // The column already sits inside the dock's inset, so attachments span
+        // it fully; their own standalone inset width would double-indent.
+        "[&>[data-slot=composer-banner-attachment]]:w-full",
+        className,
+      )}
       {...props}
     />
   );
