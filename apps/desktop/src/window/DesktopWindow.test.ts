@@ -1336,7 +1336,7 @@ describe("DesktopWindow", () => {
           return yield* Effect.die("before-input-event listener was not registered");
         }
 
-        const sendKey = (key: string) => {
+        const sendKey = (key: string, shift = false) => {
           let prevented = false;
           beforeInput(
             { preventDefault: () => (prevented = true) },
@@ -1347,7 +1347,7 @@ describe("DesktopWindow", () => {
               control: true,
               meta: false,
               alt: false,
-              shift: false,
+              shift,
             },
           );
           return prevented;
@@ -1359,8 +1359,11 @@ describe("DesktopWindow", () => {
         assert.isTrue(sendKey("="));
         assert.equal(fake.window.webContents.getZoomLevel(), 0.5);
 
+        assert.isTrue(sendKey("+", true));
+        assert.equal(fake.window.webContents.getZoomLevel(), 1);
+
         assert.isTrue(sendKey("-"));
-        assert.equal(fake.window.webContents.getZoomLevel(), 0);
+        assert.equal(fake.window.webContents.getZoomLevel(), 0.5);
 
         fake.window.webContents.setZoomLevel(1.5);
         assert.isTrue(sendKey("0"));

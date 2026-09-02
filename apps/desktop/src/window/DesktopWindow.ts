@@ -612,8 +612,8 @@ export const make = Effect.gen(function* () {
         return;
       }
 
-      if (environment.platform === "win32" && input.control && !input.alt && !input.shift) {
-        if (input.key === ",") {
+      if (environment.platform === "win32" && input.control && !input.alt) {
+        if (!input.shift && input.key === ",") {
           event.preventDefault();
           window.webContents.send(MENU_ACTION_CHANNEL, "open-settings");
           return;
@@ -624,13 +624,13 @@ export const make = Effect.gen(function* () {
           void runPromise(previewManager.reapplyZoom());
           return;
         }
-        if (input.key === "-" || input.key === "_") {
+        if (!input.shift && (input.key === "-" || input.key === "_")) {
           event.preventDefault();
           window.webContents.setZoomLevel(window.webContents.getZoomLevel() - 0.5);
           void runPromise(previewManager.reapplyZoom());
           return;
         }
-        if (input.key === "0") {
+        if (!input.shift && input.key === "0") {
           event.preventDefault();
           window.webContents.setZoomLevel(0);
           void runPromise(previewManager.reapplyZoom());
