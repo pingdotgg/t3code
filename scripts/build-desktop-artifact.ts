@@ -1707,23 +1707,21 @@ export const preflightMacDesktopBuild = Effect.fn("preflightMacDesktopBuild")(fu
 });
 
 function windowsVswherePrerequisiteScript(arch: typeof BuildArch.Type): string {
-  const components =
+  const toolComponents =
     arch === "arm64"
-      ? [
-          "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
-          "Microsoft.VisualStudio.Component.VC.Tools.ARM64.Spectre",
-        ]
-      : [
-          "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-          "Microsoft.VisualStudio.Component.VC.Tools.x86.x64.Spectre",
-        ];
+      ? ["Microsoft.VisualStudio.Component.VC.Tools.ARM64"]
+      : ["Microsoft.VisualStudio.Component.VC.Tools.x86.x64"];
+  const spectreArch = arch === "arm64" ? "arm64" : "x64";
   return [
     "$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\\Installer\\vswhere.exe'",
     "if (!(Test-Path $vswhere)) { exit 1 }",
-    `$install = & $vswhere -latest -products * -requires ${components.join(" ")} -property installationPath`,
+    `$install = & $vswhere -latest -products * -requires ${toolComponents.join(" ")} -property installationPath`,
     "if (!$install) { exit 1 }",
     "$kitsRoot = Get-ItemPropertyValue 'HKLM:\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots' -Name KitsRoot10 -ErrorAction SilentlyContinue",
     "if (!$kitsRoot -or !(Test-Path (Join-Path $kitsRoot 'Lib'))) { exit 1 }",
+    "$msvcToolset = Get-ChildItem (Join-Path $install 'VC\\Tools\\MSVC') -Directory | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1",
+    "if (!$msvcToolset) { exit 1 }",
+    `if (!(Test-Path (Join-Path $msvcToolset.FullName 'lib\\spectre\\${spectreArch}'))) { exit 1 }`,
   ].join("; ");
 }
 
