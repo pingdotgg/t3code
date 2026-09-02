@@ -244,7 +244,13 @@ export function SettingsRow({
           </div>
         ) : null}
       </div>
-      {children}
+      {unavailable && children ? (
+        <div inert className="opacity-50">
+          {children}
+        </div>
+      ) : (
+        children
+      )}
     </div>
   );
 }
