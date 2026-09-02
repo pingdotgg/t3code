@@ -5,6 +5,7 @@ import { Atom } from "effect/unstable/reactivity";
 import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
@@ -54,6 +55,11 @@ export function createTerminalEnvironmentAtoms<R, E>(
         subscribe(WS_METHODS.subscribeTerminalMetadata, {}).pipe(
           Stream.scan([] as ReadonlyArray<TerminalSummary>, applyTerminalMetadataStreamEvent),
         ),
+    }),
+    listShells: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:terminal:listShells",
+      tag: WS_METHODS.terminalListShells,
+      staleTimeMs: 30_000,
     }),
     open: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:open",

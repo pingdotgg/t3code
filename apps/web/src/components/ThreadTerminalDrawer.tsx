@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { type TerminalSessionState } from "@t3tools/client-runtime/state/terminal";
 import {
+  ChevronDown,
   Plus,
   Square,
   SquareSplitHorizontal,
@@ -16,10 +17,12 @@ import {
   type ContextMenuItem,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  type TerminalDescribedShell,
   type ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
+import { AsyncResult } from "effect/unstable/reactivity";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -32,6 +35,14 @@ import {
   useState,
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuTrigger,
+} from "~/components/ui/menu";
 import { Button } from "~/components/ui/button";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
@@ -938,6 +949,8 @@ interface ThreadTerminalDrawerProps {
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
   onNewTerminal: () => void;
+  /** Open a brand-new terminal using a specific shell executable. */
+  onNewTerminalWithShell: (shell: string) => void;
   splitShortcutLabel?: string | undefined;
   splitVerticalShortcutLabel?: string | undefined;
   newShortcutLabel?: string | undefined;
@@ -982,6 +995,56 @@ function TerminalActionButton({ label, className, onClick, children }: TerminalA
   );
 }
 
+interface TerminalShellPickerProps {
+  shells: readonly TerminalDescribedShell[];
+  align?: "start" | "end";
+  triggerClassName: string;
+  onSelectDefault: () => void;
+  onSelectShell: (executable: string) => void;
+}
+
+function TerminalShellPicker({
+  shells,
+  align = "start",
+  triggerClassName,
+  onSelectDefault,
+  onSelectShell,
+}: TerminalShellPickerProps) {
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <button
+            type="button"
+            className={triggerClassName}
+            aria-label="Open a new terminal with a shell"
+          />
+        }
+      >
+        <ChevronDown className="size-3.25" />
+      </MenuTrigger>
+      <MenuPopup align={align} sideOffset={6} className="w-64">
+        <MenuGroup>
+          <MenuGroupLabel>New terminal</MenuGroupLabel>
+          {shells.length === 0 ? (
+            <MenuItem onClick={onSelectDefault}>
+              <TerminalSquare className="size-4" />
+              <span>Default shell</span>
+            </MenuItem>
+          ) : (
+            shells.map((shell) => (
+              <MenuItem key={shell.id} onClick={() => onSelectShell(shell.executable)}>
+                <TerminalSquare className="size-4" />
+                <span className="min-w-0 flex-1 truncate">{shell.label}</span>
+              </MenuItem>
+            ))
+          )}
+        </MenuGroup>
+      </MenuPopup>
+    </Menu>
+  );
+}
+
 export default function ThreadTerminalDrawer({
   mode = "drawer",
   threadRef,
@@ -999,6 +1062,7 @@ export default function ThreadTerminalDrawer({
   onSplitTerminal,
   onSplitTerminalVertical,
   onNewTerminal,
+  onNewTerminalWithShell,
   splitShortcutLabel,
   splitVerticalShortcutLabel,
   newShortcutLabel,
@@ -1012,6 +1076,14 @@ export default function ThreadTerminalDrawer({
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
   const isPanel = mode === "panel";
+  const availableShellsQuery = terminalEnvironment.listShells({
+    environmentId: threadRef.environmentId,
+    input: {},
+  });
+  const availableShellsResult = useAtomValue(availableShellsQuery);
+  const availableShells = AsyncResult.isSuccess(availableShellsResult)
+    ? availableShellsResult.value.shells
+    : [];
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
     false,
@@ -1409,6 +1481,14 @@ export default function ThreadTerminalDrawer({
               <Plus className="size-3.25" />
             </TerminalActionButton>
             <div className="h-4 w-px bg-border/80" />
+            <TerminalShellPicker
+              shells={availableShells}
+              align="start"
+              triggerClassName="p-1 text-foreground/90 transition-colors hover:bg-accent"
+              onSelectDefault={onNewTerminalAction}
+              onSelectShell={onNewTerminalWithShell}
+            />
+            <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
               className="p-1 text-foreground/90 transition-colors hover:bg-accent"
               onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
@@ -1549,6 +1629,13 @@ export default function ThreadTerminalDrawer({
                   >
                     <Plus className="size-3.25" />
                   </TerminalActionButton>
+                  <TerminalShellPicker
+                    shells={availableShells}
+                    align="end"
+                    triggerClassName="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+                    onSelectDefault={onNewTerminalAction}
+                    onSelectShell={onNewTerminalWithShell}
+                  />
                   <TerminalActionButton
                     className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
                     onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}

@@ -60,6 +60,7 @@ const makeTerminalManagerLayer = (
     close: () => Effect.void,
     subscribe: () => Effect.succeed(() => undefined),
     subscribeMetadata: () => Effect.succeed(() => undefined),
+    listShells: () => Effect.succeed({ defaultShell: undefined, shells: [] }),
   });
 
 const testLayer = (

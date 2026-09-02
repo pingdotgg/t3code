@@ -1435,6 +1435,26 @@ it.layer(
     }),
   );
 
+  it.effect("honors a requested shell from the open input above the platform default", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {
+          ComSpec: "C:\\Windows\\System32\\cmd.exe",
+          PATH: "C:\\Windows\\System32",
+          SystemRoot: "C:\\Windows",
+        },
+      }).pipe(Effect.provide(withHostPlatform("win32")));
+
+      yield* manager.open(openInput({ threadId: "thread-default", shell: "cmd.exe" }));
+      yield* manager.open(openInput({ threadId: "thread-requested", shell: undefined }));
+
+      expect(ptyAdapter.spawnInputs[0]).toEqual(expect.objectContaining({ shell: "cmd.exe" }));
+      expect(ptyAdapter.spawnInputs[1]).toEqual(
+        expect.objectContaining({ shell: "pwsh.exe", args: ["-NoLogo"] }),
+      );
+    }),
+  );
+
   it.effect("prefers PowerShell over ComSpec for Windows terminals", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {

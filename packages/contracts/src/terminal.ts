@@ -36,6 +36,10 @@ const TerminalSessionInput = Schema.Struct({
 });
 export type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionInput>;
 
+/** Shell executable (or full path) requested for a terminal session. When
+ * absent the environment's default shell is used. */
+const TerminalShellSchema = TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(1024));
+
 export const TerminalOpenInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: TrimmedNonEmptyStringSchema,
@@ -43,6 +47,7 @@ export const TerminalOpenInput = Schema.Struct({
   cols: Schema.optional(TerminalColsSchema),
   rows: Schema.optional(TerminalRowsSchema),
   env: Schema.optional(TerminalEnvSchema),
+  shell: Schema.optional(TerminalShellSchema),
 });
 export type TerminalOpenInput = Schema.Codec.Encoded<typeof TerminalOpenInput>;
 
@@ -54,6 +59,7 @@ export const TerminalAttachInput = Schema.Struct({
   rows: Schema.optional(TerminalRowsSchema),
   env: Schema.optional(TerminalEnvSchema),
   restartIfNotRunning: Schema.optional(Schema.Boolean),
+  shell: Schema.optional(TerminalShellSchema),
 });
 export type TerminalAttachInput = Schema.Codec.Encoded<typeof TerminalAttachInput>;
 
@@ -80,6 +86,7 @@ export const TerminalRestartInput = Schema.Struct({
   cols: TerminalColsSchema,
   rows: TerminalRowsSchema,
   env: Schema.optional(TerminalEnvSchema),
+  shell: Schema.optional(TerminalShellSchema),
 });
 export type TerminalRestartInput = Schema.Codec.Encoded<typeof TerminalRestartInput>;
 
@@ -350,3 +357,23 @@ export const TerminalError = Schema.Union([
   TerminalResizeError,
 ]);
 export type TerminalError = typeof TerminalError.Type;
+
+/** A discoverable shell the host exposes for opening terminals. `executable`
+ * is passed back to `TerminalOpenInput.shell`. */
+export const TerminalDescribedShell = Schema.Struct({
+  /** Stable identifier used for selection in the UI (e.g. "cmd", "powershell"). */
+  id: TrimmedNonEmptyStringSchema,
+  /** Human-readable label (e.g. "Command Prompt"). */
+  label: TrimmedNonEmptyStringSchema,
+  /** Executable path or command name handed to the PTY spawn. */
+  executable: TerminalShellSchema,
+});
+export type TerminalDescribedShell = typeof TerminalDescribedShell.Type;
+
+export const TerminalListShellsResult = Schema.Struct({
+  /** The default shell the environment opens terminals with. */
+  defaultShell: Schema.optional(TerminalShellSchema),
+  /** All shells detected on the host, ordered by preference. */
+  shells: Schema.Array(TerminalDescribedShell),
+});
+export type TerminalListShellsResult = typeof TerminalListShellsResult.Type;
