@@ -231,6 +231,52 @@ it.layer(hermesAdapterTestLayer)("HermesAdapter (mock ACP agent)", (it) => {
     }),
   );
 
+  it.effect("announces the turn before configuration that can fail", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("hermes-failed-preparation");
+      const wrapperPath = yield* Effect.promise(() => makeMockHermesWrapper());
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (String(event.threadId) === String(threadId)) {
+            runtimeEvents.push(event);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("hermes"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      // The mock rejects model ids it does not advertise, so this turn fails
+      // inside session configuration. It must still have announced itself: a
+      // steer merging into it skips its own turn.started, so a turn that can
+      // settle without ever starting is the regression.
+      yield* Effect.flip(
+        adapter.sendTurn({
+          threadId,
+          input: "configure with a model the agent rejects",
+          attachments: [],
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("hermes"),
+            model: "model-the-mock-never-advertises",
+          },
+        }),
+      );
+
+      const started = runtimeEvents.filter((event) => event.type === "turn.started");
+      assert.lengthOf(started, 1);
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("merges a sendTurn racing session configuration into the in-flight turn", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("hermes-steer-race");

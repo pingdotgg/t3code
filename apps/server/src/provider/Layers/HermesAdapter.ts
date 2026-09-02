@@ -864,15 +864,11 @@ export function makeHermesAdapter(
               ? turnModelSelection.model
               : undefined;
           const model = requestedTurnModel ?? ctx.session.model;
-          yield* applyRequestedSessionConfiguration({
-            runtime: ctx.acp,
-            runtimeMode: ctx.session.runtimeMode,
-            interactionMode: input.interactionMode,
-            modelSelection: model === undefined ? undefined : { model },
-            currentModelId: ctx.session.model,
-            mapError: ({ cause, method }) =>
-              mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
-          });
+          // Captured before the session record below adopts `model`: the
+          // skip-if-match guard must compare against the model the ACP session
+          // is actually on, not the one this turn is about to request.
+          const sessionModelBeforeTurn = ctx.session.model;
+
           if (steeringTurnId === undefined) {
             ctx.lastPlanFingerprint = undefined;
           }
@@ -883,6 +879,10 @@ export function makeHermesAdapter(
             updatedAt: yield* nowIso,
           };
 
+          // Announce the turn before the awaited configuration below. A steer
+          // that merges into this turn skips its own `turn.started`, so if
+          // preparation could fail after the id was published the merged turn
+          // would settle without ever having started.
           if (steeringTurnId === undefined) {
             yield* offerRuntimeEvent({
               type: "turn.started",
@@ -893,6 +893,16 @@ export function makeHermesAdapter(
               payload: model === undefined ? {} : { model },
             });
           }
+
+          yield* applyRequestedSessionConfiguration({
+            runtime: ctx.acp,
+            runtimeMode: ctx.session.runtimeMode,
+            interactionMode: input.interactionMode,
+            modelSelection: model === undefined ? undefined : { model },
+            currentModelId: sessionModelBeforeTurn,
+            mapError: ({ cause, method }) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
+          });
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           if (input.input?.trim()) {
