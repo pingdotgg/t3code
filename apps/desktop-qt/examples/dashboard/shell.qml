@@ -4,11 +4,11 @@ import QtQuick.Layouts
 import T3.Shell
 import T3.Bricks
 
-// Rosé dashboard: an icon rail owns project scope and the app's places, the
-// sidebar is just threads, and a notch of tabs hangs from the top of the
-// page. The Dashboard tab pulls a widget drawer over the page: today and the
-// calendar, the open workspace and its git state, thread meters, and the
-// agent behind the composer.
+// Rosé dashboard: an icon rail owns project scope, the app's places and
+// settings, and the sidebar is just threads. The rail's Dashboard button
+// pulls a widget drawer over the page: today and the calendar, the open
+// workspace and its git state, thread meters, and the agent behind the
+// composer.
 ShellWindow {
     id: root
 
@@ -31,7 +31,6 @@ ShellWindow {
     property date now: new Date()
     readonly property string dayKey: Qt.formatDate(now, "yyyy-MM-dd")
     readonly property var calendarCells: buildCalendar(dayKey)
-    readonly property int tabIndex: drawerOpen ? 0 : settingsActive ? 3 : panel.open ? 2 : 1
 
     readonly property color canvas: Theme.color("canvas", "#f3e6e1")
     readonly property color card: Theme.color("surface", "#fbf1ed")
@@ -162,51 +161,6 @@ ShellWindow {
         ToolTip.visible: hovered && text.length > 0
         ToolTip.delay: 500
         ToolTip.text: text
-    }
-
-    component NotchTab: AbstractButton {
-        id: tab
-
-        property string kind
-        property bool active: false
-
-        implicitWidth: 100
-        implicitHeight: 46
-        hoverEnabled: true
-        activeFocusOnTab: true
-        Accessible.role: Accessible.Button
-        Accessible.name: text
-
-        contentItem: Item {
-            ShellIcon {
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: 7
-                name: tab.kind
-                color: tab.active ? root.accent : tab.hovered ? root.accentDeep : root.muted
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 140
-                    }
-                }
-            }
-
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: 26
-                text: tab.text
-                color: tab.active ? root.accentDeep : tab.hovered ? root.ink : root.muted
-                font.family: Theme.fontUi
-                font.pixelSize: 11
-                font.weight: tab.active ? Font.DemiBold : Font.Medium
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 140
-                    }
-                }
-            }
-        }
     }
 
     // A drawer widget. Cards arrive a beat apart when the drawer opens and
@@ -516,6 +470,17 @@ ShellWindow {
                         text: qsTr("Add project")
                         onClicked: Shell.dispatch("project.add")
                     }
+
+                    RailButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        kind: "settings"
+                        text: qsTr("Settings")
+                        active: root.settingsActive
+                        onClicked: {
+                            root.drawerOpen = false;
+                            Shell.dispatch(root.settingsActive ? "settings.back" : "settings.open");
+                        }
+                    }
                 }
             }
 
@@ -546,7 +511,7 @@ ShellWindow {
                 Layout.fillHeight: true
                 spacing: 12
 
-                // The page, with a band at the top for the notch to hang from.
+                // The page.
                 ShellCard {
                     id: surfaceCard
 
@@ -556,7 +521,6 @@ ShellWindow {
 
                     WebSurface {
                         anchors.fill: parent
-                        anchors.topMargin: 54
                         url: Shell.pageUrl
                     }
 
@@ -585,7 +549,7 @@ ShellWindow {
                         id: drawer
 
                         anchors.top: parent.top
-                        anchors.topMargin: 58
+                        anchors.topMargin: 12
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: Math.min(parent.width - 24, 1040)
                         height: 336
@@ -1087,91 +1051,6 @@ ShellWindow {
                                             onClicked: Shell.dispatch("workspace.openInEditor", {})
                                         }
                                     }
-                                }
-                            }
-                        }
-                    }
-
-                    // The notch: four tabs on a pill hanging from the top edge,
-                    // the active one carried by a sliding plate.
-                    Rectangle {
-                        id: notch
-
-                        readonly property Item activeTab: tabRow.children[root.tabIndex] ?? null
-
-                        anchors.top: parent.top
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: tabRow.width + 12
-                        height: 50
-                        color: root.raised
-                        bottomLeftRadius: 20
-                        bottomRightRadius: 20
-
-                        Rectangle {
-                            x: tabRow.x + (notch.activeTab ? notch.activeTab.x : 0)
-                            y: 4
-                            width: notch.activeTab ? notch.activeTab.width : 0
-                            height: notch.height - 8
-                            radius: 16
-                            color: root.card
-
-                            Behavior on x {
-                                NumberAnimation {
-                                    duration: 260
-                                    easing.type: Easing.OutQuint
-                                }
-                            }
-
-                            Behavior on width {
-                                NumberAnimation {
-                                    duration: 260
-                                    easing.type: Easing.OutQuint
-                                }
-                            }
-                        }
-
-                        Row {
-                            id: tabRow
-
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            NotchTab {
-                                kind: "layout-grid"
-                                text: qsTr("Dashboard")
-                                active: root.tabIndex === 0
-                                onClicked: root.drawerOpen = !root.drawerOpen
-                            }
-
-                            NotchTab {
-                                kind: "message-square"
-                                text: qsTr("Chat")
-                                active: root.tabIndex === 1
-                                onClicked: {
-                                    root.drawerOpen = false;
-                                    if (root.settingsActive) {
-                                        Shell.dispatch("settings.back");
-                                    }
-                                }
-                            }
-
-                            NotchTab {
-                                kind: "file-diff"
-                                text: qsTr("Changes")
-                                active: root.tabIndex === 2
-                                onClicked: {
-                                    root.drawerOpen = false;
-                                    Shell.dispatch("rightPanel.toggle");
-                                }
-                            }
-
-                            NotchTab {
-                                kind: "settings"
-                                text: qsTr("Settings")
-                                active: root.tabIndex === 3
-                                onClicked: {
-                                    root.drawerOpen = false;
-                                    Shell.dispatch("settings.open");
                                 }
                             }
                         }
