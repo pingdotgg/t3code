@@ -593,7 +593,9 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
-      {isPrimaryEnvironment ? <SourceControlWritingSettingsSection /> : null}
+      {/* Its rows are serverScoped: without a primary they render inert with
+          an explanation, which beats disappearing. */}
+      <SourceControlWritingSettingsSection />
     </SettingsPageContainer>
   );
 }
