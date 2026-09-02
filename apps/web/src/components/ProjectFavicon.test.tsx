@@ -128,6 +128,18 @@ describe("ProjectFavicon", () => {
     expect(element.props.colorClassName).toBe("text-cyan-600 dark:text-cyan-400");
   });
 
+  it("renders a deterministic emoji when the emoji pool wins", () => {
+    testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
+
+    const element = ProjectFavicon({
+      environmentId: "environment-test" as EnvironmentId,
+      cwd: "/workspace/agent-runtime",
+      projectName: "agent-runtime",
+    }) as ReactElement<{ readonly emoji?: string }>;
+
+    expect(element.props.emoji).toBe("🤖");
+  });
+
   it("falls back when the displayed favicon fails without discarding a valid older image early", () => {
     const { Component, props } = resolveImageComponent();
     const initialLoadingImage = renderImage(Component, props).props.children[2];

@@ -25,6 +25,10 @@ export const PROJECT_ICON_NAMES = [
 
 export type ProjectIconName = (typeof PROJECT_ICON_NAMES)[number];
 
+export type ProjectIconSelection =
+  | { readonly kind: "lucide"; readonly icon: ProjectIconName }
+  | { readonly kind: "emoji"; readonly icon: ProjectIconName; readonly emoji: string };
+
 interface ProjectIconClass {
   readonly icon: ProjectIconName;
   readonly terms: ReadonlyArray<string>;
@@ -127,7 +131,32 @@ const GENERIC_PROJECT_ICONS: ReadonlyArray<ProjectIconName> = [
   "layers",
 ];
 
-const projectIconCache = new Map<string, ProjectIconName>();
+const PROJECT_ICON_EMOJIS: Record<ProjectIconName, string> = {
+  ai: "🤖",
+  book: "📚",
+  braces: "🧩",
+  circuit: "⚡",
+  cloud: "☁️",
+  code: "💻",
+  database: "🗄️",
+  desktop: "🖥️",
+  "folder-code": "🛠️",
+  game: "🎮",
+  image: "🖼️",
+  layers: "✨",
+  mobile: "📱",
+  music: "🎵",
+  package: "📦",
+  security: "🔒",
+  server: "🖧",
+  shopping: "🛍️",
+  terminal: "⌨️",
+  test: "🧪",
+  video: "🎬",
+  web: "🌐",
+};
+
+const projectIconCache = new Map<string, ProjectIconSelection>();
 
 function projectNameTokens(value: string): ReadonlyArray<string> {
   return value
@@ -152,7 +181,10 @@ function stableIndex(value: string, length: number): number {
   return (hash >>> 0) % length;
 }
 
-export function selectProjectIcon(projectName: string, workspaceRoot: string): ProjectIconName {
+export function selectProjectIcon(
+  projectName: string,
+  workspaceRoot: string,
+): ProjectIconSelection {
   const name = projectName.trim() || workspaceRoot.split(/[\\/]+/).findLast(Boolean) || "project";
   const cacheKey = name.toLowerCase();
   const cachedIcon = projectIconCache.get(cacheKey);
@@ -177,8 +209,12 @@ export function selectProjectIcon(projectName: string, workspaceRoot: string): P
     }
   }
 
-  const icon =
+  const iconName =
     bestIcon ?? GENERIC_PROJECT_ICONS[stableIndex(cacheKey, GENERIC_PROJECT_ICONS.length)]!;
+  const icon: ProjectIconSelection =
+    stableIndex(`${cacheKey}:variant3`, 3) === 0
+      ? { kind: "emoji", icon: iconName, emoji: PROJECT_ICON_EMOJIS[iconName] }
+      : { kind: "lucide", icon: iconName };
   projectIconCache.set(cacheKey, icon);
   return icon;
 }

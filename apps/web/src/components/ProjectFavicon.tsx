@@ -98,10 +98,12 @@ export function ProjectFavicon(input: {
   const automaticIconName = input.fallbackIcon
     ? null
     : selectProjectIcon(input.projectName, input.cwd);
-  const FallbackIcon = input.fallbackIcon ?? PROJECT_ICONS[automaticIconName!];
-  const fallbackColorClassName = automaticIconName
-    ? PROJECT_ICON_COLORS[automaticIconName]
-    : undefined;
+  const FallbackIcon =
+    input.fallbackIcon ??
+    (automaticIconName?.kind === "lucide" ? PROJECT_ICONS[automaticIconName.icon] : undefined);
+  const fallbackEmoji = automaticIconName?.kind === "emoji" ? automaticIconName.emoji : undefined;
+  const fallbackColorClassName =
+    automaticIconName?.kind === "lucide" ? PROJECT_ICON_COLORS[automaticIconName.icon] : undefined;
 
   if (!src || isProjectFaviconFallbackUrl(src)) {
     return (
@@ -109,6 +111,7 @@ export function ProjectFavicon(input: {
         className={input.className}
         colorClassName={fallbackColorClassName}
         icon={FallbackIcon}
+        emoji={fallbackEmoji}
       />
     );
   }
@@ -122,6 +125,7 @@ export function ProjectFavicon(input: {
       src={src}
       className={input.className}
       fallbackIcon={FallbackIcon}
+      fallbackEmoji={fallbackEmoji}
       fallbackColorClassName={fallbackColorClassName}
     />
   );
@@ -143,11 +147,28 @@ function ProjectFaviconFallback({
   className,
   colorClassName,
   icon: Icon,
+  emoji,
 }: {
   readonly className?: string | undefined;
   readonly colorClassName?: string | undefined;
-  readonly icon: ComponentType<{ className?: string }>;
+  readonly icon?: ComponentType<{ className?: string }> | undefined;
+  readonly emoji?: string | undefined;
 }) {
+  if (emoji) {
+    return (
+      <span
+        aria-hidden="true"
+        className={cn(
+          "inline-flex size-3.5 shrink-0 items-center justify-center text-[0.9em] leading-none",
+          className,
+        )}
+      >
+        {emoji}
+      </span>
+    );
+  }
+
+  if (!Icon) return null;
   return <Icon className={cn("size-3.5 shrink-0 text-icon-muted", colorClassName, className)} />;
 }
 
@@ -156,12 +177,14 @@ function ProjectFaviconImage({
   src,
   className,
   fallbackIcon: FallbackIcon,
+  fallbackEmoji,
   fallbackColorClassName,
 }: {
   readonly cacheKey: string;
   readonly src: string;
   readonly className?: string | undefined;
-  readonly fallbackIcon: ComponentType<{ className?: string }>;
+  readonly fallbackIcon?: ComponentType<{ className?: string }> | undefined;
+  readonly fallbackEmoji?: string | undefined;
   readonly fallbackColorClassName?: string | undefined;
 }) {
   const [displayedSrc, setDisplayedSrc] = useState<string | null>(
@@ -182,6 +205,7 @@ function ProjectFaviconImage({
           className={className}
           colorClassName={fallbackColorClassName}
           icon={FallbackIcon}
+          emoji={fallbackEmoji}
         />
       ) : null}
       {displayedSrc ? (

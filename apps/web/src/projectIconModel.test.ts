@@ -12,17 +12,25 @@ describe("selectProjectIcon", () => {
     ["agent-runtime", "ai"],
     ["video-studio", "video"],
   ] as const)("classifies %s as %s", (projectName, expectedIcon) => {
-    expect(selectProjectIcon(projectName, `/workspace/${projectName}`)).toBe(expectedIcon);
+    expect(selectProjectIcon(projectName, `/workspace/${projectName}`).icon).toBe(expectedIcon);
   });
 
   it("uses the workspace directory when the project name is blank", () => {
-    expect(selectProjectIcon("", "C:\\work\\mobile-app")).toBe("mobile");
+    expect(selectProjectIcon("", "C:\\work\\mobile-app").icon).toBe("mobile");
+  });
+
+  it("includes emoji in the deterministic icon pool", () => {
+    expect(selectProjectIcon("agent-runtime", "/workspace/agent-runtime")).toEqual({
+      kind: "emoji",
+      icon: "ai",
+      emoji: "🤖",
+    });
   });
 
   it("gives unknown names a stable generic icon", () => {
     const icon = selectProjectIcon("mercury", "/workspace/mercury");
 
-    expect(PROJECT_ICON_NAMES).toContain(icon);
-    expect(selectProjectIcon("mercury", "/elsewhere/mercury")).toBe(icon);
+    expect(PROJECT_ICON_NAMES).toContain(icon.icon);
+    expect(selectProjectIcon("mercury", "/elsewhere/mercury")).toEqual(icon);
   });
 });
