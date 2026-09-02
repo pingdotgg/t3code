@@ -92,6 +92,7 @@ interface FilePreviewPanelProps {
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
+const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
 const FILE_SAVE_DEBOUNCE_MS = 500;
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const FILE_LINK_REVEAL_UNSAFE_CSS = `
@@ -194,6 +195,69 @@ function WorkspaceImagePreview(props: {
     <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
       <LoaderCircle className="size-5 animate-spin" />
     </div>
+  );
+}
+
+const isPdfPreviewFile = (path: string): boolean => /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
+
+/**
+ * Renders an HTML or PDF file in place from its signed asset URL. HTML runs in
+ * a sandboxed frame with an opaque origin, so a page cannot reach the app's
+ * session or storage. A file inside the workspace may load sibling assets; a
+ * host file outside it is served on its own.
+ */
+function WorkspaceBrowserPreview(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
+  readonly absolutePath: string;
+  readonly workspaceRoot: string;
+  readonly title: string;
+  readonly workspaceMutationId: string | null;
+}) {
+  const insideWorkspace =
+    mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined;
+  const resource = useMemo(
+    () => ({
+      _tag: insideWorkspace ? ("workspace-file" as const) : ("media-file" as const),
+      threadId: props.threadRef.threadId,
+      path: props.absolutePath,
+    }),
+    [insideWorkspace, props.threadRef.threadId, props.absolutePath],
+  );
+  const assetUrl = useAssetUrlState(props.environmentId, resource);
+  const revisionSuffix =
+    props.workspaceMutationId === null
+      ? ""
+      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId)}`;
+
+  if (assetUrl._tag === "Failure") {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
+        Unable to load file preview.
+      </div>
+    );
+  }
+  if (assetUrl._tag !== "Success") {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+        <LoaderCircle className="size-5 animate-spin" />
+      </div>
+    );
+  }
+  const src = `${assetUrl.url}${revisionSuffix}`;
+  const className = "min-h-0 flex-1 border-0 bg-white";
+  // The built-in PDF viewer needs an unsandboxed frame; a PDF runs no scripts.
+  return isPdfPreviewFile(props.absolutePath) ? (
+    // oxlint-disable-next-line react/iframe-missing-sandbox
+    <iframe key={src} src={src} title={props.title} className={className} />
+  ) : (
+    <iframe
+      key={src}
+      src={src}
+      title={props.title}
+      className={className}
+      sandbox="allow-scripts allow-forms allow-popups allow-modals"
+    />
   );
 }
 
@@ -839,6 +903,11 @@ function RenderedMarkdownSurface({
   );
 }
 
+function renderedToggleLabel(isMarkdown: boolean, rendered: boolean): string {
+  if (isMarkdown) return rendered ? "Show markdown source" : "Show rendered markdown";
+  return rendered ? "Show HTML source" : "Show rendered page";
+}
+
 function initialExplorerOpen(): boolean {
   try {
     return getLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, Schema.Boolean) ?? true;
@@ -878,15 +947,23 @@ export default function FilePreviewPanel({
   const isVideo = relativePath !== null && isWorkspaceVideoPreviewPath(relativePath);
   const isImage = relativePath !== null && !isVideo && isWorkspaceImagePreviewPath(relativePath);
   const isMedia = isImage || isVideo;
+  // PDFs have no text to show; HTML has, and can toggle between page and source.
+  const isPdf = relativePath !== null && isPdfPreviewFile(relativePath);
+  const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
   // A file outside the workspace (an absolute path) is shown, never edited.
   const isHostFile = relativePath !== null && isAbsolutePath(relativePath);
-  const file = useProjectFileQuery(environmentId, cwd, relativePath, !isMedia);
+  const file = useProjectFileQuery(environmentId, cwd, relativePath, !isMedia && !isPdf);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   // Reading markdown rendered is a preference, not a property of one file. Keeping
   // it on the panel meant a thread switch dropped it and forced source back.
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
     RENDER_MARKDOWN_STORAGE_KEY,
     false,
+    Schema.Boolean,
+  );
+  const [renderBrowserFilePreferred, setRenderBrowserFilePreferred] = useLocalStorage(
+    RENDER_BROWSER_FILE_STORAGE_KEY,
+    true,
     Schema.Boolean,
   );
   // Paired with the path on purpose: each file surface counts its reveals from
@@ -898,11 +975,16 @@ export default function FilePreviewPanel({
   const breadcrumbRef = useRef<HTMLDivElement>(null);
   const isMarkdown = relativePath ? isMarkdownPreviewFile(relativePath) : false;
   // A reveal still wins over the preference: the line only exists in the source.
-  const renderMarkdown =
-    isMarkdown &&
-    renderMarkdownPreferred &&
-    (revealLine === null ||
-      (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId));
+  const revealHandled =
+    revealLine === null ||
+    (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
+  const renderMarkdown = isMarkdown && renderMarkdownPreferred && revealHandled;
+  const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
+  const canToggleRendered = isMarkdown || isHtml;
+  const rendered = isMarkdown ? renderMarkdown : renderBrowserFile;
+  const setRenderedPreferred = isMarkdown
+    ? setRenderMarkdownPreferred
+    : setRenderBrowserFilePreferred;
   const canOpenInBrowser =
     relativePath !== null &&
     !isVideo &&
@@ -915,7 +997,7 @@ export default function FilePreviewPanel({
   );
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
   useWorkspaceMutationRefresh({
-    enabled: relativePath !== null && !isMedia && !selectedFilePending,
+    enabled: relativePath !== null && !isMedia && !isPdf && !selectedFilePending,
     mutationId: workspaceMutationId,
     refresh: file.refresh,
     resourceKey: `file:${environmentId}:${cwd}:${relativePath ?? ""}`,
@@ -1023,32 +1105,30 @@ export default function FilePreviewPanel({
               enableShortcut={false}
             />
           ) : null}
-          {isMarkdown ? (
+          {canToggleRendered ? (
             <Tooltip>
               <TooltipTrigger
                 render={
                   <Toggle
                     className="shrink-0"
-                    pressed={renderMarkdown}
+                    pressed={rendered}
                     onPressedChange={(pressed) => {
-                      setRenderMarkdownPreferred(pressed);
+                      setRenderedPreferred(pressed);
                       setHandledReveal(
                         pressed && relativePath !== null
                           ? { path: relativePath, requestId: revealRequestId }
                           : null,
                       );
                     }}
-                    aria-label={renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
+                    aria-label={renderedToggleLabel(isMarkdown, rendered)}
                     variant="ghost"
                     size="sm"
                   >
-                    {renderMarkdown ? <Code2 className="size-3.5" /> : <Eye className="size-3.5" />}
+                    {rendered ? <Code2 className="size-3.5" /> : <Eye className="size-3.5" />}
                   </Toggle>
                 }
               />
-              <TooltipPopup>
-                {renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
-              </TooltipPopup>
+              <TooltipPopup>{renderedToggleLabel(isMarkdown, rendered)}</TooltipPopup>
             </Tooltip>
           ) : null}
           {canOpenInBrowser ? (
@@ -1091,7 +1171,7 @@ export default function FilePreviewPanel({
           </Tooltip>
         </div>
       ) : null}
-      {relativePath && !isMedia && file.data?.truncated ? (
+      {relativePath && !isMedia && !renderBrowserFile && file.data?.truncated ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
           Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
         </div>
@@ -1121,6 +1201,16 @@ export default function FilePreviewPanel({
               absolutePath={absolutePath}
               workspaceRoot={cwd}
               alt={relativePath}
+              workspaceMutationId={workspaceMutationId}
+            />
+          ) : relativePath && renderBrowserFile && absolutePath ? (
+            <WorkspaceBrowserPreview
+              key={absolutePath}
+              environmentId={environmentId}
+              threadRef={threadRef}
+              absolutePath={absolutePath}
+              workspaceRoot={cwd}
+              title={relativePath}
               workspaceMutationId={workspaceMutationId}
             />
           ) : relativePath && file.error && file.data === null ? (
@@ -1204,7 +1294,9 @@ export default function FilePreviewPanel({
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}
-              {...(relativePath && !isMedia ? { onRefreshSelectedFile: file.refresh } : {})}
+              {...(relativePath && !isMedia && !isPdf
+                ? { onRefreshSelectedFile: file.refresh }
+                : {})}
             />
           </aside>
         ) : null}
