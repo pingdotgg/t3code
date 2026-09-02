@@ -17,6 +17,7 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
+import { readProviderResumeCursorHistory } from "../providerResumeCursorHistory.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 
@@ -119,6 +120,45 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
           model: "gpt-5-codex",
           activeTurnId: "turn-1",
         });
+      }
+    }));
+
+  it("retains replaced provider resume cursors in runtime history", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.make("thread-resume-history");
+
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        resumeCursor: { threadId: "provider-session-old" },
+        runtimePayload: { cwd: "/tmp/project" },
+      });
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        resumeCursor: { threadId: "provider-session-new" },
+      });
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        resumeCursor: { threadId: "provider-session-new" },
+      });
+
+      const runtime = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        assert.deepEqual(readProviderResumeCursorHistory(runtime.value.runtimePayload), [
+          {
+            providerName: "codex",
+            resumeCursor: { threadId: "provider-session-old" },
+          },
+        ]);
+        assert.equal(
+          (runtime.value.runtimePayload as Record<string, unknown>)["cwd"],
+          "/tmp/project",
+        );
       }
     }));
 

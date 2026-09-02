@@ -297,6 +297,21 @@ describe("runtimeUsageSessionKey", () => {
     );
   });
 
+  it("includes provider sessions replaced by later model switches", () => {
+    assert.deepEqual(
+      UsageService.runtimeUsageSessionKeys(
+        "codex",
+        { threadId: "current-session" },
+        {
+          _t3PreviousResumeCursors: [
+            { providerName: "codex", resumeCursor: { threadId: "previous-session" } },
+          ],
+        },
+      ),
+      ["codex:current-session", "codex:previous-session"],
+    );
+  });
+
   it("ignores providers and cursors without a usage transcript session", () => {
     assert.isNull(UsageService.runtimeUsageSessionKey("opencode", { sessionId: "session" }));
     assert.isNull(UsageService.runtimeUsageSessionKey("grok", { sessionId: "" }));

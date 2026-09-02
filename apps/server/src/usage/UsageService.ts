@@ -46,6 +46,7 @@ import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.t
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { readProviderResumeCursorHistory } from "../provider/providerResumeCursorHistory.ts";
 import { makeProjectResolver, UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -680,12 +681,16 @@ export const make = Effect.gen(function* () {
       .list()
       .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
     for (const runtime of runtimes) {
-      const sessionKey = runtimeUsageSessionKey(runtime.providerName, runtime.resumeCursor);
-      if (sessionKey === null) continue;
-      sessionToThread.set(sessionKey, {
-        threadId: runtime.threadId,
-        title: titles.get(runtime.threadId) ?? runtime.threadId,
-      });
+      for (const sessionKey of runtimeUsageSessionKeys(
+        runtime.providerName,
+        runtime.resumeCursor,
+        runtime.runtimePayload,
+      )) {
+        sessionToThread.set(sessionKey, {
+          threadId: runtime.threadId,
+          title: titles.get(runtime.threadId) ?? runtime.threadId,
+        });
+      }
     }
 
     return { sessionToThread, worktreeToThread };
@@ -878,6 +883,21 @@ export function runtimeUsageSessionKey(providerName: string, cursor: unknown): s
       return null;
   }
   return typeof sessionId === "string" && sessionId.length > 0 ? `${provider}:${sessionId}` : null;
+}
+
+/** Maps current and replaced provider cursors to every transcript session owned by a thread. */
+export function runtimeUsageSessionKeys(
+  providerName: string,
+  cursor: unknown,
+  runtimePayload: unknown | null,
+): readonly string[] {
+  const keys = [
+    runtimeUsageSessionKey(providerName, cursor),
+    ...readProviderResumeCursorHistory(runtimePayload).map((entry) =>
+      runtimeUsageSessionKey(entry.providerName, entry.resumeCursor),
+    ),
+  ];
+  return [...new Set(keys.filter((key): key is string => key !== null))];
 }
 
 export const layer = Layer.effect(UsageService, make);
