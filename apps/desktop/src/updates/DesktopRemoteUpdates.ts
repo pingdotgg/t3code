@@ -27,7 +27,20 @@ const { logInfo, logError } = DesktopObservability.makeComponentLogger("desktop-
 /** Pause before retrying an action the updater refused for a held reservation. */
 const ACTION_RETRY_DELAY = Duration.millis(250);
 const PREPARED_UPDATE_TTL = Duration.minutes(5);
-const MAX_EARLY_CANCELLATIONS = 32;
+
+interface PreparedUpdate {
+  readonly requestId: string;
+  readonly downloadedVersion: string;
+  readonly status: "prepared" | "committing" | "failed";
+  readonly failureReason?: string;
+  readonly expiresAt: number;
+}
+
+type CommitClaim =
+  | { readonly _tag: "invalid" }
+  | { readonly _tag: "failed"; readonly prepared: PreparedUpdate }
+  | { readonly _tag: "committing" }
+  | { readonly _tag: "claimed"; readonly prepared: PreparedUpdate };
 
 /**
  * Server-triggered desktop updates. Mirrors updater state, prepares downloads,
@@ -49,15 +62,7 @@ export const listen: Effect.Effect<
     }>;
     readonly cancelledBeforeStart: ReadonlyArray<string>;
   }>({ active: Option.none(), cancelledBeforeStart: [] });
-  const preparedUpdateRef = yield* Ref.make(
-    Option.none<{
-      readonly requestId: string;
-      readonly downloadedVersion: string;
-      readonly status: "prepared" | "committing" | "failed";
-      readonly failureReason?: string;
-      readonly expiresAt: number;
-    }>(),
-  );
+  const preparedUpdateRef = yield* Ref.make(Option.none<PreparedUpdate>());
 
   const publishReport = (
     state: DesktopUpdateState,
@@ -332,19 +337,20 @@ export const listen: Effect.Effect<
                 (requestId) => requestId !== cancellation.requestId,
               ),
               cancellation.requestId,
-            ].slice(-MAX_EARLY_CANCELLATIONS),
+            ],
           },
         ] as const;
       });
       if (Option.isSome(activeSignal)) {
         yield* Deferred.succeed(activeSignal.value, undefined);
       }
-      const clearedPrepared = yield* Ref.modify(preparedUpdateRef, (prepared) =>
-        Option.isSome(prepared) && prepared.value.requestId === cancellation.requestId
-          ? ([true, Option.none()] as const)
-          : ([false, prepared] as const),
-      );
-      if (clearedPrepared) {
+      const matchedPrepared = yield* Ref.modify(preparedUpdateRef, (prepared) => {
+        if (Option.isNone(prepared) || prepared.value.requestId !== cancellation.requestId) {
+          return [false, prepared] as const;
+        }
+        return [true, prepared.value.status === "prepared" ? Option.none() : prepared] as const;
+      });
+      if (matchedPrepared) {
         yield* Ref.update(requestControlRef, (control) => {
           return {
             ...control,
@@ -359,15 +365,31 @@ export const listen: Effect.Effect<
 
   yield* Stream.runForEach(publisher.updateCommits, (commit) =>
     Effect.gen(function* () {
-      const prepared = yield* Ref.get(preparedUpdateRef);
       const current = yield* updates.getState;
       const now = yield* Clock.currentTimeMillis;
-      if (
-        Option.isNone(prepared) ||
-        prepared.value.requestId !== commit.requestId ||
-        (prepared.value.status === "prepared" && prepared.value.expiresAt <= now) ||
-        current.downloadedVersion !== prepared.value.downloadedVersion
-      ) {
+      const claim = yield* Ref.modify(
+        preparedUpdateRef,
+        (prepared): readonly [CommitClaim, Option.Option<PreparedUpdate>] => {
+          if (
+            Option.isNone(prepared) ||
+            prepared.value.requestId !== commit.requestId ||
+            (prepared.value.status === "prepared" && prepared.value.expiresAt <= now)
+          ) {
+            return [{ _tag: "invalid" as const }, prepared] as const;
+          }
+          if (prepared.value.status === "failed") {
+            return [{ _tag: "failed" as const, prepared: prepared.value }, prepared] as const;
+          }
+          if (prepared.value.status === "committing") {
+            return [{ _tag: "committing" as const }, prepared] as const;
+          }
+          return [
+            { _tag: "claimed" as const, prepared: prepared.value },
+            Option.some({ ...prepared.value, status: "committing" as const }),
+          ] as const;
+        },
+      );
+      if (claim._tag === "invalid") {
         yield* publishReport(
           yield* updates.getState,
           {
@@ -378,25 +400,30 @@ export const listen: Effect.Effect<
         );
         return;
       }
-      if (prepared.value.status === "failed") {
+      if (claim._tag === "failed") {
         yield* publishReport(
           current,
           {
             outcome: "failed",
-            reason: prepared.value.failureReason ?? "The desktop app failed to install the update.",
+            reason: claim.prepared.failureReason ?? "The desktop app failed to install the update.",
           },
           commit.requestId,
         );
         return;
       }
-      if (prepared.value.status === "committing") {
+      if (claim._tag === "committing") {
         return;
       }
       yield* Ref.set(activeRequestIdRef, Option.some(commit.requestId));
-      yield* Ref.set(preparedUpdateRef, Option.some({ ...prepared.value, status: "committing" }));
-      const before = yield* updates.getState;
-      const result = yield* updates.installPrepared(prepared.value.downloadedVersion);
-      if (!result.accepted || result.state !== before) {
+      if (current.downloadedVersion !== claim.prepared.downloadedVersion) {
+        const reason = "This desktop update is no longer prepared.";
+        if (yield* recordPreparedFailure(commit.requestId, reason)) {
+          yield* publishReport(current, { outcome: "failed", reason }, commit.requestId);
+        }
+        return;
+      }
+      const result = yield* updates.installPrepared(claim.prepared.downloadedVersion);
+      if (!result.accepted || result.failed) {
         const reason = result.state.message ?? "The desktop app could not start the install.";
         if (yield* recordPreparedFailure(commit.requestId, reason)) {
           yield* publishReport(result.state, { outcome: "failed", reason }, commit.requestId);

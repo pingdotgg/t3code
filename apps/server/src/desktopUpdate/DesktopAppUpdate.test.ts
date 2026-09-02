@@ -229,6 +229,18 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
         "A desktop app update is already in progress.",
       );
       yield* Fiber.interrupt(first);
+
+      const retry = yield* Effect.forkChild(
+        service.run(() => Effect.void),
+        {
+          startImmediately: true,
+        },
+      );
+      yield* Effect.yieldNow;
+      expect((yield* service.run(() => Effect.void).pipe(Effect.flip)).reason).toBe(
+        "A desktop app update is already in progress.",
+      );
+      yield* Fiber.interrupt(retry);
     }),
   );
 });

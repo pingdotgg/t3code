@@ -218,6 +218,45 @@ describe("DesktopRemoteUpdates", () => {
     );
   });
 
+  it.effect("ignores an unrelated updater event while an install is starting", () => {
+    const stopStarted = Deferred.makeUnsafe<void>();
+    const releaseStop = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({
+      stopBackend: Deferred.succeed(stopStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(releaseStop)),
+      ),
+    });
+
+    return runRemoteUpdatesTest(harness, ({ reports, requests, commits }) =>
+      Effect.gen(function* () {
+        yield* Queue.offer(requests, request("req-late-event"));
+        yield* settle;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* settle;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* settle;
+
+        yield* Queue.offer(commits, {
+          version: 1,
+          type: "commitDesktopUpdate",
+          requestId: "req-late-event",
+        });
+        yield* Deferred.await(stopStarted);
+        harness.emit("download-progress", { percent: 90 });
+        yield* settle;
+        yield* Deferred.succeed(releaseStop, undefined);
+        yield* settle;
+
+        assert.deepEqual(
+          terminalReports(reports)
+            .filter((report) => report.requestId === "req-late-event")
+            .map((report) => report.outcome),
+          ["ready-to-install"],
+        );
+      }),
+    );
+  });
+
   it.effect("retries a download refused while the check still holds the reservation", () => {
     // electron-updater emits update-available from inside checkForUpdates,
     // before the check action releases its reservation. The download the
@@ -426,6 +465,123 @@ describe("DesktopRemoteUpdates", () => {
         yield* Queue.offer(requests, request("req-after-early-cancel"));
         yield* settle;
         assert.equal(harness.checkCount(), 1);
+      }),
+    );
+  });
+
+  it.effect("keeps every queued cancellation until its request starts", () => {
+    const harness = makeHarness();
+
+    return runRemoteUpdatesTest(harness, ({ requests, cancellations }) =>
+      Effect.gen(function* () {
+        for (let index = 0; index < 40; index += 1) {
+          yield* Queue.offer(cancellations, {
+            version: 1,
+            type: "cancelDesktopUpdate",
+            requestId: `req-queued-cancel-${index}`,
+          });
+        }
+        yield* settle;
+        for (let index = 0; index < 40; index += 1) {
+          yield* Queue.offer(requests, request(`req-queued-cancel-${index}`));
+        }
+        yield* settle;
+        assert.equal(harness.checkCount(), 0);
+
+        yield* Queue.offer(requests, request("req-after-queued-cancels"));
+        yield* settle;
+        assert.equal(harness.checkCount(), 1);
+      }),
+    );
+  });
+
+  it.effect("does not install after cancellation wins the commit claim", () => {
+    const harness = makeHarness();
+
+    return runRemoteUpdatesTest(harness, ({ reports, requests, commits, cancellations }) =>
+      Effect.gen(function* () {
+        yield* Queue.offer(requests, request("req-cancel-before-commit"));
+        yield* settle;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* settle;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* settle;
+
+        yield* Queue.offer(cancellations, {
+          version: 1,
+          type: "cancelDesktopUpdate",
+          requestId: "req-cancel-before-commit",
+        });
+        yield* settle;
+        yield* Queue.offer(commits, {
+          version: 1,
+          type: "commitDesktopUpdate",
+          requestId: "req-cancel-before-commit",
+        });
+        yield* settle;
+
+        assert.equal(harness.quitAndInstalls(), 0);
+        assert.deepEqual(
+          terminalReports(reports)
+            .filter((report) => report.requestId === "req-cancel-before-commit")
+            .map((report) => report.outcome),
+          ["ready-to-install", "failed"],
+        );
+      }),
+    );
+  });
+
+  it.effect("retains an install failure after cancellation loses the commit claim", () => {
+    const installStarted = Deferred.makeUnsafe<void>();
+    const releaseInstall = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({
+      quitAndInstall: Deferred.succeed(installStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(releaseInstall)),
+        Effect.andThen(
+          Effect.fail(
+            new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+              channel: "latest",
+              isSilent: true,
+              isForceRunAfter: true,
+              cause: new Error("installer refused"),
+            }),
+          ),
+        ),
+      ),
+    });
+
+    return runRemoteUpdatesTest(harness, ({ reports, requests, commits, cancellations }) =>
+      Effect.gen(function* () {
+        yield* Queue.offer(requests, request("req-cancel-after-commit"));
+        yield* settle;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* settle;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* settle;
+        const commit = {
+          version: 1,
+          type: "commitDesktopUpdate",
+          requestId: "req-cancel-after-commit",
+        } as const;
+        yield* Queue.offer(commits, commit);
+        yield* Deferred.await(installStarted);
+        yield* Queue.offer(cancellations, {
+          version: 1,
+          type: "cancelDesktopUpdate",
+          requestId: "req-cancel-after-commit",
+        });
+        yield* settle;
+        yield* Deferred.succeed(releaseInstall, undefined);
+        yield* settle;
+        yield* Queue.offer(commits, commit);
+        yield* settle;
+
+        assert.deepEqual(
+          terminalReports(reports)
+            .filter((report) => report.requestId === "req-cancel-after-commit")
+            .map((report) => report.outcome),
+          ["ready-to-install", "failed", "failed"],
+        );
       }),
     );
   });

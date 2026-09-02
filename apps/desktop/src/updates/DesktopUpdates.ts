@@ -50,6 +50,10 @@ const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
 
 type UpdateAction = "check" | "download" | "install" | "channel";
 
+interface DesktopPreparedUpdateInstallResult extends DesktopUpdateActionResult {
+  readonly failed: boolean;
+}
+
 const AppUpdateYmlConfig = Schema.Record(Schema.String, Schema.String);
 type AppUpdateYmlConfig = typeof AppUpdateYmlConfig.Type;
 
@@ -176,7 +180,9 @@ export class DesktopUpdates extends Context.Service<
     readonly check: (reason: string) => Effect.Effect<DesktopUpdateCheckResult>;
     readonly download: Effect.Effect<DesktopUpdateActionResult>;
     readonly install: Effect.Effect<DesktopUpdateActionResult>;
-    readonly installPrepared: (expectedVersion: string) => Effect.Effect<DesktopUpdateActionResult>;
+    readonly installPrepared: (
+      expectedVersion: string,
+    ) => Effect.Effect<DesktopPreparedUpdateInstallResult>;
   }
 >()("@t3tools/desktop/updates/DesktopUpdates") {}
 
@@ -524,7 +530,7 @@ export const make = Effect.gen(function* () {
         }),
       );
       if (!admitted) {
-        return { accepted: false, completed: false };
+        return { accepted: false, completed: false, failed: false };
       }
 
       yield* Ref.set(desktopState.quitting, true);
@@ -547,7 +553,7 @@ export const make = Effect.gen(function* () {
           isSilent: true,
           isForceRunAfter: true,
         });
-        return { accepted: true, completed: false };
+        return { accepted: true, completed: false, failed: false };
       }).pipe(
         Effect.catchTags({
           ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
@@ -559,7 +565,7 @@ export const make = Effect.gen(function* () {
                 isSilent: error.isSilent,
                 isForceRunAfter: error.isForceRunAfter,
               });
-              return { accepted: true, completed: false };
+              return { accepted: true, completed: false, failed: true };
             },
           ),
         }),
@@ -575,7 +581,7 @@ export const make = Effect.gen(function* () {
               errorTag: error._tag,
               action: error.action,
             });
-            return { accepted: true, completed: false };
+            return { accepted: true, completed: false, failed: true };
           }),
         ),
       );
@@ -587,6 +593,7 @@ export const make = Effect.gen(function* () {
         return {
           accepted: false,
           completed: false,
+          failed: false,
           state: yield* Ref.get(updateStateRef),
         };
       }
@@ -594,6 +601,7 @@ export const make = Effect.gen(function* () {
       return {
         accepted: result.accepted,
         completed: result.completed,
+        failed: result.failed,
         state: yield* Ref.get(updateStateRef),
       };
     }).pipe(Effect.withSpan("desktop.updates.install"));
@@ -921,7 +929,9 @@ export const make = Effect.gen(function* () {
         state: yield* Ref.get(updateStateRef),
       };
     }).pipe(Effect.withSpan("desktop.updates.download")),
-    install: installWithExpectedVersion(),
+    install: installWithExpectedVersion().pipe(
+      Effect.map(({ accepted, completed, state }) => ({ accepted, completed, state })),
+    ),
     installPrepared: (expectedVersion) => installWithExpectedVersion(expectedVersion),
   });
 });
