@@ -143,7 +143,9 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
         expiry > 0 ? Math.floor(expiry) + APPLE_EPOCH_OFFSET_SECONDS : undefined;
 
       cookies.push({
-        url: `${secure ? "https" : "http"}://${host}${path || "/"}`,
+        // A bare IPv6 host is invalid in a URL authority, so bracket it the
+        // way the Chromium reader's cookieScope does.
+        url: `${secure ? "https" : "http"}://${host.includes(":") ? `[${host}]` : host}${path || "/"}`,
         name,
         value,
         domain,

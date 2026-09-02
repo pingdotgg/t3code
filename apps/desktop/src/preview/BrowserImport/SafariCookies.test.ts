@@ -130,6 +130,17 @@ describe("parseBinaryCookies", () => {
     ]);
   });
 
+  it("brackets IPv6 hosts in the cookie URL", () => {
+    const file = encodeBinaryCookies([
+      { domain: "::1", name: "local", path: "/", value: "v", flags: 0, expiry: 0 },
+    ]);
+
+    expect(parseBinaryCookies(file)[0]).toMatchObject({
+      url: "http://[::1]/",
+      domain: "::1",
+    });
+  });
+
   it("reads cookies spread across multiple pages", () => {
     // Safari pages its cookie file, and a single-page reader would silently
     // return only the first slice.
