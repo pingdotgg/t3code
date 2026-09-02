@@ -149,6 +149,8 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         )
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory);
   },
+  loadOpenCodeSkills: () => Effect.succeed([]),
+  loadSkillsFromCli: () => Effect.succeed([]),
 };
 
 beforeEach(() => {
