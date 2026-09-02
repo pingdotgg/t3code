@@ -163,6 +163,43 @@ describe("DesktopRemoteUpdates", () => {
     );
   });
 
+  it.effect("joins an in-progress install on commit instead of failing the token", () => {
+    const harness = makeHarness();
+
+    return runRemoteUpdatesTest(harness, ({ reports, requests, commits }) =>
+      Effect.gen(function* () {
+        const desktopState = yield* DesktopState.DesktopState;
+        yield* Queue.offer(requests, request("req-join-commit"));
+        yield* settle;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* settle;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* settle;
+        assert.deepEqual(
+          terminalReports(reports).map((report) => report.outcome),
+          ["ready-to-install"],
+        );
+
+        // Another install (local click) took the shutdown first.
+        yield* Ref.set(desktopState.quitting, true);
+        yield* Queue.offer(commits, {
+          version: 1,
+          type: "commitDesktopUpdate",
+          requestId: "req-join-commit",
+        });
+        yield* settle;
+
+        // No "failed" marker: that install relaunches the app and the
+        // client proves the handoff by reconnecting on the target version.
+        assert.deepEqual(
+          terminalReports(reports).map((report) => report.outcome),
+          ["ready-to-install"],
+        );
+        assert.equal(harness.quitAndInstalls(), 0);
+      }),
+    );
+  });
+
   it.effect("does not misread a lingering install error as a failed retry", () => {
     let installAttempts = 0;
     const harness = makeHarness({

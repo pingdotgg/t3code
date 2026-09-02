@@ -14,6 +14,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import {
@@ -50,9 +51,13 @@ type CommitClaim =
 export const listen: Effect.Effect<
   void,
   never,
-  DesktopUpdates.DesktopUpdates | DesktopTelemetryPublisher.DesktopTelemetryPublisher | Scope.Scope
+  | DesktopUpdates.DesktopUpdates
+  | DesktopTelemetryPublisher.DesktopTelemetryPublisher
+  | DesktopState.DesktopState
+  | Scope.Scope
 > = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
+  const desktopState = yield* DesktopState.DesktopState;
   const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
   const activeRequestIdRef = yield* Ref.make(Option.none<string>());
   const requestControlRef = yield* Ref.make<{
@@ -423,6 +428,17 @@ export const listen: Effect.Effect<
         return;
       }
       const result = yield* updates.installPrepared(claim.prepared.downloadedVersion);
+      if (!result.accepted && (yield* Ref.get(desktopState.quitting))) {
+        // Another install (local, or an earlier remote request) already owns
+        // the shutdown and will relaunch the app on the same downloaded
+        // version. This commit joins it: no failure marker, and the client
+        // proves the handoff the same way, by transport loss then the
+        // target version on reconnect.
+        yield* logInfo("remote update commit joining an in-progress install", {
+          requestId: commit.requestId,
+        });
+        return;
+      }
       if (!result.accepted || result.failed) {
         const reason = result.state.message ?? "The desktop app could not start the install.";
         if (yield* recordPreparedFailure(commit.requestId, reason)) {
