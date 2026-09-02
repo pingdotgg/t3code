@@ -13,6 +13,7 @@ Rectangle {
     readonly property bool ready: model !== null
     readonly property color foreground: Theme.color("text", "#e4e4e7")
     readonly property color muted: Theme.color("textMuted", "#8b8b93")
+    readonly property color projectColor: Theme.color("projectForeground", muted)
     readonly property color iconMuted: Theme.color("iconMuted", "#8b8b93")
     readonly property var preferredScript: {
         if (!ready || model.scripts.length === 0) {
@@ -91,7 +92,7 @@ Rectangle {
                 Layout.maximumWidth: Math.min(implicitWidth, 160)
                 visible: strip.ready && strip.model.projectTitle !== null
                 text: strip.ready ? (strip.model.projectTitle ?? "") : ""
-                color: projectHover.hovered ? strip.foreground : strip.muted
+                color: projectHover.hovered ? strip.foreground : strip.projectColor
                 font.pixelSize: 14
                 font.weight: Font.Medium
                 font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family

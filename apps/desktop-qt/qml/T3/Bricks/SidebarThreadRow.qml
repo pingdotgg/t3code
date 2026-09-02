@@ -20,8 +20,8 @@ Item {
     readonly property color secondaryColor: Theme.color("secondaryLabel", "#8b8b93")
     // Themes may colour the project and branch lines and mark the active
     // row with a bar; without those roles the row stays monochrome.
-    readonly property color projectColor: Theme.color("sidebarProjectForeground", secondaryColor)
-    readonly property color branchColor: Theme.color("sidebarBranchForeground", secondaryColor)
+    readonly property color projectColor: Theme.color("projectForeground", secondaryColor)
+    readonly property color branchColor: Theme.color("branchForeground", secondaryColor)
     readonly property color indicatorColor: Theme.color("sidebarActiveIndicator", "transparent")
     readonly property string statusIcon: {
         switch (item.status) {

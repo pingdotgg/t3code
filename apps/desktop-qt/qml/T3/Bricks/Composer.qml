@@ -25,6 +25,7 @@ Rectangle {
     readonly property color muted: Theme.color("textMuted", "#8b8b93")
     readonly property color secondary: Theme.color("secondaryLabel", "#a1a1aa")
     readonly property color iconMuted: Theme.color("iconMuted", "#8b8b93")
+    readonly property color branchColor: Theme.color("branchForeground", Qt.alpha(muted, 0.7))
     readonly property var modelChoices: buildModelChoices(ready ? model.instances : [])
     readonly property var effortOption: ready ? (model.options.find(option => option.type === "select") ?? null) : null
     readonly property int maximumCardWidth: 768
@@ -667,7 +668,7 @@ Rectangle {
                     iconName: "git-branch"
                     iconSize: 12
                     iconTint: Qt.alpha(composer.iconMuted, 0.7)
-                    tint: branchButton.hovered ? Qt.alpha(composer.foreground, 0.8) : Qt.alpha(composer.muted, 0.7)
+                    tint: branchButton.hovered ? Qt.alpha(composer.foreground, 0.8) : composer.branchColor
                     chevron: contextStrip.wsReady && contextStrip.ws.branchChangeable
                     chevronSize: 12
                     font.pixelSize: 12

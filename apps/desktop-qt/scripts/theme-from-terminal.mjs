@@ -140,6 +140,11 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
   const yellow = slot(3, slot(11, "#e0af68"));
   const green = slot(2, slot(10, "#9ece6a"));
   const magenta = slot(5, slot(13, accent));
+  // Terminals draw bold in the bright-white slot; when it outshines the
+  // foreground it is the ink for titles and body text, and the foreground
+  // becomes the label tier a step behind it.
+  const brightWhite = slot(15, null);
+  const ink = brightWhite && contrast(brightWhite, bg) > contrast(fg, bg) ? brightWhite : fg;
   const cyan = slot(6, slot(14, accent));
   // A bright black too close to the background (default xterm) or to the
   // foreground (a light palette with a grey slot) is no use as a tint.
@@ -150,16 +155,24 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
       : mix(bg, fg, 0.5);
   const raise = (t) => mix(bg, tone, t);
   const tint = (t) => mix(bg, accent, t);
-  const onColor = (color) => (contrast(color, bg) >= 3 ? bg : fg);
-  const dimmer = (color) => (dark ? mix(color, fg, 0.15) : mix(color, "#000000", 0.35));
+  const onColor = (color) => (contrast(color, bg) >= 3 ? bg : ink);
+  const dimmer = (color) => (dark ? mix(color, ink, 0.15) : mix(color, "#000000", 0.35));
   const chrome = dark ? mix(bg, "#000000", 0.22) : mix(bg, "#000000", 0.04);
-  // Comment grey: the bright black lifted toward the foreground until it
-  // reads at 12px. Secondary labels use the palette's normal white, the
-  // colour a terminal already uses for text that should sit a step back
-  // from the foreground, as long as it is a distinct, readable slot.
-  const muted = tone === brightBlack ? mix(tone, fg, 0.32) : mix(bg, fg, 0.55);
+  // Labels: the foreground when the ink is the bright slot, else the
+  // palette's normal white (the colour a terminal already uses for text a
+  // step back from the foreground) when it is distinct and readable, else
+  // a mix. Muted is the comment grey lifted toward the ink until it reads
+  // at 12px, kept a step below the label.
   const white = slot(7, null);
-  const label = white && white !== fg && contrast(white, chrome) >= 4.5 ? white : mix(fg, bg, 0.25);
+  const label =
+    fg !== ink
+      ? fg
+      : white && white !== fg && contrast(white, chrome) >= 4.5
+        ? white
+        : mix(ink, bg, 0.25);
+  // Muted never outshines the label tier, however bright the comment grey.
+  const lifted = tone === brightBlack ? mix(tone, ink, 0.4) : mix(bg, ink, 0.55);
+  const muted = contrast(lifted, bg) < contrast(label, bg) ? lifted : mix(tone, label, 0.5);
   const border = raise(0.9);
   // The page's actions, bubbles and code carry the palette too: primary
   // actions in the accent, secondary controls, chips and the user's own
@@ -168,15 +181,15 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
     canvas: bg,
     chrome,
     toolbar: chrome,
-    toolbarForeground: fg,
+    toolbarForeground: ink,
     toolbarBorder: border,
     toolbarControl: tint(0.3),
-    toolbarControlForeground: fg,
+    toolbarControlForeground: ink,
     toolbarControlHover: tint(0.5),
     surface: raise(0.25),
     surfaceRaised: raise(0.4),
     surfaceOverlay: raise(0.32),
-    text: fg,
+    text: ink,
     textMuted: muted,
     border,
     input: raise(0.75),
@@ -184,7 +197,7 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
     accent,
     accentForeground: onColor(accent),
     secondary: tint(0.3),
-    secondaryForeground: fg,
+    secondaryForeground: ink,
     muted: tint(0.25),
     mutedForeground: muted,
     placeholder: muted,
@@ -202,16 +215,16 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
     updateForeground: dimmer(slot(10, green)),
     updateSurface: mix(bg, green, 0.22),
     accentSurface: tint(0.34),
-    accentSurfaceForeground: fg,
+    accentSurfaceForeground: ink,
     messageSurface: tint(0.28),
-    messageForeground: fg,
+    messageForeground: ink,
     messageAction: accent,
     messageActionForeground: onColor(accent),
     messageActionHover: mix(accent, fg, 0.15),
     codeBackground: chrome,
-    codeForeground: fg,
+    codeForeground: ink,
     sidebar: chrome,
-    sidebarForeground: fg,
+    sidebarForeground: ink,
     sidebarMutedForeground: label,
     sidebarControlSurface: raise(0.4),
     sidebarRowHover: raise(0.35),
@@ -220,8 +233,8 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
     sidebarBorder: border,
     // The palette's own colours where the sidebar carries meaning: the
     // project folder, the git branch, and the bar marking the open thread.
-    sidebarProjectForeground: accent,
-    sidebarBranchForeground: magenta,
+    projectForeground: accent,
+    branchForeground: magenta,
     sidebarActiveIndicator: accent,
     terminalBackground: bg,
     terminalForeground: fg,
