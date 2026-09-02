@@ -55,6 +55,15 @@ vi.mock("@legendapp/list/react", async () => {
             layout?: boolean;
           };
         };
+    maintainVisibleContentPosition?:
+      | boolean
+      | {
+          data?: boolean;
+          size?: boolean;
+          shouldRestorePosition?: boolean;
+        };
+    className?: string;
+    contentInsetEndAdjustment?: number;
     ref?: Ref<LegendListRef>;
   }) => {
     if (props.anchoredEndSpace) {
@@ -64,7 +73,32 @@ vi.mock("@legendapp/list/react", async () => {
     return (
       <div
         data-testid={legendListTestId}
+        data-class-name={props.className}
         data-anchor-index={props.anchoredEndSpace?.anchorIndex}
+        data-anchor-max-size={props.anchoredEndSpace?.anchorMaxSize}
+        data-anchor-offset={props.anchoredEndSpace?.anchorOffset}
+        data-anchor-on-ready={Boolean(props.anchoredEndSpace?.onReady)}
+        data-content-inset-end={props.contentInsetEndAdjustment}
+        data-maintain-visible-content-position={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? "object"
+            : props.maintainVisibleContentPosition
+        }
+        data-maintain-visible-content-position-data={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? props.maintainVisibleContentPosition.data
+            : undefined
+        }
+        data-maintain-visible-content-position-size={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? props.maintainVisibleContentPosition.size
+            : undefined
+        }
+        data-maintain-visible-content-position-restore={
+          typeof props.maintainVisibleContentPosition === "object"
+            ? Boolean(props.maintainVisibleContentPosition.shouldRestorePosition)
+            : undefined
+        }
         data-maintain-scroll-at-end={props.maintainScrollAtEnd ? "enabled" : undefined}
         data-maintain-scroll-at-end-animated={
           typeof props.maintainScrollAtEnd === "object"
@@ -84,26 +118,6 @@ vi.mock("@legendapp/list/react", async () => {
         data-maintain-scroll-at-end-layout={
           typeof props.maintainScrollAtEnd === "object"
             ? props.maintainScrollAtEnd.on?.layout
-            : undefined
-        }
-        data-maintain-visible-content-position={
-          typeof props.maintainVisibleContentPosition === "object"
-            ? "object"
-            : props.maintainVisibleContentPosition
-        }
-        data-maintain-visible-content-position-data={
-          typeof props.maintainVisibleContentPosition === "object"
-            ? props.maintainVisibleContentPosition.data
-            : undefined
-        }
-        data-maintain-visible-content-position-size={
-          typeof props.maintainVisibleContentPosition === "object"
-            ? props.maintainVisibleContentPosition.size
-            : undefined
-        }
-        data-maintain-visible-content-position-restore={
-          typeof props.maintainVisibleContentPosition === "object"
-            ? Boolean(props.maintainVisibleContentPosition.shouldRestorePosition)
             : undefined
         }
       >
@@ -625,7 +639,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain('data-anchor-index="1"');
-    expect(markup).toContain('data-anchor-offset="16"');
+    expect(markup).toContain('data-anchor-offset="24"');
     expect(markup).toContain('data-anchor-on-ready="true"');
     expect(markup).not.toContain("data-anchor-max-size=");
     expect(markup).toContain('data-content-inset-end="144"');

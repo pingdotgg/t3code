@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import * as DateTime from "effect/DateTime";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
