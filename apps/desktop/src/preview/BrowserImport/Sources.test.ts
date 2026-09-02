@@ -19,6 +19,7 @@ import {
   chromiumProcessIsAlive,
   chromiumSingletonLockIsHeld,
   cookieDatabaseCandidatePaths,
+  firefoxSymlinkLockIsHeld,
   resolveCookieDatabase,
   isSourceInstalled,
   isSourceRunning,
@@ -499,10 +500,31 @@ describe("isSourceRunning for Firefox", () => {
         yield* fileSystem.writeFileString(`${root}/lock`, "");
         assert.isFalse(yield* isSourceRunning(firefox, context));
 
+        // `.parentlock` is deliberately left on disk after a clean exit as a
+        // last-used marker, so it is not evidence of a running browser —
+        // treating it as one blocked every import after first use.
         yield* fileSystem.writeFileString(`${profile}/.parentlock`, "");
+        assert.isFalse(yield* isSourceRunning(firefox, context));
+
+        // The `lock` symlink is what Firefox removes on exit; a live pid in
+        // its target means the profile is held.
+        yield* fileSystem.symlink(`127.0.0.1:+${process.pid}`, `${profile}/lock`);
         assert.isTrue(yield* isSourceRunning(firefox, context));
       }),
     ),
+  );
+
+  it.effect("reads a Firefox lock symlink's pid to tell live from crashed", () =>
+    Effect.gen(function* () {
+      const alive = (pid: number) => Effect.succeed(pid === 4242);
+      // Both the plain and the fcntl-marked (`+`) forms carry the pid.
+      assert.isTrue(yield* firefoxSymlinkLockIsHeld("127.0.0.1:4242", alive));
+      assert.isTrue(yield* firefoxSymlinkLockIsHeld("127.0.0.1:+4242", alive));
+      // A crash leaves the symlink behind with a dead pid.
+      assert.isFalse(yield* firefoxSymlinkLockIsHeld("127.0.0.1:+9999", alive));
+      // Anything unparseable stays conservative.
+      assert.isTrue(yield* firefoxSymlinkLockIsHeld("garbage", alive));
+    }),
   );
 });
 

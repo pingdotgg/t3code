@@ -24,6 +24,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -402,12 +403,9 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
       .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
     const found = yield* Effect.forEach(entries, (entry) => {
       const directory = context.platform === "linux" ? entry : context.path.join("Profiles", entry);
-      const database = cookieDatabasePath(definition, context, directory);
-      return database === undefined
-        ? Effect.succeed(undefined)
-        : databaseFileExists(database).pipe(
-            Effect.map((exists) => (exists ? { directory, name: entry } : undefined)),
-          );
+      return resolveCookieDatabase(definition, context, directory).pipe(
+        Effect.map((database) => (database === undefined ? undefined : { directory, name: entry })),
+      );
     });
     return yield* withCookieCounts(
       definition,
@@ -509,7 +507,77 @@ export const chromiumSingletonLockIsHeld = Effect.fnUntraced(function* (
   return yield* isProcessAlive(pid);
 });
 
-const FIREFOX_LOCK_NAMES = ["lock", ".parentlock", "parent.lock"] as const;
+/** Windows sharing and lock violations are translated by libuv to `Busy`. */
+export const isWindowsLockHeldError = (error: PlatformError.PlatformError): boolean =>
+  error.reason._tag === "Busy";
+
+/**
+ * Whether a regular lock file is actually held by a running process. Windows
+ * `parent.lock` is opened with no sharing, so it persists on disk after the
+ * process exits and `stat` always succeeds; only trying to open it for write
+ * reveals an active holder, which surfaces as `Busy`.
+ */
+const isLockHeld = Effect.fnUntraced(function* (lockPath: string, platform: NodeJS.Platform) {
+  if (platform !== "win32") return yield* entryExists(lockPath);
+  // Permission failures are distinct: they do not prove a browser owns the
+  // lock, so they must not hide the source as running.
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.open(lockPath, { flag: "r+" }).pipe(
+    Effect.as(false),
+    Effect.catchIf(isWindowsLockHeldError, () => Effect.succeed(true)),
+    Effect.orElseSucceed(() => false),
+    Effect.scoped,
+  );
+});
+
+/**
+ * Whether a Firefox `lock` symlink's `<ip>:[+]<pid>` target still names a
+ * live owner. Firefox writes this symlink beside the profile while it runs and
+ * unlinks it on a clean exit, so a dangling one is either live or a crash.
+ */
+export const firefoxSymlinkLockIsHeld = Effect.fnUntraced(function* (
+  target: string,
+  isProcessAlive: ProcessLivenessProbe,
+) {
+  const separator = target.lastIndexOf(":");
+  if (separator < 0) return true;
+  // A `+` marks an fcntl-holding owner; the pid follows either way.
+  const pidText = target.slice(separator + 1).replace(/^\+/, "");
+  if (!/^\d+$/.test(pidText)) return true;
+  const pid = Number(pidText);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
+  return yield* isProcessAlive(pid);
+});
+
+/**
+ * Whether Firefox holds a profile.
+ *
+ * Firefox leaves two kinds of lock behind, and they mean different things.
+ * On Linux the `lock` symlink (target `<ip>:+<pid>`) is removed on a clean
+ * exit, so its presence is evidence — provided the pid it names is alive. But
+ * `.parentlock` (macOS/Linux) and `parent.lock` (Windows) are regular files
+ * held with fcntl or a Windows handle and are *deliberately left on disk*
+ * after exit, as a last-used marker. Treating those as proof of a running
+ * browser blocks every import after Firefox has been used once. Node exposes
+ * no fcntl probe, so on POSIX those files carry no signal here; on Windows the
+ * held handle denies our open, which `isLockHeld` reads as `Busy`.
+ */
+const firefoxProfileIsHeld = Effect.fnUntraced(function* (
+  directory: string,
+  context: BrowserImportPathContext,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  if (context.platform === "win32") {
+    return yield* isLockHeld(context.path.join(directory, "parent.lock"), context.platform);
+  }
+  return yield* fileSystem.readLink(context.path.join(directory, "lock")).pipe(
+    Effect.flatMap((target) => firefoxSymlinkLockIsHeld(target, processIsAlive)),
+    // No symlink (clean exit or macOS, which uses fcntl only) means not held;
+    // a `lock` that is a plain file rather than a symlink is not Firefox's.
+    Effect.orElseSucceed(() => false),
+  );
+});
+
 /** Whether the browser is running, which leaves its cookie DB mid-write. */
 export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")(function* (
   definition: BrowserImportSourceDefinition,
@@ -534,9 +602,7 @@ export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")
     const directory = context.path.isAbsolute(profile.directory)
       ? profile.directory
       : context.path.join(root, profile.directory);
-    return Effect.forEach(FIREFOX_LOCK_NAMES, (lock) =>
-      entryExists(context.path.join(directory, lock)),
-    ).pipe(Effect.map((results) => results.some(Boolean)));
+    return firefoxProfileIsHeld(directory, context);
   });
   return found.some(Boolean);
 });
