@@ -590,7 +590,10 @@ export function PreviewView({
             stackedThreadToast({
               type: "error",
               title: "Could not capture the picked element",
-              description: "Send again without it.",
+              description:
+                submission === "send"
+                  ? "The message was sent without the screenshot."
+                  : "The annotation was added without the screenshot.",
             }),
           );
         }
