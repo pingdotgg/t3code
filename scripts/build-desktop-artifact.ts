@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Node's typed junction API avoids Windows symlink privileges while keeping the probe isolated.
 
 import * as NodeFSP from "node:fs/promises";
+import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
 
 import {
@@ -286,6 +287,125 @@ export class BuildCommandFailedError extends Schema.TaggedErrorClass<BuildComman
   }
 }
 
+export const LINUX_DESKTOP_BUILD_PREREQUISITES = [
+  { id: "cargo", description: "Rust compiler and Cargo", packages: ["cargo", "rustc"] },
+  { id: "rust-target", description: "Requested Rust standard library", packages: [] },
+  { id: "cc", description: "C/C++ build toolchain", packages: ["build-essential"] },
+  { id: "make", description: "Make", packages: ["build-essential"] },
+  { id: "imagemagick", description: "ImageMagick", packages: ["imagemagick"] },
+] as const;
+
+export class LinuxDesktopBuildPrerequisitesMissingError extends Schema.TaggedErrorClass<LinuxDesktopBuildPrerequisitesMissingError>()(
+  "LinuxDesktopBuildPrerequisitesMissingError",
+  {
+    missing: Schema.Array(Schema.String),
+    rustTarget: Schema.String,
+  },
+) {
+  override get message(): string {
+    const missingRequirements = LINUX_DESKTOP_BUILD_PREREQUISITES.filter((requirement) =>
+      this.missing.includes(requirement.id),
+    );
+    const details = missingRequirements
+      .map((requirement) =>
+        requirement.packages.length > 0
+          ? `  - ${requirement.description} (${requirement.packages.join(", ")})`
+          : `  - ${requirement.description}`,
+      )
+      .join("\n");
+    const packages = [
+      ...new Set(missingRequirements.flatMap((requirement) => requirement.packages)),
+    ];
+    return [
+      "Linux desktop build prerequisites are missing:",
+      details,
+      "",
+      ...(packages.length > 0
+        ? ["On Ubuntu/Debian, install them with:", `  sudo apt-get install ${packages.join(" ")}`]
+        : []),
+      ...(this.missing.includes("rust-target")
+        ? ["Add the requested Rust target with:", `  rustup target add ${this.rustTarget}`]
+        : []),
+      "",
+      "For other distributions, see docs/internals/scripts.md#linux-appimage-prerequisites.",
+      "Then rerun `vp run dist:desktop:linux`.",
+    ].join("\n");
+  }
+}
+
+const MAC_DESKTOP_BUILD_PREREQUISITES = [
+  { id: "rust", description: "Rust/Cargo and the requested Rust target" },
+  { id: "clang", description: "Xcode Command Line Tools (clang)" },
+  { id: "make", description: "Xcode Command Line Tools (make)" },
+  { id: "sips", description: "macOS image tool (sips)" },
+  { id: "iconutil", description: "macOS icon tool (iconutil)" },
+  { id: "lipo", description: "Xcode universal-binary tool (lipo)" },
+] as const;
+
+export class MacDesktopBuildPrerequisitesMissingError extends Schema.TaggedErrorClass<MacDesktopBuildPrerequisitesMissingError>()(
+  "MacDesktopBuildPrerequisitesMissingError",
+  {
+    missing: Schema.Array(Schema.String),
+    rustTargets: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
+    const details = MAC_DESKTOP_BUILD_PREREQUISITES.filter((requirement) =>
+      this.missing.includes(requirement.id),
+    )
+      .map((requirement) => `  - ${requirement.description}`)
+      .join("\n");
+    return [
+      "macOS desktop build prerequisites are missing:",
+      details,
+      "",
+      "Install Apple's build tools with:",
+      "  xcode-select --install",
+      "Install Rust from https://rustup.rs, then add the requested target(s):",
+      `  rustup target add ${this.rustTargets.join(" ")}`,
+      "",
+      "Then rerun the desktop artifact command.",
+    ].join("\n");
+  }
+}
+
+const WINDOWS_DESKTOP_BUILD_PREREQUISITES = [
+  { id: "rust", description: "Rust/Cargo and the requested MSVC Rust target" },
+  { id: "python", description: "Python 3 for node-gyp" },
+  {
+    id: "msvc",
+    description: "Visual Studio Build Tools with C++, Windows SDK, and Spectre libraries",
+  },
+  { id: "tar", description: "tar for the bundled WSL runtime" },
+] as const;
+
+export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedErrorClass<WindowsDesktopBuildPrerequisitesMissingError>()(
+  "WindowsDesktopBuildPrerequisitesMissingError",
+  {
+    missing: Schema.Array(Schema.String),
+    rustTarget: Schema.String,
+  },
+) {
+  override get message(): string {
+    const details = WINDOWS_DESKTOP_BUILD_PREREQUISITES.filter((requirement) =>
+      this.missing.includes(requirement.id),
+    )
+      .map((requirement) => `  - ${requirement.description}`)
+      .join("\n");
+    return [
+      "Windows desktop build prerequisites are missing:",
+      details,
+      "",
+      "Install Rust from https://rustup.rs and add the requested target:",
+      `  rustup target add ${this.rustTarget}`,
+      "Install Python 3 and the Visual Studio Build Tools components listed in",
+      "docs/internals/scripts.md#windows-installer-prerequisites.",
+      "",
+      "Then rerun the desktop artifact command.",
+    ].join("\n");
+  }
+}
+
 export class ResourceMonitorBuildOutputMissingError extends Schema.TaggedErrorClass<ResourceMonitorBuildOutputMissingError>()(
   "ResourceMonitorBuildOutputMissingError",
   {
@@ -560,6 +680,8 @@ const WindowsPackagedPayloadValidationReason = Schema.Literals([
   "sidecar-invalid",
   "unpacked-native-missing",
   "resource-monitor-missing",
+  "wsl-runtime-missing",
+  "wsl-runtime-invalid",
   "file-limit-exceeded",
 ]);
 
@@ -583,6 +705,12 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedErrorCla
     }
     if (this.reason === "resource-monitor-missing") {
       return "Windows packaged payload is missing the resource monitor executable.";
+    }
+    if (this.reason === "wsl-runtime-missing") {
+      return "Windows packaged payload is missing the WSL runtime archive or SHA-256 sidecar.";
+    }
+    if (this.reason === "wsl-runtime-invalid") {
+      return "Windows packaged payload contains an invalid WSL runtime archive.";
     }
     if (this.reason === "sidecar-invalid") {
       return "Windows packaged payload contains an invalid server.asar sidecar.";
@@ -712,8 +840,18 @@ const resolvePythonForNodeGyp = Effect.fn("resolvePythonForNodeGyp")(function* (
     ),
     localAppData: Config.string("LOCALAPPDATA").pipe(Config.option),
   });
+  const isPython3 = (candidate: string) =>
+    spawnAndCollectOutput(
+      ChildProcess.make(candidate, [
+        "-c",
+        "import sys; raise SystemExit(0 if sys.version_info.major == 3 else 1)",
+      ]),
+    ).pipe(
+      Effect.map((result) => result.exitCode === 0),
+      Effect.orElseSucceed(() => false),
+    );
   const configured = Option.getOrUndefined(env.configuredPython);
-  if (configured && (yield* fs.exists(configured))) {
+  if (configured && (yield* fs.exists(configured)) && (yield* isPython3(configured))) {
     return configured;
   }
 
@@ -722,7 +860,7 @@ const resolvePythonForNodeGyp = Effect.fn("resolvePythonForNodeGyp")(function* (
     if (localAppData) {
       for (const version of ["Python313", "Python312", "Python311", "Python310"]) {
         const candidate = path.join(localAppData, "Programs", "Python", version, "python.exe");
-        if (yield* fs.exists(candidate)) {
+        if ((yield* fs.exists(candidate)) && (yield* isPython3(candidate))) {
           return candidate;
         }
       }
@@ -744,7 +882,7 @@ const resolvePythonForNodeGyp = Effect.fn("resolvePythonForNodeGyp")(function* (
   }
 
   const executable = probe.stdout.trim();
-  if (!executable || !(yield* fs.exists(executable))) {
+  if (!executable || !(yield* fs.exists(executable)) || !(yield* isPython3(executable))) {
     return undefined;
   }
 
@@ -795,6 +933,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // staging inputs out of app.asar; they are emitted once at resources/.
   "!apps/desktop/prod-resources/windows-server",
   "!apps/desktop/prod-resources/windows-server/**/*",
+  "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
+  "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
 ] as const;
 // Windows terminal helpers cannot run on macOS and slow signing and notarization.
 export const MAC_FILE_EXCLUSIONS = [
@@ -806,8 +946,8 @@ export const MAC_FILE_EXCLUSIONS = [
 // then extracts a handful of large archives instead of thousands of small
 // files, which dominates install (and update) time. The Windows primary runs
 // the server from inside server.asar via the asar-aware ELECTRON_RUN_AS_NODE
-// runtime; the WSL backend cannot read asar archives, so enabling WSL lazily
-// extracts the sidecar to a version-keyed directory (see DesktopWslServerTree).
+// runtime. WSL normally uses the dedicated compressed Linux runtime below;
+// DesktopWslServerTree can still materialize this sidecar as a fallback.
 export const WINDOWS_SERVER_ASAR_RESOURCE = "server.asar";
 // dlopen/spawn need real files, so native modules, shared libraries, and
 // helper executables live in the server.asar.unpacked sibling (the standard
@@ -851,6 +991,53 @@ export const WINDOWS_SERVER_EXTRA_RESOURCES = [
     to: ".",
     filter: [WINDOWS_SERVER_ASAR_RESOURCE, `${WINDOWS_SERVER_ASAR_RESOURCE}.unpacked/**/*`],
   },
+] as const;
+export const WSL_RUNTIME_ARCHIVE_NAME = "wsl-runtime.tar.gz";
+export const WSL_RUNTIME_ARCHIVE_HASH_NAME = `${WSL_RUNTIME_ARCHIVE_NAME}.sha256`;
+export const WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE = {
+  from: `apps/desktop/prod-resources/${WSL_RUNTIME_ARCHIVE_NAME}`,
+  to: WSL_RUNTIME_ARCHIVE_NAME,
+} as const;
+export const WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE = {
+  from: `apps/desktop/prod-resources/${WSL_RUNTIME_ARCHIVE_HASH_NAME}`,
+  to: WSL_RUNTIME_ARCHIVE_HASH_NAME,
+} as const;
+export const WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS = ["apps/server/dist", "node_modules"] as const;
+
+// The WSL runtime uses only the Linux half of the shared Windows/WSL sidecar.
+// Keep build/install metadata and target-native packages that cannot run in
+// WSL out of the compressed archive.
+export const WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES = [
+  "node_modules/@anthropic-ai/claude-agent-sdk-",
+  "node_modules/.bin",
+  "node_modules/.pnpm",
+  "node_modules/.modules.yaml",
+  "node_modules/.pnpm-workspace-state-v1.json",
+  "node_modules/node-pty/prebuilds/darwin-",
+  "node_modules/node-pty/prebuilds/win32-",
+  "node_modules/node-pty/build",
+  "node_modules/node-pty/third_party/conpty",
+  "node_modules/@ff-labs/fff-bin-win32-",
+  "node_modules/@yuuang/ffi-rs-win32-",
+  "node_modules/@msgpackr-extract/msgpackr-extract-win32-",
+] as const;
+// WSL runs the same CPU arch as the Windows host; universal is mac-only.
+export const resolveWslPrebuildArch = (arch: typeof BuildArch.Type): "x64" | "arm64" | undefined =>
+  arch === "x64" ? "x64" : arch === "arm64" ? "arm64" : undefined;
+
+// A packaged WSL runtime is only usable when a Linux pty.node is bundled with
+// it, so this one predicate decides both whether the archive is built and
+// whether the packaging config ships it. Without it the build would produce an
+// archive that can never pass the install script's payload check, and every
+// launch would extract a few hundred MB from /mnt/c only to throw it away.
+export const bundlesWslRuntime = (input: {
+  readonly arch: typeof BuildArch.Type;
+  readonly prebuildPath: string | undefined;
+}): boolean => input.prebuildPath !== undefined && resolveWslPrebuildArch(input.arch) !== undefined;
+
+export const WSL_RUNTIME_EXTRA_RESOURCES = [
+  WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
+  WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
 ] as const;
 export const DESKTOP_EXTRA_RESOURCES = [
   {
@@ -1410,6 +1597,166 @@ const runCommand = Effect.fn("runCommand")(function* (
   }
 });
 
+const desktopBuildProbeSucceeds = Effect.fn("desktopBuildProbeSucceeds")(function* (
+  command: ChildProcess.Command,
+  label: string,
+) {
+  return yield* runCommand(command, { label, verbose: false }).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
+const rustTargetIsInstalled = Effect.fn("rustTargetIsInstalled")(function* (target: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const result = yield* spawnAndCollectOutput(
+    ChildProcess.make("rustc", ["--print", "target-libdir", "--target", target]),
+  ).pipe(Effect.orElseSucceed(() => null));
+  if (result === null || result.exitCode !== 0) return false;
+
+  const targetLibDir = result.stdout.trim();
+  if (targetLibDir === "") return false;
+  const entries = yield* fs.readDirectory(targetLibDir).pipe(Effect.orElseSucceed(() => []));
+  return entries.some((entry) => entry.startsWith("libstd-") && entry.endsWith(".rlib"));
+});
+
+export const preflightLinuxDesktopBuild = Effect.fn("preflightLinuxDesktopBuild")(function* (
+  arch: typeof BuildArch.Type = "x64",
+) {
+  const reuseResourceMonitor = yield* Config.boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
+    Config.withDefault(false),
+  );
+  const rustTarget = resolveResourceMonitorRustTargets("linux", arch)[0]!;
+
+  const checks = yield* Effect.all(
+    {
+      cargo: reuseResourceMonitor
+        ? Effect.succeed(true)
+        : desktopBuildProbeSucceeds(ChildProcess.make("cargo", ["--version"]), "cargo"),
+      "rust-target": reuseResourceMonitor
+        ? Effect.succeed(true)
+        : rustTargetIsInstalled(rustTarget),
+      cc: desktopBuildProbeSucceeds(ChildProcess.make("cc", ["--version"]), "cc"),
+      make: desktopBuildProbeSucceeds(ChildProcess.make("make", ["--version"]), "make"),
+      imagemagick: Effect.all([
+        desktopBuildProbeSucceeds(ChildProcess.make("magick", ["-version"]), "magick"),
+        desktopBuildProbeSucceeds(ChildProcess.make("convert", ["-version"]), "convert"),
+      ]).pipe(Effect.map(([magick, convert]) => magick || convert)),
+    },
+    { concurrency: "unbounded" },
+  );
+  const missing = LINUX_DESKTOP_BUILD_PREREQUISITES.filter(
+    (requirement) => !checks[requirement.id],
+  ).map((requirement) => requirement.id);
+
+  if (missing.length > 0) {
+    return yield* new LinuxDesktopBuildPrerequisitesMissingError({ missing, rustTarget });
+  }
+});
+
+export const preflightMacDesktopBuild = Effect.fn("preflightMacDesktopBuild")(function* (
+  arch: typeof BuildArch.Type,
+) {
+  const rustTargets = resolveResourceMonitorRustTargets("mac", arch);
+  const reuseResourceMonitor = yield* Config.boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
+    Config.withDefault(false),
+  );
+  const checks = yield* Effect.all(
+    {
+      rust: reuseResourceMonitor
+        ? Effect.succeed(true)
+        : Effect.all([
+            desktopBuildProbeSucceeds(ChildProcess.make("cargo", ["--version"]), "cargo"),
+            Effect.forEach(rustTargets, rustTargetIsInstalled).pipe(
+              Effect.map((results) => results.every(Boolean)),
+            ),
+          ]).pipe(Effect.map(([cargo, targets]) => cargo && targets)),
+      clang: desktopBuildProbeSucceeds(ChildProcess.make("clang", ["--version"]), "clang"),
+      make: desktopBuildProbeSucceeds(ChildProcess.make("make", ["--version"]), "make"),
+      sips: desktopBuildProbeSucceeds(ChildProcess.make("sips", ["--help"]), "sips"),
+      iconutil: desktopBuildProbeSucceeds(
+        ChildProcess.make("xcrun", ["--find", "iconutil"]),
+        "iconutil",
+      ),
+      lipo:
+        arch === "universal"
+          ? desktopBuildProbeSucceeds(ChildProcess.make("lipo", ["-version"]), "lipo")
+          : Effect.succeed(true),
+    },
+    { concurrency: "unbounded" },
+  );
+  const missing = MAC_DESKTOP_BUILD_PREREQUISITES.filter(
+    (requirement) => !checks[requirement.id],
+  ).map((requirement) => requirement.id);
+  if (missing.length > 0) {
+    return yield* new MacDesktopBuildPrerequisitesMissingError({ missing, rustTargets });
+  }
+});
+
+function windowsVswherePrerequisiteScript(arch: typeof BuildArch.Type): string {
+  const components =
+    arch === "arm64"
+      ? [
+          "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
+          "Microsoft.VisualStudio.Component.VC.Tools.ARM64.Spectre",
+        ]
+      : [
+          "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+          "Microsoft.VisualStudio.Component.VC.Tools.x86.x64.Spectre",
+        ];
+  return [
+    "$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\\Installer\\vswhere.exe'",
+    "if (!(Test-Path $vswhere)) { exit 1 }",
+    `$install = & $vswhere -latest -products * -requires ${components.join(" ")} -property installationPath`,
+    "if (!$install) { exit 1 }",
+    "$kitsRoot = Get-ItemPropertyValue 'HKLM:\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots' -Name KitsRoot10 -ErrorAction SilentlyContinue",
+    "if (!$kitsRoot -or !(Test-Path (Join-Path $kitsRoot 'Lib'))) { exit 1 }",
+  ].join("; ");
+}
+
+export const preflightWindowsDesktopBuild = Effect.fn("preflightWindowsDesktopBuild")(
+  function* (input: { readonly arch: typeof BuildArch.Type; readonly bundlesWslRuntime: boolean }) {
+    const rustTarget = resolveResourceMonitorRustTargets("win", input.arch)[0]!;
+    const reuseResourceMonitor = yield* Config.boolean(
+      "T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR",
+    ).pipe(Config.withDefault(false));
+    const python = yield* resolvePythonForNodeGyp();
+    const checks = yield* Effect.all(
+      {
+        rust: reuseResourceMonitor
+          ? Effect.succeed(true)
+          : Effect.all([
+              desktopBuildProbeSucceeds(ChildProcess.make("cargo", ["--version"]), "cargo"),
+              rustTargetIsInstalled(rustTarget),
+            ]).pipe(Effect.map(([cargo, target]) => cargo && target)),
+        python: Effect.succeed(python !== undefined),
+        msvc: reuseResourceMonitor
+          ? Effect.succeed(true)
+          : desktopBuildProbeSucceeds(
+              ChildProcess.make("powershell.exe", [
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                windowsVswherePrerequisiteScript(input.arch),
+              ]),
+              "Visual Studio Build Tools",
+            ),
+        tar: input.bundlesWslRuntime
+          ? desktopBuildProbeSucceeds(ChildProcess.make("tar.exe", ["--version"]), "tar")
+          : Effect.succeed(true),
+      },
+      { concurrency: "unbounded" },
+    );
+    const missing = WINDOWS_DESKTOP_BUILD_PREREQUISITES.filter(
+      (requirement) => !checks[requirement.id],
+    ).map((requirement) => requirement.id);
+    if (missing.length > 0) {
+      return yield* new WindowsDesktopBuildPrerequisitesMissingError({ missing, rustTarget });
+    }
+  },
+);
+
 /**
  * Every `node_modules` directory that would be visible from `startDir`.
  *
@@ -1656,22 +2003,22 @@ const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSel
       // stdin, a port, a lock) would otherwise hang release CI until the job
       // times out with nothing useful in the log.
       Effect.timeout(BUNDLE_SELF_CHECK_TIMEOUT),
-      Effect.catchTag("TimeoutError", () =>
-        Effect.fail(
-          new BundleNotSelfContainedError({
-            exitCode: -1,
-            output: `The packaged bundle did not print its version within ${Duration.toSeconds(BUNDLE_SELF_CHECK_TIMEOUT)}s; it is hanging rather than failing to resolve.`,
-          }),
-        ),
-      ),
-      Effect.catchTag("BuildCommandFailedError", (error) =>
-        Effect.fail(
-          new BundleNotSelfContainedError({
-            exitCode: error.exitCode,
-            output: `${error.stderrTail ?? ""}${error.stdoutTail ?? ""}`.trim(),
-          }),
-        ),
-      ),
+      Effect.catchTags({
+        TimeoutError: () =>
+          Effect.fail(
+            new BundleNotSelfContainedError({
+              exitCode: -1,
+              output: `The packaged bundle did not print its version within ${Duration.toSeconds(BUNDLE_SELF_CHECK_TIMEOUT)}s; it is hanging rather than failing to resolve.`,
+            }),
+          ),
+        BuildCommandFailedError: (error) =>
+          Effect.fail(
+            new BundleNotSelfContainedError({
+              exitCode: error.exitCode,
+              output: `${error.stderrTail ?? ""}${error.stdoutTail ?? ""}`.trim(),
+            }),
+          ),
+      }),
     );
   },
 );
@@ -2077,6 +2424,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         readonly provisioningProfilePath: string;
       }
     | undefined,
+  // Windows only, and false when no Linux node-pty prebuild was bundled: the
+  // sidecar staging skips the archive in that case, and listing a resource
+  // whose source file was never written fails the electron-builder step.
+  wslRuntimeBundled = false,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
@@ -2094,6 +2445,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
+      ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
     ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
@@ -2247,8 +2599,7 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
     return;
   }
 
-  // WSL runs the same CPU arch as the Windows host; universal is mac-only.
-  const linuxArch = input.arch === "x64" ? "x64" : input.arch === "arm64" ? "arm64" : undefined;
+  const linuxArch = resolveWslPrebuildArch(input.arch);
   if (linuxArch === undefined) {
     yield* Effect.logWarning(
       `[desktop-artifact] No WSL node-pty prebuild mapping for arch "${input.arch}"; skipping WSL backend bundling.`,
@@ -2291,6 +2642,56 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
 
   yield* Effect.log(
     `[desktop-artifact] Staged WSL node-pty prebuild (linux-${linuxArch}, node-pty ${nodePtyVersion}).`,
+  );
+});
+
+// tar reads an `-f` target containing a colon as `host:path` and tries to reach
+// it over rsh, so handing it a Windows drive path (C:\...\wsl-runtime.tar.gz)
+// makes Git for Windows' GNU tar fail with "Cannot connect to C: resolve
+// failed". The staged source tree and the archive both live under the build's
+// stage root, so the target is always expressible relative to tar's cwd.
+export const wslRuntimeArchiveTarTarget = (relativeArchivePath: string): string =>
+  relativeArchivePath.replaceAll("\\", "/");
+
+// `archivePath` is relative to the cwd tar runs in; see wslRuntimeArchiveTarTarget.
+export const buildWslRuntimeArchiveArgs = (
+  archivePath: string = WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from,
+): ReadonlyArray<string> => [
+  "-czf",
+  archivePath,
+  ...WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.map((prefix) => `--exclude=${prefix}*`),
+  ...WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS,
+];
+
+export const parseWslRuntimeArchiveMembers = (listing: string): ReadonlyArray<string> =>
+  listing
+    .split(/\r?\n/)
+    .map((member) => member.replace(/^\.\//, "").replace(/\/$/, ""))
+    .filter((member) => member.length > 0);
+
+export const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(function* (input: {
+  readonly sourceDir: string;
+  readonly archivePath: string;
+  readonly hashPath: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.dirname(input.archivePath), { recursive: true });
+  const tarTarget = wslRuntimeArchiveTarTarget(path.relative(input.sourceDir, input.archivePath));
+  yield* runCommand(
+    ChildProcess.make("tar", buildWslRuntimeArchiveArgs(tarTarget), {
+      cwd: input.sourceDir,
+    }),
+    { label: "tar WSL runtime", verbose: false },
+  );
+  const hash = NodeCrypto.createHash("sha256");
+  yield* fs
+    .stream(input.archivePath)
+    .pipe(Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))));
+  const digest = hash.digest("hex");
+  yield* fs.writeFileString(input.hashPath, `${digest}\n`);
+  yield* Effect.log(
+    `[desktop-artifact] Staged compressed WSL runtime at ${input.archivePath} (${digest}).`,
   );
 });
 
@@ -2337,6 +2738,8 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   readonly overrides: Record<string, string>;
   readonly wslPrebuildPath: string | undefined;
   readonly asarPath: string;
+  readonly wslRuntimeArchivePath: string;
+  readonly wslRuntimeArchiveHashPath: string;
   readonly verbose: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
@@ -2402,6 +2805,16 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     arch: input.arch,
     prebuildPath: input.wslPrebuildPath,
   });
+  // Skip the archive entirely rather than shipping one the install script must
+  // extract and reject on every launch. The desktop app treats a missing
+  // archive as "no WSL-local runtime" and goes straight to the mounted tree.
+  if (bundlesWslRuntime({ arch: input.arch, prebuildPath: input.wslPrebuildPath })) {
+    yield* stageWslRuntimeArchive({
+      sourceDir: serverStageDir,
+      archivePath: input.wslRuntimeArchivePath,
+      hashPath: input.wslRuntimeArchiveHashPath,
+    });
+  }
 
   yield* Effect.log("[desktop-artifact] Packing server.asar...");
   yield* fs.makeDirectory(path.dirname(input.asarPath), { recursive: true });
@@ -2546,6 +2959,7 @@ export const validateWindowsPackagedPayload = Effect.fn(
   readonly stageDistDir: string;
   readonly appExecutableName: string;
   readonly targetArch: typeof BuildArch.Type;
+  readonly expectWslRuntime?: boolean;
   readonly fileLimit?: number;
   readonly verbose?: boolean;
 }) {
@@ -2645,6 +3059,99 @@ export const validateWindowsPackagedPayload = Effect.fn(
     });
   }
 
+  const wslArchivePath = path.join(resourcesDir, WSL_RUNTIME_ARCHIVE_NAME);
+  const wslArchiveHashPath = path.join(resourcesDir, WSL_RUNTIME_ARCHIVE_HASH_NAME);
+  const [hasWslArchive, hasWslArchiveHash] = yield* Effect.all([
+    isFile(wslArchivePath),
+    isFile(wslArchiveHashPath),
+  ]);
+  if (input.expectWslRuntime === true && (!hasWslArchive || !hasWslArchiveHash)) {
+    return yield* new WindowsPackagedPayloadValidationError({
+      reason: "wsl-runtime-missing",
+      packagedAppDir,
+      missingFiles: [
+        ...(hasWslArchive ? [] : [WSL_RUNTIME_ARCHIVE_NAME]),
+        ...(hasWslArchiveHash ? [] : [WSL_RUNTIME_ARCHIVE_HASH_NAME]),
+      ],
+    });
+  }
+  if (hasWslArchive !== hasWslArchiveHash) {
+    return yield* new WindowsPackagedPayloadValidationError({
+      reason: "wsl-runtime-missing",
+      packagedAppDir,
+      missingFiles: [hasWslArchive ? WSL_RUNTIME_ARCHIVE_HASH_NAME : WSL_RUNTIME_ARCHIVE_NAME],
+    });
+  }
+  if (hasWslArchive && hasWslArchiveHash) {
+    const invalidWslRuntime = (cause: unknown) =>
+      new WindowsPackagedPayloadValidationError({
+        reason: "wsl-runtime-invalid",
+        packagedAppDir,
+        cause,
+      });
+    const recordedHash = yield* fs
+      .readFileString(wslArchiveHashPath)
+      .pipe(Effect.mapError(invalidWslRuntime));
+    const expectedHash = recordedHash.trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(expectedHash)) {
+      return yield* invalidWslRuntime(new Error("invalid WSL runtime SHA-256 sidecar"));
+    }
+    const archiveHash = NodeCrypto.createHash("sha256");
+    yield* fs.stream(wslArchivePath).pipe(
+      Stream.runForEach((chunk) => Effect.sync(() => archiveHash.update(chunk))),
+      Effect.mapError(invalidWslRuntime),
+    );
+    const actualHash = archiveHash.digest("hex");
+    if (actualHash !== expectedHash) {
+      return yield* invalidWslRuntime(
+        new Error(`WSL runtime SHA-256 mismatch: expected ${expectedHash}, got ${actualHash}`),
+      );
+    }
+
+    const listing = yield* spawnAndCollectOutput(
+      ChildProcess.make("tar", ["-tzf", WSL_RUNTIME_ARCHIVE_NAME], {
+        cwd: resourcesDir,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    ).pipe(Effect.mapError(invalidWslRuntime));
+    if (listing.exitCode !== 0) {
+      return yield* invalidWslRuntime(
+        new Error(`tar could not list WSL runtime archive: ${listing.stderr.trim()}`),
+      );
+    }
+    const members = parseWslRuntimeArchiveMembers(listing.stdout);
+    const forbiddenMember = members.find((member) =>
+      WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)),
+    );
+    if (forbiddenMember !== undefined) {
+      return yield* invalidWslRuntime(
+        new Error(`WSL runtime archive contains forbidden member ${forbiddenMember}`),
+      );
+    }
+    const wslArch = resolveWslPrebuildArch(input.targetArch);
+    const requiredMembers = [
+      "apps/server/dist/bin.mjs",
+      "node_modules/node-pty/package.json",
+      ...(wslArch === undefined
+        ? []
+        : [
+            `node_modules/node-pty/prebuilds/linux-${wslArch}/pty.node`,
+            `node_modules/node-pty/prebuilds/linux-${wslArch}/t3code-wsl-node-pty.json`,
+          ]),
+    ];
+    const missingMembers = requiredMembers.filter((member) => !members.includes(member));
+    if (missingMembers.length > 0) {
+      return yield* new WindowsPackagedPayloadValidationError({
+        reason: "wsl-runtime-invalid",
+        packagedAppDir,
+        missingFiles: missingMembers,
+        cause: new Error("WSL runtime archive is incomplete"),
+      });
+    }
+  }
+
   const fileCount = yield* countPayloadFiles(packagedAppDir);
   if (fileCount > fileLimit) {
     return yield* new WindowsPackagedPayloadValidationError({
@@ -2681,6 +3188,21 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcessPlatform;
+  if (hostPlatform === "linux" && options.platform === "linux") {
+    yield* preflightLinuxDesktopBuild(options.arch);
+  }
+  if (hostPlatform === "darwin" && options.platform === "mac") {
+    yield* preflightMacDesktopBuild(options.arch);
+  }
+  if (hostPlatform === "win32" && options.platform === "win") {
+    yield* preflightWindowsDesktopBuild({
+      arch: options.arch,
+      bundlesWslRuntime: bundlesWslRuntime({
+        arch: options.arch,
+        prebuildPath: options.wslPrebuild,
+      }),
+    });
+  }
   const workspaceConfig = yield* readWorkspaceConfig();
   const workspaceCatalog = workspaceConfig.catalog ?? {};
   const workspaceOverrides = workspaceConfig.overrides ?? {};
@@ -2979,6 +3501,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
         : undefined,
+      bundlesWslRuntime({ arch: options.arch, prebuildPath: options.wslPrebuild }),
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -3033,6 +3556,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       overrides: resolvedOverrides,
       wslPrebuildPath: options.wslPrebuild,
       asarPath: windowsServerAsarPath,
+      wslRuntimeArchivePath: path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from),
+      wslRuntimeArchiveHashPath: path.join(
+        stageAppDir,
+        WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE.from,
+      ),
+
       verbose: options.verbose,
     });
   }
@@ -3131,6 +3660,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       stageDistDir,
       appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
       targetArch: options.arch,
+      expectWslRuntime: bundlesWslRuntime({
+        arch: options.arch,
+        prebuildPath: options.wslPrebuild,
+      }),
       verbose: options.verbose,
     });
   }

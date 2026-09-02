@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/desktop",
-  "version": "0.0.34",
+  "version": "0.0.38",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
@@ -21,7 +21,7 @@
     "@t3tools/ssh": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
     "effect": "catalog:",
-    "electron": "41.5.0",
+    "electron": "43.4.1",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.6.2",
     "playwright-core": "1.60.0",
@@ -30,6 +30,7 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
+    "acorn": "8.16.0",
     "cross-env": "^10.1.0",
     "electron-builder": "26.15.6",
     "tailwindcss": "^4.0.0",

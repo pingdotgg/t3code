@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 // Pinned so the direction cases below read as fixed versions instead of
@@ -8,14 +9,16 @@ vi.mock("./branding", () => branding);
 
 import { APP_VERSION } from "./branding";
 import {
-  appendVersionMismatchHint,
   buildVersionMismatchDismissalKey,
+  dismissServerUpdateFailure,
   dismissVersionMismatch,
+  isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
   serverUpdateGuidance,
+  supportsDesktopAppUpdate,
 } from "./versionSkew";
 
 const MISMATCH_HINT =
@@ -24,6 +27,39 @@ const MISMATCH_HINT =
 describe("versionSkew", () => {
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
+  });
+
+  it("dismisses only the current failed attempt without clearing its retry state", () => {
+    const failure = {
+      status: "failed",
+      stage: "downloading",
+      fromVersion: "0.0.33",
+      targetVersion: "0.0.34",
+      message: "Download failed.",
+    } as const satisfies ServerUpdateState;
+    const retryFailure = { ...failure };
+    const otherEnvironmentFailure = { ...failure };
+
+    dismissServerUpdateFailure(failure);
+
+    expect(isServerUpdateFailureDismissed(failure)).toBe(true);
+    expect(failure.status).toBe("failed");
+    expect(failure.message).toBe("Download failed.");
+    expect(isServerUpdateFailureDismissed(retryFailure)).toBe(false);
+    expect(isServerUpdateFailureDismissed(otherEnvironmentFailure)).toBe(false);
+  });
+
+  it("does not dismiss an update that is still running", () => {
+    const running = {
+      status: "running",
+      stage: "resuming",
+      fromVersion: "0.0.33",
+      targetVersion: "0.0.34",
+    } as const satisfies ServerUpdateState;
+
+    dismissServerUpdateFailure(running);
+
+    expect(isServerUpdateFailureDismissed(running)).toBe(false);
   });
 
   it("does not warn when versions match", () => {
@@ -139,14 +175,6 @@ describe("versionSkew", () => {
     ).toBe(false);
   });
 
-  it("appends a hint to connection errors when the server is behind", () => {
-    const mismatch = resolveVersionMismatch("0.0.33");
-
-    expect(appendVersionMismatchHint("Socket closed.", mismatch)).toBe(
-      `Socket closed. Hint: ${MISMATCH_HINT}`,
-    );
-  });
-
   it("reads desktop-managed update capabilities from config descriptors", () => {
     expect(
       resolveServerSelfUpdateCapability({
@@ -165,15 +193,29 @@ describe("versionSkew", () => {
     expect(resolveServerSelfUpdateCapability(null)).toBeNull();
   });
 
+  it("detects remote desktop-app update support from config descriptors", () => {
+    const descriptor = (desktopAppUpdate?: boolean) => ({
+      environment: {
+        environmentId: EnvironmentId.make("environment-desktop"),
+        label: "Desktop",
+        platform: { os: "darwin", arch: "arm64" } as const,
+        serverVersion: "9.9.9",
+        capabilities: {
+          repositoryIdentity: true,
+          serverSelfUpdate: "desktop-managed" as const,
+          ...(desktopAppUpdate === undefined ? {} : { desktopAppUpdate }),
+        },
+      },
+    });
+
+    expect(supportsDesktopAppUpdate(descriptor(true))).toBe(true);
+    expect(supportsDesktopAppUpdate(descriptor(false))).toBe(false);
+    expect(supportsDesktopAppUpdate(descriptor())).toBe(false);
+    expect(supportsDesktopAppUpdate(null)).toBe(false);
+  });
+
   it("matches version-drift guidance to the advertised update path", () => {
-    expect(serverUpdateGuidance("respawn", "Remote server")).toBe(
-      "Update the Remote server so they stay in sync.",
-    );
-    expect(serverUpdateGuidance("desktop-managed", "Desktop server")).toBe(
-      "Update the desktop app that runs the Desktop server.",
-    );
-    expect(serverUpdateGuidance(null, "Local server")).toBe(
-      "Relaunch the Local server with the copied command to sync them.",
-    );
+    expect(serverUpdateGuidance("respawn")).toBe("Update to stay in sync");
+    expect(serverUpdateGuidance("desktop-managed")).toBe("Update the desktop app");
   });
 });

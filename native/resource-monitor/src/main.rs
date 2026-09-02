@@ -250,6 +250,10 @@ impl HistoryRecorder {
         max_retained_entries: usize,
         max_retained_bytes: usize,
     ) {
+        let clock_moved_backward = self
+            .snapshots
+            .back()
+            .is_some_and(|previous| previous.sampled_at_unix_ms > snapshot.sampled_at_unix_ms);
         let mut retained = snapshot.clone();
         retained.request_id = None;
         self.retained_entry_count = self
@@ -264,6 +268,7 @@ impl HistoryRecorder {
             max_snapshots,
             max_retained_entries,
             max_retained_bytes,
+            clock_moved_backward,
         );
     }
 
@@ -273,20 +278,24 @@ impl HistoryRecorder {
         max_snapshots: usize,
         max_retained_entries: usize,
         max_retained_bytes: usize,
+        clock_moved_backward: bool,
     ) {
-        let mut future_entry_count = 0usize;
-        let mut future_bytes = 0usize;
-        self.snapshots.retain(|snapshot| {
-            let keep = snapshot.sampled_at_unix_ms <= now_ms;
-            if !keep {
-                future_entry_count =
-                    future_entry_count.saturating_add(snapshot.retained_entry_count());
-                future_bytes = future_bytes.saturating_add(snapshot.estimated_history_bytes());
-            }
-            keep
-        });
-        self.retained_entry_count = self.retained_entry_count.saturating_sub(future_entry_count);
-        self.retained_bytes = self.retained_bytes.saturating_sub(future_bytes);
+        if clock_moved_backward {
+            let mut future_entry_count = 0usize;
+            let mut future_bytes = 0usize;
+            self.snapshots.retain(|snapshot| {
+                let keep = snapshot.sampled_at_unix_ms <= now_ms;
+                if !keep {
+                    future_entry_count =
+                        future_entry_count.saturating_add(snapshot.retained_entry_count());
+                    future_bytes = future_bytes.saturating_add(snapshot.estimated_history_bytes());
+                }
+                keep
+            });
+            self.retained_entry_count =
+                self.retained_entry_count.saturating_sub(future_entry_count);
+            self.retained_bytes = self.retained_bytes.saturating_sub(future_bytes);
+        }
 
         while self.snapshots.front().is_some_and(|snapshot| {
             snapshot.sampled_at_unix_ms < now_ms.saturating_sub(HISTORY_RETENTION_MS)

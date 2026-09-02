@@ -23,6 +23,7 @@ import { sortModelsForProviderInstance } from "../../modelOrdering";
 import { MAX_CUSTOM_MODEL_LENGTH } from "../../modelSelection";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 /**
@@ -185,12 +186,15 @@ export function ProviderModelsSection({
   };
 
   return (
-    <div>
+    <div className="lg:flex lg:h-full lg:min-h-0 lg:flex-col">
       <div className="text-xs font-medium text-foreground">Models</div>
       <div className="mt-1 text-xs text-muted-foreground">
         {models.length} model{models.length === 1 ? "" : "s"} available.
       </div>
-      <div ref={listRef} className="mt-2 max-h-40 overflow-y-auto pb-1">
+      <div
+        ref={listRef}
+        className="mt-2 max-h-40 overflow-y-auto pb-1 lg:min-h-0 lg:max-h-none lg:flex-1"
+      >
         {orderedModels.map((model, index) => {
           const caps = model.capabilities;
           const capLabels: string[] = [];
@@ -241,8 +245,11 @@ export function ProviderModelsSection({
                   {model.name}
                 </span>
                 {hasDetails ? (
-                  <Tooltip>
-                    <TooltipTrigger
+                  <Popover>
+                    <PopoverTrigger
+                      openOnHover
+                      delay={250}
+                      closeDelay={100}
                       render={
                         <Button
                           size="icon-micro"
@@ -253,8 +260,8 @@ export function ProviderModelsSection({
                       }
                     >
                       <InfoIcon className="size-3" />
-                    </TooltipTrigger>
-                    <TooltipPopup side="top" className="max-w-56">
+                    </PopoverTrigger>
+                    <PopoverPopup side="top" tooltipStyle className="max-w-56">
                       <div className="space-y-1">
                         <code className="block text-[11px] text-foreground">{model.slug}</code>
                         {capLabels.length > 0 ? (
@@ -267,8 +274,8 @@ export function ProviderModelsSection({
                           </div>
                         ) : null}
                       </div>
-                    </TooltipPopup>
-                  </Tooltip>
+                    </PopoverPopup>
+                  </Popover>
                 ) : null}
                 {isHidden ? (
                   <span className="text-[10px] text-muted-foreground">hidden</span>

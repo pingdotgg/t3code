@@ -17,7 +17,7 @@ const layer = it.layer(
 );
 
 layer("OrchestrationEventStore", (it) => {
-  it.effect("stores json columns as strings and replays decoded events", () =>
+  it.effect("stores json columns as strings and replays CLI-origin events", () =>
     Effect.gen(function* () {
       const eventStore = yield* OrchestrationEventStore;
       const sql = yield* SqlClient.SqlClient;
@@ -34,6 +34,9 @@ layer("OrchestrationEventStore", (it) => {
         correlationId: CommandId.make("cmd-store-roundtrip"),
         metadata: {
           adapterKey: "codex",
+          origin: {
+            surface: "cli",
+          },
         },
         payload: {
           projectId: ProjectId.make("project-roundtrip"),
@@ -66,6 +69,7 @@ layer("OrchestrationEventStore", (it) => {
       assert.equal(replayed.length, 1);
       assert.equal(replayed[0]?.type, "project.created");
       assert.equal(replayed[0]?.metadata.adapterKey, "codex");
+      assert.deepEqual(replayed[0]?.metadata.origin, { surface: "cli" });
     }),
   );
 

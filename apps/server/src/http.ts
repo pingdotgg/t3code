@@ -12,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import { cast } from "effect/Function";
 import {
   HttpBody,
@@ -28,6 +29,7 @@ import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
   storeAttachmentUpload,
@@ -49,20 +51,165 @@ const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+// HTML previews are agent output, not the app. The sandbox gives the document an
+// opaque origin: scripts run, but same-origin cookies, storage, and API calls are
+// out of reach. Relative sibling assets still load through their signed URLs.
+const HTML_CONTENT_SECURITY_POLICY = "sandbox allow-scripts allow-forms allow-popups allow-modals";
 
-export function assetResponseHeaders(filePath: string): Record<string, string> {
+// Types a browser may render as a document if a proxy strips the disposition
+// header. Downloads of these fall back to octet-stream.
+const DOWNLOAD_MIME_TYPE_PATTERN = /^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/;
+const isSafeDownloadMimeType = (mimeType: string): boolean =>
+  DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) &&
+  !/(?:^text\/html$|\/xml(?:$|-)|\+xml$)/i.test(mimeType.trim().toLowerCase());
+const isSafeInlineVideoMimeType = (mimeType: string): boolean =>
+  DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) && mimeType.toLowerCase().startsWith("video/");
+
+/** RFC 6266 disposition with an ASCII fallback name plus a UTF-8 `filename*`. */
+export function downloadContentDisposition(fileName?: string): string {
+  if (fileName === undefined) {
+    return "attachment";
+  }
+  // toWellFormed: encodeURIComponent throws URIError on unpaired surrogates.
+  // eslint-disable-next-line no-control-regex -- Header filenames must strip ASCII controls.
+  const sanitized = fileName.toWellFormed().replace(/[\u0000-\u001f"\\]/g, "_");
+  const asciiFallback = sanitized.replace(/[^\u0020-\u007e]/g, "_");
+  const needsExtended = asciiFallback !== sanitized;
+  const extendedName = encodeURIComponent(sanitized).replace(
+    /['()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${asciiFallback}"${
+    needsExtended ? `; filename*=UTF-8''${extendedName}` : ""
+  }`;
+}
+
+export function assetResponseHeaders(
+  filePath: string,
+  options?: {
+    readonly download?: boolean;
+    readonly fileName?: string;
+    readonly mimeType?: string;
+  },
+): Record<string, string> {
   const lowerPath = filePath.toLowerCase();
+  const inlineVideoMimeType = options?.mimeType?.split(";", 1)[0]?.trim();
   return {
     "Cache-Control": "private, max-age=3600",
     "X-Content-Type-Options": "nosniff",
-    ...(lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
-      ? { "Content-Type": "text/html; charset=utf-8" }
-      : {}),
-    ...(lowerPath.endsWith(".svg")
+    ...(options?.download
+      ? {
+          "Content-Disposition": downloadContentDisposition(options.fileName),
+          "Content-Security-Policy": "default-src 'none'; sandbox",
+          "Content-Type":
+            options.mimeType !== undefined && isSafeDownloadMimeType(options.mimeType)
+              ? options.mimeType
+              : "application/octet-stream",
+        }
+      : inlineVideoMimeType !== undefined && isSafeInlineVideoMimeType(inlineVideoMimeType)
+        ? { "Content-Type": inlineVideoMimeType }
+        : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
+          ? {
+              "Content-Type": "text/html; charset=utf-8",
+              "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
+            }
+          : {}),
+    ...(!options?.download && lowerPath.endsWith(".svg")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),
   };
 }
+
+/** A single byte range for native video readers; unsupported range syntax uses the full file. */
+function assetByteRange(header: string, size: bigint) {
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(header.trim());
+  if (!match || (!match[1] && !match[2])) return null;
+  const first = match[1] ? BigInt(match[1]) : null;
+  const last = match[2] ? BigInt(match[2]) : null;
+  if (first !== null && last !== null && last < first) return null;
+  if (size === 0n || (first !== null && first >= size) || (first === null && last === 0n)) {
+    return { _tag: "Unsatisfiable" as const };
+  }
+  const start = first ?? (last! >= size ? 0n : size - last!);
+  const end = first === null || last === null || last >= size ? size - 1n : last;
+  if (!Number.isSafeInteger(Number(start)) || !Number.isSafeInteger(Number(end))) {
+    return { _tag: "Unsatisfiable" as const };
+  }
+  return {
+    _tag: "Range" as const,
+    offset: start,
+    bytesToRead: end - start + 1n,
+    contentRange: `bytes ${start}-${end}/${size}`,
+  };
+}
+
+export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
+  asset: {
+    readonly path: string;
+    readonly download?: boolean;
+    readonly fileName?: string;
+    readonly mimeType?: string;
+    readonly file?: OpenMediaFile;
+  },
+  rangeHeader?: string,
+  ifRangeHeader?: string,
+  method: "GET" | "HEAD" = "GET",
+) {
+  const headers = assetResponseHeaders(asset.path, asset);
+  const mediaFile = asset.file;
+  const mediaInfo = mediaFile ? yield* statMediaFile(asset.path, mediaFile) : undefined;
+  const isVideo = headers["Content-Type"]?.toLowerCase().startsWith("video/") === true;
+  if (mediaFile && isVideo) {
+    // Host videos can change in place. Do not invite conditional range requests
+    // with validators that cannot establish byte-for-byte identity.
+    headers["Cache-Control"] = "private, no-store";
+  }
+  let status = 200;
+  let offset = 0n;
+  let bytesToRead: bigint | undefined;
+  if (isVideo) {
+    headers["Accept-Ranges"] = "bytes";
+    // If-Range requires a matching validator. A full response is safe when we cannot validate it.
+    if (method === "GET" && rangeHeader && ifRangeHeader === undefined) {
+      const fs = yield* FileSystem.FileSystem;
+      const info = mediaInfo ?? (yield* fs.stat(asset.path));
+      const range = assetByteRange(rangeHeader, info.size);
+      if (range?._tag === "Unsatisfiable") {
+        return HttpServerResponse.empty({
+          status: 416,
+          headers: { ...headers, "Content-Range": `bytes */${info.size}` },
+        });
+      }
+      if (range?._tag === "Range") {
+        status = 206;
+        offset = range.offset;
+        bytesToRead = range.bytesToRead;
+        headers["Content-Range"] = range.contentRange;
+      }
+    }
+  }
+  if (mediaFile && mediaInfo) {
+    const size = bytesToRead ?? mediaInfo.size;
+    headers["Content-Type"] ??= Mime.getType(asset.path) ?? "application/octet-stream";
+    headers["Content-Length"] = String(size);
+    if (!isVideo) {
+      headers["Last-Modified"] = mediaInfo.mtime.toUTCString();
+      headers.ETag = `W/"${mediaInfo.size.toString(16)}-${mediaInfo.mtimeMs.toString(16)}"`;
+    }
+    if (method === "HEAD" || size === 0n) {
+      return HttpServerResponse.empty({ status, headers });
+    }
+    const body = streamMediaFile(mediaFile, offset, size);
+    if (!body) {
+      return HttpServerResponse.text("File is too large to preview.", { status: 413 });
+    }
+    return HttpServerResponse.stream(body, {
+      status,
+      headers,
+    });
+  }
+  return yield* HttpServerResponse.file(asset.path, { status, offset, bytesToRead, headers });
+});
 
 export const httpCompressionLayer = HttpRouter.middleware(HttpMiddleware.compression(), {
   global: true,
@@ -117,7 +264,10 @@ const authenticateRawRouteWithScope = (
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
       Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-        failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
+        failEnvironmentAuthInvalid(
+          EnvironmentAuth.serverAuthCredentialReason(error),
+          EnvironmentAuth.serverAuthDpopFailureReason(error),
+        ),
       ),
       Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
         failEnvironmentInternal("internal_error", error),
@@ -226,10 +376,12 @@ export const assetRouteLayer = HttpRouter.add(
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
     }
-    return yield* HttpServerResponse.file(asset.path, {
-      status: 200,
-      headers: assetResponseHeaders(asset.path),
-    }).pipe(
+    return yield* assetFileResponse(
+      asset,
+      request.method === "GET" ? request.headers.range : undefined,
+      request.headers["if-range"],
+      request.method === "HEAD" ? "HEAD" : "GET",
+    ).pipe(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
     );
   }),
@@ -265,15 +417,9 @@ export const attachmentUploadRouteLayer = HttpRouter.add(
       });
     }
 
-    const body = yield* request.arrayBuffer.pipe(
-      Effect.provideService(HttpServerRequest.MaxBodySize, FileSystem.Size(claims.sizeBytes)),
-      Effect.orElseSucceed(() => null),
-    );
-    if (body === null) {
-      return HttpServerResponse.text("Failed to read the upload body.", { status: 400 });
-    }
-
-    const stored = yield* storeAttachmentUpload(claims, new Uint8Array(body));
+    // Keep the request stream in the route scope until the response is sent.
+    const bodyPull = yield* Stream.toPull(request.stream);
+    const stored = yield* storeAttachmentUpload(claims, Stream.fromPull(Effect.succeed(bodyPull)));
     return stored.ok
       ? HttpServerResponse.empty({ status: 204 })
       : HttpServerResponse.text(stored.detail, { status: stored.status });

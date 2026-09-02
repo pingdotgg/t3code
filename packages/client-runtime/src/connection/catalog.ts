@@ -104,12 +104,6 @@ export const PlatformConnectionRegistration = Schema.Union([
 ]);
 export type PlatformConnectionRegistration = typeof PlatformConnectionRegistration.Type;
 
-export function connectionRegistrationTarget(
-  registration: ConnectionRegistration | PrimaryConnectionRegistration,
-): ConnectionTarget {
-  return registration.target;
-}
-
 export function connectionRegistrationCatalogEntry(
   registration: ConnectionRegistration | PrimaryConnectionRegistration,
 ): ConnectionCatalogEntry {

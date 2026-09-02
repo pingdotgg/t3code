@@ -2,6 +2,7 @@ import {
   WS_METHODS,
   type PullRequestDetail,
   type PullRequestDiffInput,
+  type PullRequestSummary,
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import * as Data from "effect/Data";
@@ -20,26 +21,34 @@ import { PullRequestDiffLoader } from "./pullRequestDiffHttp.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 
-export { PullRequestDiffLoader, pullRequestDiffLoaderLayer } from "./pullRequestDiffHttp.ts";
+export {
+  type PullRequestDiffLoadError,
+  PullRequestDiffCredentialRejectedError,
+  PullRequestDiffLoader,
+  pullRequestDiffLoaderLayer,
+} from "./pullRequestDiffHttp.ts";
 
 export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
   "EnvironmentHttpConnectionNotReadyError",
 )<{ readonly message: string }> {}
 
-/** Refresh a linked PR while its thread is visible so merges update the sidebar. */
-export function createLinkedPullRequestDetailAtomFamily<R, E>(
+export const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
+
+/** Refresh only the live fields a linked thread renders. */
+export function createLinkedPullRequestSummaryAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return createEnvironmentRpcQueryAtomFamily(runtime, {
-    label: "environment-data:pull-requests:linked-detail",
-    tag: WS_METHODS.pullRequestsDetail,
-    staleTimeMs: 15_000,
-    refreshIntervalMs: 30_000,
+    label: "environment-data:pull-requests:linked-summary",
+    tag: WS_METHODS.pullRequestsSummary,
+    staleTimeMs: 60_000,
+    refreshIntervalMs: 60_000,
+    idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
   });
 }
 
 export function pullRequestDetailToVcsStatus(
-  detail: PullRequestDetail,
+  detail: PullRequestDetail | PullRequestSummary,
 ): NonNullable<VcsStatusResult["pr"]> {
   return {
     number: detail.number,
@@ -65,6 +74,11 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     mode: "serial",
     key: ({ environmentId }: { readonly environmentId: string }) => environmentId,
   } as const;
+  const activity = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:pull-requests:activity",
+    tag: WS_METHODS.pullRequestsActivity,
+    staleTimeMs: 15_000,
+  });
   return {
     list: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:list",
@@ -87,11 +101,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsDetail,
       staleTimeMs: 15_000,
     }),
-    activity: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:pull-requests:activity",
-      tag: WS_METHODS.pullRequestsActivity,
-      staleTimeMs: 15_000,
-    }),
+    activity,
     threadComments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:thread-comments",
       tag: WS_METHODS.pullRequestsThreadComments,
@@ -160,6 +170,10 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsUpdateComment,
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
+      onSuccess: ({ environmentId, input: { projectId, repository, number } }, registry) =>
+        Effect.sync(() =>
+          registry.refresh(activity({ environmentId, input: { projectId, repository, number } })),
+        ),
     }),
     submitReview: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:submit-review",

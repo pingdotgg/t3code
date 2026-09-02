@@ -24,7 +24,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { useFontFamily } from "../../lib/useFontFamily";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
@@ -45,9 +45,6 @@ function SelectionRow(props: {
   readonly subtitle?: string;
   readonly title: string;
 }) {
-  const iconColor = useThemeColor("--color-icon-muted");
-  const checkmarkColor = useThemeColor("--color-icon");
-
   return (
     <Pressable
       accessibilityLabel={[props.title, props.subtitle].filter(Boolean).join(", ")}
@@ -62,7 +59,12 @@ function SelectionRow(props: {
       style={{ opacity: props.disabled ? 0.45 : 1 }}
     >
       {props.icon ? (
-        <SymbolView name={props.icon} size={17} tintColor={iconColor} type="monochrome" />
+        <SymbolView
+          name={props.icon}
+          size={17}
+          tintColorClassName={"accent-icon-muted"}
+          type="monochrome"
+        />
       ) : null}
       <View className="min-w-0 flex-1 gap-0.5">
         <Text className="text-base font-t3-medium text-foreground" numberOfLines={1}>
@@ -78,7 +80,7 @@ function SelectionRow(props: {
         <SymbolView
           name="checkmark"
           size={16}
-          tintColor={checkmarkColor}
+          tintColorClassName={"accent-icon"}
           type="monochrome"
           weight="semibold"
         />
@@ -191,8 +193,7 @@ export function NewTaskBranchPickerRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const placeholderColor = useThemeColor("--color-placeholder");
-  const foregroundColor = useThemeColor("--color-foreground");
+  const foregroundColor = useUniwindTheme()["--color-foreground"];
   const fontFamily = useFontFamily("regular");
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const [switchingBranchName, setSwitchingBranchName] = useState<string | null>(null);
@@ -419,7 +420,7 @@ export function NewTaskBranchPickerRouteScreen() {
             className="h-11 rounded-xl bg-card px-4 text-base text-foreground"
             onChangeText={flow.setBranchQuery}
             placeholder="Find a branch"
-            placeholderTextColor={placeholderColor}
+            placeholderTextColorClassName={"accent-placeholder"}
             style={{ color: foregroundColor, fontFamily }}
             value={flow.branchQuery}
           />
