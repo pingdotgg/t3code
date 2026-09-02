@@ -5638,7 +5638,7 @@ export default function ChatView(props: ChatViewProps) {
       title: `Goal ${formatCodexGoalStatus(codexGoal.status)}`,
       description: (
         <Tooltip>
-          <TooltipTrigger render={<span className="line-clamp-2">{goalDescription}</span>} />
+          <TooltipTrigger render={<span>{goalDescription}</span>} />
           <TooltipPopup side="top" className="max-w-96">
             {goalDescription}
           </TooltipPopup>
