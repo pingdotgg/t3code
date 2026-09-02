@@ -10,6 +10,7 @@ import {
   isPermissionDenied,
   parseBinaryCookies,
   readSafariCookies,
+  safariAccessDenied,
   SafariCookieReadError,
 } from "./SafariCookies.ts";
 
@@ -363,6 +364,42 @@ describe("readSafariCookies", () => {
       const error = yield* readSafariCookies(`${directory}/absent.binarycookies`).pipe(Effect.flip);
 
       assert.equal(error.reason, "readFailed");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+});
+
+describe("safariAccessDenied", () => {
+  const eperm = PlatformError.systemError({
+    _tag: "Unknown",
+    module: "FileSystem",
+    method: "open",
+    pathOrDescriptor: "/protected/Cookies.binarycookies",
+    cause: Object.assign(new Error("operation not permitted"), { code: "EPERM" }),
+  });
+  const denied = (error: PlatformError.PlatformError) =>
+    FileSystem.layerNoop({ open: () => Effect.fail(error) });
+
+  it.effect("reports TCC's EPERM as a missing Full Disk Access grant", () =>
+    Effect.gen(function* () {
+      // `stat` finds the jar without the grant, so only an open tells the
+      // listing whether the import would actually be allowed.
+      assert.isTrue(
+        yield* safariAccessDenied("/protected/Cookies.binarycookies").pipe(
+          Effect.provide(denied(eperm)),
+        ),
+      );
+    }),
+  );
+
+  it.effect("does not read a readable jar, or any other failure, as denied", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-safari-" });
+      const jar = `${directory}/Cookies.binarycookies`;
+      yield* fileSystem.writeFile(jar, new Uint8Array([0x63, 0x6f, 0x6f, 0x6b]));
+      assert.isFalse(yield* safariAccessDenied(jar));
+      // Missing entirely is "not installed", not "denied".
+      assert.isFalse(yield* safariAccessDenied(`${directory}/absent.binarycookies`));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

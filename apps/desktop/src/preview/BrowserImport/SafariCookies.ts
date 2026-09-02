@@ -209,6 +209,22 @@ export const isPermissionDenied = (error: PlatformError.PlatformError): boolean 
   return code === "EPERM";
 };
 
+/**
+ * Whether reading the jar is refused by TCC. `stat` succeeds on the jar
+ * inside Safari's container even without Full Disk Access — that is what lets
+ * the listing find it — so presence alone cannot tell granted from denied.
+ * Opening it for read is what TCC gates: EPERM means the grant is missing.
+ * Anything else (including a missing jar) is not a permission answer.
+ */
+export const safariAccessDenied = Effect.fnUntraced(function* (cookiePath: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.open(cookiePath, { flag: "r" }).pipe(
+    Effect.as(false),
+    Effect.catch((cause) => Effect.succeed(isPermissionDenied(cause))),
+    Effect.scoped,
+  );
+});
+
 export const readSafariCookies = Effect.fn("SafariCookies.readSafariCookies")(function* (
   cookiePath: string,
 ) {

@@ -27,7 +27,7 @@ import * as BrowserSession from "../BrowserSession.ts";
 import { ChromiumCookieReadError, readChromiumCookies } from "./ChromiumCookies.ts";
 import type { CookieReadResult } from "./CookieDatabase.ts";
 import { FirefoxCookieReadError, readFirefoxCookies } from "./FirefoxCookies.ts";
-import { readSafariCookies, SafariCookieReadError } from "./SafariCookies.ts";
+import { readSafariCookies, safariAccessDenied, SafariCookieReadError } from "./SafariCookies.ts";
 import {
   BROWSER_IMPORT_SOURCES,
   resolveCookieDatabase,
@@ -93,6 +93,15 @@ const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function*
   if (!definition.platforms.includes(context.platform)) return "unsupportedPlatform";
   if (!(yield* isSourceInstalled(definition, context))) return "notInstalled";
   if (yield* isSourceRunning(definition, context)) return "browserRunning";
+  // Safari's jar is found by `stat`, which TCC permits without Full Disk
+  // Access — so a Safari that lists as ready may still refuse the read. Probe
+  // the grant here, so the wizard can open on the permission step and a
+  // post-grant recheck can tell granted from still-denied, rather than only
+  // discovering it by attempting the import.
+  if (definition.engine === "safari") {
+    const jar = yield* resolveCookieDatabase(definition, context, ".");
+    if (jar !== undefined && (yield* safariAccessDenied(jar))) return "needsFullDiskAccess";
+  }
   return undefined;
 });
 
