@@ -156,6 +156,9 @@ describe("theme files", () => {
       expect(contrastRatio(colors.textMuted, colors.canvas)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(colors.textMuted, colors.canvas)).toBeLessThan(5.5);
       expect(contrastRatio(colors.mutedForeground, colors.muted)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(colors.mutedForeground, colors.muted)).toBeLessThan(
+        contrastRatio(colors.text, colors.muted),
+      );
       expect(contrastRatio(colors.placeholder, colors.surfaceRaised)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(colors.placeholder, colors.surfaceRaised)).toBeLessThan(
         contrastRatio(colors.text, colors.surfaceRaised),
