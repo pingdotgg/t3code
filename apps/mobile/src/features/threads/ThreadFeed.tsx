@@ -1557,6 +1557,20 @@ function renderFeedEntry(
       !assistantTurnStillInProgress &&
       !message.streaming;
 
+    if (isUser && message.origin === "continuation") {
+      // Hidden prompt sent by Continue after an interrupted turn: a marker,
+      // never a bubble, mirroring the web timeline.
+      return (
+        <View className="my-2 flex-row items-center gap-2">
+          <View className="h-px flex-1 bg-border" />
+          <NativeText className="text-xs text-muted-foreground">
+            Continued from the interrupted step
+          </NativeText>
+          <View className="h-px flex-1 bg-border" />
+        </View>
+      );
+    }
+
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
       return (

@@ -810,7 +810,11 @@ function deriveTimelineMinimapItems(
   const items: TimelineMinimapItem[] = [];
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    if (row?.kind !== "message" || row.message.role !== "user") {
+    if (
+      row?.kind !== "message" ||
+      row.message.role !== "user" ||
+      row.message.origin === "continuation"
+    ) {
       continue;
     }
 
@@ -1112,7 +1116,16 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
-      {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
+      {row.kind === "message" &&
+      row.message.role === "user" &&
+      row.message.origin === "continuation" ? (
+        <ContinuationTimelineRow row={row} />
+      ) : null}
+      {row.kind === "message" &&
+      row.message.role === "user" &&
+      row.message.origin !== "continuation" ? (
+        <UserTimelineRow row={row} />
+      ) : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
       ) : null}
@@ -1833,6 +1846,33 @@ function toolGroupSummaryIconName(
     case "mixed":
       return "hammer";
   }
+}
+
+/**
+ * A continuation is the hidden prompt sent by the Continue button after an
+ * interrupted or failed turn. It renders as a marker, not a bubble: the user
+ * did not write it, and the words only matter to the agent.
+ */
+function ContinuationTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <div
+      className="flex items-center gap-2 py-1 text-xs text-muted-foreground"
+      data-message-id={row.message.id}
+      data-message-role="user"
+      data-message-origin="continuation"
+    >
+      <span className="h-px flex-1 bg-border/60" aria-hidden />
+      <span className="flex shrink-0 items-center gap-1.5">
+        <PlayIcon className="size-3" aria-hidden />
+        <span>Continued from the interrupted step</span>
+        <span className="tabular-nums opacity-70">
+          {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
+        </span>
+      </span>
+      <span className="h-px flex-1 bg-border/60" aria-hidden />
+    </div>
+  );
 }
 
 function WorkGroupToggleTimelineRow({
