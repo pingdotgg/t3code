@@ -411,7 +411,10 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
     // `profiles.ini` also lists profiles the installer created but the user
     // never launched, which hold no cookie database and nothing to import.
     // Only keep the ones a database proves exist, like the directory scans
-    // below do.
+    // below do. When none of the declared profiles has one, fall through to
+    // the scan rather than returning empty: `profiles.ini` can list stale or
+    // never-launched profiles while the cookies live in one it does not
+    // mention, and an empty answer here hides the browser entirely.
     if (declared.length > 0) {
       const found = yield* Effect.forEach(declared, (profile) =>
         Effect.forEach(
@@ -419,14 +422,13 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
           (candidate) => databaseFileExists(candidate),
         ).pipe(Effect.map((results) => (results.some(Boolean) ? profile : undefined))),
       );
-      return yield* withCookieCounts(
-        definition,
-        context,
-        found.filter((profile) => profile !== undefined),
-      );
+      const withDatabase = found.filter((profile) => profile !== undefined);
+      if (withDatabase.length > 0) {
+        return yield* withCookieCounts(definition, context, withDatabase);
+      }
     }
 
-    // No readable `profiles.ini`, so fall back to scanning the directory the
+    // No usable `profiles.ini`, so fall back to scanning the directory the
     // profiles actually live in, keeping only the ones a cookie database
     // proves were launched.
     const fallbackDirectory =
