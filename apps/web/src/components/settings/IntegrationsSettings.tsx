@@ -152,7 +152,7 @@ const zoomLabel = (zoomFactor: number) => `${Math.round(zoomFactor * 100)}%`;
  * it. Anything unrecognised reads as a plain read failure rather than leaking
  * the raw message into a toast.
  */
-const importFailureReason = (cause: unknown): BrowserImportFailureReason => {
+export const importFailureReason = (cause: unknown): BrowserImportFailureReason => {
   const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
   return (
     BrowserImportFailureReason.literals.find((reason) => message.includes(`failed: ${reason}.`)) ??
@@ -860,7 +860,12 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
               [environmentId],
               input.target.profileId,
             ).catch(() => undefined);
-            throw cause;
+            // Not a read failure: the cookies came over and were cleared again
+            // because the profile could not be kept. Name that, in the same
+            // token form `importFailureReason` recovers from a bridge error.
+            throw new Error(`Importing cookies from ${source.id} failed: profileNotSaved.`, {
+              cause,
+            });
           }
         } else {
           targetName = source.name;

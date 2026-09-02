@@ -168,6 +168,10 @@ describe("isRetryableReason", () => {
     // has to offer the retry it asks for.
     expect(isRetryableReason("keychainItemMissing")).toBe(true);
   });
+
+  it("offers a retry when the cookies landed but the new profile was not saved", () => {
+    expect(isRetryableReason("profileNotSaved")).toBe(true);
+  });
 });
 
 describe("formatSkippedDomains", () => {

@@ -135,6 +135,7 @@ export function isRetryableReason(reason: BrowserImportFailureReason): boolean {
     case "keychainItemMissing":
     case "readFailed":
     case "sessionUnavailable":
+    case "profileNotSaved":
       return true;
     default:
       return false;

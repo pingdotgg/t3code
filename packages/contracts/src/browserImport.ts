@@ -53,6 +53,11 @@ export const BrowserImportFailureReason = Schema.Literals([
   "unknownSourceProfile",
   /** The target profile's Electron session could not be opened. */
   "sessionUnavailable",
+  /**
+   * The cookies were written, but the new profile could not be saved to
+   * settings, so its partition was cleared again rather than left orphaned.
+   */
+  "profileNotSaved",
   /** Anything else: a corrupt database, a failed decrypt, a vanished file. */
   "readFailed",
 ]);
@@ -133,5 +138,6 @@ export const BROWSER_IMPORT_FAILURE_COPY: Readonly<Record<BrowserImportFailureRe
   unknownSource: "That browser is no longer available to import from.",
   unknownSourceProfile: "That browser profile no longer exists.",
   sessionUnavailable: "The target profile could not be opened.",
+  profileNotSaved: "The cookies were imported, but the new profile couldn't be saved. Try again.",
   readFailed: "The browser's cookie database could not be read.",
 };
