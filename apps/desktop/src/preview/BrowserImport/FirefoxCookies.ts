@@ -56,7 +56,25 @@ const SAMESITE_NONE = 0;
 const SAMESITE_LAX = 1;
 const SAMESITE_STRICT = 2;
 
-const sameSiteFromColumn = (value: number): ImportedCookie["sameSite"] => {
+/**
+ * Schemas 10–14 carried a second column, `rawSameSite`: the value the cookie
+ * actually declared, beside a `sameSite` that Firefox had already defaulted to
+ * Lax. The schema-15 migration folded them back together with
+ * `sameSite = UNSET where sameSite = LAX and rawSameSite = NONE`, i.e. a row
+ * that "is Lax" only because nothing was declared. Reading such a database
+ * before Firefox has migrated it must apply the same rule, or an undeclared
+ * cookie is imported as an explicit Lax.
+ */
+const FIREFOX_RAW_SAMESITE_FIRST_SCHEMA = 10;
+const FIREFOX_RAW_SAMESITE_LAST_SCHEMA = 14;
+
+const sameSiteFromColumn = (
+  value: number | null,
+  rawValue: number | null,
+): ImportedCookie["sameSite"] => {
+  // Schema 9 added the column with no default, so older rows carry NULL.
+  if (value === null) return "unspecified";
+  if (value === SAMESITE_LAX && rawValue === SAMESITE_NONE) return "unspecified";
   if (value === SAMESITE_NONE) return "no_restriction";
   if (value === SAMESITE_LAX) return "lax";
   if (value === SAMESITE_STRICT) return "strict";
@@ -73,7 +91,9 @@ const CookieRow = Schema.Struct({
   expiry: Schema.Number,
   isSecure: Schema.Number,
   isHttpOnly: Schema.Number,
-  sameSite: Schema.Number,
+  sameSite: Schema.NullOr(Schema.Number),
+  // Present only for schemas 10–14; selected as NULL elsewhere.
+  rawSameSite: Schema.NullOr(Schema.Number),
 });
 const decodeCookieRows = Schema.decodeUnknownEffect(Schema.Array(CookieRow));
 
@@ -110,11 +130,21 @@ export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")
     // `^privateBrowsingId=1`); Electron has no equivalent, so importing them
     // all would collapse several identities onto one host/name/path and hand
     // the profile an arbitrary container's session.
-    const raw = yield* sql`
-      select host, name, value, path, expiry, isSecure, isHttpOnly, sameSite
-        from moz_cookies
-       where originAttributes = ''
-    `;
+    const hasRawSameSite =
+      schemaVersion >= FIREFOX_RAW_SAMESITE_FIRST_SCHEMA &&
+      schemaVersion <= FIREFOX_RAW_SAMESITE_LAST_SCHEMA;
+    const raw = hasRawSameSite
+      ? yield* sql`
+          select host, name, value, path, expiry, isSecure, isHttpOnly, sameSite, rawSameSite
+            from moz_cookies
+           where originAttributes = ''
+        `
+      : yield* sql`
+          select host, name, value, path, expiry, isSecure, isHttpOnly, sameSite,
+                 null as rawSameSite
+            from moz_cookies
+           where originAttributes = ''
+        `;
     return { rows: yield* decodeCookieRows(raw), schemaVersion };
   }).pipe(
     Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })),
@@ -133,7 +163,7 @@ export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")
       secure,
       httpOnly: row.isHttpOnly === 1,
       expirationDate: expiryToSeconds(row.expiry, schemaVersion),
-      sameSite: sameSiteFromColumn(row.sameSite),
+      sameSite: sameSiteFromColumn(row.sameSite, row.rawSameSite),
     } satisfies ImportedCookie;
   });
 });

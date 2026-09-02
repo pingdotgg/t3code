@@ -34,7 +34,8 @@ const writeFirefoxCookieDatabase = Effect.fnUntraced(function* (
     expiry: number;
     isSecure: number;
     isHttpOnly: number;
-    sameSite: number;
+    sameSite: number | null;
+    rawSameSite?: number;
     originAttributes?: string;
   }>,
   // Firefox stamps `PRAGMA user_version`; schema 16+ stores `expiry` in
@@ -46,17 +47,21 @@ const writeFirefoxCookieDatabase = Effect.fnUntraced(function* (
   const file = `${directory}/cookies.sqlite`;
   const database = new NodeSqlite.DatabaseSync(file);
   database.exec(`pragma user_version = ${schemaVersion}`);
+  // Only schemas 10–14 have `rawSameSite`; the schema-15 migration dropped it.
+  const hasRawSameSite = schemaVersion >= 10 && schemaVersion <= 14;
   database.exec(
     `create table moz_cookies (
        id integer primary key, host text, name text, value text, path text,
        expiry integer, isSecure integer, isHttpOnly integer, sameSite integer,
+       ${hasRawSameSite ? "rawSameSite integer," : ""}
        originAttributes text not null default ''
      )`,
   );
   const insert = database.prepare(
     `insert into moz_cookies
-       (host, name, value, path, expiry, isSecure, isHttpOnly, sameSite, originAttributes)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (host, name, value, path, expiry, isSecure, isHttpOnly, sameSite,
+        ${hasRawSameSite ? "rawSameSite," : ""} originAttributes)
+     values (?, ?, ?, ?, ?, ?, ?, ?, ${hasRawSameSite ? "?," : ""} ?)`,
   );
   for (const row of rows) {
     insert.run(
@@ -68,6 +73,7 @@ const writeFirefoxCookieDatabase = Effect.fnUntraced(function* (
       row.isSecure,
       row.isHttpOnly,
       row.sameSite,
+      ...(hasRawSameSite ? [row.rawSameSite ?? row.sameSite] : []),
       row.originAttributes ?? "",
     );
   }
@@ -190,6 +196,72 @@ describe("readFirefoxCookies", () => {
         );
         expect(cookies.map(({ name, sameSite }) => ({ name, sameSite }))).toEqual([
           { name: "unset", sameSite: "unspecified" },
+          { name: "none", sameSite: "no_restriction" },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("imports rows whose SameSite was never written", () =>
+    run(
+      Effect.gen(function* () {
+        // Schema 9 added `sameSite` without a default, so rows from before the
+        // upgrade hold NULL. One such row must not fail the whole import.
+        const row = {
+          host: "example.test",
+          name: "c",
+          value: "v",
+          path: "/",
+          expiry: 0,
+          isSecure: 0,
+          isHttpOnly: 0,
+        };
+        const cookies = yield* readFirefoxCookies(
+          yield* writeFirefoxCookieDatabase(
+            [
+              { ...row, name: "legacy", sameSite: null },
+              { ...row, name: "strict", sameSite: 2 },
+            ],
+            9,
+          ),
+        );
+        expect(cookies.map(({ name, sameSite }) => ({ name, sameSite }))).toEqual([
+          { name: "legacy", sameSite: "unspecified" },
+          { name: "strict", sameSite: "strict" },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("applies the schema-15 rawSameSite rule to older databases", () =>
+    run(
+      Effect.gen(function* () {
+        // Schemas 10–14 defaulted `sameSite` to Lax and kept the declared value
+        // in `rawSameSite`. Firefox's own migration to 15 turns "Lax by
+        // default, None declared" into Unset; an unmigrated database has to be
+        // read the same way or an undeclared cookie becomes an explicit Lax.
+        const row = {
+          host: "example.test",
+          name: "c",
+          value: "v",
+          path: "/",
+          expiry: 0,
+          isSecure: 0,
+          isHttpOnly: 0,
+        };
+        const cookies = yield* readFirefoxCookies(
+          yield* writeFirefoxCookieDatabase(
+            [
+              { ...row, name: "defaulted", sameSite: 1, rawSameSite: 0 },
+              { ...row, name: "declared", sameSite: 1, rawSameSite: 1 },
+              { ...row, name: "none", sameSite: 0, rawSameSite: 0 },
+            ],
+            14,
+          ),
+        );
+        expect(cookies.map(({ name, sameSite }) => ({ name, sameSite }))).toEqual([
+          { name: "defaulted", sameSite: "unspecified" },
+          { name: "declared", sameSite: "lax" },
           { name: "none", sameSite: "no_restriction" },
         ]);
       }),
