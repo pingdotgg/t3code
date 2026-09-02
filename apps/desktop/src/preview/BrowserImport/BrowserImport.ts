@@ -98,7 +98,7 @@ const cookieHost = (url: string): string => {
 };
 
 export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
-  session: { readonly cookies: Pick<Session["cookies"], "set"> },
+  session: { readonly cookies: Pick<Session["cookies"], "set" | "flushStore"> },
   read: CookieReadResult,
 ) {
   let imported = 0;
@@ -132,6 +132,19 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
       skipped += 1;
       skippedDomains.add(cookieHost(cookie.url));
     }
+  }
+  // `set` resolves once the cookie is in memory; Chromium writes the store to
+  // disk on its own schedule. Flush before reporting "Done", so a crash right
+  // after does not lose what the user was just told was imported. A failed
+  // flush is logged rather than surfaced: the cookies are still in the
+  // session and land on disk at the next scheduled write.
+  if (imported > 0) {
+    yield* Effect.tryPromise(() => session.cookies.flushStore()).pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("Imported cookies could not be flushed to disk", { cause: error.cause }),
+      ),
+      Effect.ignore,
+    );
   }
   return { imported, skipped, skippedDomains: [...skippedDomains].slice(0, 20) };
 });

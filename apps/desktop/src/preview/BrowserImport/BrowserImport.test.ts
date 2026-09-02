@@ -135,10 +135,15 @@ describe("BrowserImport.importCookies", () => {
 describe("BrowserImport.writeCookies", () => {
   it.effect("counts a rejected cookie and its domain as skipped", () =>
     Effect.gen(function* () {
+      let flushes = 0;
       const result = yield* BrowserImport.writeCookies(
         {
           cookies: {
             set: () => Promise.reject(new Error("fixture rejection")),
+            flushStore: () => {
+              flushes += 1;
+              return Promise.resolve();
+            },
           },
         },
         { cookies: [cookie], undecryptable: 0, undecryptableHosts: [] },
@@ -149,6 +154,34 @@ describe("BrowserImport.writeCookies", () => {
         skipped: 1,
         skippedDomains: ["rejected.example"],
       });
+      // Nothing landed, so there is nothing to persist.
+      assert.equal(flushes, 0);
+    }),
+  );
+
+  it.effect("flushes the store after writing, and reports success if the flush fails", () =>
+    Effect.gen(function* () {
+      const events: Array<string> = [];
+      const result = yield* BrowserImport.writeCookies(
+        {
+          cookies: {
+            set: () => {
+              events.push("set");
+              return Promise.resolve();
+            },
+            flushStore: () => {
+              events.push("flush");
+              return Promise.reject(new Error("fixture flush failure"));
+            },
+          },
+        },
+        { cookies: [cookie, cookie], undecryptable: 0, undecryptableHosts: [] },
+      );
+
+      // One flush after every write, not one per cookie; the cookies are in
+      // the session either way, so a failed flush is not a failed import.
+      assert.deepEqual(events, ["set", "set", "flush"]);
+      assert.deepEqual(result, { imported: 2, skipped: 0, skippedDomains: [] });
     }),
   );
 
@@ -158,6 +191,7 @@ describe("BrowserImport.writeCookies", () => {
         {
           cookies: {
             set: () => new Promise<void>(() => {}),
+            flushStore: () => Promise.resolve(),
           },
         },
         { cookies: [cookie], undecryptable: 0, undecryptableHosts: [] },
