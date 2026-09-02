@@ -52,6 +52,30 @@ On mobile, the model picker shows each OpenCode model's upstream provider, such 
 GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list
 when starting a thread or changing an existing thread's model.
 
+## Quote an assistant response
+
+On web and desktop, select text in an assistant response, then choose **Cite in composer** from the
+menu that appears when you release the selection. This inserts an inline quote chip at your cursor
+and opens an optional comment bubble beside the selected text; press `Enter` or choose **Save** to
+attach the comment, or leave it blank to keep just the quote. You can type before and after the
+chip, such as a quote followed by "what do you mean?". A selection must stay within one response
+and fit in 8,000 characters.
+
+The chip shows your comment when it has one, or a short quote preview otherwise. Use the pencil
+button to add or change the comment, and the remove button to delete the quote and its comment from
+the draft. Copying, reloading, and restoring a [stashed prompt](#prompt-stash) keep each comment
+with its quote, and sending tells the agent which words were quoted and which comment you wrote.
+The quoted text and comment count toward the message limit.
+
+Select a chip in the composer or a sent message to open the source thread, scroll to the response,
+and highlight the quoted passage — including in older history. The
+highlight pulses, holds for a moment, then fades on its own; press `Escape` to stop the navigation
+or clear it early. If the source is unavailable or its text has changed, the saved quote stays
+readable and T3 Code shows a warning.
+
+Mobile shows the full saved quote and its comment in sent messages. It does not offer
+**Cite in composer** or navigation to a quote's source.
+
 ## Images and videos in messages
 
 On web, desktop, and mobile, select a link to an image or video to open it inside T3 Code.

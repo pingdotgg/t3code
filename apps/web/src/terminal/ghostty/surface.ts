@@ -1,4 +1,5 @@
 import { isMacPlatform } from "../../lib/utils";
+import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
   GhosttyTerminalCore,
@@ -513,7 +514,7 @@ export function advanceTerminalSelectionClickSequence(
 ): TerminalSelectionClickSequence {
   const repeats =
     previous !== null &&
-    event.timeStamp - previous.time <= 500 &&
+    event.timeStamp - previous.time <= SELECTION_MULTI_CLICK_INTERVAL_MS &&
     Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= 4;
   return {
     count: repeats ? (previous.count >= 3 ? 1 : previous.count + 1) : 1,

@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import {
+  collectAssistantCitations,
+  serializeAssistantCitation,
+} from "@t3tools/shared/assistantCitations";
 
 import { removeLocalStorageItem } from "./hooks/useLocalStorage";
 
@@ -101,6 +105,34 @@ describe("promptStashStore", () => {
     store.stashEntry(makeEntry({ id: "second" }));
     const entries = usePromptStashStore.getState().entries;
     expect(entries.map((entry) => entry.id)).toEqual(["second", "first"]);
+  });
+
+  it("restores citations and bound comments from a persisted stash", () => {
+    const citation = {
+      version: 1 as const,
+      environmentId: EnvironmentId.make("remote-source"),
+      threadId: ThreadId.make("source-thread"),
+      messageId: MessageId.make("source-message"),
+      text: "A quote to revisit later.",
+      comment: "Revisit this tomorrow.\nCheck whether the example still applies.",
+      start: 0,
+      end: 24,
+      prefix: "",
+      suffix: " Next.",
+    };
+    const prompt = `Revisit ${serializeAssistantCitation(citation)}`;
+    writePromptStashStorageForTest(
+      JSON.stringify({
+        version: 2,
+        state: { entries: [makeEntry({ id: "citation-stash", prompt })] },
+      }),
+    );
+    const restored = usePromptStashStore.getState().takeEntry("citation-stash").entry;
+    expect(restored?.prompt).toBe(prompt);
+    expect(
+      collectAssistantCitations(restored?.prompt ?? "").map((entry) => entry.citation),
+    ).toEqual([citation]);
+    expect(usePromptStashStore.getState().takeEntry("citation-stash").entry).toBeNull();
   });
 
   it("evicts the oldest entry past the cap and returns it", () => {
