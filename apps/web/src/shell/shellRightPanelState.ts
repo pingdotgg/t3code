@@ -1,4 +1,4 @@
-import type { ShellRightPanelState } from "@t3tools/contracts";
+import type { ShellRightPanelState } from "@t3tools/contracts/shell";
 
 import type { RightPanelSurface } from "../rightPanelStore";
 

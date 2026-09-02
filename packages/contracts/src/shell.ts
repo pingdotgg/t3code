@@ -6,8 +6,10 @@ import * as Schema from "effect/Schema";
  * derived view models with `publish(key, value)` and receives user intent
  * from shell-rendered chrome as actions. The page stays the only client of
  * the server; the shell never sees the app protocol.
+ *
+ * Imported as `@t3tools/contracts/shell` so only shell-hosted code pulls
+ * these schemas into its bundle.
  */
-export const SHELL_PROTOCOL_VERSION = 1 as const;
 
 export const ShellSidebarThreadStatus = Schema.Literals([
   "approval",
@@ -356,6 +358,7 @@ export const ShellGitMenuItem = Schema.Struct({
   label: Schema.String,
   disabledReason: Schema.NullOr(Schema.String),
 });
+export type ShellGitMenuItem = typeof ShellGitMenuItem.Type;
 
 /**
  * Published under the `git` key while a thread route is open: the git
@@ -461,7 +464,7 @@ export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("rightPanel.close"), id: Schema.String }),
   Schema.Struct({
     type: Schema.Literal("rightPanel.add"),
-    kind: Schema.Literals(["diff", "files", "terminal", "pullRequest", "agents"]),
+    kind: Schema.Literals(["diff", "files", "terminal", "pull-request", "agents"]),
   }),
   Schema.Struct({ type: Schema.Literal("workspace.newThread") }),
   Schema.Struct({

@@ -1283,9 +1283,13 @@ export interface LocalApi {
     openSystemSettings: (pane: SystemSettingsPane) => Promise<void>;
   };
   contextMenu: {
+    /**
+     * `surface: "shell"` marks window coordinates from a native shell's own
+     * chrome rather than a point in this document; browsers ignore it.
+     */
     show: <T extends string>(
       items: readonly ContextMenuItem<T>[],
-      position?: { x: number; y: number },
+      position?: { x: number; y: number; surface?: "shell" },
     ) => Promise<T | null>;
     close: () => Promise<void>;
   };

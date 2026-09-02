@@ -192,7 +192,7 @@ Rectangle {
                         iconName: "git-pull-request"
                         enabled: panel.open && panel.model.canAdd.pullRequest
                         onTriggered: Shell.dispatch("rightPanel.add", {
-                            kind: "pullRequest"
+                            kind: "pull-request"
                         })
                     }
 

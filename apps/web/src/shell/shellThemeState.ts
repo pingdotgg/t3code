@@ -1,4 +1,4 @@
-import type { ShellThemeState } from "@t3tools/contracts";
+import type { ShellThemeState } from "@t3tools/contracts/shell";
 
 /** Theme role → the semantic CSS variable the page paints it with. */
 export const SHELL_THEME_ROLE_VARIABLES: Readonly<Record<string, string>> = {

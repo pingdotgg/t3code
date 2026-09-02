@@ -2,10 +2,10 @@ import {
   EDITORS,
   type EditorId,
   type ProjectScript,
-  type ShellWorkspaceState,
   type VcsRef,
   type VcsStatusResult,
 } from "@t3tools/contracts";
+import type { ShellWorkspaceState } from "@t3tools/contracts/shell";
 
 import {
   resolveEnvModeLabel,

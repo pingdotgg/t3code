@@ -1,4 +1,4 @@
-import type { ShellSettingsState } from "@t3tools/contracts";
+import type { ShellSettingsState } from "@t3tools/contracts/shell";
 
 import {
   SETTINGS_SECTION_LABELS,

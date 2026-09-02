@@ -1,6 +1,7 @@
 /// <reference types="vite-plus/client" />
 
-import type { DesktopBridge, T3Shell } from "@t3tools/contracts";
+import type { DesktopBridge } from "@t3tools/contracts";
+import type { T3Shell } from "@t3tools/contracts/shell";
 
 interface ImportMetaEnv {
   readonly VITE_HTTP_URL: string;

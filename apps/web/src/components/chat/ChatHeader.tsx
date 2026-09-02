@@ -29,7 +29,6 @@ import { OpenInPicker } from "./OpenInPicker";
 import { useRemoteOpenState, type RemoteOpenMode } from "../../remoteOpen";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
-import { resolveRenameCommit } from "./ChatHeader.logic";
 import { useRenameThread } from "../../hooks/useRenameThread";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { observeResponsiveBreakpointFade, usePanelAnimationSettings } from "../../panelAnimations";
@@ -75,11 +74,6 @@ interface ChatHeaderProps {
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
 }
-
-/**
- * Rename commit rule shared with the sidebar's inline rename: trim, reject
- * empty (the caller toasts), and skip the mutation when nothing changed.
- */
 
 // How long a click on the thread title waits before opening the action menu,
 // so a double-click-to-rename can cancel it first. Only the native desktop
@@ -265,8 +259,7 @@ export const ChatHeader = memo(function ChatHeader({
   openMenuRef.current = openMenu;
   useEffect(() => {
     if (!shellHosted || shellMenuRequest === null) return;
-    const position = { x: shellMenuRequest.x, y: shellMenuRequest.y, surface: "shell" };
-    openMenuRef.current(position);
+    openMenuRef.current({ x: shellMenuRequest.x, y: shellMenuRequest.y, surface: "shell" });
   }, [shellHosted, shellMenuRequest]);
 
   const handleHeaderContextMenu = useCallback(
@@ -448,5 +441,3 @@ export const ChatHeader = memo(function ChatHeader({
     </div>
   );
 });
-
-export { resolveRenameCommit };

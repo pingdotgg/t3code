@@ -119,7 +119,7 @@ export function useThreadActionMenu(input: {
   });
 
   const openMenu = useCallback(
-    (position: { x: number; y: number }) => {
+    (position: { x: number; y: number; surface?: "shell" }) => {
       if (threadRef === null) return;
       void (async () => {
         const api = readLocalApi();

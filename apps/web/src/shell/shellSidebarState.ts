@@ -1,6 +1,10 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ShellSidebarDraft, ShellSidebarState, ShellSidebarThread } from "@t3tools/contracts";
+import type {
+  ShellSidebarDraft,
+  ShellSidebarState,
+  ShellSidebarThread,
+} from "@t3tools/contracts/shell";
 
 import {
   hasUnseenCompletion,

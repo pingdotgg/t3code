@@ -11,7 +11,7 @@ import type {
   ShellComposerOption,
   ShellComposerState,
   ShellComposerSuggestion,
-} from "@t3tools/contracts";
+} from "@t3tools/contracts/shell";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
