@@ -1,10 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import {
-  ArrowLeftIcon,
-  ChevronRightIcon,
-  LoaderCircleIcon,
-  RotateCwIcon,
-} from "lucide-react";
+import { ArrowLeftIcon, ChevronRightIcon, LoaderCircleIcon, RotateCwIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
