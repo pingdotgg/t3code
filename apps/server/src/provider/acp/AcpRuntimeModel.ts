@@ -713,13 +713,24 @@ export const waitForSessionLoadReplayIdle = (input: {
     }
   });
 
+/**
+ * Model state some agents (Grok) advertise in `initialize._meta.modelState`, before any
+ * session exists. Undefined when the agent does not advertise it or the shape is unknown.
+ */
+export function sessionModelStateFromInitialize(
+  initializeResult: EffectAcpSchema.InitializeResponse,
+): EffectAcpSchema.SessionModelState | undefined {
+  const meta = initializeResult._meta;
+  const modelState = isRecord(meta) ? meta.modelState : undefined;
+  return isSessionModelState(modelState) ? modelState : undefined;
+}
+
 export function syntheticLoadSessionResponseFromInitialize(
   initializeResult: EffectAcpSchema.InitializeResponse,
 ): EffectAcpSchema.LoadSessionResponse {
   const meta = initializeResult._meta;
-  const modelState = isRecord(meta) ? meta.modelState : undefined;
   const modeState = isRecord(meta) ? meta.modeState : undefined;
-  const models = isSessionModelState(modelState) ? modelState : undefined;
+  const models = sessionModelStateFromInitialize(initializeResult);
   const modes = isSessionModeState(modeState) ? modeState : undefined;
 
   return {

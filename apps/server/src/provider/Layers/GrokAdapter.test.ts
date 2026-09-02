@@ -1739,7 +1739,8 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       assert.equal(error._tag, "ProviderAdapterRequestError");
       assert.include(error.message, "Grok usage limit reached. Try again later.");
       assert.equal(readySession?.status, "ready");
-      assert.equal(readySession?.model, "grok-build");
+      // "grok-build" resolves to the session's current model instead of going over the wire.
+      assert.equal(readySession?.model, "grok-4.6");
       assert.isUndefined(readySession?.activeTurnId);
       assert.lengthOf(terminalEvents, 1);
       const [terminalEvent] = terminalEvents;
