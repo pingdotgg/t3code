@@ -66,7 +66,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
-  it.effect("discovers project skills from the workspace .agents directory", () =>
+  it.effect("ignores .agents/skills, which Claude Code does not load", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -74,6 +74,8 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       const configDir = path.join(tempDir, "claude-home");
       const workspace = path.join(tempDir, "workspace");
 
+      // Verified against the CLI: `/review` here is answered with
+      // `Unknown command`, so offering it would dispatch a dead command.
       yield* writeSkill(
         path.join(workspace, ".agents", "skills"),
         "review",
@@ -82,19 +84,11 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
 
       const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
 
-      assert.deepEqual(skills, [
-        {
-          name: "review",
-          path: path.join(workspace, ".agents", "skills", "review", "SKILL.md"),
-          enabled: true,
-          scope: "project",
-          description: "Review the changes.",
-        },
-      ]);
+      assert.deepEqual(skills, []);
     }),
   );
 
-  it.effect("prefers user skills on three-way name collisions", () =>
+  it.effect("prefers user skills on name collisions even with a stray .agents copy", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -116,39 +110,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         path.join(workspace, ".claude", "skills"),
         "deploy",
         ["---", "name: deploy", "description: Claude deploy.", "---"].join("\n"),
-      );
-
-      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
-
-      assert.deepEqual(skills, [
-        {
-          name: "deploy",
-          path: path.join(configDir, "skills", "deploy", "SKILL.md"),
-          enabled: true,
-          scope: "user",
-          description: "User deploy.",
-        },
-      ]);
-    }),
-  );
-
-  it.effect("prefers user skills over workspace .agents skills on name collisions", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
-      const configDir = path.join(tempDir, "claude-home");
-      const workspace = path.join(tempDir, "workspace");
-
-      yield* writeSkill(
-        path.join(configDir, "skills"),
-        "deploy",
-        ["---", "name: deploy", "description: User deploy.", "---"].join("\n"),
-      );
-      yield* writeSkill(
-        path.join(workspace, ".agents", "skills"),
-        "deploy",
-        ["---", "name: deploy", "description: Agents deploy.", "---"].join("\n"),
       );
 
       const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
@@ -418,28 +379,36 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
-  it.effect("keeps an unmodelled override value visible", () =>
+  it.effect("drops every override in a file when one value is invalid, as Claude Code does", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
       const configDir = path.join(tempDir, "claude-home");
 
-      yield* writeSkill(
-        path.join(configDir, "skills"),
-        "ask-matt",
-        ["---", "name: ask-matt", "---", "", "# Body"].join("\n"),
-      );
+      for (const name of ["unknown-mode", "boolean-false", "sibling-off"]) {
+        yield* writeSkill(
+          path.join(configDir, "skills"),
+          name,
+          ["---", `name: ${name}`, "---", "", "# Body"].join("\n"),
+        );
+      }
+      // Verified against the CLI: with an unknown string or a boolean in the
+      // map, the valid "off" sibling is ignored too and every skill runs.
       yield* fs.writeFileString(
         path.join(configDir, "settings.json"),
-        '{ "skillOverrides": { "ask-matt": "some-future-mode" } }',
+        '{ "skillOverrides": { "unknown-mode": "some-future-mode", "boolean-false": false, "sibling-off": "off" } }',
       );
 
       const skills = yield* discoverClaudeSkills({ homePath: configDir });
 
       assert.deepEqual(
-        skills.map((skill) => [skill.name, skill.enabled, skill.userInvocationOnly === true]),
-        [["ask-matt", true, false]],
+        skills.map((skill) => [skill.name, skill.enabled]),
+        [
+          ["boolean-false", true],
+          ["sibling-off", true],
+          ["unknown-mode", true],
+        ],
       );
     }),
   );

@@ -1,11 +1,12 @@
 /**
  * ClaudeSkills — filesystem discovery of Claude Code skills for the `$` picker.
  *
- * Claude Code loads skills from `<config dir>/skills` (user scope), then
- * `<cwd>/.claude/skills` and `<cwd>/.agents/skills` (project scope), one
- * directory per skill with a `SKILL.md` carrying YAML frontmatter. The first
- * root wins on name collisions, so precedence is user, `.claude`, then
- * `.agents`, matching the CLI.
+ * Claude Code loads skills from `<config dir>/skills` (user scope) and
+ * `<cwd>/.claude/skills` (project scope), one directory per skill with a
+ * `SKILL.md` carrying YAML frontmatter. The user root wins on name collisions,
+ * matching the CLI. `.agents/skills` is a Codex location: verified against the
+ * CLI, a skill that lives only there is answered with `Unknown command`, so it
+ * is not scanned here.
  * The Agent SDK init handshake surfaces skills only as slash commands without
  * their filesystem paths, so the provider snapshot scans the same locations
  * directly, mirroring how the Codex app-server reports its skills.
@@ -179,11 +180,19 @@ const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
   }
 });
 
+/**
+ * The four states Claude Code accepts. The CLI validates the whole map, not
+ * each entry: verified against it, one entry with an unknown value (or a
+ * boolean) makes it drop every override in that file, so this schema does the
+ * same rather than applying the valid siblings the CLI ignores.
+ */
+const SkillOverrideValue = Schema.Literals(["on", "name-only", "user-invocable-only", "off"]);
+
 // Lenient because these settings files are hand-edited and Claude Code itself
 // tolerates comments and trailing commas in them.
 const SkillOverrideSettings = fromLenientJson(
   Schema.Struct({
-    skillOverrides: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    skillOverrides: Schema.optional(Schema.Record(Schema.String, SkillOverrideValue)),
   }),
 );
 const decodeSkillOverrideSettings = Schema.decodeUnknownEffect(SkillOverrideSettings);
@@ -198,16 +207,16 @@ type SkillOverride = {
   readonly userInvocationOnly: boolean;
 };
 
-function parseSkillOverride(value: unknown): SkillOverride {
-  if (value === "off" || value === false) {
-    return { enabled: false, userInvocationOnly: false };
+function parseSkillOverride(value: typeof SkillOverrideValue.Type): SkillOverride {
+  switch (value) {
+    case "off":
+      return { enabled: false, userInvocationOnly: false };
+    case "user-invocable-only":
+      return { enabled: true, userInvocationOnly: true };
+    case "on":
+    case "name-only":
+      return { enabled: true, userInvocationOnly: false };
   }
-  if (value === "user-invocable-only") {
-    return { enabled: true, userInvocationOnly: true };
-  }
-  // An unknown value means a newer Claude Code grew a mode we do not model
-  // yet — leave the skill visible rather than guessing at it.
-  return { enabled: true, userInvocationOnly: false };
 }
 
 const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
@@ -287,14 +296,14 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
 });
 
 /**
- * Enumerate Claude Code skills from the user config dir, workspace
- * `.claude/skills`, and workspace `.agents/skills`. Discovery is best-effort:
- * unreadable roots and malformed skill entries are skipped so a broken skill
- * never degrades the provider snapshot. Roots are listed highest precedence
- * first and the first hit for a name wins, matching Claude Code: verified
- * against the CLI with the same skill name in both scopes, the user copy is
- * the one that runs. Reporting the project copy instead would attach its
- * invocation metadata to a command Claude Code resolves elsewhere.
+ * Enumerate Claude Code skills from the user config dir and the workspace
+ * `.claude/skills`. Discovery is best-effort: unreadable roots and malformed
+ * skill entries are skipped so a broken skill never degrades the provider
+ * snapshot. Roots are listed highest precedence first and the first hit for a
+ * name wins, matching Claude Code: verified against the CLI with the same
+ * skill name in both scopes, the user copy is the one that runs. Reporting the
+ * project copy instead would attach its invocation metadata to a command
+ * Claude Code resolves elsewhere.
  */
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath">,
@@ -308,12 +317,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
 
   const roots: ReadonlyArray<{ directory: string; scope: ClaudeSkillScope }> = [
     { directory: path.join(configDirPath, "skills"), scope: "user" },
-    ...(cwd
-      ? [
-          { directory: path.join(cwd, ".claude", "skills"), scope: "project" as const },
-          { directory: path.join(cwd, ".agents", "skills"), scope: "project" as const },
-        ]
-      : []),
+    ...(cwd ? [{ directory: path.join(cwd, ".claude", "skills"), scope: "project" as const }] : []),
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();
