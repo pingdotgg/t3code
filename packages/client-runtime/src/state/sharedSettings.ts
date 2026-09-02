@@ -60,13 +60,19 @@ export interface SharedSettingsEnvironment {
 /**
  * Connected environments whose shared settings differ from the primary
  * environment's. Offline environments are skipped: nothing can be read from
- * or written to them, and the warning would never clear.
+ * or written to them, and the warning would never clear. With no primary
+ * settings loaded there is nothing to compare against, so nothing is
+ * reported. Callers must pass the real loaded settings, never a default
+ * fallback, or "apply to all" would push defaults over real values.
  */
 export function findSharedSettingsMismatches(input: {
   readonly primaryEnvironmentId: EnvironmentId | null;
-  readonly primarySettings: ServerSettings;
+  readonly primarySettings: ServerSettings | null;
   readonly environments: ReadonlyArray<SharedSettingsEnvironment>;
 }): ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }> {
+  if (input.primaryEnvironmentId === null || input.primarySettings === null) {
+    return [];
+  }
   const expected = pickSharedServerSettings(input.primarySettings);
   return input.environments.flatMap((environment) => {
     if (

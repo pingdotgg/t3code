@@ -72,6 +72,22 @@ describe("findSharedSettingsMismatches", () => {
     expect(mismatches).toEqual([]);
   });
 
+  it("reports nothing until the primary environment's settings are loaded", () => {
+    const environments = [
+      { environmentId: boxId, label: "Remote Box", connected: true, settings: primarySettings },
+    ];
+    expect(
+      findSharedSettingsMismatches({ primaryEnvironmentId: null, primarySettings, environments }),
+    ).toEqual([]);
+    expect(
+      findSharedSettingsMismatches({
+        primaryEnvironmentId: primaryId,
+        primarySettings: null,
+        environments,
+      }),
+    ).toEqual([]);
+  });
+
   it("skips offline environments and environments without a loaded config", () => {
     const mismatches = findSharedSettingsMismatches({
       primaryEnvironmentId: primaryId,

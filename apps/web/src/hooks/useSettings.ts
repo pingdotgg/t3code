@@ -384,8 +384,12 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
  * an older client.
  */
 export function useSharedSettingsSync() {
-  const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
-  const primarySettings = useAtomValue(primaryServerSettingsAtom);
+  const primaryEnvironment = usePrimaryEnvironment();
+  const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
+  // Read the loaded config, not `primaryServerSettingsAtom`: that atom falls
+  // back to defaults while the primary is disconnected, and "apply to all"
+  // must never push defaults over real values.
+  const primarySettings = primaryEnvironment?.serverConfig?.settings ?? null;
   const { environments } = useEnvironments();
   const persistServerSettings = useAtomCommand(
     serverEnvironment.updateSettings,
@@ -408,6 +412,9 @@ export function useSharedSettingsSync() {
   );
 
   const applyToAll = useCallback(() => {
+    if (primarySettings === null) {
+      return;
+    }
     const patch = pickSharedServerSettings(primarySettings);
     for (const mismatch of mismatches) {
       void persistServerSettings({

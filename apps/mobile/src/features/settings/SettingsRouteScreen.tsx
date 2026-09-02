@@ -597,8 +597,11 @@ function AutoSettleSettingsRows() {
 
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
   const commitDays = () => {
-    const parsed = Number.parseInt(daysDraft ?? "", 10);
+    const draft = (daysDraft ?? "").trim();
     setDaysDraft(null);
+    // Whole-string check so "3.5" and "3days" are rejected instead of
+    // silently becoming 3 on every connected environment.
+    const parsed = /^\d+$/.test(draft) ? Number(draft) : Number.NaN;
     if (
       Number.isInteger(parsed) &&
       parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
