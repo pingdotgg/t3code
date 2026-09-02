@@ -77,7 +77,10 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { makeClaudeEnvironment } from "../../provider/Drivers/ClaudeHome.ts";
-import { resolveClaudeContextWindow } from "../../provider/Layers/ClaudeProvider.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  resolveClaudeCatalogContextWindow,
+} from "../../provider/ClaudeModelCatalog.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
@@ -134,7 +137,9 @@ function claudeContextWindow(modelSelection: ModelSelection): number | null {
   if (modelSelection.model === "claude-opus-4-6" || modelSelection.model === "claude-opus-4-7") {
     return 1_000_000;
   }
-  return resolveClaudeContextWindow(modelSelection) === "1m" ? 1_000_000 : 200_000;
+  return resolveClaudeCatalogContextWindow(BUNDLED_CLAUDE_MODEL_CATALOG, modelSelection) === "1m"
+    ? 1_000_000
+    : 200_000;
 }
 
 export function claudeProviderTurnTokenUsage(
