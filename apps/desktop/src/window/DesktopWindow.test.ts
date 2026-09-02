@@ -1303,7 +1303,7 @@ describe("DesktopWindow", () => {
     Effect.gen(function* () {
       const fake = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make(Option.none());
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const windowsEnvironmentLayer = DesktopEnvironment.layer({
         ...environmentInput,
         platform: "win32",
