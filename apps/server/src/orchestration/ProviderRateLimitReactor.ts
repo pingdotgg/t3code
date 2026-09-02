@@ -9,22 +9,26 @@
  * 2. A turn that fails while its account is limited is re-sent on a sibling
  *    account when `autoSwitchProviderOnRateLimit` is enabled. The sibling must
  *    share the driver and continuation group so the provider session resumes
- *    with full history. Each failed turn is retried at most once.
+ *    with full history. The retry reuses the original user message, so the
+ *    thread shows one bubble, and each failed turn is retried at most once.
  *
  * Ordering matters: the runtime reports the rejection before the failing
  * result, and both arrive on the same stream, so the retry decision never
- * races the state update.
+ * races the state update. Turn-start domain events are also observed so the
+ * reactor knows which user message started the turn that failed.
  *
- * @module ProviderRateLimitReactorLive
+ * @module orchestration/ProviderRateLimitReactor
  */
 import {
   CommandId,
   EventId,
-  MessageId,
+  type MessageId,
   type ModelSelection,
+  type OrchestrationEvent,
   type OrchestrationThread,
   type ProviderRuntimeEvent,
   type ServerProvider,
+  type ServerProviderRateLimit,
   type ThreadId,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -33,30 +37,49 @@ import {
   selectRateLimitFallbackProvider,
 } from "@t3tools/shared/providerRateLimits";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import {
   readProviderRateLimitFromPayload,
   readProviderRateLimitFromTurnError,
-} from "../../provider/providerRateLimits.ts";
-import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
-import { ProviderService } from "../../provider/Services/ProviderService.ts";
-import { forkParked } from "../../serverActivation.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
-import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
-import {
+} from "../provider/providerRateLimits.ts";
+import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
+import { forkParked } from "../serverActivation.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+
+export class ProviderRateLimitReactor extends Context.Service<
   ProviderRateLimitReactor,
-  type ProviderRateLimitReactorShape,
-} from "../Services/ProviderRateLimitReactor.ts";
+  {
+    /**
+     * Start consuming provider runtime and turn-start events. The returned
+     * effect must be run in a scope so the worker fiber is finalized on
+     * shutdown.
+     */
+    readonly start: () => Effect.Effect<void, never, Scope.Scope>;
+    /** Resolves when every queued event has been processed. Test use only. */
+    readonly drain: Effect.Effect<void>;
+  }
+>()("t3/orchestration/ProviderRateLimitReactor") {}
 
 export const PROVIDER_INSTANCE_SWITCHED_ACTIVITY_KIND = "provider.instance.switched";
 
 const RETRIED_TURN_KEY_MAX = 512;
+
+type ReactorInput =
+  | { readonly source: "runtime"; readonly event: ProviderRuntimeEvent }
+  | {
+      readonly source: "domain";
+      readonly event: Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }>;
+    };
 
 export function providerDisplayName(provider: Pick<ServerProvider, "displayName" | "instanceId">) {
   return provider.displayName ?? provider.instanceId;
@@ -69,7 +92,29 @@ export function formatRateLimitSwitchSummary(input: {
   return `Switched to ${providerDisplayName(input.to)} because ${providerDisplayName(input.from)} hit its usage limit`;
 }
 
-const make = Effect.gen(function* () {
+/**
+ * Codex reports windows sparsely: an update carrying only the 5-hour window
+ * says nothing about a still-rejected weekly window. Keep the previous
+ * rejection until its own reset passes or an update names that window.
+ */
+export function mergeCodexRateLimit(
+  previous: ServerProviderRateLimit | undefined,
+  next: ServerProviderRateLimit,
+  nowMs: number,
+): ServerProviderRateLimit {
+  if (
+    previous !== undefined &&
+    next.status !== "rejected" &&
+    isProviderRateLimitActive(previous, nowMs) &&
+    previous.resetsAt !== undefined &&
+    next.resetsAt !== previous.resetsAt
+  ) {
+    return previous;
+  }
+  return next;
+}
+
+export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -90,6 +135,10 @@ const make = Effect.gen(function* () {
     }
     retriedTurnKeys.add(key);
   };
+  // The user message that started each thread's most recent turn. Messages
+  // are stored with a null turn id, so this is the only link back from a
+  // failed turn to the prompt that should be retried.
+  const latestTurnMessageByThread = new Map<ThreadId, MessageId>();
 
   const autoSwitchEnabled = serverSettingsService.getSettings.pipe(
     Effect.map((settings) => settings.autoSwitchProviderOnRateLimit),
@@ -135,7 +184,15 @@ const make = Effect.gen(function* () {
         },
         createdAt: input.createdAt,
       });
-    });
+    }).pipe(
+      // The switch note is informational; never let it block the retry.
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider rate limit reactor could not record the account switch", {
+          threadId: input.threadId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
 
   const retryTurnOnProvider = (input: {
     readonly thread: OrchestrationThread;
@@ -145,7 +202,6 @@ const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       const commandId = yield* serverCommandId("provider-rate-limit-retry");
-      const messageId = MessageId.make(yield* crypto.randomUUIDv4);
       const modelSelection: ModelSelection = {
         ...input.thread.modelSelection,
         instanceId: input.to.instanceId,
@@ -155,7 +211,9 @@ const make = Effect.gen(function* () {
         commandId,
         threadId: input.thread.id,
         message: {
-          messageId,
+          // Same id as the original: the projection upserts instead of
+          // appending, so the transcript keeps a single bubble.
+          messageId: input.userMessage.id,
           role: "user",
           text: input.userMessage.text,
           attachments: input.userMessage.attachments ?? [],
@@ -170,7 +228,7 @@ const make = Effect.gen(function* () {
   const recordRateLimit = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
       if (event.providerInstanceId === undefined) return;
-      const rateLimit =
+      const derived =
         event.type === "account.rate-limits.updated"
           ? readProviderRateLimitFromPayload({
               driver: event.provider,
@@ -179,18 +237,22 @@ const make = Effect.gen(function* () {
             })
           : event.type === "turn.completed" && event.payload.state === "failed"
             ? readProviderRateLimitFromTurnError({
+                driver: event.provider,
                 errorMessage: event.payload.errorMessage,
                 observedAt: event.createdAt,
               })
             : undefined;
-      if (!rateLimit) return;
+      if (!derived) return;
+      const nowMs = Date.parse(event.createdAt);
+      const providers = yield* providerRegistry.getProviders;
+      const previous = providers.find((p) => p.instanceId === event.providerInstanceId)?.rateLimit;
       // A structured update always wins; the error-text heuristic only fills
       // in when nothing structured has marked this account as limited.
-      if (event.type === "turn.completed") {
-        const providers = yield* providerRegistry.getProviders;
-        const current = providers.find((p) => p.instanceId === event.providerInstanceId);
-        if (isProviderRateLimitActive(current?.rateLimit, Date.parse(event.createdAt))) return;
-      }
+      if (event.type === "turn.completed" && isProviderRateLimitActive(previous, nowMs)) return;
+      const rateLimit =
+        event.provider === "codex" && event.type === "account.rate-limits.updated"
+          ? mergeCodexRateLimit(previous, derived, nowMs)
+          : derived;
       yield* providerRegistry.setProviderRateLimit({
         instanceId: event.providerInstanceId,
         rateLimit,
@@ -223,14 +285,13 @@ const make = Effect.gen(function* () {
         return;
       }
 
+      const messageId = latestTurnMessageByThread.get(event.threadId);
+      if (messageId === undefined) return;
       const thread = yield* resolveThreadDetail(event.threadId);
-      if (!thread) return;
-      const userMessages = thread.messages
-        .toReversed()
-        .filter((message) => message.role === "user" && message.text.trim().length > 0);
-      const userMessage =
-        userMessages.find((message) => message.turnId === event.turnId) ?? userMessages[0];
-      if (!userMessage) return;
+      const userMessage = thread?.messages.find(
+        (message) => message.id === messageId && message.role === "user",
+      );
+      if (!thread || !userMessage) return;
 
       rememberRetriedTurn(retryKey);
       yield* Effect.logInfo("provider rate limit reactor switching thread to fallback account", {
@@ -250,37 +311,55 @@ const make = Effect.gen(function* () {
       yield* retryTurnOnProvider({ thread, userMessage, to, createdAt: event.createdAt });
     });
 
-  const processEvent = (event: ProviderRuntimeEvent) =>
-    recordRateLimit(event).pipe(
-      Effect.andThen(maybeSwitchFailedTurn(event)),
+  const processInput = (input: ReactorInput) =>
+    (input.source === "domain"
+      ? Effect.sync(() => {
+          latestTurnMessageByThread.set(
+            input.event.payload.threadId,
+            input.event.payload.messageId,
+          );
+        })
+      : recordRateLimit(input.event).pipe(Effect.andThen(maybeSwitchFailedTurn(input.event)))
+    ).pipe(
       Effect.catchCause((cause) =>
-        Effect.logWarning("provider rate limit reactor failed to process runtime event", {
-          eventId: event.eventId,
-          eventType: event.type,
+        Effect.logWarning("provider rate limit reactor failed to process event", {
+          eventType: input.event.type,
           cause: Cause.pretty(cause),
         }),
       ),
     );
 
-  const worker = yield* makeDrainableWorker(processEvent);
+  const worker = yield* makeDrainableWorker(processInput);
 
-  const start: ProviderRateLimitReactorShape["start"] = () =>
-    forkParked(
-      Stream.runForEach(providerService.streamEvents, (event) => {
-        if (
-          event.type !== "account.rate-limits.updated" &&
-          !(event.type === "turn.completed" && event.payload.state === "failed")
-        ) {
-          return Effect.void;
-        }
-        return worker.enqueue(event);
-      }),
-    );
+  const start: ProviderRateLimitReactor["Service"]["start"] = () =>
+    Effect.gen(function* () {
+      yield* forkParked(
+        Stream.runForEach(providerService.streamEvents, (event) => {
+          if (
+            event.type !== "account.rate-limits.updated" &&
+            !(event.type === "turn.completed" && event.payload.state === "failed")
+          ) {
+            return Effect.void;
+          }
+          return worker.enqueue({ source: "runtime", event });
+        }),
+      );
+      // Subscribe before returning so no turn start is missed while event
+      // handling waits for server activation.
+      const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
+      yield* forkParked(
+        Stream.runForEach(domainEvents, (event) =>
+          event.type === "thread.turn-start-requested"
+            ? worker.enqueue({ source: "domain", event })
+            : Effect.void,
+        ),
+      );
+    });
 
   return {
     start,
     drain: worker.drain,
-  } satisfies ProviderRateLimitReactorShape;
+  } satisfies ProviderRateLimitReactor["Service"];
 });
 
-export const ProviderRateLimitReactorLive = Layer.effect(ProviderRateLimitReactor, make);
+export const layer = Layer.effect(ProviderRateLimitReactor, make);

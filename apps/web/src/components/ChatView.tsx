@@ -5877,6 +5877,13 @@ export default function ChatView(props: ChatViewProps) {
   const [dismissedRateLimitKeys, setDismissedRateLimitKeys] = useState<ReadonlySet<string>>(
     new Set(),
   );
+  const providerInstanceLabel = useCallback(
+    (provider: ServerProvider) =>
+      deriveProviderInstanceEntries(providerStatuses).find(
+        (entry) => entry.instanceId === provider.instanceId,
+      )?.displayName ?? providerLabel(provider),
+    [providerStatuses],
+  );
   const rateLimitSuggestion = useMemo(
     () =>
       activeThread
@@ -5915,11 +5922,13 @@ export default function ChatView(props: ChatViewProps) {
     setStickyComposerModelSelection(nextModelSelection);
     // A turn that just failed on the limited account is worth re-sending
     // as-is; put it back in the composer when nothing else is drafted.
+    // Attachments cannot be turned back into composer drafts, so a message
+    // that carried any is left for the user to re-send by hand.
     if (activeThread.session?.status === "error" && !composerHasUnsentContent) {
       const lastUserMessage = activeThread.messages
         .toReversed()
         .find((message) => message.role === "user" && message.text.trim().length > 0);
-      if (lastUserMessage) {
+      if (lastUserMessage && (lastUserMessage.attachments?.length ?? 0) === 0) {
         setComposerDraftPrompt(threadRef, lastUserMessage.text);
       }
     }
@@ -5949,20 +5958,26 @@ export default function ChatView(props: ChatViewProps) {
       id: `provider-rate-limit:${rateLimitSuggestion.key}`,
       variant: "warning",
       icon: <GaugeIcon />,
-      title: `${providerLabel(rateLimitSuggestion.limited)} hit its usage limit`,
+      title: `${providerInstanceLabel(rateLimitSuggestion.limited)} hit its usage limit`,
       description: fallback
-        ? `${reset ? `${reset[0]!.toUpperCase()}${reset.slice(1)}. ` : ""}${providerLabel(fallback)} can continue this thread.`
+        ? `${reset ? `${reset[0]!.toUpperCase()}${reset.slice(1)}. ` : ""}${providerInstanceLabel(fallback)} can continue this thread.`
         : (reset ?? undefined),
       actions: fallback ? (
         <Button size="xs" variant="ghost" onClick={handleSwitchRateLimitedAccount}>
-          Switch to {providerLabel(fallback)}
+          Switch to {providerInstanceLabel(fallback)}
         </Button>
       ) : undefined,
       dismissLabel: "Dismiss usage limit notice",
       onDismiss: () =>
         setDismissedRateLimitKeys((keys) => new Set(keys).add(rateLimitSuggestion.key)),
     };
-  }, [dismissedRateLimitKeys, handleSwitchRateLimitedAccount, nowMinute, rateLimitSuggestion]);
+  }, [
+    dismissedRateLimitKeys,
+    handleSwitchRateLimitedAccount,
+    nowMinute,
+    providerInstanceLabel,
+    rateLimitSuggestion,
+  ]);
   const handleRestoreThreadBranch = useCallback(() => {
     if (gitStatusQuery.data?.hasWorkingTreeChanges) {
       setBranchRestoreConfirmOpen(true);

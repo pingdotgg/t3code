@@ -13,6 +13,7 @@ import {
   claudeProjectDirectoryName,
   makeClaudeCapabilitiesCacheKey,
   makeClaudeEnvironment,
+  resolveClaudeConfigDir,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 
@@ -25,6 +26,12 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
 
         expect(yield* resolveClaudeHomePath({ homePath: "" })).toBe(resolved);
         expect(yield* makeClaudeEnvironment({ homePath: "" })).toBe(process.env);
+        expect(yield* resolveClaudeConfigDir({ homePath: "" })).toBe(
+          path.join(NodeOS.homedir(), ".claude"),
+        );
+        expect(yield* resolveClaudeConfigDir({ homePath: "~/.claude-work" })).toBe(
+          path.resolve(NodeOS.homedir(), ".claude-work"),
+        );
       }),
     );
 
@@ -131,7 +138,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         expect(carriedOver).toBe(true);
         expect(
           yield* fileSystem.exists(
-            path.join(toHomePath, "projects", "-repo-old", `${sessionId}.jsonl`),
+            path.join(toHomePath, "projects", "-repo-new", `${sessionId}.jsonl`),
           ),
         ).toBe(true);
       }).pipe(Effect.scoped),

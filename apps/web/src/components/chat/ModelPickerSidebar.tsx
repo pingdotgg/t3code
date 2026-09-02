@@ -180,7 +180,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 disabled={isDisabled}
                 type="button"
                 aria-label={
-                  isUnavailable || isContextDisabled
+                  isUnavailable || isContextDisabled || describeRateLimitedInstance(entry) !== null
                     ? tooltip
                     : showNewBadge
                       ? `${entry.displayName}, new`
@@ -191,7 +191,9 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                   driverKind={entry.driverKind}
                   displayName={entry.displayName}
                   accentColor={entry.accentColor}
-                  showBadge={showInstanceBadge}
+                  // The tinted glyph is the account marker; initials only
+                  // disambiguate siblings that have no colour.
+                  showBadge={showInstanceBadge && entry.accentColor === undefined}
                   className="size-6"
                   iconClassName="size-5"
                   indicatorBackground={
@@ -201,9 +203,6 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                         ? "var(--background)"
                         : "color-mix(in oklab, var(--muted) 30%, transparent)"
                   }
-                  {...(entry.accentColor
-                    ? { badgeClassName: "h-3 min-w-3 px-0.5 text-[7px]" }
-                    : {})}
                 />
                 {showNewBadge ? (
                   <span className={NEW_BADGE_CLASS} aria-hidden>

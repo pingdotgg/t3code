@@ -101,24 +101,41 @@ describe("readProviderRateLimitFromPayload", () => {
 });
 
 describe("readProviderRateLimitFromTurnError", () => {
-  it("recognizes usage limit error text", () => {
+  it("recognizes usage limit error text with a short expiry", () => {
     expect(
       readProviderRateLimitFromTurnError({
+        driver: "claudeAgent",
         errorMessage: "You've hit your limit · resets 3pm (Asia/Dhaka)",
         observedAt: OBSERVED_AT,
       }),
-    ).toEqual({ status: "rejected", observedAt: OBSERVED_AT });
+    ).toEqual({
+      status: "rejected",
+      resetsAt: "2026-09-02T10:15:00.000Z",
+      observedAt: OBSERVED_AT,
+    });
   });
 
-  it("ignores unrelated failures", () => {
+  it("ignores unrelated failures and drivers without structured updates", () => {
     expect(
       readProviderRateLimitFromTurnError({
+        driver: "claudeAgent",
         errorMessage: "Claude turn failed.",
         observedAt: OBSERVED_AT,
       }),
     ).toBeUndefined();
     expect(
-      readProviderRateLimitFromTurnError({ errorMessage: undefined, observedAt: OBSERVED_AT }),
+      readProviderRateLimitFromTurnError({
+        driver: "grok",
+        errorMessage: "Grok usage limit reached. Try again later.",
+        observedAt: OBSERVED_AT,
+      }),
+    ).toBeUndefined();
+    expect(
+      readProviderRateLimitFromTurnError({
+        driver: "codex",
+        errorMessage: undefined,
+        observedAt: OBSERVED_AT,
+      }),
     ).toBeUndefined();
   });
 });

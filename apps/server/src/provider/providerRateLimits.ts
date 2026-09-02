@@ -147,17 +147,31 @@ export function readProviderRateLimitFromPayload(input: {
   }
 }
 
+/** How long an error-text detection stays active without a structured update. */
+export const TURN_ERROR_RATE_LIMIT_TTL_MS = 15 * 60 * 1000;
+
+const TURN_ERROR_RATE_LIMIT_DRIVERS = new Set(["claudeAgent", "codex"]);
+
 /**
- * Some runtimes only surface a usage limit as the failing turn's error text.
- * Treat that as a rejection with no known reset so the account is not retried
- * blindly; the next structured update replaces it.
+ * Claude and Codex sometimes surface a usage limit only as the failing turn's
+ * error text, ahead of or instead of a structured update. Treat that as a
+ * short-lived rejection so the account is not retried blindly; a structured
+ * update replaces it and the TTL clears it otherwise. Other drivers emit no
+ * structured updates at all, so their error text is left alone rather than
+ * marking the account limited indefinitely.
  */
 export function readProviderRateLimitFromTurnError(input: {
+  readonly driver: string;
   readonly errorMessage: string | undefined;
   readonly observedAt: string;
 }): ServerProviderRateLimit | undefined {
+  if (!TURN_ERROR_RATE_LIMIT_DRIVERS.has(input.driver)) return undefined;
   if (!input.errorMessage || !USAGE_LIMIT_ERROR_PATTERN.test(input.errorMessage)) {
     return undefined;
   }
-  return build({ status: "rejected", observedAt: input.observedAt });
+  const observedMs = Date.parse(input.observedAt);
+  const resetsAt = Number.isFinite(observedMs)
+    ? epochToIso(observedMs + TURN_ERROR_RATE_LIMIT_TTL_MS)
+    : undefined;
+  return build({ status: "rejected", resetsAt, observedAt: input.observedAt });
 }

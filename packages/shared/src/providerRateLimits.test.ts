@@ -18,6 +18,7 @@ function candidate(
     driver: ProviderDriverKind.make("claudeAgent"),
     continuation: { groupKey: "claude:session-transcript" },
     enabled: true,
+    installed: true,
     status: "ready",
     ...overrides,
   };
@@ -83,12 +84,26 @@ describe("selectRateLimitFallbackProvider", () => {
       candidate("claude_off", { enabled: false }),
       candidate("claude_missing", { availability: "unavailable" }),
       candidate("claude_broken", { status: "error" }),
+      candidate("claude_missing_cli", { installed: false }),
       candidate("codex_personal", { driver: ProviderDriverKind.make("codex") }),
       candidate("claude_other_home", { continuation: { groupKey: "claude:home:/other" } }),
     ];
     expect(
       selectRateLimitFallbackProvider({
         providers,
+        instanceId: ProviderInstanceId.make("claude_work"),
+        nowMs: NOW,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when the current account has no continuation group", () => {
+    expect(
+      selectRateLimitFallbackProvider({
+        providers: [
+          candidate("claude_work", { continuation: undefined }),
+          candidate("claude_personal", { continuation: undefined }),
+        ],
         instanceId: ProviderInstanceId.make("claude_work"),
         nowMs: NOW,
       }),
