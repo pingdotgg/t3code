@@ -741,6 +741,27 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("falls back to the Hermes session model when only Hermes is enabled", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      const settings = yield* serverSettings.updateSettings({
+        providers: {
+          codex: { enabled: false },
+          claudeAgent: { enabled: false },
+          hermes: { enabled: true },
+        },
+      });
+
+      // "default" is Hermes's product slug, not an ACP model id: the adapter
+      // skips session/set_model for it and keeps Hermes's configured model.
+      // Without a DEFAULT_MODEL_BY_PROVIDER entry the fallback would hand
+      // Hermes the Codex text-generation slug, which Hermes rejects.
+      assert.deepEqual(settings.textGenerationModelSelection.instanceId, "hermes");
+      assert.deepEqual(settings.textGenerationModelSelection.model, "default");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("persists explicit disables after a provider has been used", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
