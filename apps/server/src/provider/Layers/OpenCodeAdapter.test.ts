@@ -2809,6 +2809,11 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         yield* Fiber.join(openedFiber).pipe(Effect.timeout("1 second")),
       );
       NodeAssert.equal(opened?.requestId, "per_doom_loop_failed");
+      // Exactly one auto-reply attempt: the fallback surfaces the dialog
+      // instead of retrying the reply.
+      NodeAssert.deepEqual(runtimeMock.state.permissionReplyCalls, [
+        { requestID: "per_doom_loop_failed", reply: "always" },
+      ]);
 
       yield* adapter.stopSession(threadId);
     }),
