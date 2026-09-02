@@ -178,6 +178,10 @@ import {
 import { MARKDOWN_IMAGE_MAX_WIDTH, resolveMarkdownImageDisplaySize } from "./markdownImageSize";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
+  // Native iOS blockquotes and adjacent selectable text are separate layout
+  // chunks. Giving their shrink-to-fit bubble a definite width keeps both
+  // chunks measured against the width at which UIKit draws them.
+  includeBlockquotes: Platform.OS === "ios",
   includeOrderedLists: Platform.OS === "android",
 } as const;
 
