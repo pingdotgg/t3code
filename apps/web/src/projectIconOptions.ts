@@ -62,7 +62,7 @@ export const PROJECT_EMOJIS: ReadonlyArray<{ readonly emoji: string; readonly la
 ];
 
 export function filterProjectIconNames(query: string): ReadonlyArray<IconName> {
-  const normalized = query.trim().toLowerCase().replaceAll(" ", "-");
+  const normalized = query.trim().toLowerCase().replaceAll(/\s+/g, "-");
   if (!normalized) return POPULAR_PROJECT_ICONS;
   return iconNames.filter((name) => name.includes(normalized)).slice(0, 60);
 }
@@ -72,6 +72,10 @@ export function firstEmoji(value: string): string | null {
   if (!trimmed) return null;
   const segments = new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(trimmed);
   const segment = segments[Symbol.iterator]().next().value?.segment;
-  if (!segment || !/\p{Extended_Pictographic}/u.test(segment)) return null;
+  const isFlag = /^\p{Regional_Indicator}{2}$/u.test(segment ?? "");
+  const isKeycap = /^[#*0-9]\uFE0F?\u20E3$/u.test(segment ?? "");
+  if (!segment || (!/\p{Extended_Pictographic}/u.test(segment) && !isFlag && !isKeycap)) {
+    return null;
+  }
   return segment;
 }

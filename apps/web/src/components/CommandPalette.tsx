@@ -941,8 +941,14 @@ function OpenCommandPaletteDialog(props: {
     () => new Map(projects.map((project) => [project.id, project.faviconPath ?? null] as const)),
     [projects],
   );
-  const projectIconById = useMemo(
-    () => new Map(projects.map((project) => [project.id, project.projectIcon ?? null] as const)),
+  const projectIconByKey = useMemo(
+    () =>
+      new Map(
+        projects.map(
+          (project) =>
+            [`${project.environmentId}:${project.id}`, project.projectIcon ?? null] as const,
+        ),
+      ),
     [projects],
   );
   const projectTitleById = useMemo(
@@ -1176,7 +1182,9 @@ function OpenCommandPaletteDialog(props: {
               environmentId={thread.environmentId}
               projectCwd={projectCwdById.get(thread.projectId) ?? null}
               projectFaviconPath={projectFaviconPathById.get(thread.projectId) ?? null}
-              projectIcon={projectIconById.get(thread.projectId) ?? null}
+              projectIcon={
+                projectIconByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+              }
               projectTitle={projectTitle ?? null}
               branch={thread.branch}
               worktreePath={thread.worktreePath}
@@ -1216,7 +1224,7 @@ function OpenCommandPaletteDialog(props: {
       navigate,
       projectCwdById,
       projectFaviconPathById,
-      projectIconById,
+      projectIconByKey,
       projectTitleById,
       providerEntryByEnvironmentAndInstanceId,
       threadContentMatchByKey,
