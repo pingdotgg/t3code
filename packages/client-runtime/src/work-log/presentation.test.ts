@@ -46,6 +46,50 @@ describe("command work-log details", () => {
       }),
     ).toBe(false);
   });
+
+  it("treats an ingestion-truncated echo of a long command as a repeat", () => {
+    const command = `git add -A && git commit -m "${"x".repeat(200)}"`;
+    const truncated = `Bash: ${command}`.slice(0, 177) + "...";
+    expect(
+      commandDetailRepeatsCommand({
+        detail: truncated,
+        command,
+        rawCommand: null,
+        toolName: "Bash",
+        data: { toolName: "Bash", command },
+      }),
+    ).toBe(true);
+    expect(
+      commandDetailRepeatsCommand({
+        detail: "Bash: printf hello...",
+        command: "printf goodbye",
+        rawCommand: null,
+        toolName: "Bash",
+        data: { toolName: "Bash", command: "printf goodbye" },
+      }),
+    ).toBe(false);
+  });
+
+  it("treats ACP command echoes as synthetic even without a tool kind", () => {
+    expect(
+      commandDetailRepeatsCommand({
+        detail: "pnpm test",
+        command: "pnpm test",
+        rawCommand: null,
+        toolName: undefined,
+        data: { toolCallId: "tool-1", command: "pnpm test" },
+      }),
+    ).toBe(true);
+    expect(
+      commandDetailRepeatsCommand({
+        detail: "pnpm test",
+        command: "pnpm test",
+        rawCommand: null,
+        toolName: undefined,
+        data: { command: "pnpm test" },
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("workEntryViewedImagePath", () => {

@@ -117,6 +117,38 @@ export function extractCommandOutputText(dataValue: unknown): string | null {
   return null;
 }
 
+/**
+ * Ingestion caps tool details at 180 chars and appends "...", so a long command
+ * echo no longer equals the command it repeats. Treat a truncated prefix of the
+ * command as the same echo.
+ */
+function textRepeatsCommand(text: string, commands: ReadonlyArray<string | null>): boolean {
+  const truncated = text.endsWith("...")
+    ? text.slice(0, -3)
+    : text.endsWith("\u2026")
+      ? text.slice(0, -1)
+      : null;
+  return commands.some((candidate) => {
+    const command = candidate?.trim();
+    if (!command) return false;
+    if (command === text) return true;
+    return (
+      truncated !== null &&
+      truncated.length > 0 &&
+      command.length > truncated.length &&
+      command.startsWith(truncated)
+    );
+  });
+}
+
+/**
+ * Decides whether a command row's `detail` is a synthetic echo of the command
+ * rather than real output. OpenCode stores completed output in `detail` with no
+ * other output channel, so plain equality is only treated as synthetic when the
+ * payload shape shows the detail came from the command: Codex item metadata,
+ * an ACP tool call (`data.toolCallId`, `kind: "execute"`), a Claude tool-name
+ * prefix, or no structured command at all.
+ */
 export function commandDetailRepeatsCommand(input: {
   readonly detail: string;
   readonly command: string | null;
@@ -131,11 +163,11 @@ export function commandDetailRepeatsCommand(input: {
     const prefix = `${toolName}:`;
     if (detail.toLowerCase().startsWith(prefix.toLowerCase())) {
       const unprefixed = detail.slice(prefix.length).trim();
-      if (commands.some((command) => command?.trim() === unprefixed)) return true;
+      if (textRepeatsCommand(unprefixed, commands)) return true;
     }
   }
 
-  if (!commands.some((command) => command?.trim() === detail)) return false;
+  if (!textRepeatsCommand(detail, commands)) return false;
 
   const data = asRecord(input.data);
   const item = asRecord(data?.item);
@@ -154,6 +186,7 @@ export function commandDetailRepeatsCommand(input: {
   return (
     !hasStructuredCommand ||
     item !== null ||
+    data?.toolCallId !== undefined ||
     nonEmptyString(data?.kind)?.toLowerCase() === "execute"
   );
 }

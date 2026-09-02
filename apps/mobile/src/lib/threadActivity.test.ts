@@ -329,6 +329,68 @@ describe("buildThreadFeed", () => {
     expect(row?.getFullDetail()).toBe(`${command}\n\n${command}`);
   });
 
+  it("drops a truncated Claude echo of a long command", () => {
+    const command = `git add -A && git commit -m "${"x".repeat(200)}"`;
+    const thread = makeThread({
+      id: ThreadId.make("thread-truncated-echo"),
+      projectId: ProjectId.make("project-1"),
+      title: "Truncated echo",
+      activities: [
+        makeActivity({
+          id: EventId.make("truncated-echo"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Command run",
+          createdAt: "2026-09-01T00:00:00.000Z",
+          payload: {
+            itemType: "command_execution",
+            title: "Command run",
+            detail: `Bash: ${command}`.slice(0, 177) + "...",
+            data: { toolName: "Bash", command },
+          },
+        }),
+      ],
+    });
+
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    const [row] = group.activities;
+    expect(row?.workEntry.detail).toBeUndefined();
+    expect(row?.getFullDetail()).toBe(command);
+  });
+
+  it("drops an ACP command echo when the update omits the tool kind", () => {
+    const command = "pnpm test";
+    const thread = makeThread({
+      id: ThreadId.make("thread-acp-no-kind"),
+      projectId: ProjectId.make("project-1"),
+      title: "ACP no kind",
+      activities: [
+        makeActivity({
+          id: EventId.make("acp-no-kind"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Terminal",
+          createdAt: "2026-09-01T00:00:00.000Z",
+          payload: {
+            itemType: "command_execution",
+            title: "Terminal",
+            detail: command,
+            data: { toolCallId: "tool-1", command },
+          },
+        }),
+      ],
+    });
+
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    const [row] = group.activities;
+    expect(row?.workEntry.detail).toBeUndefined();
+    expect(row?.getFullDetail()).toBe(command);
+  });
+
   it("drops ACP command metadata when detail only repeats the command", () => {
     const command = "printf hello";
     const thread = makeThread({

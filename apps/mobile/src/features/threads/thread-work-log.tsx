@@ -339,7 +339,8 @@ export function ThreadWorkLog(props: {
           const fullDetail = expanded ? row.getFullDetail() : null;
           const viewedImagePath = workEntryViewedImagePath(row.workEntry);
           const previewText = row.detail ?? row.summary;
-          const displayText = expanded && row.workEntry.command?.trim() ? "Command" : previewText;
+          const displayText =
+            expanded && !row.live && row.workEntry.command?.trim() ? "Command" : previewText;
           const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
           const failed = row.status === "failure";
           const showIcon = !row.groupedToolDetail || iconIsDestructive || failed;
