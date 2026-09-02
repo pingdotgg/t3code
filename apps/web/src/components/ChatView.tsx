@@ -1949,11 +1949,17 @@ export default function ChatView(props: ChatViewProps) {
   const serverThreadCompletedAt = serverThread?.latestTurn?.completedAt;
   const serverThreadConfigLoaded =
     serverThreadEnvironmentId !== undefined && serverConfigs.has(serverThreadEnvironmentId);
-  // An environment the catalog does not know yet counts as not connected;
-  // the effect re-runs once it appears with a live socket.
-  const serverThreadConnected =
+  // Only the server command needs a live socket; the legacy local write
+  // keeps working offline as it did before. An environment the catalog does
+  // not know yet counts as not connected, and the effect re-runs once it
+  // appears with a live socket.
+  const serverThreadSupportsViewState =
     serverThreadEnvironmentId !== undefined &&
-    environmentById.get(serverThreadEnvironmentId)?.connection.phase === "connected";
+    serverConfigs.get(serverThreadEnvironmentId)?.environment.capabilities.threadViewState === true;
+  const serverThreadConnected =
+    !serverThreadSupportsViewState ||
+    (serverThreadEnvironmentId !== undefined &&
+      environmentById.get(serverThreadEnvironmentId)?.connection.phase === "connected");
   useEffect(() => {
     if (
       !serverThreadEnvironmentId ||
