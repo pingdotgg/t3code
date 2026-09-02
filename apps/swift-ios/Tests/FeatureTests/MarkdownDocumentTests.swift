@@ -713,6 +713,28 @@ struct MarkdownDocumentTests {
     }
 
     @Test @MainActor
+    func selectableTextKeepsSkillsLiteralInsideFencedCode() throws {
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(
+                for: MarkdownContentRevision("```text\n$file-pr\n```")
+            )
+        )
+        guard case let .codeBlock(_, code, inline) = document.blocks.first else {
+            Issue.record("Expected a rendered code block")
+            return
+        }
+
+        let attributed = MarkdownSelectableTextAttributes.make(
+            from: inline,
+            lineSpacing: 3,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")]
+        )
+
+        #expect(attributed.string == code)
+        #expect(FeatureInlineSkillProjection.signatures(in: attributed).isEmpty)
+    }
+
+    @Test @MainActor
     func selectableTextKeepsSkillBoundariesAcrossFormattedRuns() throws {
         let document = try #require(
             MarkdownRenderCache.shared.documentImmediately(

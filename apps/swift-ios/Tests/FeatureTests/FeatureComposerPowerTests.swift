@@ -797,6 +797,77 @@ struct FeatureComposerPowerTests {
         )
     }
 
+    @Test @MainActor
+    func inlineSkillSynchronizationPreservesComposerUndoHistory() throws {
+        let input = FeatureComposerTextInput(
+            text: .constant("Use"),
+            focused: .constant(false),
+            placeholder: "",
+            acceptsImages: false,
+            isReadOnly: false,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")],
+            selectionRequest: nil,
+            onSelectionChange: { _ in },
+            onPasteImages: { _ in },
+            onDismissKeyboard: nil
+        )
+        let coordinator = FeatureComposerTextInput.Coordinator(input)
+        let textView = FeatureComposerUITextView()
+        textView.delegate = coordinator
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.attributedText = NSAttributedString(string: "Use")
+        textView.selectedRange = NSRange(location: 3, length: 0)
+
+        let viewController = UIViewController()
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.rootViewController = viewController
+        viewController.view.addSubview(textView)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        #expect(textView.becomeFirstResponder())
+
+        let undoManager = try #require(textView.undoManager)
+        undoManager.removeAllActions()
+        undoManager.groupsByEvent = false
+
+        #expect(coordinator.textView(
+            textView,
+            shouldChangeTextIn: textView.selectedRange,
+            replacementText: " $file-pr"
+        ))
+        textView.insertText(" $file-pr")
+        #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).isEmpty)
+
+        #expect(coordinator.textView(
+            textView,
+            shouldChangeTextIn: textView.selectedRange,
+            replacementText: " "
+        ))
+        textView.insertText(" ")
+        #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).count == 1)
+
+        #expect(undoManager.canUndo)
+        undoManager.undo()
+        #expect(
+            FeatureInlineSkillProjection.plainText(from: textView.attributedText)
+                == "Use $file-pr"
+        )
+        undoManager.undo()
+        #expect(FeatureInlineSkillProjection.plainText(from: textView.attributedText) == "Use")
+
+        undoManager.redo()
+        #expect(
+            FeatureInlineSkillProjection.plainText(from: textView.attributedText)
+                == "Use $file-pr"
+        )
+        undoManager.redo()
+        #expect(
+            FeatureInlineSkillProjection.plainText(from: textView.attributedText)
+                == "Use $file-pr "
+        )
+        #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).count == 1)
+    }
+
     @Test
     func changingInputQuestionsKeepsAValidActiveQuestionAndDropsStaleAnswers() {
         #expect(

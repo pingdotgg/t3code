@@ -161,11 +161,18 @@ struct FeatureComposerTextInput: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
+        private struct UndoSnapshot: Equatable {
+            let source: String
+            let selection: NSRange
+        }
+
         var parent: FeatureComposerTextInput
         var lastAppliedFocus: Bool?
         var lastAppliedSelectionRequestID: UUID?
         var isApplyingProgrammaticUpdate = false
         private var isSynchronizingInlineSkills = false
+        private var pendingUndoSnapshot: UndoSnapshot?
+        private weak var disabledUndoManager: UndoManager?
 
         init(_ parent: FeatureComposerTextInput) {
             self.parent = parent
@@ -176,10 +183,24 @@ struct FeatureComposerTextInput: UIViewRepresentable {
             shouldChangeTextIn range: NSRange,
             replacementText text: String
         ) -> Bool {
-            !parent.isReadOnly
+            guard !parent.isReadOnly else { return false }
+            guard !isApplyingProgrammaticUpdate, !isSynchronizingInlineSkills else {
+                return true
+            }
+            if pendingUndoSnapshot == nil {
+                pendingUndoSnapshot = undoSnapshot(in: textView)
+            }
+            if disabledUndoManager == nil,
+               let undoManager = textView.undoManager,
+               undoManager.isUndoRegistrationEnabled {
+                undoManager.disableUndoRegistration()
+                disabledUndoManager = undoManager
+            }
+            return true
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            restoreUndoRegistration()
             guard !isApplyingProgrammaticUpdate else { return }
             guard !isSynchronizingInlineSkills else { return }
             let source = FeatureInlineSkillProjection.plainText(from: textView.attributedText)
@@ -199,6 +220,15 @@ struct FeatureComposerTextInput: UIViewRepresentable {
                 source: source,
                 selection: selection
             )
+            let updatedSnapshot = UndoSnapshot(source: source, selection: selection)
+            if let pendingUndoSnapshot, pendingUndoSnapshot != updatedSnapshot {
+                registerUndo(
+                    restoring: pendingUndoSnapshot,
+                    inverse: updatedSnapshot,
+                    in: composerTextView
+                )
+            }
+            pendingUndoSnapshot = nil
             composerTextView.scrollSelectionIntoView()
         }
 
@@ -242,22 +272,31 @@ struct FeatureComposerTextInput: UIViewRepresentable {
                 traits: textView.traitCollection
             )
             isSynchronizingInlineSkills = true
+            let undoManager = textView.undoManager
+            let shouldRestoreUndoRegistration = undoManager?.isUndoRegistrationEnabled == true
+            if shouldRestoreUndoRegistration {
+                undoManager?.disableUndoRegistration()
+            }
             textView.attributedText = attributedText
             textView.selectedRange = FeatureInlineSkillProjection.displayRange(
                 for: selection,
                 in: attributedText
             )
             textView.typingAttributes = baseAttributes
+            if shouldRestoreUndoRegistration {
+                undoManager?.enableUndoRegistration()
+            }
             isSynchronizingInlineSkills = false
             return true
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
             guard !isApplyingProgrammaticUpdate, !isSynchronizingInlineSkills else { return }
-            parent.onSelectionChange(FeatureInlineSkillProjection.plainRange(
+            let selection = FeatureInlineSkillProjection.plainRange(
                 for: textView.selectedRange,
                 in: textView.attributedText
-            ))
+            )
+            parent.onSelectionChange(selection)
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
@@ -268,10 +307,72 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
+            restoreUndoRegistration()
+            pendingUndoSnapshot = nil
             lastAppliedFocus = false
             if parent.focused {
                 parent.focused = false
             }
+        }
+
+        private func undoSnapshot(in textView: UITextView) -> UndoSnapshot {
+            UndoSnapshot(
+                source: FeatureInlineSkillProjection.plainText(from: textView.attributedText),
+                selection: FeatureInlineSkillProjection.plainRange(
+                    for: textView.selectedRange,
+                    in: textView.attributedText
+                )
+            )
+        }
+
+        private func restoreUndoRegistration() {
+            if let disabledUndoManager,
+               !disabledUndoManager.isUndoRegistrationEnabled {
+                disabledUndoManager.enableUndoRegistration()
+            }
+            disabledUndoManager = nil
+        }
+
+        private func registerUndo(
+            restoring snapshot: UndoSnapshot,
+            inverse: UndoSnapshot,
+            in textView: FeatureComposerUITextView
+        ) {
+            guard let undoManager = textView.undoManager else { return }
+            let opensUndoGroup = undoManager.groupingLevel == 0
+            if opensUndoGroup {
+                undoManager.beginUndoGrouping()
+            }
+            undoManager.registerUndo(withTarget: self) { [weak textView] coordinator in
+                guard let textView else { return }
+                coordinator.restore(
+                    snapshot,
+                    inverse: inverse,
+                    in: textView
+                )
+            }
+            undoManager.setActionName("Typing")
+            if opensUndoGroup {
+                undoManager.endUndoGrouping()
+            }
+        }
+
+        private func restore(
+            _ snapshot: UndoSnapshot,
+            inverse: UndoSnapshot,
+            in textView: FeatureComposerUITextView
+        ) {
+            registerUndo(restoring: inverse, inverse: snapshot, in: textView)
+            isApplyingProgrammaticUpdate = true
+            _ = synchronizeInlineSkills(
+                in: textView,
+                source: snapshot.source,
+                selection: snapshot.selection
+            )
+            parent.text = snapshot.source
+            parent.onSelectionChange(snapshot.selection)
+            isApplyingProgrammaticUpdate = false
+            textView.scrollSelectionIntoView()
         }
     }
 }

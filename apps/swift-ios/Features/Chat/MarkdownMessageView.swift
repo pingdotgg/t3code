@@ -1102,7 +1102,9 @@ enum MarkdownSelectableTextAttributes {
             let hasTrailingBoundary = run.range.upperBound == rendered.attributedText.endIndex
                 || rendered.attributedText.characters[run.range.upperBound].isWhitespace
             let runLength = (runText as NSString).length
-            let descriptors = intent?.contains(.code) == true || run.link != nil
+            let descriptors = rendered.style == .code
+                || intent?.contains(.code) == true
+                || run.link != nil
                 ? []
                 : FeatureInlineSkillParser.descriptors(
                     in: runText,
