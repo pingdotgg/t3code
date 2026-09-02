@@ -17,6 +17,13 @@ npx t3@latest
 This starts the T3 Code server on your machine and opens the local web app. Use
 `npx t3@latest --help` for the full CLI reference.
 
+## Install the Web App
+
+Open [app.t3.codes](https://app.t3.codes) in Chrome and choose **Install T3 Code** from the
+browser menu or address bar. Chrome installs it as a standalone app with its own window and app
+icon. A directly hosted T3 Code web app can also be installed when it uses HTTPS or runs on
+localhost; browsers do not offer web app installation from an insecure LAN HTTP address.
+
 ## Open a project in the desktop app
 
 When the T3 Code desktop app is running on the same machine, open the current directory with:
