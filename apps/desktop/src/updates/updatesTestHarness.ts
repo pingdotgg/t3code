@@ -30,6 +30,7 @@ export interface UpdatesHarnessOptions {
   readonly downloadUpdate?: Effect.Effect<void>;
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly stopBackend?: Effect.Effect<void>;
+  readonly startBackend?: Effect.Effect<void>;
   readonly env?: Record<string, string | undefined>;
 }
 
@@ -126,7 +127,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     label: Effect.succeed("Windows"),
     start: Effect.sync(() => {
       installSteps.push("startBackend");
-    }),
+    }).pipe(Effect.andThen(options.startBackend ?? Effect.void)),
     stop: () => options.stopBackend ?? Effect.void,
     currentConfig: Effect.succeed(Option.none()),
     snapshot: Effect.succeed({

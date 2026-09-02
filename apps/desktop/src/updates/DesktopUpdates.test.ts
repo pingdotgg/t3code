@@ -587,6 +587,45 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("refuses a second install while a failed install is still recovering", () => {
+    const backendRestarting = Deferred.makeUnsafe<void>();
+    const releaseRestart = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({
+      quitAndInstall: Effect.fail(
+        new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+          channel: "latest",
+          isSilent: true,
+          isForceRunAfter: true,
+          cause: new Error("installer refused"),
+        }),
+      ),
+      startBackend: Deferred.succeed(backendRestarting, undefined).pipe(
+        Effect.andThen(Deferred.await(releaseRestart)),
+      ),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const first = yield* updates.install.pipe(Effect.forkChild);
+        yield* Deferred.await(backendRestarting);
+        // Recovery in flight: the reservation must still be held so a
+        // concurrent install cannot stop the backends a second time.
+        const second = yield* updates.install;
+        assert.isFalse(second.accepted);
+        assert.equal(harness.quitAndInstalls(), 1);
+
+        yield* Deferred.succeed(releaseRestart, undefined);
+        assert.isTrue((yield* Fiber.join(first)).accepted);
+        assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("recovers when quitAndInstall reports failure through an updater event", () => {
     const harness = makeHarness();
 

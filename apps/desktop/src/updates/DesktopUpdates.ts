@@ -508,13 +508,16 @@ export const make = Effect.gen(function* () {
   const recoverFailedInstall = Effect.fn("desktop.updates.recoverFailedInstall")(function* (
     message: string,
   ) {
-    yield* resetInstallAction;
+    // Hold the install reservation and `quitting` until recovery is done.
+    // Releasing them first would let a concurrent install be admitted and
+    // stop the backends again while they are still restarting.
     const instances = yield* pool.list;
     yield* Effect.forEach(instances, (instance) => instance.start, {
       concurrency: "unbounded",
       discard: true,
     });
     yield* updateState((current) => reduceDesktopUpdateStateOnInstallFailure(current, message));
+    yield* resetInstallAction;
   });
 
   const installDownloadedUpdate = (expectedVersion?: string) =>
