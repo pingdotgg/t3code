@@ -185,6 +185,27 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
+export const ServerProviderRateLimitStatus = Schema.Literals(["allowed", "warning", "rejected"]);
+export type ServerProviderRateLimitStatus = typeof ServerProviderRateLimitStatus.Type;
+
+/**
+ * Latest usage-limit state reported by a provider instance's runtime.
+ * Volatile: it is never persisted and only reflects what the provider last
+ * told us. `rejected` with a future `resetsAt` means the account cannot run
+ * turns until then.
+ */
+export const ServerProviderRateLimit = Schema.Struct({
+  status: ServerProviderRateLimitStatus,
+  /** When the limiting window resets, if the provider reported it. */
+  resetsAt: Schema.optionalKey(IsoDateTime),
+  /** Provider-specific window name such as `five_hour` or `seven_day`. */
+  window: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Percentage of the window already used, 0-100, when reported. */
+  utilization: Schema.optionalKey(Schema.Number),
+  observedAt: IsoDateTime,
+});
+export type ServerProviderRateLimit = typeof ServerProviderRateLimit.Type;
+
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -235,6 +256,7 @@ export const ServerProvider = Schema.Struct({
   usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  rateLimit: Schema.optionalKey(ServerProviderRateLimit),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

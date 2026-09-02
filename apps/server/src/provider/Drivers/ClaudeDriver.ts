@@ -59,7 +59,7 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import { CLAUDE_CONTINUATION_GROUP_KEY, makeClaudeCapabilitiesCacheKey } from "./ClaudeHome.ts";
 import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -135,13 +135,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           Effect.provideService(Path.Path, path),
         ),
       );
-      const continuationGroupKey = yield* makeClaudeContinuationGroupKey(effectiveConfig);
       const stampIdentity = withInstanceIdentity({
         instanceId,
         driverKind: DRIVER_KIND,
         displayName,
         accentColor,
-        continuationGroupKey,
+        continuationGroupKey: CLAUDE_CONTINUATION_GROUP_KEY,
       });
 
       // One per instance: the status probe writes the model-scoped bucket
@@ -248,7 +247,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         driverKind: DRIVER_KIND,
         continuationIdentity: {
           ...fallbackContinuationIdentity,
-          continuationKey: continuationGroupKey,
+          continuationKey: CLAUDE_CONTINUATION_GROUP_KEY,
         },
         displayName,
         accentColor,

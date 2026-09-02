@@ -559,6 +559,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.continueThreadsAfterServerUpdate !==
       DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
         ? ["Continue threads after restarts"]
+      ...(settings.autoSwitchProviderOnRateLimit !==
+      DEFAULT_UNIFIED_SETTINGS.autoSwitchProviderOnRateLimit
+        ? ["Switch accounts on usage limit"]
         : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
@@ -624,6 +627,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.enableLegacyTokenStreaming,
       settings.enableProviderUpdateChecks,
       settings.continueThreadsAfterServerUpdate,
+      settings.autoSwitchProviderOnRateLimit,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
@@ -719,6 +723,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
+      autoSwitchProviderOnRateLimit: DEFAULT_UNIFIED_SETTINGS.autoSwitchProviderOnRateLimit,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -2423,6 +2428,35 @@ export function GeneralSettingsPanel() {
                 updateSettings({ continueThreadsAfterServerUpdate: Boolean(checked) })
               }
               aria-label="Continue threads after restarts"
+            />
+          }
+        />
+
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("provider-rate-limit-auto-switch")}
+          description="When an account hits its usage limit, continue the thread on another account of the same provider. Off shows a suggestion instead."
+          resetAction={
+            settings.autoSwitchProviderOnRateLimit !==
+            DEFAULT_UNIFIED_SETTINGS.autoSwitchProviderOnRateLimit ? (
+              <SettingResetButton
+                label="switch accounts on usage limit"
+                onClick={() =>
+                  updateSettings({
+                    autoSwitchProviderOnRateLimit:
+                      DEFAULT_UNIFIED_SETTINGS.autoSwitchProviderOnRateLimit,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.autoSwitchProviderOnRateLimit}
+              onCheckedChange={(checked) =>
+                updateSettings({ autoSwitchProviderOnRateLimit: Boolean(checked) })
+              }
+              aria-label="Switch accounts on usage limit"
             />
           }
         />

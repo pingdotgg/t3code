@@ -72,6 +72,9 @@ when it resets, when Codex reports them. Send the message again after the reset.
 message also says whether your workspace owner needs to add credits or raise the
 spend limit to continue sooner.
 
+When another Codex instance shares the thread's **CODEX_HOME path** and is not limited, the composer offers to move the thread to it.
+Turn on **Switch accounts on usage limit** in **Settings > General** to have T3 Code re-send the failed turn on that account automatically.
+
 ## Send feedback to OpenAI
 
 In an existing Codex thread, send `/feedback` with an optional description, for

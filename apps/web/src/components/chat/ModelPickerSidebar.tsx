@@ -2,6 +2,8 @@ import { type ProviderInstanceId } from "@t3tools/contracts";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import { SparklesIcon, StarIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { formatProviderRateLimitReset } from "./providerRateLimitBanner.logic";
+import { isProviderRateLimitActive } from "@t3tools/shared/providerRateLimits";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import {
@@ -27,6 +29,12 @@ function describeUnavailableInstance(entry: ProviderInstanceEntry): string {
     entry.status === "error" ? "Unavailable" : entry.status === "warning" ? "Limited" : "Not ready";
   const msg = entry.snapshot.message?.trim();
   return msg ? `${label} — ${kind}. ${msg}` : `${label} — ${kind}.`;
+}
+
+function describeRateLimitedInstance(entry: ProviderInstanceEntry): string | null {
+  if (!isProviderRateLimitActive(entry.rateLimit, Date.now())) return null;
+  const reset = formatProviderRateLimitReset(entry.rateLimit?.resetsAt, Date.now());
+  return `${entry.displayName} — Usage limit reached${reset ? `, ${reset}` : ""}.`;
 }
 
 const SELECTED_INDICATOR_CLASS =
@@ -150,9 +158,8 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
               ? describeUnavailableInstance(entry)
               : isContextDisabled
                 ? (props.getDisabledInstanceTooltip?.(entry) ?? entry.displayName)
-                : showNewBadge
-                  ? `${entry.displayName} — New`
-                  : entry.displayName;
+                : (describeRateLimitedInstance(entry) ??
+                  (showNewBadge ? `${entry.displayName} — New` : entry.displayName));
 
             const button = (
               <button

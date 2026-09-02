@@ -29,10 +29,11 @@ custom setting changes `CLAUDE_CONFIG_DIR`, leaving `HOME` and the system keycha
 location intact. Use the same variable for the login command. Setting `HOME`
 instead can put credentials where this provider will not find them.
 
-Check the account reported in provider settings after signing in. Existing
-threads can switch only between Claude instances with the same config directory.
-Separate account directories stay isolated, including their local conversation
-state. Claude does not have Codex's shared-home and shadow-home arrangement.
+Check the account reported in provider settings after signing in.
+Existing threads can switch to any other Claude instance from the model picker.
+T3 Code copies the thread's Claude session transcript into the target config directory before resuming, so the conversation continues with its full history on the other account.
+Everything else in each directory stays isolated, including logins and local settings.
+A thread that last ran before this behaviour existed records its directory on the next message; until then another account starts it fresh.
 
 For presets that differ only in API keys or endpoints, use the instance's
 **Environment variables**. Variable assignments do not belong in **Launch arguments**.
@@ -60,6 +61,11 @@ limit was reached and the remaining wait when Claude provides a reset time.
 Claude Code holds the turn until that window reopens, so it can keep showing as
 working. Wait for the reset, or stop the turn and continue later. The warning's
 timestamp shows when the displayed wait started.
+
+The model picker marks an account that is out of usage and shows when it resets.
+When another Claude instance is available and not limited, the composer offers to move the thread to it.
+Accepting also puts the message that failed back in the composer.
+Turn on **Switch accounts on usage limit** in **Settings > General** to skip the offer: T3 Code re-sends the failed turn on the other account, records the switch in the thread, and keeps later messages there until the limit resets.
 
 ## Skills
 

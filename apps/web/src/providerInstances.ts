@@ -67,6 +67,8 @@ export interface ProviderInstanceEntry {
   readonly isAvailable: boolean;
   readonly snapshot: ServerProvider;
   readonly models: ReadonlyArray<ServerProviderModel>;
+  /** Latest usage-limit state the server observed for this account. */
+  readonly rateLimit?: ServerProvider["rateLimit"];
 }
 
 /**
@@ -112,6 +114,7 @@ export function deriveProviderInstanceEntries(
       isAvailable: snapshot.availability !== "unavailable",
       snapshot,
       models: snapshot.models,
+      ...(snapshot.rateLimit !== undefined ? { rateLimit: snapshot.rateLimit } : {}),
     } satisfies ProviderInstanceEntry;
   });
 }
