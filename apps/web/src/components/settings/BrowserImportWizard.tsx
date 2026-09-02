@@ -229,11 +229,17 @@ function ConfigureStep({
   const targetMissing =
     target.kind === "existing" &&
     !targetProfiles.some((profile) => profile.id === target.profileId);
+  // The "New profile" tile is unrendered once the cap is reached, so a target
+  // chosen before that leaves nothing selected in "Into" — say so, the same
+  // way a vanished existing target is explained.
+  const targetUncreatable = target.kind === "new" && !canCreateProfile;
   const targetFeedback =
     targetError ??
     (targetMissing
       ? "That profile is no longer available. Choose where to import these cookies."
-      : undefined);
+      : targetUncreatable
+        ? "You've reached the profile limit. Choose an existing profile to import into."
+        : undefined);
   return (
     <>
       <DialogHeader>
@@ -297,13 +303,7 @@ function ConfigureStep({
           Cancel
         </Button>
         <Button
-          disabled={
-            sourceProfileDirectory === "" ||
-            targetMissing ||
-            // A "new" target chosen before the profile cap was reached must
-            // not slip past it once it is.
-            (target.kind === "new" && !canCreateProfile)
-          }
+          disabled={sourceProfileDirectory === "" || targetMissing || targetUncreatable}
           onClick={onImport}
         >
           Import
