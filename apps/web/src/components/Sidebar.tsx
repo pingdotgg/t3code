@@ -2242,7 +2242,9 @@ export default function Sidebar() {
   >(() => new Set());
   useEffect(() => {
     if (activeProjectSections === null) return;
-    const activeKeys = new Set(activeProjectSections.map(({ project }) => project.projectKey));
+    const activeKeys = new Set(
+      activeProjectSections.sections.map(({ project }) => project.projectKey),
+    );
     setCollapsedProjectSectionKeys((collapsedKeys) => {
       const nextCollapsedKeys = new Set(
         [...collapsedKeys].filter((projectKey) => activeKeys.has(projectKey)),
@@ -2261,15 +2263,23 @@ export default function Sidebar() {
       return nextCollapsedKeys;
     });
   }, []);
-  const visibleActiveThreads = useMemo(
-    () =>
-      activeProjectSections === null
-        ? activeThreads
-        : activeProjectSections.flatMap(({ project, threads: projectThreads }) =>
-            collapsedProjectSectionKeys.has(project.projectKey) ? [] : projectThreads,
-          ),
-    [activeProjectSections, activeThreads, collapsedProjectSectionKeys],
-  );
+  const visibleActiveThreads = useMemo(() => {
+    if (activeProjectSections === null) return activeThreads;
+    const sectionThreads = activeProjectSections.sections.flatMap(
+      ({ project, threads: projectThreads }) => {
+        if (!collapsedProjectSectionKeys.has(project.projectKey)) return projectThreads;
+        // The open thread must never vanish behind a collapsed section — same
+        // exception the snoozed and settled shelves make for the routed row.
+        if (routeThreadKey === null) return [];
+        const routeThread = projectThreads.find(
+          (thread) =>
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+        );
+        return routeThread === undefined ? [] : [routeThread];
+      },
+    );
+    return [...sectionThreads, ...activeProjectSections.ungroupedThreads];
+  }, [activeProjectSections, activeThreads, collapsedProjectSectionKeys, routeThreadKey]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -4060,7 +4070,10 @@ export default function Sidebar() {
                     );
                   }
                   if (activeProjectSections) {
-                    for (const { project, threads: projectThreads } of activeProjectSections) {
+                    for (const {
+                      project,
+                      threads: projectThreads,
+                    } of activeProjectSections.sections) {
                       const isExpanded = !collapsedProjectSectionKeys.has(project.projectKey);
                       items.push(
                         <li
@@ -4104,7 +4117,25 @@ export default function Sidebar() {
                         for (const thread of projectThreads) {
                           items.push(renderThreadRow(thread, "active", undefined, false));
                         }
+                      } else if (routeThreadKey !== null) {
+                        // The open thread must never vanish behind a collapsed
+                        // section — same exception the snoozed/settled shelves
+                        // make for the routed row.
+                        const routeThread = projectThreads.find(
+                          (thread) =>
+                            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+                            routeThreadKey,
+                        );
+                        if (routeThread !== undefined) {
+                          items.push(renderThreadRow(routeThread, "active", undefined, false));
+                        }
                       }
+                    }
+                    // Threads whose project is in no group (e.g. removed
+                    // projects) render after the sections; hiding them would
+                    // make live work unreachable.
+                    for (const thread of activeProjectSections.ungroupedThreads) {
+                      items.push(renderThreadRow(thread, "active"));
                     }
                   } else {
                     for (const thread of activeThreads) {

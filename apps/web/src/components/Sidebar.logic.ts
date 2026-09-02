@@ -108,6 +108,15 @@ type LogicalSidebarProject = SidebarProject & {
   }[];
 };
 
+// NUL cannot appear in either identifier, so the composite key never collides.
+const projectMemberKey = (environmentId: string, projectId: string) =>
+  `${environmentId}\u0000${projectId}`;
+
+/**
+ * Threads whose project is in no group (e.g. the project was removed while its
+ * threads live on) land in `ungroupedThreads` so the sectioned sidebar can
+ * still render them; hiding them would make live work unreachable.
+ */
 export function groupThreadsIntoProjectSections<
   const TProject extends {
     readonly projectKey: string;
@@ -121,23 +130,32 @@ export function groupThreadsIntoProjectSections<
   const projectKeyByMember = new Map(
     projects.flatMap((project) =>
       project.memberProjectRefs.map(
-        (ref) => [`${ref.environmentId}:${ref.projectId}`, project.projectKey] as const,
+        (ref) => [projectMemberKey(ref.environmentId, ref.projectId), project.projectKey] as const,
       ),
     ),
   );
   const threadsByProjectKey = new Map<string, TThread[]>();
+  const ungroupedThreads: TThread[] = [];
   for (const thread of threads) {
-    const projectKey = projectKeyByMember.get(`${thread.environmentId}:${thread.projectId}`);
-    if (!projectKey) continue;
+    const projectKey = projectKeyByMember.get(
+      projectMemberKey(thread.environmentId, thread.projectId),
+    );
+    if (!projectKey) {
+      ungroupedThreads.push(thread);
+      continue;
+    }
     const projectThreads = threadsByProjectKey.get(projectKey);
     if (projectThreads) projectThreads.push(thread);
     else threadsByProjectKey.set(projectKey, [thread]);
   }
 
-  return projects.flatMap((project) => {
-    const projectThreads = threadsByProjectKey.get(project.projectKey);
-    return projectThreads ? [{ project, threads: projectThreads }] : [];
-  });
+  return {
+    sections: projects.flatMap((project) => {
+      const projectThreads = threadsByProjectKey.get(project.projectKey);
+      return projectThreads ? [{ project, threads: projectThreads }] : [];
+    }),
+    ungroupedThreads,
+  };
 }
 
 export type ThreadTraversalDirection = "previous" | "next";
