@@ -20,6 +20,13 @@ npx t3@latest
 This starts the server and opens the local web app. Run
 `npx t3@latest --help` for command-line options.
 
+## Install the web app
+
+Open [app.t3.codes](https://app.t3.codes) in Chrome and choose **Install T3 Code** from the
+browser menu or address bar. Chrome installs it as a standalone app with its own window and app
+icon. A directly hosted T3 Code web app can also be installed when it uses HTTPS or runs on
+localhost; browsers do not offer web app installation from an insecure LAN HTTP address.
+
 ## Desktop app
 
 Download a release from [GitHub Releases](https://github.com/pingdotgg/t3code/releases),

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -8,8 +10,43 @@ import {
   resolveWebAssetBrandForPackageVersion,
   resolveWebIconOverrides,
 } from "./brand-assets.ts";
+import { readPngDimensions } from "./icon-export.ts";
 
 describe("brand-assets", () => {
+  it("ships a Chrome-installable web app manifest", () => {
+    const publicDirectory = new URL("../../apps/web/public/", import.meta.url);
+    const manifest = JSON.parse(
+      readFileSync(new URL("manifest.webmanifest", publicDirectory), "utf8"),
+    ) as {
+      readonly name?: unknown;
+      readonly short_name?: unknown;
+      readonly start_url?: unknown;
+      readonly display?: unknown;
+      readonly icons?: ReadonlyArray<{ readonly src?: unknown; readonly sizes?: unknown }>;
+    };
+
+    expect(manifest).toMatchObject({
+      name: "T3 Code",
+      short_name: "T3 Code",
+      start_url: "/",
+      display: "standalone",
+      icons: [
+        { src: "/web-app-icon-192.png", sizes: "192x192" },
+        { src: "/web-app-icon-512.png", sizes: "512x512" },
+      ],
+    });
+    expect(
+      manifest.icons?.map(({ src, sizes }) => {
+        expect(typeof src).toBe("string");
+        const image = readFileSync(new URL(String(src).replace(/^\//, ""), publicDirectory));
+        return [sizes, readPngDimensions(image)];
+      }),
+    ).toEqual([
+      ["192x192", { width: 192, height: 192 }],
+      ["512x512", { width: 512, height: 512 }],
+    ]);
+  });
+
   it("maps production web assets into the server package", () => {
     expect(resolveWebIconOverrides("production", "dist/client")).toEqual([
       {
@@ -27,6 +64,14 @@ describe("brand-assets", () => {
       {
         sourceRelativePath: BRAND_ASSET_PATHS.productionWebAppleTouchIconPng,
         targetRelativePath: "dist/client/apple-touch-icon.png",
+      },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.productionWebAppIcon192Png,
+        targetRelativePath: "dist/client/web-app-icon-192.png",
+      },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.productionWebAppIcon512Png,
+        targetRelativePath: "dist/client/web-app-icon-512.png",
       },
     ]);
   });
@@ -55,6 +100,14 @@ describe("brand-assets", () => {
       {
         sourceRelativePath: BRAND_ASSET_PATHS.developmentWebAppleTouchIconPng,
         targetRelativePath: "apps/web/public/apple-touch-icon.png",
+      },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.developmentWebAppIcon192Png,
+        targetRelativePath: "apps/web/public/web-app-icon-192.png",
+      },
+      {
+        sourceRelativePath: BRAND_ASSET_PATHS.developmentWebAppIcon512Png,
+        targetRelativePath: "apps/web/public/web-app-icon-512.png",
       },
     ]);
   });
