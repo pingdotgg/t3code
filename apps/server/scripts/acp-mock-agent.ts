@@ -293,13 +293,22 @@ function modeState(): AcpSchema.SessionModeState {
   };
 }
 
+// Mirrors the real Grok ACP: it advertises versioned model ids, never the CLI's own
+// "grok-build" product name, and it rejects unknown ids in session/set_model.
 const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
   {
-    modelId: "grok-build",
-    name: "Grok Build",
-    ...(initialGrokReasoningEffort
-      ? { _meta: { reasoningEffort: initialGrokReasoningEffort } }
-      : {}),
+    modelId: "grok-4.6",
+    name: "Grok 4.6",
+    _meta: {
+      totalContextTokens: 500_000,
+      supportsReasoningEffort: true,
+      reasoningEffort: initialGrokReasoningEffort ?? "high",
+      reasoningEfforts: [
+        { id: "xhigh", value: "xhigh", label: "Extra High Effort", default: false },
+        { id: "high", value: "high", label: "High Effort", default: true },
+        { id: "low", value: "low", label: "Low Effort", default: false },
+      ],
+    },
   },
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
 ];
@@ -307,7 +316,7 @@ const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
 function modelState(): AcpSchema.SessionModelState {
   const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
     ? currentModelId
-    : "grok-build";
+    : "grok-4.6";
   return {
     currentModelId: modelId,
     availableModels: grokAcpModels,
@@ -324,6 +333,9 @@ const program = Effect.gen(function* () {
       return {
         protocolVersion: 1,
         agentCapabilities: { loadSession: true },
+        // Grok advertises model state before any session exists; the provider
+        // health check reads it from here without authenticating.
+        _meta: { modelState: modelState() },
       };
     }),
   );
