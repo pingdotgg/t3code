@@ -38,6 +38,8 @@ export function SelectableMarkdownText({
   highlightCode,
   preserveSoftBreaks = false,
   onLinkPress,
+  fileContextMenu,
+  onFileContextMenuAction,
   renderImage,
   marginTop = 0,
   marginBottom = 0,
@@ -83,6 +85,8 @@ export function SelectableMarkdownText({
                 runs={chunk.runs}
                 textStyle={textStyle}
                 onLinkPress={onLinkPress}
+                fileContextMenu={fileContextMenu}
+                onFileContextMenuAction={onFileContextMenuAction}
               />
             );
 

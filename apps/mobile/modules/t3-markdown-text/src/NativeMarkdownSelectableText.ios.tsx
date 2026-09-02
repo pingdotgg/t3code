@@ -3,7 +3,10 @@ import { Image, Linking, type TextStyle, useColorScheme } from "react-native";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
 import { markdownFileIconSource } from "./markdownFileIcons";
 import type { NativeMarkdownTextRun } from "./nativeMarkdownText";
-import type { NativeMarkdownTextStyle } from "./SelectableMarkdownText.types";
+import type {
+  MarkdownFileContextMenu,
+  NativeMarkdownTextStyle,
+} from "./SelectableMarkdownText.types";
 
 const EXTERNAL_LINK_PREFIX = "◉ ";
 const INLINE_ATTACHMENT_PREFIX = "\uFFFC\u00A0";
@@ -137,6 +140,8 @@ export function NativeMarkdownSelectableText(props: {
   readonly runs: ReadonlyArray<NativeMarkdownTextRun>;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly onLinkPress?: (href: string) => void;
+  readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;
+  readonly onFileContextMenuAction?: (href: string, actionId: string) => void;
 }) {
   const colorScheme = useColorScheme();
   const occurrences = new Map<string, number>();
@@ -195,6 +200,7 @@ export function NativeMarkdownSelectableText(props: {
     >
       {keyedRuns.map(({ key, run, text }) => {
         const href = run.href;
+        const contextMenu = run.fileIcon && href ? props.fileContextMenu?.(href) : undefined;
         return (
           <MarkdownTextPrimitive
             key={key}
@@ -205,6 +211,7 @@ export function NativeMarkdownSelectableText(props: {
                   ? "t3-skill:sf:cube"
                   : undefined
             }
+            contextMenuConfig={contextMenu ? JSON.stringify(contextMenu) : undefined}
             style={runStyle(run, props.textStyle)}
             onPress={
               href
@@ -215,6 +222,12 @@ export function NativeMarkdownSelectableText(props: {
                       void Linking.openURL(href);
                     }
                   }
+                : undefined
+            }
+            onContextMenuAction={
+              contextMenu && href && props.onFileContextMenuAction
+                ? (event) =>
+                    props.onFileContextMenuAction?.(href, event.nativeEvent.actionIdentifier)
                 : undefined
             }
           >
