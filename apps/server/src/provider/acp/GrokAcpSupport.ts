@@ -130,6 +130,74 @@ export function currentGrokModelIdFromSessionSetup(
   return sessionSetupResult.models?.currentModelId?.trim() || undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Model context window from Grok ACP `availableModels[]._meta.totalContextTokens`. */
+export function totalContextTokensFromModelMeta(meta: unknown): number | undefined {
+  if (!isRecord(meta)) {
+    return undefined;
+  }
+  const value = meta.totalContextTokens;
+  return typeof value === "number" && Number.isFinite(value) && value >= 1
+    ? Math.round(value)
+    : undefined;
+}
+
+export function contextWindowsFromGrokSessionModels(
+  models: EffectAcpSchema.SessionModelState | null | undefined,
+): ReadonlyMap<string, number> {
+  const windows = new Map<string, number>();
+  for (const model of models?.availableModels ?? []) {
+    const size = totalContextTokensFromModelMeta(model._meta);
+    if (size === undefined) {
+      continue;
+    }
+    const modelId = model.modelId.trim();
+    if (!modelId) {
+      continue;
+    }
+    windows.set(modelId, size);
+    const baseId = resolveGrokAcpBaseModelId(modelId);
+    if (baseId !== modelId) {
+      windows.set(baseId, size);
+    }
+  }
+  return windows;
+}
+
+export function contextWindowForGrokModelId(
+  windows: ReadonlyMap<string, number>,
+  modelId: string | undefined,
+): number | undefined {
+  const trimmed = modelId?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return windows.get(trimmed) ?? windows.get(resolveGrokAcpBaseModelId(trimmed));
+}
+
+export function contextWindowFromGrokSessionSetup(
+  sessionSetupResult:
+    | EffectAcpSchema.LoadSessionResponse
+    | EffectAcpSchema.NewSessionResponse
+    | EffectAcpSchema.ResumeSessionResponse,
+  modelId?: string,
+): number | undefined {
+  const models = sessionSetupResult.models;
+  const windows = contextWindowsFromGrokSessionModels(models);
+  const currentId = (modelId ?? models?.currentModelId)?.trim();
+  const matched = contextWindowForGrokModelId(windows, currentId);
+  if (matched !== undefined) {
+    return matched;
+  }
+  if ((models?.availableModels.length ?? 0) === 1) {
+    return totalContextTokensFromModelMeta(models?.availableModels[0]?._meta);
+  }
+  return undefined;
+}
+
 export function currentGrokReasoningEffortFromSessionSetup(
   sessionSetupResult:
     | EffectAcpSchema.LoadSessionResponse

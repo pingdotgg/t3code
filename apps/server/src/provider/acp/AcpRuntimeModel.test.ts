@@ -339,6 +339,80 @@ describe("AcpRuntimeModel", () => {
     ]);
   });
 
+  it("reads Grok context occupancy from session-update _meta.totalTokens", () => {
+    const result = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      _meta: { totalTokens: 1615, contextWindowTokens: 500_000 },
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: "hello",
+        },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(result.events).toContainEqual({
+      _tag: "UsageUpdated",
+      used: 1615,
+      size: 500_000,
+      rawPayload: {
+        sessionId: "session-1",
+        _meta: { totalTokens: 1615, contextWindowTokens: 500_000 },
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: "hello",
+          },
+        },
+      },
+    });
+  });
+
+  it("does not treat billed prompt-response usage as context occupancy", () => {
+    const result = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      _meta: { usage: { totalTokens: 20_554, inputTokens: 18_000, outputTokens: 2_554 } },
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: "hello",
+        },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(result.events.some((event) => event._tag === "UsageUpdated")).toBe(false);
+  });
+
+  it("projects ACP usage updates for the context-window meter", () => {
+    const result = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 12_345,
+        size: 200_000,
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(result.events).toEqual([
+      {
+        _tag: "UsageUpdated",
+        used: 12_345,
+        size: 200_000,
+        rawPayload: {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "usage_update",
+            used: 12_345,
+            size: 200_000,
+          },
+        },
+      },
+    ]);
+  });
+
   it("keeps permission request parsing compatible with loose extension payloads", () => {
     const request = parsePermissionRequest({
       sessionId: "session-1",

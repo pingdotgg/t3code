@@ -27,10 +27,13 @@ import {
 
 import { ServerConfig } from "../../config.ts";
 import {
+  GROK_DEFAULT_CONTEXT_WINDOW,
+  grokContextWindowAfterModelChange,
   grokPromptSettlementBelongsToContext,
   isGrokEnterPlanModeToolCall,
   makeGrokAdapter,
   nextGrokPlanModeActive,
+  resolveGrokContextUsage,
   selectGrokPermissionOptionId,
 } from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
@@ -179,6 +182,83 @@ it("prefers allow_always when Grok offers it", () => {
   assert.equal(selectGrokPermissionOptionId(request, "accept"), "allow-once");
 });
 
+it("keeps occupancy snapshots when only the context window changes", () => {
+  assert.deepStrictEqual(
+    resolveGrokContextUsage({
+      used: 1615,
+      eventSize: 0,
+      lastUsed: 1615,
+      lastKnownMaxTokens: 500_000,
+      lastEmittedMaxTokens: 500_000,
+    }),
+    undefined,
+  );
+  assert.deepStrictEqual(
+    resolveGrokContextUsage({
+      used: 1615,
+      eventSize: 256_000,
+      lastUsed: 1615,
+      lastKnownMaxTokens: 500_000,
+      lastEmittedMaxTokens: 500_000,
+    }),
+    { used: 1615, size: 256_000 },
+  );
+  assert.deepStrictEqual(
+    resolveGrokContextUsage({
+      used: 1615,
+      eventSize: 0,
+      lastUsed: 1615,
+      lastKnownMaxTokens: 256_000,
+      lastEmittedMaxTokens: 500_000,
+    }),
+    { used: 1615, size: 256_000 },
+  );
+  assert.equal(
+    resolveGrokContextUsage({
+      used: 1_200,
+      eventSize: 0,
+      lastUsed: undefined,
+      lastKnownMaxTokens: undefined,
+      lastEmittedMaxTokens: undefined,
+    })?.size,
+    GROK_DEFAULT_CONTEXT_WINDOW,
+  );
+});
+
+it("refreshes the cached window when the Grok model changes", () => {
+  const windows = new Map([
+    ["grok-4.6", 500_000],
+    ["grok-code", 256_000],
+  ]);
+  assert.equal(
+    grokContextWindowAfterModelChange({
+      previousModelId: "grok-4.6",
+      nextModelId: "grok-4.6",
+      windows,
+      lastKnownMaxTokens: 500_000,
+    }),
+    500_000,
+  );
+  assert.equal(
+    grokContextWindowAfterModelChange({
+      previousModelId: "grok-4.6",
+      nextModelId: "grok-code",
+      windows,
+      lastKnownMaxTokens: 500_000,
+    }),
+    256_000,
+  );
+  assert.equal(
+    grokContextWindowAfterModelChange({
+      previousModelId: "grok-4.6",
+      nextModelId: "grok-unknown",
+      windows,
+      lastKnownMaxTokens: 500_000,
+    }),
+    undefined,
+  );
+});
+
 it("requires a settlement to match the live Grok turn", () => {
   const staleTurnId = TurnId.make("stale-turn");
   const replacementTurnId = TurnId.make("replacement-turn");
@@ -272,6 +352,56 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       assert.isDefined(delta);
       if (delta?.type === "content.delta") {
         assert.equal(delta.payload.delta, "hello from mock");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("emits context occupancy from session-update _meta.totalTokens", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-context-window-thread");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_CONTEXT_USAGE: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.completed"
+              ? Deferred.succeed(turnCompleted, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-4.6" },
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello grok",
+        attachments: [],
+      });
+
+      yield* Deferred.await(turnCompleted);
+      yield* Fiber.interrupt(runtimeEventsFiber);
+
+      const usageEvent = runtimeEvents.find((event) => event.type === "thread.token-usage.updated");
+      assert.equal(usageEvent?.type, "thread.token-usage.updated");
+      if (usageEvent?.type === "thread.token-usage.updated") {
+        assert.equal(usageEvent.payload.usage.usedTokens, 1615);
+        assert.equal(usageEvent.payload.usage.maxTokens, 500_000);
       }
 
       yield* adapter.stopSession(threadId);
