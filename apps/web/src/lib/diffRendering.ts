@@ -163,11 +163,75 @@ export function resolveFileDiffPreviousPath(fileDiff: FileDiffMetadata): string 
   return raw;
 }
 
+export function buildFileDiffIdentityKey(fileDiff: FileDiffMetadata): string {
+  return `${resolveFileDiffPreviousPath(fileDiff)}\u0000${resolveFileDiffPath(fileDiff)}`;
+}
+
 export function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
   const cacheKey = fileDiff.cacheKey;
   if (!cacheKey) return `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
 
   return cacheKey.endsWith(":hydrated") ? cacheKey.slice(0, -":hydrated".length) : cacheKey;
+}
+
+function hashFileDiffPart(hash: number, value: string | number | boolean | undefined): number {
+  const serialized = value === undefined ? "undefined" : String(value);
+  const withLength = fnv1a32(`${typeof value}:${serialized.length}:`, hash);
+  return fnv1a32(serialized, withLength);
+}
+
+/**
+ * Content-only version for CodeView reconciliation. Pierre's cache key includes
+ * the whole patch, so using it here would repaint every file when one changes.
+ */
+export function buildFileDiffContentVersion(fileDiff: FileDiffMetadata): number {
+  let hash = FNV_OFFSET_BASIS_32;
+  const append = (value: string | number | boolean | undefined) => {
+    hash = hashFileDiffPart(hash, value);
+  };
+
+  append(fileDiff.name);
+  append(fileDiff.prevName);
+  append(fileDiff.lang);
+  append(fileDiff.newObjectId);
+  append(fileDiff.prevObjectId);
+  append(fileDiff.mode);
+  append(fileDiff.prevMode);
+  append(fileDiff.type);
+  append(fileDiff.isPartial);
+  append(fileDiff.splitLineCount);
+  append(fileDiff.unifiedLineCount);
+
+  for (const line of fileDiff.additionLines) append(line);
+  for (const line of fileDiff.deletionLines) append(line);
+  for (const hunk of fileDiff.hunks) {
+    append(hunk.collapsedBefore);
+    append(hunk.additionStart);
+    append(hunk.additionCount);
+    append(hunk.additionLines);
+    append(hunk.additionLineIndex);
+    append(hunk.deletionStart);
+    append(hunk.deletionCount);
+    append(hunk.deletionLines);
+    append(hunk.deletionLineIndex);
+    append(hunk.hunkContext);
+    append(hunk.hunkSpecs);
+    append(hunk.splitLineStart);
+    append(hunk.splitLineCount);
+    append(hunk.unifiedLineStart);
+    append(hunk.unifiedLineCount);
+    append(hunk.noEOFCRAdditions);
+    append(hunk.noEOFCRDeletions);
+    for (const content of hunk.hunkContent) {
+      append(content.type);
+      append(content.additionLineIndex);
+      append(content.deletionLineIndex);
+      append(content.type === "change" ? content.additions : content.lines);
+      append(content.type === "change" ? content.deletions : undefined);
+    }
+  }
+
+  return hash;
 }
 
 export function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string {
