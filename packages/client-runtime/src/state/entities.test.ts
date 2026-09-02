@@ -10,7 +10,12 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
-import { PrimaryConnectionTarget } from "../connection/model.ts";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  ConnectionTransientError,
+  PrimaryConnectionTarget,
+  type SupervisorConnectionState,
+} from "../connection/model.ts";
 import {
   InvalidScopedProjectKeyError,
   InvalidScopedProjectRefCollectionKeyError,
@@ -174,12 +179,16 @@ function makeHarness() {
     ]),
   });
   const snapshotAtom = createEnvironmentSnapshotAtom(shellStateAtoms);
+  const connectionStateAtoms = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make(AsyncResult.success<SupervisorConnectionState>(AVAILABLE_CONNECTION_STATE)),
+  );
   const projects = createEnvironmentProjectAtoms({
     catalogValueAtom,
     snapshotAtom,
   });
   const threadShells = createEnvironmentThreadShellAtoms({
     catalogValueAtom,
+    connectionStateAtom: connectionStateAtoms,
     snapshotAtom,
   });
   const threadDetails = createEnvironmentThreadDetailAtoms((environmentId, threadId) =>
@@ -189,6 +198,7 @@ function makeHarness() {
   return {
     registry: AtomRegistry.make(),
     shellStateAtom: shellStateAtoms(ENVIRONMENT_ID),
+    connectionStateAtom: connectionStateAtoms,
     threadStateAtom: (threadId: ThreadId) => threadStateAtoms(`${ENVIRONMENT_ID}\u0000${threadId}`),
     projects,
     threadShells,
@@ -197,6 +207,76 @@ function makeHarness() {
 }
 
 describe("environment entity projections", () => {
+  it("marks cached thread shells from unavailable environments without hiding them", () => {
+    const harness = makeHarness();
+    const ref = { environmentId: ENVIRONMENT_ID, threadId: THREAD_ID };
+    const shellUnavailable = () =>
+      harness.registry.get(harness.threadShells.threadShellAtom(ref))?.environmentUnavailable;
+    const setConnection = (state: SupervisorConnectionState) => {
+      harness.registry.set(
+        harness.connectionStateAtom(ENVIRONMENT_ID),
+        AsyncResult.success<SupervisorConnectionState>(state),
+      );
+    };
+    const initialRefs = harness.registry.get(harness.threadShells.threadRefsAtom);
+    expect(initialRefs.length).toBeGreaterThan(0);
+    expect(shellUnavailable()).toBe(false);
+
+    // A first connection attempt carries no failure yet: still available.
+    setConnection({
+      ...AVAILABLE_CONNECTION_STATE,
+      desired: true,
+      network: "online",
+      phase: "connecting",
+      stage: "preparing",
+      attempt: 1,
+    });
+    expect(shellUnavailable()).toBe(false);
+
+    // A failed attempt in backoff marks the shells, but every row stays listed.
+    const backoff: SupervisorConnectionState = {
+      desired: true,
+      network: "online",
+      phase: "backoff",
+      stage: null,
+      attempt: 1,
+      generation: 0,
+      lastFailure: new ConnectionTransientError({
+        reason: "remote-unavailable",
+        detail: "Remote environment is unavailable.",
+      }),
+      retryAt: 1,
+    };
+    setConnection(backoff);
+    expect(shellUnavailable()).toBe(true);
+    expect(harness.registry.get(harness.threadShells.threadRefsAtom)).toEqual(initialRefs);
+
+    // Retry attempts keep the mark rather than flickering back to available.
+    setConnection({
+      ...backoff,
+      phase: "connecting",
+      stage: "preparing",
+      attempt: 2,
+      retryAt: null,
+    });
+    expect(shellUnavailable()).toBe(true);
+
+    // The device going offline reads as plain cached browsing, not unavailability.
+    setConnection({ ...backoff, network: "offline", phase: "offline", retryAt: null });
+    expect(shellUnavailable()).toBe(false);
+
+    // Reconnecting clears the mark.
+    setConnection({
+      ...AVAILABLE_CONNECTION_STATE,
+      desired: true,
+      network: "online",
+      phase: "connected",
+      attempt: 2,
+      generation: 1,
+    });
+    expect(shellUnavailable()).toBe(false);
+  });
+
   it("composes detail collections with authoritative shell workspace metadata", () => {
     const messages: OrchestrationThread["messages"] = [];
     const detail = {

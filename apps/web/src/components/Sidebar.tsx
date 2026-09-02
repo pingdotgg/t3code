@@ -854,8 +854,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // stands out.
   const isInFlight =
     status === "working" || status === "monitoring" || status === "approval" || status === "input";
+  // Offline rows recede like resting ones: nothing can happen there until the
+  // environment reconnects, so they must not compete for attention.
   const shouldRecede =
-    (status === "ready" || isInFlight) && !isUnread && !isWoke && !props.isActive && !isSelected;
+    (status === "ready" || status === "offline" || isInFlight) &&
+    !isUnread &&
+    !isWoke &&
+    !props.isActive &&
+    !isSelected;
   // Status hues follow the system-wide convention set by sidebar v1 and the
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
@@ -891,25 +897,31 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 icon: null,
                 className: "text-indigo-600 dark:text-indigo-300",
               }
-            : status === "failed"
+            : status === "offline"
               ? {
-                  label: "Failed",
+                  label: "Offline",
                   icon: null,
-                  className: "text-red-700 dark:text-red-300",
+                  className: "text-zinc-500 dark:text-zinc-400",
                 }
-              : isWoke
+              : status === "failed"
                 ? {
-                    label: "Woke",
-                    icon: "woke" as const,
-                    className: "text-amber-700 dark:text-amber-300",
+                    label: "Failed",
+                    icon: null,
+                    className: "text-red-700 dark:text-red-300",
                   }
-                : isUnread
+                : isWoke
                   ? {
-                      label: "Done",
-                      icon: "done" as const,
-                      className: "text-emerald-700 dark:text-emerald-300",
+                      label: "Woke",
+                      icon: "woke" as const,
+                      className: "text-amber-700 dark:text-amber-300",
                     }
-                  : null;
+                  : isUnread
+                    ? {
+                        label: "Done",
+                        icon: "done" as const,
+                        className: "text-emerald-700 dark:text-emerald-300",
+                      }
+                    : null;
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({

@@ -30,6 +30,13 @@ by older clients on one device no longer control this behavior.
 When you un-settle a thread, it returns to the top of the active list so you can find it right
 away. Its timestamps do not change. Other threads keep their positions.
 
+When a remote environment cannot be reached, its threads stay in the sidebar but show **Offline**
+instead of live states like Working or Pending Approval: those come from the last data the
+environment sent and cannot update or be acted on until it reconnects. Actions that need the
+environment, such as Stop or Settle, fail with a message naming the disconnected environment. To
+clear the threads entirely, remove the environment in **Settings → Connections**; they return when
+you pair it again.
+
 Right-click a pull request link in a thread and choose **Link to thread** to show that pull request
 in the sidebar. The thread settles when the linked pull request merges if **Auto-settle merged
 threads** is enabled. Right-click the same link and choose **Unlink from thread** to remove it.

@@ -1,5 +1,6 @@
 export {
   activeThreadAnchorTimestampMs,
+  environmentUnavailableRank,
   getLatestThreadForProject,
   getThreadSortTimestamp,
   sortThreads,

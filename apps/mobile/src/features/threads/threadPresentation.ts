@@ -8,7 +8,8 @@ export type ThreadStatusKind =
   | "working"
   | "connecting"
   | "error"
-  | "plan-ready";
+  | "plan-ready"
+  | "offline";
 
 export interface ThreadStatusPresentation extends StatusTone {
   readonly kind: ThreadStatusKind;
@@ -30,12 +31,33 @@ function isLatestTurnSettled(
   return session.status !== "running";
 }
 
+const OFFLINE_STATUS: ThreadStatusPresentation = {
+  kind: "offline",
+  label: "Offline",
+  pillClassName: "bg-adaptive-zinc-500-a12-a16",
+  textClassName: "text-adaptive-zinc-600-300",
+  ...THREAD_STATUS_NEUTRAL_ICON,
+  pulse: false,
+};
+
 /**
  * Resolves the user-facing status of a thread, in priority order. Returns
  * `null` for quiescent threads so rows stay free of "Idle"-style noise.
  * Mirrors `resolveThreadStatusPill` in apps/web/src/components/Sidebar.logic.ts.
  */
 export function resolveThreadStatus(
+  thread: EnvironmentThreadShell,
+): ThreadStatusPresentation | null {
+  const status = resolveConnectedThreadStatus(thread);
+  // Same stale-claim rule as web's resolveSidebarThreadStatus; a cached
+  // error is a historical fact and stays.
+  if (thread.environmentUnavailable && status !== null && status.kind !== "error") {
+    return OFFLINE_STATUS;
+  }
+  return status;
+}
+
+function resolveConnectedThreadStatus(
   thread: EnvironmentThreadShell,
 ): ThreadStatusPresentation | null {
   if (thread.hasPendingApprovals) {

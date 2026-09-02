@@ -12,6 +12,10 @@ export interface EnvironmentProject extends OrchestrationProjectShell {
 
 export interface EnvironmentThreadShell extends OrchestrationThreadShell {
   readonly environmentId: EnvironmentId;
+  /** True while the owning environment's connection is failing: the shell is
+      a cache that cannot receive updates or accept commands right now.
+      Absent/false wherever availability is unknown or not tracked. */
+  readonly environmentUnavailable?: boolean;
 }
 
 export type EnvironmentMessage = OrchestrationMessage;
@@ -30,8 +34,9 @@ export function scopeProject(
 export function scopeThreadShell(
   environmentId: EnvironmentId,
   thread: OrchestrationThreadShell,
+  environmentUnavailable = false,
 ): EnvironmentThreadShell {
-  return { ...thread, environmentId };
+  return { ...thread, environmentId, environmentUnavailable };
 }
 
 export function scopeThread(

@@ -87,6 +87,19 @@ export function activeThreadAnchorTimestampMs(thread: {
   );
 }
 
+/**
+ * Sort tier for the active thread list: threads on reachable environments
+ * come first, threads whose environment is unavailable sink below them. An
+ * availability flip is a lifecycle transition, so this is the only signal
+ * besides settle/un-settle that may move a row. Shared by web and mobile so
+ * both render the same order.
+ */
+export function environmentUnavailableRank(thread: {
+  readonly environmentUnavailable?: boolean;
+}): number {
+  return thread.environmentUnavailable ? 1 : 0;
+}
+
 export function sortThreads<T extends { readonly id: string } & ThreadSortInput>(
   threads: readonly T[],
   sortOrder: SidebarThreadSortOrder,

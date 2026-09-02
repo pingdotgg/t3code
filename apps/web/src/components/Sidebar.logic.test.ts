@@ -676,6 +676,31 @@ describe("resolveSidebarThreadStatus", () => {
     );
   });
 
+  it("reads live states as offline while the environment is unavailable", () => {
+    expect(resolveSidebarThreadStatus({ ...idle, session, environmentUnavailable: true })).toBe(
+      "offline",
+    );
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        hasPendingApprovals: true,
+        session,
+        environmentUnavailable: true,
+      }),
+    ).toBe("offline");
+    // Historical facts survive: a cached failure is still a failure.
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        session: { ...session, status: "error" as const },
+        environmentUnavailable: true,
+      }),
+    ).toBe("failed");
+    expect(
+      resolveSidebarThreadStatus({ ...idle, session: null, environmentUnavailable: true }),
+    ).toBe("ready");
+  });
+
   it("prioritizes awaiting input over a running session, below approval", () => {
     expect(resolveSidebarThreadStatus({ ...idle, hasPendingUserInput: true, session })).toBe(
       "input",
@@ -832,6 +857,32 @@ describe("sortThreadsForSidebar", () => {
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+
+  it("sinks threads from unavailable environments below reachable ones", () => {
+    const sorted = sortThreadsForSidebar([
+      {
+        id: "offline-newest",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        environmentUnavailable: true,
+      },
+      sortable({ id: "reachable-old", createdAt: "2026-03-09T08:00:00.000Z" }),
+      {
+        id: "offline-old",
+        createdAt: "2026-03-09T09:00:00.000Z",
+        environmentUnavailable: true,
+      },
+      sortable({ id: "reachable-new", createdAt: "2026-03-09T10:00:00.000Z" }),
+    ]);
+
+    // Reachable rows keep their static order on top; offline rows keep
+    // theirs below.
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      "reachable-new",
+      "reachable-old",
+      "offline-newest",
+      "offline-old",
+    ]);
   });
 
   it("surfaces an un-settled thread at the top via its re-entry stamp", () => {
@@ -1176,6 +1227,52 @@ describe("resolveThreadStatusPill", () => {
         thread: baseThread,
       }),
     ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("reads live pills as offline while the environment is unavailable", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: { ...baseThread, environmentUnavailable: true },
+      }),
+    ).toMatchObject({ label: "Offline", pulse: false });
+    expect(
+      resolveThreadStatusPill({
+        thread: { ...baseThread, hasPendingApprovals: true, environmentUnavailable: true },
+      }),
+    ).toMatchObject({ label: "Offline", pulse: false });
+  });
+
+  it("keeps completed and quiet pills while the environment is unavailable", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          interactionMode: "default" as const,
+          latestTurn: makeLatestTurn(),
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          session: {
+            ...baseThread.session,
+            status: "ready" as const,
+            activeTurnId: null,
+          },
+          environmentUnavailable: true,
+        },
+      }),
+    ).toMatchObject({ label: "Completed" });
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: makeLatestTurn(),
+          session: {
+            ...baseThread.session,
+            status: "ready" as const,
+            activeTurnId: null,
+          },
+          environmentUnavailable: true,
+        },
+      }),
+    ).toBeNull();
   });
 
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
