@@ -1,11 +1,16 @@
 import { ExternalLinkIcon, PaperclipIcon, PlayIcon } from "lucide-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { createContext, useContext, useMemo } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
 import { cn } from "~/lib/utils";
 
 import ChatMarkdown from "../ChatMarkdown";
+import { ExpandedImageDialog } from "../chat/ExpandedImageDialog";
+import {
+  buildExpandedImagePreviewFromContainer,
+  type ExpandedImagePreview,
+} from "../chat/ExpandedImagePreview";
 import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
 
 export const PullRequestMarkdownContext = createContext<string | null>(null);
@@ -29,46 +34,73 @@ export function PullRequestMarkdown({
   className?: string;
 }) {
   const segments = splitPullRequestBody(text);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [expandedImageState, setExpandedImageState] = useState<{
+    readonly text: string;
+    readonly preview: ExpandedImagePreview;
+  } | null>(null);
+  const expandedImage = expandedImageState?.text === text ? expandedImageState.preview : null;
+  const expandImage = useCallback(
+    (fallbackPreview: ExpandedImagePreview, selectedImage?: HTMLImageElement) => {
+      const root = rootRef.current;
+      const preview =
+        root === null || selectedImage === undefined
+          ? fallbackPreview
+          : (buildExpandedImagePreviewFromContainer(root, selectedImage) ?? fallbackPreview);
+      setExpandedImageState({ text, preview });
+    },
+    [text],
+  );
   const repositoryUrl = useContext(PullRequestMarkdownContext);
   const extraRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
     () => (repositoryUrl ? [[remarkPullRequestAutolinks, { repositoryUrl }]] : []),
     [repositoryUrl],
   );
   return (
-    <div className={cn("space-y-3", className)}>
-      {segments.map((segment) => {
-        if (segment.kind === "markdown") {
+    <>
+      <div ref={rootRef} className={cn("space-y-3", className)}>
+        {segments.map((segment) => {
+          if (segment.kind === "markdown") {
+            return (
+              <ChatMarkdown
+                key={segment.id}
+                text={segment.text}
+                cwd={cwd}
+                environmentId={environmentId}
+                onImageExpand={expandImage}
+                extraRemarkPlugins={extraRemarkPlugins}
+              />
+            );
+          }
+          const isVideo = segment.media === "video";
+          const Icon = isVideo ? PlayIcon : PaperclipIcon;
           return (
-            <ChatMarkdown
+            // A plain anchor rather than the page's openExternal button: the desktop window
+            // turns a blocked _blank into openExternal itself, and in a browser tab — where
+            // there is no shell to call — this is the only one of the two that goes anywhere.
+            <a
               key={segment.id}
-              text={segment.text}
-              cwd={cwd}
-              environmentId={environmentId}
-              extraRemarkPlugins={extraRemarkPlugins}
-            />
+              href={segment.url}
+              rel="noreferrer noopener"
+              target="_blank"
+              className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm hover:bg-muted/60"
+            >
+              <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate">
+                {isVideo ? "Play video on GitHub" : "Open attachment on GitHub"}
+              </span>
+              <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+            </a>
           );
-        }
-        const isVideo = segment.media === "video";
-        const Icon = isVideo ? PlayIcon : PaperclipIcon;
-        return (
-          // A plain anchor rather than the page's openExternal button: the desktop window
-          // turns a blocked _blank into openExternal itself, and in a browser tab — where
-          // there is no shell to call — this is the only one of the two that goes anywhere.
-          <a
-            key={segment.id}
-            href={segment.url}
-            rel="noreferrer noopener"
-            target="_blank"
-            className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm hover:bg-muted/60"
-          >
-            <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate">
-              {isVideo ? "Play video on GitHub" : "Open attachment on GitHub"}
-            </span>
-            <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-          </a>
-        );
-      })}
-    </div>
+        })}
+      </div>
+      {expandedImage ? (
+        <ExpandedImageDialog
+          key={`${expandedImage.images[expandedImage.index]?.src ?? "image"}:${expandedImage.index}`}
+          preview={expandedImage}
+          onClose={() => setExpandedImageState(null)}
+        />
+      ) : null}
+    </>
   );
 }

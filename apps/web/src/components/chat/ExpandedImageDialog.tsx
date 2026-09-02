@@ -77,8 +77,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
       event.stopPropagation();
       navigateImage(1);
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [navigateImage, onClose, preview.images.length]);
 
   if (!item) return null;
@@ -88,7 +88,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
       <OpenMediaLink originalUrl={item.originalUrl} />
     ) : null;
 
-  return createPortal(
+  const dialog = (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 px-4 py-6 [-webkit-app-region:no-drag]"
       role="dialog"
@@ -178,7 +178,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           <ChevronRightIcon className="size-5" />
         </Button>
       )}
-    </div>,
-    document.body,
+    </div>
   );
+  return typeof document === "undefined" ? dialog : createPortal(dialog, document.body);
 });

@@ -82,6 +82,8 @@ import {
 } from "@t3tools/client-runtime/codex-markdown-directives";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import {
+  EXPANDED_IMAGE_ELEMENT_PROPS,
+  registerExpandedImagePreviewItem,
   resolveMarkdownMediaPreview,
   type ExpandedImagePreview,
 } from "./chat/ExpandedImagePreview";
@@ -193,9 +195,14 @@ interface ChatMarkdownProps {
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
       to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
-  onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+  onImageExpand?: MarkdownMediaExpandHandler | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 }
+
+type MarkdownMediaExpandHandler = (
+  preview: ExpandedImagePreview,
+  selectedImage?: HTMLImageElement,
+) => void;
 
 export function canUseMarkdownFileShellActions(
   environmentId: EnvironmentId | null,
@@ -1201,7 +1208,7 @@ const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
 const MarkdownLinkContext = React.createContext(false);
 
 function expandableMarkdownImageProps(
-  onImageExpand: ((preview: ExpandedImagePreview) => void) | undefined,
+  onImageExpand: MarkdownMediaExpandHandler | undefined,
   src: string,
   alt: string,
   originalUrl?: string,
@@ -1209,28 +1216,30 @@ function expandableMarkdownImageProps(
 ) {
   if (!onImageExpand) return {};
   const previewName = alt.trim() || "image";
-  const expand = (event: ReactMouseEvent | ReactKeyboardEvent) => {
+  const previewItem = {
+    src,
+    name: previewName,
+    ...(originalUrl ? { originalUrl } : {}),
+    ...(actionsSource ? { actionsSource } : {}),
+  };
+  const expand = (
+    event: ReactMouseEvent<HTMLImageElement> | ReactKeyboardEvent<HTMLImageElement>,
+  ) => {
     if (event.currentTarget.closest("a")) return;
     event.preventDefault();
     event.stopPropagation();
-    onImageExpand({
-      images: [
-        {
-          src,
-          name: previewName,
-          ...(originalUrl ? { originalUrl } : {}),
-          ...(actionsSource ? { actionsSource } : {}),
-        },
-      ],
-      index: 0,
-    });
+    onImageExpand({ images: [previewItem], index: 0 }, event.currentTarget);
   };
   return {
+    ...EXPANDED_IMAGE_ELEMENT_PROPS,
+    ref: (element: HTMLImageElement | null) => {
+      if (element) registerExpandedImagePreviewItem(element, previewItem);
+    },
     role: "button" as const,
     tabIndex: 0,
     "aria-label": `Preview ${previewName}`,
     onClick: expand,
-    onKeyDown: (event: ReactKeyboardEvent) => {
+    onKeyDown: (event: ReactKeyboardEvent<HTMLImageElement>) => {
       if (event.key === "Enter" || event.key === " ") expand(event);
     },
   };
@@ -1274,7 +1283,7 @@ function ChatMarkdownVideo(props: {
   readonly mediaIdentity?: string | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
   readonly onRetry?: (() => Promise<void>) | undefined;
-  readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+  readonly onImageExpand?: MarkdownMediaExpandHandler | undefined;
 }) {
   return (
     <MediaVideoPlayer
@@ -1334,7 +1343,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly srcFragment?: string;
   readonly style?: CSSProperties | undefined;
   readonly workspaceRoot?: string | undefined;
-  readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+  readonly onImageExpand?: MarkdownMediaExpandHandler | undefined;
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, props.resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);

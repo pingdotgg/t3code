@@ -36,6 +36,25 @@ export interface ExpandedImagePreview {
   index: number;
 }
 
+export interface ExpandedImageElement {
+  readonly src: string;
+  readonly currentSrc: string;
+  readonly alt: string;
+}
+
+export const EXPANDED_IMAGE_ELEMENT_PROPS = { "data-expanded-image": "" } as const;
+
+const EXPANDED_IMAGE_ELEMENT_SELECTOR = "img[data-expanded-image]";
+
+const expandedImageItemByElement = new WeakMap<ExpandedImageElement, ExpandedImageItem>();
+
+export function registerExpandedImagePreviewItem(
+  element: ExpandedImageElement,
+  item: ExpandedImageItem,
+): void {
+  expandedImageItemByElement.set(element, item);
+}
+
 /** Resolves a chat media reference on its owning environment, without downloading its bytes. */
 export async function resolveMarkdownMediaPreview(input: {
   source: string;
@@ -158,4 +177,51 @@ export function buildExpandedImagePreview(
     })),
     index: selectedIndex,
   };
+}
+
+export function buildExpandedImagePreviewFromElements(
+  images: ReadonlyArray<ExpandedImageElement>,
+  selectedImage: ExpandedImageElement,
+): ExpandedImagePreview | null {
+  const previewableImages = images.flatMap((image) => {
+    const src = image.currentSrc.trim() || image.src.trim();
+    const registeredItem = expandedImageItemByElement.get(image);
+    return src.length === 0
+      ? []
+      : [
+          {
+            element: image,
+            item: registeredItem
+              ? {
+                  ...registeredItem,
+                  src,
+                  ...(registeredItem.actionsSource
+                    ? {
+                        actionsSource: {
+                          ...registeredItem.actionsSource,
+                          src,
+                        },
+                      }
+                    : {}),
+                }
+              : { src, name: image.alt.trim() || "image" },
+          },
+        ];
+  });
+  const selectedIndex = previewableImages.findIndex(({ element }) => element === selectedImage);
+  if (selectedIndex < 0) return null;
+  return {
+    images: previewableImages.map(({ item }) => item),
+    index: selectedIndex,
+  };
+}
+
+export function buildExpandedImagePreviewFromContainer(
+  container: ParentNode,
+  selectedImage: HTMLImageElement,
+): ExpandedImagePreview | null {
+  return buildExpandedImagePreviewFromElements(
+    [...container.querySelectorAll<HTMLImageElement>(EXPANDED_IMAGE_ELEMENT_SELECTOR)],
+    selectedImage,
+  );
 }
