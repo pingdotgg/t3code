@@ -166,6 +166,8 @@ import {
   snoozeWakeLabel,
   type SnoozePreset,
 } from "./Sidebar.snooze";
+import { SIDEBAR_SWIPE_ACTION_WIDTH } from "./Sidebar.swipe";
+import { MobileSidebarSwipeActions, useMobileSidebarRowSwipe } from "./SidebarSwipeActions";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
@@ -728,6 +730,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // When a snooze ended (timer or early wake); drives the Woke pill until
   // the user visits the thread.
   wokeAt: string | null;
+  mobileSwipeOpen: boolean;
+  mobileSwipeEnabled: boolean;
   isActive: boolean;
   openPullRequestsInRightPanel: boolean;
   jumpLabel: string | null;
@@ -751,7 +755,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   onUnsettle: (threadRef: ScopedThreadRef) => void;
   onSnooze: (threadRef: ScopedThreadRef, preset: SnoozePreset) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
+  onPin: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
+  onMobileSwipeOpenChange: (threadKey: string, open: boolean) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
   changeRequestSnapshot: ThreadChangeRequestSnapshot | null;
   onChangeRequestSnapshot: (
@@ -770,6 +776,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     onRenameTitleChange,
     onSettle,
     onSnooze,
+    onPin,
     onStartRename,
     onThreadActivate,
     onThreadClick,
@@ -787,6 +794,35 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  // Snooze is offered only where it can succeed: capability-gated and never
+  // on blocked-on-you work or queued turns (the server rejects both).
+  const showSnoozeButton =
+    props.snoozeSupported && canSnooze(thread, { now: new Date().toISOString() });
+  const swipeActionCount =
+    (props.settlementSupported ? 1 : 0) +
+    (showSnoozeButton ? 1 : 0) +
+    (props.pinningSupported ? 1 : 0);
+  const swipeRevealWidth = swipeActionCount * SIDEBAR_SWIPE_ACTION_WIDTH;
+  const swipeEnabled =
+    props.mobileSwipeEnabled && variant === "card" && !isRenaming && swipeActionCount > 0;
+  const setMobileSwipeOpen = useCallback(
+    (open: boolean) => props.onMobileSwipeOpenChange(threadKey, open),
+    [props.onMobileSwipeOpenChange, threadKey],
+  );
+  const {
+    consumeSuppressedClick,
+    dragging: swipeDragging,
+    offset: swipeOffset,
+    onPointerCancel: handleSwipePointerCancel,
+    onPointerDown: handleSwipePointerDown,
+    onPointerMove: handleSwipePointerMove,
+    onPointerUp: handleSwipePointerUp,
+  } = useMobileSidebarRowSwipe({
+    enabled: swipeEnabled,
+    open: props.mobileSwipeOpen && swipeEnabled,
+    revealWidth: swipeRevealWidth,
+    onOpenChange: setMobileSwipeOpen,
+  });
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
@@ -978,9 +1014,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
 
   const handleClick = useCallback(
     (event: ReactMouseEvent) => {
+      if (consumeSuppressedClick()) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (props.mobileSwipeOpen) {
+        event.preventDefault();
+        event.stopPropagation();
+        setMobileSwipeOpen(false);
+        return;
+      }
       onThreadClick(event, threadRef);
     },
-    [onThreadClick, threadRef],
+    [consumeSuppressedClick, onThreadClick, props.mobileSwipeOpen, setMobileSwipeOpen, threadRef],
   );
   const handleAcknowledgeWokeClick = useCallback(
     (event: ReactMouseEvent) => {
@@ -1075,6 +1122,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     },
     [onUnpin, threadRef],
   );
+  const handlePinClick = useCallback(() => onPin(threadRef), [onPin, threadRef]);
   const handleSnoozePreset = useCallback(
     (preset: SnoozePreset) => {
       onSnooze(threadRef, preset);
@@ -1084,10 +1132,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // While the snooze popover is open the pointer leaves the row, which
   // would fade the hover actions out from under the open menu; pin them.
   const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);
-  // Snooze is offered only where it can succeed: capability-gated and never
-  // on blocked-on-you work or queued turns (the server rejects both).
-  const showSnoozeButton =
-    props.snoozeSupported && canSnooze(thread, { now: new Date().toISOString() });
   // If the thread becomes blocked while the popover is open, the button
   // unmounts without firing onOpenChange(false). Deriving the flag keeps a
   // stale true from permanently hiding the status label / pinning the
@@ -1400,9 +1444,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       {...(sortable?.listeners ?? {})}
       className={cn(
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_96px]",
+        swipeEnabled && "relative overflow-hidden rounded-md",
         sortable?.isDragging && "z-20 opacity-80",
       )}
     >
+      {swipeEnabled ? (
+        <MobileSidebarSwipeActions
+          open={props.mobileSwipeOpen}
+          showSettle={props.settlementSupported}
+          showSnooze={showSnoozeButton}
+          showPin={props.pinningSupported}
+          isPinned={props.isPinned}
+          timestampFormat={props.timestampFormat}
+          onSettle={() => onSettle(threadRef)}
+          onSnooze={handleSnoozePreset}
+          onPinToggle={props.isPinned ? () => onUnpin(threadRef) : handlePinClick}
+          onClose={() => setMobileSwipeOpen(false)}
+        />
+      ) : null}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -1411,11 +1470,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               tabIndex={0}
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
-              className={rowSurfaceClassName}
+              className={cn(
+                rowSurfaceClassName,
+                swipeEnabled && "touch-pan-y",
+                swipeEnabled && !props.isActive && !isSelected && "bg-sidebar",
+                swipeEnabled && !swipeDragging && "transition-transform duration-200 ease-out",
+                swipeEnabled && (swipeDragging || props.mobileSwipeOpen) && "will-change-transform",
+              )}
+              style={
+                swipeEnabled ? { transform: `translate3d(${swipeOffset}px, 0, 0)` } : undefined
+              }
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
               onKeyDown={handleKeyDown}
               onContextMenu={handleContextMenu}
+              onPointerDown={handleSwipePointerDown}
+              onPointerMove={handleSwipePointerMove}
+              onPointerUp={handleSwipePointerUp}
+              onPointerCancel={handleSwipePointerCancel}
             />
           }
         >
@@ -1732,7 +1804,14 @@ export default function Sidebar() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, openMobile, setOpenMobile } = useSidebar();
+  const [mobileSwipeOpenThreadKey, setMobileSwipeOpenThreadKey] = useState<string | null>(null);
+  const handleMobileSwipeOpenChange = useCallback((threadKey: string, open: boolean) => {
+    setMobileSwipeOpenThreadKey(open ? threadKey : null);
+  }, []);
+  useEffect(() => {
+    if (!openMobile) setMobileSwipeOpenThreadKey(null);
+  }, [openMobile]);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -3791,6 +3870,8 @@ export default function Sidebar() {
                         // the wake signal must survive the trip. Still-snoozed
                         // rows resolve to null on their own.
                         wokeAt={threadWokeAt(thread, { now: snoozeNow })}
+                        mobileSwipeEnabled={isMobile}
+                        mobileSwipeOpen={mobileSwipeOpenThreadKey === threadKey}
                         isActive={routeThreadKey === threadKey}
                         openPullRequestsInRightPanel={routeThreadRef !== null}
                         jumpLabel={
@@ -3829,7 +3910,9 @@ export default function Sidebar() {
                         onUnsettle={attemptUnsettle}
                         onSnooze={attemptSnooze}
                         onUnsnooze={attemptUnsnooze}
+                        onPin={attemptPin}
                         onUnpin={attemptUnpin}
+                        onMobileSwipeOpenChange={handleMobileSwipeOpenChange}
                         onAcknowledgeWoke={acknowledgeWoke}
                         changeRequestSnapshot={changeRequestSnapshotByKey.get(threadKey) ?? null}
                         onChangeRequestSnapshot={setThreadChangeRequestSnapshot}

@@ -28,6 +28,10 @@ Right-click a pull request link in a thread and choose **Link to thread** to sho
 in the sidebar. The thread settles when the linked pull request merges if **Auto-settle merged
 threads** is enabled. Right-click the same link and choose **Unlink from thread** to remove it.
 
+In the mobile-width web app, swipe an active thread to the left to reveal **Settle**, **Snooze**,
+and **Pin** actions. A pinned thread shows **Unpin** instead. Vertical movement continues to scroll
+the sidebar, and tapping the revealed thread closes its actions.
+
 On web and desktop, drag a pinned thread to change its position. On mobile, open the thread's menu
 and choose **Move up** or **Move down**. The order is stored by the server and appears on your
 other connected devices.
