@@ -60,14 +60,31 @@ const CookieRow = Schema.Struct({
   name: Schema.String,
   value: Schema.String,
   path: Schema.String,
-  // Already seconds since the UNIX epoch, unlike Chromium's 1601-based
-  // microseconds, so no conversion is needed.
+  // UNIX-epoch based, unlike Chromium's 1601-based microseconds — but the
+  // unit depends on the schema version; see `expiryToSeconds`.
   expiry: Schema.Number,
   isSecure: Schema.Number,
   isHttpOnly: Schema.Number,
   sameSite: Schema.Number,
 });
 const decodeCookieRows = Schema.decodeUnknownEffect(Schema.Array(CookieRow));
+
+/**
+ * Firefox schema 16 (Firefox 129) moved `expiry` from seconds to milliseconds
+ * — the migration is `UPDATE moz_cookies SET expiry = expiry * 1000`. Electron
+ * wants seconds, so the unit is decided by `PRAGMA user_version` rather than
+ * assumed: importing a pre-16 profile as milliseconds would expire every cookie
+ * at once, and a post-16 one as seconds would keep them for ~1000× too long.
+ */
+const FIREFOX_EXPIRY_MILLISECONDS_SCHEMA = 16;
+
+const UserVersionRow = Schema.Struct({ user_version: Schema.Number });
+const decodeUserVersion = Schema.decodeUnknownEffect(Schema.Array(UserVersionRow));
+
+const expiryToSeconds = (expiry: number, schemaVersion: number): number | undefined => {
+  if (expiry <= 0) return undefined;
+  return schemaVersion >= FIREFOX_EXPIRY_MILLISECONDS_SCHEMA ? Math.floor(expiry / 1000) : expiry;
+};
 
 export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")(function* (
   cookieDatabasePath: string,
@@ -76,8 +93,10 @@ export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")
     Effect.mapError((cause) => new FirefoxCookieReadError({ cookieDatabasePath, cause })),
   );
 
-  const rows = yield* Effect.gen(function* () {
+  const { rows, schemaVersion } = yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const [versionRow] = yield* decodeUserVersion(yield* sql`pragma user_version`);
+    const schemaVersion = versionRow?.user_version ?? 0;
     // Only the default container. Firefox isolates cookies per container and
     // per private window via `originAttributes` (`^userContextId=2`,
     // `^privateBrowsingId=1`); Electron has no equivalent, so importing them
@@ -88,7 +107,7 @@ export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")
         from moz_cookies
        where originAttributes = ''
     `;
-    return yield* decodeCookieRows(raw);
+    return { rows: yield* decodeCookieRows(raw), schemaVersion };
   }).pipe(
     Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })),
     Effect.mapError((cause) => new FirefoxCookieReadError({ cookieDatabasePath, cause })),
@@ -105,7 +124,7 @@ export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")
       path: row.path,
       secure,
       httpOnly: row.isHttpOnly === 1,
-      expirationDate: row.expiry > 0 ? row.expiry : undefined,
+      expirationDate: expiryToSeconds(row.expiry, schemaVersion),
       sameSite: sameSiteFromColumn(row.sameSite),
     } satisfies ImportedCookie;
   });

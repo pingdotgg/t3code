@@ -37,11 +37,15 @@ const writeFirefoxCookieDatabase = Effect.fnUntraced(function* (
     sameSite: number;
     originAttributes?: string;
   }>,
+  // Firefox stamps `PRAGMA user_version`; schema 16+ stores `expiry` in
+  // milliseconds, earlier ones in seconds.
+  schemaVersion = 15,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-firefox-test-" });
   const file = `${directory}/cookies.sqlite`;
   const database = new NodeSqlite.DatabaseSync(file);
+  database.exec(`pragma user_version = ${schemaVersion}`);
   database.exec(
     `create table moz_cookies (
        id integer primary key, host text, name text, value text, path text,
@@ -75,6 +79,32 @@ const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path
   effect.pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("readFirefoxCookies", () => {
+  it.effect("converts millisecond expiries from schema 16 and newer", () =>
+    run(
+      Effect.gen(function* () {
+        // Firefox 129 (schema 16) migrated `expiry` to milliseconds; older
+        // profiles still hold seconds. Both must land as seconds for Electron.
+        const row = {
+          host: "example.test",
+          name: "c",
+          value: "v",
+          path: "/",
+          expiry: 1_800_000_000_000,
+          isSecure: 0,
+          isHttpOnly: 0,
+          sameSite: 0,
+        };
+        const modern = yield* readFirefoxCookies(yield* writeFirefoxCookieDatabase([row], 16));
+        expect(modern[0]?.expirationDate).toBe(1_800_000_000);
+
+        const legacy = yield* readFirefoxCookies(
+          yield* writeFirefoxCookieDatabase([{ ...row, expiry: 1_800_000_000 }], 15),
+        );
+        expect(legacy[0]?.expirationDate).toBe(1_800_000_000);
+      }),
+    ),
+  );
+
   it.effect("maps moz_cookies onto the shape Electron accepts", () =>
     run(
       Effect.gen(function* () {
