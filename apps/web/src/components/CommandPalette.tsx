@@ -183,7 +183,7 @@ function projectFavicon(project: Project) {
       cwd={project.workspaceRoot}
       projectName={project.title}
       faviconPath={project.faviconPath}
-      className={ITEM_ICON_CLASS}
+      className="size-4"
     />
   );
 }
