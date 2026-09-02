@@ -37,6 +37,7 @@ import {
   resolveDiffThemeName,
   resolveFileDiffPath,
 } from "../lib/diffRendering";
+import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
@@ -948,6 +949,7 @@ export default function DiffPanel({
                     lineDiffType: "none",
                     overflow: wordWrap ? "wrap" : "scroll",
                     theme: resolveDiffThemeName(resolvedTheme),
+                    preferredHighlighter: PREFERRED_HIGHLIGHTER,
                     themeType: resolvedTheme as DiffThemeType,
                     stickyHeaders: true,
                     ...(loadDiffFiles ? { loadDiffFiles } : {}),
