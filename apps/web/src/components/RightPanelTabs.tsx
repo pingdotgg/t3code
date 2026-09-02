@@ -464,19 +464,27 @@ function RightPanelEmptyState(props: {
           {actions.map((action) =>
             action.available ? (
               // The card is itself a button, so the profile chooser sits beside
-              // it in a wrapper rather than inside it.
-              <div key={action.label} className="relative">
+              // it in a wrapper rather than inside it. Hover lives on the
+              // wrapper: the chooser overlays the card, and a pointer moving
+              // onto it must not read as leaving the card.
+              <div
+                key={action.label}
+                className="group relative"
+                onMouseEnter={() => setHighlight(availableActions.indexOf(action))}
+                onMouseLeave={() =>
+                  setHighlight((current) =>
+                    current === availableActions.indexOf(action) ? -1 : current,
+                  )
+                }
+              >
                 <button
                   type="button"
                   onClick={action.onClick}
-                  onMouseEnter={() => setHighlight(availableActions.indexOf(action))}
-                  onMouseLeave={() =>
-                    setHighlight((current) =>
-                      current === availableActions.indexOf(action) ? -1 : current,
-                    )
-                  }
                   className={cn(
-                    "relative flex w-full cursor-pointer flex-col items-start p-4 text-left transition hover:border-border hover:bg-accent/60",
+                    // Full height: the wrapper is the grid item that stretches
+                    // to the row, so the button must fill it to stay level with
+                    // its neighbour and keep the chooser anchored inside.
+                    "relative flex h-full w-full cursor-pointer flex-col items-start p-4 text-left transition group-hover:border-border group-hover:bg-accent/60",
                     cardShellClass,
                     isHighlighted(action) && highlightedCardClass,
                   )}
@@ -501,9 +509,9 @@ function RightPanelEmptyState(props: {
                       render={
                         <Button
                           aria-label="Open browser in a profile"
-                          className="absolute right-3 bottom-3 text-muted-foreground hover:text-foreground"
+                          className="absolute right-3 bottom-3 [--control-icon-color:currentColor]"
                           size="icon-xs"
-                          variant="ghost"
+                          variant="ghost-muted"
                         />
                       }
                     >
