@@ -281,7 +281,7 @@ export function ProviderUpdatePrimaryNotification() {
                 children: "Settings",
                 onClick: openSettings,
               },
-        actionVariant: oneClickProviders.length > 0 ? "default" : "outline",
+        actionVariant: "outline",
         data: {
           leadingIcon:
             updateProviders.length === 1 ? (
