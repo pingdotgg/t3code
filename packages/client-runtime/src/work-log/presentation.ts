@@ -69,6 +69,7 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
   if (
     entry.requestKind === "file-read" ||
     entry.itemType === "image_view" ||
+    entry.viewedImagePath !== undefined ||
     (entry.itemType === "dynamic_tool_call" &&
       entry.toolTitle?.trim().toLowerCase() === "read file")
   ) {
