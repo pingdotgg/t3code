@@ -3,6 +3,8 @@
 #include <QJsonDocument>
 #include <QGuiApplication>
 #include <QProcessEnvironment>
+#include <QQmlEngine>
+#include <QQuickWebEngineProfile>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QtLogging>
@@ -12,18 +14,35 @@
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
 #include "ThemeStore.h"
+#include "WebProfile.h"
 
 namespace {
 
-// The rice lives inside T3 home next to the rest of the app's state, so a
-// sandboxed T3CODE_HOME brings its own shell config too.
-QString resolveConfigDir(const QString& override) {
+// T3 home, resolved the way the server resolves it: `--home-dir` (forwarded
+// to the desktop host untouched), then T3CODE_HOME, then ~/.t3. The rice and
+// the browser profile live inside it next to the rest of the app's state, so
+// a sandboxed home brings its own shell config and session too.
+QString resolveHomeDir(const QStringList& hostArguments) {
+  for (qsizetype i = 0; i < hostArguments.size(); ++i) {
+    const QString& argument = hostArguments.at(i);
+    if (argument == QStringLiteral("--home-dir") && i + 1 < hostArguments.size()) {
+      return QDir(hostArguments.at(i + 1)).absolutePath();
+    }
+    if (argument.startsWith(QStringLiteral("--home-dir="))) {
+      return QDir(argument.mid(QStringLiteral("--home-dir=").size())).absolutePath();
+    }
+  }
+  const QString fromEnv =
+      QProcessEnvironment::systemEnvironment().value(QStringLiteral("T3CODE_HOME"));
+  return fromEnv.isEmpty() ? QDir::home().filePath(QStringLiteral(".t3"))
+                           : QDir(fromEnv).absolutePath();
+}
+
+QString resolveConfigDir(const QString& override, const QString& homeDir) {
   if (!override.isEmpty()) {
     return QDir(override).absolutePath();
   }
-  const QString home = QProcessEnvironment::systemEnvironment().value(QStringLiteral("T3CODE_HOME"));
-  const QString base = home.isEmpty() ? QDir::home().filePath(QStringLiteral(".t3")) : home;
-  return QDir(base).absoluteFilePath(QStringLiteral("shell"));
+  return QDir(homeDir).absoluteFilePath(QStringLiteral("shell"));
 }
 
 QString resolveQmlSourceDir(const QString& override) {
@@ -91,13 +110,18 @@ int main(int argc, char* argv[]) {
                      screenshotOption, actionOption});
   parser.process(app);
 
-  const QString configDir = resolveConfigDir(parser.value(configDirOption));
+  const QString homeDir = resolveHomeDir(parser.positionalArguments());
+  const QString configDir = resolveConfigDir(parser.value(configDirOption), homeDir);
   const QString qmlSourceDir =
       resolveQmlSourceDir(parser.isSet(qmlDirOption) ? parser.value(qmlDirOption) : QString());
   qInfo().noquote() << "[shell] config dir:" << configDir;
   if (!qmlSourceDir.isEmpty()) {
     qInfo().noquote() << "[shell] bricks from disk:" << qmlSourceDir;
   }
+
+  // Configured before any engine exists so the first page already lands on it.
+  WebProfile webProfile(QDir(homeDir).filePath(QStringLiteral("userdata/shell-web")));
+  qmlRegisterSingletonInstance("T3.Shell", 1, 0, "WebProfile", webProfile.profile());
 
   ShellBridge bridge;
   ThemeStore theme(configDir);

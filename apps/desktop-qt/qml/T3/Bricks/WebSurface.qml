@@ -14,7 +14,7 @@ WebEngineView {
 
     backgroundColor: Theme.windowTransparent ? "transparent" : Theme.color("chrome", "#0b0b0d")
 
-    profile: WebProfile.instance
+    profile: WebProfile
 
     webChannel: WebChannel {
         id: channel

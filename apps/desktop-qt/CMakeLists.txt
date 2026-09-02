@@ -50,6 +50,8 @@ qt_add_executable(t3code-qt
   src/ShellRuntime.h
   src/ThemeStore.cpp
   src/ThemeStore.h
+  src/WebProfile.cpp
+  src/WebProfile.h
   src/PlatformWindow.h
 )
 
