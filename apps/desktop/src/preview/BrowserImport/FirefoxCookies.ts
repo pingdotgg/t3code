@@ -125,14 +125,14 @@ export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")
     const sql = yield* SqlClient.SqlClient;
     const [versionRow] = yield* decodeUserVersion(yield* sql`pragma user_version`);
     const schemaVersion = versionRow?.user_version ?? 0;
+    const hasRawSameSite =
+      schemaVersion >= FIREFOX_RAW_SAMESITE_FIRST_SCHEMA &&
+      schemaVersion <= FIREFOX_RAW_SAMESITE_LAST_SCHEMA;
     // Only the default container. Firefox isolates cookies per container and
     // per private window via `originAttributes` (`^userContextId=2`,
     // `^privateBrowsingId=1`); Electron has no equivalent, so importing them
     // all would collapse several identities onto one host/name/path and hand
     // the profile an arbitrary container's session.
-    const hasRawSameSite =
-      schemaVersion >= FIREFOX_RAW_SAMESITE_FIRST_SCHEMA &&
-      schemaVersion <= FIREFOX_RAW_SAMESITE_LAST_SCHEMA;
     const raw = hasRawSameSite
       ? yield* sql`
           select host, name, value, path, expiry, isSecure, isHttpOnly, sameSite, rawSameSite
