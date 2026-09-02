@@ -85,12 +85,22 @@ describe("ThreadUsageAccumulator", () => {
     expect(groups[0]?.totals.outputTokens).toBe(50);
   });
 
-  it("records each day's estimated cost", () => {
+  it("splits each day's model-priced cost into cache components", () => {
     const context = { sessionKey: "claude:session-a", agentId: null };
     const groups = accumulate([[record(), context]]);
     const day = groups[0]?.daily.get("2026-08-07");
 
-    expect(day).toBeCloseTo(100 * 1e-5 + 1000 * 1e-6 + 10 * 1.25e-5 + 50 * 5e-5, 12);
+    expect(day?.cacheWriteUsd).toBeCloseTo(10 * 1.25e-5, 12);
+    expect(day?.cacheReadUsd).toBeCloseTo(1000 * 1e-6, 12);
+    expect(day?.freshUsd).toBeCloseTo(100 * 1e-5 + 50 * 5e-5, 12);
+  });
+
+  it("does not invent a component split for provider-reported costs", () => {
+    const context = { sessionKey: "claude:session-a", agentId: null };
+    const groups = accumulate([[record({ reportedCostUsd: 1.25 }), context]]);
+
+    expect(groups[0]?.costUsd).toBe(1.25);
+    expect(groups[0]?.daily.size).toBe(0);
   });
 
   it("drops records outside the window", () => {

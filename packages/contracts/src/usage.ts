@@ -254,12 +254,16 @@ export const UsageAgentRow = Schema.Struct({
 export type UsageAgentRow = typeof UsageAgentRow.Type;
 
 /**
- * One day of a thread's estimated cost. Days the thread was idle are omitted.
- * Unpriced records contribute tokens to the row totals but nothing here.
+ * One day of a thread's model-priced cost split by component. Days the thread
+ * was idle are omitted. Unpriced and provider-reported records contribute to
+ * the row totals but not this split.
  */
 export const UsageThreadDayCost = Schema.Struct({
   day: UsageDay,
-  costUsd: Schema.Number,
+  cacheWriteUsd: Schema.Number,
+  cacheReadUsd: Schema.Number,
+  /** Fresh input plus output. */
+  freshUsd: Schema.Number,
 });
 export type UsageThreadDayCost = typeof UsageThreadDayCost.Type;
 

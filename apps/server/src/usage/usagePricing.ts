@@ -184,3 +184,33 @@ export function cacheSavingsUsd(table: RateTable, model: string, totals: UsageTo
   if (rate === null) return 0;
   return totals.cachedInputTokens * (rate.inputCostPerToken - rate.cacheReadCostPerToken);
 }
+
+export interface UsageComponentCosts {
+  readonly cacheWriteUsd: number;
+  readonly cacheReadUsd: number;
+  /** Fresh input plus output. */
+  readonly freshUsd: number;
+}
+
+const ZERO_COMPONENT_COSTS: UsageComponentCosts = {
+  cacheWriteUsd: 0,
+  cacheReadUsd: 0,
+  freshUsd: 0,
+};
+
+/** Splits model-priced usage into the three components shown in usage charts. */
+export function usageComponentCosts(
+  table: RateTable,
+  model: string,
+  totals: UsageTokenTotals,
+): UsageComponentCosts {
+  const rate = lookupRate(table, model);
+  if (rate === null) return ZERO_COMPONENT_COSTS;
+  return {
+    cacheWriteUsd: totals.cacheCreationTokens * rate.cacheCreationCostPerToken,
+    cacheReadUsd: totals.cachedInputTokens * rate.cacheReadCostPerToken,
+    freshUsd:
+      totals.uncachedInputTokens * rate.inputCostPerToken +
+      totals.outputTokens * rate.outputCostPerToken,
+  };
+}
