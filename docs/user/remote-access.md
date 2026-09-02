@@ -110,7 +110,8 @@ The SSH form's **Local SSH environment** section adds variables to the local
 `ssh` process. This is useful when SSH config uses `SendEnv` but the desktop app
 was opened outside a shell and did not inherit the variable. Each saved name
 must match `SendEnv` for that host, and the SSH server must allow it with
-`AcceptEnv`. Values are kept in protected desktop connection storage. Use
+`AcceptEnv`. Values are kept in protected desktop connection storage. The
+editor accepts up to 128 variables with a combined encoded size of 16 KiB. Use
 **Edit SSH env** on a saved environment to update or clear them and reconnect.
 Saving restarts a remote T3 server managed by Desktop. If Desktop attached to a
 server started independently, restart that server yourself so it can inherit

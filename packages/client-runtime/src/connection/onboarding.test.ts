@@ -7,6 +7,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import { ClientPresentation, SshEnvironmentGateway } from "../platform/capabilities.ts";
+import * as Persistence from "../platform/persistence.ts";
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
@@ -355,7 +356,7 @@ describe("connection onboarding", () => {
       let preparedTarget: typeof profile.target | null = null;
       const registry = EnvironmentRegistry.EnvironmentRegistry.of({
         entries,
-        register: () =>
+        registerIfCurrent: () =>
           Effect.sync(() => {
             registerCount += 1;
           }),
@@ -389,6 +390,78 @@ describe("connection onboarding", () => {
       });
       expect(preparedTarget).toMatchObject({ environmentVariables: { TOKEN: "new-value" } });
       expect(registerCount).toBe(0);
+    }),
+  );
+
+  it.effect("cleans up the prepared SSH environment when persistence fails", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("environment-ssh");
+      const target = new SshConnectionTarget({
+        environmentId,
+        label: "Remote development box",
+        connectionId: "ssh:environment-ssh",
+      });
+      const profile = new SshConnectionProfile({
+        connectionId: target.connectionId,
+        environmentId,
+        label: target.label,
+        target: {
+          alias: "devbox",
+          hostname: "devbox.example.test",
+          username: "developer",
+          port: 22,
+          environmentVariables: { TOKEN: "old-value" },
+        },
+      });
+      const entries = yield* SubscriptionRef.make(
+        new Map([[environmentId, { target, profile: Option.some(profile) }]]),
+      );
+      const disconnectedTargets = new Array<typeof profile.target>();
+      const registry = EnvironmentRegistry.EnvironmentRegistry.of({
+        entries,
+        registerIfCurrent: () =>
+          Effect.fail(
+            new Persistence.ConnectionPersistenceError({
+              operation: "register-connection",
+              message: "Storage is unavailable.",
+            }),
+          ),
+      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+      const gateway = SshEnvironmentGateway.of({
+        provision: () => Effect.die("unused"),
+        prepare: (input) =>
+          Effect.succeed({
+            bootstrap: {
+              target: input.target,
+              httpBaseUrl: "http://127.0.0.1:3773/",
+              wsBaseUrl: "ws://127.0.0.1:3773/",
+              pairingToken: "pairing-token",
+              remotePort: 3773,
+            },
+            bearerToken: "bearer-token",
+          }),
+        disconnect: (preparedTarget) =>
+          Effect.sync(() => {
+            disconnectedTargets.push(preparedTarget);
+          }),
+      });
+
+      const error = yield* updateSshEnvironmentVariables({
+        environmentId,
+        environmentVariables: { TOKEN: "new-value" },
+      }).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
+        Effect.provideService(SshEnvironmentGateway, gateway),
+        Effect.flip,
+      );
+
+      expect(error._tag).toBe("ConnectionPersistenceError");
+      expect(disconnectedTargets).toEqual([
+        {
+          ...profile.target,
+          environmentVariables: { TOKEN: "new-value" },
+        },
+      ]);
     }),
   );
 });

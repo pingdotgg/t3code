@@ -350,6 +350,23 @@ export function isSafeDesktopSshEnvironmentVariableName(name: string): boolean {
   );
 }
 
+export const DESKTOP_SSH_ENVIRONMENT_VARIABLES_MAX_ENCODED_BYTES = 16 * 1_024;
+const sshEnvironmentTextEncoder = new TextEncoder();
+
+function desktopSshEnvironmentVariablesEncodedBytes(
+  environmentVariables: Readonly<Record<string, string>>,
+): number {
+  return Object.entries(environmentVariables).reduce(
+    (total, [name, value]) =>
+      total +
+      sshEnvironmentTextEncoder.encode(name).byteLength +
+      1 +
+      sshEnvironmentTextEncoder.encode(value).byteLength +
+      1,
+    0,
+  );
+}
+
 export const DesktopSshEnvironmentVariablesSchema = Schema.Record(
   Schema.String,
   Schema.String.check(
@@ -374,6 +391,12 @@ export const DesktopSshEnvironmentVariablesSchema = Schema.Record(
     ),
   ),
   Schema.isMaxProperties(128),
+  Schema.makeFilter((environmentVariables) =>
+    desktopSshEnvironmentVariablesEncodedBytes(environmentVariables) <=
+    DESKTOP_SSH_ENVIRONMENT_VARIABLES_MAX_ENCODED_BYTES
+      ? undefined
+      : "SSH environment variables exceed the 16 KiB encoded size limit",
+  ),
 );
 export type DesktopSshEnvironmentVariables = typeof DesktopSshEnvironmentVariablesSchema.Type;
 

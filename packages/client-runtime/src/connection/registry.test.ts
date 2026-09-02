@@ -27,6 +27,7 @@ import {
   type ConnectionRegistration,
   PrimaryConnectionRegistration,
   RelayConnectionRegistration,
+  SshConnectionRegistration,
   SshConnectionProfile,
   type ConnectionCredential,
   type ConnectionProfile,
@@ -780,6 +781,45 @@ describe("EnvironmentRegistry", () => {
         expect((yield* Ref.get(harness.storedTargets)).has(RELAY_TARGET.environmentId)).toBe(true);
         expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
         expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("does not register an update after its environment was removed", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([SSH_CONNECTION], [SSH_PROFILE]);
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const expectedEntry = Option.getOrThrow(
+          Option.fromUndefinedOr(
+            (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId),
+          ),
+        );
+
+        yield* registry.remove(SSH_CONNECTION.environmentId);
+        const error = yield* registry
+          .registerIfCurrent(
+            expectedEntry,
+            new SshConnectionRegistration({
+              target: SSH_CONNECTION,
+              profile: new SshConnectionProfile({
+                connectionId: SSH_PROFILE.connectionId,
+                environmentId: SSH_PROFILE.environmentId,
+                label: SSH_PROFILE.label,
+                target: {
+                  ...SSH_PROFILE.target,
+                  environmentVariables: { TOKEN: "new-value" },
+                },
+              }),
+            }),
+          )
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("EnvironmentNotRegisteredError");
+        expect((yield* Ref.get(harness.storedTargets)).has(SSH_CONNECTION.environmentId)).toBe(
+          false,
+        );
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

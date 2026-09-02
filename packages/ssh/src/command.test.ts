@@ -283,7 +283,8 @@ describe("ssh command", () => {
       const target = yield* resolveSshTarget("devbox", { TOKEN: "forwarded-value" });
 
       assert.isUndefined(spawnedEnvironments[0]?.TOKEN);
-      assert.equal(spawnedEnvironments[1]?.TOKEN, "forwarded-value");
+      assert.isUndefined(spawnedEnvironments[1]?.TOKEN);
+      assert.equal(spawnedEnvironments[2]?.TOKEN, "forwarded-value");
       assert.deepEqual(target, {
         alias: "devbox",
         hostname: "devbox.example.com",
@@ -291,6 +292,40 @@ describe("ssh command", () => {
         port: 2222,
         environmentVariables: { TOKEN: "forwarded-value" },
       });
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("validates SendEnv with the managed remote command", () => {
+    const spawnedArgs: Array<ReadonlyArray<string>> = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      const args = command._tag === "StandardCommand" ? command.args : [];
+      spawnedArgs.push(args);
+      const commandSpecificConfig = args.includes("sh");
+      return Effect.succeed(
+        makeSuccessfulProcess(
+          [
+            "hostname devbox.example.com",
+            "user julius",
+            "port 2222",
+            ...(commandSpecificConfig ? ["sendenv TOKEN"] : []),
+            "",
+          ].join("\n"),
+        ),
+      );
+    });
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      const target = yield* resolveSshTarget("devbox", { TOKEN: "forwarded-value" });
+
+      assert.equal(spawnedArgs.length, 3);
+      assert.notInclude(spawnedArgs[0] ?? [], "sh");
+      assert.include(spawnedArgs[1] ?? [], "sh");
+      assert.include(spawnedArgs[2] ?? [], "sh");
+      assert.equal(target.environmentVariables?.TOKEN, "forwarded-value");
     }).pipe(Effect.provide(processLayer));
   });
 
@@ -322,7 +357,7 @@ describe("ssh command", () => {
       resolveCount += 1;
       return Effect.succeed(
         makeSuccessfulProcess(
-          resolveCount === 1
+          resolveCount <= 2
             ? "hostname devbox.example.com\nsendenv TOKEN\n"
             : "hostname devbox.example.com\n",
         ),

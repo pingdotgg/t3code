@@ -79,6 +79,20 @@ describe("DesktopSshEnvironmentTargetSchema", () => {
     ).toThrow();
   });
 
+  it("rejects environment maps above the encoded process environment budget", () => {
+    expect(() =>
+      decode({
+        alias: "devbox",
+        hostname: "devbox.example.test",
+        username: null,
+        port: null,
+        environmentVariables: Object.fromEntries(
+          Array.from({ length: 9 }, (_, index) => [`TOKEN_${index}`, "€".repeat(8_192)]),
+        ),
+      }),
+    ).toThrow();
+  });
+
   it("rejects variables that can alter local process execution", () => {
     for (const name of [
       "PATH",

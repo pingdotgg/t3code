@@ -70,6 +70,13 @@ export class EnvironmentRegistry extends Context.Service<
     readonly register: (
       registration: ConnectionRegistration,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    readonly registerIfCurrent: (
+      expectedEntry: ConnectionCatalogEntry,
+      registration: ConnectionRegistration,
+    ) => Effect.Effect<
+      void,
+      Persistence.ConnectionPersistenceError | EnvironmentNotRegisteredError
+    >;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
@@ -387,24 +394,48 @@ export const make = Effect.gen(function* () {
     yield* createServiceScope(entry);
   });
 
-  const register = Effect.fn("EnvironmentRegistry.register")(function* (
+  const registerLocked = Effect.fn("EnvironmentRegistry.registerLocked")(function* (
     registration: ConnectionRegistration,
   ) {
     const entry = connectionRegistrationCatalogEntry(registration);
     const environmentId = entry.target.environmentId;
+    yield* registrations.register(registration);
+    yield* Ref.update(persistedTargetsByEnvironment, (current) => {
+      const next = new Map(current);
+      next.set(environmentId, registration.target);
+      return next;
+    });
+    yield* installEntryLocked(entry);
+  });
+
+  const register = Effect.fn("EnvironmentRegistry.register")(function* (
+    registration: ConnectionRegistration,
+  ) {
+    const environmentId = registration.target.environmentId;
     yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
           return;
         }
-        yield* registrations.register(registration);
-        yield* Ref.update(persistedTargetsByEnvironment, (current) => {
-          const next = new Map(current);
-          next.set(environmentId, registration.target);
-          return next;
-        });
-        yield* installEntryLocked(entry);
+        yield* registerLocked(registration);
+      }),
+    );
+  });
+
+  const registerIfCurrent = Effect.fn("EnvironmentRegistry.registerIfCurrent")(function* (
+    expectedEntry: ConnectionCatalogEntry,
+    registration: ConnectionRegistration,
+  ) {
+    const environmentId = registration.target.environmentId;
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        const currentEntry = (yield* SubscriptionRef.get(entries)).get(environmentId);
+        if (currentEntry === undefined || !Equal.equals(currentEntry, expectedEntry)) {
+          return yield* new EnvironmentNotRegisteredError({ environmentId });
+        }
+        yield* registerLocked(registration);
       }),
     );
   });
@@ -663,6 +694,7 @@ export const make = Effect.gen(function* () {
     networkStatus,
     start,
     register,
+    registerIfCurrent,
     registerPlatform,
     reconcilePlatform,
     remove,

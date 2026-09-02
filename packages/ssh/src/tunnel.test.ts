@@ -515,10 +515,10 @@ describe("ssh tunnel scripts", () => {
       const manager = yield* SshEnvironmentManager;
       yield* manager.ensureEnvironment(target);
 
-      assert.equal(resolveCount, 2);
+      assert.equal(resolveCount, 3);
       yield* manager.disconnectEnvironment(target);
 
-      assert.equal(resolveCount, 2);
+      assert.equal(resolveCount, 3);
       assert.equal(tunnelKillCount, 1);
       assert.equal(stopCommandCount, 1);
     }).pipe(Effect.provide(layer), Effect.scoped);
@@ -683,6 +683,76 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.effect("keeps the old tunnel when its managed server cannot be stopped", () => {
+    let launchCount = 0;
+    let stopAttemptCount = 0;
+    let tunnelKillCount = 0;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-G")) {
+          return makeSuccessfulProcess("sendenv TOKEN\n");
+        }
+        if (args.includes("-N")) {
+          return makeRunningProcess(() => {
+            tunnelKillCount += 1;
+          });
+        }
+        if (args.includes("sh") && args.includes("--")) {
+          launchCount += 1;
+          return makeSuccessfulProcess('{"remotePort":3773}\n');
+        }
+        if (args.includes("sh")) {
+          stopAttemptCount += 1;
+          return stopAttemptCount === 1
+            ? makeFailedProcess("stop failed\n")
+            : makeSuccessfulProcess('{"stopped":true}\n');
+        }
+        return makeSuccessfulProcess("\n");
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshPasswordPrompt.disabledLayer,
+      SshEnvironmentManager.layer(),
+    );
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+
+    return Effect.gen(function* () {
+      const manager = yield* SshEnvironmentManager;
+      yield* manager.ensureEnvironment({
+        ...target,
+        environmentVariables: { TOKEN: "old-value" },
+      });
+      const replaceExit = yield* Effect.exit(
+        manager.ensureEnvironment({
+          ...target,
+          environmentVariables: { TOKEN: "new-value" },
+        }),
+      );
+
+      assert.isTrue(Exit.isFailure(replaceExit));
+      assert.equal(launchCount, 1);
+      assert.equal(tunnelKillCount, 0);
+
+      yield* manager.ensureEnvironment({
+        ...target,
+        environmentVariables: { TOKEN: "new-value" },
+      });
+      assert.equal(stopAttemptCount, 2);
+      assert.equal(launchCount, 2);
+      assert.equal(tunnelKillCount, 1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.effect("waits for an in-flight ensure before replacing its environment", () =>
     Effect.gen(function* () {
       const pairingStarted = yield* Deferred.make<void>();
@@ -699,12 +769,12 @@ describe("ssh tunnel scripts", () => {
           const environment = commandEnvironment(command);
           if (args.includes("-G")) {
             resolveCount += 1;
-            if (resolveCount % 2 === 1) {
-              assert.isUndefined(environment?.TOKEN);
-            } else {
+            if (resolveCount % 3 === 0) {
               assert.isDefined(environment?.TOKEN);
+            } else {
+              assert.isUndefined(environment?.TOKEN);
             }
-            if (resolveCount === 3) {
+            if (resolveCount === 4) {
               yield* Deferred.succeed(secondResolveStarted, undefined).pipe(Effect.ignore);
             }
             return makeSuccessfulProcess("sendenv TOKEN\n");

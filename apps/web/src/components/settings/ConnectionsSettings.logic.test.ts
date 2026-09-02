@@ -41,6 +41,17 @@ describe("parseSshEnvironmentVariables", () => {
     ).toThrow("limited to 128");
   });
 
+  it("rejects variables above the combined encoded size limit", () => {
+    expect(() =>
+      parseSshEnvironmentVariables(
+        Array.from({ length: 9 }, (_, index) => ({
+          name: `TOKEN_${index}`,
+          value: "€".repeat(8_192),
+        })),
+      ),
+    ).toThrow("limited to 16 KiB in total");
+  });
+
   it("rejects missing, invalid, and duplicate names", () => {
     expect(() => parseSshEnvironmentVariables([{ name: "", value: "secret" }])).toThrow(
       "needs a name",

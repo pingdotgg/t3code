@@ -296,16 +296,42 @@ export const updateSshEnvironmentVariables = Effect.fn(
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const gateway = yield* ClientCapabilities.SshEnvironmentGateway;
   const entry = (yield* SubscriptionRef.get(registry.entries)).get(input.environmentId);
+  if (entry === undefined) {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail: "Only saved SSH environments can update their local environment variables.",
+    });
+  }
   const registration = yield* prepareSshEnvironmentVariablesUpdate({
     input,
-    entry: Option.fromUndefinedOr(entry),
+    entry: Option.some(entry),
   });
   yield* gateway.prepare({
     connectionId: registration.profile.connectionId,
     expectedEnvironmentId: registration.profile.environmentId,
     target: registration.profile.target,
   });
-  yield* registry.register(registration);
+  yield* registry.registerIfCurrent(entry, registration).pipe(
+    Effect.tapError(() =>
+      gateway.disconnect(registration.profile.target).pipe(
+        Effect.tapError((error) =>
+          Effect.logWarning("Could not clean up a prepared SSH environment after save failed.", {
+            environmentId: input.environmentId,
+            error,
+          }),
+        ),
+        Effect.ignore,
+      ),
+    ),
+    Effect.catchTag(
+      "EnvironmentNotRegisteredError",
+      () =>
+        new ConnectionBlockedError({
+          reason: "configuration",
+          detail: "The SSH environment was removed before the update could be saved.",
+        }),
+    ),
+  );
 });
 
 export const make = Effect.gen(function* () {

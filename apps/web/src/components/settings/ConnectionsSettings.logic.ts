@@ -1,4 +1,5 @@
 import {
+  DESKTOP_SSH_ENVIRONMENT_VARIABLES_MAX_ENCODED_BYTES,
   isSafeDesktopSshEnvironmentVariableName,
   type AdvertisedEndpoint,
   type DesktopBridge,
@@ -14,6 +15,7 @@ const SSH_ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const SSH_ENVIRONMENT_VARIABLE_MAX_COUNT = 128;
 const SSH_ENVIRONMENT_VARIABLE_NAME_MAX_LENGTH = 128;
 const SSH_ENVIRONMENT_VARIABLE_VALUE_MAX_LENGTH = 8_192;
+const sshEnvironmentTextEncoder = new TextEncoder();
 
 export function parseSshEnvironmentVariables(
   drafts: ReadonlyArray<SshEnvironmentVariableDraft>,
@@ -23,6 +25,7 @@ export function parseSshEnvironmentVariables(
     string
   >;
   let nonEmptyDraftCount = 0;
+  let encodedBytes = 0;
 
   for (const draft of drafts) {
     const name = draft.name.trim();
@@ -58,6 +61,14 @@ export function parseSshEnvironmentVariables(
     }
     if (Object.hasOwn(environmentVariables, name)) {
       throw new Error(`SSH environment variable '${name}' is listed more than once.`);
+    }
+    encodedBytes +=
+      sshEnvironmentTextEncoder.encode(name).byteLength +
+      1 +
+      sshEnvironmentTextEncoder.encode(draft.value).byteLength +
+      1;
+    if (encodedBytes > DESKTOP_SSH_ENVIRONMENT_VARIABLES_MAX_ENCODED_BYTES) {
+      throw new Error("SSH environment variables are limited to 16 KiB in total.");
     }
     environmentVariables[name] = draft.value;
   }
