@@ -59,7 +59,15 @@ describe("Linux Chromium secrets", () => {
       });
 
       expect(captured?.command).toBe("secret-tool");
-      expect(captured?.args).toEqual(["lookup", "application", "msedge"]);
+      // Scoped to Chromium's own schema so another item tagged with the same
+      // `application` attribute cannot supply the wrong key.
+      expect(captured?.args).toEqual([
+        "lookup",
+        "xdg:schema",
+        "chrome_libsecret_os_crypt_password_v2",
+        "application",
+        "msedge",
+      ]);
       expect(captured?.options.stdin).toBe("ignore");
       expect(keys.cbcV10).toHaveLength(16);
       expect(keys.cbcV11).toHaveLength(16);

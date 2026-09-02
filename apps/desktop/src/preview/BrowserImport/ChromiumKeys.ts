@@ -127,10 +127,15 @@ const secretToolFailure = (stderr: string): ChromiumKeyFailure => {
 };
 
 /**
- * Chromium's Linux backend uses a custom libsecret schema keyed by its
- * `application` attribute. `secret-tool lookup` performs that same attribute
- * search through Secret Service and keeps its normal unlock/consent prompt.
+ * Chromium's Linux backend stores the passphrase under its own libsecret
+ * schema, `chrome_libsecret_os_crypt_password_v2`, keyed by an `application`
+ * attribute. Matching on the schema as well keeps an unrelated item that
+ * happens to carry `application=chrome` from being picked up: that would derive
+ * the wrong v11 key and silently skip every real cookie. `secret-tool lookup`
+ * performs the same attribute search through Secret Service and keeps its
+ * normal unlock/consent prompt.
  */
+const CHROMIUM_LIBSECRET_SCHEMA = "chrome_libsecret_os_crypt_password_v2";
 export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(function* (
   application: string,
 ) {
@@ -140,10 +145,14 @@ export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(functio
       const environment = yield* HostProcessEnvironment;
       const handle = yield* spawner
         .spawn(
-          ChildProcess.make("secret-tool", ["lookup", "application", application], {
-            stdin: "ignore",
-            env: { ...environment, LC_ALL: "C" },
-          }),
+          ChildProcess.make(
+            "secret-tool",
+            ["lookup", "xdg:schema", CHROMIUM_LIBSECRET_SCHEMA, "application", application],
+            {
+              stdin: "ignore",
+              env: { ...environment, LC_ALL: "C" },
+            },
+          ),
         )
         .pipe(Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })));
       const [stdout, stderr, exitCode] = yield* Effect.all(
