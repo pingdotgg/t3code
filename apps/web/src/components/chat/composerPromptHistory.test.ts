@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { appendElementContextsToPrompt } from "../../lib/elementContext";
-import { appendTerminalContextsToPrompt } from "../../lib/terminalContext";
+import {
+  appendTerminalContextsToPrompt,
+  materializeInlineTerminalContextPrompt,
+} from "../../lib/terminalContext";
+import { appendReviewCommentsToPrompt, buildFileReviewComment } from "../../reviewCommentContext";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   buildComposerPromptHistoryEntries,
@@ -49,6 +53,35 @@ describe("recallableComposerPrompt", () => {
       },
     ]);
     expect(recallableComposerPrompt(`Ultrathink:\n${withElement}`)).toBe("Investigate this");
+  });
+
+  it("removes inline terminal labels along with their trailing block", () => {
+    const context = {
+      terminalId: "default",
+      terminalLabel: "Terminal 1",
+      lineStart: 12,
+      lineEnd: 13,
+      text: "git status",
+    };
+    const typed = materializeInlineTerminalContextPrompt("Look at \uFFFC please", [context]);
+    expect(typed).toBe("Look at @terminal-1:12-13 please");
+    const sent = appendTerminalContextsToPrompt(typed, [context]);
+    expect(recallableComposerPrompt(sent)).toBe("Look at please");
+  });
+
+  it("strips only the review comments appended at the end", () => {
+    const comment = buildFileReviewComment({
+      id: "comment-1",
+      filePath: "src/app.ts",
+      startLine: 2,
+      endLine: 3,
+      text: "Keep this configurable.",
+      contents: "one\ntwo\nthree",
+    });
+    const sent = appendReviewCommentsToPrompt("Please update this.", [comment]);
+    expect(recallableComposerPrompt(sent)).toBe("Please update this.");
+    const midPrompt = appendReviewCommentsToPrompt("Before", [comment]) + "\n\nAfter";
+    expect(recallableComposerPrompt(midPrompt)).toBe(midPrompt);
   });
 
   it("returns an empty string for attachment-only sends", () => {

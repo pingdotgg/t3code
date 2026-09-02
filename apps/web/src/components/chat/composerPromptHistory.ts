@@ -60,16 +60,44 @@ export interface ComposerPromptHistoryStep {
   readonly prompt: string;
 }
 
+/**
+ * Drop only the review comments appended at send time, which sit at the
+ * end. A review comment block the user typed mid-prompt stays put.
+ */
 function stripTrailingReviewComments(prompt: string): string {
-  const segments = parseReviewCommentMessageSegments(prompt);
-  if (!segments.some((segment) => segment.kind === "review-comment")) {
-    return prompt;
+  const segments = [...parseReviewCommentMessageSegments(prompt)];
+  let changed = false;
+  while (segments.length > 0) {
+    const last = segments[segments.length - 1]!;
+    if (last.kind === "review-comment" || (changed && last.text.trim().length === 0)) {
+      segments.pop();
+      changed = true;
+      continue;
+    }
+    break;
   }
+  if (!changed) return prompt;
   return segments
-    .filter((segment) => segment.kind === "text")
-    .map((segment) => segment.text)
+    .map((segment) => (segment.kind === "text" ? segment.text : ""))
     .join("")
     .trimEnd();
+}
+
+/**
+ * Inline terminal chips are sent as `@terminal-1:12-13` labels in the text
+ * with their content in the trailing block. Once the block is stripped the
+ * label points at nothing, so remove it too. Block headers look like
+ * `Terminal 1 lines 12-13`.
+ */
+function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string>): string {
+  let result = prompt;
+  for (const header of headers) {
+    const match = /^(.+?) lines? (\d+(?:-\d+)?)$/.exec(header);
+    if (!match) continue;
+    const label = match[1]!.trim().toLowerCase().replace(/\s+/g, "-");
+    result = result.split(`@${label}:${match[2]}`).join("");
+  }
+  return result.replace(/[ \t]{2,}/g, " ").replace(/ +$/gm, "");
 }
 
 /**
@@ -102,7 +130,10 @@ export function recallableComposerPrompt(messageText: string): string {
     }
     const terminalContexts = extractTrailingTerminalContexts(prompt);
     if (terminalContexts.contextCount > 0) {
-      prompt = terminalContexts.promptText;
+      prompt = stripInlineTerminalLabels(
+        terminalContexts.promptText,
+        terminalContexts.contexts.map((context) => context.header),
+      );
       continue;
     }
     break;

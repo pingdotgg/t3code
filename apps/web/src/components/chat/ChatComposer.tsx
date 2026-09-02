@@ -2993,13 +2993,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return false;
       }
       if (isComposerApprovalState || pendingUserInputs.length > 0) return false;
-      // A composer holding an image, file, or picked element is not empty.
-      // Recalling text into it would send the old prompt with the new
-      // attachment, which is never what ArrowUp meant.
+      // A composer holding an image, file, picked element, preview
+      // annotation, or review comment is not empty. Recalling text into it
+      // would send the old prompt with the new context, which is never what
+      // ArrowUp meant.
       if (
         composerImagesRef.current.length > 0 ||
         composerFilesRef.current.length > 0 ||
-        composerElementContextsRef.current.length > 0
+        composerElementContextsRef.current.length > 0 ||
+        composerPreviewAnnotations.length > 0 ||
+        composerReviewComments.length > 0
       ) {
         return false;
       }
@@ -3022,6 +3025,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerElementContextsRef,
       composerFilesRef,
       composerImagesRef,
+      composerPreviewAnnotations.length,
+      composerReviewComments.length,
       isComposerApprovalState,
       pendingUserInputs.length,
       promptRef,
