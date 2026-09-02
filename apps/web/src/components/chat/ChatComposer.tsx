@@ -2993,6 +2993,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return false;
       }
       if (isComposerApprovalState || pendingUserInputs.length > 0) return false;
+      // A composer holding an image, file, or picked element is not empty.
+      // Recalling text into it would send the old prompt with the new
+      // attachment, which is never what ArrowUp meant.
+      if (
+        composerImagesRef.current.length > 0 ||
+        composerFilesRef.current.length > 0 ||
+        composerElementContextsRef.current.length > 0
+      ) {
+        return false;
+      }
       const editor = composerEditorRef.current;
       if (!editor?.isCaretOnVisualEdge(direction === "backward" ? "start" : "end")) {
         return false;
@@ -3008,7 +3018,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       replacePromptFromHistory(step.prompt);
       return true;
     },
-    [isComposerApprovalState, pendingUserInputs.length, promptRef, replacePromptFromHistory],
+    [
+      composerElementContextsRef,
+      composerFilesRef,
+      composerImagesRef,
+      isComposerApprovalState,
+      pendingUserInputs.length,
+      promptRef,
+      replacePromptFromHistory,
+    ],
   );
 
   // ------------------------------------------------------------------

@@ -61,11 +61,12 @@ navigate to their sources.
 Press `ArrowUp` in an empty composer to bring back the last prompt you sent in this thread. Press
 `ArrowUp` again to go further back, and `ArrowDown` to come forward. Moving forward past the newest
 prompt clears the composer. Recall walks the prompts loaded in the thread. Attachments, terminal
-context, and other extras from the original message are not restored, only the text you typed.
+context, and other extras from the original message are not restored, only the text you typed. A
+composer that holds an attachment or a picked element does not count as empty.
 
-When the composer has text, the arrow keys move the caret as usual. Recall takes over only when
-the caret is on the first line and the text is an unedited recalled prompt. Editing a recalled
-prompt turns it into a normal draft.
+When the composer has text, the arrow keys move the caret as usual. Recall takes over only while
+the text is an unedited recalled prompt, with the caret on the first line for `ArrowUp` or the
+last line for `ArrowDown`. Editing a recalled prompt turns it into a normal draft.
 
 ## Prompt stash
 
