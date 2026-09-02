@@ -23,7 +23,6 @@ export interface EnvironmentUsage {
 
 export interface RetainableUsageStatus {
   readonly environmentId: EnvironmentId;
-  readonly isPending: boolean;
   readonly error: string | null;
   readonly summary: UsageSummary | null;
 }
@@ -56,7 +55,7 @@ export function retainUsageStatuses<T extends RetainableUsageStatus>(
     const settledStatus = previousByEnvironment?.get(status.environmentId);
     if (settledStatus?.summary === null || settledStatus === undefined) return status;
     retainedAny = true;
-    return Object.assign({}, status, { isPending: false, summary: settledStatus.summary });
+    return Object.assign({}, status, { summary: settledStatus.summary });
   });
   const visible = retainedAny ? withRetained : current;
   const settled = visible.some((status) => status.summary !== null)

@@ -11,7 +11,7 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -32,6 +32,7 @@ const WINDOW_OPTIONS = [
 ] as const;
 
 const CHART_HEIGHT = 180;
+const REFRESH_INDICATOR_TIMEOUT_MS = 30_000;
 
 export function UsageRouteScreen() {
   const navigation = useNavigation();
@@ -41,6 +42,9 @@ export function UsageRouteScreen() {
     window: makeWindow(30),
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+  const refreshWasPending = useRef(false);
+  const refreshIndicatorTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
@@ -72,7 +76,34 @@ export function UsageRouteScreen() {
   // The pull spinner tracks re-scans of environments that have answered
   // before. The initial scan renders its own placeholder, and an unreachable
   // environment stays pending forever — neither may pin the spinner on.
-  const refreshing = environments.some((entry) => entry.isPending && entry.summary !== null);
+  const refreshPending = environments.some((entry) => entry.isPending && entry.summary !== null);
+  const refreshing = isPullRefreshing && refreshPending;
+  useEffect(() => {
+    if (!isPullRefreshing) {
+      refreshWasPending.current = false;
+      return;
+    }
+    if (refreshPending) {
+      refreshWasPending.current = true;
+      return;
+    }
+    if (!refreshWasPending.current) return;
+
+    setIsPullRefreshing(false);
+    refreshWasPending.current = false;
+    if (refreshIndicatorTimeout.current !== null) {
+      clearTimeout(refreshIndicatorTimeout.current);
+      refreshIndicatorTimeout.current = null;
+    }
+  }, [isPullRefreshing, refreshPending]);
+  useEffect(
+    () => () => {
+      if (refreshIndicatorTimeout.current !== null) {
+        clearTimeout(refreshIndicatorTimeout.current);
+      }
+    },
+    [],
+  );
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -80,6 +111,15 @@ export function UsageRouteScreen() {
     });
   };
   const refreshWindow = () => {
+    setIsPullRefreshing(true);
+    if (refreshIndicatorTimeout.current !== null) {
+      clearTimeout(refreshIndicatorTimeout.current);
+    }
+    refreshIndicatorTimeout.current = setTimeout(() => {
+      setIsPullRefreshing(false);
+      refreshWasPending.current = false;
+      refreshIndicatorTimeout.current = null;
+    }, REFRESH_INDICATOR_TIMEOUT_MS);
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
       nextWindow.sinceDay !== window.sinceDay ||

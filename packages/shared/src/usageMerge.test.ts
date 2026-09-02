@@ -395,14 +395,14 @@ describe("retainUsageStatuses", () => {
     );
 
     expect(refreshing.visible.map(({ isPending, summary: value }) => [isPending, value])).toEqual([
-      [false, oldA],
-      [false, oldB],
+      [true, oldA],
+      [true, oldB],
     ]);
     expect(
       partlyAnswered.visible.map(({ isPending, summary: value }) => [isPending, value]),
     ).toEqual([
       [false, newA],
-      [false, oldB],
+      [true, oldB],
     ]);
   });
 
