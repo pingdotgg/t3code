@@ -939,9 +939,9 @@ interface ComposerPromptEditorProps {
 /**
  * Client rect of the line the collapsed caret is on. A collapsed range
  * reports zero-height rects at some positions, so probe the adjacent
- * character. An empty paragraph has no text to probe, so fall back to the
- * element. Returns null when nothing measurable is found rather than
- * measuring a wrapped parent and misreporting the line.
+ * character. When the range container is the paragraph itself (an empty
+ * line, or a caret beside an inline chip) measure the child next to the
+ * caret before falling back to the paragraph.
  */
 function caretLineRect(range: Range): DOMRect | null {
   const collapsedRect = Array.from(range.getClientRects()).find((rect) => rect.height > 0);
@@ -961,11 +961,23 @@ function caretLineRect(range: Range): DOMRect | null {
     return boundingRect.height > 0 ? boundingRect : null;
   }
 
-  if (container instanceof HTMLElement && container.textContent?.length === 0) {
-    const emptyLineRect = container.getBoundingClientRect();
-    return emptyLineRect.height > 0 ? emptyLineRect : null;
+  if (!(container instanceof HTMLElement)) return null;
+  // The caret sits between the paragraph's children, which is where Lexical
+  // puts it next to an inline chip. Measure the neighbouring child.
+  const neighbour =
+    container.childNodes[Math.max(0, range.startOffset - 1)] ??
+    container.childNodes[range.startOffset];
+  if (neighbour instanceof HTMLElement) {
+    const neighbourRect = neighbour.getBoundingClientRect();
+    if (neighbourRect.height > 0) return neighbourRect;
+  } else if (neighbour instanceof Text && neighbour.data.length > 0) {
+    const probeRange = document.createRange();
+    probeRange.selectNodeContents(neighbour);
+    const probeRect = Array.from(probeRange.getClientRects()).find((rect) => rect.height > 0);
+    if (probeRect) return probeRect;
   }
-  return null;
+  const containerRect = container.getBoundingClientRect();
+  return containerRect.height > 0 ? containerRect : null;
 }
 
 function ComposerCommandKeyPlugin(props: {
