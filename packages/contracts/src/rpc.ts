@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
@@ -96,6 +97,7 @@ import {
   PullRequestOperationError,
   PullRequestReactionInput,
   PullRequestRef,
+  PullRequestSummary,
   PullRequestReviewerCandidateList,
   PullRequestReviewerRequestInput,
   PullRequestSubmitReviewInput,
@@ -301,6 +303,7 @@ export const WS_METHODS = {
   // Pull request methods
   pullRequestsList: "pullRequests.list",
   pullRequestsListStats: "pullRequests.listStats",
+  pullRequestsSummary: "pullRequests.summary",
   pullRequestsDetail: "pullRequests.detail",
   pullRequestsActivity: "pullRequests.activity",
   pullRequestsThreadComments: "pullRequests.threadComments",
@@ -368,6 +371,7 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
      * refreshes.
      */
     instanceId: Schema.optional(ProviderInstanceId),
+    cwd: Schema.optional(TrimmedNonEmptyString),
   }),
   success: ServerProviderUpdatedPayload,
   error: EnvironmentAuthorizationError,
@@ -516,6 +520,12 @@ export const WsPullRequestsListRpc = Rpc.make(WS_METHODS.pullRequestsList, {
 export const WsPullRequestsListStatsRpc = Rpc.make(WS_METHODS.pullRequestsListStats, {
   payload: PullRequestListStatsInput,
   success: PullRequestListStatsResult,
+  error: PullRequestRpcError,
+});
+
+export const WsPullRequestsSummaryRpc = Rpc.make(WS_METHODS.pullRequestsSummary, {
+  payload: PullRequestRef,
+  success: PullRequestSummary,
   error: PullRequestRpcError,
 });
 
@@ -1061,6 +1071,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudInstallRelayClientRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
+  WsPullRequestsSummaryRpc,
   WsPullRequestsDetailRpc,
   WsPullRequestsActivityRpc,
   WsPullRequestsThreadCommentsRpc,

@@ -7,6 +7,43 @@ import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullRequestProvider.ts";
 import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
 
+it.effect("uses one narrow read for a linked pull request summary", () =>
+  Effect.gen(function* () {
+    let summaryReads = 0;
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+          getPullRequestSummary: () =>
+            Effect.sync(() => {
+              summaryReads += 1;
+              return {
+                number: 7,
+                title: "Summary",
+                url: "https://github.com/acme/web/pull/7",
+                headBranch: "feat/summary",
+                baseBranch: "main",
+                state: "open" as const,
+                updatedAt: "2026-08-24T12:34:56.000Z",
+              };
+            }),
+        }),
+      ),
+    );
+
+    const readSummary = provider.getChangeRequestSummary;
+    if (readSummary === undefined) return yield* Effect.die("summary read was not implemented");
+    const summary = yield* readSummary({
+      cwd: "/w",
+      repository: "acme/web",
+      host: "github.com",
+      number: 7,
+    });
+
+    expect(summary.state).toBe("open");
+    expect(summaryReads).toBe(1);
+  }),
+);
+
 describe("gitHubViewerPermissions", () => {
   it("offers everything to a viewer who can write to the repository", () => {
     expect(gitHubViewerPermissions({ canWrite: true, canUpdate: true, didAuthor: false })).toEqual({

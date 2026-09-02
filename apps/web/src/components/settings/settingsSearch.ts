@@ -192,6 +192,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["installed cli versions newer available codex claude cursor grok opencode"],
   },
   {
+    id: "continue-threads-after-server-update",
+    title: "Continue threads after server updates",
+    to: "/settings/general",
+    searchTerms: ["resume running active work restart desktop update automatically"],
+  },
+  {
     id: "background-activity",
     title: "Background activity",
     to: "/settings/general",
@@ -260,6 +266,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Plan mode (legacy)",
     to: "/settings/general",
     searchTerms: ["build plan composer old"],
+  },
+  {
+    id: "legacy-context-window-indicator",
+    title: "Context window indicator (legacy)",
+    to: "/settings/general",
+    searchTerms: ["composer meter usage tokens circle old"],
   },
   {
     id: "legacy-token-streaming",

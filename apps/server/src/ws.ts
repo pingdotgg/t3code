@@ -33,7 +33,6 @@ import {
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
-  type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
@@ -51,7 +50,7 @@ import {
   ProviderUploadFeedbackError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
-  type ServerSelfUpdateError,
+  ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
@@ -137,7 +136,6 @@ import * as SourceControlProviderRegistry from "./sourceControl/SourceControlPro
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
-import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
@@ -511,7 +509,7 @@ const makeWsRpcLayer = (
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerService = yield* ProviderService.ProviderService;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
-      const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+      const serverUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -1094,9 +1092,8 @@ const makeWsRpcLayer = (
 
             if (bootstrap?.prepareWorktree) {
               let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
-              // "Start from origin" is a stored default; repos without an
-              // origin remote fall back to the local base branch instead of
-              // failing the whole bootstrap on `git fetch origin`.
+              // "Start from origin" is a stored default; repos without the
+              // requested remote branch fall back to the local base branch.
               const startFromOrigin =
                 bootstrap.prepareWorktree.startFromOrigin === true &&
                 (yield* gitWorkflow.remoteExists({
@@ -1108,12 +1105,19 @@ const makeWsRpcLayer = (
                   cwd: bootstrap.prepareWorktree.projectCwd,
                   remoteName: "origin",
                 });
-                const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
+                const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
                   cwd: bootstrap.prepareWorktree.projectCwd,
                   refName: bootstrap.prepareWorktree.baseBranch,
-                  fallbackRemoteName: "origin",
+                  remoteName: "origin",
                 });
-                worktreeBaseRef = resolvedRemoteBase.commitSha;
+                if (remoteBaseExists) {
+                  const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
+                    cwd: bootstrap.prepareWorktree.projectCwd,
+                    refName: bootstrap.prepareWorktree.baseBranch,
+                    fallbackRemoteName: "origin",
+                  });
+                  worktreeBaseRef = resolvedRemoteBase.commitSha;
+                }
               }
               const worktree = yield* gitWorkflow.createWorktree({
                 cwd: bootstrap.prepareWorktree.projectCwd,
@@ -1662,9 +1666,14 @@ const makeWsRpcLayer = (
         [WS_METHODS.serverRefreshProviders]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverRefreshProviders,
-            (input.instanceId !== undefined
-              ? providerRegistry.refreshInstance(input.instanceId)
-              : providerRegistry.refresh()
+            (input.cwd !== undefined && input.instanceId !== undefined
+              ? providerRegistry.refreshWorkspaceSnapshot({
+                  instanceId: input.instanceId,
+                  cwd: input.cwd,
+                })
+              : input.instanceId !== undefined
+                ? providerRegistry.refreshInstance(input.instanceId)
+                : providerRegistry.refresh()
             ).pipe(Effect.map((providers) => ({ providers }))),
             { "rpc.aggregate": "server" },
           ),
@@ -1691,14 +1700,14 @@ const makeWsRpcLayer = (
             },
           ),
         [WS_METHODS.serverUpdateServer]: (input) =>
-          observeRpcEffect(WS_METHODS.serverUpdateServer, serverSelfUpdate.update(input), {
+          observeRpcEffect(WS_METHODS.serverUpdateServer, serverUpdate.update(input), {
             "rpc.aggregate": "server",
           }),
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
           observeRpcStream(
             WS_METHODS.serverUpdateServerWithProgress,
             Stream.callback<ServerSelfUpdateProgressEvent, ServerSelfUpdateError>((queue) =>
-              serverSelfUpdate
+              serverUpdate
                 .update(input, (stage) =>
                   Queue.offer(queue, {
                     type: "progress",
@@ -1724,7 +1733,7 @@ const makeWsRpcLayer = (
         [WS_METHODS.serverCommitDesktopUpdate]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverCommitDesktopUpdate,
-            serverSelfUpdate.commitDesktopUpdate(input.requestId),
+            serverUpdate.commitDesktopUpdate(input.requestId),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverUpsertKeybinding]: (rule) =>
@@ -1883,6 +1892,10 @@ const makeWsRpcLayer = (
           }),
         [WS_METHODS.pullRequestsListStats]: (input) =>
           observeRpcEffect(WS_METHODS.pullRequestsListStats, pullRequests.listStats(input), {
+            "rpc.aggregate": "pull-requests",
+          }),
+        [WS_METHODS.pullRequestsSummary]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsSummary, pullRequests.summary(input), {
             "rpc.aggregate": "pull-requests",
           }),
         [WS_METHODS.pullRequestsDetail]: (input) =>
@@ -2565,7 +2578,32 @@ const makeWsRpcLayer = (
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-    const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+    const baseServerSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+    const config = yield* ServerConfig.ServerConfig;
+    const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+    const serverSelfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
+      mode: config.mode,
+      selfUpdate: baseServerSelfUpdate,
+      prepare: startup.markRunningProviderSessionsForContinuation.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSelfUpdateError({
+              reason: "Could not prepare running threads to continue after the update.",
+              cause,
+            }),
+        ),
+      ),
+      clear: (threadIds) =>
+        startup.clearProviderSessionContinuationMarkers(threadIds).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSelfUpdateError({
+                reason: "Could not clear thread continuation markers after the update failed.",
+                cause,
+              }),
+          ),
+        ),
+    });
     const pullRequests = yield* PullRequestService.PullRequestService;
     return HttpRouter.add(
       "GET",
@@ -2624,7 +2662,6 @@ export const websocketRpcRouteLayer = Layer.unwrap(
                       ),
                     ),
                   ),
-                  Layer.provide(VcsProcess.layer),
                 ),
               ),
             ),

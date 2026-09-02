@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
+import * as Semaphore from "effect/Semaphore";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -52,6 +53,8 @@ export class VcsProcess extends Context.Service<
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
+const VCS_PROCESS_CONCURRENCY = 8;
+const GITHUB_PROCESS_CONCURRENCY = 4;
 
 const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
@@ -101,8 +104,10 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
 
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
+  const githubProcesses = yield* Semaphore.make(GITHUB_PROCESS_CONCURRENCY);
 
-  const run = Effect.fn("VcsProcess.run")(function* (input: VcsProcessInput) {
+  const runUnbounded = Effect.fn("VcsProcess.runUnbounded")(function* (input: VcsProcessInput) {
     const baseError = {
       operation: input.operation,
       command: input.command,
@@ -179,6 +184,11 @@ export const make = Effect.gen(function* () {
       stdoutInvalidUtf8: result.stdoutInvalidUtf8 ?? false,
       stderrInvalidUtf8: result.stderrInvalidUtf8 ?? false,
     } satisfies VcsProcessOutput;
+  });
+
+  const run = Effect.fn("VcsProcess.run")(function* (input: VcsProcessInput) {
+    const bounded = vcsProcesses.withPermits(1)(runUnbounded(input));
+    return yield* input.command === "gh" ? githubProcesses.withPermits(1)(bounded) : bounded;
   });
 
   return VcsProcess.of({ run });

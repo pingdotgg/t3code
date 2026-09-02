@@ -52,6 +52,16 @@ On mobile, the model picker shows each OpenCode model's upstream provider, such 
 GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list
 when starting a thread or changing an existing thread's model.
 
+## Model defaults
+
+T3 Code remembers the last provider, model, and model options you selected and reuses that
+selection for new threads. A model configured in a project's settings overrides the remembered
+selection for that project; resetting the project setting returns it to the remembered selection.
+
+Model options shown as provider defaults remain display values until you choose them in T3 Code.
+T3 Code only sends options you selected explicitly, so an unset reasoning level or service tier can
+still come from the provider's own configuration.
+
 ## Quote an assistant response
 
 On web and desktop, select text in an assistant response, then choose **Cite in composer** from the

@@ -715,8 +715,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                 ]
               : [`This removes ${members.length} grouped project entries.`]),
             ...(projectThreads.length > 0
-              ? ["This permanently clears conversation history for those threads."]
-              : []),
+              ? [
+                  "This permanently clears conversation history for those threads and any archived threads.",
+                ]
+              : ["This permanently clears any archived conversation history."]),
             isWholeGroup
               ? "This removes only the project entries, not the files on disk."
               : "Other entries in this grouped project are unaffected.",
@@ -738,7 +740,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             environmentId: member.environmentId,
             input: {
               projectId: member.id,
-              ...(memberThreads.length > 0 ? { force: true } : {}),
+              force: true,
             },
           }),
           () => undefined,
