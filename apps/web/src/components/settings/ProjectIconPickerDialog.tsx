@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 const DEFAULT_ICON: IconName = "folder-code";
 const DEFAULT_COLOR: ProjectIconColor = "blue";
@@ -82,24 +83,18 @@ export function ProjectIconPickerDialog({
           <DialogDescription>Pick any Lucide icon and color, or use an emoji.</DialogDescription>
         </DialogHeader>
         <DialogPanel className="flex min-h-0 flex-col gap-4">
-          <div className="flex gap-2" role="group" aria-label="Icon type">
-            <Button
-              size="sm"
-              variant={mode === "lucide" ? "secondary" : "outline"}
-              aria-pressed={mode === "lucide"}
-              onClick={() => setMode("lucide")}
-            >
-              Icons
-            </Button>
-            <Button
-              size="sm"
-              variant={mode === "emoji" ? "secondary" : "outline"}
-              aria-pressed={mode === "emoji"}
-              onClick={() => setMode("emoji")}
-            >
-              Emoji
-            </Button>
-          </div>
+          <ToggleGroup
+            aria-label="Icon type"
+            variant="segmented"
+            value={[mode]}
+            onValueChange={(next) => {
+              const value = next[0];
+              if (value === "lucide" || value === "emoji") setMode(value);
+            }}
+          >
+            <Toggle value="lucide">Icons</Toggle>
+            <Toggle value="emoji">Emoji</Toggle>
+          </ToggleGroup>
 
           {mode === "lucide" ? (
             <>

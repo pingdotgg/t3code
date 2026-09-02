@@ -1,4 +1,4 @@
-import type { EnvironmentId, ProjectIconOverride } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectIconColor, ProjectIconOverride } from "@t3tools/contracts";
 import {
   getProjectFaviconCacheKey,
   isProjectFaviconFallbackUrl,
@@ -41,7 +41,7 @@ const DynamicIcon = lazy(() =>
 );
 
 function DynamicProjectIconFallback() {
-  return <FolderCodeIcon className="size-3.5 shrink-0" />;
+  return <FolderCodeIcon className="size-full" />;
 }
 
 const PROJECT_ICONS: Record<ProjectIconName, ComponentType<{ className?: string }>> = {
@@ -69,29 +69,29 @@ const PROJECT_ICONS: Record<ProjectIconName, ComponentType<{ className?: string 
   web: Globe2Icon,
 };
 
-const PROJECT_ICON_COLORS: Record<ProjectIconName, string> = {
-  ai: "text-violet-600 dark:text-violet-400",
-  book: "text-amber-600 dark:text-amber-400",
-  braces: "text-purple-600 dark:text-purple-400",
-  circuit: "text-teal-600 dark:text-teal-400",
-  cloud: "text-sky-600 dark:text-sky-400",
-  code: "text-blue-600 dark:text-blue-400",
-  database: "text-cyan-600 dark:text-cyan-400",
-  desktop: "text-indigo-600 dark:text-indigo-400",
-  "folder-code": "text-orange-600 dark:text-orange-400",
-  game: "text-emerald-600 dark:text-emerald-400",
-  image: "text-pink-600 dark:text-pink-400",
-  layers: "text-fuchsia-600 dark:text-fuchsia-400",
-  mobile: "text-lime-600 dark:text-lime-400",
-  music: "text-fuchsia-600 dark:text-fuchsia-400",
-  package: "text-orange-600 dark:text-orange-400",
-  security: "text-teal-600 dark:text-teal-400",
-  server: "text-blue-600 dark:text-blue-400",
-  shopping: "text-rose-600 dark:text-rose-400",
-  terminal: "text-green-600 dark:text-green-400",
-  test: "text-yellow-600 dark:text-yellow-400",
-  video: "text-red-600 dark:text-red-400",
-  web: "text-sky-600 dark:text-sky-400",
+const PROJECT_ICON_COLOR_BY_NAME: Record<ProjectIconName, ProjectIconColor> = {
+  ai: "violet",
+  book: "amber",
+  braces: "purple",
+  circuit: "teal",
+  cloud: "sky",
+  code: "blue",
+  database: "cyan",
+  desktop: "indigo",
+  "folder-code": "orange",
+  game: "emerald",
+  image: "pink",
+  layers: "fuchsia",
+  mobile: "lime",
+  music: "fuchsia",
+  package: "orange",
+  security: "teal",
+  server: "blue",
+  shopping: "rose",
+  terminal: "green",
+  test: "yellow",
+  video: "red",
+  web: "sky",
 };
 
 export function ProjectFavicon(input: {
@@ -109,18 +109,21 @@ export function ProjectFavicon(input: {
     return <ProjectFaviconFallback className={input.className} emoji={input.projectIcon.emoji} />;
   }
   if (input.projectIcon?.kind === "lucide") {
+    const iconClassName = cn(
+      "inline-flex size-3.5 shrink-0 items-center justify-center",
+      projectIconColorClassName(input.projectIcon.color),
+      input.className,
+    );
     return (
-      <Suspense fallback={<DynamicProjectIconFallback />}>
-        <DynamicIcon
-          name={input.projectIcon.name as IconName}
-          className={cn(
-            "size-3.5 shrink-0",
-            projectIconColorClassName(input.projectIcon.color),
-            input.className,
-          )}
-          fallback={DynamicProjectIconFallback}
-        />
-      </Suspense>
+      <span aria-hidden="true" className={iconClassName}>
+        <Suspense fallback={<DynamicProjectIconFallback />}>
+          <DynamicIcon
+            name={input.projectIcon.name as IconName}
+            className="size-full"
+            fallback={DynamicProjectIconFallback}
+          />
+        </Suspense>
+      </span>
     );
   }
   const automaticIconName = input.fallbackIcon
@@ -131,7 +134,9 @@ export function ProjectFavicon(input: {
     (automaticIconName?.kind === "lucide" ? PROJECT_ICONS[automaticIconName.icon] : undefined);
   const fallbackEmoji = automaticIconName?.kind === "emoji" ? automaticIconName.emoji : undefined;
   const fallbackColorClassName =
-    automaticIconName?.kind === "lucide" ? PROJECT_ICON_COLORS[automaticIconName.icon] : undefined;
+    automaticIconName?.kind === "lucide"
+      ? projectIconColorClassName(PROJECT_ICON_COLOR_BY_NAME[automaticIconName.icon])
+      : undefined;
 
   if (!src || isProjectFaviconFallbackUrl(src)) {
     return (
