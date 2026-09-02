@@ -7,7 +7,7 @@ MODULE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VENDOR_DIR="${MODULE_DIR}/Vendor/libghostty"
 
 GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-${HOME}/ghostty}"
-GHOSTTY_ZIG_VERSION="${GHOSTTY_ZIG_VERSION:-0.15.2}"
+GHOSTTY_ZIG_VERSION="${GHOSTTY_ZIG_VERSION:-0.16.0}"
 GHOSTTY_ZIG="${GHOSTTY_ZIG:-}"
 
 log() {
@@ -86,8 +86,8 @@ log "building GhosttyKit.xcframework"
 )
 
 xcframework="${GHOSTTY_SOURCE_DIR}/macos/GhosttyKit.xcframework"
-ios_archive="${xcframework}/ios-arm64/libghostty-fat.a"
-sim_archive="${xcframework}/ios-arm64-simulator/libghostty-fat.a"
+ios_archive="${xcframework}/ios-arm64/libghostty-internal.a"
+sim_archive="${xcframework}/ios-arm64-simulator/libghostty-internal.a"
 [[ -f "${ios_archive}" ]] || die "missing built iOS archive: ${ios_archive}"
 [[ -f "${sim_archive}" ]] || die "missing built iOS simulator archive: ${sim_archive}"
 
@@ -102,5 +102,8 @@ rsync -a --delete "${xcframework}/ios-arm64/Headers/" \
   "${VENDOR_DIR}/GhosttyKit.xcframework/ios-arm64/Headers/"
 rsync -a --delete "${xcframework}/ios-arm64-simulator/Headers/" \
   "${VENDOR_DIR}/GhosttyKit.xcframework/ios-arm64-simulator/Headers/"
+sed -i '' -e 's/[[:space:]]*$//' \
+  "${VENDOR_DIR}/GhosttyKit.xcframework/ios-arm64/Headers/ghostty.h" \
+  "${VENDOR_DIR}/GhosttyKit.xcframework/ios-arm64-simulator/Headers/ghostty.h"
 
 log "done"

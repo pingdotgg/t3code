@@ -2,13 +2,13 @@
 
 ## Ghostty / libghostty
 
-The iOS terminal renderer vendors `GhosttyKit.xcframework`, a libghostty build produced from T3's
-iOS 16 support fork. That fork was created from VVTerm's custom-I/O Ghostty fork.
+The iOS terminal renderer vendors `GhosttyKit.xcframework`, a libghostty build produced from
+VVTerm's custom-I/O and live-padding Ghostty branch.
 
 - Upstream project: https://github.com/ghostty-org/ghostty
-- Custom-I/O base fork: https://github.com/wiedymi/ghostty/tree/custom-io
-- Vendored source fork: https://github.com/Yash-Singh1/ghostty/tree/custom-io
-- Vendored revision: `d36c3b8dffd0d756dd5e5f4933962f774a0e6753`
+- Vendored source branch: https://github.com/Yash-Singh1/ghostty/tree/t3code/custom-io-ordered-feed
+- Vendored revision: `cf8edc23f3a6a87a96e41a90013e89e987d34980`
+- Based on: https://github.com/wiedymi/ghostty/tree/vvterm/custom-io-padding
 - Reference integration: https://github.com/vivy-company/vvterm
 - License: MIT
 
