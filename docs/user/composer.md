@@ -196,6 +196,8 @@ such as System, Personal, Project, or App.
 On mobile, these menus are available on the **New task** screen before you start a thread. They
 use the skills and commands from the selected environment and provider.
 
+In an existing thread, send `/compact` to reduce context usage. Web and desktop also offer this action from the context meter, and the work log records token counts when the provider reports them.
+
 By default, the `/` menu includes skills. To keep this menu command-only, turn off **Show skills in
 slash menu** in **Settings → General**. Skill results use the `/skill:Skill Name` label and add the
 same `$name` skill token to your message. The original skill name remains searchable. If the provider

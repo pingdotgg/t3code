@@ -53,6 +53,11 @@ export interface ProviderServiceShape {
     input: ProviderSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;
 
+  readonly compactThread: (
+    threadId: ThreadId,
+    modelSelection?: ProviderSendTurnInput["modelSelection"],
+  ) => Effect.Effect<void, ProviderServiceError>;
+
   /**
    * Interrupt a running provider turn.
    */
