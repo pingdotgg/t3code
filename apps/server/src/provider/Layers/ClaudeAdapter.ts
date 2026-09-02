@@ -444,7 +444,7 @@ function resultUserFacingError(result: SDKResultMessage): string | undefined {
   // Structured failure markers for results whose error list is empty or
   // diagnostic-only: an overloaded API (529) and the terminal reasons the
   // CLI stamps when it gives up on a turn.
-  if (result.subtype === "success" && result.api_error_status === 529) {
+  if (isOverloadedResult(result)) {
     return "Claude API is overloaded (529). Try again shortly.";
   }
   switch (result.terminal_reason) {
@@ -1430,8 +1430,20 @@ const FAILED_TERMINAL_REASONS: ReadonlySet<NonNullable<SDKResultMessage["termina
     "turn_setup_failed",
   ]);
 
+/**
+ * The CLI reports repeated 529 overload failures as a success-subtype result
+ * with api_error_status 529 and an empty error list; the status code is the
+ * only structured failure signal.
+ */
+function isOverloadedResult(result: SDKResultMessage): boolean {
+  return result.subtype === "success" && result.api_error_status === 529;
+}
+
 function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStatus {
-  if (result.terminal_reason !== undefined && FAILED_TERMINAL_REASONS.has(result.terminal_reason)) {
+  if (
+    isOverloadedResult(result) ||
+    (result.terminal_reason !== undefined && FAILED_TERMINAL_REASONS.has(result.terminal_reason))
+  ) {
     return "failed";
   }
   if (result.subtype === "success") {
