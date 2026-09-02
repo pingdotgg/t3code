@@ -19,10 +19,18 @@ const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
 // buttons — e.g. the Next.js / Vercel error overlay — fail with
 // `Failed to execute 'writeText' on 'Clipboard': Write permission denied`.
 const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
-  "clipboard-read",
   "clipboard-sanitized-write",
   "notifications",
-  "geolocation",
+  // Deliberately NOT clipboard-read: that is the read direction of the
+  // clipboard, and the copy buttons this list exists for only ever write.
+  // Preview tabs load arbitrary sites and the agent can evaluate script in
+  // them, so granting it would hand whatever the user last copied - a
+  // password, an API key, a one-time code - to any page or injected
+  // instruction that asks for it.
+  //
+  // Deliberately NOT geolocation: nothing in the preview needs the user's
+  // physical location, and it is granted here to every site the agent opens.
+  //
   // Deliberately NOT local-fonts: preview sessions run untrusted web content,
   // and silently granting it would hand every page the user's installed-font
   // fingerprint (and font file bytes via FontData.blob()). The app's own font
