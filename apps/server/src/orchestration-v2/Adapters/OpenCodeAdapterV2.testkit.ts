@@ -342,6 +342,20 @@ function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript)
               detail: "OpenCode replay does not load inventory.",
             }),
           ),
+        loadOpenCodeSkills: () =>
+          Effect.fail(
+            new OpenCodeRuntimeError({
+              operation: "loadOpenCodeSkills",
+              detail: "OpenCode replay does not load skills.",
+            }),
+          ),
+        loadSkillsFromCli: () =>
+          Effect.fail(
+            new OpenCodeRuntimeError({
+              operation: "loadSkillsFromCli",
+              detail: "OpenCode replay does not load skills.",
+            }),
+          ),
       } satisfies OpenCodeRuntimeShape);
     }),
   );

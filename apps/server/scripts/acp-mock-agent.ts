@@ -303,11 +303,18 @@ function modeState(): AcpSchema.SessionModeState {
 // "grok-build" product name, and it rejects unknown ids in session/set_model.
 const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
   {
-    modelId: "grok-build",
-    name: "Grok Build",
-    ...(initialGrokReasoningEffort
-      ? { _meta: { reasoningEffort: initialGrokReasoningEffort } }
-      : {}),
+    modelId: "grok-4.6",
+    name: "Grok 4.6",
+    _meta: {
+      totalContextTokens: 500_000,
+      supportsReasoningEffort: true,
+      reasoningEffort: initialGrokReasoningEffort ?? "high",
+      reasoningEfforts: [
+        { id: "xhigh", value: "xhigh", label: "Extra High Effort", default: false },
+        { id: "high", value: "high", label: "High Effort", default: true },
+        { id: "low", value: "low", label: "Low Effort", default: false },
+      ],
+    },
   },
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
 ];
@@ -331,6 +338,9 @@ const program = Effect.gen(function* () {
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
       return {
         protocolVersion: 1,
+        // Grok advertises model state before any session exists; the provider
+        // health check reads it from here without authenticating.
+        _meta: { modelState: modelState() },
         agentCapabilities: {
           loadSession: true,
           ...(supportsSessionLifecycle

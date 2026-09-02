@@ -387,6 +387,10 @@ const ServerWsRpcGroup = WsRpcGroup;
 // past this gap a single O(active-threads) snapshot is cheaper and bounded.
 // Matches the event store's default page size (DEFAULT_READ_FROM_SEQUENCE_LIMIT).
 const SHELL_RESUME_MAX_GAP = 1_000;
+// Row count alone does not bound replay memory: a few events with large tool
+// payloads can decode to gigabytes. Before replaying, sum the serialized
+// payload bytes of the range in SQL and reset with a snapshot past this budget.
+const ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES = 8 * 1024 * 1024;
 
 function toAuthAccessStreamEvent(
   change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
@@ -523,6 +527,32 @@ const makeWsRpcLayer = (
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+      const canReplayPersistedRange = Effect.fnUntraced(function* (
+        afterSequence: number,
+        headSequence: number,
+        maxGap: number,
+      ) {
+        const replayGap = headSequence - afterSequence;
+        if (replayGap < 0 || replayGap > maxGap) {
+          return false;
+        }
+        const stats = yield* projectionSnapshotQuery.getEventReplayStats({
+          fromSequenceExclusive: afterSequence,
+          toSequenceInclusive: headSequence,
+        });
+        if (stats.payloadBytes > ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES) {
+          yield* Effect.logDebug("orchestration replay replaced by snapshot", {
+            afterSequence,
+            headSequence,
+            replayGap,
+            eventCount: stats.eventCount,
+            payloadBytes: stats.payloadBytes,
+            payloadBudgetBytes: ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES,
+          });
+          return false;
+        }
+        return true;
+      });
       const providerSessionsV2 = yield* ProviderSessionManagerV2;
       const analytics = yield* AnalyticsService.AnalyticsService;
       // Client-origin attribution (#7774): every thread/turn the connecting
@@ -1065,8 +1095,13 @@ const makeWsRpcLayer = (
             }
 
             const highWater = yield* applicationEvents.latestApplicationSequence;
-            const replayGap = highWater - input.afterSequence;
-            if (replayGap < 0 || replayGap > SHELL_RESUME_MAX_GAP) {
+            if (
+              !(yield* canReplayPersistedRange(
+                input.afterSequence,
+                highWater,
+                SHELL_RESUME_MAX_GAP,
+              ))
+            ) {
               const loaded = yield* loadSnapshot();
               return composeShellStreamWithEnrichment({
                 initial: initialSnapshotItems(loaded),
