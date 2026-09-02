@@ -1621,6 +1621,15 @@ export function makeOpenCodeAdapter(
           // (evaluated against the agent ruleset only) and inside subagent
           // sessions (which drop the parent's wildcard allow). Answer those
           // here so the user never sees an approval they already granted.
+          //
+          // Record the ids before awaiting the reply: retry and recovery
+          // fibers can re-enter this function, and the matching
+          // `permission.replied` can land, while the SDK call is in flight.
+          // Marking first makes those paths skip the ask instead of racing
+          // to emit a duplicate `request.opened` or a stray
+          // `request.resolved`.
+          context.resolvedRequestIds.add(request.id);
+          context.autoRepliedRequestIds.add(request.id);
           const replied = yield* runOpenCodeSdk("permission.reply", () =>
             context.client.permission.reply({ requestID: request.id, reply: "always" }),
           ).pipe(
@@ -1628,10 +1637,13 @@ export function makeOpenCodeAdapter(
             Effect.orElseSucceed(() => false),
           );
           if (replied) {
-            context.resolvedRequestIds.add(request.id);
-            context.autoRepliedRequestIds.add(request.id);
             return;
           }
+          // The reply failed, so fall back to surfacing the approval. Undo
+          // the bookkeeping so the terminal event and any retry treat it as
+          // a normal pending request.
+          context.resolvedRequestIds.delete(request.id);
+          context.autoRepliedRequestIds.delete(request.id);
         }
         context.pendingPermissions.set(request.id, request);
         yield* emit({
