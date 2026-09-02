@@ -9,6 +9,18 @@ export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number
   );
 }
 
+/**
+ * Working-tree snapshot taken right before a revert so a failed provider
+ * rollback can be compensated back to the exact pre-revert state — prior
+ * checkpoints can miss uncommitted local edits. One per thread; the capture
+ * overwrites it on each revert attempt via `git update-ref`.
+ */
+export function checkpointRefForRevertBase(threadId: ThreadId): CheckpointRef {
+  return CheckpointRef.make(
+    `${CHECKPOINT_REFS_PREFIX}/${Encoding.encodeBase64Url(threadId)}/revert-base`,
+  );
+}
+
 export function resolveThreadWorkspaceCwd(input: {
   readonly thread: {
     readonly projectId: ProjectId;

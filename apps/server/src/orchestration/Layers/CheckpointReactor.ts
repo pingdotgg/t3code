@@ -23,10 +23,12 @@ import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import {
+  checkpointRefForRevertBase,
   checkpointRefForThreadTurn,
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
+import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { forkParked } from "../../serverActivation.ts";
@@ -755,6 +757,15 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    // Snapshot the current worktree before touching anything so a failed
+    // provider rollback can be compensated back to the exact pre-revert
+    // state — prior checkpoints can miss uncommitted local edits.
+    const revertBaseRef = checkpointRefForRevertBase(event.payload.threadId);
+    yield* checkpointStore.captureCheckpoint({
+      cwd: sessionRuntime.value.cwd,
+      checkpointRef: revertBaseRef,
+    });
+
     const restored = yield* checkpointStore.restoreCheckpoint({
       cwd: sessionRuntime.value.cwd,
       checkpointRef: targetCheckpointRef,
@@ -776,13 +787,40 @@ const make = Effect.gen(function* () {
 
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
     if (rolledBackTurns > 0) {
-      yield* providerService.rollbackConversation({
-        threadId: sessionRuntime.value.threadId,
-        numTurns: rolledBackTurns,
-      });
+      const rollbackFailure = yield* providerService
+        .rollbackConversation({
+          threadId: sessionRuntime.value.threadId,
+          numTurns: rolledBackTurns,
+        })
+        .pipe(
+          Effect.map(() => Option.none<ProviderServiceError>()),
+          Effect.catch((error) => Effect.succeed(Option.some(error))),
+        );
+      if (Option.isSome(rollbackFailure)) {
+        // Compensate: the workspace moved but the conversation did not.
+        // Restore the pre-revert snapshot so both sides stay in their
+        // original state and retrying the revert starts from a clean slate.
+        yield* checkpointStore
+          .restoreCheckpoint({
+            cwd: sessionRuntime.value.cwd,
+            checkpointRef: revertBaseRef,
+            fallbackToHead: false,
+          })
+          .pipe(
+            Effect.andThen(workspaceEntries.refresh(sessionRuntime.value.cwd)),
+            Effect.catch(() => Effect.void),
+          );
+        yield* appendRevertFailureActivity({
+          threadId: event.payload.threadId,
+          turnCount: event.payload.turnCount,
+          detail: rollbackFailure.value.message,
+          createdAt: now,
+        }).pipe(Effect.catch(() => Effect.void));
+        return;
+      }
     }
 
-    const staleCheckpointRefs: Array<CheckpointRef> = [];
+    const staleCheckpointRefs: Array<CheckpointRef> = [revertBaseRef];
     for (const checkpoint of thread.checkpoints) {
       if (checkpoint.checkpointTurnCount > event.payload.turnCount) {
         staleCheckpointRefs.push(checkpoint.checkpointRef);
