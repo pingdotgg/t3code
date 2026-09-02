@@ -134,12 +134,28 @@ describe("DesktopConnectionCatalogStore", () => {
             makeLayer(baseDir, true, null, NodeServices.layer, "T3 Code (Fork Alpha)"),
           ),
         );
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments.pipe(
+          Effect.provide(
+            makeLayer(baseDir, true, null, NodeServices.layer, "T3 Code (Fork Alpha)"),
+          ),
+        );
         const officialCatalogPath = `${baseDir}/userdata/connection-catalog.json`;
         const downstreamCatalogPath = `${baseDir}/userdata/connection-catalog.0054003300200043006f00640065002000280046006f0072006b00200041006c0070006800610029.json`;
 
         yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
         yield* fileSystem.writeFileString(officialCatalogPath, "official-ciphertext");
+        yield* savedEnvironments.setRegistry([
+          {
+            environmentId: EnvironmentId.make("legacy-bearer-environment"),
+            label: "Legacy bearer",
+            httpBaseUrl: "https://legacy.example.com/",
+            wsBaseUrl: "wss://legacy.example.com/",
+            createdAt: "2026-06-01T00:00:00.000Z",
+            lastConnectedAt: null,
+          },
+        ]);
         assert.deepStrictEqual(yield* store.get, Option.none());
+        assert.isFalse(yield* fileSystem.exists(downstreamCatalogPath));
         assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":[]}'));
         assert.equal(yield* fileSystem.readFileString(officialCatalogPath), "official-ciphertext");
         assert.isTrue(yield* fileSystem.exists(downstreamCatalogPath));

@@ -429,6 +429,12 @@ export const make = Effect.gen(function* () {
   });
 
   const migrateLegacyCatalog = Effect.gen(function* () {
+    // Legacy saved-environment secrets belong to the official app's safeStorage
+    // identity. A downstream app cannot decrypt them without a macOS Keychain
+    // prompt, so it must begin with its own empty catalog instead.
+    if (environment.isDownstreamDistribution) {
+      return Option.none<string>();
+    }
     if (!(yield* encryptionAvailable)) {
       return Option.none<string>();
     }
