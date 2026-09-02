@@ -57,6 +57,16 @@ the warning always works.
 See [Running T3 Code in the Background](./background-service.md) for install, status, and removal
 commands.
 
+## Nightly desktop release notes
+
+The desktop app shows a compact release-notes preview when a nightly update is available. Changes
+appear newest first within each release. Each release links to its exact page on GitHub, even when
+all changes fit in the preview.
+
+The preview shows up to eight changes from each of six releases. When it leaves out changes or older
+releases, it shows the exact number and links to the rest. Contributor credits do not count as
+changes.
+
 ## After the Update
 
 Keep the web or desktop app open while the server restarts. The update completes only after the

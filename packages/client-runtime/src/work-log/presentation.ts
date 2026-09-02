@@ -20,6 +20,7 @@ export interface WorkLogPresentationEntry {
   readonly tone: "thinking" | "tool" | "info" | "error";
   readonly command?: string;
   readonly detail?: string;
+  readonly viewedImagePath?: string;
   readonly changedFiles?: ReadonlyArray<string>;
   readonly itemType?: ToolLifecycleItemType;
   readonly requestKind?: string;
@@ -209,6 +210,7 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
   if (
     entry.requestKind === "file-read" ||
     entry.itemType === "image_view" ||
+    entry.viewedImagePath !== undefined ||
     (entry.itemType === "dynamic_tool_call" &&
       entry.toolTitle?.trim().toLowerCase() === "read file")
   ) {
@@ -230,6 +232,14 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
 }
 
 export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): string | null {
+  const viewedImagePath = entry.viewedImagePath?.trim();
+  if (
+    viewedImagePath !== undefined &&
+    !/[\r\n]/.test(viewedImagePath) &&
+    isWorkspaceImagePreviewPath(viewedImagePath)
+  ) {
+    return viewedImagePath;
+  }
   const detail = entry.detail?.trim();
   return toolGroupAction(entry) === "read" &&
     detail !== undefined &&

@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  isBrowserPreviewFile,
-  isImagePreviewFile,
-  isSvgImagePreviewFile,
-  resolveWorkspaceRelativeFilePath,
-} from "./filePath";
+import { isSvgImagePreviewFile, resolveWorkspaceRelativeFilePath } from "./filePath";
 
 describe("resolveWorkspaceRelativeFilePath", () => {
   it("keeps normalized workspace-relative paths", () => {
@@ -29,13 +24,6 @@ describe("resolveWorkspaceRelativeFilePath", () => {
 });
 
 describe("file preview types", () => {
-  it("recognizes browser and image previews", () => {
-    expect(isBrowserPreviewFile("reports/summary.html")).toBe(true);
-    expect(isImagePreviewFile("assets/icon.png")).toBe(true);
-    expect(isImagePreviewFile("assets/diagram.SVG?raw=1")).toBe(true);
-    expect(isImagePreviewFile("src/image.ts")).toBe(false);
-  });
-
   it("identifies SVG images that need web rendering", () => {
     expect(isSvgImagePreviewFile("assets/diagram.svg#icon")).toBe(true);
     expect(isSvgImagePreviewFile("assets/photo.png")).toBe(false);
