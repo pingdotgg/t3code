@@ -1512,8 +1512,8 @@ function appendToolGroupRows(
       activity.turnId === unsettledTurnId &&
       (activity.lifecycleStatus === "inProgress" ||
         (activeTail &&
-          (activity.workEntry.sourceActivityKind === "task.progress" ||
-            (activity.lifecycleStatus === undefined && activity.toolLike)))),
+          activity.lifecycleStatus === undefined &&
+          (activity.workEntry.sourceActivityKind === "task.progress" || activity.toolLike))),
   );
   const active = latestActiveActivity !== undefined;
   const live = activeTail || active;
@@ -1572,7 +1572,17 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, active: boolean):
   const command = activity.workEntry.command?.trim();
   if (command) {
     const program = commandProgramName(command);
-    const verb = active ? "Running" : activity.lifecycleStatus === "declined" ? "Declined" : "Ran";
+    const status = activity.lifecycleStatus ?? (active ? "inProgress" : "completed");
+    const verb =
+      status === "inProgress"
+        ? "Running"
+        : status === "failed"
+          ? "Failed"
+          : status === "declined"
+            ? "Declined"
+            : status === "stopped"
+              ? "Stopped"
+              : "Ran";
     return `${verb} ${program ?? "command"}`;
   }
   return activity.detail ?? activity.summary;

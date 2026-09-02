@@ -1659,7 +1659,9 @@ describe("buildThreadFeed", () => {
         [
           { lifecycleStatus: "inProgress", summary: "Running pnpm", shimmer: true },
           { lifecycleStatus: "completed", summary: "Ran pnpm", shimmer: false },
+          { lifecycleStatus: "failed", summary: "Failed pnpm", shimmer: false },
           { lifecycleStatus: "declined", summary: "Declined pnpm", shimmer: false },
+          { lifecycleStatus: "stopped", summary: "Stopped pnpm", shimmer: false },
         ] as const
       ).map((state) => ({ command, ...state })),
     ),
@@ -1678,7 +1680,7 @@ describe("buildThreadFeed", () => {
         createdAt: `2026-04-01T00:00:0${id.at(-1)}.000Z`,
         turnId,
         summary: `Tool ${id}`,
-        detail: null,
+        detail: lifecycleStatus === "stopped" ? "Exit code 130" : null,
         canExpand: false,
         getFullDetail: () => null,
         getCopyText: () => id,
@@ -1693,6 +1695,7 @@ describe("buildThreadFeed", () => {
           label: `Tool ${id}`,
           tone,
           toolLifecycleStatus: lifecycleStatus,
+          ...(lifecycleStatus === "stopped" ? { detail: "Exit code 130" } : {}),
           ...(command ? { command, itemType: "command_execution" as const } : {}),
         },
       });
@@ -1707,7 +1710,11 @@ describe("buildThreadFeed", () => {
             activity("activity-2", "failure", "failed", "error"),
             activity(
               "activity-3",
-              lifecycleStatus === "declined" ? "failure" : "success",
+              lifecycleStatus === "inProgress"
+                ? "neutral"
+                : lifecycleStatus === "completed"
+                  ? "success"
+                  : "failure",
               lifecycleStatus,
               "tool",
               command,
@@ -1771,6 +1778,48 @@ describe("buildThreadFeed", () => {
       ]);
     },
   );
+
+  it.each([
+    ["inProgress", true],
+    ["completed", false],
+    ["failed", false],
+    ["declined", false],
+    ["stopped", false],
+  ] as const)("respects the %s lifecycle of trailing task progress", (status, shimmer) => {
+    const turnId = TurnId.make("turn-task-progress");
+    const thread = makeThread({
+      id: ThreadId.make("thread-task-progress"),
+      projectId: ProjectId.make("project-1"),
+      title: "Task lifecycle",
+      latestTurn: {
+        turnId,
+        state: "running",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("task-progress"),
+          kind: "task.progress",
+          summary: "Task progress",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: { taskId: "task-1", status },
+        }),
+      ],
+    });
+
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      thread.latestTurn,
+      new Set(),
+      new Set(),
+      thread.latestTurn!.startedAt,
+    );
+    expect(rows.some((entry) => entry.type === "work-toggle" && entry.shimmer)).toBe(shimmer);
+  });
 
   it("does not revive cached in-progress tools after work stops", () => {
     const turnId = TurnId.make("turn-stale-tool");

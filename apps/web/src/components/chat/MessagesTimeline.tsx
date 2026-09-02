@@ -62,6 +62,7 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
+import { T3Wordmark } from "../T3Wordmark";
 import {
   BotIcon,
   BrainIcon,
@@ -2327,14 +2328,7 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "browser":
       return <GlobeIcon className={className} aria-hidden />;
     case "t3-code":
-      return (
-        <img
-          src={`${import.meta.env.BASE_URL}apple-touch-icon.png`}
-          alt=""
-          aria-hidden
-          className={cn(className, "rounded-[4px] object-cover")}
-        />
-      );
+      return <T3Wordmark className={className} aria-hidden />;
     case "check":
       return <CheckIcon className={className} aria-hidden />;
     case "circle-alert":
@@ -2691,6 +2685,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
               <span className={cn("min-w-0 flex-1 truncate", headingClass)}>{displayText}</span>
             </p>
           </div>
+          {showFailedIndicator && toolPresentation ? (
+            <XIcon aria-hidden className="size-3 shrink-0 text-icon-muted" />
+          ) : null}
           <span
             className={cn(
               "flex size-4 shrink-0 items-center justify-center",
@@ -2705,9 +2702,6 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
               )}
             />
           </span>
-          {showFailedIndicator && toolPresentation ? (
-            <XIcon aria-hidden className="size-3 shrink-0 text-icon-muted" />
-          ) : null}
         </div>
       </div>
       {expanded && canExpand && expandedBody ? (

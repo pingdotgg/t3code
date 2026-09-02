@@ -62,7 +62,17 @@ export function liveWorkEntryLabel(
   if (toolPresentation) return toolPresentation.displayName;
   const command = entry.command?.trim();
   if (command) {
-    const verb = active ? "Running" : entry.toolLifecycleStatus === "declined" ? "Declined" : "Ran";
+    const status = entry.toolLifecycleStatus ?? (active ? "inProgress" : "completed");
+    const verb =
+      status === "inProgress"
+        ? "Running"
+        : status === "failed"
+          ? "Failed"
+          : status === "declined"
+            ? "Declined"
+            : status === "stopped"
+              ? "Stopped"
+              : "Ran";
     return `${verb} ${commandProgramName(command) ?? "command"}`;
   }
   return workEntryDisplayLabel(entry, workspaceRoot);
@@ -464,8 +474,8 @@ function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
 function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
   return (
     entry.toolLifecycleStatus === "inProgress" ||
-    entry.sourceActivityKind === "task.progress" ||
-    (entry.toolLifecycleStatus === undefined && workLogEntryIsToolLike(entry))
+    (entry.toolLifecycleStatus === undefined &&
+      (entry.sourceActivityKind === "task.progress" || workLogEntryIsToolLike(entry)))
   );
 }
 

@@ -133,6 +133,25 @@ describe("work entry labels", () => {
     expect(workEntryDisplayLabel(commandEntry, undefined)).toBe(command);
   });
 
+  it.each([
+    ["inProgress", "Running vp"],
+    ["completed", "Ran vp"],
+    ["failed", "Failed vp"],
+    ["declined", "Declined vp"],
+    ["stopped", "Stopped vp"],
+  ] as const)(
+    "uses the command's %s outcome even while the turn continues",
+    (toolLifecycleStatus, label) => {
+      const commandEntry = {
+        ...entry,
+        command: "/bin/bash -lc 'vp test run'",
+        toolLifecycleStatus,
+      };
+      expect(liveWorkEntryLabel(commandEntry, undefined, true)).toBe(label);
+      expect(liveWorkEntryLabel(commandEntry, undefined, false)).toBe(label);
+    },
+  );
+
   it("gives a completed browser group its own count and summary icon category", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
@@ -1346,6 +1365,50 @@ describe("deriveMessagesTimelineRows", () => {
       "running-command",
     ]);
   });
+
+  it.each([
+    [undefined, true],
+    ["inProgress", true],
+    ["completed", false],
+    ["failed", false],
+    ["declined", false],
+    ["stopped", false],
+  ] as const)(
+    "respects the %s lifecycle of trailing task progress",
+    (toolLifecycleStatus, active) => {
+      const turnId = TurnId.make("turn-task-progress");
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: [
+          {
+            id: "task-progress-entry",
+            kind: "work",
+            createdAt: "2026-01-01T00:00:05Z",
+            entry: {
+              id: "task-progress",
+              createdAt: "2026-01-01T00:00:05Z",
+              turnId,
+              label: "Task progress",
+              tone: "thinking",
+              sourceActivityKind: "task.progress",
+              ...(toolLifecycleStatus ? { toolLifecycleStatus } : {}),
+            },
+          },
+        ],
+        latestTurn: {
+          turnId,
+          state: "running",
+          startedAt: "2026-01-01T00:00:00Z",
+          completedAt: null,
+        },
+        isWorking: true,
+        activeTurnStartedAt: "2026-01-01T00:00:00Z",
+        turnDiffSummaryByAssistantMessageId: new Map(),
+        revertTurnCountByUserMessageId: new Map(),
+      });
+
+      expect(rows.find((row) => row.kind === "work-live")).toMatchObject({ active });
+    },
+  );
 
   it("reuses one activity row for initial thinking and the latest tool", () => {
     const deriveRows = (toolLifecycleStatus: "inProgress" | "completed" | "declined" | null) =>
