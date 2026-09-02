@@ -324,15 +324,13 @@ describe("assetResponseHeaders", () => {
       "X-Content-Type-Options": "nosniff",
     });
   });
-  it("declares utf-8 for HTML assets so non-ASCII content renders correctly", () => {
-    expect(assetResponseHeaders("/workspace/page.html")).toHaveProperty(
-      "Content-Type",
-      "text/html; charset=utf-8",
-    );
-    expect(assetResponseHeaders("/workspace/PAGE.HTM")).toHaveProperty(
-      "Content-Type",
-      "text/html; charset=utf-8",
-    );
+  it("serves HTML assets as utf-8 inside a sandboxed origin", () => {
+    for (const path of ["/workspace/page.html", "/workspace/PAGE.HTM", "/tmp/report.html"]) {
+      expect(assetResponseHeaders(path)).toMatchObject({
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-modals",
+      });
+    }
   });
 
   it("downloads uploaded documents without executing their content", () => {

@@ -10,8 +10,15 @@ function isWindowsAbsolutePath(value: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
 }
 
-function isAbsolutePath(value: string): boolean {
+/** A file route holding an absolute path shows a host file outside the workspace. */
+export function isAbsolutePath(value: string): boolean {
   return value.startsWith("/") || isWindowsAbsolutePath(value);
+}
+
+/** Route segments that `normalizeRoutePath` joins back into the same path, root included. */
+export function fileRoutePathSegments(path: string): string[] {
+  const segments = path.split("/").filter((segment) => segment.length > 0);
+  return path.startsWith("/") ? ["", ...segments] : segments;
 }
 
 function isWindowsPathStyle(value: string): boolean {

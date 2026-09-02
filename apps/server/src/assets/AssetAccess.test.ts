@@ -44,7 +44,7 @@ const testLayer = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
-  it.effect("issues exact URLs for images and videos outside the workspace", () =>
+  it.effect("issues exact URLs for media and browser documents outside the workspace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -54,6 +54,8 @@ describe("AssetAccess", () => {
         ["screenshot.png", "image/png"],
         ["recording.mp4", "video/mp4"],
         ["recording.webm", "video/webm"],
+        ["report.html", "text/html"],
+        ["report.pdf", "application/pdf"],
       ] as const) {
         const filePath = path.join(outside, name);
         yield* fs.writeFileString(filePath, "media");
@@ -104,12 +106,12 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("rejects non-media files, disguised targets, and directories", () =>
+  it.effect("rejects non-previewable files, disguised targets, and directories", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-validation-" });
-      for (const name of ["report.html", "secret.txt", "secret.%70ng", "secret.png#private.txt"]) {
+      for (const name of ["report.md", "secret.txt", "secret.%70ng", "secret.png#private.txt"]) {
         const filePath = path.join(root, name);
         yield* fs.writeFileString(filePath, "not media");
         const error = yield* issueAssetUrl({
@@ -118,7 +120,7 @@ describe("AssetAccess", () => {
         expect(error).toBeInstanceOf(AssetPreviewTypeValidationError);
       }
       const disguisedPath = path.join(root, "disguised.png");
-      yield* fs.symlink(path.join(root, "report.html"), disguisedPath);
+      yield* fs.symlink(path.join(root, "secret.txt"), disguisedPath);
       const disguisedError = yield* issueAssetUrl({
         resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: disguisedPath },
       }).pipe(Effect.flip);
