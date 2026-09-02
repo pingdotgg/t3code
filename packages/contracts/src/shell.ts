@@ -363,7 +363,7 @@ export type ShellContextMenuItem = typeof ShellContextMenuItem.Type;
  * coordinates, for menus opened from native chrome). Null when closed.
  */
 export const ShellContextMenuState = Schema.Struct({
-  requestId: Schema.Number,
+  requestId: Schema.String,
   surfaceId: Schema.String,
   x: Schema.Number,
   y: Schema.Number,
@@ -564,7 +564,7 @@ export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("notification.dismiss"), id: Schema.String }),
   Schema.Struct({
     type: Schema.Literal("contextMenu.select"),
-    requestId: Schema.Number,
+    requestId: Schema.String,
     id: Schema.NullOr(Schema.String),
   }),
   /** Open the thread's action menu at window coordinates. */

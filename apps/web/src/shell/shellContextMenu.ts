@@ -4,7 +4,7 @@ import type { ShellContextMenuItem } from "@t3tools/contracts/shell";
 import { decodeShellAction } from "./useShellActions";
 
 let nextRequestId = 1;
-const pending = new Map<number, (id: string | null) => void>();
+const pending = new Map<string, (id: string | null) => void>();
 let listening = false;
 
 function ensureListener(): void {
@@ -59,7 +59,8 @@ export function showShellContextMenu<T extends string>(
   const shell = window.t3Shell;
   if (!shell) return Promise.resolve(null);
   ensureListener();
-  const requestId = nextRequestId++;
+  closeShellContextMenu();
+  const requestId = `${shell.surfaceId}:${nextRequestId++}`;
   return new Promise<T | null>((resolve) => {
     pending.set(requestId, (id) => {
       void shell.publish("contextMenu", null);

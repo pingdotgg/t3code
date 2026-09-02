@@ -13,7 +13,7 @@ Item {
 
     readonly property var request: Shell.state.contextMenu ?? null
     readonly property bool mine: request !== null && request.surfaceId === surfaceId
-    property int shownRequestId: -1
+    property string shownRequestId: ""
 
     anchors.fill: parent
 
