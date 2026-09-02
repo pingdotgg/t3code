@@ -17,7 +17,7 @@ ShellWindow {
     readonly property color canvas: Theme.color("canvas", "#1a1b26")
     readonly property color chrome: Theme.color("chrome", "#14151e")
     readonly property color ink: Theme.color("text", "#c0caf5")
-    readonly property color dim: Theme.color("textMuted", "#5d6587")
+    readonly property color dim: Theme.color("secondaryLabel", "#a9b1d6")
     readonly property color line: Theme.color("border", "#3d4461")
     // The ANSI slots land in the theme when it came from a terminal; a hand-
     // written theme falls back to its semantic colours.

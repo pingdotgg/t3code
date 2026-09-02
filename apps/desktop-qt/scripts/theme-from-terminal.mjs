@@ -139,6 +139,7 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
   const red = slot(1, slot(9, "#f7768e"));
   const yellow = slot(3, slot(11, "#e0af68"));
   const green = slot(2, slot(10, "#9ece6a"));
+  const magenta = slot(5, slot(13, accent));
   const cyan = slot(6, slot(14, accent));
   // A bright black too close to the background (default xterm) or to the
   // foreground (a light palette with a grey slot) is no use as a tint.
@@ -152,10 +153,13 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
   const onColor = (color) => (contrast(color, bg) >= 3 ? bg : fg);
   const dimmer = (color) => (dark ? mix(color, fg, 0.15) : mix(color, "#000000", 0.35));
   const chrome = dark ? mix(bg, "#000000", 0.22) : mix(bg, "#000000", 0.04);
-  // Comment grey: the bright black lifted a little toward the foreground,
-  // and one more step for labels that have to stay readable at 12px.
-  const muted = tone === brightBlack ? mix(tone, fg, 0.22) : mix(bg, fg, 0.5);
-  const label = tone === brightBlack ? mix(tone, fg, 0.42) : mix(bg, fg, 0.62);
+  // Comment grey: the bright black lifted toward the foreground until it
+  // reads at 12px. Secondary labels use the palette's normal white, the
+  // colour a terminal already uses for text that should sit a step back
+  // from the foreground, as long as it is a distinct, readable slot.
+  const muted = tone === brightBlack ? mix(tone, fg, 0.32) : mix(bg, fg, 0.55);
+  const white = slot(7, null);
+  const label = white && white !== fg && contrast(white, chrome) >= 4.5 ? white : mix(fg, bg, 0.25);
   const border = raise(0.9);
   const colors = {
     canvas: bg,
@@ -211,6 +215,11 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
     sidebarRowActive: tint(0.32),
     sidebarRowSelected: tint(0.26),
     sidebarBorder: border,
+    // The palette's own colours where the sidebar carries meaning: the
+    // project folder, the git branch, and the bar marking the open thread.
+    sidebarProjectForeground: accent,
+    sidebarBranchForeground: magenta,
+    sidebarActiveIndicator: accent,
     terminalBackground: bg,
     terminalForeground: fg,
     terminalCursor: cursor ?? accent,

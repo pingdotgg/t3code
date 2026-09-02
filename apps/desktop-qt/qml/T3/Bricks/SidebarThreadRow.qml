@@ -18,6 +18,11 @@ Item {
 
     readonly property color textColor: Theme.color("sidebarForeground", "#e4e4e7")
     readonly property color secondaryColor: Theme.color("secondaryLabel", "#8b8b93")
+    // Themes may colour the project and branch lines and mark the active
+    // row with a bar; without those roles the row stays monochrome.
+    readonly property color projectColor: Theme.color("sidebarProjectForeground", secondaryColor)
+    readonly property color branchColor: Theme.color("sidebarBranchForeground", secondaryColor)
+    readonly property color indicatorColor: Theme.color("sidebarActiveIndicator", "transparent")
     readonly property string statusIcon: {
         switch (item.status) {
         case "working":
@@ -79,6 +84,18 @@ Item {
                 duration: 120
             }
         }
+    }
+
+    Rectangle {
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.topMargin: 8
+        anchors.bottomMargin: 8
+        width: 3
+        radius: 1.5
+        color: row.indicatorColor
+        visible: row.active && row.indicatorColor.a > 0
     }
 
     HoverHandler {
@@ -155,14 +172,14 @@ Item {
             ShellIcon {
                 name: "folder"
                 size: 16
-                color: row.secondaryColor
+                color: row.projectColor
                 Layout.alignment: Qt.AlignVCenter
             }
 
             Text {
                 Layout.fillWidth: true
                 text: row.projectName
-                color: row.secondaryColor
+                color: row.projectColor
                 font.pixelSize: 12
                 font.weight: Font.Medium
                 font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
@@ -206,14 +223,14 @@ Item {
                 visible: row.item.branch !== null && row.item.branch !== undefined
                 name: "git-branch"
                 size: 12
-                color: row.secondaryColor
+                color: row.branchColor
                 Layout.alignment: Qt.AlignVCenter
             }
 
             Text {
                 Layout.fillWidth: true
                 text: row.item.branch ?? ""
-                color: row.secondaryColor
+                color: row.branchColor
                 font.pixelSize: 12
                 font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                 elide: Text.ElideRight
