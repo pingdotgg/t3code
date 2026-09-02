@@ -1,4 +1,3 @@
-import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
@@ -51,10 +50,11 @@ const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 // Review previews share the same per-file expansion budget for tracked and untracked changes.
-// Keeping the whole patch at this limit prevents large lockfile or generated-file changes from
+// Keeping the tracked patch at this limit prevents large lockfile or generated-file changes from
 // hiding later source files behind a small, order-dependent truncation cap.
 const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES;
 const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES;
+const REVIEW_UNTRACKED_DIFF_TOTAL_MAX_OUTPUT_BYTES = REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
@@ -2221,11 +2221,36 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: 4 },
     );
 
+    const encoder = new TextEncoder();
+    let diff = "";
+    let totalBytes = 0;
+    let truncated = untrackedResult.stdoutTruncated;
+    for (const result of diffs) {
+      if (result.stdout.trim().length === 0) {
+        truncated ||= result.stdoutTruncated;
+        continue;
+      }
+
+      const separator = diff.length > 0 ? "\n" : "";
+      const next = `${separator}${result.stdout}`;
+      const nextBytes = encoder.encode(next).byteLength;
+      if (totalBytes + nextBytes > REVIEW_UNTRACKED_DIFF_TOTAL_MAX_OUTPUT_BYTES) {
+        truncated = true;
+        break;
+      }
+
+      diff += next;
+      totalBytes += nextBytes;
+      truncated ||= result.stdoutTruncated;
+    }
+
+    if (truncated) {
+      diff += OUTPUT_TRUNCATED_MARKER;
+    }
+
     return {
-      diff: Arr.filterMap(diffs, (result) =>
-        result.stdout.trim().length > 0 ? Result.succeed(result.stdout) : Result.failVoid,
-      ).join("\n"),
-      truncated: untrackedResult.stdoutTruncated || diffs.some((result) => result.stdoutTruncated),
+      diff,
+      truncated,
     };
   });
 
