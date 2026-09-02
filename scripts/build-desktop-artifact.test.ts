@@ -321,6 +321,28 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("enables stable ad hoc update signing for downstream macOS builds", () =>
+    Effect.gen(function* () {
+      const identity = yield* resolveDesktopBuildIdentity("0.0.17-nightly.20260413.42", "Fork");
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.17-nightly.20260413.42",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        identity,
+        true,
+      );
+
+      const mac = config.mac as Record<string, unknown>;
+      assert.equal(mac.identity, "-");
+      assert.match(String(mac.sign), /\/scripts\/sign-macos\.ts$/);
+    }),
+  );
+
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {
       macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
@@ -1830,6 +1852,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         skipBuild: Option.none(),
         keepStage: Option.none(),
         signed: Option.none(),
+        stableMacAdhocSignature: Option.none(),
         verbose: Option.none(),
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
@@ -1870,6 +1893,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             skipBuild: Option.none(),
             keepStage: Option.none(),
             signed: Option.none(),
+            stableMacAdhocSignature: Option.none(),
             verbose: Option.none(),
             mockUpdates: Option.none(),
             mockUpdateServerPort: Option.none(),
@@ -1894,6 +1918,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         skipBuild: Option.some(false),
         keepStage: Option.some(false),
         signed: Option.some(false),
+        stableMacAdhocSignature: Option.some(false),
         verbose: Option.some(false),
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),

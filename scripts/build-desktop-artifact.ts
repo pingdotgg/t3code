@@ -159,6 +159,7 @@ interface BuildCliInput {
   readonly skipBuild: Option.Option<boolean>;
   readonly keepStage: Option.Option<boolean>;
   readonly signed: Option.Option<boolean>;
+  readonly stableMacAdhocSignature: Option.Option<boolean>;
   readonly verbose: Option.Option<boolean>;
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
@@ -780,6 +781,7 @@ interface ResolvedBuildOptions {
   readonly skipBuild: boolean;
   readonly keepStage: boolean;
   readonly signed: boolean;
+  readonly stableMacAdhocSignature: boolean;
   readonly verbose: boolean;
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
@@ -1336,6 +1338,9 @@ const BuildEnvConfig = Config.all({
   skipBuild: Config.boolean("T3CODE_DESKTOP_SKIP_BUILD").pipe(Config.withDefault(false)),
   keepStage: Config.boolean("T3CODE_DESKTOP_KEEP_STAGE").pipe(Config.withDefault(false)),
   signed: Config.boolean("T3CODE_DESKTOP_SIGNED").pipe(Config.withDefault(false)),
+  stableMacAdhocSignature: Config.boolean("T3CODE_DESKTOP_STABLE_MAC_ADHOC_SIGNATURE").pipe(
+    Config.withDefault(false),
+  ),
   verbose: Config.boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
   mockUpdates: Config.boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
   mockUpdateServerPort: Config.string("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
@@ -1422,6 +1427,10 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   const skipBuild = resolveBooleanFlag(input.skipBuild, env.skipBuild);
   const keepStage = resolveBooleanFlag(input.keepStage, env.keepStage);
   const signed = resolveBooleanFlag(input.signed, env.signed);
+  const stableMacAdhocSignature =
+    platform === "mac" &&
+    !signed &&
+    resolveBooleanFlag(input.stableMacAdhocSignature, env.stableMacAdhocSignature);
   const verbose = resolveBooleanFlag(input.verbose, env.verbose);
 
   const mockUpdates = resolveBooleanFlag(input.mockUpdates, env.mockUpdates);
@@ -1452,6 +1461,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     skipBuild,
     keepStage,
     signed,
+    stableMacAdhocSignature,
     verbose,
     mockUpdates,
     mockUpdateServerPort,
@@ -2199,6 +2209,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   // whose source file was never written fails the electron-builder step.
   wslRuntimeBundled = false,
   configuredBuildIdentity?: DesktopBuildIdentity,
+  stableMacAdhocSignature = false,
 ) {
   const buildIdentity =
     configuredBuildIdentity ?? (yield* resolveDesktopBuildIdentity(version, undefined));
@@ -2249,7 +2260,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           schemes: ["t3code", "t3code-dev"],
         },
       ],
-      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      ...(stableMacAdhocSignature ? { identity: "-" } : {}),
+      ...(signed || stableMacAdhocSignature
+        ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") }
+        : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
@@ -3266,6 +3280,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         : undefined,
       bundlesWslRuntime({ arch: options.arch, prebuildPath: options.wslPrebuild }),
       options.buildIdentity,
+      options.stableMacAdhocSignature,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -3349,6 +3364,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     delete buildEnv.APPLE_API_KEY;
     delete buildEnv.APPLE_API_KEY_ID;
     delete buildEnv.APPLE_API_ISSUER;
+  }
+  if (options.stableMacAdhocSignature) {
+    buildEnv.T3CODE_MACOS_STABLE_ADHOC_BUNDLE_ID = options.buildIdentity.appId;
+  } else {
+    delete buildEnv.T3CODE_MACOS_STABLE_ADHOC_BUNDLE_ID;
   }
 
   if (hostPlatform === "win32") {
@@ -3495,6 +3515,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   signed: Flag.boolean("signed").pipe(
     Flag.withDescription(
       "Enable signing/notarization discovery; Windows uses Azure Trusted Signing (env: T3CODE_DESKTOP_SIGNED).",
+    ),
+    Flag.optional,
+  ),
+  stableMacAdhocSignature: Flag.boolean("stable-mac-adhoc-signature").pipe(
+    Flag.withDescription(
+      "Use a stable credential-free macOS update requirement (env: T3CODE_DESKTOP_STABLE_MAC_ADHOC_SIGNATURE).",
     ),
     Flag.optional,
   ),
