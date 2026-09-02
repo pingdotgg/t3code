@@ -70,12 +70,14 @@ export function parseSshResolveOutput(alias: string, stdout: string): DesktopSsh
 }
 
 export function targetConnectionKey(target: DesktopSshEnvironmentTarget): string {
-  return `${target.alias}\u0000${target.hostname}\u0000${target.username ?? ""}\u0000${target.port ?? ""}`;
+  return `${target.alias}\u0000${target.hostname}\u0000${target.username ?? ""}\u0000${target.port ?? ""}\u0000${target.forwardAgent === true ? "forward-agent" : "no-agent"}`;
 }
 
 export function remoteStateKey(target: DesktopSshEnvironmentTarget): string {
   return NodeCrypto.createHash("sha256")
-    .update(targetConnectionKey(target))
+    .update(
+      `${target.alias}\u0000${target.hostname}\u0000${target.username ?? ""}\u0000${target.port ?? ""}`,
+    )
     .digest("hex")
     .slice(0, 16);
 }
@@ -101,9 +103,10 @@ export const buildSshHostSpecEffect = (
 
 export function baseSshArgs(
   target: DesktopSshEnvironmentTarget,
-  input?: { readonly batchMode?: "yes" | "no" },
+  input?: { readonly batchMode?: "yes" | "no"; readonly forwardAgent?: boolean },
 ): string[] {
   return [
+    input?.forwardAgent === true ? "-A" : "-a",
     "-o",
     `BatchMode=${input?.batchMode ?? "no"}`,
     "-o",

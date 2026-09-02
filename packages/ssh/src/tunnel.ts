@@ -11,10 +11,12 @@ import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -57,11 +59,14 @@ const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
 const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
+const AGENT_FORWARD_READY_TIMEOUT = Duration.seconds(10);
+const AGENT_FORWARD_READY_MARKER = "t3-agent-forward-ready";
 
 export interface RemoteT3RunnerOptions {
   readonly packageSpec?: string;
   readonly nodeScriptPath?: string | null;
   readonly nodeEngineRange?: string | null;
+  readonly forwardAgent?: boolean;
 }
 
 export interface SshEnvironmentManagerOptions {
@@ -113,6 +118,7 @@ function sshTargetLogFields(target: DesktopSshEnvironmentTarget) {
     hostname: target.hostname,
     username: target.username,
     port: target.port,
+    forwardAgent: target.forwardAgent === true,
   };
 }
 
@@ -452,6 +458,33 @@ printf 'Remote host is missing the t3 CLI and could not install @@T3_PACKAGE_SPE
 exit 1
 `;
 
+export const REMOTE_AGENT_FORWARD_SCRIPT = `set -eu
+STATE_KEY="$1"
+STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
+SOCKET_FILE="$STATE_DIR/agent-sock"
+SOCKET_NEXT="$STATE_DIR/agent-sock.next.$$"
+FORWARDED_SOCKET="\${SSH_AUTH_SOCK:-}"
+if [ -z "$FORWARDED_SOCKET" ] || [ ! -S "$FORWARDED_SOCKET" ]; then
+  printf 'SSH agent forwarding was requested, but the remote SSH session did not receive an agent socket. Check AllowAgentForwarding on the remote host.\n' >&2
+  exit 1
+fi
+mkdir -p "$STATE_DIR"
+printf '%s\n' "$FORWARDED_SOCKET" >"$SOCKET_NEXT"
+mv "$SOCKET_NEXT" "$SOCKET_FILE"
+cleanup_forwarded_socket() {
+  CURRENT_SOCKET="$(cat "$SOCKET_FILE" 2>/dev/null || true)"
+  if [ "$CURRENT_SOCKET" = "$FORWARDED_SOCKET" ]; then
+    rm -f "$SOCKET_FILE"
+  fi
+  rm -f "$SOCKET_NEXT"
+}
+trap cleanup_forwarded_socket EXIT HUP INT TERM
+printf '@@T3_AGENT_FORWARD_READY_MARKER@@\n'
+while :; do
+  sleep 60
+done
+`;
+
 export const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
@@ -464,6 +497,8 @@ MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
+FORWARD_AGENT=@@T3_FORWARD_AGENT@@
+AGENT_SOCKET_FILE="$STATE_DIR/agent-sock"
 mkdir -p "$STATE_DIR"
 cleanup_runner_next() {
   rm -f "$RUNNER_NEXT"
@@ -584,13 +619,29 @@ else
   REMOTE_PORT=""
   REMOTE_MANAGED=""
 fi
+if [ "$FORWARD_AGENT" = "1" ] && [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ]; then
+  kill "$REMOTE_PID" 2>/dev/null || true
+  wait_for_pid_exit "$REMOTE_PID"
+  REMOTE_PID=""
+  REMOTE_PORT=""
+  REMOTE_MANAGED=""
+fi
 if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
   if [ -z "$REMOTE_PORT" ]; then
     printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\\n' >&2
     exit 1
   fi
-  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  if [ "$FORWARD_AGENT" = "1" ]; then
+    FORWARDED_SSH_AUTH_SOCK="$(cat "$AGENT_SOCKET_FILE" 2>/dev/null || true)"
+    if [ -z "$FORWARDED_SSH_AUTH_SOCK" ] || [ ! -S "$FORWARDED_SSH_AUTH_SOCK" ]; then
+      printf 'SSH agent forwarding was requested, but its remote socket is unavailable.\n' >&2
+      exit 1
+    fi
+    SSH_AUTH_SOCK="$FORWARDED_SSH_AUTH_SOCK" nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  else
+    nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  fi
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
@@ -683,6 +734,13 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
     T3_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
     T3_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
+    T3_FORWARD_AGENT: input?.forwardAgent === true ? "1" : "0",
+  });
+}
+
+export function buildRemoteAgentForwardScript(): string {
+  return applyScriptPlaceholders(REMOTE_AGENT_FORWARD_SCRIPT, {
+    T3_AGENT_FORWARD_READY_MARKER: AGENT_FORWARD_READY_MARKER,
   });
 }
 
@@ -937,6 +995,109 @@ export const resolveLoopbackSshHttpBaseUrl = Effect.fn("ssh/tunnel.resolveLoopba
 const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(function* () {
   const net = yield* NetService.NetService;
   return yield* net.reserveLoopbackPort();
+});
+
+const startSshAgentForwarder = Effect.fn("ssh/tunnel.startSshAgentForwarder")(function* (input: {
+  readonly target: DesktopSshEnvironmentTarget;
+  readonly authOptions: SshAuthOptions;
+  readonly scope: Scope.Scope;
+}): Effect.fn.Return<
+  ChildProcessSpawner.ChildProcessHandle,
+  SshCommandError | SshInvalidTargetError,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+> {
+  const hostSpec = yield* buildSshHostSpecEffect(input.target);
+  const childEnvironment = yield* buildSshChildEnvironment({
+    ...(input.authOptions.authSecret === undefined
+      ? {}
+      : { authSecret: input.authOptions.authSecret }),
+    ...(input.authOptions.interactiveAuth === undefined
+      ? {}
+      : { interactiveAuth: input.authOptions.interactiveAuth }),
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new SshCommandError({
+          command: ["ssh"],
+          exitCode: null,
+          stderr: "",
+          message: "Failed to prepare SSH agent forwarding helpers.",
+          cause,
+        }),
+    ),
+  );
+  const args = [
+    ...baseSshArgs(input.target, {
+      batchMode: input.authOptions.batchMode ?? "no",
+      forwardAgent: true,
+    }),
+    hostSpec,
+    "sh",
+    "-s",
+    "--",
+    remoteStateKey(input.target),
+  ];
+  const sshCommand = yield* resolveSshCommand;
+  const command = [sshCommand, ...args];
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const child = yield* spawner
+    .spawn(
+      ChildProcess.make(sshCommand, args, {
+        env: childEnvironment,
+        extendEnv: true,
+        stdin: {
+          stream: Stream.encodeText(Stream.make(buildRemoteAgentForwardScript())),
+          endOnDone: true,
+        },
+      }),
+    )
+    .pipe(
+      Effect.provideService(Scope.Scope, input.scope),
+      Effect.mapError(
+        (cause) =>
+          new SshCommandError({
+            command,
+            exitCode: null,
+            stderr: "",
+            message: `Failed to start SSH agent forwarding for ${hostSpec}.`,
+            cause,
+          }),
+      ),
+    );
+
+  const readyLine = yield* child.stdout.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.filter((line) => line.trim() === AGENT_FORWARD_READY_MARKER),
+    Stream.runHead,
+    Effect.mapError(
+      (cause) =>
+        new SshCommandError({
+          command,
+          exitCode: null,
+          stderr: "",
+          message: `Failed while waiting for SSH agent forwarding on ${hostSpec}.`,
+          cause,
+        }),
+    ),
+    Effect.timeoutOption(AGENT_FORWARD_READY_TIMEOUT),
+  );
+  if (Option.isNone(readyLine) || Option.isNone(readyLine.value)) {
+    yield* child
+      .kill({ killSignal: "SIGTERM", forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS })
+      .pipe(Effect.ignore);
+    return yield* new SshCommandError({
+      command,
+      exitCode: null,
+      stderr: "",
+      message: `SSH agent forwarding did not become ready for ${hostSpec}. Check that the local agent is running and AllowAgentForwarding is enabled on the remote host.`,
+    });
+  }
+  yield* Effect.logInfo("ssh.agentForward.ready", {
+    ...sshTargetLogFields(input.target),
+    pid: child.pid,
+  });
+  return child;
 });
 
 const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: {
@@ -1339,12 +1500,58 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshRunnerLogFields(input.runner),
       key: input.key,
     });
+    const entryScope = yield* Scope.make("sequential");
+    const agentForwarderProcess =
+      input.resolvedTarget.forwardAgent === true
+        ? yield* runWithSshAuth({
+            key: input.key,
+            target: input.resolvedTarget,
+            operation: (authOptions) =>
+              startSshAgentForwarder({
+                target: input.resolvedTarget,
+                authOptions,
+                scope: entryScope,
+              }),
+          }).pipe(
+            Effect.onExit((exit) =>
+              Exit.isSuccess(exit)
+                ? Effect.void
+                : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),
+            ),
+          )
+        : undefined;
+    const stopAgentForwarder = agentForwarderProcess
+      ? agentForwarderProcess
+          .kill({
+            killSignal: "SIGTERM",
+            forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
+          })
+          .pipe(Effect.ignore)
+      : Effect.void;
+    if (agentForwarderProcess) {
+      yield* Scope.addFinalizer(entryScope, stopAgentForwarder);
+    }
+    const closeEntryScope = Scope.close(entryScope, Exit.void).pipe(Effect.ignore);
     const remoteLaunch = yield* runWithSshAuth({
       key: input.key,
       target: input.resolvedTarget,
       operation: (authOptions) =>
-        launchOrReuseRemoteServer(input.resolvedTarget, authOptions, input.runner),
-    });
+        launchOrReuseRemoteServer(input.resolvedTarget, authOptions, {
+          ...input.runner,
+          forwardAgent: input.resolvedTarget.forwardAgent === true,
+        }),
+    }).pipe(Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : closeEntryScope)));
+    if (
+      input.resolvedTarget.forwardAgent === true &&
+      remoteLaunch.remoteServerKind === "external"
+    ) {
+      yield* closeEntryScope;
+      return yield* new SshLaunchError({
+        message:
+          "SSH agent forwarding requires a T3 server managed by this desktop connection. Stop the pre-existing remote T3 server and reconnect.",
+        stdout: "",
+      });
+    }
     const remotePort = remoteLaunch.remotePort;
     yield* Effect.logDebug("ssh.environment.remotePort.ready", {
       ...sshTargetLogFields(input.resolvedTarget),
@@ -1352,7 +1559,9 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       remotePort,
       remoteServerKind: remoteLaunch.remoteServerKind,
     });
-    const localPort = yield* reserveLocalTunnelPort();
+    const localPort = yield* reserveLocalTunnelPort().pipe(
+      Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : closeEntryScope)),
+    );
     const httpBaseUrl = `http://127.0.0.1:${localPort}/`;
     const wsBaseUrl = `ws://127.0.0.1:${localPort}/`;
     yield* Effect.logDebug("ssh.environment.localPort.reserved", {
@@ -1361,7 +1570,6 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       localPort,
       remotePort,
     });
-    const entryScope = yield* Scope.make("sequential");
     const tunnelEntry = yield* runWithSshAuth({
       key: input.key,
       target: input.resolvedTarget,
@@ -1381,6 +1589,26 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         Exit.isSuccess(exit) ? Effect.void : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),
       ),
     );
+    if (agentForwarderProcess) {
+      yield* agentForwarderProcess.exitCode.pipe(
+        Effect.flatMap((exitCode) =>
+          Effect.logWarning("ssh.agentForward.process.exited", {
+            ...sshTargetLogFields(input.resolvedTarget),
+            pid: agentForwarderProcess.pid,
+            exitCode: Number(exitCode),
+          }).pipe(
+            Effect.andThen(
+              tunnelEntry.process.kill({
+                killSignal: "SIGTERM",
+                forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
+              }),
+            ),
+          ),
+        ),
+        Effect.ignore,
+        Effect.forkIn(entryScope),
+      );
+    }
     tunnels.set(input.key, tunnelEntry);
     const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystemService = yield* FileSystem.FileSystem;
@@ -1531,6 +1759,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...baseResolved,
       ...(target.username !== null ? { username: target.username } : {}),
       ...(target.port !== null ? { port: target.port } : {}),
+      ...(target.forwardAgent === true ? { forwardAgent: true } : {}),
     };
     const key = targetConnectionKey(resolvedTarget);
     yield* Effect.logDebug("ssh.environment.target.resolved", {
@@ -1587,6 +1816,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...baseResolved,
       ...(target.username !== null ? { username: target.username } : {}),
       ...(target.port !== null ? { port: target.port } : {}),
+      ...(target.forwardAgent === true ? { forwardAgent: true } : {}),
     };
     const key = targetConnectionKey(resolvedTarget);
     const entry = tunnels.get(key) ?? null;

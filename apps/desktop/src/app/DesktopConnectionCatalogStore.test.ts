@@ -147,6 +147,7 @@ describe("DesktopConnectionCatalogStore", () => {
               hostname: "devbox.example.com",
               username: "julius",
               port: 22,
+              forwardAgent: true,
             },
           },
           {
@@ -200,6 +201,7 @@ describe("DesktopConnectionCatalogStore", () => {
             hostname: "devbox.example.com",
             username: "julius",
             port: 22,
+            forwardAgent: true,
           },
         });
         assert.deepInclude(catalog.profiles[1], {

@@ -306,6 +306,7 @@ export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
   hostname: Schema.String,
   username: Schema.NullOr(Schema.String),
   port: Schema.NullOr(Schema.Number),
+  forwardAgent: Schema.optionalKey(Schema.Boolean),
 });
 export type DesktopSshEnvironmentTarget = typeof DesktopSshEnvironmentTargetSchema.Type;
 
