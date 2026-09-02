@@ -237,7 +237,7 @@ const CHART_BANDS = [
   {
     key: "freshUsd",
     label: "fresh input + output",
-    className: "text-emerald-500",
+    className: "text-success",
     lowerKeys: [],
   },
   {
@@ -249,7 +249,7 @@ const CHART_BANDS = [
   {
     key: "cacheWriteUsd",
     label: "cache writes",
-    className: "text-sky-500",
+    className: "text-info",
     lowerKeys: ["freshUsd", "cacheReadUsd"],
   },
 ] as const;
