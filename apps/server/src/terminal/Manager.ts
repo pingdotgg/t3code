@@ -892,19 +892,25 @@ const ALTERNATE_SCREEN_DEC_MODES = [47, 1047, 1049];
 // screens keep separate stacks, and the encoder only reads the active top, so
 // zeroing it is enough; only RIS clears the stacks.
 const KITTY_KEYBOARD_CLEAR = "\u001b[=0;1u";
-// DEC mode set/reset, Kitty keyboard push/pop/set, and RIS (`ESC c`). RIS is
-// the only reset that touches these in libghostty-vt; DECSTR (`CSI ! p`)
-// leaves every one of them alone, so it is deliberately not tracked.
-const INHERITED_MODE_PATTERN =
-  // eslint-disable-next-line no-control-regex -- matches ESC / CSI control sequences.
-  /(?:\u001b\[|\u009b)(?:\?([0-9;]+)([hl])|([<>=])([0-9]*)[0-9;]*u)|\u001b(c)/gu;
+// Every sequence of interest starts with ESC (after folding the 8-bit CSI
+// byte into ESC `[`), so the history is split there and each fragment's head
+// is matched: DEC mode set/reset, Kitty keyboard push/pop/set, or RIS (`c`).
+// RIS is the only reset that touches these in libghostty-vt; DECSTR
+// (`CSI ! p`) leaves every one of them alone, so it is deliberately not
+// tracked.
+const ESCAPE = "\u001b";
+const CSI_8BIT = "\u009b";
+const INHERITED_MODE_SEQUENCE = /^(?:\[(?:\?([0-9;]+)([hl])|([<>=])([0-9]*)[0-9;]*u)|(c))/u;
 
 function neutralizeInheritedHistory(history: string): string {
   if (history.length === 0) return history;
   const modes = new Map<number, boolean>();
   const kittyStacks = { main: [0], alternate: [0] };
   let screen: keyof typeof kittyStacks = "main";
-  for (const match of history.matchAll(INHERITED_MODE_PATTERN)) {
+  const fragments = history.replaceAll(CSI_8BIT, `${ESCAPE}[`).split(ESCAPE);
+  for (const fragment of fragments.slice(1)) {
+    const match = INHERITED_MODE_SEQUENCE.exec(fragment);
+    if (match === null) continue;
     if (match[5] !== undefined) {
       modes.clear();
       kittyStacks.main = [0];
