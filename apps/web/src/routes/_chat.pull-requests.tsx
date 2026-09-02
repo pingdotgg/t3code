@@ -91,7 +91,7 @@ import { PullRequestListEmptyState } from "../components/pullRequest/PullRequest
 import { PullRequestListGhost } from "../components/pullRequest/PullRequestGhosts";
 import { PullRequestRow } from "../components/pullRequest/PullRequestRow";
 import { PullRequestsUnavailableState } from "../components/pullRequest/PullRequestsUnavailableState";
-import { RightPanelTabs, type PullRequestTabStatus } from "../components/RightPanelTabs";
+import { RightPanelTabs, type PullRequestTabStatusSeed } from "../components/RightPanelTabs";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -109,10 +109,10 @@ import { useLiveRefresh } from "../hooks/useLiveRefresh";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { toSortableTimestamp } from "../lib/threadSort";
 import {
+  pullRequestSurfaceId,
   selectActiveRightPanelSurface,
   selectSelectedRightPanelSurface,
   selectThreadRightPanelState,
-  updatePullRequestTabStatus,
   useRightPanelStore,
   type PullRequestSurface,
 } from "../rightPanelStore";
@@ -475,22 +475,6 @@ function PullRequestsRouteView() {
     (renderedPullRequestSurface?.environmentId as EnvironmentId | undefined) ??
     selectedProject?.environmentId ??
     null;
-  const [pullRequestTabStatuses, setPullRequestTabStatuses] = useState<
-    Record<string, PullRequestTabStatus>
-  >({});
-  // Keyed by the surface the panel is showing rather than by a key rebuilt from the status: a
-  // surface opened from this page carries the environment its row was listed under, and a key
-  // assembled from the pull request alone would never name that surface back.
-  const activePullRequestSurfaceId = activePullRequestSurface?.id;
-  const handlePullRequestTabStatusChange = useCallback(
-    (status: PullRequestTabStatus) => {
-      const id = activePullRequestSurfaceId;
-      if (id === undefined) return;
-      setPullRequestTabStatuses((current) => updatePullRequestTabStatus(current, id, status));
-    },
-    [activePullRequestSurfaceId],
-  );
-
   const updateSearch = useCallback(
     (patch: {
       [Key in keyof PullRequestsSearch]?: PullRequestsSearch[Key] | undefined;
@@ -1181,6 +1165,21 @@ function PullRequestsRouteView() {
     typedParsed.text,
     viewers,
   ]);
+
+  // Seed the first tab paint from list rows while each tab's cached detail read lands.
+  const listedPullRequestTabStatuses = useMemo<Record<string, PullRequestTabStatusSeed>>(
+    () =>
+      Object.fromEntries(
+        entries.map((entry) => [
+          pullRequestSurfaceId(entry),
+          {
+            state: entry.state,
+            isDraft: entry.isDraft,
+          },
+        ]),
+      ),
+    [entries],
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -1889,6 +1888,7 @@ function PullRequestsRouteView() {
             // it. SSR has no window, so fall back to a reasonable width.
             defaultWidth={typeof window === "undefined" ? 640 : Math.floor(window.innerWidth / 2)}
             surfaces={renderedRightPanelSurfaces}
+            environmentId={panelEnvironmentId}
             activeSurfaceId={renderedPullRequestSurface.id}
             pendingSurfaceIds={EMPTY_PENDING_SURFACES}
             previewSessions={EMPTY_PREVIEW_SESSIONS}
@@ -1922,7 +1922,7 @@ function PullRequestsRouteView() {
             pullRequestAvailable={false}
             agentsAvailable={false}
             liveAgentCount={0}
-            pullRequestStatuses={pullRequestTabStatuses}
+            pullRequestStatusSeeds={listedPullRequestTabStatuses}
           >
             <PullRequestDetailPanel
               key={renderedPullRequestSurface.id}
@@ -1941,7 +1941,6 @@ function PullRequestsRouteView() {
                 authoredQuery.refresh();
                 reviewingQuery.refresh();
               }}
-              onStateChange={handlePullRequestTabStatusChange}
             />
           </RightPanelTabs>
         ) : null}
