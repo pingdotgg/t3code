@@ -190,14 +190,9 @@ int main(int argc, char* argv[]) {
   const bool screenshotRequested = parser.isSet(screenshotOption);
   if (!scriptedSteps.isEmpty() || screenshotRequested) {
     const QString target = parser.value(screenshotOption);
-    auto* armed = new bool(false);
     QObject::connect(&bridge, &ShellBridge::pageLoaded, &runtime,
-                     [&runtime, &bridge, &app, target, scriptedSteps, screenshotRequested,
-                      armed](bool ok) {
-                       if (*armed) {
-                         return;
-                       }
-                       *armed = true;
+                     [&runtime, &bridge, &app, target, scriptedSteps,
+                      screenshotRequested](bool ok) {
                        if (!ok) {
                          qWarning().noquote() << "[shell] page failed to load; scripted run aborted";
                          if (screenshotRequested) {
@@ -235,7 +230,8 @@ int main(int argc, char* argv[]) {
                            app.exit(ok ? 0 : 2);
                          });
                        }
-                     });
+                     },
+                     Qt::SingleShotConnection);
   }
 
   runtime.start();
