@@ -591,6 +591,30 @@ describe("CheckpointReactor", () => {
     expect(pullRequestRefreshCalls).toEqual([harness.cwd]);
   });
 
+  it("re-asks for the pull request after adopting a drifted checkout", async () => {
+    const pullRequestRefreshCalls: string[] = [];
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      threadBranch: "t3code/original-branch",
+      localStatusRefName: "t3code/renamed-by-agent",
+      pullRequestRefreshCalls,
+    });
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-drift-pr"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-drift-pr"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+
+    expect(pullRequestRefreshCalls).toEqual([harness.cwd]);
+  });
+
   it("does not re-ask for the pull request at turn end on the default branch", async () => {
     const pullRequestRefreshCalls: string[] = [];
     const harness = await createHarness({

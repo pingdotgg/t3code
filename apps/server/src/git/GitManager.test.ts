@@ -1924,6 +1924,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           prListByHeadSelector: {
+            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
             // @effect-diagnostics-next-line preferSchemaOverJson:off
             "feature/pushed-plain": JSON.stringify([
               {
@@ -1944,6 +1945,112 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(status.refName).toBe("feature/pushed-plain");
       expect(status.pr?.number).toBe(88);
       expect(ghCalls.some((call) => call.includes("--head main"))).toBe(false);
+    }),
+  );
+
+  it.effect(
+    "status finds a fork PR pushed under the branch's own name despite a default upstream",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+        yield* configureRemote(repoDir, "team/fork", forkDir, "team/fork");
+        yield* runGit(repoDir, ["checkout", "-b", "feature/fork-plain", "origin/main"]);
+        // Pushed to the fork without -u: upstream stays origin/main.
+        yield* runGit(repoDir, ["push", "team/fork", "feature/fork-plain"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "git@github.com:pingdotgg/codething-mvp.git",
+          originDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "team/fork",
+          "git@github.com:contributor/codething-mvp.git",
+          forkDir,
+        );
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListByHeadSelector: {
+              // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              "contributor:feature/fork-plain": JSON.stringify([
+                {
+                  number: 89,
+                  title: "Fork PR pushed without -u",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/89",
+                  baseRefName: "main",
+                  headRefName: "feature/fork-plain",
+                  state: "OPEN",
+                  updatedAt: "2026-05-01T10:00:00Z",
+                  isCrossRepository: true,
+                  headRepository: { nameWithOwner: "contributor/codething-mvp" },
+                  headRepositoryOwner: { login: "contributor" },
+                },
+              ]),
+            },
+          },
+        });
+
+        const status = yield* manager.status({ cwd: repoDir });
+        expect(status.pr?.number).toBe(89);
+        expect(ghCalls.some((call) => call.includes("--head contributor:feature/fork-plain"))).toBe(
+          true,
+        );
+        expect(ghCalls.some((call) => call.includes("--head main"))).toBe(false);
+      }),
+  );
+
+  it.effect("status keeps an own-name PR when a later lookup fails on a default upstream", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/sticky-plain", "origin/main"]);
+      yield* runGit(repoDir, ["push", "origin", "feature/sticky-plain"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListByHeadSelector: {
+            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            "feature/sticky-plain": JSON.stringify([
+              {
+                number: 90,
+                title: "Sticky own-name PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/90",
+                baseRefName: "main",
+                headRefName: "feature/sticky-plain",
+                state: "OPEN",
+                updatedAt: "2026-05-01T10:00:00Z",
+              },
+            ]),
+          },
+          failWith: new GitHubCli.GitHubCliUnavailableError({
+            command: "gh",
+            cwd: repoDir,
+            cause: new Error("rate limited"),
+          }),
+          failAfterCalls: 1,
+        },
+      });
+
+      const first = yield* manager.status({ cwd: repoDir });
+      expect(first.pr?.number).toBe(90);
+
+      yield* manager.invalidateStatus(repoDir);
+      const second = yield* manager.status({ cwd: repoDir });
+      expect(second.pr?.number).toBe(90);
     }),
   );
 

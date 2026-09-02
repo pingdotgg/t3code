@@ -1009,37 +1009,9 @@ export const make = Effect.gen(function* () {
         ...(remoteName.length > 0 ? { remoteName } : {}),
       };
       return Effect.gen(function* () {
-        const headContext = yield* resolveBranchHeadContext(cwd, details);
-        const upstreamHeadIsDefault =
-          headContext.headBranch === details.defaultBranch ||
-          (details.defaultBranch === null &&
-            (headContext.headBranch === "main" || headContext.headBranch === "master"));
-        // `git worktree add -b feature origin/main` makes the new local branch
-        // track origin/main. That upstream is the branch's base, not its
-        // published PR head. Looking up PRs for it can attach an old reverse
-        // merge from main and auto-settle an unrelated feature thread.
-        //
-        // The branch may still have been pushed under its own name by a plain
-        // `git push origin feature` that never moved the upstream. When a
-        // remote-tracking ref for the local name exists, look the PR up by
-        // that name instead of giving up. Without the ref there is nothing to
-        // ask the host about, so no API call is spent.
-        if (
-          headContext.headBranch !== details.branch &&
-          upstreamHeadIsDefault &&
-          !headContext.isCrossRepository
-        ) {
-          const publishedUnderOwnName = yield* hasRemoteTrackingRef(cwd, details.branch);
-          if (!publishedUnderOwnName) {
-            return { latest: null, headContext };
-          }
-          const ownNameContext = yield* resolveBranchHeadContext(cwd, {
-            branch: details.branch,
-            upstreamRef: null,
-            remoteName: headContext.remoteName ?? "origin",
-          });
-          const latest = yield* findLatestPrForHeadContext(cwd, ownNameContext);
-          return { latest, headContext: ownNameContext };
+        const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
+        if (!lookup) {
+          return { latest: null, headContext };
         }
         // Only skip when the branch is untracked as well: anything carrying an
         // upstream keeps the old behaviour.
@@ -1175,8 +1147,8 @@ export const make = Effect.gen(function* () {
                 }
               : {}),
           }),
-          Effect.andThen(resolveBranchHeadContext(cwd, details)),
-          Effect.map((headContext) =>
+          Effect.andThen(resolveLookupHeadContext(cwd, details)),
+          Effect.map(({ headContext }) =>
             resolveLastKnownPr(branchKey, {
               upstreamRef: details.upstreamRef,
               headBranch: headContext.headBranch,
@@ -1362,6 +1334,96 @@ export const make = Effect.gen(function* () {
     } satisfies BranchHeadContext;
   });
 
+  // The remote that holds a ref named after the local branch, or null when
+  // none does. Remote names may contain slashes, so refs are matched literally
+  // per remote instead of with a glob. When several remotes hold the name, the
+  // preferred remote wins, then origin, then the first configured remote.
+  const findRemoteTrackingRemote = Effect.fn("findRemoteTrackingRemote")(function* (
+    cwd: string,
+    branch: string,
+    preferredRemoteName: string | null,
+  ) {
+    if (branch.length === 0) return null;
+    return yield* Effect.gen(function* () {
+      const remoteNames = (yield* gitCore.execute({
+        operation: "GitManager.findRemoteTrackingRemote.remotes",
+        cwd,
+        args: ["remote"],
+        timeoutMs: 5_000,
+      })).stdout
+        .split("\n")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+      if (remoteNames.length === 0) return null;
+      const refs = new Set(
+        (yield* gitCore.execute({
+          operation: "GitManager.findRemoteTrackingRemote.refs",
+          cwd,
+          args: [
+            "for-each-ref",
+            "--format=%(refname)",
+            ...remoteNames.map((name) => `refs/remotes/${name}/${branch}`),
+          ],
+          timeoutMs: 5_000,
+        })).stdout
+          .split("\n")
+          .map((ref) => ref.trim())
+          .filter((ref) => ref.length > 0),
+      );
+      const matching = remoteNames.filter((name) => refs.has(`refs/remotes/${name}/${branch}`));
+      if (preferredRemoteName !== null && matching.includes(preferredRemoteName)) {
+        return preferredRemoteName;
+      }
+      if (matching.includes("origin")) return "origin";
+      return matching[0] ?? null;
+    }).pipe(Effect.orElseSucceed(() => null));
+  });
+
+  // `git worktree add -b feature origin/main` makes the new local branch track
+  // origin/main. That upstream is the branch's base, not its published PR
+  // head. Looking up PRs for it can attach an old reverse merge from main and
+  // auto-settle an unrelated feature thread.
+  //
+  // The branch may still have been pushed under its own name by a plain
+  // `git push <remote> feature` that never moved the upstream. When a remote
+  // holds a ref for the local name, look the PR up by that name on that
+  // remote. Without such a ref there is nothing to ask the host about, so
+  // `lookup` is false and no API call is spent. Both the cached lookup and the
+  // failure fallback resolve through here so the last-known PR compares
+  // against the same head branch.
+  const resolveLookupHeadContext = Effect.fn("resolveLookupHeadContext")(function* (
+    cwd: string,
+    details: {
+      branch: string;
+      upstreamRef: string | null;
+      defaultBranch: string | null;
+      remoteName?: string;
+    },
+  ) {
+    const headContext = yield* resolveBranchHeadContext(cwd, details);
+    const upstreamHeadIsDefault =
+      headContext.headBranch === details.defaultBranch ||
+      (details.defaultBranch === null &&
+        (headContext.headBranch === "main" || headContext.headBranch === "master"));
+    if (
+      headContext.headBranch === details.branch ||
+      !upstreamHeadIsDefault ||
+      headContext.isCrossRepository
+    ) {
+      return { headContext, lookup: true };
+    }
+    const remoteName = yield* findRemoteTrackingRemote(cwd, details.branch, headContext.remoteName);
+    if (remoteName === null) {
+      return { headContext, lookup: false };
+    }
+    const ownNameContext = yield* resolveBranchHeadContext(cwd, {
+      branch: details.branch,
+      upstreamRef: null,
+      remoteName,
+    });
+    return { headContext: ownNameContext, lookup: true };
+  });
+
   /**
    * Whether git has no record of this branch on any remote, so a change request
    * cannot exist for it and asking the provider is a guaranteed-empty API call.
@@ -1375,24 +1437,6 @@ export const make = Effect.gen(function* () {
    * because then every branch looks unpublished; it, and any failed probe,
    * keeps the lookup.
    */
-  // True when any remote holds a ref named after the local branch.
-  const hasRemoteTrackingRef = Effect.fn("hasRemoteTrackingRef")(function* (
-    cwd: string,
-    branch: string,
-  ) {
-    if (branch.length === 0) return false;
-    return yield* gitCore
-      .execute({
-        operation: "GitManager.hasRemoteTrackingRef",
-        cwd,
-        args: ["for-each-ref", "--count=1", "--format=%(refname)", `refs/remotes/*/${branch}`],
-        timeoutMs: 5_000,
-      })
-      .pipe(
-        Effect.map((result) => result.stdout.trim().length > 0),
-        Effect.orElseSucceed(() => false),
-      );
-  });
   const isUnpublishedBranch = Effect.fn("isUnpublishedBranch")(function* (
     cwd: string,
     headContext: Pick<BranchHeadContext, "headBranch" | "localBranch">,
