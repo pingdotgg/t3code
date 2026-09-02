@@ -1,6 +1,7 @@
 import { extractTrailingElementContexts } from "../../lib/elementContext";
 import { extractTrailingPreviewAnnotation } from "../../lib/previewAnnotation";
 import { extractTrailingTerminalContexts } from "../../lib/terminalContext";
+import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
 
 /**
  * Terminal-style prompt recall for the composer. ArrowUp on an empty
@@ -146,8 +147,15 @@ export function recallableComposerPrompt(messageText: string): string {
     break;
   }
 
+  // App-composed sends are not text the user typed, so they are not history.
   const trimmed = prompt.trim();
-  return trimmed === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ? "" : trimmed;
+  if (
+    trimmed === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ||
+    trimmed.startsWith(PLAN_IMPLEMENTATION_PROMPT_PREFIX)
+  ) {
+    return "";
+  }
+  return trimmed;
 }
 
 /**

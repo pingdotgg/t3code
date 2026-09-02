@@ -6,6 +6,7 @@ import {
   materializeInlineTerminalContextPrompt,
 } from "../../lib/terminalContext";
 import { appendReviewCommentsToPrompt, buildFileReviewComment } from "../../reviewCommentContext";
+import { buildPlanImplementationPrompt } from "../../proposedPlan";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   buildComposerPromptHistoryEntries,
@@ -113,9 +114,10 @@ describe("recallableComposerPrompt", () => {
     expect(recallableComposerPrompt(both)).toBe(midPrompt);
   });
 
-  it("returns an empty string for attachment-only sends", () => {
+  it("returns an empty string for app-composed sends", () => {
     expect(recallableComposerPrompt("   ")).toBe("");
     expect(recallableComposerPrompt(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT)).toBe("");
+    expect(recallableComposerPrompt(buildPlanImplementationPrompt("# Plan\n1. do it"))).toBe("");
   });
 });
 
