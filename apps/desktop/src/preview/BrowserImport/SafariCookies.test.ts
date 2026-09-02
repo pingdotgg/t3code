@@ -218,6 +218,29 @@ describe("parseBinaryCookies", () => {
     }
   });
 
+  it("rejects record offsets that point into the page header or an earlier record", () => {
+    const valid = encodeBinaryCookies([
+      { domain: "a.test", name: "n", path: "/", value: "v", expiry: 1_000, flags: 0 },
+      { domain: "b.test", name: "m", path: "/", value: "w", expiry: 1_000, flags: 0 },
+    ]);
+    const pageStart = 8 + 4;
+    const firstRecord = valid.readUInt32LE(pageStart + 8);
+
+    // Pointing the second offset at the page's offset table would let those
+    // table bytes parse as a fabricated record.
+    const intoTable = Buffer.from(valid);
+    intoTable.writeUInt32LE(4, pageStart + 12);
+    expect(() => parseBinaryCookies(intoTable)).toThrow(SafariCookieReadError);
+
+    // Pointing it back at the first record makes the same bytes count twice.
+    const overlapping = Buffer.from(valid);
+    overlapping.writeUInt32LE(firstRecord, pageStart + 12);
+    expect(() => parseBinaryCookies(overlapping)).toThrow(SafariCookieReadError);
+
+    // And a well-formed two-record page still parses.
+    expect(parseBinaryCookies(valid)).toHaveLength(2);
+  });
+
   it("rejects string offsets that point into the record header", () => {
     const valid = encodeBinaryCookies([
       { domain: "a.test", name: "n", path: "/", value: "v", expiry: 1_000, flags: 0 },

@@ -99,21 +99,32 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
 
     // Page bodies switch to little-endian after the big-endian header.
     const cookieCount = page.readUInt32LE(4);
-    if (COOKIE_PAGE_HEADER_SIZE + cookieCount * 4 > page.length) {
+    const offsetTableEnd = COOKIE_PAGE_HEADER_SIZE + cookieCount * 4;
+    if (offsetTableEnd > page.length) {
       throw new SafariCookieReadError({ reason: "readFailed" });
     }
+    // Every record accepted so far, so a later offset cannot point back into
+    // one of them: the page header, the offset table, and earlier records are
+    // all bytes that would otherwise parse as a fabricated cookie.
+    const accepted: Array<readonly [start: number, end: number]> = [];
     for (let index = 0; index < cookieCount; index += 1) {
       const cookieStart = page.readUInt32LE(8 + index * 4);
-      if (cookieStart + COOKIE_RECORD_HEADER_SIZE > page.length) {
+      if (cookieStart < offsetTableEnd || cookieStart + COOKIE_RECORD_HEADER_SIZE > page.length) {
         throw new SafariCookieReadError({ reason: "readFailed" });
       }
       // Bounded by the record's own length so a string offset cannot run past
       // it into the following record's bytes.
       const recordSize = page.readUInt32LE(cookieStart);
-      if (recordSize < COOKIE_RECORD_HEADER_SIZE || cookieStart + recordSize > page.length) {
+      const cookieEnd = cookieStart + recordSize;
+      if (
+        recordSize < COOKIE_RECORD_HEADER_SIZE ||
+        cookieEnd > page.length ||
+        accepted.some(([start, end]) => cookieStart < end && cookieEnd > start)
+      ) {
         throw new SafariCookieReadError({ reason: "readFailed" });
       }
-      const cookie = page.subarray(cookieStart, cookieStart + recordSize);
+      accepted.push([cookieStart, cookieEnd]);
+      const cookie = page.subarray(cookieStart, cookieEnd);
 
       const flags = cookie.readUInt32LE(8);
       const urlOffset = cookie.readUInt32LE(16);
