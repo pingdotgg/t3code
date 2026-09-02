@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import { ClientPresentation, SshEnvironmentGateway } from "../platform/capabilities.ts";
@@ -11,13 +12,15 @@ import {
   BearerConnectionProfile,
   SshConnectionProfile,
 } from "./catalog.ts";
-import { BearerConnectionTarget, SshConnectionTarget } from "./model.ts";
+import { BearerConnectionTarget, ConnectionBlockedError, SshConnectionTarget } from "./model.ts";
 import {
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
   prepareSshEnvironmentVariablesUpdate,
   prepareSshRegistration,
+  updateSshEnvironmentVariables,
 } from "./onboarding.ts";
+import * as EnvironmentRegistry from "./registry.ts";
 
 const CLIENT_PRESENTATION_LAYER = Layer.succeed(
   ClientPresentation,
@@ -322,6 +325,70 @@ describe("connection onboarding", () => {
         username: "developer",
         port: 22,
       });
+    }),
+  );
+
+  it.effect("validates updated SSH environment variables before persisting them", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("environment-ssh");
+      const target = new SshConnectionTarget({
+        environmentId,
+        label: "Remote development box",
+        connectionId: "ssh:environment-ssh",
+      });
+      const profile = new SshConnectionProfile({
+        connectionId: target.connectionId,
+        environmentId,
+        label: target.label,
+        target: {
+          alias: "devbox",
+          hostname: "devbox.example.test",
+          username: "developer",
+          port: 22,
+          environmentVariables: { TOKEN: "old-value" },
+        },
+      });
+      const entries = yield* SubscriptionRef.make(
+        new Map([[environmentId, { target, profile: Option.some(profile) }]]),
+      );
+      let registerCount = 0;
+      let preparedTarget: typeof profile.target | null = null;
+      const registry = EnvironmentRegistry.EnvironmentRegistry.of({
+        entries,
+        register: () =>
+          Effect.sync(() => {
+            registerCount += 1;
+          }),
+      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+      const gateway = SshEnvironmentGateway.of({
+        provision: () => Effect.die("unused"),
+        prepare: (input) => {
+          preparedTarget = input.target;
+          return Effect.fail(
+            new ConnectionBlockedError({
+              reason: "configuration",
+              detail: "TOKEN is not selected by SendEnv.",
+            }),
+          );
+        },
+        disconnect: () => Effect.die("unused"),
+      });
+
+      const error = yield* updateSshEnvironmentVariables({
+        environmentId,
+        environmentVariables: { TOKEN: "new-value" },
+      }).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
+        Effect.provideService(SshEnvironmentGateway, gateway),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "configuration",
+      });
+      expect(preparedTarget).toMatchObject({ environmentVariables: { TOKEN: "new-value" } });
+      expect(registerCount).toBe(0);
     }),
   );
 });

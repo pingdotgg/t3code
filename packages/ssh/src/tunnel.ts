@@ -1778,45 +1778,21 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         }),
       );
     }
-    const baseResolved = yield* resolveSshTarget(
-      target.alias || target.hostname,
-      target.environmentVariables,
-    );
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-      ...(target.environmentVariables === undefined
-        ? {}
-        : { environmentVariables: target.environmentVariables }),
-    };
-    const { key, requestedKey, resolvedKey } = resolveTunnelKey(target, resolvedTarget);
+    const { environmentVariables: _environmentVariables, ...cleanupTarget } = target;
+    const key = targetConnectionKey(cleanupTarget);
     yield* withTunnelMutationLock(
       key,
       Effect.gen(function* () {
-        rememberTunnelTargetKeys(key, requestedKey, resolvedKey, resolvedTarget);
         const entry = tunnels.get(key) ?? null;
-        yield* Effect.logDebug("ssh.environment.disconnect.targetResolved", {
-          ...sshTargetLogFields(resolvedTarget),
+        yield* Effect.logDebug("ssh.environment.disconnect.savedTarget", {
+          ...sshTargetLogFields(cleanupTarget),
           key,
           hasTunnel: entry !== null,
           hasPendingTunnel: pendingTunnelEntries.has(key),
         });
-        if (entry !== null) {
-          yield* closeTunnelEntry(entry);
-        }
-        yield* cancelPendingTunnelEntry(key, resolvedTarget);
-        if (entry === null) {
-          yield* runWithSshAuth({
-            key,
-            target: resolvedTarget,
-            operation: (authOptions) => stopRemoteServer(resolvedTarget, authOptions),
-          });
-        }
-        forgetTunnelTargetKeys(key);
-        authSecrets.delete(key);
+        yield* cleanupTunnelKey(key, cleanupTarget, true);
         yield* Effect.logInfo("ssh.environment.disconnect.succeeded", {
-          ...sshTargetLogFields(resolvedTarget),
+          ...sshTargetLogFields(cleanupTarget),
           key,
         });
       }),

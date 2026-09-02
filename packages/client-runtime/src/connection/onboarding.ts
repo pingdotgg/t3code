@@ -294,10 +294,16 @@ export const updateSshEnvironmentVariables = Effect.fn(
   "clientRuntime.connection.onboarding.updateSshEnvironmentVariables",
 )(function* (input: SshEnvironmentVariablesUpdateInput) {
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  const gateway = yield* ClientCapabilities.SshEnvironmentGateway;
   const entry = (yield* SubscriptionRef.get(registry.entries)).get(input.environmentId);
   const registration = yield* prepareSshEnvironmentVariablesUpdate({
     input,
     entry: Option.fromUndefinedOr(entry),
+  });
+  yield* gateway.prepare({
+    connectionId: registration.profile.connectionId,
+    expectedEnvironmentId: registration.profile.environmentId,
+    target: registration.profile.target,
   });
   yield* registry.register(registration);
 });
@@ -324,6 +330,7 @@ export const make = Effect.gen(function* () {
     updateSshEnvironmentVariables: (input) =>
       updateSshEnvironmentVariables(input).pipe(
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
+        Effect.provideService(ClientCapabilities.SshEnvironmentGateway, ssh),
       ),
     updateBearer: (input) =>
       updateBearerConnection(input).pipe(

@@ -524,6 +524,48 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.effect("disconnects a saved target without a tracked tunnel or SendEnv validation", () => {
+    let resolveCount = 0;
+    let stopCommandCount = 0;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-G")) {
+          resolveCount += 1;
+          return makeFailedProcess("SSH config is unavailable\n");
+        }
+        if (args.includes("sh")) {
+          stopCommandCount += 1;
+          return makeSuccessfulProcess('{"stopped":true}\n');
+        }
+        return makeSuccessfulProcess("\n");
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshPasswordPrompt.disabledLayer,
+      SshEnvironmentManager.layer(),
+    );
+    const savedTarget = {
+      alias: "devbox",
+      hostname: "resolved.example.com",
+      username: "resolved-user",
+      port: 2200,
+      environmentVariables: { TOKEN: "forwarded-value" },
+    } as const;
+
+    return Effect.gen(function* () {
+      const manager = yield* SshEnvironmentManager;
+      yield* manager.disconnectEnvironment(savedTarget);
+
+      assert.equal(resolveCount, 0);
+      assert.equal(stopCommandCount, 1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.effect("stops the resolved target after tunnel creation fails", () => {
     const postLaunchCommands: Array<ReadonlyArray<string>> = [];
     const spawner = ChildProcessSpawner.make((command) =>
