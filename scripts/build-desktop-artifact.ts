@@ -1730,16 +1730,18 @@ export const preflightWindowsDesktopBuild = Effect.fn("preflightWindowsDesktopBu
               rustTargetIsInstalled(rustTarget),
             ]).pipe(Effect.map(([cargo, target]) => cargo && target)),
         python: Effect.succeed(python !== undefined),
-        msvc: desktopBuildProbeSucceeds(
-          ChildProcess.make("powershell.exe", [
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            windowsVswherePrerequisiteScript(input.arch),
-          ]),
-          "Visual Studio Build Tools",
-        ),
+        msvc: reuseResourceMonitor
+          ? Effect.succeed(true)
+          : desktopBuildProbeSucceeds(
+              ChildProcess.make("powershell.exe", [
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                windowsVswherePrerequisiteScript(input.arch),
+              ]),
+              "Visual Studio Build Tools",
+            ),
         tar: input.bundlesWslRuntime
           ? desktopBuildProbeSucceeds(ChildProcess.make("tar.exe", ["--version"]), "tar")
           : Effect.succeed(true),
