@@ -20,6 +20,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { cn } from "~/lib/utils";
+import { isAbsolutePath } from "~/terminal-links";
 
 import {
   type FileBreadcrumb,
@@ -251,6 +252,7 @@ function DirectoryBreadcrumb(props: FileBreadcrumbsProps & { readonly crumb: Fil
 }
 
 export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
+  const hostPath = isAbsolutePath(props.relativePath);
   const breadcrumbs = useMemo(
     () => fileBreadcrumbs(props.projectName, props.relativePath),
     [props.projectName, props.relativePath],
@@ -269,6 +271,8 @@ export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
         <span aria-current="page">
           <BreadcrumbLabel current label={crumb.label} pathLabel={crumb.path} />
         </span>
+      ) : hostPath ? (
+        <BreadcrumbLabel label={crumb.label} pathLabel={crumb.path} />
       ) : (
         <DirectoryBreadcrumb {...props} crumb={crumb} />
       )}
