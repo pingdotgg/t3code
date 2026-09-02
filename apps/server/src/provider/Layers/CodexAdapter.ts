@@ -65,6 +65,11 @@ import {
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import {
+  providerUsageLimitFromError,
+  retryAtFromEpochSeconds,
+  type ProviderUsageLimit,
+} from "../usageLimits.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -94,6 +99,34 @@ interface CodexAdapterSessionContext {
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
   stopped: boolean;
+}
+
+interface CodexUsageLimitState {
+  latest: ProviderUsageLimit | undefined;
+}
+
+function codexRateLimitResetAt(
+  snapshot: EffectCodexSchema.V2AccountRateLimitsUpdatedNotification__RateLimitSnapshot,
+) {
+  const exhaustedResetCandidates = [
+    (snapshot.primary?.usedPercent ?? 0) >= 100 ? snapshot.primary?.resetsAt : undefined,
+    (snapshot.secondary?.usedPercent ?? 0) >= 100 ? snapshot.secondary?.resetsAt : undefined,
+    snapshot.spendControlReached === true ||
+    (snapshot.individualLimit?.remainingPercent ?? 100) <= 0
+      ? snapshot.individualLimit?.resetsAt
+      : undefined,
+  ].filter((value): value is number => typeof value === "number");
+  const resetCandidates =
+    exhaustedResetCandidates.length > 0
+      ? exhaustedResetCandidates
+      : [
+          snapshot.primary?.resetsAt,
+          snapshot.secondary?.resetsAt,
+          snapshot.individualLimit?.resetsAt,
+        ].filter((value): value is number => typeof value === "number");
+  return resetCandidates.length === 0
+    ? undefined
+    : retryAtFromEpochSeconds(Math.max(...resetCandidates));
 }
 
 function mapCodexRuntimeError(
@@ -770,6 +803,7 @@ function mapCollabAgentEvent(
 function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
+  usageLimitState: CodexUsageLimitState,
 ): ReadonlyArray<ProviderRuntimeEvent> {
   if (event.kind === "notification" && event.method.startsWith("collabAgent/")) {
     return mapCollabAgentEvent(event, canonicalThreadId);
@@ -778,13 +812,18 @@ function mapToRuntimeEvents(
     if (!event.message) {
       return [];
     }
+    const usageLimit = providerUsageLimitFromError({
+      message: event.message,
+      detail: event.payload,
+    });
     return [
       {
         ...runtimeEventBase(event, canonicalThreadId),
         type: "runtime.error",
         payload: {
           message: event.message,
-          class: "provider_error",
+          class: usageLimit === null ? "provider_error" : "usage_limit",
+          ...(usageLimit?.retryAt !== undefined ? { retryAt: usageLimit.retryAt } : {}),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
@@ -1414,9 +1453,15 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "account/rateLimits/updated") {
-    if (!readPayload(EffectCodexSchema.V2AccountRateLimitsUpdatedNotification, event.payload)) {
+    const payload = readPayload(
+      EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
+      event.payload,
+    );
+    if (!payload) {
       return [];
     }
+    const retryAt = codexRateLimitResetAt(payload.rateLimits);
+    usageLimitState.latest = retryAt === undefined ? {} : { retryAt };
     return [
       {
         type: "account.rate-limits.updated",
@@ -1540,13 +1585,32 @@ function mapToRuntimeEvents(
     const payload = readPayload(EffectCodexSchema.V2ErrorNotification, event.payload);
     const message = payload?.error.message ?? event.message ?? "Provider runtime error";
     const willRetry = payload?.willRetry === true;
+    const parsedUsageLimit = providerUsageLimitFromError({
+      message,
+      detail: event.payload,
+      ...(payload?.error.codexErrorInfo === "usageLimitExceeded" &&
+      usageLimitState.latest?.retryAt !== undefined
+        ? { retryAt: usageLimitState.latest.retryAt }
+        : {}),
+    });
+    const usageLimit =
+      payload?.error.codexErrorInfo === "usageLimitExceeded"
+        ? (parsedUsageLimit ?? usageLimitState.latest ?? {})
+        : parsedUsageLimit;
     return [
       {
         type: willRetry ? "runtime.warning" : "runtime.error",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           message,
-          ...(!willRetry ? { class: "provider_error" as const } : {}),
+          ...(!willRetry
+            ? {
+                class: usageLimit === null ? ("provider_error" as const) : ("usage_limit" as const),
+              }
+            : {}),
+          ...(!willRetry && usageLimit?.retryAt !== undefined
+            ? { retryAt: usageLimit.retryAt }
+            : {}),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
@@ -1740,10 +1804,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         // this a child of `startSession`, and Effect interrupts a fiber's
         // children when it completes, so the consumer died on return and every
         // runtime event the session emitted afterwards was dropped.
+        const usageLimitState: CodexUsageLimitState = { latest: undefined };
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            const runtimeEvents = mapToRuntimeEvents(event, event.threadId, usageLimitState);
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,

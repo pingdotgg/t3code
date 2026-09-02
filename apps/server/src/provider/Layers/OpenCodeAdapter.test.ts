@@ -1255,6 +1255,49 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("classifies native OpenCode quota errors as usage limits", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-usage-limit");
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "session.error",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            error: {
+              name: "APIError",
+              data: {
+                message: "OpenCode provider request failed.",
+                statusCode: 429,
+              },
+            },
+          },
+        },
+      ];
+      const runtimeErrorFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "runtime.error"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const runtimeError = yield* Fiber.join(runtimeErrorFiber).pipe(Effect.timeout("1 second"));
+      NodeAssert.equal(runtimeError._tag, "Some");
+      if (runtimeError._tag !== "Some" || runtimeError.value.type !== "runtime.error") {
+        throw new Error("Expected an OpenCode runtime error");
+      }
+      NodeAssert.equal(runtimeError.value.payload.class, "usage_limit");
+      NodeAssert.equal(runtimeError.value.payload.message, "OpenCode provider request failed.");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("rolls back session state when sendTurn fails before OpenCode accepts the prompt", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

@@ -85,4 +85,17 @@ describe("ThreadErrorBanner", () => {
     expect(markup).toContain("h-lh w-4");
     expect(markup).toContain("h-lh self-start");
   });
+
+  it("renders automatic resume status with a dismiss action", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error="Usage limit reached"
+        actionDescription="Automatic resume scheduled for Aug 28, 1:10 PM."
+        onDismiss={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Automatic resume scheduled");
+    expect(markup).toContain('aria-label="Dismiss error"');
+  });
 });

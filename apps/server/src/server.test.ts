@@ -108,6 +108,7 @@ import * as ServerConfig from "./config.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
 import {
   isThreadDetailEvent,
+  shouldStreamThreadDetailEvent,
   resolveAvailableEditorsForConfig,
   resolveFileManagerRevealKindForConfig,
 } from "./ws.ts";
@@ -1500,6 +1501,20 @@ const NodeHttpServerTestWithWsDeflate = HttpServer.layerTestClient.pipe(
 );
 
 it.layer(NodeServices.layer)("server router seam", (it) => {
+  it("streams usage-limit resume state changes to active thread clients", () => {
+    for (const type of [
+      "thread.usage-limit-resume-scheduled",
+      "thread.usage-limit-resume-cancelled",
+      "thread.usage-limit-resume-attempted",
+    ] as const) {
+      assertTrue(isThreadDetailEvent({ type } as OrchestrationEvent));
+      assertTrue(shouldStreamThreadDetailEvent({ type } as OrchestrationEvent, "web"));
+      assertTrue(!shouldStreamThreadDetailEvent({ type } as OrchestrationEvent, "mobile"));
+      assertTrue(!shouldStreamThreadDetailEvent({ type } as OrchestrationEvent, undefined));
+      assertTrue(shouldStreamThreadDetailEvent({ type } as OrchestrationEvent, "desktop"));
+    }
+  });
+
   it.effect("parks HTTP ingress until command readiness", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

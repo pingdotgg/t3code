@@ -250,6 +250,111 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("preserves Cursor usage-limit prompt errors for orchestration", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-usage-limit-error");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_FAIL_PROMPT: "1",
+          T3_ACP_FAIL_PROMPT_MESSAGE: "You've hit your Cursor usage limit.",
+        }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const error = yield* Effect.flip(
+        adapter.sendTurn({
+          threadId,
+          input: "continue the task",
+          attachments: [],
+        }),
+      );
+
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      assert.include(error.message, "You've hit your Cursor usage limit.");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("classifies Cursor's native ACP resource-exhausted message", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-native-usage-limit-error");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_PROMPT_RESPONSE_TEXT:
+            "Error: RetriableError: [resource_exhausted] You have reached your Cursor usage limit. Try again later.",
+        }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const sawRuntimeError = yield* Deferred.make<ProviderRuntimeEvent>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          if (event.threadId !== threadId) {
+            return;
+          }
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.threadId === threadId && event.type === "runtime.error"
+              ? Deferred.succeed(sawRuntimeError, event).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "continue the task",
+        attachments: [],
+      });
+
+      const runtimeError = yield* Deferred.await(sawRuntimeError);
+      assert.equal(runtimeError.type, "runtime.error");
+      if (runtimeError.type === "runtime.error") {
+        assert.equal(runtimeError.payload.class, "usage_limit");
+        assert.equal(
+          runtimeError.payload.message,
+          "You have reached your Cursor usage limit. Try again later.",
+        );
+      }
+
+      const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.isDefined(completed);
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.payload.state, "failed");
+      }
+      assert.notInclude(
+        runtimeEvents.map((event) => event.type),
+        "content.delta",
+      );
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

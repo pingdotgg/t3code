@@ -25,6 +25,7 @@ import {
   ModelSelection,
   ProjectId,
   ThreadLinkedPullRequest,
+  ThreadUsageLimitResume,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
@@ -96,6 +97,7 @@ const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
+    usageLimitResume: Schema.NullOr(Schema.fromJsonString(ThreadUsageLimitResume)),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -323,6 +325,8 @@ function mapSessionRow(
     runtimeMode: row.runtimeMode,
     activeTurnId: row.activeTurnId,
     lastError: row.lastError,
+    ...(row.lastErrorClass !== null ? { lastErrorClass: row.lastErrorClass } : {}),
+    ...(row.retryAt !== null ? { retryAt: row.retryAt } : {}),
     updatedAt: row.updatedAt,
   };
 }
@@ -464,6 +468,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          usage_limit_resume_json AS "usageLimitResume",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           title_regeneration_request_id AS "titleRegenerationRequestId",
@@ -502,6 +507,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          usage_limit_resume_json AS "usageLimitResume",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           title_regeneration_request_id AS "titleRegenerationRequestId",
@@ -542,6 +548,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          usage_limit_resume_json AS "usageLimitResume",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           title_regeneration_request_id AS "titleRegenerationRequestId",
@@ -636,6 +643,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
+          last_error_class AS "lastErrorClass",
+          retry_at AS "retryAt",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
         ORDER BY thread_id ASC
@@ -657,6 +666,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
           sessions.last_error AS "lastError",
+          sessions.last_error_class AS "lastErrorClass",
+          sessions.retry_at AS "retryAt",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
         INNER JOIN projection_threads threads
@@ -682,6 +693,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
           sessions.last_error AS "lastError",
+          sessions.last_error_class AS "lastErrorClass",
+          sessions.retry_at AS "retryAt",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
         INNER JOIN projection_threads threads
@@ -986,6 +999,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          usage_limit_resume_json AS "usageLimitResume",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           title_regeneration_request_id AS "titleRegenerationRequestId",
@@ -1178,6 +1192,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
+          last_error_class AS "lastErrorClass",
+          retry_at AS "retryAt",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
         WHERE thread_id = ${threadId}
@@ -1270,7 +1286,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             'thread.activity-appended',
             'thread.turn-diff-completed',
             'thread.reverted',
-            'thread.session-set'
+            'thread.session-set',
+            'thread.usage-limit-resume-scheduled',
+            'thread.usage-limit-resume-cancelled',
+            'thread.usage-limit-resume-attempted'
           )
       `,
   });
@@ -1839,6 +1858,8 @@ pending_approval_requests AS (
                   runtimeMode: row.runtimeMode,
                   activeTurnId: row.activeTurnId,
                   lastError: row.lastError,
+                  ...(row.lastErrorClass !== null ? { lastErrorClass: row.lastErrorClass } : {}),
+                  ...(row.retryAt !== null ? { retryAt: row.retryAt } : {}),
                   updatedAt: row.updatedAt,
                 });
               }
@@ -1883,6 +1904,7 @@ pending_approval_requests AS (
                 unsettledAt: row.unsettledAt,
                 snoozedUntil: row.snoozedUntil,
                 snoozedAt: row.snoozedAt,
+                usageLimitResume: row.usageLimitResume,
                 pinnedAt: row.pinnedAt,
                 pinOrderKey: row.pinOrderKey ?? null,
                 titleRegeneration: mapTitleRegeneration(row),
@@ -2094,6 +2116,7 @@ pending_approval_requests AS (
                   unsettledAt: row.unsettledAt,
                   snoozedUntil: row.snoozedUntil,
                   snoozedAt: row.snoozedAt,
+                  usageLimitResume: row.usageLimitResume,
                   pinnedAt: row.pinnedAt,
                   pinOrderKey: row.pinOrderKey ?? null,
                   titleRegeneration: mapTitleRegeneration(row),
@@ -2234,6 +2257,7 @@ pending_approval_requests AS (
                       unsettledAt: row.unsettledAt,
                       snoozedUntil: row.snoozedUntil,
                       snoozedAt: row.snoozedAt,
+                      usageLimitResume: row.usageLimitResume,
                       pinnedAt: row.pinnedAt,
                       pinOrderKey: row.pinOrderKey ?? null,
                       titleRegeneration: mapTitleRegeneration(row),
@@ -2383,6 +2407,7 @@ pending_approval_requests AS (
                   unsettledAt: row.unsettledAt,
                   snoozedUntil: row.snoozedUntil,
                   snoozedAt: row.snoozedAt,
+                  usageLimitResume: row.usageLimitResume,
                   pinnedAt: row.pinnedAt,
                   pinOrderKey: row.pinOrderKey ?? null,
                   titleRegeneration: mapTitleRegeneration(row),
@@ -2666,6 +2691,7 @@ pending_approval_requests AS (
         unsettledAt: threadRow.value.unsettledAt,
         snoozedUntil: threadRow.value.snoozedUntil,
         snoozedAt: threadRow.value.snoozedAt,
+        usageLimitResume: threadRow.value.usageLimitResume,
         pinnedAt: threadRow.value.pinnedAt,
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         titleRegeneration: mapTitleRegeneration(threadRow.value),
@@ -2904,6 +2930,7 @@ pending_approval_requests AS (
         unsettledAt: threadRow.value.unsettledAt,
         snoozedUntil: threadRow.value.snoozedUntil,
         snoozedAt: threadRow.value.snoozedAt,
+        usageLimitResume: threadRow.value.usageLimitResume,
         pinnedAt: threadRow.value.pinnedAt,
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         titleRegeneration: mapTitleRegeneration(threadRow.value),

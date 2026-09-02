@@ -135,6 +135,7 @@ describe("searchSettings", () => {
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
+      hasThreadUsageLimitResume: false,
     });
 
     const gatedIds = new Set<string>([
@@ -151,6 +152,7 @@ describe("searchSettings", () => {
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
       "days-before-auto-settle",
+      "automatic-resume",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
@@ -163,6 +165,7 @@ describe("searchSettings", () => {
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: true,
+      hasThreadUsageLimitResume: false,
     });
 
     expect(searchSettings("auto-settle", available).map((item) => item.id)).toEqual([
@@ -170,6 +173,28 @@ describe("searchSettings", () => {
       "auto-settle-merged-threads",
       "days-before-auto-settle",
     ]);
+  });
+
+  it("shows automatic resume only when the server supports it", () => {
+    const base = {
+      hasCloudPublicConfig: false,
+      hasPrimaryEnvironment: false,
+      hasProviderSettingsEnvironment: false,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+
+    expect(
+      filterAvailableSettingsSearchItems({ ...base, hasThreadUsageLimitResume: false }).some(
+        (item) => item.id === "automatic-resume",
+      ),
+    ).toBe(false);
+    expect(
+      filterAvailableSettingsSearchItems({ ...base, hasThreadUsageLimitResume: true }).some(
+        (item) => item.id === "automatic-resume",
+      ),
+    ).toBe(true);
   });
 
   it("keeps catalog result ids unique", () => {

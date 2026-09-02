@@ -97,6 +97,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         unsettledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        usageLimitResume: null,
         pinnedAt: null,
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
@@ -161,6 +162,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         unsettledAt: null,
         snoozedUntil: "2026-03-26T09:00:00.000Z",
         snoozedAt: "2026-03-25T00:00:00.000Z",
+        usageLimitResume: null,
         pinnedAt: "2026-03-25T00:00:00.000Z",
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
@@ -191,6 +193,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         unsettledAt: "2026-03-26T00:00:00.000Z",
         snoozedUntil: null,
         snoozedAt: null,
+        usageLimitResume: null,
         pinnedAt: null,
       });
       const repersisted = yield* threads.getById({
@@ -238,6 +241,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         unsettledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        usageLimitResume: null,
         pinnedAt: null,
         latestUserMessageAt: null,
         pendingApprovalCount: 0,

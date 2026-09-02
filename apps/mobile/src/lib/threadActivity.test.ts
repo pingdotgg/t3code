@@ -234,6 +234,27 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("hides a cleared waiting notice and shows its replacement after the conversation", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-resume"),
+      projectId: ProjectId.make("project-1"),
+      title: "Example thread",
+      messages: [" ", "Example response", "Waiting for provider availability."].map(
+        (text, index) => ({
+          id: MessageId.make(`message-${index}`),
+          role: "assistant",
+          text,
+          turnId: null,
+          streaming: false,
+          createdAt: `2026-04-01T00:00:0${index}.000Z`,
+          updatedAt: "2026-04-01T00:00:03.000Z",
+        }),
+      ),
+    });
+    const feed = buildThreadFeed(thread);
+    expect(feed.map((entry) => entry.id)).toEqual(["message-1", "message-2"]);
+  });
+
   it("keeps setup failures visible without routine setup notices before or after a turn", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-worktree-setup"),

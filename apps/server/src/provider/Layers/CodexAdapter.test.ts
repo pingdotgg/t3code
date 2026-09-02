@@ -1114,6 +1114,149 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps usage-limit errors with the latest account reset timestamp", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const runtimeErrorFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "runtime.error"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-rate-limits"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-28T18:00:00.000Z",
+        method: "account/rateLimits/updated",
+        payload: {
+          rateLimits: {
+            primary: { usedPercent: 100, resetsAt: 1_787_944_200 },
+            secondary: { usedPercent: 20, resetsAt: 1_788_548_200 },
+            rateLimitReachedType: "rate_limit_reached",
+          },
+        },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        id: asEventId("evt-usage-limit"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: "2026-08-28T18:00:01.000Z",
+        method: "error",
+        message: "You have no weighted tokens left",
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          willRetry: false,
+          error: {
+            message: "You have no weighted tokens left",
+            codexErrorInfo: "usageLimitExceeded",
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const runtimeError = yield* Fiber.join(runtimeErrorFiber);
+      NodeAssert.equal(runtimeError._tag, "Some");
+      if (runtimeError._tag !== "Some" || runtimeError.value.type !== "runtime.error") {
+        return;
+      }
+      NodeAssert.equal(runtimeError.value.payload.class, "usage_limit");
+      NodeAssert.equal(runtimeError.value.payload.retryAt, "2026-08-28T19:10:00.000Z");
+    }),
+  );
+
+  it.effect("does not apply account reset times to a capacity outage", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const errorFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "runtime.error"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* runtime.emit({
+        id: asEventId("cached-account-limit"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-28T18:00:00.000Z",
+        method: "account/rateLimits/updated",
+        payload: {
+          rateLimits: { primary: { usedPercent: 100, resetsAt: 1_788_548_200 }, secondary: null },
+        },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        id: asEventId("capacity-error"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-28T18:00:01.000Z",
+        method: "error",
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          willRetry: false,
+          error: { message: "Model is at capacity", codexErrorInfo: "other" },
+        },
+      } satisfies ProviderEvent);
+      const error = yield* Fiber.join(errorFiber);
+      NodeAssert.equal(error._tag, "Some");
+      if (error._tag === "Some" && error.value.type === "runtime.error") {
+        NodeAssert.equal(error.value.payload.class, "usage_limit");
+        NodeAssert.equal(error.value.payload.retryAt, undefined);
+      }
+    }),
+  );
+
+  it.effect("preserves the message reset time after an account update without a reset", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const errorFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "runtime.error"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* runtime.emit({
+        id: asEventId("empty-limit-state"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-28T18:00:00.000Z",
+        method: "account/rateLimits/updated",
+        payload: { rateLimits: { primary: null, secondary: null } },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        id: asEventId("timed-limit-error"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-28T18:00:01.000Z",
+        method: "error",
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          willRetry: false,
+          error: {
+            message: "Usage limit reached. Try again at 7:41 PM.",
+            codexErrorInfo: "usageLimitExceeded",
+          },
+        },
+      } satisfies ProviderEvent);
+      const result = yield* Fiber.join(errorFiber);
+      NodeAssert.equal(result._tag, "Some");
+      if (result._tag !== "Some" || result.value.type !== "runtime.error") return;
+      NodeAssert.ok(result.value.payload.retryAt);
+      const reset = new Intl.DateTimeFormat("en-GB", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).format(Date.parse(result.value.payload.retryAt));
+      NodeAssert.equal(reset, "19:42");
+    }),
+  );
+
   it.effect("preserves request type when mapping serverRequest/resolved", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

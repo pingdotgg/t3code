@@ -307,7 +307,10 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
       | "thread.activity-appended"
       | "thread.turn-diff-completed"
       | "thread.reverted"
-      | "thread.session-set";
+      | "thread.session-set"
+      | "thread.usage-limit-resume-scheduled"
+      | "thread.usage-limit-resume-cancelled"
+      | "thread.usage-limit-resume-attempted";
   }
 > {
   return (
@@ -316,7 +319,22 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
     event.type === "thread.activity-appended" ||
     event.type === "thread.turn-diff-completed" ||
     event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
+    event.type === "thread.session-set" ||
+    event.type === "thread.usage-limit-resume-scheduled" ||
+    event.type === "thread.usage-limit-resume-cancelled" ||
+    event.type === "thread.usage-limit-resume-attempted"
+  );
+}
+
+export function shouldStreamThreadDetailEvent(
+  event: OrchestrationEvent,
+  surface: OrchestrationClientOrigin["surface"],
+): boolean {
+  return (
+    isThreadDetailEvent(event) &&
+    (surface === "web" ||
+      surface === "desktop" ||
+      !event.type.startsWith("thread.usage-limit-resume-"))
   );
 }
 
@@ -1479,7 +1497,7 @@ const makeWsRpcLayer = (
               const isThisThreadDetailEvent = (event: OrchestrationEvent) =>
                 event.aggregateKind === "thread" &&
                 event.aggregateId === input.threadId &&
-                isThreadDetailEvent(event);
+                shouldStreamThreadDetailEvent(event, clientOrigin.surface);
 
               const liveStream = orchestrationEngine.streamDomainEvents.pipe(
                 Stream.filter(isThisThreadDetailEvent),

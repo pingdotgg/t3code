@@ -93,8 +93,9 @@ export type RuntimeContentStreamKind = typeof RuntimeContentStreamKind.Type;
 const RuntimeSessionExitKind = Schema.Literals(["graceful", "error"]);
 export type RuntimeSessionExitKind = typeof RuntimeSessionExitKind.Type;
 
-const RuntimeErrorClass = Schema.Literals([
+export const RuntimeErrorClass = Schema.Literals([
   "provider_error",
+  "usage_limit",
   "transport_error",
   "permission_error",
   "validation_error",
@@ -777,6 +778,7 @@ export type RuntimeWarningPayload = typeof RuntimeWarningPayload.Type;
 const RuntimeErrorPayload = Schema.Struct({
   message: TrimmedNonEmptyStringSchema,
   class: Schema.optional(RuntimeErrorClass),
+  retryAt: Schema.optional(IsoDateTime),
   detail: Schema.optional(Schema.Unknown),
 });
 export type RuntimeErrorPayload = typeof RuntimeErrorPayload.Type;

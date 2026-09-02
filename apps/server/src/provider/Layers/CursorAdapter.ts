@@ -77,6 +77,7 @@ import {
 import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { providerUsageLimitFromError } from "../usageLimits.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
 const PROVIDER = ProviderDriverKind.make("cursor");
@@ -84,6 +85,26 @@ const CURSOR_RESUME_VERSION = 1 as const;
 const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
 const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
 const ACP_APPROVAL_MODE_ALIASES = ["ask"];
+const CURSOR_ACP_USAGE_LIMIT_ERROR =
+  /^\s*Error:\s*(?:RetriableError:\s*)?\[resource_exhausted\]\s*(?<message>.+?)\s*$/is;
+
+interface CursorAcpUsageLimitError {
+  readonly message: string;
+  readonly rawPayload: unknown;
+  readonly turnId: TurnId | undefined;
+}
+
+function cursorAcpUsageLimitMessage(text: string): string | undefined {
+  const match = CURSOR_ACP_USAGE_LIMIT_ERROR.exec(text);
+  if (!match) {
+    return undefined;
+  }
+  const message = match.groups?.message?.trim();
+  if (!message) {
+    return undefined;
+  }
+  return providerUsageLimitFromError({ message: text }) === null ? undefined : message;
+}
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -133,6 +154,7 @@ interface CursorSessionContext {
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
+  pendingUsageLimitError: CursorAcpUsageLimitError | undefined;
   /** Number of sendTurn prompts currently in flight or being prepared.
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
@@ -778,6 +800,7 @@ export function makeCursorAdapter(
             turns: [],
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
+            pendingUsageLimitError: undefined,
             promptsInFlight: 0,
             stopped: false,
           };
@@ -855,6 +878,15 @@ export function makeCursorAdapter(
                       event.rawPayload,
                       "acp.jsonrpc",
                     );
+                    const usageLimitMessage = cursorAcpUsageLimitMessage(event.text);
+                    if (usageLimitMessage !== undefined) {
+                      ctx.pendingUsageLimitError = {
+                        message: usageLimitMessage,
+                        rawPayload: event.rawPayload,
+                        turnId: ctx.activeTurnId,
+                      };
+                      return;
+                    }
                     yield* offerRuntimeEvent(
                       makeAcpContentDeltaEvent({
                         stamp: yield* makeEventStamp(),
@@ -948,6 +980,7 @@ export function makeCursorAdapter(
           ctx.activeTurnId = turnId;
           if (steeringTurnId === undefined) {
             ctx.lastPlanFingerprint = undefined;
+            ctx.pendingUsageLimitError = undefined;
           }
           ctx.session = {
             ...ctx.session,
@@ -1024,6 +1057,9 @@ export function makeCursorAdapter(
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
               ),
             );
+          if (!ctx.stopped) {
+            yield* ctx.acp.drainEvents;
+          }
 
           const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
           if (turnRecord) {
@@ -1042,6 +1078,27 @@ export function makeCursorAdapter(
           // superseded prompt resolving (usually cancelled) while another is
           // in flight or pending must leave the merged turn running.
           if (ctx.promptsInFlight === 1) {
+            const usageLimitError = ctx.pendingUsageLimitError;
+            ctx.pendingUsageLimitError = undefined;
+            if (usageLimitError !== undefined) {
+              yield* offerRuntimeEvent({
+                type: "runtime.error",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId,
+                payload: {
+                  message: usageLimitError.message,
+                  class: "usage_limit",
+                  detail: usageLimitError.rawPayload,
+                },
+                raw: {
+                  source: "acp.jsonrpc",
+                  method: "session/update",
+                  payload: usageLimitError.rawPayload,
+                },
+              });
+            }
             yield* offerRuntimeEvent({
               type: "turn.completed",
               ...(yield* makeEventStamp()),
@@ -1049,8 +1106,14 @@ export function makeCursorAdapter(
               threadId: input.threadId,
               turnId,
               payload: {
-                state: result.stopReason === "cancelled" ? "cancelled" : "completed",
+                state:
+                  usageLimitError !== undefined
+                    ? "failed"
+                    : result.stopReason === "cancelled"
+                      ? "cancelled"
+                      : "completed",
                 stopReason: result.stopReason ?? null,
+                ...(usageLimitError !== undefined ? { errorMessage: usageLimitError.message } : {}),
               },
             });
           }

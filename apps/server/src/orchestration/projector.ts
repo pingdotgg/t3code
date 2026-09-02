@@ -30,6 +30,9 @@ import {
   ThreadUnarchivedPayload,
   ThreadUnsettledPayload,
   ThreadUnsnoozedPayload,
+  ThreadUsageLimitResumeScheduledPayload,
+  ThreadUsageLimitResumeCancelledPayload,
+  ThreadUsageLimitResumeAttemptedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
@@ -306,6 +309,7 @@ export function projectEvent(
             unsettledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
+            usageLimitResume: null,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -412,6 +416,67 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             snoozedUntil: null,
             snoozedAt: null,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.usage-limit-resume-scheduled":
+      return decodeForEvent(
+        ThreadUsageLimitResumeScheduledPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            usageLimitResume: {
+              nextAttemptAt: payload.resumeAt,
+              ...(payload.pendingMessageId !== undefined
+                ? { pendingMessageId: payload.pendingMessageId }
+                : {}),
+              attempt: payload.attempt,
+            },
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.usage-limit-resume-attempted":
+      return decodeForEvent(
+        ThreadUsageLimitResumeAttemptedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: payload.shouldResume
+            ? updateThread(nextBase.threads, payload.threadId, {
+                usageLimitResume: {
+                  ...nextBase.threads.find((thread) => thread.id === payload.threadId)
+                    ?.usageLimitResume,
+                  nextAttemptAt: null,
+                  attempt: payload.attempt,
+                },
+                updatedAt: payload.updatedAt,
+              })
+            : nextBase.threads,
+        })),
+      );
+
+    case "thread.usage-limit-resume-cancelled":
+      return decodeForEvent(
+        ThreadUsageLimitResumeCancelledPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            usageLimitResume: null,
             updatedAt: payload.updatedAt,
           }),
         })),

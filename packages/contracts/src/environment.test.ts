@@ -27,6 +27,16 @@ describe("ExecutionEnvironmentDescriptor", () => {
     ).toBe(true);
   });
 
+  it("gates usage-limit resume commands under version skew", () => {
+    expect(decodeDescriptor(descriptor).capabilities.threadUsageLimitResume).toBeUndefined();
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, threadUsageLimitResume: true },
+      }).capabilities.threadUsageLimitResume,
+    ).toBe(true);
+  });
+
   it("treats a missing attachment upload capability as unsupported", () => {
     expect(decodeDescriptor(descriptor).capabilities.attachmentUploads).toBeUndefined();
   });

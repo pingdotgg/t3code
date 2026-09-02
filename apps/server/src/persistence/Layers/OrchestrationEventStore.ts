@@ -65,6 +65,7 @@ const HasEventAfterRequestSchema = Schema.Struct({
   aggregateKind: Schema.String,
   aggregateId: Schema.String,
   type: Schema.optional(Schema.String),
+  afterLatestEvent: Schema.optional(Schema.String),
   sequenceExclusive: NonNegativeInt,
 });
 
@@ -279,6 +280,16 @@ const makeEventStore = Effect.gen(function* () {
             AND ${sql.and([
               sql`sequence > ${request.sequenceExclusive}`,
               ...(request.type === undefined ? [] : [sql`event_type = ${request.type}`]),
+              ...(request.afterLatestEvent === undefined
+                ? []
+                : [
+                    sql`sequence > COALESCE((
+                SELECT MAX(sequence) FROM orchestration_events
+                WHERE aggregate_kind = ${request.aggregateKind}
+                  AND stream_id = ${request.aggregateId}
+                  AND event_type = ${request.afterLatestEvent}
+              ), 0)`,
+                  ]),
             ])}
           LIMIT 1
         `,

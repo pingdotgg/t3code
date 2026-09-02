@@ -16,6 +16,21 @@ const base = {
 };
 
 describe("runtimeEventToActivities task progress", () => {
+  it("uses an existing activity kind without claiming a retry is enabled", () => {
+    const [activity] = runtimeEventToActivities({
+      ...base,
+      type: "runtime.error",
+      eventId: EventId.make("evt-usage-limit"),
+      payload: {
+        message: "Usage limit reached",
+        class: "usage_limit",
+      },
+    });
+
+    expect(activity?.kind).toBe("runtime.error");
+    expect(activity?.summary).toBe("Provider usage limit or temporary unavailability");
+  });
+
   it("persists usage independently from replaceable activity", () => {
     const taskId = RuntimeTaskId.make("agent-1");
     const usageOnly = {

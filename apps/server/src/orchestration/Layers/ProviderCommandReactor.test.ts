@@ -23,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -35,6 +36,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
+import { OrchestrationListenerCallbackError } from "../Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -93,7 +95,10 @@ async function waitFor(
 
 describe("ProviderCommandReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderCommandReactor | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderCommandReactor
+    | ProjectionSnapshotQuery
+    | ServerSettingsService,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -149,9 +154,27 @@ describe("ProviderCommandReactor", () => {
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
+    readonly usageLimitResumeAttemptDispatchFailures?: number;
+    readonly usageLimitResumeSessionErrorDispatchFailures?: number;
+    readonly usageLimitResumeActivityDispatchFailures?: number;
+    readonly usageLimitResumeTransitionDispatchFailures?: number;
+    readonly usageLimitResumeTransitionFailureThreadId?: ThreadId;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly createSecondThread?: boolean;
+    readonly usageLimitResumeScheduledBeforeStart?: string;
+    readonly usageLimitResumeAttemptedBeforeStart?: boolean;
+    readonly usageLimitResumeAttemptedSecondThreadBeforeStart?: boolean;
+    readonly usageLimitedBeforeStart?: boolean;
+    readonly enableAutomaticResume?: boolean;
+    readonly usageLimitResumeCancelledBeforeStart?: boolean;
+    readonly newLimitAfterCancellation?: boolean;
+    readonly usageLimitRetryAtBeforeStart?: string;
     readonly interruptTurnEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly stopSessionEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
+    readonly sendTurnEffect?: () => Effect.Effect<
+      { readonly threadId: ThreadId; readonly turnId: TurnId },
+      ProviderAdapterRequestError
+    >;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -231,11 +254,13 @@ describe("ProviderCommandReactor", () => {
         ),
       );
     });
-    const sendTurn = vi.fn((_: unknown) =>
-      Effect.succeed({
-        threadId: ThreadId.make("thread-1"),
-        turnId: asTurnId("turn-1"),
-      }),
+    const sendTurn = vi.fn(
+      (_: unknown) =>
+        input?.sendTurnEffect?.() ??
+        Effect.succeed({
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+        }),
     );
     const interruptTurn = vi.fn((_: unknown) => input?.interruptTurnEffect?.() ?? Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
@@ -374,6 +399,17 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(SqlitePersistenceMemory),
     );
     let titleRegenerationCompletionDispatchAttempts = 0;
+    let usageLimitResumeAttemptDispatchAttempts = 0;
+    let usageLimitResumeSessionErrorDispatchAttempts = 0;
+    let usageLimitResumeActivityDispatchAttempts = 0;
+    let usageLimitResumeTransitionDispatchAttempts = 0;
+    const usageLimitResumeTransitionDispatchAttemptsByThread = new Map<ThreadId, number>();
+    const usageLimitResumeAttemptObserved = Effect.runSync(Deferred.make<void>());
+    const usageLimitResumeScheduled = Effect.runSync(Deferred.make<void>());
+    const usageLimitResumeAttemptDispatched = Effect.runSync(Deferred.make<void>());
+    const usageLimitResumeTransitionAttemptObserved = Effect.runSync(Deferred.make<void>());
+    const usageLimitResumeTransitionDispatched = Effect.runSync(Deferred.make<void>());
+    const usageLimitResumeThread2TransitionDispatched = Effect.runSync(Deferred.make<void>());
     const reactorOrchestrationLayer = Layer.effect(
       OrchestrationEngineService,
       Effect.gen(function* () {
@@ -390,7 +426,129 @@ describe("ProviderCommandReactor", () => {
                 return Effect.die(new Error("Injected title regeneration completion failure"));
               }
             }
-            return engine.dispatch(command);
+            if (command.type === "thread.usage-limit-resume.attempt") {
+              return Effect.suspend(() => {
+                usageLimitResumeAttemptDispatchAttempts += 1;
+                const markObserved = Deferred.succeed(usageLimitResumeAttemptObserved, undefined);
+                if (
+                  usageLimitResumeAttemptDispatchAttempts <=
+                  (input?.usageLimitResumeAttemptDispatchFailures ?? 0)
+                ) {
+                  return markObserved.pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new OrchestrationListenerCallbackError({
+                          listener: "domain-event",
+                          detail: "Injected usage-limit attempt dispatch failure",
+                        }),
+                      ),
+                    ),
+                  );
+                }
+                return markObserved.pipe(
+                  Effect.andThen(engine.dispatch(command)),
+                  Effect.tap(() => Deferred.succeed(usageLimitResumeAttemptDispatched, undefined)),
+                );
+              });
+            }
+            if (
+              command.type === "thread.session.set" &&
+              command.session.status === "error" &&
+              !String(command.commandId).startsWith("cmd-mark-usage-limited")
+            ) {
+              usageLimitResumeSessionErrorDispatchAttempts += 1;
+              if (
+                usageLimitResumeSessionErrorDispatchAttempts <=
+                (input?.usageLimitResumeSessionErrorDispatchFailures ?? 0)
+              ) {
+                return Effect.fail(
+                  new OrchestrationListenerCallbackError({
+                    listener: "domain-event",
+                    detail: "Injected usage-limit session-error dispatch failure",
+                  }),
+                );
+              }
+            }
+            if (
+              command.type === "thread.activity.append" &&
+              command.activity.kind === "provider.turn.start.failed"
+            ) {
+              usageLimitResumeActivityDispatchAttempts += 1;
+              if (
+                usageLimitResumeActivityDispatchAttempts <=
+                (input?.usageLimitResumeActivityDispatchFailures ?? 0)
+              ) {
+                return Effect.fail(
+                  new OrchestrationListenerCallbackError({
+                    listener: "domain-event",
+                    detail: "Injected usage-limit activity dispatch failure",
+                  }),
+                );
+              }
+            }
+            if (
+              command.type === "thread.usage-limit-resume.retry" ||
+              command.type === "thread.usage-limit-resume.cancel"
+            ) {
+              return Effect.suspend(() => {
+                usageLimitResumeTransitionDispatchAttempts += 1;
+                const markObserved = Deferred.succeed(
+                  usageLimitResumeTransitionAttemptObserved,
+                  undefined,
+                );
+                const threadAttempts =
+                  (usageLimitResumeTransitionDispatchAttemptsByThread.get(command.threadId) ?? 0) +
+                  1;
+                usageLimitResumeTransitionDispatchAttemptsByThread.set(
+                  command.threadId,
+                  threadAttempts,
+                );
+                const failureThreadId = input?.usageLimitResumeTransitionFailureThreadId;
+                if (
+                  (failureThreadId === undefined || failureThreadId === command.threadId) &&
+                  threadAttempts <= (input?.usageLimitResumeTransitionDispatchFailures ?? 0)
+                ) {
+                  return markObserved.pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new OrchestrationListenerCallbackError({
+                          listener: "domain-event",
+                          detail: "Injected usage-limit transition dispatch failure",
+                        }),
+                      ),
+                    ),
+                  );
+                }
+                return markObserved.pipe(
+                  Effect.andThen(engine.dispatch(command)),
+                  Effect.tap(() =>
+                    Effect.all(
+                      [
+                        Deferred.succeed(usageLimitResumeTransitionDispatched, undefined),
+                        ...(command.threadId === ThreadId.make("thread-2")
+                          ? [
+                              Deferred.succeed(
+                                usageLimitResumeThread2TransitionDispatched,
+                                undefined,
+                              ),
+                            ]
+                          : []),
+                      ],
+                      { discard: true },
+                    ),
+                  ),
+                );
+              });
+            }
+            return engine
+              .dispatch(command)
+              .pipe(
+                Effect.tap(() =>
+                  command.type === "thread.usage-limit-resume.schedule"
+                    ? Deferred.succeed(usageLimitResumeScheduled, undefined)
+                    : Effect.void,
+                ),
+              );
           },
           get streamDomainEvents() {
             return engine.streamDomainEvents;
@@ -400,6 +558,7 @@ describe("ProviderCommandReactor", () => {
       }),
     ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderCommandReactorLive.pipe(
+      Layer.provideMerge(OrchestrationEventStoreLive.pipe(Layer.provide(SqlitePersistenceMemory))),
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
@@ -426,7 +585,11 @@ describe("ProviderCommandReactor", () => {
           generateThreadTitle,
         }),
       ),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        ServerSettingsService.layerTest({
+          enableAutomaticResume: input?.enableAutomaticResume ?? true,
+        }),
+      ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -436,6 +599,29 @@ describe("ProviderCommandReactor", () => {
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
     const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
+    let usageLimitSessionIndex = 0;
+    const markUsageLimited = (threadId = ThreadId.make("thread-1")) => {
+      usageLimitSessionIndex += 1;
+      return engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make(`cmd-mark-usage-limited-${usageLimitSessionIndex}`),
+        threadId,
+        session: {
+          threadId,
+          status: "error",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: "Usage limit reached",
+          lastErrorClass: "usage_limit",
+          ...(input?.usageLimitRetryAtBeforeStart !== undefined
+            ? { retryAt: input.usageLimitRetryAtBeforeStart }
+            : {}),
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+    };
 
     await Effect.runPromise(
       engine.dispatch({
@@ -463,7 +649,11 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
-    if (input?.titleRegenerationBeforeStart === "two") {
+    if (
+      input?.titleRegenerationBeforeStart === "two" ||
+      input?.createSecondThread === true ||
+      input?.usageLimitResumeAttemptedSecondThreadBeforeStart === true
+    ) {
       await Effect.runPromise(
         engine.dispatch({
           type: "thread.create",
@@ -498,13 +688,69 @@ describe("ProviderCommandReactor", () => {
         }),
       );
     }
+    const scheduledResumeAt =
+      input?.usageLimitResumeScheduledBeforeStart ??
+      (input?.usageLimitResumeAttemptedBeforeStart === true
+        ? "2099-01-01T00:00:00.000Z"
+        : undefined);
+    const usageLimitResumeThreadIds = [
+      ThreadId.make("thread-1"),
+      ...(input?.usageLimitResumeAttemptedSecondThreadBeforeStart === true
+        ? [ThreadId.make("thread-2")]
+        : []),
+    ];
+    if (input?.usageLimitedBeforeStart === true && scheduledResumeAt === undefined) {
+      await Effect.runPromise(markUsageLimited());
+    }
+    if (scheduledResumeAt !== undefined) {
+      for (const [index, threadId] of usageLimitResumeThreadIds.entries()) {
+        await Effect.runPromise(markUsageLimited(threadId));
+        await Effect.runPromise(
+          engine.dispatch({
+            type: "thread.usage-limit-resume.schedule",
+            commandId: CommandId.make(`cmd-resume-before-reactor-start-${index + 1}`),
+            threadId,
+            resumeAt: scheduledResumeAt,
+          }),
+        );
+      }
+    }
+    if (input?.usageLimitResumeAttemptedBeforeStart === true && scheduledResumeAt !== undefined) {
+      for (const [index, threadId] of usageLimitResumeThreadIds.entries()) {
+        await Effect.runPromise(
+          engine.dispatch({
+            type: "thread.usage-limit-resume.attempt",
+            commandId: CommandId.make(`cmd-resume-attempt-before-reactor-start-${index + 1}`),
+            threadId,
+            expectedAttemptAt: scheduledResumeAt,
+            createdAt: scheduledResumeAt,
+          }),
+        );
+      }
+    }
 
+    if (input?.usageLimitResumeCancelledBeforeStart) {
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.usage-limit-resume.cancel",
+          commandId: CommandId.make("cancel-before-restart"),
+          threadId: ThreadId.make("thread-1"),
+        }),
+      );
+    }
+    if (input?.newLimitAfterCancellation) await Effect.runPromise(markUsageLimited());
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
 
     return {
       engine,
+      updateSettings: (enableAutomaticResume: boolean) =>
+        runtime!.runPromise(
+          Effect.flatMap(ServerSettingsService, (settings) =>
+            settings.updateSettings({ enableAutomaticResume }),
+          ),
+        ),
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       startSession,
       sendTurn,
@@ -519,12 +765,37 @@ describe("ProviderCommandReactor", () => {
       generateBranchName,
       generateThreadTitle,
       runtimeSessions,
+      markUsageLimited,
       stateDir,
       drain,
       runEffect,
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
       },
+      get usageLimitResumeAttemptDispatchAttempts() {
+        return usageLimitResumeAttemptDispatchAttempts;
+      },
+      get usageLimitResumeSessionErrorDispatchAttempts() {
+        return usageLimitResumeSessionErrorDispatchAttempts;
+      },
+      get usageLimitResumeActivityDispatchAttempts() {
+        return usageLimitResumeActivityDispatchAttempts;
+      },
+      get usageLimitResumeTransitionDispatchAttempts() {
+        return usageLimitResumeTransitionDispatchAttempts;
+      },
+      usageLimitResumeTransitionDispatchAttemptsForThread: (threadId: ThreadId) =>
+        usageLimitResumeTransitionDispatchAttemptsByThread.get(threadId) ?? 0,
+      usageLimitResumeAttemptObserved: Deferred.await(usageLimitResumeAttemptObserved),
+      usageLimitResumeScheduled: Deferred.await(usageLimitResumeScheduled),
+      usageLimitResumeAttemptDispatched: Deferred.await(usageLimitResumeAttemptDispatched),
+      usageLimitResumeTransitionAttemptObserved: Deferred.await(
+        usageLimitResumeTransitionAttemptObserved,
+      ),
+      usageLimitResumeTransitionDispatched: Deferred.await(usageLimitResumeTransitionDispatched),
+      usageLimitResumeThread2TransitionDispatched: Deferred.await(
+        usageLimitResumeThread2TransitionDispatched,
+      ),
     };
   }
 
@@ -567,6 +838,854 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
+
+  it("resumes a provider turn without adding another visible user message", async () => {
+    const harness = await createHarness();
+    const resumeAt = "2099-01-01T00:00:00.000Z";
+
+    await harness.runEffect(harness.markUsageLimited());
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.usage-limit-resume.schedule",
+        commandId: CommandId.make("cmd-auto-resume-schedule"),
+        threadId: ThreadId.make("thread-1"),
+        resumeAt,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.usage-limit-resume.attempt",
+        commandId: CommandId.make("cmd-auto-resume-attempt"),
+        threadId: ThreadId.make("thread-1"),
+        expectedAttemptAt: resumeAt,
+        createdAt: resumeAt,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      input: "Continue from where you left off.",
+    });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.messages.filter((message) => message.role === "user")).toHaveLength(0);
+    expect(thread?.messages).toHaveLength(1);
+    expect(thread?.messages[0]?.text).toContain("Checking provider availability");
+    expect(thread?.usageLimitResume).toEqual({ nextAttemptAt: null, attempt: 0 });
+  });
+
+  effectIt.effect("does not send a resume cancelled during provider preparation", () =>
+    Effect.gen(function* () {
+      const sessionStartEntered = yield* Deferred.make<void>();
+      const releaseSessionStart = yield* Deferred.make<void>();
+      const threadId = ThreadId.make("thread-1");
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          startSessionEffect: (session) =>
+            Deferred.succeed(sessionStartEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseSessionStart)),
+              Effect.as(session),
+            ),
+        }),
+      );
+      const resumeAt = "2099-01-01T00:00:00.000Z";
+
+      yield* harness.markUsageLimited();
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.schedule",
+        commandId: CommandId.make("cmd-cancel-preparing-resume-schedule"),
+        threadId,
+        resumeAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.attempt",
+        commandId: CommandId.make("cmd-cancel-preparing-resume-attempt"),
+        threadId,
+        expectedAttemptAt: resumeAt,
+        createdAt: resumeAt,
+      });
+      yield* Deferred.await(sessionStartEntered);
+
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.cancel",
+        commandId: CommandId.make("cmd-cancel-preparing-resume"),
+        threadId,
+      });
+      yield* Deferred.succeed(releaseSessionStart, undefined);
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === threadId);
+      expect(thread?.usageLimitResume).toBeNull();
+    }),
+  );
+
+  effectIt.effect("keeps retrying transient automatic-resume attempt dispatch failures", () =>
+    Effect.gen(function* () {
+      const resumeAt = DateTime.formatIso(DateTime.add(DateTime.nowUnsafe(), { seconds: 1 }));
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          usageLimitResumeAttemptDispatchFailures: 2,
+          usageLimitResumeScheduledBeforeStart: resumeAt,
+        }),
+      );
+      yield* harness.usageLimitResumeAttemptObserved;
+      yield* harness.usageLimitResumeAttemptDispatched;
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.usageLimitResumeAttemptDispatchAttempts).toBe(3);
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.usageLimitResume).toEqual({ nextAttemptAt: null, attempt: 0 });
+    }),
+  );
+
+  it("schedules an initial ACP usage-limit rejection without a runtime error event", async () => {
+    const harness = await createHarness({
+      sendTurnEffect: () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "grok",
+            method: "session/prompt",
+            detail: "Usage limit reached. Try again later.",
+          }),
+        ),
+    });
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("initial-acp-limit"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("initial-message"),
+          role: "user",
+          text: "Continue the task",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2099-01-01T00:00:00.000Z",
+      }),
+    );
+    await harness.runEffect(harness.usageLimitResumeScheduled);
+    await harness.drain();
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(thread?.session?.lastErrorClass).toBe("usage_limit");
+    expect(thread?.usageLimitResume).toEqual({
+      attempt: 0,
+      nextAttemptAt: "2099-01-01T00:20:00.000Z",
+      pendingMessageId: asMessageId("initial-message"),
+    });
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.usage-limit-resume.attempt",
+        commandId: CommandId.make("replay-rejected-input"),
+        threadId: ThreadId.make("thread-1"),
+        expectedAttemptAt: "2099-01-01T00:20:00.000Z",
+        createdAt: "2099-01-01T00:20:00.000Z",
+      }),
+    );
+    await harness.runEffect(harness.usageLimitResumeTransitionDispatched);
+    expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({ input: "Continue the task" });
+  });
+
+  it("paces another retry when an ACP provider still reports a usage limit", async () => {
+    const harness = await createHarness({
+      sendTurnEffect: () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "grok",
+            method: "session/prompt",
+            detail: "Grok usage limit reached. Try again later.",
+          }),
+        ),
+    });
+    const resumeAt = "2099-01-01T00:00:00.000Z";
+
+    await harness.runEffect(harness.markUsageLimited());
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.usage-limit-resume.schedule",
+        commandId: CommandId.make("cmd-acp-resume-schedule"),
+        threadId: ThreadId.make("thread-1"),
+        resumeAt,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.usage-limit-resume.attempt",
+        commandId: CommandId.make("cmd-acp-resume-attempt"),
+        threadId: ThreadId.make("thread-1"),
+        expectedAttemptAt: resumeAt,
+        createdAt: resumeAt,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return thread?.usageLimitResume?.attempt === 1;
+    });
+    const events = Array.from(
+      await harness.runEffect(Stream.runCollect(harness.engine.readEvents(0, 100))),
+    );
+    const errorSessionEvent = events.findLast(
+      (event) => event.type === "thread.session-set" && event.payload.session.status === "error",
+    );
+    expect(errorSessionEvent?.type).toBe("thread.session-set");
+    if (errorSessionEvent?.type === "thread.session-set") {
+      expect(errorSessionEvent.payload.session.lastErrorClass).toBe("usage_limit");
+    }
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session).toMatchObject({
+      status: "error",
+      lastError: "Grok usage limit reached. Try again later.",
+      lastErrorClass: "usage_limit",
+    });
+    expect(thread?.usageLimitResume?.nextAttemptAt).not.toBeNull();
+  });
+
+  effectIt.effect("ignores an automatic-resume failure superseded by newer work", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-1");
+      const newerTurnId = asTurnId("turn-newer-work");
+      let harness: Awaited<ReturnType<typeof createHarness>>;
+      harness = yield* Effect.promise(() =>
+        createHarness({
+          sendTurnEffect: () =>
+            Effect.gen(function* () {
+              yield* harness.engine
+                .dispatch({
+                  type: "thread.usage-limit-resume.cancel",
+                  commandId: CommandId.make("cmd-cancel-superseded-resume"),
+                  threadId,
+                })
+                .pipe(Effect.orDie);
+              yield* harness.engine
+                .dispatch({
+                  type: "thread.session.set",
+                  commandId: CommandId.make("cmd-session-set-newer-work"),
+                  threadId,
+                  session: {
+                    threadId,
+                    status: "running",
+                    providerName: "codex",
+                    runtimeMode: "approval-required",
+                    activeTurnId: newerTurnId,
+                    lastError: null,
+                    updatedAt: "2026-01-01T00:00:02.000Z",
+                  },
+                  createdAt: "2026-01-01T00:00:02.000Z",
+                })
+                .pipe(Effect.orDie);
+              return yield* new ProviderAdapterRequestError({
+                provider: "codex",
+                method: "thread.turn.start",
+                detail: "stale automatic-resume failure",
+              });
+            }),
+        }),
+      );
+      const resumeAt = "2099-01-01T00:00:00.000Z";
+
+      yield* harness.markUsageLimited();
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.schedule",
+        commandId: CommandId.make("cmd-superseded-resume-schedule"),
+        threadId,
+        resumeAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.attempt",
+        commandId: CommandId.make("cmd-superseded-resume-attempt"),
+        threadId,
+        expectedAttemptAt: resumeAt,
+        createdAt: resumeAt,
+      });
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+          return thread?.usageLimitResume === null && thread.session?.activeTurnId === newerTurnId;
+        }),
+      );
+      yield* Effect.promise(() => harness.drain());
+
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === threadId);
+      expect(thread?.usageLimitResume).toBeNull();
+      expect(thread?.session).toMatchObject({
+        status: "running",
+        activeTurnId: newerTurnId,
+        lastError: null,
+      });
+      expect(
+        thread?.activities.some((activity) => activity.summary === "Automatic resume failed"),
+      ).toBe(false);
+    }),
+  );
+
+  effectIt.effect("advances the durable retry without appending another failure activity", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          sendTurnEffect: () =>
+            Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "grok",
+                method: "session/prompt",
+                detail: "Grok usage limit reached. Try again later.",
+              }),
+            ),
+          usageLimitResumeSessionErrorDispatchFailures: 1,
+          usageLimitResumeTransitionDispatchFailures: 1,
+        }),
+      );
+      const resumeAt = "2099-01-01T00:00:00.000Z";
+
+      yield* harness.markUsageLimited();
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.schedule",
+        commandId: CommandId.make("cmd-report-failure-resume-schedule"),
+        threadId: ThreadId.make("thread-1"),
+        resumeAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.attempt",
+        commandId: CommandId.make("cmd-report-failure-resume-attempt"),
+        threadId: ThreadId.make("thread-1"),
+        expectedAttemptAt: resumeAt,
+        createdAt: resumeAt,
+      });
+      yield* harness.usageLimitResumeTransitionDispatched;
+
+      expect(harness.usageLimitResumeSessionErrorDispatchAttempts).toBe(1);
+      expect(harness.usageLimitResumeActivityDispatchAttempts).toBe(0);
+      expect(harness.usageLimitResumeTransitionDispatchAttempts).toBe(2);
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.usageLimitResume?.attempt).toBe(1);
+      expect(thread?.usageLimitResume?.nextAttemptAt).not.toBeNull();
+    }),
+  );
+
+  effectIt.effect("keeps the serial worker moving while a resume repair retries", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          startSessionEffect: () =>
+            Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "grok",
+                method: "session/prompt",
+                detail: "Grok usage limit reached. Try again later.",
+              }),
+            ),
+          usageLimitResumeTransitionDispatchFailures: 1,
+        }),
+      );
+      const resumeAt = "2099-01-01T00:00:00.000Z";
+
+      yield* harness.markUsageLimited();
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.schedule",
+        commandId: CommandId.make("cmd-nonblocking-resume-schedule"),
+        threadId: ThreadId.make("thread-1"),
+        resumeAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.attempt",
+        commandId: CommandId.make("cmd-nonblocking-resume-attempt"),
+        threadId: ThreadId.make("thread-1"),
+        expectedAttemptAt: resumeAt,
+        createdAt: resumeAt,
+      });
+      yield* harness.usageLimitResumeTransitionAttemptObserved;
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-interrupt-during-resume-repair"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: "2099-01-01T00:00:01.000Z",
+      });
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.interruptTurn.mock.calls).toContainEqual([
+        { threadId: ThreadId.make("thread-1") },
+      ]);
+      expect(harness.usageLimitResumeTransitionDispatchAttempts).toBe(1);
+    }),
+  );
+
+  effectIt.effect("retries an in-flight automatic resume repair after a server restart", () =>
+    Effect.gen(function* () {
+      const providerRetryAt = "2099-01-01T02:00:00.000Z";
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          usageLimitResumeAttemptedBeforeStart: true,
+          usageLimitResumeTransitionDispatchFailures: 1,
+          usageLimitRetryAtBeforeStart: providerRetryAt,
+        }),
+      );
+      yield* harness.usageLimitResumeTransitionDispatched;
+
+      expect(harness.usageLimitResumeTransitionDispatchAttempts).toBe(2);
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.usageLimitResume?.attempt).toBe(1);
+      expect(thread?.usageLimitResume?.nextAttemptAt).toBe("2099-01-01T02:00:02.000Z");
+    }),
+  );
+
+  effectIt.effect("schedules an unsettled usage-limit error after a server restart", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness({ usageLimitedBeforeStart: true }));
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+
+      expect(thread?.usageLimitResume?.attempt).toBe(0);
+      expect(thread?.usageLimitResume?.nextAttemptAt).not.toBeNull();
+    }),
+  );
+
+  it.each([
+    { usageLimitedBeforeStart: true, enableAutomaticResume: false },
+    {
+      usageLimitResumeScheduledBeforeStart: "2099-01-01T00:00:00.000Z",
+      enableAutomaticResume: false,
+    },
+    { usageLimitResumeAttemptedBeforeStart: true, enableAutomaticResume: false },
+    { usageLimitedBeforeStart: true, usageLimitResumeCancelledBeforeStart: true },
+  ])("does not revive disabled or cancelled retries after restart: %j", async (input) => {
+    const harness = await createHarness(input);
+    await harness.drain();
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(thread?.usageLimitResume).toBeNull();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+  });
+
+  it("recovers a new limit incident after an older cancellation", async () => {
+    const harness = await createHarness({
+      usageLimitedBeforeStart: true,
+      usageLimitResumeCancelledBeforeStart: true,
+      newLimitAfterCancellation: true,
+    });
+    await harness.drain();
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(thread?.usageLimitResume?.attempt).toBe(0);
+    expect(thread?.usageLimitResume?.nextAttemptAt).toBeTruthy();
+  });
+
+  it("cancels pending timers when automatic resume is turned off", async () => {
+    const harness = await createHarness({
+      usageLimitResumeScheduledBeforeStart: "2099-01-01T00:00:00.000Z",
+    });
+    await harness.updateSettings(false);
+    await harness.runEffect(harness.usageLimitResumeTransitionDispatched);
+    await harness.drain();
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(thread?.usageLimitResume).toBeNull();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+  });
+
+  it("updates one mobile-compatible system notice without creating a provider turn", async () => {
+    const harness = await createHarness();
+    const threadId = ThreadId.make("thread-1");
+    await harness.runEffect(harness.markUsageLimited());
+    for (const [index, resumeAt] of [
+      "2099-01-01T00:00:00.000Z",
+      "2099-01-02T00:00:00.000Z",
+    ].entries()) {
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.usage-limit-resume.schedule",
+          commandId: CommandId.make(`notice-${index}`),
+          threadId,
+          resumeAt,
+        }),
+      );
+      await harness.drain();
+    }
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.messages).toHaveLength(1);
+    expect(thread?.messages[0]).toMatchObject({
+      role: "assistant",
+      turnId: null,
+      streaming: false,
+    });
+    expect(thread?.messages[0]?.text).toContain("02/01/2099");
+    expect(thread?.messages[0]?.text).not.toContain("01/01/2099");
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+  });
+
+  it("moves a legacy notice below new messages and clears it on cancellation", async () => {
+    const harness = await createHarness();
+    const threadId = ThreadId.make("thread-1");
+    for (const [index, [messageId, text]] of (
+      [
+        ["t3-resume-notice:thread-1", "Old waiting notice"],
+        ["new-response", "Example response"],
+      ] as const
+    ).entries()) {
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make(`seed-${messageId}`),
+          threadId,
+          messageId: MessageId.make(messageId),
+          text,
+          createdAt: `2026-01-01T00:00:0${index}.000Z`,
+        }),
+      );
+    }
+    await harness.runEffect(harness.markUsageLimited());
+    for (const resumeAt of ["2099-01-01T00:00:00.000Z", "2099-01-02T00:00:00.000Z"]) {
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.usage-limit-resume.schedule",
+          commandId: CommandId.make(`move-${resumeAt}`),
+          threadId,
+          resumeAt,
+        }),
+      );
+      await harness.drain();
+    }
+    const messages = (await harness.readModel()).threads.find(
+      (thread) => thread.id === threadId,
+    )!.messages;
+    expect(messages).toHaveLength(3);
+    expect(messages[0]?.text.trim()).toBe("");
+    expect(messages.at(-1)?.text).toContain("02/01/2099");
+    expect(messages.at(-1)?.text).not.toMatch(/T3 system notice|server time/);
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.usage-limit-resume.cancel",
+        commandId: CommandId.make("cancel-bottom-notice"),
+        threadId,
+      }),
+    );
+    await harness.drain();
+    const cancelled = (await harness.readModel()).threads.find((thread) => thread.id === threadId)!;
+    expect(cancelled.messages.filter((message) => message.text.trim())).toEqual([messages[1]]);
+  });
+
+  effectIt.effect("keeps startup repairs independent and retries more than once", () =>
+    Effect.gen(function* () {
+      const thread1 = ThreadId.make("thread-1");
+      const thread2 = ThreadId.make("thread-2");
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          usageLimitResumeAttemptedBeforeStart: true,
+          usageLimitResumeAttemptedSecondThreadBeforeStart: true,
+          usageLimitResumeTransitionDispatchFailures: 2,
+          usageLimitResumeTransitionFailureThreadId: thread1,
+        }),
+      );
+      yield* harness.usageLimitResumeThread2TransitionDispatched;
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          const thread = readModel.threads.find((entry) => entry.id === thread1);
+          return thread?.usageLimitResume?.attempt === 1;
+        }),
+      );
+
+      expect(harness.usageLimitResumeTransitionDispatchAttemptsForThread(thread1)).toBe(3);
+      expect(harness.usageLimitResumeTransitionDispatchAttemptsForThread(thread2)).toBe(1);
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const recoveredThread1 = readModel.threads.find((entry) => entry.id === thread1);
+      const recoveredThread = readModel.threads.find((entry) => entry.id === thread2);
+      expect(recoveredThread1?.usageLimitResume?.attempt).toBe(1);
+      expect(recoveredThread1?.usageLimitResume?.nextAttemptAt).not.toBeNull();
+      expect(recoveredThread?.usageLimitResume?.attempt).toBe(1);
+      expect(recoveredThread?.usageLimitResume?.nextAttemptAt).not.toBeNull();
+    }),
+  );
+
+  effectIt.effect("interrupts an in-flight automatic resume when the thread is settled", () =>
+    Effect.gen(function* () {
+      const resumeSendStarted = yield* Deferred.make<void>();
+      const releaseResumeSend = yield* Deferred.make<void>();
+      const threadId = ThreadId.make("thread-1");
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          sendTurnEffect: () =>
+            Deferred.succeed(resumeSendStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseResumeSend)),
+              Effect.as({ threadId, turnId: asTurnId("turn-resume-before-settle") }),
+            ),
+        }),
+      );
+      const resumeAt = "2099-01-01T00:00:00.000Z";
+
+      yield* harness.markUsageLimited();
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.schedule",
+        commandId: CommandId.make("cmd-settle-running-resume-schedule"),
+        threadId,
+        resumeAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.attempt",
+        commandId: CommandId.make("cmd-settle-running-resume-attempt"),
+        threadId,
+        expectedAttemptAt: resumeAt,
+        createdAt: resumeAt,
+      });
+      yield* Deferred.await(resumeSendStarted);
+      yield* harness.markUsageLimited();
+
+      yield* harness.engine.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("cmd-settle-running-resume"),
+        threadId,
+      });
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.interruptTurn.mock.calls).toContainEqual([{ threadId }]);
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === threadId);
+      expect(thread?.settledOverride).toBe("settled");
+      expect(thread?.usageLimitResume).toBeNull();
+      yield* Deferred.succeed(releaseResumeSend, undefined);
+    }),
+  );
+
+  effectIt.effect("does not resume an attempted timer after the thread is settled", () =>
+    Effect.gen(function* () {
+      const blockedSessionStarted = yield* Deferred.make<void>();
+      const releaseBlockedSession = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          createSecondThread: true,
+          startSessionEffect: (session) =>
+            session.threadId === ThreadId.make("thread-2")
+              ? Deferred.succeed(blockedSessionStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseBlockedSession)),
+                  Effect.as(session),
+                )
+              : Effect.succeed(session),
+        }),
+      );
+      const resumeAt = "2099-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-block-reactor-worker"),
+        threadId: ThreadId.make("thread-2"),
+        message: {
+          messageId: asMessageId("message-block-reactor-worker"),
+          role: "user",
+          text: "block the worker",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      yield* Deferred.await(blockedSessionStarted);
+
+      yield* harness.markUsageLimited();
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.schedule",
+        commandId: CommandId.make("cmd-settled-resume-schedule"),
+        threadId: ThreadId.make("thread-1"),
+        resumeAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.attempt",
+        commandId: CommandId.make("cmd-settled-resume-attempt"),
+        threadId: ThreadId.make("thread-1"),
+        expectedAttemptAt: resumeAt,
+        createdAt: resumeAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("cmd-settle-before-resume-processing"),
+        threadId: ThreadId.make("thread-1"),
+      });
+
+      yield* Deferred.succeed(releaseBlockedSession, undefined);
+      yield* Effect.promise(() => harness.drain());
+
+      expect(
+        harness.sendTurn.mock.calls.some(
+          ([input]) =>
+            typeof input === "object" &&
+            input !== null &&
+            "input" in input &&
+            input.input === "Continue from where you left off.",
+        ),
+      ).toBe(false);
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.settledOverride).toBe("settled");
+      expect(thread?.usageLimitResume).toBeNull();
+    }),
+  );
+
+  effectIt.effect("does not resume an attempted timer after the thread is archived", () =>
+    Effect.gen(function* () {
+      const blockedSessionStarted = yield* Deferred.make<void>();
+      const releaseBlockedSession = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          createSecondThread: true,
+          startSessionEffect: (session) =>
+            session.threadId === ThreadId.make("thread-2")
+              ? Deferred.succeed(blockedSessionStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseBlockedSession)),
+                  Effect.as(session),
+                )
+              : Effect.succeed(session),
+        }),
+      );
+      const resumeAt = "2099-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-block-reactor-worker-for-archive"),
+        threadId: ThreadId.make("thread-2"),
+        message: {
+          messageId: asMessageId("message-block-reactor-worker-for-archive"),
+          role: "user",
+          text: "block the worker",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      yield* Deferred.await(blockedSessionStarted);
+
+      yield* harness.markUsageLimited();
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.schedule",
+        commandId: CommandId.make("cmd-archived-resume-schedule"),
+        threadId: ThreadId.make("thread-1"),
+        resumeAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.attempt",
+        commandId: CommandId.make("cmd-archived-resume-attempt"),
+        threadId: ThreadId.make("thread-1"),
+        expectedAttemptAt: resumeAt,
+        createdAt: resumeAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("cmd-archive-before-resume-processing"),
+        threadId: ThreadId.make("thread-1"),
+      });
+
+      yield* Deferred.succeed(releaseBlockedSession, undefined);
+      yield* Effect.promise(() => harness.drain());
+
+      expect(
+        harness.sendTurn.mock.calls.some(
+          ([input]) =>
+            typeof input === "object" &&
+            input !== null &&
+            "input" in input &&
+            input.input === "Continue from where you left off.",
+        ),
+      ).toBe(false);
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.archivedAt).not.toBeNull();
+      expect(thread?.usageLimitResume).toBeNull();
+      expect(harness.interruptTurn.mock.calls).toContainEqual([
+        { threadId: ThreadId.make("thread-1") },
+      ]);
+    }),
+  );
+
+  effectIt.effect("does not resume an attempted timer after the thread is deleted", () =>
+    Effect.gen(function* () {
+      const blockedSessionStarted = yield* Deferred.make<void>();
+      const releaseBlockedSession = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          createSecondThread: true,
+          startSessionEffect: (session) =>
+            session.threadId === ThreadId.make("thread-2")
+              ? Deferred.succeed(blockedSessionStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseBlockedSession)),
+                  Effect.as(session),
+                )
+              : Effect.succeed(session),
+        }),
+      );
+      const resumeAt = "2099-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-block-reactor-worker-for-delete"),
+        threadId: ThreadId.make("thread-2"),
+        message: {
+          messageId: asMessageId("message-block-reactor-worker-for-delete"),
+          role: "user",
+          text: "block the worker",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      yield* Deferred.await(blockedSessionStarted);
+
+      yield* harness.markUsageLimited();
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.schedule",
+        commandId: CommandId.make("cmd-deleted-resume-schedule"),
+        threadId: ThreadId.make("thread-1"),
+        resumeAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.usage-limit-resume.attempt",
+        commandId: CommandId.make("cmd-deleted-resume-attempt"),
+        threadId: ThreadId.make("thread-1"),
+        expectedAttemptAt: resumeAt,
+        createdAt: resumeAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("cmd-delete-before-resume-processing"),
+        threadId: ThreadId.make("thread-1"),
+      });
+
+      yield* Deferred.succeed(releaseBlockedSession, undefined);
+      yield* Effect.promise(() => harness.drain());
+
+      expect(
+        harness.sendTurn.mock.calls.some(
+          ([input]) =>
+            typeof input === "object" &&
+            input !== null &&
+            "input" in input &&
+            input.input === "Continue from where you left off.",
+        ),
+      ).toBe(false);
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.deletedAt).not.toBeNull();
+      expect(thread?.usageLimitResume).toBeNull();
+      expect(harness.interruptTurn.mock.calls).toContainEqual([
+        { threadId: ThreadId.make("thread-1") },
+      ]);
+    }),
+  );
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>
     Effect.gen(function* () {
@@ -2997,7 +4116,7 @@ describe("ProviderCommandReactor", () => {
       ),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-approval-error"),
@@ -3015,7 +4134,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-approval-requested"),
@@ -3036,7 +4155,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.approval.respond",
         commandId: CommandId.make("cmd-approval-respond-stale"),
@@ -3092,7 +4211,7 @@ describe("ProviderCommandReactor", () => {
       ),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-user-input-error"),
@@ -3110,7 +4229,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-user-input-requested"),
@@ -3143,7 +4262,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.user-input.respond",
         commandId: CommandId.make("cmd-user-input-respond-stale"),

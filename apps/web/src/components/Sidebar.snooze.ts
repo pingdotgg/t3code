@@ -45,9 +45,11 @@ export function snoozeWakeDescription(
   const wake = parseTimestampDate(snoozedUntil);
   if (wake === null) return "";
   const time = timeOfDayLabel(wake, timestampFormat);
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
-  const dayDelta = Math.floor((wake.getTime() - startOfToday.getTime()) / DAY_MS);
+  // Compare local calendar ordinals rather than elapsed time so a DST-shifted
+  // 23- or 25-hour day still counts as exactly one day.
+  const todayOrdinal = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const wakeOrdinal = Date.UTC(wake.getFullYear(), wake.getMonth(), wake.getDate());
+  const dayDelta = (wakeOrdinal - todayOrdinal) / DAY_MS;
   if (dayDelta === 0) return time;
   if (dayDelta === 1) return `tomorrow ${time}`;
   const weekday = wake.toLocaleDateString(undefined, { weekday: "short" });

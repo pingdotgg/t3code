@@ -101,6 +101,11 @@ import {
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import {
+  providerUsageLimitFromError,
+  retryAtFromEpochSeconds,
+  type ProviderUsageLimit,
+} from "../usageLimits.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
@@ -318,6 +323,8 @@ interface ClaudeSessionContext {
   lastKnownTotalProcessedTokens: number | undefined;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
+  usageLimitError: ProviderUsageLimit | undefined;
+  apiErrorMessage: string | undefined;
   stopped: boolean;
 }
 
@@ -430,6 +437,74 @@ function resultUserFacingError(result: SDKResultMessage): string | undefined {
     return undefined;
   }
   return result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
+}
+
+function assistantApiErrorMessage(message: SDKMessage): string | undefined {
+  if (message.type !== "assistant") {
+    return undefined;
+  }
+  const apiError = message as unknown as {
+    readonly is_api_error_message?: unknown;
+    readonly error?: unknown;
+  };
+  if (apiError.is_api_error_message !== true) {
+    return undefined;
+  }
+  const content = message.message?.content;
+  if (Array.isArray(content)) {
+    const text = content
+      .flatMap((block) =>
+        block &&
+        typeof block === "object" &&
+        "type" in block &&
+        block.type === "text" &&
+        "text" in block &&
+        typeof block.text === "string"
+          ? [block.text]
+          : [],
+      )
+      .join("\n")
+      .trim();
+    if (text.length > 0) {
+      return text;
+    }
+  }
+  return typeof apiError.error === "string" && apiError.error.trim().length > 0
+    ? apiError.error.trim()
+    : "Claude API request failed.";
+}
+
+function resultApiError(
+  result: SDKResultMessage,
+  pendingMessage: string | undefined,
+): { readonly message: string; readonly usageLimit: ProviderUsageLimit | undefined } | undefined {
+  const apiResult = result as unknown as {
+    readonly api_error_status?: unknown;
+    readonly result?: unknown;
+    readonly terminal_reason?: unknown;
+  };
+  if (
+    result.is_error !== true ||
+    (apiResult.terminal_reason !== "api_error" && typeof apiResult.api_error_status !== "number")
+  ) {
+    return undefined;
+  }
+  const resultMessage =
+    typeof apiResult.result === "string" && apiResult.result.trim().length > 0
+      ? apiResult.result.trim()
+      : undefined;
+  const message = pendingMessage ?? resultMessage ?? "Claude API request failed.";
+  return {
+    message,
+    usageLimit: providerUsageLimitFromError({ message, detail: result }) ?? undefined,
+  };
+}
+
+function usageLimitWithKnownRetryAt(
+  next: ProviderUsageLimit | undefined,
+  previous: ProviderUsageLimit | undefined,
+): ProviderUsageLimit | undefined {
+  return next?.retryAt !== undefined ? next : (previous ?? next);
 }
 
 function isInterruptedResult(result: SDKResultMessage): boolean {
@@ -2031,6 +2106,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     context: ClaudeSessionContext,
     message: string,
     cause?: unknown,
+    usageLimit = providerUsageLimitFromError({ message, detail: cause }) ?? undefined,
   ) {
     if (cause !== undefined) {
       void cause;
@@ -2046,7 +2122,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ...(turnState ? { turnId: asCanonicalTurnId(turnState.turnId) } : {}),
       payload: {
         message,
-        class: "provider_error",
+        class: usageLimit === undefined ? "provider_error" : "usage_limit",
+        ...(usageLimit?.retryAt !== undefined ? { retryAt: usageLimit.retryAt } : {}),
         ...(cause !== undefined ? { detail: cause } : {}),
       },
       providerRefs: nativeProviderRefs(context),
@@ -2901,6 +2978,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    const apiErrorMessage = assistantApiErrorMessage(message);
+    if (apiErrorMessage !== undefined) {
+      context.apiErrorMessage = apiErrorMessage;
+      context.usageLimitError = usageLimitWithKnownRetryAt(
+        providerUsageLimitFromError({ message: apiErrorMessage, detail: message }) ?? undefined,
+        context.usageLimitError,
+      );
+      context.lastAssistantUuid = message.uuid;
+      yield* updateResumeCursor(context);
+      return;
+    }
+
     // Auto-start a synthetic turn for assistant messages that arrive without
     // an active turn (e.g., background agent/subagent responses between user prompts).
     if (!context.turnState) {
@@ -3001,11 +3090,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
-    const status = turnStatusFromResult(message);
-    const errorMessage = resultUserFacingError(message);
+    const apiError = resultApiError(message, context.apiErrorMessage);
+    context.apiErrorMessage = undefined;
+    const status = apiError === undefined ? turnStatusFromResult(message) : "failed";
+    const errorMessage = apiError?.message ?? resultUserFacingError(message);
 
     if (status === "failed") {
-      yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
+      yield* emitRuntimeError(
+        context,
+        errorMessage ?? "Claude turn failed.",
+        apiError === undefined ? undefined : message,
+        usageLimitWithKnownRetryAt(apiError?.usageLimit, context.usageLimitError),
+      );
     }
 
     yield* completeTurn(context, status, errorMessage, message);
@@ -3551,6 +3647,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           rateLimits: message,
         },
       });
+      if (message.rate_limit_info.status === "rejected") {
+        const retryAt = retryAtFromEpochSeconds(message.rate_limit_info.resetsAt);
+        const usageLimit: ProviderUsageLimit = retryAt === undefined ? {} : { retryAt };
+        context.usageLimitError = usageLimit;
+        yield* emitRuntimeError(context, "Claude usage limit reached.", message, usageLimit);
+      }
       return;
     }
   });
@@ -4426,6 +4528,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastKnownTotalProcessedTokens: undefined,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
+        usageLimitError: undefined,
+        apiErrorMessage: undefined,
         stopped: false,
       };
       yield* Ref.set(contextRef, context);
@@ -4507,6 +4611,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     const context = yield* requireSession(input.threadId);
+    context.usageLimitError = undefined;
+    context.apiErrorMessage = undefined;
     const modelCatalog = yield* modelCatalogEffect;
     const selectedModel =
       input.modelSelection !== undefined && input.modelSelection.instanceId === boundInstanceId

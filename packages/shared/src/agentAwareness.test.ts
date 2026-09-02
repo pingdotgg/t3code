@@ -177,4 +177,35 @@ describe("projectThreadAwareness", () => {
       detail: "Provider process exited.",
     });
   });
+
+  it("projects scheduled usage-limit retries as active instead of repeated failures", () => {
+    const resumeAt = "2099-01-01T14:11:00.000Z";
+    const state = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        session: {
+          threadId: "thread-1" as ThreadId,
+          status: "error",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: "Usage limit reached",
+          lastErrorClass: "usage_limit",
+          updatedAt: NOW,
+        },
+        usageLimitResume: { nextAttemptAt: resumeAt, attempt: 1 },
+      }),
+    });
+
+    expect(state).toMatchObject({
+      phase: "running",
+      headline: `Automatic resume ${new Intl.DateTimeFormat(undefined, {
+        weekday: "short",
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(Date.parse(resumeAt))}`,
+      detail: "Waiting for provider capacity.",
+    });
+  });
 });

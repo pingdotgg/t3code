@@ -80,6 +80,9 @@ describe("snoozeWakeDescription", () => {
     expect(snoozeWakeDescription(localDate(2026, 4, 9, 9).toISOString(), now, "locale")).toContain(
       "tomorrow",
     );
+    expect(
+      snoozeWakeDescription(localDate(2026, 4, 9, 0, 30).toISOString(), now, "locale"),
+    ).toContain("tomorrow");
     expect(snoozeWakeDescription(localDate(2026, 4, 13, 9).toISOString(), now, "locale")).toMatch(
       /Mon/,
     );
@@ -91,6 +94,15 @@ describe("snoozeWakeDescription", () => {
     );
     expect(snoozeWakeDescription(localDate(2026, 4, 8, 18).toISOString(), now, "24-hour")).toBe(
       "18:00",
+    );
+  });
+
+  it("uses calendar days across a spring daylight-saving transition", () => {
+    const transitionDay = localDate(2026, 3, 8, 10);
+    const nextCalendarDay = localDate(2026, 3, 9, 0, 30);
+
+    expect(snoozeWakeDescription(nextCalendarDay.toISOString(), transitionDay, "locale")).toContain(
+      "tomorrow",
     );
   });
 });

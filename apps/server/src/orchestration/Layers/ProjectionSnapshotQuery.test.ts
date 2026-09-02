@@ -49,6 +49,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       yield* sql`DELETE FROM projection_state`;
       yield* sql`DELETE FROM projection_thread_proposed_plans`;
       yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM orchestration_events`;
 
       yield* sql`
         INSERT INTO projection_projects (
@@ -89,6 +90,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pending_approval_count,
           pending_user_input_count,
           has_actionable_proposed_plan,
+          usage_limit_resume_json,
           pinned_at,
           pin_order_key,
           created_at,
@@ -110,6 +112,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           1,
           0,
           0,
+          '{"nextAttemptAt":"2026-02-24T01:00:00.000Z","attempt":2}',
           '2026-02-24T00:00:01.000Z',
           'gm',
           '2026-02-24T00:00:02.000Z',
@@ -197,17 +200,21 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtime_mode,
           active_turn_id,
           last_error,
+          last_error_class,
+          retry_at,
           updated_at
         )
         VALUES (
           'thread-1',
-          'running',
+          'error',
           'codex',
           'provider-session-1',
           'provider-thread-1',
           'approval-required',
           'turn-1',
-          NULL,
+          'Usage limit reached.',
+          'usage_limit',
+          '2026-02-24T01:00:00.000Z',
           '2026-02-24T00:00:07.000Z'
         )
       `;
@@ -244,6 +251,39 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'checkpoint-1',
           'ready',
           '[{"path":"README.md","kind":"modified","additions":2,"deletions":1}]'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO orchestration_events (
+          sequence,
+          event_id,
+          aggregate_kind,
+          stream_id,
+          stream_version,
+          event_type,
+          occurred_at,
+          command_id,
+          causation_event_id,
+          correlation_id,
+          actor_kind,
+          payload_json,
+          metadata_json
+        )
+        VALUES (
+          4,
+          'usage-limit-scheduled-event',
+          'thread',
+          'thread-1',
+          1,
+          'thread.usage-limit-resume-scheduled',
+          '2026-02-24T00:00:08.500Z',
+          NULL,
+          NULL,
+          NULL,
+          'user',
+          '{"threadId":"thread-1","resumeAt":"2026-02-24T01:00:00.000Z","attempt":2,"updatedAt":"2026-02-24T00:00:08.500Z"}',
+          '{}'
         )
       `;
 
@@ -333,6 +373,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           unsettledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
+          usageLimitResume: {
+            nextAttemptAt: "2026-02-24T01:00:00.000Z",
+            attempt: 2,
+          },
           pinnedAt: "2026-02-24T00:00:01.000Z",
           pinOrderKey: "gm",
           titleRegeneration: null,
@@ -383,11 +427,13 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           ],
           session: {
             threadId: ThreadId.make("thread-1"),
-            status: "running",
+            status: "error",
             providerName: "codex",
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
-            lastError: null,
+            lastError: "Usage limit reached.",
+            lastErrorClass: "usage_limit",
+            retryAt: "2026-02-24T01:00:00.000Z",
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
         },
@@ -459,16 +505,22 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           unsettledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
+          usageLimitResume: {
+            nextAttemptAt: "2026-02-24T01:00:00.000Z",
+            attempt: 2,
+          },
           pinnedAt: "2026-02-24T00:00:01.000Z",
           pinOrderKey: "gm",
           titleRegeneration: null,
           session: {
             threadId: ThreadId.make("thread-1"),
-            status: "running",
+            status: "error",
             providerName: "codex",
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
-            lastError: null,
+            lastError: "Usage limit reached.",
+            lastErrorClass: "usage_limit",
+            retryAt: "2026-02-24T01:00:00.000Z",
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
           latestUserMessageAt: "2026-02-24T00:00:04.000Z",
@@ -555,6 +607,14 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             createdAt: "2026-02-24T00:00:06.100Z",
           },
         ]);
+      }
+      const windowedThread = yield* snapshotQuery.getThreadDetailSnapshot(
+        ThreadId.make("thread-1"),
+        { turnLimit: 1 },
+      );
+      assert.equal(windowedThread._tag, "Some");
+      if (windowedThread._tag === "Some") {
+        assert.equal(windowedThread.value.page?.threadSequence, 4);
       }
     }),
   );

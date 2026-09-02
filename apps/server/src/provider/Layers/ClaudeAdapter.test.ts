@@ -24,6 +24,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -2315,6 +2316,138 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(completed.payload.state, "failed");
         assert.equal(completed.payload.errorMessage, "Claude runtime stream failed.");
       }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("maps rejected subscription limits with their reset timestamp", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const runtimeErrorFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "runtime.error"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      harness.query.emit({
+        type: "rate_limit_event",
+        session_id: "sdk-session-rate-limit",
+        uuid: "rate-limit-1",
+        rate_limit_info: {
+          status: "rejected",
+          resetsAt: 1_787_944_200,
+        },
+      } as unknown as SDKMessage);
+
+      const runtimeError = yield* Fiber.join(runtimeErrorFiber);
+      assert.equal(runtimeError._tag, "Some");
+      if (runtimeError._tag !== "Some" || runtimeError.value.type !== "runtime.error") {
+        return;
+      }
+      assert.equal(runtimeError.value.payload.class, "usage_limit");
+      assert.equal(runtimeError.value.payload.retryAt, "2026-08-28T19:10:00.000Z");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("classifies Claude CLI API 429 results as usage limits", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const apiErrorMessage =
+        "API Error: Request rejected (429) · Usage limit reached. Try again later.";
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const sawRuntimeError = yield* Deferred.make<ProviderRuntimeEvent>();
+      const sawTurnCompleted = yield* Deferred.make<ProviderRuntimeEvent>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "runtime.error" && event.payload.message === apiErrorMessage
+              ? Deferred.succeed(sawRuntimeError, event).pipe(Effect.asVoid)
+              : event.type === "turn.completed"
+                ? Deferred.succeed(sawTurnCompleted, event).pipe(Effect.asVoid)
+                : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "continue the task",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "rate_limit_event",
+        session_id: "sdk-session-api-429",
+        uuid: "rate-limit-api-429",
+        rate_limit_info: {
+          status: "rejected",
+          resetsAt: 1_787_944_200,
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-api-429",
+        uuid: "assistant-api-429",
+        parent_tool_use_id: null,
+        error: "rate_limit",
+        is_api_error_message: true,
+        message: {
+          id: "assistant-message-api-429",
+          model: "<synthetic>",
+          role: "assistant",
+          content: [{ type: "text", text: apiErrorMessage }],
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        terminal_reason: "api_error",
+        api_error_status: 429,
+        result: apiErrorMessage,
+        session_id: "sdk-session-api-429",
+        uuid: "result-api-429",
+      } as unknown as SDKMessage);
+
+      const runtimeError = yield* Deferred.await(sawRuntimeError);
+      assert.equal(runtimeError.type, "runtime.error");
+      if (runtimeError.type === "runtime.error") {
+        assert.equal(runtimeError.payload.class, "usage_limit");
+        assert.equal(runtimeError.payload.message, apiErrorMessage);
+        assert.equal(runtimeError.payload.retryAt, "2026-08-28T19:10:00.000Z");
+      }
+
+      const completed = yield* Deferred.await(sawTurnCompleted);
+      assert.equal(completed.type, "turn.completed");
+      if (completed.type === "turn.completed") {
+        assert.equal(completed.payload.state, "failed");
+        assert.equal(completed.payload.errorMessage, apiErrorMessage);
+      }
+      assert.notInclude(
+        runtimeEvents.map((event) => event.type),
+        "content.delta",
+      );
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

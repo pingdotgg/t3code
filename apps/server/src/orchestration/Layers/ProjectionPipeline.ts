@@ -644,6 +644,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             unsettledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
+            usageLimitResume: null,
             pinnedAt: null,
             pinOrderKey: null,
             titleRegenerationRequestId: null,
@@ -755,6 +756,66 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             snoozedUntil: null,
             snoozedAt: null,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.usage-limit-resume-scheduled": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            usageLimitResume: {
+              nextAttemptAt: event.payload.resumeAt,
+              ...(event.payload.pendingMessageId !== undefined
+                ? { pendingMessageId: event.payload.pendingMessageId }
+                : {}),
+              attempt: event.payload.attempt,
+            },
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.usage-limit-resume-attempted": {
+          if (!event.payload.shouldResume) {
+            return;
+          }
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            usageLimitResume: {
+              nextAttemptAt: null,
+              ...(existingRow.value.usageLimitResume?.pendingMessageId !== undefined
+                ? { pendingMessageId: existingRow.value.usageLimitResume.pendingMessageId }
+                : {}),
+              attempt: event.payload.attempt,
+            },
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.usage-limit-resume-cancelled": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            usageLimitResume: null,
             updatedAt: event.payload.updatedAt,
           });
           return;
@@ -1230,6 +1291,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         runtimeMode: event.payload.session.runtimeMode,
         activeTurnId: event.payload.session.activeTurnId,
         lastError: event.payload.session.lastError,
+        lastErrorClass: event.payload.session.lastErrorClass ?? null,
+        retryAt: event.payload.session.retryAt ?? null,
         updatedAt: event.payload.session.updatedAt,
       });
     });

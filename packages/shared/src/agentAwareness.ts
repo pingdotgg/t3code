@@ -37,6 +37,7 @@ export interface ProjectThreadAwarenessInput {
     | "modelSelection"
     | "session"
     | "latestTurn"
+    | "usageLimitResume"
     | "updatedAt"
     | "hasPendingApprovals"
     | "hasPendingUserInput"
@@ -66,7 +67,7 @@ export function projectThreadAwareness(
     projectTitle: project.title,
     threadTitle: thread.title,
     phase,
-    headline: headlineForPhase(phase),
+    headline: usageLimitResumeHeadline(thread) ?? headlineForPhase(phase),
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,
     updatedAt: thread.updatedAt,
@@ -82,6 +83,13 @@ function resolveThreadAwarenessPhase(
   }
   if (thread.hasPendingUserInput) {
     return "waiting_for_input";
+  }
+  if (
+    thread.session?.status === "error" &&
+    thread.session.lastErrorClass === "usage_limit" &&
+    thread.usageLimitResume != null
+  ) {
+    return "running";
   }
   if (thread.session?.status === "error" || thread.latestTurn?.state === "error") {
     return "failed";
@@ -116,6 +124,23 @@ function resolveThreadAwarenessPhase(
   return null;
 }
 
+const resumeTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  weekday: "short",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+function usageLimitResumeHeadline(
+  thread: ProjectThreadAwarenessInput["thread"],
+): string | undefined {
+  if (thread.session?.lastErrorClass !== "usage_limit" || thread.usageLimitResume == null)
+    return undefined;
+  const resumeAt = thread.usageLimitResume?.nextAttemptAt;
+  return resumeAt === null || resumeAt === undefined
+    ? "Resuming automatically"
+    : `Automatic resume ${resumeTimeFormatter.format(Date.parse(resumeAt))}`;
+}
+
 function headlineForPhase(phase: AgentAwarenessPhase): string {
   switch (phase) {
     case "starting":
@@ -139,6 +164,9 @@ function detailForPhase(
   phase: AgentAwarenessPhase,
   thread: ProjectThreadAwarenessInput["thread"],
 ): string | undefined {
+  if (thread.session?.lastErrorClass === "usage_limit" && thread.usageLimitResume != null) {
+    return "Waiting for provider capacity.";
+  }
   if (phase === "failed") {
     return thread.session?.lastError ?? undefined;
   }
