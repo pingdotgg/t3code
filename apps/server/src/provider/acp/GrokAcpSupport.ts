@@ -145,6 +145,39 @@ export function totalContextTokensFromModelMeta(meta: unknown): number | undefin
     : undefined;
 }
 
+export function contextWindowsFromGrokSessionModels(
+  models: EffectAcpSchema.SessionModelState | null | undefined,
+): ReadonlyMap<string, number> {
+  const windows = new Map<string, number>();
+  for (const model of models?.availableModels ?? []) {
+    const size = totalContextTokensFromModelMeta(model._meta);
+    if (size === undefined) {
+      continue;
+    }
+    const modelId = model.modelId.trim();
+    if (!modelId) {
+      continue;
+    }
+    windows.set(modelId, size);
+    const baseId = resolveGrokAcpBaseModelId(modelId);
+    if (baseId !== modelId) {
+      windows.set(baseId, size);
+    }
+  }
+  return windows;
+}
+
+export function contextWindowForGrokModelId(
+  windows: ReadonlyMap<string, number>,
+  modelId: string | undefined,
+): number | undefined {
+  const trimmed = modelId?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return windows.get(trimmed) ?? windows.get(resolveGrokAcpBaseModelId(trimmed));
+}
+
 export function contextWindowFromGrokSessionSetup(
   sessionSetupResult:
     | EffectAcpSchema.LoadSessionResponse
@@ -153,19 +186,14 @@ export function contextWindowFromGrokSessionSetup(
   modelId?: string,
 ): number | undefined {
   const models = sessionSetupResult.models;
-  if (!models) {
-    return undefined;
+  const windows = contextWindowsFromGrokSessionModels(models);
+  const currentId = (modelId ?? models?.currentModelId)?.trim();
+  const matched = contextWindowForGrokModelId(windows, currentId);
+  if (matched !== undefined) {
+    return matched;
   }
-  const currentId = (modelId ?? models.currentModelId)?.trim();
-  if (currentId) {
-    const match = models.availableModels.find((model) => model.modelId.trim() === currentId);
-    const size = totalContextTokensFromModelMeta(match?._meta);
-    if (size !== undefined) {
-      return size;
-    }
-  }
-  if (models.availableModels.length === 1) {
-    return totalContextTokensFromModelMeta(models.availableModels[0]?._meta);
+  if ((models?.availableModels.length ?? 0) === 1) {
+    return totalContextTokensFromModelMeta(models?.availableModels[0]?._meta);
   }
   return undefined;
 }

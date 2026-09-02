@@ -62,7 +62,9 @@ import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
   applyGrokAcpModelSelection,
+  contextWindowForGrokModelId,
   contextWindowFromGrokSessionSetup,
+  contextWindowsFromGrokSessionModels,
   currentGrokModelIdFromSessionSetup,
   currentGrokReasoningEffortFromSessionSetup,
   makeGrokAcpRuntime,
@@ -171,8 +173,10 @@ interface GrokSessionContext {
   promptResponsesReady: number;
   currentModelId: string | undefined;
   currentReasoningEffort: string | undefined;
+  contextWindows: ReadonlyMap<string, number>;
   lastContextTokens: number | undefined;
   lastKnownMaxTokens: number | undefined;
+  lastEmittedMaxTokens: number | undefined;
   stopped: boolean;
 }
 
@@ -318,7 +322,36 @@ function selectAutoApprovedPermissionOption(
   );
 }
 
-const GROK_DEFAULT_CONTEXT_WINDOW = 500_000;
+export const GROK_DEFAULT_CONTEXT_WINDOW = 500_000;
+
+export function resolveGrokContextUsage(input: {
+  readonly used: number;
+  readonly eventSize: number;
+  readonly lastUsed: number | undefined;
+  readonly lastKnownMaxTokens: number | undefined;
+  readonly lastEmittedMaxTokens: number | undefined;
+}): { readonly used: number; readonly size: number } | undefined {
+  const size =
+    input.eventSize > 0
+      ? input.eventSize
+      : (input.lastKnownMaxTokens ?? GROK_DEFAULT_CONTEXT_WINDOW);
+  if (input.lastUsed === input.used && input.lastEmittedMaxTokens === size) {
+    return undefined;
+  }
+  return { used: input.used, size };
+}
+
+export function grokContextWindowAfterModelChange(input: {
+  readonly previousModelId: string | undefined;
+  readonly nextModelId: string | undefined;
+  readonly windows: ReadonlyMap<string, number>;
+  readonly lastKnownMaxTokens: number | undefined;
+}): number | undefined {
+  if (input.nextModelId === input.previousModelId) {
+    return input.lastKnownMaxTokens;
+  }
+  return contextWindowForGrokModelId(input.windows, input.nextModelId);
+}
 
 function completedStopReasonFromPromptResponse(
   response: EffectAcpSchema.PromptResponse | undefined,
@@ -1306,11 +1339,13 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               requestedStartReasoningEffort !== undefined
                 ? normalizeGrokReasoningEffort(requestedStartReasoningEffort)
                 : currentStartReasoningEffort,
+            contextWindows: contextWindowsFromGrokSessionModels(started.sessionSetupResult.models),
             lastContextTokens: undefined,
             lastKnownMaxTokens: contextWindowFromGrokSessionSetup(
               started.sessionSetupResult,
               boundModelId,
             ),
+            lastEmittedMaxTokens: undefined,
             stopped: false,
           };
 
@@ -1339,23 +1374,28 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   if (usageTurnId !== undefined && ctx.interruptedTurnIds.has(usageTurnId)) {
                     return;
                   }
-                  if (ctx.lastContextTokens === event.used) {
+                  const snapshot = resolveGrokContextUsage({
+                    used: event.used,
+                    eventSize: event.size,
+                    lastUsed: ctx.lastContextTokens,
+                    lastKnownMaxTokens: ctx.lastKnownMaxTokens,
+                    lastEmittedMaxTokens: ctx.lastEmittedMaxTokens,
+                  });
+                  if (!snapshot) {
                     return;
                   }
-                  ctx.lastContextTokens = event.used;
+                  ctx.lastContextTokens = snapshot.used;
                   if (event.size > 0) {
                     ctx.lastKnownMaxTokens = event.size;
                   }
+                  ctx.lastEmittedMaxTokens = snapshot.size;
                   const usageEvent = makeAcpTokenUsageEvent({
                     stamp: yield* makeEventStamp(),
                     provider: PROVIDER,
                     threadId: ctx.threadId,
                     turnId: usageTurnId,
-                    used: event.used,
-                    size:
-                      event.size > 0
-                        ? event.size
-                        : (ctx.lastKnownMaxTokens ?? GROK_DEFAULT_CONTEXT_WINDOW),
+                    used: snapshot.used,
+                    size: snapshot.size,
                     rawPayload: event.rawPayload,
                   });
                   if (usageEvent) {
@@ -1615,6 +1655,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 requestedReasoningEffort: requestedTurnReasoningEffort,
                 mapError: (cause) =>
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
+              });
+              ctx.lastKnownMaxTokens = grokContextWindowAfterModelChange({
+                previousModelId: ctx.currentModelId,
+                nextModelId: currentModelId,
+                windows: ctx.contextWindows,
+                lastKnownMaxTokens: ctx.lastKnownMaxTokens,
               });
               ctx.currentModelId = currentModelId;
               if (requestedTurnReasoningEffort !== undefined) {

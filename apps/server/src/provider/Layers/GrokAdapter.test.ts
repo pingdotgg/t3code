@@ -27,10 +27,13 @@ import {
 
 import { ServerConfig } from "../../config.ts";
 import {
+  GROK_DEFAULT_CONTEXT_WINDOW,
+  grokContextWindowAfterModelChange,
   grokPromptSettlementBelongsToContext,
   isGrokEnterPlanModeToolCall,
   makeGrokAdapter,
   nextGrokPlanModeActive,
+  resolveGrokContextUsage,
   selectGrokPermissionOptionId,
 } from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
@@ -177,6 +180,83 @@ it("prefers allow_always when Grok offers it", () => {
 
   assert.equal(selectGrokPermissionOptionId(request, "acceptForSession"), "allow-always");
   assert.equal(selectGrokPermissionOptionId(request, "accept"), "allow-once");
+});
+
+it("keeps occupancy snapshots when only the context window changes", () => {
+  assert.deepStrictEqual(
+    resolveGrokContextUsage({
+      used: 1615,
+      eventSize: 0,
+      lastUsed: 1615,
+      lastKnownMaxTokens: 500_000,
+      lastEmittedMaxTokens: 500_000,
+    }),
+    undefined,
+  );
+  assert.deepStrictEqual(
+    resolveGrokContextUsage({
+      used: 1615,
+      eventSize: 256_000,
+      lastUsed: 1615,
+      lastKnownMaxTokens: 500_000,
+      lastEmittedMaxTokens: 500_000,
+    }),
+    { used: 1615, size: 256_000 },
+  );
+  assert.deepStrictEqual(
+    resolveGrokContextUsage({
+      used: 1615,
+      eventSize: 0,
+      lastUsed: 1615,
+      lastKnownMaxTokens: 256_000,
+      lastEmittedMaxTokens: 500_000,
+    }),
+    { used: 1615, size: 256_000 },
+  );
+  assert.equal(
+    resolveGrokContextUsage({
+      used: 1_200,
+      eventSize: 0,
+      lastUsed: undefined,
+      lastKnownMaxTokens: undefined,
+      lastEmittedMaxTokens: undefined,
+    })?.size,
+    GROK_DEFAULT_CONTEXT_WINDOW,
+  );
+});
+
+it("refreshes the cached window when the Grok model changes", () => {
+  const windows = new Map([
+    ["grok-4.6", 500_000],
+    ["grok-code", 256_000],
+  ]);
+  assert.equal(
+    grokContextWindowAfterModelChange({
+      previousModelId: "grok-4.6",
+      nextModelId: "grok-4.6",
+      windows,
+      lastKnownMaxTokens: 500_000,
+    }),
+    500_000,
+  );
+  assert.equal(
+    grokContextWindowAfterModelChange({
+      previousModelId: "grok-4.6",
+      nextModelId: "grok-code",
+      windows,
+      lastKnownMaxTokens: 500_000,
+    }),
+    256_000,
+  );
+  assert.equal(
+    grokContextWindowAfterModelChange({
+      previousModelId: "grok-4.6",
+      nextModelId: "grok-unknown",
+      windows,
+      lastKnownMaxTokens: 500_000,
+    }),
+    undefined,
+  );
 });
 
 it("requires a settlement to match the live Grok turn", () => {

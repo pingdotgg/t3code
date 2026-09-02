@@ -5,7 +5,9 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import {
   applyGrokAcpModelSelection,
   buildGrokAcpSpawnInput,
+  contextWindowForGrokModelId,
   contextWindowFromGrokSessionSetup,
+  contextWindowsFromGrokSessionModels,
   grokAcpSpawnArgs,
   isValidGrokReasoningEffortToken,
   resolveGrokAcpBaseModelId,
@@ -111,6 +113,19 @@ describe("contextWindowFromGrokSessionSetup", () => {
         "grok-4.6",
       ),
     ).toBeUndefined();
+  });
+
+  it("looks up a later model from the session model map", () => {
+    const windows = contextWindowsFromGrokSessionModels({
+      currentModelId: "grok-4.6",
+      availableModels: [
+        { modelId: "grok-4.6", name: "Grok 4.6", _meta: { totalContextTokens: 500_000 } },
+        { modelId: "grok-code", name: "Grok Code", _meta: { totalContextTokens: 256_000 } },
+      ],
+    });
+    expect(contextWindowForGrokModelId(windows, "grok-4.6")).toBe(500_000);
+    expect(contextWindowForGrokModelId(windows, "grok-code")).toBe(256_000);
+    expect(contextWindowForGrokModelId(windows, "missing")).toBeUndefined();
   });
 });
 
