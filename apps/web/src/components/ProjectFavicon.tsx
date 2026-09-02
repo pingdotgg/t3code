@@ -41,7 +41,7 @@ const DynamicIcon = lazy(() =>
 );
 
 function DynamicProjectIconFallback() {
-  return <FolderCodeIcon className="size-full" />;
+  return <FolderCodeIcon className="size-full text-[inherit]" />;
 }
 
 const PROJECT_ICONS: Record<ProjectIconName, ComponentType<{ className?: string }>> = {
@@ -109,9 +109,10 @@ export function ProjectFavicon(input: {
     return <ProjectFaviconFallback className={input.className} emoji={input.projectIcon.emoji} />;
   }
   if (input.projectIcon?.kind === "lucide") {
+    const colorClassName = projectIconColorClassName(input.projectIcon.color);
     const iconClassName = cn(
       "inline-flex size-3.5 shrink-0 items-center justify-center",
-      projectIconColorClassName(input.projectIcon.color),
+      colorClassName,
       input.className,
     );
     return (
@@ -119,7 +120,7 @@ export function ProjectFavicon(input: {
         <Suspense fallback={<DynamicProjectIconFallback />}>
           <DynamicIcon
             name={input.projectIcon.name as IconName}
-            className="size-full"
+            className={cn("size-full", colorClassName)}
             fallback={DynamicProjectIconFallback}
           />
         </Suspense>

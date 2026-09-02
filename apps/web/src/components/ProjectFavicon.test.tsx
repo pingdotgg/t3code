@@ -160,6 +160,7 @@ describe("ProjectFavicon", () => {
 
     expect(element.props.children.props.children.props.name).toBe("alarm-clock");
     expect(element.props.className).toContain("text-violet-600");
+    expect(element.props.children.props.children.props.className).toContain("text-violet-600");
   });
 
   it("renders a saved emoji ahead of an uploaded favicon", () => {
