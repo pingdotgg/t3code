@@ -8,6 +8,7 @@
     "build:qt:release": "node scripts/dev-qt.mjs --configure-only --release",
     "dev": "node scripts/dev-qt.mjs",
     "test": "vp test run --passWithNoTests",
+    "theme:terminal": "node scripts/theme-from-terminal.mjs",
     "typecheck": "tsgo --noEmit"
   },
   "devDependencies": {

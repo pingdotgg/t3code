@@ -14,12 +14,14 @@ cp examples/glass/*.* ~/.t3/shell/
 | `minimal`   | The default layout with the title bar moved to the bottom, on the web app's own dark palette (`theme.json` here is the page's default theme, so it is the one to copy when a rice should start from stock colours).                                                                                                                  |
 | `dashboard` | Rosé light theme, an icon rail that also carries settings, and a Dashboard button that pulls a widget drawer over the page: today, the month, the open workspace, thread meters, and the agent, with a cat at play (a Lottie animation; needs the Qt Lottie module, `qt6-lottie` on Arch, and shows the agent's initial without it). |
 | `glass`     | The shape of a Mac app: one rounded window with a hairline edge, traffic lights, a translucent sidebar for the compositor to blur behind, and a unified toolbar over an opaque content column.                                                                                                                                       |
-| `terminal`  | Status line with prompt mark, counts, model, the palette's sixteen colours and a clock; mono type, sharp corners. `theme-from-terminal.mjs` writes a `theme.json` in the colours of the terminal you run it from.                                                                                                                    |
+| `terminal`  | Status line with prompt mark, counts, model, the palette's sixteen colours and a clock; mono type, sharp corners. Its `theme.json` is Tokyo Night as `vp run theme:qt` writes it from a terminal in those colours.                                                                                                                   |
 
-Pick up the terminal's colours with:
+Pick up your own terminal's colours (it asks the terminal for its palette and
+writes `theme.json` into the shell directory, `~/.t3/shell` by default):
 
 ```sh
-node apps/desktop-qt/examples/terminal/theme-from-terminal.mjs ~/.t3/shell/theme.json
+vp run theme:qt
+vp run theme:qt ~/.t3/shell
 ```
 
 What you can reach from `shell.qml`: `ShellWindow` as the root (window

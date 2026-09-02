@@ -162,9 +162,10 @@ overrides it.
 The file _is_ the interface for colour propagation: theme managers (omarchy
 themes, pywal templates, a hand-written file) write it and the app follows.
 The shell itself does not import terminal configs; the generator that comes
-closest, `examples/terminal/theme-from-terminal.mjs`, asks the running
-terminal for its palette over OSC 10 / 11 / 12 / 17 / 4 and writes a
-`theme.json` from the answer, keeping the shell on the file contract.
+closest, `vp run theme:qt [shell-dir]` (`scripts/theme-from-terminal.mjs`),
+asks the running terminal for its palette over OSC 10 / 11 / 12 / 17 / 4 and
+writes `theme.json` into the shell directory from the answer, keeping the
+shell on the file contract.
 
 Its shape is the web app's own `ThemeFile` (`apps/web/src/themePalette.ts`;
 the Settings → Theme editor exports it) plus a shell-only `window` section:
