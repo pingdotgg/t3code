@@ -151,6 +151,15 @@ to reveal them, or focus **Show other notices** with `Tab` and press `Enter` or 
 `Escape` to close the stack and return focus to that control. On a touchscreen, tap the peek to
 open the stack. Interacting with the attached banner or composer does not open the stack.
 
+## Model defaults
+
+A project's **New threads model** setting overrides your last-used model. Otherwise, a new thread
+keeps the last model and options you used for that provider. On a fresh client with no saved choice,
+T3 Code uses the provider default. For Codex, that includes the effective `model`,
+`model_reasoning_effort`, and `service_tier` values from Codex configuration. T3 Code falls back to
+the live Codex model catalog when those values are not configured or are unavailable. Reset the
+model in Project Settings to remove a project override.
+
 ## Prompt stash
 
 Use the default shortcut, `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux, to stash the current
