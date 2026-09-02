@@ -32,6 +32,8 @@ function baseInput() {
     worktreePath: "/repo/.worktrees/x",
     gitStatus,
     canOpenPullRequest: true,
+    terminalAvailable: true,
+    terminalOpen: false,
     availableEditors: ["vscode", "zed"] as EditorId[],
     preferredEditorId: "zed" as EditorId,
     scripts: [script],
@@ -70,6 +72,8 @@ describe("buildShellWorkspaceState", () => {
       },
     });
     expect(state.canOpenPullRequest).toBe(true);
+    expect(state.terminalAvailable).toBe(true);
+    expect(state.terminalOpen).toBe(false);
     expect(state.editors).toEqual([
       { id: "vscode", label: "VS Code" },
       { id: "zed", label: "Zed" },

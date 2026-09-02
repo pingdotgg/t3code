@@ -337,13 +337,16 @@ the embed document has no composer to reach yet.
 `ShellWorkspaceState`: project and thread titles, checkout mode (and whether
 it can still change), branch and worktree, a git summary (dirty, ahead/behind,
 linked PR), the environments the logical project spans, available editors
-with the preferred one, and project scripts. `ChatHeader` keeps only the git
+with the preferred one, project scripts, and the terminal drawer's state
+(`terminalAvailable`, `terminalOpen`; the drawer itself stays in the page,
+under the timeline). `ChatHeader` keeps only the git
 control (`shellHosted`), since commit/push/PR flows carry dialogs and progress
 UI that live with that control; the branch toolbar under the composer is not
 rendered. The `Workspace` brick renders the breadcrumb and the run / open
 pills; the branch toolbar's contents (environment, checkout mode, branch
 picker, PR badge) are the context strip under the `Composer` brick, where the
-page puts them. Actions: `workspace.newThread`, `workspace.openInEditor
+page puts them, and the terminal and panel toggles from the page's header.
+Actions: `workspace.newThread`, `terminal.toggle`, `workspace.openInEditor
 {editorId?}` (same command and preference as the HTML picker),
 `workspace.runScript {scriptId}`, `workspace.envMode.set {mode}`,
 `workspace.startFromOrigin.set {enabled}`, `workspace.openPullRequest`,

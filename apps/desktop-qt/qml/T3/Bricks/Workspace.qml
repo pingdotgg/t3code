@@ -314,6 +314,20 @@ Rectangle {
             compact: strip.compact
         }
 
+        // The terminal drawer stays in the page; its toggle is the strip's,
+        // next to the panel's, as in the page's header.
+        ShellButton {
+            visible: strip.ready && strip.model.terminalAvailable
+            subtle: true
+            implicitHeight: 28
+            iconName: "panel-bottom"
+            iconSize: 16
+            iconTint: strip.ready && strip.model.terminalOpen ? strip.foreground : strip.iconMuted
+            Layout.leftMargin: 4
+            Accessible.name: strip.ready && strip.model.terminalOpen ? qsTr("Hide terminal") : qsTr("Show terminal")
+            onClicked: Shell.dispatch("terminal.toggle")
+        }
+
         ShellButton {
             visible: strip.panelToggle !== null
             subtle: true

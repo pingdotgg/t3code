@@ -40,6 +40,7 @@ const ICONS = [
   "message-square",
   "minus",
   "monitor",
+  "panel-bottom",
   "panel-left",
   "panel-left-close",
   "panel-right",

@@ -242,6 +242,9 @@ export const ShellWorkspaceState = Schema.Struct({
     }),
   ),
   canOpenPullRequest: Schema.Boolean,
+  /** The thread's terminal drawer: whether one can open here, and whether it is open. */
+  terminalAvailable: Schema.Boolean,
+  terminalOpen: Schema.Boolean,
   editors: Schema.Array(Schema.Struct({ id: Schema.String, label: Schema.String })),
   preferredEditorId: Schema.NullOr(Schema.String),
   scripts: Schema.Array(
@@ -460,6 +463,7 @@ export const ShellAction = Schema.Union([
     mode: Schema.Literals(["default", "plan"]),
   }),
   Schema.Struct({ type: Schema.Literal("rightPanel.toggle") }),
+  Schema.Struct({ type: Schema.Literal("terminal.toggle") }),
   Schema.Struct({ type: Schema.Literal("rightPanel.activate"), id: Schema.String }),
   Schema.Struct({ type: Schema.Literal("rightPanel.close"), id: Schema.String }),
   Schema.Struct({

@@ -45,12 +45,15 @@ export interface ShellWorkspaceBridgeProps {
   readonly worktreePath: string | null;
   readonly gitStatus: VcsStatusResult | null;
   readonly canOpenPullRequest: boolean;
+  readonly terminalAvailable: boolean;
+  readonly terminalOpen: boolean;
   readonly availableEditors: ReadonlyArray<EditorId>;
   readonly scripts: ReadonlyArray<ProjectScript>;
   readonly preferredScriptId: string | null;
   readonly environments: ReadonlyArray<{ environmentId: EnvironmentId; label: string }>;
   readonly environmentChangeable: boolean;
   readonly onNewThread: () => void;
+  readonly onToggleTerminal: () => void;
   readonly onRunScript: (script: ProjectScript) => void;
   readonly onEnvModeChange: (mode: EnvMode) => void;
   readonly onStartFromOriginChange: (enabled: boolean) => void;
@@ -66,8 +69,9 @@ export interface ShellWorkspaceBridgeProps {
 
 /**
  * Mounted by ChatView when the Qt shell hosts the app. Publishes the
- * workspace strip (breadcrumb, checkout context, editors, scripts) and routes
- * workspace.* actions to ChatView's handlers. Opening in an editor uses the
+ * workspace strip (breadcrumb, checkout context, editors, scripts, the
+ * terminal drawer's state) and routes workspace.* actions and the drawer
+ * toggle to ChatView's handlers. Opening in an editor uses the
  * same command and preference the HTML picker uses.
  */
 export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
@@ -121,6 +125,8 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
         worktreePath: props.worktreePath,
         gitStatus: props.gitStatus,
         canOpenPullRequest: props.onOpenPullRequest !== undefined && props.canOpenPullRequest,
+        terminalAvailable: props.terminalAvailable,
+        terminalOpen: props.terminalOpen,
         availableEditors: props.availableEditors,
         preferredEditorId,
         scripts: props.scripts,
@@ -156,6 +162,9 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
     switch (action.type) {
       case "workspace.newThread":
         props.onNewThread();
+        return;
+      case "terminal.toggle":
+        if (props.terminalAvailable) props.onToggleTerminal();
         return;
       case "workspace.openInEditor": {
         if (props.openInCwd === null) return;
