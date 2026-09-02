@@ -691,13 +691,18 @@ export function deriveMessagesTimelineRows(input: {
   const latestRunningToolEntry = visibleActiveToolEntries.findLast((entry) =>
     workEntryIsActiveTurnActivity(entry.entry),
   );
+  const latestToolFailed =
+    latestRunningToolEntry === undefined &&
+    latestVisibleToolEntry !== undefined &&
+    latestVisibleToolEntry.entry.toolLifecycleStatus !== "declined" &&
+    workEntryDisplayIndicatesToolFailure(latestVisibleToolEntry.entry);
   const latestToolKeepsActivityLive =
     latestRunningToolEntry !== undefined ||
     (latestVisibleToolEntry !== undefined &&
       workEntryIndicatesToolSuccess(latestVisibleToolEntry.entry));
   const activeWorkPlacementEntryId = latestVisibleToolEntry?.id;
   const activeWorkRow =
-    activeWorkAnchor && latestVisibleToolEntry
+    activeWorkAnchor && latestVisibleToolEntry && !latestToolFailed
       ? (() => {
           const groupId = workGroupId(activeWorkAnchor.id, activeWorkAnchor.entry);
           return {
@@ -715,7 +720,7 @@ export function deriveMessagesTimelineRows(input: {
         })()
       : null;
   const activeWorkEntryIds = new Set(
-    activeWorkRow === null ? [] : activeToolEntries.map((entry) => entry.id),
+    activeWorkRow !== null || latestToolFailed ? activeToolEntries.map((entry) => entry.id) : [],
   );
   const appendWorkingRow = () => {
     nextRows.push({
@@ -912,7 +917,7 @@ export function deriveMessagesTimelineRows(input: {
   if (input.isWorking && activeTurnHeaderIndex === input.timelineEntries.length) {
     appendWorkingRow();
   }
-  if (input.isWorking && !hasActivityRow) {
+  if (input.isWorking && (!hasActivityRow || latestToolFailed)) {
     nextRows.push({
       kind: "thinking",
       id: LIVE_ACTIVITY_ROW_ID,
