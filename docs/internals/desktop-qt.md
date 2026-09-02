@@ -564,9 +564,10 @@ X11 `WM_CLASS`, so compositor rules can target the window — on Hyprland:
 `.github/workflows/desktop-qt.yml` builds Release binaries on Linux and
 macOS with the official Qt 6.9 binaries (`jurplel/install-qt-action`) and
 packages an AppImage (`scripts/package-linux.sh`, linuxdeploy + its Qt
-plugin) and a macOS bundle (`macdeployqt`). The Node desktop host still
-requires a system Node at runtime. The Linux path was written against the
-documented tooling but has only been exercised in CI, not on this machine.
+plugin) and a macOS bundle (`macdeployqt`). Each package carries the Node
+executable used to install its native runtime dependencies. The Linux path was
+written against the documented tooling but has only been exercised in CI, not
+on this machine.
 
 ## Splitting chrome out
 
@@ -582,5 +583,5 @@ primary view stays the brain.
 
 ## Release targets
 
-Linux AppImage and macOS `.app` first, Windows later. The runtime Node is not
-bundled: the host requires a system Node matching `apps/server`'s engine range.
+Linux AppImage and macOS `.app` first, Windows later. Release staging bundles
+the build's Node executable and license beside the host runtime.

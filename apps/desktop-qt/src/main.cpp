@@ -57,6 +57,22 @@ QString resolveDefaultHostEntry() {
              : QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(configured);
 }
 
+QString resolveDefaultNodeExecutable() {
+  const QString fromEnv =
+      QProcessEnvironment::systemEnvironment().value(QStringLiteral("T3CODE_NODE"));
+  if (!fromEnv.isEmpty()) {
+    return fromEnv;
+  }
+  const QString configured = QStringLiteral(T3_NODE_ENTRY);
+  if (QDir::isAbsolutePath(configured)) {
+    return configured;
+  }
+  if (configured.contains(QLatin1Char('/')) || configured.contains(QLatin1Char('\\'))) {
+    return QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(configured);
+  }
+  return configured;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -100,7 +116,7 @@ int main(int argc, char* argv[]) {
       QStringLiteral("file"), resolveDefaultHostEntry());
   const QCommandLineOption nodeOption(
       QStringLiteral("node"), QStringLiteral("Node executable used to run the desktop host."),
-      QStringLiteral("path"));
+      QStringLiteral("path"), resolveDefaultNodeExecutable());
   const QCommandLineOption screenshotOption(
       QStringLiteral("screenshot"),
       QStringLiteral("Write a PNG of the window once the page has loaded, then quit."),
@@ -145,10 +161,7 @@ int main(int argc, char* argv[]) {
                    });
 
   BackendProcess::Options backendOptions;
-  const auto env = QProcessEnvironment::systemEnvironment();
-  backendOptions.nodeExecutable = parser.isSet(nodeOption)
-                                      ? parser.value(nodeOption)
-                                      : env.value(QStringLiteral("T3CODE_NODE"), QStringLiteral("node"));
+  backendOptions.nodeExecutable = parser.value(nodeOption);
   backendOptions.hostEntry = parser.value(hostEntryOption);
   backendOptions.hostArguments = parser.positionalArguments();
   if (parser.isSet(homeDirOption)) {

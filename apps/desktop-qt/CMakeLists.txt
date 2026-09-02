@@ -35,6 +35,22 @@ if(NOT DEFINED T3_HOST_ENTRY)
   endif()
 endif()
 
+# Release packages carry the same Node executable that installed their native
+# dependencies. Development builds keep using the command from PATH.
+if(NOT DEFINED T3_NODE_ENTRY)
+  if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    if(APPLE)
+      set(T3_NODE_ENTRY "../Resources/t3code/bin/node")
+    elseif(WIN32)
+      set(T3_NODE_ENTRY "../share/t3code/bin/node.exe")
+    else()
+      set(T3_NODE_ENTRY "../share/t3code/bin/node")
+    endif()
+  else()
+    set(T3_NODE_ENTRY "node")
+  endif()
+endif()
+
 # qwebchannel.js is the browser half of Qt WebChannel. Qt installs it as data
 # (share/qt6/webchannel); bundling it makes the injected script independent of
 # whether the runtime Qt exposes it as a qrc resource.
@@ -74,6 +90,7 @@ endif()
 target_compile_definitions(t3code-qt PRIVATE
   T3_QML_SOURCE_DIR="${T3_QML_SOURCE_DIR}"
   T3_HOST_ENTRY="${T3_HOST_ENTRY}"
+  T3_NODE_ENTRY="${T3_NODE_ENTRY}"
   T3_APP_VERSION="${PROJECT_VERSION}"
 )
 

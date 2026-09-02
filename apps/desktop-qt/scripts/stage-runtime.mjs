@@ -20,6 +20,9 @@ if (destinationArg === undefined) {
 
 const destination = NodePath.resolve(destinationArg);
 const serverDist = NodePath.join(repoRoot, "apps/server/dist");
+const nodePrefix = NodePath.resolve(NodePath.dirname(process.execPath), "..");
+const nodeLicense = NodePath.join(nodePrefix, "LICENSE");
+const nodeExecutableName = hostPlatform === "win32" ? "node.exe" : "node";
 const serverManifest = JSON.parse(
   await NodeFSP.readFile(NodePath.join(repoRoot, "apps/server/package.json"), "utf8"),
 );
@@ -29,8 +32,13 @@ const rootManifest = JSON.parse(
 
 await NodeFSP.access(NodePath.join(serverDist, "bin.mjs"));
 await NodeFSP.access(NodePath.join(serverDist, "client/index.html"));
+await NodeFSP.access(nodeLicense);
 await NodeFSP.rm(destination, { recursive: true, force: true });
-await NodeFSP.mkdir(NodePath.join(destination, "host"), { recursive: true });
+await Promise.all([
+  NodeFSP.mkdir(NodePath.join(destination, "host"), { recursive: true }),
+  NodeFSP.mkdir(NodePath.join(destination, "bin"), { recursive: true }),
+  NodeFSP.mkdir(NodePath.join(destination, "licenses/node"), { recursive: true }),
+]);
 await Promise.all([
   NodeFSP.copyFile(
     NodePath.join(repoRoot, "apps/desktop-qt/host/main.ts"),
@@ -41,7 +49,12 @@ await Promise.all([
     NodePath.join(destination, "host/pairingUrl.ts"),
   ),
   NodeFSP.cp(serverDist, NodePath.join(destination, "server"), { recursive: true }),
+  NodeFSP.copyFile(process.execPath, NodePath.join(destination, "bin", nodeExecutableName)),
+  NodeFSP.copyFile(nodeLicense, NodePath.join(destination, "licenses/node/LICENSE")),
 ]);
+if (hostPlatform !== "win32") {
+  await NodeFSP.chmod(NodePath.join(destination, "bin", nodeExecutableName), 0o755);
+}
 
 const dependencies = selectCliRuntimeExternalDependencies(serverManifest.dependencies);
 await NodeFSP.writeFile(
