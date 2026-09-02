@@ -108,7 +108,7 @@ function BreadcrumbMenuContent(props: {
     <MenuPopup
       align="start"
       side="bottom"
-      className="w-max max-w-[min(19rem,var(--available-width))]"
+      className="w-max min-w-32 max-w-[min(19rem,var(--available-width))]"
       onKeyDown={(event) => {
         if (event.key !== "ArrowLeft" || !canGoBack || parentPath === null) return;
         event.preventDefault();
