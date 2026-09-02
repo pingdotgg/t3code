@@ -12,6 +12,7 @@ import {
   shortcutToKeybindingInput,
   unknownWhenVariables,
   whenAstToExpression,
+  whenNodeRemoveLabel,
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
@@ -118,6 +119,19 @@ describe("KeybindingsSettings.logic", () => {
         },
       },
     });
+  });
+
+  it("describes the scope of each visual expression removal", () => {
+    const condition = { type: "identifier", name: "terminalFocus" } as const;
+    const negatedCondition = { type: "not", node: condition } as const;
+    const group = { type: "and", left: condition, right: negatedCondition } as const;
+    const negatedGroup = { type: "not", node: group } as const;
+
+    expect(whenNodeRemoveLabel(group, 0)).toBe("Clear all conditions");
+    expect(whenNodeRemoveLabel(condition, 1)).toBe("Remove condition");
+    expect(whenNodeRemoveLabel(negatedCondition, 1)).toBe("Remove condition");
+    expect(whenNodeRemoveLabel(group, 1)).toBe("Remove group and its conditions");
+    expect(whenNodeRemoveLabel(negatedGroup, 1)).toBe("Remove group and its conditions");
   });
 
   it("formats static and project script command labels", () => {
