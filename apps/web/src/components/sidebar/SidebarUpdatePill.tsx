@@ -113,10 +113,6 @@ export function SidebarUpdatePill() {
 }
 
 function SidebarUpdateControl() {
-  "use no memo";
-  // Base UI loses focus restoration when React Compiler caches this Popover subtree
-  // across mixed hover and keyboard open cycles.
-
   const state = useDesktopUpdateState();
   const [isActionPending, setIsActionPending] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
@@ -166,8 +162,16 @@ function SidebarUpdateControl() {
   );
 
   useEffect(() => {
-    if (!showReleaseNotesPopover) releaseNotesPopoverHandle.close();
-  }, [releaseNotesPopoverHandle, showReleaseNotesPopover]);
+    if (!showReleaseNotesPopover) {
+      releaseNotesPopoverHandle.close();
+      return;
+    }
+
+    const trigger = document.getElementById(releaseNotesTriggerId);
+    if (trigger?.matches(":focus-visible")) {
+      releaseNotesPopoverHandle.open(releaseNotesTriggerId);
+    }
+  }, [releaseNotesPopoverHandle, releaseNotesTriggerId, showReleaseNotesPopover]);
 
   const handleAction = useCallback(async () => {
     const bridge = window.desktopBridge;
@@ -345,18 +349,47 @@ function SidebarUpdateControl() {
 
   return (
     <SidebarMenuItem className="ml-auto shrink-0">
-      {showReleaseNotesPopover && state ? (
-        <Popover
-          handle={releaseNotesPopoverHandle}
-          onOpenChange={handleSidebarUpdateReleaseNotesPopoverOpenChange}
-        >
-          <PopoverTrigger
-            closeDelay={150}
-            handle={releaseNotesPopoverHandle}
+      <Popover
+        handle={releaseNotesPopoverHandle}
+        onOpenChange={(open, details) => {
+          if (open && !showReleaseNotesPopover) {
+            details.cancel();
+            return;
+          }
+          handleSidebarUpdateReleaseNotesPopoverOpenChange(open, details);
+        }}
+      >
+        <Tooltip disabled={showReleaseNotesPopover}>
+          <TooltipTrigger
             id={releaseNotesTriggerId}
-            openOnHover
-            render={updateButton}
+            render={
+              <PopoverTrigger
+                {...(!showReleaseNotesPopover
+                  ? {
+                      "aria-controls": undefined,
+                      "aria-expanded": undefined,
+                      "aria-haspopup": undefined,
+                    }
+                  : {})}
+                closeDelay={150}
+                handle={releaseNotesPopoverHandle}
+                id={releaseNotesTriggerId}
+                openOnHover={showReleaseNotesPopover}
+                render={updateButton}
+              />
+            }
           />
+          {!showReleaseNotesPopover ? (
+            <TooltipPopup
+              align="center"
+              side="top"
+              variant={showUpdateDetails ? "glass" : "default"}
+            >
+              {tooltip}
+            </TooltipPopup>
+          ) : null}
+        </Tooltip>
+        {showReleaseNotesPopover && state ? (
           <PopoverPopup
             align="center"
             aria-label="Nightly update release notes"
@@ -380,15 +413,8 @@ function SidebarUpdateControl() {
               tooltip={tooltip}
             />
           </PopoverPopup>
-        </Popover>
-      ) : (
-        <Tooltip>
-          <TooltipTrigger render={updateButton} />
-          <TooltipPopup align="center" side="top" variant={showUpdateDetails ? "glass" : "default"}>
-            {tooltip}
-          </TooltipPopup>
-        </Tooltip>
-      )}
+        ) : null}
+      </Popover>
     </SidebarMenuItem>
   );
 }
