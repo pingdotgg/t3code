@@ -332,6 +332,28 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("forwards explicit output limits to the process boundary", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.execute({
+        cwd: "/repo",
+        args: ["repos", "pr", "list"],
+        maxOutputBytes: 16 * 1024 * 1024,
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: ["repos", "pr", "list"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+        maxOutputBytes: 16 * 1024 * 1024,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("preserves VCS causes without copying upstream details into messages", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({

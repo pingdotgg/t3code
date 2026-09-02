@@ -111,6 +111,7 @@ export type AzureDevOpsPullRequestCliError =
 
 /** The version every REST call below is pinned to, so a new default cannot reshape a response. */
 const REST_API_VERSION = "7.1";
+const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export class AzureDevOpsPullRequestCli extends Context.Service<
   AzureDevOpsPullRequestCli,
@@ -258,10 +259,15 @@ export const make = Effect.gen(function* () {
   // how to read all of them.
   const detectArgs = ["--detect", "true"] as const;
 
-  const executeJson = (input: { readonly cwd: string; readonly args: ReadonlyArray<string> }) =>
+  const executeJson = (input: {
+    readonly cwd: string;
+    readonly args: ReadonlyArray<string>;
+    readonly maxOutputBytes?: number;
+  }) =>
     azure.execute({
       cwd: input.cwd,
       args: [...input.args, "--only-show-errors", "--output", "json"],
+      ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
     });
 
   /**
@@ -290,6 +296,7 @@ export const make = Effect.gen(function* () {
     const top = remaining + 1;
     return executeJson({
       cwd: input.cwd,
+      maxOutputBytes: PULL_REQUEST_LIST_MAX_OUTPUT_BYTES,
       args: [
         "repos",
         "pr",
