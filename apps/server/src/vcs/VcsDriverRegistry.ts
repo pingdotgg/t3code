@@ -12,7 +12,12 @@ import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 
 const DETECTION_CACHE_CAPACITY = 2_048;
-const DETECTION_CACHE_TTL = Duration.seconds(2);
+// Detection spawns three git processes per cwd. A two second window meant
+// every VCS call past that re-ran them, which dominates latency when many
+// projects refresh at once. Whether a directory is a git repository is stable,
+// and a negative result is still never cached, so `git init` is picked up at
+// once.
+const DETECTION_CACHE_TTL = Duration.minutes(5);
 
 export interface VcsDriverResolveInput {
   readonly cwd: string;
