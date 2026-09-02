@@ -63,6 +63,7 @@ private:
   QString sourceFingerprint() const;
   QUrl defaultShellUrl() const;
   QQuickWindow* rootWindow() const;
+  void applyWindowTheme();
 
   Options m_options;
   ShellBridge* m_bridge;

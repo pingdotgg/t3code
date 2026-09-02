@@ -49,6 +49,7 @@ ShellRuntime::ShellRuntime(Options options, ShellBridge* bridge, ThemeStore* the
   connect(&m_watcher, &QFileSystemWatcher::directoryChanged, &m_debounce,
           qOverload<>(&QTimer::start));
   connect(&m_watcher, &QFileSystemWatcher::fileChanged, &m_debounce, qOverload<>(&QTimer::start));
+  connect(m_theme, &ThemeStore::themeChanged, this, &ShellRuntime::applyWindowTheme);
 }
 
 ShellRuntime::~ShellRuntime() {
@@ -121,12 +122,7 @@ void ShellRuntime::reload() {
   if (previous != nullptr) {
     previous->deleteLater();
   }
-  for (QObject* root : m_engine->rootObjects()) {
-    if (auto* window = qobject_cast<QQuickWindow*>(root)) {
-      applyWindowBlur(window, m_theme->windowTransparent() && m_theme->windowBlur(),
-                      m_theme->appearance() != QStringLiteral("light"));
-    }
-  }
+  applyWindowTheme();
   m_fingerprint = sourceFingerprint();
   ++m_generation;
   qInfo().noquote() << "[shell] generation" << m_generation << "loaded from"
@@ -239,6 +235,18 @@ QQuickWindow* ShellRuntime::rootWindow() const {
     }
   }
   return nullptr;
+}
+
+void ShellRuntime::applyWindowTheme() {
+  if (m_engine == nullptr) {
+    return;
+  }
+  for (QObject* root : m_engine->rootObjects()) {
+    if (auto* window = qobject_cast<QQuickWindow*>(root)) {
+      applyWindowBlur(window, m_theme->windowTransparent() && m_theme->windowBlur(),
+                      m_theme->appearance() != QStringLiteral("light"));
+    }
+  }
 }
 
 bool ShellRuntime::captureWindow(const QString& path) {

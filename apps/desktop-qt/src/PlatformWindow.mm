@@ -23,30 +23,35 @@ bool applyWindowServerBlur(NSWindow* native, int radius) {
   return setBlur(connection(), native.windowNumber, radius) == 0;
 }
 
-void applyEffectView(NSWindow* native, bool dark) {
+void applyEffectView(NSWindow* native, bool enabled, bool dark) {
+  NSVisualEffectView* backdrop = nil;
   if ([native.contentView isKindOfClass:[NSVisualEffectView class]]) {
+    backdrop = (NSVisualEffectView*)native.contentView;
+  } else if (enabled) {
+    // Qt's view becomes a child of the effect view: the blur paints below it and
+    // Qt keeps drawing on a clear surface on top.
+    NSView* content = native.contentView;
+    backdrop = [[NSVisualEffectView alloc] initWithFrame:content.frame];
+    backdrop.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    backdrop.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+    native.contentView = backdrop;
+    content.frame = backdrop.bounds;
+    content.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    [backdrop addSubview:content];
+  }
+  if (backdrop == nil) {
     return;
   }
-  // Qt's view becomes a child of the effect view: the blur paints below it and
-  // Qt keeps drawing on a clear surface on top.
-  NSView* content = native.contentView;
-  NSVisualEffectView* backdrop = [[NSVisualEffectView alloc] initWithFrame:content.frame];
-  backdrop.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-  backdrop.blendingMode = NSVisualEffectBlendingModeBehindWindow;
   backdrop.material = dark ? NSVisualEffectMaterialHUDWindow : NSVisualEffectMaterialPopover;
-  backdrop.state = NSVisualEffectStateActive;
+  backdrop.state = enabled ? NSVisualEffectStateActive : NSVisualEffectStateInactive;
   backdrop.appearance =
       [NSAppearance appearanceNamed:dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
-  native.contentView = backdrop;
-  content.frame = backdrop.bounds;
-  content.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-  [backdrop addSubview:content];
 }
 
 }  // namespace
 
 void applyWindowBlur(QWindow* window, bool enabled, bool dark) {
-  if (window == nullptr || !enabled) {
+  if (window == nullptr) {
     return;
   }
   auto* qtView = reinterpret_cast<NSView*>(window->winId());
@@ -54,9 +59,13 @@ void applyWindowBlur(QWindow* window, bool enabled, bool dark) {
   if (native == nil) {
     return;
   }
-  native.opaque = NO;
-  native.backgroundColor = NSColor.clearColor;
-  if (!applyWindowServerBlur(native, 32)) {
-    applyEffectView(native, dark);
+  if (enabled) {
+    native.opaque = NO;
+    native.backgroundColor = NSColor.clearColor;
+  }
+  if (!applyWindowServerBlur(native, enabled ? 32 : 0)) {
+    applyEffectView(native, enabled, dark);
+  } else if ([native.contentView isKindOfClass:[NSVisualEffectView class]]) {
+    applyEffectView(native, false, dark);
   }
 }
