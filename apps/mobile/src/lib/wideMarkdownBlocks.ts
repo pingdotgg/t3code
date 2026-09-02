@@ -1,6 +1,7 @@
 /**
- * Detects markdown that the JS renderer draws as a block requiring a definite
- * user-bubble width — fenced code blocks, GFM tables, and ordered lists.
+ * Detects markdown that the renderer draws as a block requiring a definite
+ * user-bubble width: fenced code blocks, GFM tables, ordered lists, and
+ * blockquotes when requested by the caller.
  *
  * Fenced code blocks and tables report an intrinsic width equal to their
  * widest line, which is effectively unbounded. A user bubble sizes itself
@@ -31,6 +32,7 @@ const BLOCKQUOTE_PREFIX = /^ {0,3}>[ \t]?/;
 
 export interface WideMarkdownBlockOptions {
   readonly includeOrderedLists?: boolean;
+  readonly includeBlockquotes?: boolean;
 }
 
 function stripBlockquotePrefixes(line: string): string {
@@ -39,6 +41,10 @@ function stripBlockquotePrefixes(line: string): string {
     content = content.replace(BLOCKQUOTE_PREFIX, "");
   }
   return content;
+}
+
+function hasBlockquote(text: string): boolean {
+  return text.split("\n").some((line) => BLOCKQUOTE_PREFIX.test(line));
 }
 
 function hasOrderedListItem(text: string): boolean {
@@ -78,6 +84,9 @@ export function hasWideMarkdownBlock(
   options: WideMarkdownBlockOptions = {},
 ): boolean {
   if (FENCED_CODE_BLOCK.test(text)) {
+    return true;
+  }
+  if (options.includeBlockquotes === true && hasBlockquote(text)) {
     return true;
   }
   if (options.includeOrderedLists !== false && hasOrderedListItem(text)) {
