@@ -1,4 +1,5 @@
 import * as Haptics from "expo-haptics";
+import { Image as ExpoImage } from "expo-image";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
 import type {
@@ -590,16 +591,21 @@ function ThreadMarkdownImageRequest(props: {
 
   return (
     <>
-      <Image
+      <ExpoImage
         source={{ uri: props.uri }}
-        resizeMode="contain"
+        cachePolicy="memory-disk"
+        contentFit="contain"
         accessible={false}
         onLoad={(event) => {
+          const width = event.source.width;
+          const height = event.source.height;
+          if (width > 0 && height > 0) {
+            props.onLoad({ width, height });
+          }
           setLoaded(true);
-          props.onLoad(event.nativeEvent.source);
         }}
         onError={props.onError}
-        style={{ width: "100%", height: "100%", opacity: loaded ? 1 : 0 }}
+        style={{ width: "100%", height: "100%" }}
       />
       {loaded ? null : (
         <View
@@ -2256,6 +2262,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const listAppearanceData = useMemo(
     () => ({
       copiedRowId,
+      environmentId: props.environmentId,
       expandedWorkRows,
       workRowSizing,
       iconSubtleColor,
@@ -2263,6 +2270,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       userBubbleColor,
       viewportWidth,
+      workspaceRoot: props.workspaceRoot ?? null,
     }),
     [
       copiedRowId,
@@ -2270,6 +2278,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       workRowSizing,
       iconSubtleColor,
       markdownStyles,
+      props.environmentId,
+      props.workspaceRoot,
       reviewCommentColors,
       userBubbleColor,
       viewportWidth,

@@ -77,6 +77,7 @@ export function SelectableMarkdownText({
                 textStyle={textStyle}
                 highlightCode={highlightCode}
                 onLinkPress={onLinkPress}
+                renderImage={renderImage}
               />
             ) : (
               <NativeMarkdownSelectableText
