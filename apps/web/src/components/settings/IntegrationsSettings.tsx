@@ -822,10 +822,15 @@ function BrowserDefaultProfileSetting({ disabled }: { readonly disabled: boolean
           <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Default browser profile">
             <SelectValue>{selected?.name ?? "Default"}</SelectValue>
           </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
+          {/*
+            Capped and truncated like the tab menu's profile list: names are
+            user-supplied and run to 48 characters, which would otherwise
+            widen the popup to fit the longest one.
+          */}
+          <SelectPopup align="end" alignItemWithTrigger={false} className="max-w-64">
             {profiles.map((profile) => (
               <SelectItem hideIndicator key={profile.id} value={profile.id}>
-                {profile.name}
+                <span className="min-w-0 truncate">{profile.name}</span>
               </SelectItem>
             ))}
           </SelectPopup>
