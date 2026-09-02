@@ -234,6 +234,41 @@ describe("parseBinaryCookies", () => {
     }
   });
 
+  it("accepts the checksum and property-list trailer Safari writes", () => {
+    const file = encodeBinaryCookies([
+      { domain: "a.test", name: "c", path: "/", value: "v", flags: 0, expiry: 0 },
+    ]);
+    const checksum = Buffer.alloc(8);
+    const plist = Buffer.from("bplist00 stub");
+    const plistLength = Buffer.alloc(4);
+    plistLength.writeUInt32BE(plist.length, 0);
+
+    expect(parseBinaryCookies(Buffer.concat([file, checksum]))).toHaveLength(1);
+    expect(parseBinaryCookies(Buffer.concat([file, checksum, plistLength, plist]))).toHaveLength(1);
+  });
+
+  it("rejects a jar whose page table stops short of its contents", () => {
+    // A second, undeclared page after the first would be silently dropped —
+    // the cookies it holds vanish from the import with no error — so a file
+    // the header does not fully describe is refused instead.
+    const first = encodeBinaryCookies([
+      { domain: "a.test", name: "c", path: "/", value: "v", flags: 0, expiry: 0 },
+    ]);
+    const extraPage = encodeBinaryCookies([
+      { domain: "b.test", name: "d", path: "/", value: "w", flags: 0, expiry: 0 },
+    ]).subarray(12);
+
+    expect(() => parseBinaryCookies(Buffer.concat([first, extraPage]))).toThrow(
+      SafariCookieReadError,
+    );
+    // A trailer that claims a property list it doesn't contain is refused too.
+    const badLength = Buffer.alloc(4);
+    badLength.writeUInt32BE(99, 0);
+    expect(() =>
+      parseBinaryCookies(Buffer.concat([first, Buffer.alloc(8), badLength, Buffer.from("x")])),
+    ).toThrow(SafariCookieReadError);
+  });
+
   it("rejects a file that is not binarycookies", () => {
     expect(() => parseBinaryCookies(Buffer.from("not a cookie jar"))).toThrow(
       SafariCookieReadError,
@@ -259,18 +294,41 @@ describe("readSafariCookies", () => {
 
   it.effect("reports a TCC denial as a permission the user can grant", () =>
     Effect.gen(function* () {
+      // What Full Disk Access actually looks like: the file is there, the read
+      // is refused with EPERM. Effect tags that `Unknown`, not
+      // `PermissionDenied`, so the reader has to look at the errno. Reporting
+      // it as a generic failure would send the user looking for a missing
+      // browser instead of a checkbox.
+      const denied = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "FileSystem",
+        method: "readFile",
+        pathOrDescriptor: "/protected/Cookies.binarycookies",
+        cause: Object.assign(new Error("operation not permitted"), { code: "EPERM" }),
+      });
+
+      const error = yield* readSafariCookies("/protected/Cookies.binarycookies").pipe(
+        Effect.flip,
+        Effect.provide(FileSystem.layerNoop({ readFile: () => Effect.fail(denied) })),
+      );
+
+      assert.equal(error.reason, "needsFullDiskAccess");
+    }),
+  );
+
+  it.effect("reports an ordinary permission failure as a plain read failure", () =>
+    Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-safari-" });
       const jar = `${directory}/Cookies.binarycookies`;
       yield* fileSystem.writeFile(jar, new Uint8Array([0x63, 0x6f, 0x6f, 0x6b]));
-      // What Full Disk Access actually looks like: the file is there, the read
-      // is refused. Reporting that as a generic failure would send the user
-      // looking for a missing browser instead of a checkbox.
+      // A mode-bits refusal is EACCES: granting Full Disk Access cannot fix
+      // it, so it must not be routed to that grant.
       yield* fileSystem.chmod(jar, 0o000);
 
       const error = yield* readSafariCookies(jar).pipe(Effect.flip);
 
-      assert.equal(error.reason, "needsFullDiskAccess");
+      assert.equal(error.reason, "readFailed");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
@@ -299,8 +357,10 @@ describe("isPermissionDenied", () => {
     expect(isPermissionDenied(platformError("Unknown", "EPERM"))).toBe(true);
   });
 
-  it("treats an EACCES denial as permission denied", () => {
-    expect(isPermissionDenied(platformError("PermissionDenied", "EACCES"))).toBe(true);
+  it("does not send an ordinary EACCES failure to the Full Disk Access grant", () => {
+    // A POSIX permission or ACL refusal cannot be fixed by granting Full Disk
+    // Access, so it stays a plain read failure; only TCC's EPERM routes there.
+    expect(isPermissionDenied(platformError("PermissionDenied", "EACCES"))).toBe(false);
   });
 
   it("does not treat an unrelated failure as permission denied", () => {

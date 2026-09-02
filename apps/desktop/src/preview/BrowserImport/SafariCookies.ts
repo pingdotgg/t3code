@@ -161,6 +161,22 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
     }
   }
 
+  // Safari writes an 8-byte checksum after the pages, then an optional
+  // length-prefixed property list. Anything else past the declared pages —
+  // in particular whole extra pages — means the page table does not describe
+  // the file, and a jar the header lies about is refused rather than
+  // imported with cookies silently missing.
+  const trailer = buffer.length - pageStart;
+  // Legal shapes: nothing, the 8-byte checksum alone, or checksum + u32
+  // length + exactly that many property-list bytes.
+  const validTrailer =
+    trailer === 0 ||
+    trailer === 8 ||
+    (trailer >= 12 && trailer === 8 + 4 + buffer.readUInt32BE(pageStart + 8));
+  if (!validTrailer) {
+    throw new SafariCookieReadError({ reason: "readFailed" });
+  }
+
   return cookies;
 }
 
@@ -173,9 +189,13 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
  * failure and the user is never told what to grant.
  */
 export const isPermissionDenied = (error: PlatformError.PlatformError): boolean => {
-  if (error.reason._tag === "PermissionDenied") return true;
+  // TCC denies with EPERM, which Effect tags `Unknown` rather than
+  // `PermissionDenied` — so the errno is what identifies it. EACCES (and the
+  // `PermissionDenied` tag it maps to) is an ordinary POSIX permission or
+  // ACL failure that granting Full Disk Access cannot fix, so it stays a plain
+  // read failure rather than sending the user to a grant that won't help.
   const code = (error.reason as { cause?: { code?: unknown } }).cause?.code;
-  return code === "EPERM" || code === "EACCES";
+  return code === "EPERM";
 };
 
 export const readSafariCookies = Effect.fn("SafariCookies.readSafariCookies")(function* (
