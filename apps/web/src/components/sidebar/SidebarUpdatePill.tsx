@@ -384,11 +384,7 @@ function SidebarUpdateControl() {
       ) : (
         <Tooltip>
           <TooltipTrigger render={updateButton} />
-          <TooltipPopup
-            align="center"
-            side="top"
-            variant={showUpdateDetails ? "glass" : "default"}
-          >
+          <TooltipPopup align="center" side="top" variant={showUpdateDetails ? "glass" : "default"}>
             {tooltip}
           </TooltipPopup>
         </Tooltip>

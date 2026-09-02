@@ -30,7 +30,7 @@ function ReleaseLink({
 }) {
   return (
     <a
-      className="mt-2 inline-flex items-center gap-1 rounded-sm text-xs leading-5 text-update-foreground underline decoration-dotted underline-offset-4 outline-none transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      className="mt-2 inline-flex items-center gap-1 rounded-sm text-xs leading-5 text-muted-foreground underline decoration-dotted underline-offset-4 outline-none transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
       href={releaseUrl}
       onClick={(event) => {
         event.preventDefault();
@@ -65,7 +65,7 @@ export function SidebarUpdateReleaseNotes({
               Update ready to download
             </div>
             {state.availableVersion ? (
-              <div className="mt-0.5 text-xs leading-4 text-update-foreground">
+              <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
                 {state.availableVersion}
               </div>
             ) : null}
