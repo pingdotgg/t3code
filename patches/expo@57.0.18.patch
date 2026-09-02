@@ -1,0 +1,66 @@
+diff --git a/ios/AppDelegates/ExpoReactNativeFactory.mm b/ios/AppDelegates/ExpoReactNativeFactory.mm
+index ed884041d8..3e51144cec 100644
+--- a/ios/AppDelegates/ExpoReactNativeFactory.mm
++++ b/ios/AppDelegates/ExpoReactNativeFactory.mm
+@@ -21,11 +21,58 @@
+ #import <ReactCommon/RCTHost.h>
+ #import <react/renderer/runtimescheduler/RuntimeSchedulerBinding.h>
+ #import <ExpoModulesCore/EXReactSchedulerDispatch.h>
++#import <react/featureflags/ReactNativeFeatureFlags.h>
++#import <react/featureflags/ReactNativeFeatureFlagsOverridesOSSStable.h>
+-
++
++namespace {
++class T3ReactNativeFeatureFlagsOverridesOSSStable final
++    : public facebook::react::ReactNativeFeatureFlagsOverridesOSSStable {
++ public:
++  bool enableSchedulerDelegateInvalidation() override
++  {
++    return true;
++  }
++};
++} // namespace
++
++@interface RCTReactNativeFactory (T3FeatureFlags)
++- (void)_setUpFeatureFlags:(RCTReleaseLevel)releaseLevel;
++@end
++
+ @implementation EXReactNativeFactory {
+   EXAppContext *_appContext;
+ }
+-
++
++// RN 0.86.3's prebuilt Scheduler contains this delegate lifetime guard, but its
++// OSS Stable provider leaves it off. Remove this override once Stable enables it.
++- (void)_setUpFeatureFlags:(RCTReleaseLevel)releaseLevel
++{
++  static BOOL initialized = NO;
++  static RCTReleaseLevel chosenReleaseLevel;
++  NSLog(@"_setUpFeatureFlags called with release level %li", releaseLevel);
++  if (!initialized) {
++    chosenReleaseLevel = releaseLevel;
++    initialized = YES;
++  } else if (chosenReleaseLevel != releaseLevel) {
++    [NSException
++         raise:@"RCTReactNativeFactory::_setUpFeatureFlags releaseLevel mismatch between React Native instances"
++        format:@"The releaseLevel (%li) of the new instance does not match the previous instance's releaseLevel (%li)",
++               releaseLevel,
++               chosenReleaseLevel];
++  }
++
++  if (releaseLevel != Stable) {
++    [super _setUpFeatureFlags:releaseLevel];
++    return;
++  }
++
++  static dispatch_once_t setupFeatureFlagsToken;
++  dispatch_once(&setupFeatureFlagsToken, ^{
++    facebook::react::ReactNativeFeatureFlags::override(
++        std::make_unique<T3ReactNativeFeatureFlagsOverridesOSSStable>());
++  });
++}
++
+ #pragma mark - RCTHostDelegate
+-
++
+ #if TARGET_OS_OSX
