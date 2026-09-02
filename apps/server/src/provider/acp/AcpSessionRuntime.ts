@@ -1156,6 +1156,16 @@ export class AcpSessionRuntime extends Context.Service<
      */
     readonly handleExtNotification: EffectAcpClient.AcpClient["Service"]["handleExtNotification"];
     /**
+     * Sends only `initialize` and returns the agent's response. Health probes use this to read
+     * advertised capabilities without authenticating or opening a session, so a probe can never
+     * start an interactive login or boot MCP servers.
+     * @see https://agentclientprotocol.com/protocol/schema#initialize
+     */
+    readonly initialize: () => Effect.Effect<
+      EffectAcpSchema.InitializeResponse,
+      EffectAcpErrors.AcpError
+    >;
+    /**
      * Initializes the ACP connection, authenticates, and loads, resumes, or creates the session.
      * Concurrent calls share the same in-flight startup and a failed startup may be retried.
      */
@@ -1187,11 +1197,14 @@ export class AcpSessionRuntime extends Context.Service<
       sessionId?: string,
     ) => Effect.Effect<EffectAcpSchema.CloseSessionResponse, EffectAcpErrors.AcpError>;
     /**
-     * Sends a prompt turn to the active session.
+     * Sends a prompt turn to the active session. `options.dispatched` settles once the
+     * `session/prompt` RPC is registered as the active prompt, so a caller that forks this
+     * effect knows when a later `cancel` will target this prompt.
      * @see https://agentclientprotocol.com/protocol/schema#session/prompt
      */
     readonly prompt: (
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
+      options?: { readonly dispatched?: Deferred.Deferred<void> },
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
     /**
      * Sends a real ACP `session/cancel` notification for the active session.
@@ -2146,7 +2159,7 @@ export const make = (
             );
           }),
         ),
-      prompt: (payload) =>
+      prompt: (payload, promptOptions?) =>
         promptSerializationSemaphore.withPermit(
           Effect.gen(function* () {
             const started = yield* getStartedState;
@@ -2203,12 +2216,14 @@ export const make = (
                 if (Option.isSome(activePromptFiber)) {
                   yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
                 }
+                // Await the notification write so a replacement session/prompt
+                // cannot race ahead of session/cancel on the wire.
                 yield* acp.agent
                   .cancel({
                     sessionId: started.sessionId,
                     ...(options.cancelMeta === undefined ? {} : { _meta: options.cancelMeta }),
                   })
-                  .pipe(Effect.ignore, Effect.forkIn(runtimeScope));
+                  .pipe(Effect.ignore);
               }),
         ),
       ),
