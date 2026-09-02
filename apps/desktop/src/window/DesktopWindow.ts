@@ -258,6 +258,9 @@ function syncWindowAppearance(
     if (typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
     }
+    if (platform === "win32") {
+      window.setMenu?.(null);
+    }
   });
 }
 
@@ -389,6 +392,9 @@ export const make = Effect.gen(function* () {
 
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
+    }
+    if (environment.platform === "win32") {
+      window.setMenu?.(null);
     }
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;

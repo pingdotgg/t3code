@@ -109,6 +109,7 @@ function makeFakeBrowserWindow() {
     setOpacity: vi.fn(),
     setTitle: vi.fn(),
     setTitleBarOverlay: vi.fn(),
+    setMenu: vi.fn(),
     show: vi.fn(),
     webContents,
   };
@@ -131,6 +132,7 @@ function makeFakeBrowserWindow() {
     setAutoHideCursor: window.setAutoHideCursor,
     setFullScreen: window.setFullScreen,
     setOpacity: window.setOpacity,
+    setMenu: window.setMenu,
     webContentsListeners,
     windowListeners,
   };
@@ -209,6 +211,7 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly environmentLayer?: Layer.Layer<DesktopEnvironment.DesktopEnvironment>;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -267,7 +270,7 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
-        desktopEnvironmentLayer,
+        input.environmentLayer ?? desktopEnvironmentLayer,
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
         desktopServerExposureLayer,
@@ -1256,6 +1259,42 @@ describe("DesktopWindow", () => {
         assert.equal(yield* Ref.get(scenario.createCalls), 3);
         assert.deepEqual(main.send.mock.calls, [[MENU_ACTION_CHANNEL, "open-settings"]]);
       }).pipe(Effect.provide(scenario.layer));
+    }),
+  );
+
+  it.effect("detaches window menu on Windows during syncAppearance", () =>
+    Effect.gen(function* () {
+      const { window, setMenu } = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make(Option.some(window));
+      const windowsEnvironmentLayer = DesktopEnvironment.layer({
+        ...environmentInput,
+        platform: "win32",
+      }).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            DesktopConfig.layerTest({
+              T3CODE_PORT: "3773",
+              VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+            }),
+          ),
+        ),
+      );
+
+      const layer = makeTestLayer({
+        window,
+        createCount,
+        mainWindow,
+        environmentLayer: windowsEnvironmentLayer,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.syncAppearance;
+        assert.equal(setMenu.mock.calls.length, 1);
+        assert.deepEqual(setMenu.mock.calls[0], [null]);
+      }).pipe(Effect.provide(layer));
     }),
   );
 });
