@@ -5170,12 +5170,20 @@ function ChatViewContent(props: ChatViewProps) {
       : null;
   const handleContinueInterruptedTurn = useCallback(async () => {
     if (!activeThread || !activeLatestTurn || continueTurnId === null) return;
-    const turnEntries = workLogEntries.filter((entry) => entry.turnId === continueTurnId);
+    if (sendInFlightRef.current) return;
+    // The step that was cut off: prefer a call that never finished (stopped,
+    // failed, or still marked in progress), else the last tool call of the
+    // turn, whether or not it carried a command.
+    const turnEntries = workLogEntries.filter(
+      (entry) => entry.turnId === continueTurnId && entry.tone === "tool",
+    );
     const cutOff =
-      turnEntries.findLast((entry) => entry.toolLifecycleStatus === "inProgress") ??
       turnEntries.findLast(
-        (entry) => entry.command !== undefined || entry.changedFiles !== undefined,
-      );
+        (entry) =>
+          entry.toolLifecycleStatus === "inProgress" ||
+          entry.toolLifecycleStatus === "stopped" ||
+          entry.toolLifecycleStatus === "failed",
+      ) ?? turnEntries.at(-1);
     const split = cutOff?.command ? splitLeadingCdForPrompt(cutOff.command) : null;
     const text = buildContinuationPrompt({
       reason: activeLatestTurn.state === "error" ? "error" : "interrupted",
@@ -5184,6 +5192,11 @@ function ChatViewContent(props: ChatViewProps) {
       toolLabel: cutOff && !cutOff.command ? cutOff.label : undefined,
     });
     setDismissedContinueTurnIds((ids) => new Set(ids).add(continueTurnId));
+    // Same optimistic side effects as a normal send: the composer goes busy,
+    // the working row appears, and live-follow is re-armed.
+    sendInFlightRef.current = true;
+    beginLocalDispatch({ preparingWorktree: false });
+    scrollToEnd();
     const createdAt = new Date().toISOString();
     const result = await startThreadTurn({
       environmentId: activeThread.environmentId,
@@ -5202,7 +5215,9 @@ function ChatViewContent(props: ChatViewProps) {
         createdAt,
       },
     });
+    sendInFlightRef.current = false;
     if (result._tag === "Failure") {
+      resetLocalDispatch();
       toastManager.add({
         type: "error",
         title: "Could not continue",
@@ -5214,7 +5229,16 @@ function ChatViewContent(props: ChatViewProps) {
         return next;
       });
     }
-  }, [activeLatestTurn, activeThread, continueTurnId, startThreadTurn, workLogEntries]);
+  }, [
+    activeLatestTurn,
+    activeThread,
+    beginLocalDispatch,
+    continueTurnId,
+    resetLocalDispatch,
+    scrollToEnd,
+    startThreadTurn,
+    workLogEntries,
+  ]);
   const continueBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (continueTurnId === null || dismissedContinueTurnIds.has(continueTurnId)) return null;
     const stopped = activeLatestTurn?.state === "interrupted";
