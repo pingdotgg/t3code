@@ -1406,7 +1406,7 @@ describe("AcpAdapterV2", () => {
         instanceId,
         model: "grok-mock-alt",
       } satisfies ModelSelection;
-      const originalSelection = { instanceId, model: "grok-build" } satisfies ModelSelection;
+      const originalSelection = { instanceId, model: "grok-4.6" } satisfies ModelSelection;
       const runtime = yield* adapter.openSession({
         threadId: firstThreadId,
         providerSessionId: ProviderSessionId.make("provider-session-acp-active-setup"),

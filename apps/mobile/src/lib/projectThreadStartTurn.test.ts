@@ -26,7 +26,7 @@ describe("project thread title", () => {
     },
     {
       comment: 'Why "shared"?',
-      title: 'Keep `cache[key]` & <parser> shared. Retry! Comment: Why "shared"?',
+      title: "Keep `cache[key]` & <parser> shared. Retry! Commen...",
     },
   ])("uses readable titles and intact links with comment $comment", ({ comment, title }) => {
     const quoteText = "Keep `cache[key]` & <parser> shared.\n  Retry!";

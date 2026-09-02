@@ -779,7 +779,25 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     }
     const encoded = `${exit.value}\n`;
     yield* logProtocol({ direction: "outgoing", stage: "raw", payload: encoded });
-    yield* Queue.offer(outgoing, encoded);
+    // FIFO queue admission preserves wire ordering against later requests
+    // (a session/prompt sent after session/cancel cannot overtake it).
+    yield* Queue.offer(outgoing, { payload: encoded }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AcpError.AcpTransportError({
+            detail: "Failed to queue an outgoing ACP notification",
+            cause,
+          }),
+      ),
+      Effect.filterOrFail(
+        (accepted) => accepted,
+        () =>
+          new AcpError.AcpTransportError({
+            detail: "The ACP output queue was closed before accepting a notification",
+            cause: "Output queue closed",
+          }),
+      ),
+    );
   });
 
   const sendRequest = Effect.fn("sendRequest")(function* (method: string, payload: unknown) {

@@ -6,6 +6,8 @@ import type {
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
 import {
+  workEntryDisplayIndicatesToolFailure,
+  resolveWorkEntryToolPresentation,
   summarizeToolGroup,
   toolGroupSummaryKind,
   type ToolGroupSummaryKind,
@@ -868,7 +870,7 @@ function appendToolGroupRows(
     : (latestInProgressActivity ?? activities.at(-1)!);
   const groupSummary = summarizeToolGroup(activities.map((activity) => activity.workEntry));
   const summary = live
-    ? liveToolActivitySummary(latestActivity)
+    ? liveToolActivitySummary(latestActivity, latestInProgressActivity !== undefined)
     : activities.length === 1 && !activities[0]!.toolLike
       ? activities[0]!.workEntry.label
       : groupSummary.summary;
@@ -884,7 +886,12 @@ function appendToolGroupRows(
     summaryKind: toolGroupSummaryKind(
       (live ? [latestActivity] : activities).map((activity) => activity.workEntry),
     ),
-    hasFailure: groupSummary.hasFailure,
+    hasFailure: (() => {
+      const lastToolLike = activities.findLast((activity) => activity.toolLike);
+      return (
+        lastToolLike !== undefined && workEntryDisplayIndicatesToolFailure(lastToolLike.workEntry)
+      );
+    })(),
     live,
     shimmer:
       isWorking &&
@@ -892,32 +899,44 @@ function appendToolGroupRows(
       latestActivity.runId === activeRunId,
   });
   if (!expanded) return;
-  for (const activity of activities) {
-    result.push({
-      type: "activity-group",
-      id: activity.id,
-      createdAt: activity.createdAt,
-      runId: activity.runId,
-      activities: [
-        {
-          ...activity,
-          groupedToolDetail: true,
-          live:
-            isWorking &&
-            activity.id === latestActivity.id &&
-            activity.lifecycleStatus === "inProgress" &&
-            activity.runId === activeRunId,
-        },
-      ],
-    });
-  }
+  result.push({
+    type: "activity-group",
+    id: `work-details:${groupId}`,
+    createdAt: activities[0]!.createdAt,
+    runId: activities[0]!.runId,
+    activities: activities.map((activity) => ({
+      ...activity,
+      groupedToolDetail: true,
+      live:
+        isWorking &&
+        activity.id === latestActivity.id &&
+        activity.lifecycleStatus === "inProgress" &&
+        activity.runId === activeRunId,
+    })),
+  });
 }
 
-function liveToolActivitySummary(activity: ThreadFeedActivity): string {
+function liveToolActivitySummary(activity: ThreadFeedActivity, active: boolean): string {
+  const presentation = resolveWorkEntryToolPresentation(
+    activity.workEntry,
+    active ? "inProgress" : "completed",
+  );
+  if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
   if (command) {
     const program = commandProgramName(command);
-    return program ? `Running ${program}` : "Running command";
+    const status = activity.lifecycleStatus ?? (active ? "inProgress" : "completed");
+    const verb =
+      status === "inProgress"
+        ? "Running"
+        : status === "failed"
+          ? "Failed"
+          : status === "declined"
+            ? "Declined"
+            : status === "stopped"
+              ? "Stopped"
+              : "Ran";
+    return `${verb} ${program ?? "command"}`;
   }
   return activity.detail ?? activity.summary;
 }

@@ -884,6 +884,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
           environment: {},
           attachmentsDir,
           fileSystem,
+          path: yield* Path.Path,
           idAllocator,
           queryRunner: {
             allocateSessionId: Effect.succeed("native-thread-claude-resume"),
@@ -1100,6 +1101,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           environment: {},
           attachmentsDir,
           fileSystem,
+          path: yield* Path.Path,
           idAllocator,
           queryRunner: {
             allocateSessionId: Effect.succeed("native-thread-claude-attachments"),
@@ -1237,6 +1239,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           environment: {},
           attachmentsDir,
           fileSystem,
+          path: yield* Path.Path,
           idAllocator,
           queryRunner: {
             allocateSessionId: Effect.succeed("native-thread-claude-unsupported-attachment"),
@@ -1328,6 +1331,7 @@ describe("ClaudeAdapterV2 native fork", () => {
           environment: {},
           attachmentsDir,
           fileSystem,
+          path: yield* Path.Path,
           idAllocator,
           queryRunner: {
             allocateSessionId: Effect.succeed("source-native-session"),
@@ -1497,6 +1501,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
           environment: {},
           attachmentsDir,
           fileSystem,
+          path: yield* Path.Path,
           idAllocator,
           queryRunner: {
             allocateSessionId: Effect.succeed("native-session-identity"),
@@ -1719,6 +1724,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         environment: {},
         attachmentsDir,
         fileSystem,
+        path: yield* Path.Path,
         idAllocator,
         continuationRequests: {
           offer: (request) =>
@@ -2301,6 +2307,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           environment: {},
           attachmentsDir,
           fileSystem,
+          path: yield* Path.Path,
           idAllocator,
           continuationRequests: { offer: () => Effect.void },
           queryRunner: {
@@ -2412,6 +2419,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             environment: {},
             attachmentsDir,
             fileSystem,
+            path: yield* Path.Path,
             idAllocator,
             continuationRequests: {
               offer: () => Effect.void,
@@ -4481,6 +4489,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           environment: {},
           attachmentsDir,
           fileSystem,
+          path: yield* Path.Path,
           idAllocator,
           continuationRequests: {
             offer: (request) =>
@@ -4747,6 +4756,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             environment: {},
             attachmentsDir,
             fileSystem,
+            path: yield* Path.Path,
             idAllocator,
             continuationRequests: {
               offer: (request) =>
@@ -4979,6 +4989,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             environment: {},
             attachmentsDir,
             fileSystem,
+            path: yield* Path.Path,
             idAllocator,
             continuationRequests: {
               offer: (request) =>
@@ -5169,6 +5180,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             environment: {},
             attachmentsDir,
             fileSystem,
+            path: yield* Path.Path,
             idAllocator,
             continuationRequests: {
               offer: () => Effect.void,
@@ -5302,6 +5314,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             environment: {},
             attachmentsDir,
             fileSystem,
+            path: yield* Path.Path,
             idAllocator,
             continuationRequests: {
               offer: (request) =>
@@ -5496,6 +5509,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           environment: {},
           attachmentsDir,
           fileSystem,
+          path: yield* Path.Path,
           idAllocator,
           continuationRequests: {
             offer: () => Effect.void,

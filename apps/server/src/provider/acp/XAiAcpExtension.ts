@@ -1428,7 +1428,7 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
 
     return {
       ...runtime,
-      prompt: (payload) =>
+      prompt: (payload, promptOptions?) =>
         Effect.gen(function* () {
           const started = yield* runtime.start();
           const promptId = yield* allocatePromptFallbackId;
@@ -1444,14 +1444,17 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
             agentResult: null,
           });
           const promptRpcFiber = yield* runtime
-            .prompt({
-              ...payload,
-              _meta: {
-                ...payload._meta,
-                promptId: fallback.promptId,
-                requestId: fallback.promptId,
+            .prompt(
+              {
+                ...payload,
+                _meta: {
+                  ...payload._meta,
+                  promptId: fallback.promptId,
+                  requestId: fallback.promptId,
+                },
               },
-            })
+              promptOptions,
+            )
             .pipe(Effect.forkChild);
           return yield* Effect.raceFirst(
             Fiber.join(promptRpcFiber).pipe(

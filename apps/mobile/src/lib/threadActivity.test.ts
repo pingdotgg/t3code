@@ -679,9 +679,7 @@ describe("buildThreadFeed", () => {
     );
     expect(expanded.map((entry) => entry.id)).toEqual([
       "work-toggle:work-group:activity-neutral",
-      "activity-1",
-      "activity-2",
-      "activity-3",
+      "work-details:work-group:activity-neutral",
     ]);
     expect(expanded[0]).toMatchObject({
       type: "work-toggle",

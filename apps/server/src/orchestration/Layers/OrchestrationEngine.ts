@@ -242,6 +242,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           );
 
         commandReadModel = committedCommand.nextCommandReadModel;
+        for (const cleanup of committedCommand.attachmentCleanups) {
+          yield* cleanup;
+        }
         yield* eventStore.publishCommitted(
           committedCommand.committedEvents.filter(
             (event) =>

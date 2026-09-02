@@ -85,6 +85,7 @@ import Animated, {
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useFontFamily } from "../../lib/useFontFamily";
+import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
@@ -123,7 +124,11 @@ import {
 } from "../review/nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "../review/reviewModel";
 import { cn } from "../../lib/cn";
-import { deriveCenteredContentHorizontalPadding, type LayoutVariant } from "../../lib/layout";
+import {
+  deriveCenteredContentHorizontalPadding,
+  deriveThreadWorkLogSizing,
+  type LayoutVariant,
+} from "../../lib/layout";
 import { uuidv4 } from "../../lib/uuid";
 import {
   resolveMarkdownFontSizes,
@@ -147,6 +152,7 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import {
   resolveThreadFeedLiveFollow,
   type ThreadFeedLiveFollowEvent,
+  type ThreadWorkGroupScrollPosition,
 } from "./thread-feed-live-follow";
 import {
   ThreadDisclosureChevron,
@@ -171,7 +177,12 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
-import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+import {
+  basename,
+  fileRoutePathSegments,
+  isAbsolutePath,
+  resolveWorkspaceRelativeFilePath,
+} from "../files/filePath";
 import { waitForThreadShellReady } from "./threadForkNavigation";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 
@@ -1818,15 +1829,12 @@ function renderFeedEntry(
       activities={entry.activities}
       anchorKey={entry.id}
       copiedRowId={props.copiedRowId}
-      currentThreadId={props.threadId}
-      environmentId={props.environmentId}
       expandedRows={props.expandedWorkRows}
       rowSizing={props.workRowSizing}
       scrollPositions={props.workGroupScrollPositions}
       iconSubtleColor={iconSubtleColor}
       onCopyRow={props.onCopyWorkRow}
-      onToggleRow={(rowId) => props.onToggleWorkRow(rowId, entry.id)}
-      workspaceRoot={props.workspaceRoot}
+      onToggleRow={props.onToggleWorkRow}
       renderImage={props.renderViewedImage}
     />
   );
@@ -2145,7 +2153,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const previousLatestTurnRef = useRef(props.latestRun);
   const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, fontScale } = useWindowDimensions();
+  const { appearance } = useAppearancePreferences();
+  const workRowSizing = useMemo(
+    () => deriveThreadWorkLogSizing({ baseFontSize: appearance.baseFontSize, fontScale }),
+    [appearance.baseFontSize, fontScale],
+  );
+  const previousTextSize = useRef(workRowSizing.textSizeKey);
+  useLayoutEffect(() => {
+    if (previousTextSize.current === workRowSizing.textSizeKey) {
+      return;
+    }
+    previousTextSize.current = workRowSizing.textSizeKey;
+    // Text-size changes invalidate the outer list's fixed-height cache too.
+    // This never runs for scrolling, streamed output, or disclosure toggles.
+    props.listRef.current?.clearCaches({ mode: "sizes" });
+  }, [workRowSizing.textSizeKey, props.listRef]);
   const [viewportWidth, setViewportWidth] = useState(() =>
     props.layoutVariant === "split" ? 0 : windowWidth,
   );
@@ -2516,6 +2539,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // ThreadId, and keying resets (or the list mount) on the bare id would
   // carry stale scroll/follow state across an environment switch.
   const feedThreadKey = scopedThreadKey(props.environmentId, props.threadId);
+  // Virtualized groups can unmount without losing the reader's place. This cache
+  // belongs to this thread view only and never causes per-scroll React updates.
+  const workGroupScrollPositions = useMemo(
+    () => new Map<string, ThreadWorkGroupScrollPosition>(),
+    [feedThreadKey],
+  );
   // A thread switch opens pinned to the end; a send explicitly returns to the
   // live edge (ThreadDetailScreen scrolls the new message into place). Both
   // re-arm follow regardless of where the user had scrolled before.
@@ -2829,6 +2858,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             threadId: props.threadId,
             copiedRowId,
             expandedWorkRows,
+            workRowSizing,
+            workGroupScrollPositions,
             terminalAssistantMessageIds,
             unsettledTurnId,
             onCopyWorkRow,

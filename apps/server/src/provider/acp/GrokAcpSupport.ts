@@ -185,15 +185,17 @@ export function applyGrokAcpModelSelection<E>(input: {
   readonly requestedReasoningEffort?: string | undefined;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<string | undefined, E> {
-  const modelChanged =
-    input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
+  // The product slug is never sent over the wire; it keeps the session's current model.
+  const requestedModelId =
+    input.requestedModelId === GROK_DEFAULT_MODEL_SLUG ? undefined : input.requestedModelId;
+  const modelChanged = requestedModelId !== undefined && requestedModelId !== input.currentModelId;
   const reasoningProvided = input.requestedReasoningEffort !== undefined;
   const reasoningEffort = reasoningProvided
     ? normalizeGrokReasoningEffort(input.requestedReasoningEffort)
     : undefined;
   const reasoningEffortChanged =
     reasoningProvided && reasoningEffort !== input.currentReasoningEffort;
-  const targetModelId = input.requestedModelId ?? input.currentModelId;
+  const targetModelId = requestedModelId ?? input.currentModelId;
   if ((!modelChanged && !reasoningEffortChanged) || targetModelId === undefined) {
     return Effect.succeed(input.currentModelId);
   }

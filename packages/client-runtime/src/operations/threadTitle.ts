@@ -1,3 +1,4 @@
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { truncate } from "@t3tools/shared/String";
 
 export interface ThreadTitleSeedInput {
@@ -7,7 +8,7 @@ export interface ThreadTitleSeedInput {
 }
 
 function normalizeTitleSeed(value: string): string {
-  return value.trim().replace(/\s+/gu, " ");
+  return assistantCitationsToPlainText(value).trim().replace(/\s+/gu, " ");
 }
 
 export function deriveThreadTitleSeed(input: ThreadTitleSeedInput): string {
