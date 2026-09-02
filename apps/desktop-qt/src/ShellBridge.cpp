@@ -11,8 +11,8 @@ namespace {
 // Everything the web app publishes (see apps/web/src/shell/*Bridge.tsx) plus
 // the shell's own `backendError`.
 constexpr const char* kStateKeys[] = {
-    "backendError", "composer", "contextMenu", "git",      "layout", "notifications",
-    "rightPanel",   "settings", "sidebar",     "theme",    "workspace",
+    "backendError", "composer", "contextMenu", "git",   "keybindings", "layout",
+    "notifications", "rightPanel", "settings", "sidebar", "theme",     "workspace",
 };
 
 // Qt 6.11 deprecates the public constructor in favour of create(); the

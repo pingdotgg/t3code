@@ -21,6 +21,7 @@ Button {
     readonly property bool iconOnly: text.length === 0 && iconName.length > 0 && !chevron
     readonly property bool chevronOnly: text.length === 0 && iconName.length === 0 && chevron
     readonly property color hoverFill: Qt.alpha(Theme.color("accentSurface", "#27272a"), control.subtle ? 1 : 0.5)
+    readonly property color focusRing: Theme.color("focus", "#3b82f6")
     // A lone glyph sits on the button's centre: the padding is what is left
     // of the height, so a 24px chevron half stays square and centred.
     readonly property real glyphPadding: iconOnly ? (height - iconSize) / 2 : (height - chevronSize) / 2
@@ -47,8 +48,9 @@ Button {
     background: Rectangle {
         radius: control.radius
         color: control.primary ? (control.down ? Qt.darker(Theme.color("accent", "#2563eb"), 1.15) : control.hovered ? Qt.lighter(Theme.color("accent", "#2563eb"), 1.08) : Theme.color("accent", "#2563eb")) : control.hovered || control.down || control.checked ? control.hoverFill : control.subtle ? "transparent" : Qt.alpha(Theme.color("input", "#27272a"), 0.32)
-        border.color: control.primary || control.subtle ? "transparent" : Theme.color("input", "#27272a")
-        border.width: control.primary || control.subtle ? 0 : 1
+        // Keyboard focus draws the page's ring; pointer focus stays quiet.
+        border.color: control.visualFocus ? control.focusRing : control.primary || control.subtle ? "transparent" : Theme.color("input", "#27272a")
+        border.width: control.visualFocus || !(control.primary || control.subtle) ? 1 : 0
 
         Behavior on color {
             ColorAnimation {

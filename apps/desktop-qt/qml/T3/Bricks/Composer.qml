@@ -38,6 +38,23 @@ Rectangle {
     implicitHeight: stack.implicitHeight + gutter
     color: canvas
 
+    // The page's model-picker keybinding lands here while this brick hosts
+    // the picker.
+    Connections {
+        target: Shell
+        function onActionRequested(action, payload) {
+            if (action !== "composer.modelPicker.toggle") {
+                return;
+            }
+            if (modelPicker.popup.visible) {
+                modelPicker.popup.close();
+            } else if (modelPicker.enabled) {
+                modelPicker.forceActiveFocus();
+                modelPicker.popup.open();
+            }
+        }
+    }
+
     function buildModelChoices(instances) {
         const choices = [];
         for (const instance of instances) {

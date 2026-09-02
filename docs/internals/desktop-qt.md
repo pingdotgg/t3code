@@ -261,7 +261,9 @@ wraps each one in `React.lazy`, and only a shell-hosted document ever imports
 `apps/web/src/shell/T3ShellBridge.tsx` (mounted from the root route when
 `isT3Shell`) publishes `ShellSidebarState`: project groups, the current scope,
 and the thread list already bucketed (`pinned`/`active`/`snoozed`/`settled`),
-sorted, and annotated with status, status label, unread, branch. It is derived
+sorted, and annotated with status, status label, unread, branch, the snooze
+wake label, the woke timestamp and whether settle/snooze apply (`wakeLabel`,
+`wokeAt`, `canSettle`, `canSnooze`). It is derived
 with the same code as the HTML sidebar — `partitionSidebarThreads` and
 `useSidebarProjectGroups` are shared — so the two never disagree. `settled` is
 capped at 50 rows with `settledTotal` carrying the real count. When hosted,
@@ -270,8 +272,28 @@ capped at 50 rows with `settledTotal` carrying the real count. When hosted,
 Actions (`Shell.dispatch(name, payload)` in QML → `ShellAction` on the page):
 `thread.open {key}`, `draft.open {draftId}`, `thread.new {projectKey?}`,
 `sidebar.scope {projectKey|null}`, `project.add`, `settings.open`,
-`pullRequests.open`, `usage.open`, `palette.open`. Unknown or malformed
-actions are dropped by the schema guard.
+`pullRequests.open`, `usage.open`, `palette.open`. Row actions run the
+handlers the HTML row's hover buttons use (`useShellThreadRowActions`):
+`thread.settle {key}`, `thread.unsettle {key}`, `thread.unsnooze {key}`,
+`thread.snoozeMenu {key, x, y}` (the snooze durations open through
+`contextMenu` at those window coordinates), `thread.wokeDismiss {key}`, and
+`thread.menu {key, x, y}` for the thread menu. Unknown or malformed actions
+are dropped by the schema guard.
+
+`SidebarThreadRow` mirrors the HTML row's states: Working/Monitoring,
+Approval, Input, Failed, Woke (a pill that dismisses on click while `wokeAt`
+is set) and Done (unread) take the age label's place, coloured with the
+`info`, `warning`, `accent`, `error` and `success` theme roles; rows that
+need nothing recede. Hovering or keyboard-focusing a row swaps that slot for
+its actions — snooze and settle on live rows, wake on snoozed rows, un-settle
+on settled rows — and a right-click anywhere on the row opens the thread
+menu on press.
+
+The thread list is a Tab stop. Up/Down move a cursor (a ring in the `focus`
+theme role) over rows and section headers, Home/End jump to the ends, Enter
+or Space open the row or fold the header, and Menu or Shift+F10 open the
+thread menu at the row. The cursor starts on the active thread. Row action
+buttons are not Tab stops; the thread menu carries the same actions.
 
 ### `composer`
 
@@ -291,7 +313,10 @@ editor), `composer.submit {text?, intent?}` (text rides along so the send is
 atomic with the last edit), `composer.interrupt`, `composer.model.select
 {instanceId, model}`, `composer.option.set {id, value}`,
 `composer.runtimeMode.set {mode}`, `composer.interactionMode.set {mode}`,
-`composer.suggest.select {id}`, `composer.suggest.dismiss`.
+`composer.suggest.select {id}`, `composer.suggest.dismiss`. The page's
+`modelPicker.toggle` command dispatches `composer.modelPicker.toggle` the
+other way, page → shell, since the HTML picker is hidden when hosted; the
+`Composer` brick listens on `Shell.actionRequested` and opens its own.
 
 `@file`, `$skill` and `/command` suggestions reuse `ChatComposer`'s own
 trigger detection and menu: the QML editor edits the raw prompt (mentions
@@ -415,7 +440,8 @@ whatever the user picks in Settings.
 ### `layout`
 
 The page keeps owning the main sidebar's open state (its `sidebar.toggle`
-keybinding, Mod+B by default, still works when hosted) and publishes it as
+keybinding, Mod+B by default, still works when hosted — see `keybindings`)
+and publishes it as
 `layout {sidebarCollapsed}` from `ShellLayoutBridge`, mounted inside the
 sidebar provider. `sidebar.toggle` flips it from native chrome — the
 `Workspace` brick shows a toggle when its `sidebarToggle` property is bound
@@ -436,6 +462,24 @@ Usage) in its footer. A rice that puts those somewhere else — the dashboard
 example's icon rail — sets `showScope: false` and `showFooter: false` so the
 same action is not reachable from two places; `showBrand` is off by default
 because most rices bring their own title bar.
+
+### `keybindings`
+
+The page's keybindings are configurable and fire on keydown events the
+document sees, so with native chrome focused (the thread list, the composer
+editor) they would go dead. `T3ShellBridge` publishes the resolved config as
+`keybindings`: `apps/web/src/shell/shellKeybindings.ts` turns every modified
+chord into a portable Qt sequence such as `Ctrl+Shift+]` (Qt swaps Ctrl and
+Command on macOS, so the builder swaps them back), skips unmodified keys —
+those belong to whichever native control has focus — and collapses rules
+that share a chord. `ShellWindow` instantiates a window `Shortcut` per entry
+while no `WebSurface` has focus; the page handles the real key there. A match
+dispatches `keybinding.press {key, ctrlKey, metaKey, shiftKey, altKey}`,
+which the page replays as a synthetic keydown on `document.body`, so the same
+dispatcher, the same `when` clauses and the user's own config decide what
+runs. A body target reads as "not typing", so chords scoped to a focused
+editor do nothing from chrome; the QML composer submits through
+`composer.submit` instead.
 
 ### `notifications`
 

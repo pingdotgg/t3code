@@ -10,6 +10,10 @@ import T3.Shell
 WebEngineView {
     id: view
 
+    // Lets the window tell web focus from chrome focus (ShellWindow's
+    // keybindings step aside while a page owns the keyboard).
+    objectName: "T3WebSurface"
+
     // Names this surface for the page (window.t3Shell.surfaceId), so menus it
     // opens come back to this view.
     property string surfaceId: "primary"

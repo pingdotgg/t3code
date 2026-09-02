@@ -59,12 +59,16 @@ Rectangle {
         for (const draft of state.drafts) {
             out.push({
                 kind: "draft",
+                section: "draft",
+                rowKey: "draft:" + draft.draftId,
                 item: draft
             });
         }
         for (const item of state.pinned) {
             out.push({
                 kind: "thread",
+                section: "pinned",
+                rowKey: item.key,
                 item: item
             });
         }
@@ -76,6 +80,8 @@ Rectangle {
         for (const item of state.active) {
             out.push({
                 kind: "thread",
+                section: "active",
+                rowKey: item.key,
                 item: item
             });
         }
@@ -87,6 +93,7 @@ Rectangle {
             out.push({
                 kind: "header",
                 key: key,
+                rowKey: "header:" + key,
                 label: label,
                 count: items.length,
                 open: open
@@ -97,6 +104,8 @@ Rectangle {
             for (const item of items) {
                 out.push({
                     kind: "slim",
+                    section: key,
+                    rowKey: item.key,
                     item: item
                 });
             }
@@ -284,6 +293,80 @@ Rectangle {
         ListView {
             id: list
 
+            // The keyboard cursor, by row key so it survives the list being
+            // rebuilt around it. Up/Down/Home/End move it over the rows that
+            // can be acted on, Enter opens (or folds) the row, Menu or
+            // Shift+F10 opens its context menu.
+            property string cursorKey: ""
+            readonly property int cursorIndex: sidebar.rows.findIndex(r => r.rowKey !== undefined && r.rowKey === list.cursorKey)
+
+            function moveCursor(delta) {
+                let i = cursorIndex;
+                do {
+                    i += delta;
+                    if (i < 0 || i >= sidebar.rows.length) {
+                        return;
+                    }
+                } while (sidebar.rows[i].rowKey === undefined);
+                cursorKey = sidebar.rows[i].rowKey;
+                positionViewAtIndex(i, ListView.Contain);
+            }
+
+            function moveCursorToEdge(delta) {
+                const rows = sidebar.rows;
+                for (let i = delta > 0 ? 0 : rows.length - 1; i >= 0 && i < rows.length; i += delta) {
+                    if (rows[i].rowKey !== undefined) {
+                        cursorKey = rows[i].rowKey;
+                        positionViewAtIndex(i, ListView.Contain);
+                        return;
+                    }
+                }
+            }
+
+            function settleCursor() {
+                if (cursorIndex >= 0) {
+                    return;
+                }
+                const current = sidebar.rows.find(r => r.rowKey !== undefined && sidebar.model !== null && (r.kind === "draft" ? r.item.draftId === sidebar.model.activeDraftId : r.kind !== "header" && r.item.key === sidebar.model.activeThreadKey));
+                const first = current ?? sidebar.rows.find(r => r.rowKey !== undefined);
+                cursorKey = first ? first.rowKey : "";
+            }
+
+            function activateCursor() {
+                const row = sidebar.rows[cursorIndex];
+                if (!row) {
+                    return;
+                }
+                switch (row.kind) {
+                case "header":
+                    sidebar.toggleSection(row.key);
+                    break;
+                case "draft":
+                    Shell.dispatch("draft.open", {
+                        draftId: row.item.draftId
+                    });
+                    break;
+                default:
+                    Shell.dispatch("thread.open", {
+                        key: row.item.key
+                    });
+                }
+            }
+
+            function menuAtCursor() {
+                const row = sidebar.rows[cursorIndex];
+                const item = itemAtIndex(cursorIndex);
+                if (!row || !item || row.kind === "header" || row.kind === "draft") {
+                    return;
+                }
+                const p = item.mapToItem(null, item.width / 2, item.height / 2);
+                Shell.dispatch("thread.menu", {
+                    key: row.item.key,
+                    x: p.x,
+                    y: p.y
+                });
+            }
+
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.leftMargin: 9
@@ -294,6 +377,44 @@ Rectangle {
             reuseItems: true
             spacing: 1
             boundsBehavior: Flickable.StopAtBounds
+            activeFocusOnTab: true
+            keyNavigationEnabled: false
+            Accessible.role: Accessible.List
+            Accessible.name: qsTr("Threads")
+            onActiveFocusChanged: {
+                if (activeFocus) {
+                    settleCursor();
+                }
+            }
+            Keys.onUpPressed: moveCursor(-1)
+            Keys.onDownPressed: moveCursor(1)
+            Keys.onPressed: event => {
+                switch (event.key) {
+                case Qt.Key_Home:
+                    moveCursorToEdge(1);
+                    break;
+                case Qt.Key_End:
+                    moveCursorToEdge(-1);
+                    break;
+                case Qt.Key_Return:
+                case Qt.Key_Enter:
+                case Qt.Key_Space:
+                    activateCursor();
+                    break;
+                case Qt.Key_Menu:
+                    menuAtCursor();
+                    break;
+                case Qt.Key_F10:
+                    if (!(event.modifiers & Qt.ShiftModifier)) {
+                        return;
+                    }
+                    menuAtCursor();
+                    break;
+                default:
+                    return;
+                }
+                event.accepted = true;
+            }
 
             delegate: Item {
                 id: entry
@@ -301,6 +422,7 @@ Rectangle {
                 required property var modelData
 
                 readonly property string kind: modelData.kind
+                readonly property bool focused: list.activeFocus && modelData.rowKey !== undefined && modelData.rowKey === list.cursorKey
 
                 width: ListView.view.width
                 implicitHeight: kind === "header" ? 36 : kind === "divider" ? 13 : kind === "note" ? 28 : kind === "slim" ? 36 : 82
@@ -309,6 +431,15 @@ Rectangle {
                 Item {
                     anchors.fill: parent
                     visible: entry.kind === "header"
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 8
+                        color: "transparent"
+                        border.width: 1
+                        border.color: Theme.color("focus", "#3b82f6")
+                        visible: entry.focused
+                    }
 
                     HoverHandler {
                         id: headerHover
@@ -401,6 +532,8 @@ Rectangle {
 
                     sourceComponent: SidebarThreadRow {
                         slim: entry.kind !== "thread"
+                        section: entry.modelData.section
+                        focused: entry.focused
                         item: entry.kind === "draft" ? {
                             title: entry.modelData.item.label,
                             status: "ready",
@@ -411,11 +544,18 @@ Rectangle {
                         } : entry.modelData.item
                         projectName: sidebar.projectNames[entry.modelData.item.projectKey] ?? ""
                         active: sidebar.model !== null && (entry.kind === "draft" ? entry.modelData.item.draftId === sidebar.model.activeDraftId : entry.modelData.item.key === sidebar.model.activeThreadKey)
-                        onActivated: entry.kind === "draft" ? Shell.dispatch("draft.open", {
-                            draftId: entry.modelData.item.draftId
-                        }) : Shell.dispatch("thread.open", {
-                            key: entry.modelData.item.key
-                        })
+                        onActivated: {
+                            list.cursorKey = entry.modelData.rowKey;
+                            if (entry.kind === "draft") {
+                                Shell.dispatch("draft.open", {
+                                    draftId: entry.modelData.item.draftId
+                                });
+                            } else {
+                                Shell.dispatch("thread.open", {
+                                    key: entry.modelData.item.key
+                                });
+                            }
+                        }
                         onMenuRequested: (windowX, windowY) => {
                             if (entry.kind !== "draft") {
                                 Shell.dispatch("thread.menu", {
@@ -425,6 +565,23 @@ Rectangle {
                                 });
                             }
                         }
+                        onSettleRequested: Shell.dispatch("thread.settle", {
+                            key: entry.modelData.item.key
+                        })
+                        onUnsettleRequested: Shell.dispatch("thread.unsettle", {
+                            key: entry.modelData.item.key
+                        })
+                        onUnsnoozeRequested: Shell.dispatch("thread.unsnooze", {
+                            key: entry.modelData.item.key
+                        })
+                        onSnoozeRequested: (windowX, windowY) => Shell.dispatch("thread.snoozeMenu", {
+                            key: entry.modelData.item.key,
+                            x: windowX,
+                            y: windowY
+                        })
+                        onWokeDismissed: Shell.dispatch("thread.wokeDismiss", {
+                            key: entry.modelData.item.key
+                        })
                     }
                 }
             }

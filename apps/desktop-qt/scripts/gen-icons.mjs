@@ -9,6 +9,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ICONS = [
+  "alarm-clock",
+  "alarm-clock-off",
   "arrow-up",
   "bot",
   "chart-no-axes-column",
@@ -16,7 +18,10 @@ const ICONS = [
   "chevron-down",
   "chevron-right",
   "chevron-up",
+  "circle-check",
   "circle-dashed",
+  "circle-x",
+  "clock",
   "cloud",
   "cloud-upload",
   "code",
@@ -46,8 +51,8 @@ const ICONS = [
   "panel-right",
   "panel-right-close",
   "paperclip",
-  "pencil-ruler",
   "pen-line",
+  "pencil-ruler",
   "play",
   "plus",
   "search",
@@ -57,6 +62,7 @@ const ICONS = [
   "square-pen",
   "star",
   "terminal",
+  "undo-2",
   "x",
 ];
 

@@ -14,6 +14,20 @@ Window {
     // only animates and re-arranges around them.
     readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
     readonly property bool settingsActive: Shell.state.settings ? Shell.state.settings.active : false
+    // The page's keybindings (the configurable ones from Settings), as Qt
+    // sequences. They fire only while the chrome owns the keyboard: a
+    // focused page sees its own keydowns and handles them itself.
+    readonly property var keybindings: Shell.state.keybindings ?? []
+    readonly property bool webFocused: isWebItem(root.activeFocusItem)
+
+    function isWebItem(item) {
+        for (let node = item; node; node = node.parent) {
+            if (node.objectName === "T3WebSurface") {
+                return true;
+            }
+        }
+        return false;
+    }
 
     width: 1280
     height: 820
@@ -37,6 +51,25 @@ Window {
 
     ShellErrorOverlay {
         anchors.fill: parent
+    }
+
+    Instantiator {
+        model: root.keybindings
+
+        delegate: Shortcut {
+            required property var modelData
+
+            sequence: modelData.sequence
+            context: Qt.WindowShortcut
+            enabled: !root.webFocused
+            onActivated: Shell.dispatch("keybinding.press", {
+                key: modelData.key,
+                ctrlKey: modelData.ctrlKey,
+                metaKey: modelData.metaKey,
+                shiftKey: modelData.shiftKey,
+                altKey: modelData.altKey
+            })
+        }
     }
 
     Connections {
