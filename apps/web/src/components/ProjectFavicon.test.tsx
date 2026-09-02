@@ -54,6 +54,10 @@ vi.mock("react", async (importOriginal) => {
 });
 
 vi.mock("react/compiler-runtime", () => ({ c: hooks.useMemoCache }));
+vi.mock("lucide-react/dynamic", () => ({
+  DynamicIcon: "dynamic-icon",
+  iconNames: ["alarm-clock", "folder-code"],
+}));
 vi.mock("../assets/assetUrls", () => ({
   useAssetUrlState: (_environmentId: unknown, resource: unknown) => {
     testState.lastResource = resource;
@@ -138,6 +142,33 @@ describe("ProjectFavicon", () => {
     }) as ReactElement<{ readonly emoji?: string }>;
 
     expect(element.props.emoji).toBe("🤖");
+  });
+
+  it("renders a saved Lucide icon and color ahead of an uploaded favicon", () => {
+    const element = ProjectFavicon({
+      environmentId: "environment-test" as EnvironmentId,
+      cwd: "/workspace/test",
+      projectName: "test",
+      faviconPath: "brand/icon.svg",
+      projectIcon: { kind: "lucide", name: "alarm-clock", color: "violet" },
+    }) as ReactElement<{
+      readonly children: ReactElement<{ readonly name: string; readonly className: string }>;
+    }>;
+
+    expect(element.props.children.props.name).toBe("alarm-clock");
+    expect(element.props.children.props.className).toContain("text-violet-600");
+  });
+
+  it("renders a saved emoji ahead of an uploaded favicon", () => {
+    const element = ProjectFavicon({
+      environmentId: "environment-test" as EnvironmentId,
+      cwd: "/workspace/test",
+      projectName: "test",
+      faviconPath: "brand/icon.svg",
+      projectIcon: { kind: "emoji", emoji: "🦄" },
+    }) as ReactElement<{ readonly emoji: string }>;
+
+    expect(element.props.emoji).toBe("🦄");
   });
 
   it("falls back when the displayed favicon fails without discarding a valid older image early", () => {

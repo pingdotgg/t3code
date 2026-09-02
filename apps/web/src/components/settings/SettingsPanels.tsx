@@ -2776,6 +2776,7 @@ export function ArchivedThreadsPanel() {
                 name: project.title,
                 cwd: project.workspaceRoot,
                 faviconPath: project.faviconPath,
+                projectIcon: project.projectIcon,
               },
             ] as const,
         ),
@@ -2903,6 +2904,7 @@ export function ArchivedThreadsPanel() {
                 cwd={project.cwd}
                 projectName={project.name}
                 faviconPath={project.faviconPath}
+                projectIcon={project.projectIcon}
               />
             }
           >

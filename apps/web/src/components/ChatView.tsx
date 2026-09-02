@@ -7442,6 +7442,7 @@ function ChatViewContent(props: ChatViewProps) {
             activeProjectName={activeProject?.title}
             activeProjectCwd={activeProject?.workspaceRoot ?? null}
             activeProjectFaviconPath={activeProject?.faviconPath ?? null}
+            activeProjectIcon={activeProject?.projectIcon ?? null}
             openInCwd={gitCwd}
             activeProjectScripts={activeProject?.scripts}
             preferredScriptId={

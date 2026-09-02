@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectIconOverride } from "@t3tools/contracts";
 import {
   getProjectFaviconCacheKey,
   isProjectFaviconFallbackUrl,
@@ -27,13 +27,22 @@ import {
   TerminalIcon,
   VideoIcon,
 } from "lucide-react";
+import type { IconName } from "lucide-react/dynamic";
 import type { ComponentType } from "react";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useAssetUrlState } from "../assets/assetUrls";
 import { selectProjectIcon, type ProjectIconName } from "../projectIconModel";
+import { projectIconColorClassName } from "../projectIconColors";
 import { cn } from "~/lib/utils";
 
 const loadedProjectFaviconSrcs = new Map<string, string>();
+const DynamicIcon = lazy(() =>
+  import("lucide-react/dynamic").then((module) => ({ default: module.DynamicIcon })),
+);
+
+function DynamicProjectIconFallback() {
+  return <FolderCodeIcon className="size-3.5 shrink-0" />;
+}
 
 const PROJECT_ICONS: Record<ProjectIconName, ComponentType<{ className?: string }>> = {
   ai: BotIcon,
@@ -90,11 +99,30 @@ export function ProjectFavicon(input: {
   cwd: string;
   projectName: string;
   faviconPath?: string | null | undefined;
+  projectIcon?: ProjectIconOverride | null | undefined;
   className?: string | undefined;
   fallbackIcon?: ComponentType<{ className?: string }>;
 }) {
   const state = useProjectFaviconAsset(input);
   const src = state._tag === "Success" ? state.url : null;
+  if (input.projectIcon?.kind === "emoji") {
+    return <ProjectFaviconFallback className={input.className} emoji={input.projectIcon.emoji} />;
+  }
+  if (input.projectIcon?.kind === "lucide") {
+    return (
+      <Suspense fallback={<DynamicProjectIconFallback />}>
+        <DynamicIcon
+          name={input.projectIcon.name as IconName}
+          className={cn(
+            "size-3.5 shrink-0",
+            projectIconColorClassName(input.projectIcon.color),
+            input.className,
+          )}
+          fallback={DynamicProjectIconFallback}
+        />
+      </Suspense>
+    );
+  }
   const automaticIconName = input.fallbackIcon
     ? null
     : selectProjectIcon(input.projectName, input.cwd);

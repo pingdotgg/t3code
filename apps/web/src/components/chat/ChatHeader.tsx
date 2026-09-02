@@ -56,6 +56,7 @@ interface ChatHeaderProps {
   activeProjectName: string | undefined;
   activeProjectCwd: string | null;
   activeProjectFaviconPath: string | null;
+  activeProjectIcon: import("@t3tools/contracts").ProjectIconOverride | null;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -126,6 +127,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeProjectName,
   activeProjectCwd,
   activeProjectFaviconPath,
+  activeProjectIcon,
   openInCwd,
   activeProjectScripts,
   preferredScriptId,
@@ -327,6 +329,7 @@ export const ChatHeader = memo(function ChatHeader({
                     cwd={activeProjectCwd ?? ""}
                     projectName={activeProjectName}
                     faviconPath={activeProjectFaviconPath}
+                    projectIcon={activeProjectIcon}
                     className="size-3.5"
                   />
                   <span className="max-w-40 truncate">{activeProjectName}</span>
