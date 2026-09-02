@@ -35,7 +35,7 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
-import { isT3Shell } from "../env";
+import { isT3Shell, isT3ShellEmbed } from "../env";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
@@ -163,7 +163,7 @@ function RootRouteView() {
 
   // The shell's embed documents skip the app chrome but keep the providers
   // the panel content relies on (toasts, confirms, appearance sync, events).
-  if (pathname.startsWith("/embed/")) {
+  if (isT3ShellEmbed && pathname.startsWith("/embed/")) {
     return (
       <ToastProvider>
         <AnchoredToastProvider>
