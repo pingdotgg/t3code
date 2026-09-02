@@ -70,9 +70,12 @@ function testSession(
 ): RpcSession.RpcSession {
   return {
     client,
-    initialConfig: Effect.succeed({
-      threadResumeCompletionMarker: config?.completionMarker === true,
-    } as never),
+    initialConfig: Effect.succeed(
+      config?.completionMarker === true
+        ? ({ threadResumeCompletionMarker: true } as never)
+        : ({} as never),
+    ),
+    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
