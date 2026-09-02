@@ -330,8 +330,11 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).not.toContain("Image unavailable");
   });
 
-  it("blocks non-image data URIs instead of passing them to a raw image", () => {
-    const html = render("![payload](data:text/html;base64,PHNjcmlwdC8+)");
+  it.each([
+    ["markdown", "![payload](data:text/html;base64,PHNjcmlwdC8+)"],
+    ["raw HTML", '<img src="data:text/html;base64,PHNjcmlwdC8+" alt="payload">'],
+  ])("blocks non-image %s data URIs instead of passing them to a raw image", (_variant, source) => {
+    const html = render(source);
 
     expect(testState.resources).toEqual([]);
     expect(html).toContain("Image unavailable");
