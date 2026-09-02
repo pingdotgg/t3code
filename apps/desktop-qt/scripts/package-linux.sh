@@ -23,7 +23,7 @@ cmake --install "${build_dir}" --prefix "${app_dir}/usr"
 
 # Desktop entry + icon: the app id (t3code) must match what the shell sets so
 # compositor rules can target the window.
-mkdir -p "${app_dir}/usr/share/applications" "${app_dir}/usr/share/icons/hicolor/256x256/apps"
+mkdir -p "${app_dir}/usr/share/applications" "${app_dir}/usr/share/icons/hicolor/1024x1024/apps"
 cat > "${app_dir}/usr/share/applications/t3code.desktop" <<'DESKTOP'
 [Desktop Entry]
 Type=Application
@@ -33,18 +33,10 @@ Icon=t3code
 Categories=Development;
 StartupWMClass=t3code
 DESKTOP
-icon_source="$(dirname "$0")/../../desktop/resources/icon.png"
-if [ -f "${icon_source}" ]; then
-  cp "${icon_source}" "${app_dir}/usr/share/icons/hicolor/256x256/apps/t3code.png"
-else
-  # A placeholder keeps linuxdeploy happy when the desktop icon is not around.
-  printf '\x89PNG\r\n\x1a\n' > "${app_dir}/usr/share/icons/hicolor/256x256/apps/t3code.png"
-fi
+icon_source="$(dirname "$0")/../../../assets/prod/black-universal-1024.png"
+cp "${icon_source}" "${app_dir}/usr/share/icons/hicolor/1024x1024/apps/t3code.png"
 
-# The Node desktop host runs from source in-repo builds; ship it next to the
-# binary so the bundled shell can find it (system Node is still required).
-mkdir -p "${app_dir}/usr/share/t3code/host"
-cp "$(dirname "$0")/../host/"*.ts "${app_dir}/usr/share/t3code/host/"
+node "$(dirname "$0")/stage-runtime.mjs" "${app_dir}/usr/share/t3code"
 
 export QML_SOURCES_PATHS="$(cd "$(dirname "$0")/.." && pwd)/qml"
 export OUTPUT="${build_dir}/t3code-qt-x86_64.AppImage"

@@ -27,6 +27,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+
       # Official Qt binaries on every platform so WebEngine is always present
       # (distro packages often ship without it).
       - uses: jurplel/install-qt-action@v4
@@ -57,6 +66,12 @@ jobs:
       - name: Build
         run: cmake --build apps/desktop-qt/build/release
 
+      - name: Build server runtime
+        run: vp run --filter t3 build
+
+      - name: Test QML
+        run: node apps/desktop-qt/scripts/test-qml.mjs
+
       - name: Package (Linux AppImage)
         if: runner.os == 'Linux'
         run: apps/desktop-qt/scripts/package-linux.sh apps/desktop-qt/build/release
@@ -64,6 +79,7 @@ jobs:
       - name: Package (macOS app bundle)
         if: runner.os == 'macOS'
         run: |
+          node apps/desktop-qt/scripts/stage-runtime.mjs apps/desktop-qt/build/release/t3code-qt.app/Contents/Resources/t3code
           "${QT_ROOT_DIR}/bin/macdeployqt" apps/desktop-qt/build/release/t3code-qt.app -qmldir=apps/desktop-qt/qml
           ditto -c -k --keepParent apps/desktop-qt/build/release/t3code-qt.app apps/desktop-qt/build/release/t3code-qt-macos.zip
 

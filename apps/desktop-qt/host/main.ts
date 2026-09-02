@@ -15,6 +15,7 @@
  * stdin closing means the shell is gone: shut the server down.
  */
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
 import * as NodeURL from "node:url";
@@ -31,8 +32,15 @@ function emit(message: HostMessage): void {
 }
 
 const hostDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const installedServerEntry = NodePath.resolve(hostDir, "../server/bin.mjs");
+const repositoryServerEntry = NodePath.resolve(hostDir, "../../server/dist/bin.mjs");
 const serverEntry =
-  process.env.T3CODE_SERVER_ENTRY ?? NodePath.resolve(hostDir, "../../server/src/bin.ts");
+  process.env.T3CODE_SERVER_ENTRY ??
+  (NodeFS.existsSync(installedServerEntry)
+    ? installedServerEntry
+    : NodeFS.existsSync(repositoryServerEntry)
+      ? repositoryServerEntry
+      : NodePath.resolve(hostDir, "../../server/src/bin.ts"));
 
 const serverArgs = ["--no-browser", ...process.argv.slice(2)];
 const server = NodeChildProcess.spawn(process.execPath, [serverEntry, ...serverArgs], {

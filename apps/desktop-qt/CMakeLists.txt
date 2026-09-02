@@ -21,10 +21,18 @@ if(NOT DEFINED T3_QML_SOURCE_DIR)
   endif()
 endif()
 
-# The Node desktop host entry. In-repo builds point at the TypeScript source
-# (Node strips types natively); packaged builds override this.
+# The Node desktop host entry. In-repo builds point at the TypeScript source.
+# Release builds resolve an installed path relative to the executable.
 if(NOT DEFINED T3_HOST_ENTRY)
-  set(T3_HOST_ENTRY "${CMAKE_CURRENT_SOURCE_DIR}/host/main.ts")
+  if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    if(APPLE)
+      set(T3_HOST_ENTRY "../Resources/t3code/host/main.ts")
+    else()
+      set(T3_HOST_ENTRY "../share/t3code/host/main.ts")
+    endif()
+  else()
+    set(T3_HOST_ENTRY "${CMAKE_CURRENT_SOURCE_DIR}/host/main.ts")
+  endif()
 endif()
 
 # qwebchannel.js is the browser half of Qt WebChannel. Qt installs it as data

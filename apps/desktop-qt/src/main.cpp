@@ -57,6 +57,13 @@ QString resolveQmlSourceDir(const QString& override) {
   return QStringLiteral(T3_QML_SOURCE_DIR);
 }
 
+QString resolveDefaultHostEntry() {
+  const QString configured = QStringLiteral(T3_HOST_ENTRY);
+  return QDir::isAbsolutePath(configured)
+             ? configured
+             : QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(configured);
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -93,7 +100,7 @@ int main(int argc, char* argv[]) {
       QStringLiteral("dir"));
   const QCommandLineOption hostEntryOption(
       QStringLiteral("host-entry"), QStringLiteral("Path to the Node desktop host entry."),
-      QStringLiteral("file"), QStringLiteral(T3_HOST_ENTRY));
+      QStringLiteral("file"), resolveDefaultHostEntry());
   const QCommandLineOption nodeOption(
       QStringLiteral("node"), QStringLiteral("Node executable used to run the desktop host."),
       QStringLiteral("path"));
