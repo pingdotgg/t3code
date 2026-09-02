@@ -16,8 +16,8 @@ import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSna
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 
-it("uses the canonical Codex default for auto-bootstrapped model selection", () => {
-  assert.deepStrictEqual(ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(), {
+it("uses the canonical Codex default for the auto-bootstrapped welcome thread", () => {
+  assert.deepStrictEqual(ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(), {
     instanceId: ProviderInstanceId.make("codex"),
     model: DEFAULT_MODEL,
   });
@@ -158,7 +158,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
               id: bootstrapProjectId,
               title: "Startup Project",
               workspaceRoot: "/tmp/startup-project",
-              defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(),
+              defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(),
               scripts: [],
               createdAt: "2026-01-01T00:00:00.000Z",
               updatedAt: "2026-01-01T00:00:00.000Z",
@@ -181,6 +181,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
             Effect.as({ sequence: 1 }),
           ),
         streamDomainEvents: Stream.empty,
+        subscribeDomainEvents: Effect.succeed(Stream.empty),
         latestSequence: Effect.succeed(0),
       } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
       Effect.provide(NodeServices.layer),
@@ -196,7 +197,13 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
 
 it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when missing", () =>
   Effect.gen(function* () {
-    const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
+    const dispatchCalls = yield* Ref.make<
+      ReadonlyArray<{
+        readonly type: string;
+        readonly defaultModelSelection?: unknown;
+        readonly modelSelection?: unknown;
+      }>
+    >([]);
     const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
       Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
@@ -223,10 +230,11 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
       Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
         dispatch: (command) =>
-          Ref.update(dispatchCalls, (calls) => [...calls, command.type]).pipe(
+          Ref.update(dispatchCalls, (calls) => [...calls, command]).pipe(
             Effect.as({ sequence: 1 }),
           ),
         streamDomainEvents: Stream.empty,
+        subscribeDomainEvents: Effect.succeed(Stream.empty),
         latestSequence: Effect.succeed(0),
       } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
       Effect.provide(NodeServices.layer),
@@ -234,7 +242,16 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
 
     assert.equal(typeof targets.bootstrapProjectId, "string");
     assert.equal(typeof targets.bootstrapThreadId, "string");
-    assert.deepStrictEqual(yield* Ref.get(dispatchCalls), ["project.create", "thread.create"]);
+    const commands = yield* Ref.get(dispatchCalls);
+    assert.deepStrictEqual(
+      commands.map((command) => command.type),
+      ["project.create", "thread.create"],
+    );
+    assert.equal("defaultModelSelection" in commands[0]!, false);
+    assert.deepStrictEqual(
+      commands[1]?.modelSelection,
+      ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(),
+    );
   }),
 );
 
@@ -279,6 +296,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
             Effect.as({ sequence: 1 }),
           ),
         streamDomainEvents: Stream.empty,
+        subscribeDomainEvents: Effect.succeed(Stream.empty),
         latestSequence: Effect.succeed(0),
       } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
       Effect.provideService(Crypto.Crypto, {

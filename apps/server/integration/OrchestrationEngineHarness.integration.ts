@@ -22,9 +22,10 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 
 import * as CheckpointStore from "../src/checkpointing/CheckpointStore.ts";
-import { TextGeneration, type TextGenerationShape } from "../src/textGeneration/TextGeneration.ts";
+import { TextGeneration } from "../src/textGeneration/TextGeneration.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../src/persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../src/persistence/Layers/OrchestrationEventStore.ts";
 import { ProjectionCheckpointRepositoryLive } from "../src/persistence/Layers/ProjectionCheckpoints.ts";
@@ -231,6 +232,8 @@ export interface OrchestrationIntegrationHarness {
 interface MakeOrchestrationIntegrationHarnessOptions {
   readonly provider?: ProviderDriverKind;
   readonly realCodex?: boolean;
+  /** Tracer for every fiber the harness runtime runs, including reactors. */
+  readonly tracer?: Tracer.Tracer;
 }
 
 export const makeOrchestrationIntegrationHarness = (
@@ -332,7 +335,7 @@ export const makeOrchestrationIntegrationHarness = (
     const textGenerationLayer = Layer.succeed(TextGeneration, {
       generateBranchName: () => Effect.succeed({ branch: "update" }),
       generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
-    } as unknown as TextGenerationShape);
+    } as unknown as TextGeneration["Service"]);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(gitWorkflowLayer),
@@ -399,6 +402,9 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(workspaceDir, rootDir)),
       Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(
+        options?.tracer ? Layer.succeed(Tracer.Tracer, options.tracer) : Layer.empty,
+      ),
     );
 
     const runtime = ManagedRuntime.make(layer);

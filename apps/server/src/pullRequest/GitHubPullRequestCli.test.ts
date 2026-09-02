@@ -10,12 +10,14 @@ import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { BASE_COMPARISON_GRAPHQL_QUERY } from "./gitHubPullRequestJson.ts";
 
 const mockedExecute = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>();
+const mockedGetPullRequest = vi.fn<GitHubCli.GitHubCli["Service"]["getPullRequest"]>();
 
 const layer = it.layer(
   GitHubPullRequestCli.layer.pipe(
     Layer.provide(
       Layer.mock(GitHubCli.GitHubCli)({
         execute: mockedExecute,
+        getPullRequest: mockedGetPullRequest,
       }),
     ),
     Layer.provide(GitHubGraphQlBudget.layer),
@@ -177,9 +179,50 @@ function searchQueryOfCall(index: number): string | undefined {
 
 afterEach(() => {
   mockedExecute.mockReset();
+  mockedGetPullRequest.mockReset();
 });
 
 layer("GitHubPullRequestCli.layer", (it) => {
+  it.effect("reads linked pull request status through one narrow request", () =>
+    Effect.gen(function* () {
+      mockedGetPullRequest.mockReturnValueOnce(
+        Effect.succeed({
+          number: 7,
+          title: "Reuse the summary",
+          url: "https://github.com/acme/web/pull/7",
+          baseRefName: "main",
+          headRefName: "feat/summary",
+          state: "open",
+          updatedAt: "2026-08-24T12:34:56.000Z",
+        }),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const summary = yield* cli.getPullRequestSummary({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      assert.deepStrictEqual(summary, {
+        number: 7,
+        title: "Reuse the summary",
+        url: "https://github.com/acme/web/pull/7",
+        headBranch: "feat/summary",
+        baseBranch: "main",
+        state: "open",
+        updatedAt: "2026-08-24T12:34:56.000Z",
+      });
+      expect(mockedGetPullRequest).toHaveBeenCalledOnce();
+      expect(mockedGetPullRequest).toHaveBeenCalledWith({
+        cwd: "/w",
+        reference: "https://github.com/acme/web/pull/7",
+      });
+      expect(mockedExecute).not.toHaveBeenCalled();
+    }),
+  );
+
   it.effect("asks for one row more than the page, to probe for a next page", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(3, 1))));

@@ -8,7 +8,7 @@ import {
   type OrchestrationProjectShell,
   type OrchestrationShellSnapshot,
   type OrchestrationThreadShell,
-  type PullRequestDetail,
+  type PullRequestSummary,
   type ServerSettings,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
@@ -105,56 +105,24 @@ function makeSnapshot(
   };
 }
 
-function makePullRequestDetail(input: {
+function makePullRequestSummary(input: {
   readonly projectId: ProjectId;
   readonly repository: string;
   readonly number: number;
   readonly state: "open" | "closed" | "merged";
   readonly updatedAt?: string;
-}): PullRequestDetail {
+}): PullRequestSummary {
   return {
     provider: "github",
-    capabilities: {
-      diff: true,
-      comment: true,
-      actions: [],
-      mergeMethods: [],
-      search: true,
-      review: { inlineComment: true, reply: true, resolve: true, verdicts: [] },
-      reviewers: { request: true, listCandidates: true },
-    },
-    viewerPermissions: {
-      actions: [],
-      comment: true,
-      resolve: true,
-      verdicts: [],
-      requestReviewers: true,
-    },
     projectId: input.projectId,
-    projectTitle: "Linked project",
-    workspaceRoot: "/workspace/linked",
     repository: input.repository,
     number: input.number,
     title: "Pull request",
-    body: "",
     url: `https://example.test/${input.repository}/pull/${input.number}`,
-    author: null,
     state: input.state,
-    isDraft: false,
-    mergeability: "mergeable",
-    additions: 0,
-    deletions: 0,
-    changedFiles: 0,
     headBranch: "feature",
     baseBranch: "main",
-    createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: input.updatedAt ?? NOW,
-    mergedAt: input.state === "merged" ? (input.updatedAt ?? NOW) : null,
-    closedAt: input.state === "closed" ? (input.updatedAt ?? NOW) : null,
-    reviewers: [],
-    labels: [],
-    checks: [],
-    mergeCapabilities: { merge: true, squash: true, rebase: true },
   };
 }
 
@@ -162,7 +130,7 @@ interface HarnessOptions {
   readonly snapshot: OrchestrationShellSnapshot;
   readonly settings?: ServerSettings;
   readonly branchPullRequest?: GitManager["Service"]["branchPullRequest"];
-  readonly pullRequestDetail?: PullRequestService["Service"]["detail"];
+  readonly pullRequestSummary?: PullRequestService["Service"]["summary"];
   readonly onDispatch?: (
     command: AutoSettleCommand,
   ) => Effect.Effect<void, OrchestrationCommandInvariantError>;
@@ -179,13 +147,14 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const branchCalls = yield* Ref.make<
     ReadonlyArray<{ readonly cwd: string; readonly branch: string }>
   >([]);
-  const detailCalls = yield* Ref.make<
+  const summaryCalls = yield* Ref.make<
     ReadonlyArray<{
       readonly projectId: ProjectId;
       readonly repository: string;
       readonly number: number;
     }>
   >([]);
+  const summaryRecovery = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
 
   const updateSettings = (patch: ServerSettingsPatch) =>
     Effect.gen(function* () {
@@ -200,18 +169,23 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       Effect.andThen(options.branchPullRequest?.(input) ?? Effect.succeed(null)),
     );
 
-  const pullRequestDetail: PullRequestService["Service"]["detail"] = (input) =>
-    Ref.update(detailCalls, (calls) => [...calls, input]).pipe(
-      Effect.andThen(
-        options.pullRequestDetail?.(input) ??
+  const pullRequestSummary: PullRequestService["Service"]["summary"] = (input, readOptions) =>
+    Effect.gen(function* () {
+      yield* Ref.update(summaryCalls, (calls) => [...calls, input]);
+      yield* Ref.update(summaryRecovery, (values) => [
+        ...values,
+        readOptions?.recoverTransientFailure,
+      ]);
+      return yield* (
+        options.pullRequestSummary?.(input, readOptions) ??
           Effect.succeed(
-            makePullRequestDetail({
+            makePullRequestSummary({
               ...input,
               state: "open",
             }),
-          ),
-      ),
-    );
+          )
+      );
+    });
 
   const dispatch: OrchestrationEngineShape["dispatch"] = (command) => {
     if (command.type !== "thread.auto-settle") {
@@ -243,7 +217,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
         ),
     }),
     Layer.mock(GitManager)({ branchPullRequest }),
-    Layer.mock(PullRequestService)({ detail: pullRequestDetail }),
+    Layer.mock(PullRequestService)({ summary: pullRequestSummary }),
     Layer.mock(OrchestrationEngineService)({
       readEvents: () => Stream.empty,
       dispatch,
@@ -262,7 +236,8 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     snapshotReads,
     commands,
     branchCalls,
-    detailCalls,
+    summaryCalls,
+    summaryRecovery,
     updateSettings,
     layer: ThreadSettlementReactor.layer.pipe(Layer.provide(dependencies)),
   };
@@ -310,8 +285,8 @@ describe("ThreadSettlementReactor", () => {
             [makeProject(), makeProject(LINKED_PROJECT_ID, "/workspace/linked")],
           ),
           branchPullRequest: () => Effect.succeed(null),
-          pullRequestDetail: (input) =>
-            Effect.succeed(makePullRequestDetail({ ...input, state: "closed" })),
+          pullRequestSummary: (input) =>
+            Effect.succeed(makePullRequestSummary({ ...input, state: "closed" })),
         });
 
         yield* Effect.gen(function* () {
@@ -342,9 +317,10 @@ describe("ThreadSettlementReactor", () => {
           assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), [
             { cwd: "/workspace/project", branch: "inactive-feature" },
           ]);
-          assert.deepStrictEqual(yield* Ref.get(fixture.detailCalls), [
+          assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), [
             { projectId: LINKED_PROJECT_ID, repository: "owner/repository", number: 42 },
           ]);
+          assert.deepStrictEqual(yield* Ref.get(fixture.summaryRecovery), [false]);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -480,10 +456,10 @@ describe("ThreadSettlementReactor", () => {
             ],
             [makeProject(), makeProject(LINKED_PROJECT_ID, "/workspace/linked")],
           ),
-          pullRequestDetail: () =>
+          pullRequestSummary: () =>
             Effect.fail(
               new PullRequestOperationError({
-                operation: "detail",
+                operation: "summary",
                 detail: "host unavailable",
               }),
             ),
@@ -497,7 +473,7 @@ describe("ThreadSettlementReactor", () => {
             (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
             [ThreadId.make("inactive-without-pr")],
           );
-          assert.strictEqual((yield* Ref.get(fixture.detailCalls)).length, 1);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -521,8 +497,8 @@ describe("ThreadSettlementReactor", () => {
             ],
             [makeProject(LINKED_PROJECT_ID, "/workspace/linked")],
           ),
-          pullRequestDetail: (input) =>
-            Effect.succeed(makePullRequestDetail({ ...input, state: "open" })),
+          pullRequestSummary: (input) =>
+            Effect.succeed(makePullRequestSummary({ ...input, state: "open" })),
         });
 
         yield* Effect.gen(function* () {
@@ -530,7 +506,7 @@ describe("ThreadSettlementReactor", () => {
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
 
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
-          assert.deepStrictEqual(yield* Ref.get(fixture.detailCalls), [
+          assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), [
             { projectId: LINKED_PROJECT_ID, repository: "owner/repository", number: 10 },
           ]);
           assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
@@ -569,8 +545,8 @@ describe("ThreadSettlementReactor", () => {
             ],
           ),
           branchPullRequest: () => Effect.succeed({ state: "closed", updatedAt: NOW }),
-          pullRequestDetail: (input) =>
-            Effect.succeed(makePullRequestDetail({ ...input, state: "merged" })),
+          pullRequestSummary: (input) =>
+            Effect.succeed(makePullRequestSummary({ ...input, state: "merged" })),
         });
 
         yield* Effect.gen(function* () {
@@ -580,7 +556,7 @@ describe("ThreadSettlementReactor", () => {
           assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), [
             { cwd: "/workspace/project-root", branch: "saved-feature" },
           ]);
-          assert.deepStrictEqual(yield* Ref.get(fixture.detailCalls), [
+          assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), [
             { projectId: LINKED_PROJECT_ID, repository: "owner/repository", number: 77 },
           ]);
           assert.deepStrictEqual(

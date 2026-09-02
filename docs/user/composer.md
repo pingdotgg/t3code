@@ -52,6 +52,40 @@ On mobile, the model picker shows each OpenCode model's upstream provider, such 
 GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list
 when starting a thread or changing an existing thread's model.
 
+## Model defaults
+
+T3 Code remembers the last provider, model, and model options you selected and reuses that
+selection for new threads. A model configured in a project's settings overrides the remembered
+selection for that project; resetting the project setting returns it to the remembered selection.
+
+Model options shown as provider defaults remain display values until you choose them in T3 Code.
+T3 Code only sends options you selected explicitly, so an unset reasoning level or service tier can
+still come from the provider's own configuration.
+
+## Quote an assistant response
+
+On web and desktop, select text in an assistant response, then choose **Cite in composer** from the
+menu that appears when you release the selection. This inserts an inline quote chip at your cursor
+and opens an optional comment bubble beside the selected text; press `Enter` or choose **Save** to
+attach the comment, or leave it blank to keep just the quote. You can type before and after the
+chip, such as a quote followed by "what do you mean?". A selection must stay within one response
+and fit in 8,000 characters.
+
+The chip shows your comment when it has one, or a short quote preview otherwise. Use the pencil
+button to add or change the comment, and the remove button to delete the quote and its comment from
+the draft. Copying, reloading, and restoring a [stashed prompt](#prompt-stash) keep each comment
+with its quote, and sending tells the agent which words were quoted and which comment you wrote.
+The quoted text and comment count toward the message limit.
+
+Select a chip in the composer or a sent message to open the source thread, scroll to the response,
+and highlight the quoted passage — including in older history. The
+highlight pulses, holds for a moment, then fades on its own; press `Escape` to stop the navigation
+or clear it early. If the source is unavailable or its text has changed, the saved quote stays
+readable and T3 Code shows a warning.
+
+Mobile shows the full saved quote and its comment in sent messages. It does not offer
+**Cite in composer** or navigation to a quote's source.
+
 ## Images and videos in messages
 
 On web, desktop, and mobile, select a link to an image or video to open it inside T3 Code.
@@ -93,6 +127,23 @@ have a cached copy. Supported video formats and codecs depend on the browser or 
 
 Bare paths in ordinary prose and paths inside code blocks stay text. Raw HTML `<video>` tags
 are not supported; use the Markdown embed syntax above.
+
+## Files outside the workspace
+
+When an agent links to a file it wrote outside the workspace, such as a Markdown report in
+`/tmp`, select the link to open it in the file viewer. The viewer shows the file read-only, with
+rendered Markdown available as usual; it cannot edit files outside the workspace. HTML and PDF
+files outside the workspace open the same way as ones inside it. Because such a file is served on
+its own, an HTML page outside the workspace cannot load scripts, styles, or images from files beside
+it.
+
+## HTML and PDF files in the file viewer
+
+On web and desktop, the file viewer shows HTML and PDF files as a rendered page. Use the
+source toggle in the viewer's header to switch an HTML file between the page and its markup; the
+choice persists like the rendered-Markdown toggle. A link to a line always opens the source. HTML
+runs in an isolated frame with no access to your T3 Code session. On desktop, the integrated
+browser remains available from the same header for a full browser view.
 
 ## Changing projects
 

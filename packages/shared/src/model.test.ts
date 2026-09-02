@@ -3,6 +3,7 @@ import { ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
 
 import {
   applyClaudePromptEffortPrefix,
+  buildExplicitProviderOptionSelectionsFromDescriptors,
   buildProviderOptionSelectionsFromDescriptors,
   createModelCapabilities,
   createModelSelection,
@@ -109,6 +110,22 @@ describe("descriptor helpers", () => {
       { id: "reasoningEffort", value: "high" },
       { id: "fastMode", value: true },
     ]);
+  });
+
+  it("builds dispatch options only from explicit selections", () => {
+    const descriptors = getProviderOptionDescriptors({
+      caps: codexCaps,
+      selections: [{ id: "fastMode", value: true }],
+    });
+
+    expect(buildExplicitProviderOptionSelectionsFromDescriptors(descriptors, undefined)).toBe(
+      undefined,
+    );
+    expect(
+      buildExplicitProviderOptionSelectionsFromDescriptors(descriptors, [
+        { id: "fastMode", value: true },
+      ]),
+    ).toEqual([{ id: "fastMode", value: true }]);
   });
 
   it("stores option selection arrays in model selections", () => {

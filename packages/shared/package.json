@@ -179,6 +179,10 @@
       "types": "./src/composerInlineTokens.ts",
       "import": "./src/composerInlineTokens.ts"
     },
+    "./assistantCitations": {
+      "types": "./src/assistantCitations.ts",
+      "import": "./src/assistantCitations.ts"
+    },
     "./terminalLabels": {
       "types": "./src/terminalLabels.ts",
       "import": "./src/terminalLabels.ts"

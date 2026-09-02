@@ -69,6 +69,7 @@ export interface ProviderChangeRequest {
   readonly url: string;
   readonly author: PullRequestActor | null;
   readonly headBranch: string;
+  readonly headRepositoryNameWithOwner?: string | null;
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
@@ -84,6 +85,17 @@ export interface ProviderChangeRequest {
   readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
   /** Absent from a host that reports no check rollup on its listings. */
   readonly checksState?: PullRequestChecksState | null | undefined;
+}
+
+/** The fields needed to keep a linked thread's pull request status live. */
+export interface ProviderChangeRequestSummary {
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly headBranch: string;
+  readonly baseBranch: string;
+  readonly state: PullRequestState;
+  readonly updatedAt: string;
 }
 
 export interface ProviderChangeRequestPage {
@@ -299,6 +311,14 @@ export interface PullRequestProviderApi {
   readonly getChangeRequest: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestDetail, PullRequestProviderError>;
+
+  /**
+   * The cheap live fields used by linked threads. Optional because a provider without a narrow
+   * endpoint can fall back to its full detail read at the service boundary.
+   */
+  readonly getChangeRequestSummary?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<ProviderChangeRequestSummary, PullRequestProviderError>;
 
   /** Comments, line threads, and commits, kept off the critical path for the core detail. */
   readonly getChangeRequestActivity: (

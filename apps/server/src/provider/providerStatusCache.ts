@@ -20,7 +20,13 @@ const mergeProviderModels = (
   cachedModels: ReadonlyArray<ServerProvider["models"][number]>,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
   const fallbackSlugs = new Set(fallbackModels.map((model) => model.slug));
-  return [...fallbackModels, ...cachedModels.filter((model) => !fallbackSlugs.has(model.slug))];
+  // The fallback snapshot is built from current settings and already carries
+  // every custom model, so cached custom rows that are not in it were removed
+  // while the cache was stale and must not come back.
+  return [
+    ...fallbackModels,
+    ...cachedModels.filter((model) => !model.isCustom && !fallbackSlugs.has(model.slug)),
+  ];
 };
 
 export const orderProviderSnapshots = (

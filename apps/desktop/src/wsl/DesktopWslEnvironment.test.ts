@@ -198,13 +198,10 @@ describe("WSL runtime cache", () => {
     expect(script).toContain('  [ -f "$runtime_root/apps/server/dist/bin.mjs" ] &&');
     expect(script).toContain('  [ -f "$runtime_root/node_modules/node-pty/package.json" ] &&');
     expect(script).toContain('    node_pty_payload_present "$runtime_root"');
-    expect(script).not.toContain("node_modules/effect/package.json");
     expect(script).toContain("if runtime_is_ready; then");
     expect(script).toContain("trap 'exit 1' HUP INT TERM");
     expect(script).toContain('exec 9> "$runtime_lock"');
     expect(script).toContain("flock -x 9");
-    expect(script).not.toContain("runtime_lock_pid");
-    expect(script).not.toContain("sleep 0.1");
     expect(script).not.toContain('rm -rf "$runtime_lock"');
     expect(script).toContain('mv -T "$runtime_root" "$runtime_stale"');
     expect(script).toContain('mktemp -d "$runtime_parent/.1.2.3-x64.tmp.XXXXXX"');

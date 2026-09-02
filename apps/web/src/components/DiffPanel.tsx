@@ -30,7 +30,8 @@ import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
 import { useTheme } from "../hooks/useTheme";
 import {
-  buildFileDiffRenderKey,
+  buildFileDiffContentVersion,
+  buildFileDiffIdentityKey,
   getDiffCollapseIconClassName,
   getDiffLineStat,
   getRenderablePatch,
@@ -300,7 +301,7 @@ export default function DiffPanel({
   const selectedGitSource = branchDiffPreview.data?.sources.find(
     (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
   );
-  const loadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
+  const currentLoadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
     const preview = branchDiffPreview.data;
     if (selectedTurnId !== null || !activeThread || !preview || !selectedGitSource) {
       return undefined;
@@ -321,6 +322,13 @@ export default function DiffPanel({
     selectedGitSource,
     selectedTurnId,
   ]);
+  const loadDiffFilesRef = useRef(currentLoadDiffFiles);
+  loadDiffFilesRef.current = currentLoadDiffFiles;
+  const loadDiffFiles = useCallback<FileDiffContentsLoader>(async (fileDiff) => {
+    const loader = loadDiffFilesRef.current;
+    if (!loader) throw new Error("Diff file contents are unavailable for this selection.");
+    return loader(fileDiff);
+  }, []);
   const localBranchRefs = useEnvironmentQuery(
     selectedTurnId === null &&
       selectedGitScope === "branch" &&
@@ -401,17 +409,19 @@ export default function DiffPanel({
     () =>
       renderableFiles.map((fileDiff) => ({
         fileDiff,
-        fileKey: buildFileDiffRenderKey(fileDiff),
+        fileKey: buildFileDiffIdentityKey(fileDiff),
+        fileVersion: buildFileDiffContentVersion(fileDiff),
       })),
     [renderableFiles],
   );
   const codeViewFiles = useMemo(
     () =>
-      renderableFileEntries.map(({ fileDiff, fileKey }) => {
+      renderableFileEntries.map(({ fileDiff, fileKey, fileVersion }) => {
         return {
           fileDiff,
           filePath: resolveFileDiffPath(fileDiff),
           fileKey,
+          fileVersion,
           collapsed: collapsedDiffFileKeys.has(fileKey),
         };
       }),
@@ -952,7 +962,7 @@ export default function DiffPanel({
                     preferredHighlighter: PREFERRED_HIGHLIGHTER,
                     themeType: resolvedTheme as DiffThemeType,
                     stickyHeaders: true,
-                    ...(loadDiffFiles ? { loadDiffFiles } : {}),
+                    ...(currentLoadDiffFiles ? { loadDiffFiles } : {}),
                   }}
                 />
               </div>

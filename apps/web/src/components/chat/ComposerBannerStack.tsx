@@ -1,6 +1,9 @@
+import { InfoIcon } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { Button } from "../ui/button";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
 
 // Match the duration-220 exit transition before removing a dismissed notice.
@@ -15,14 +18,13 @@ export interface ComposerBannerStackItem {
   readonly description?: ReactNode;
   readonly children?: ReactNode;
   readonly actions?: ReactNode;
-  readonly className?: string;
   readonly dismissLabel?: string;
   readonly onDismiss?: () => void;
 }
 
 export type ComposerBannerStackContent = Pick<
   ComposerBannerStackItem,
-  "id" | "variant" | "priority" | "className"
+  "id" | "variant" | "priority"
 > & { readonly content: ReactNode };
 
 type ComposerBannerStackEntry = ComposerBannerStackItem | ComposerBannerStackContent;
@@ -252,37 +254,63 @@ function ComposerBannerStackAlert({
   if ("content" in item) {
     return (
       <ComposerBanner.Root
+        density="comfortable"
         placement={attached ? "attached" : "floating"}
         variant={item.variant}
-        className={item.className}
       >
         {item.content}
       </ComposerBanner.Root>
     );
   }
-
   return (
     <ComposerBanner.Root
       role="alert"
       placement={attached ? "attached" : "floating"}
       variant={item.variant}
-      className={item.className}
+      density="comfortable"
     >
       <ComposerBanner.Row layout="wrap-actions">
-        <ComposerBanner.Icon className={item.description ? "min-h-4 self-start" : undefined}>
+        <ComposerBanner.Icon className="h-(--composer-banner-icon-column) self-start">
           {item.icon}
         </ComposerBanner.Icon>
-        <ComposerBanner.Content
-          className={item.description ? "flex-col items-start gap-0" : "font-medium"}
-        >
+        <ComposerBanner.Content className="whitespace-nowrap">
+          <span
+            className={cn(
+              "min-w-0 font-medium leading-7 sm:leading-6",
+              typeof item.title === "string" && "truncate",
+            )}
+          >
+            {item.title}
+          </span>
           {item.description ? (
             <>
-              <span className="font-medium">{item.title}</span>
-              <span className="text-muted-foreground">{item.description}</span>
+              <span className="min-w-0 shrink-[9999] truncate text-muted-foreground @max-[400px]:sr-only">
+                {item.description}
+              </span>
+              <Popover>
+                <PopoverTrigger
+                  openOnHover
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label="Show notice details"
+                      className="hidden flex-none text-muted-foreground hover:text-foreground @max-[400px]:inline-flex"
+                    />
+                  }
+                >
+                  <InfoIcon className="size-3.5" />
+                </PopoverTrigger>
+                <PopoverPopup
+                  tooltipStyle
+                  side="top"
+                  className="max-w-72 whitespace-normal text-pretty"
+                >
+                  {item.description}
+                </PopoverPopup>
+              </Popover>
             </>
-          ) : (
-            item.title
-          )}
+          ) : null}
         </ComposerBanner.Content>
         {item.actions || item.onDismiss ? (
           <ComposerBanner.Actions>
