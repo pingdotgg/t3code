@@ -148,13 +148,9 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 6
 
-                Text {
-                    text: "T3"
+                T3Wordmark {
+                    size: 10
                     color: sidebar.foreground
-                    font.pixelSize: 15
-                    font.weight: Font.Bold
-                    font.letterSpacing: -0.5
-                    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                     anchors.verticalCenter: parent.verticalCenter
                 }
 

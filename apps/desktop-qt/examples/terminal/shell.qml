@@ -3,14 +3,20 @@ import QtQuick.Layouts
 import T3.Shell
 import T3.Bricks
 
-// Terminal: a powerline status line on top (session, model and clock as
-// solid blocks in the palette's colours, prompt mark, thread counts, the
-// sixteen ANSI slots as a chip), the sidebar on the darker chrome, sharp
-// corners and mono type everywhere. `vp run theme:qt` writes
-// a theme.json in the colours of whatever terminal you run it from; the one
+// Terminal: a status line on top (wordmark, prompt mark, thread counts and
+// the model in the palette's colours), the sidebar on the darker chrome,
+// sharp corners and mono type everywhere. Built for a tiling desktop such
+// as Omarchy, where the bar has the clock and windows have no buttons; the
+// flags below add them back for a floating one. `vp run theme:qt` writes a
+// theme.json in the colours of whatever terminal you run it from; the one
 // next to this file is Tokyo Night through that generator.
 ShellWindow {
     id: root
+
+    property bool showClock: false
+    property bool showWindowControls: false
+    // The sixteen ANSI slots as a chip, to check what the theme carries.
+    property bool showSwatches: false
 
     readonly property var sidebarState: Shell.state.sidebar ?? null
     readonly property var composerState: Shell.state.composer ?? null
@@ -35,7 +41,7 @@ ShellWindow {
 
     Timer {
         interval: 1000
-        running: root.visible
+        running: root.visible && root.showClock
         repeat: true
         onTriggered: root.now = new Date()
     }
@@ -48,13 +54,13 @@ ShellWindow {
         Layout.fillHeight: true
     }
 
-    // A solid powerline block: palette colour behind bold canvas-coloured text.
+    // A solid powerline block: palette colour behind bold chrome-coloured text.
     component Block: Rectangle {
         property alias text: label.text
 
         Layout.fillHeight: true
         Layout.preferredWidth: label.implicitWidth + 24
-        color: root.blue
+        color: root.yellow
 
         Segment {
             id: label
@@ -70,8 +76,7 @@ ShellWindow {
         anchors.fill: parent
         spacing: 0
 
-        // Status line: chrome-dark, with the session, model and clock as
-        // solid blocks in the palette's blue, magenta and yellow.
+        // Status line: the wordmark as the page draws it, then a prompt.
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 34
@@ -91,12 +96,20 @@ ShellWindow {
                 anchors.fill: parent
                 spacing: 0
 
-                Block {
-                    text: "t3code"
+                T3Wordmark {
+                    Layout.alignment: Qt.AlignVCenter
+                    Layout.leftMargin: 14
+                    size: 10
+                    color: root.ink
                 }
 
                 Segment {
-                    Layout.leftMargin: 14
+                    Layout.leftMargin: 6
+                    text: qsTr("Code")
+                }
+
+                Segment {
+                    Layout.leftMargin: 12
                     text: "❯"
                     color: root.green
                     font.bold: true
@@ -114,10 +127,11 @@ ShellWindow {
                     text: root.sidebarState ? qsTr("%1 settled").arg(root.sidebarState.settledTotal) : ""
                 }
 
-                Block {
+                Segment {
                     Layout.leftMargin: 14
                     visible: text.length > 0
                     color: root.magenta
+                    font.bold: true
                     text: root.composerState && root.composerState.selectedModel ? root.composerState.selectedModel : ""
                 }
 
@@ -129,6 +143,7 @@ ShellWindow {
                 Grid {
                     Layout.alignment: Qt.AlignVCenter
                     Layout.rightMargin: 14
+                    visible: root.showSwatches
                     columns: 8
                     spacing: 2
 
@@ -147,17 +162,19 @@ ShellWindow {
 
                 Segment {
                     Layout.rightMargin: 14
+                    visible: root.showClock
                     text: Qt.formatDateTime(root.now, "ddd dd MMM")
                 }
 
                 Block {
-                    color: root.yellow
+                    visible: root.showClock
                     text: Qt.formatDateTime(root.now, "HH:mm:ss")
                 }
 
                 WindowControls {
                     Layout.alignment: Qt.AlignVCenter
                     Layout.leftMargin: 6
+                    visible: root.showWindowControls
                     window: root
                     buttonWidth: 32
                     buttonHeight: 26
