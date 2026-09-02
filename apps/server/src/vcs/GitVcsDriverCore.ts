@@ -49,9 +49,12 @@ const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
 const RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
-const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
-const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+// Review previews share the same per-file expansion budget for tracked and untracked changes.
+// Keeping the whole patch at this limit prevents large lockfile or generated-file changes from
+// hiding later source files behind a small, order-dependent truncation cap.
+const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES;
+const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);

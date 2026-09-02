@@ -819,6 +819,50 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("keeps large tracked and untracked review diffs complete", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const lineCount = 16_000;
+        const original = Array.from({ length: lineCount }, (_, index) => `before-${index}\n`).join(
+          "",
+        );
+        const updated = Array.from({ length: lineCount }, (_, index) => `after-${index}\n`).join(
+          "",
+        );
+
+        yield* writeTextFile(cwd, "large-review-file.txt", original);
+        yield* git(cwd, ["add", "large-review-file.txt"]);
+        yield* git(cwd, ["commit", "-m", "add large review file"]);
+        yield* git(cwd, ["checkout", "-b", "feature/review-diff-budget"]);
+        yield* writeTextFile(cwd, "large-review-file.txt", updated);
+        yield* git(cwd, ["add", "large-review-file.txt"]);
+        yield* git(cwd, ["commit", "-m", "update large review file"]);
+
+        const untrackedLineCount = 12_000;
+        const untracked = Array.from(
+          { length: untrackedLineCount },
+          (_, index) => `untracked-${index}\n`,
+        ).join("");
+        yield* writeTextFile(cwd, "large-untracked-file.txt", untracked);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        const branchSource = preview.sources.find((source) => source.kind === "branch-range");
+        const workingTreeSource = preview.sources.find((source) => source.kind === "working-tree");
+
+        assert.isDefined(branchSource);
+        assert.isFalse(branchSource.truncated);
+        assert.isAbove(branchSource.diff.length, 120_000);
+        assert.include(branchSource.diff, `+after-${lineCount - 1}`);
+
+        assert.isDefined(workingTreeSource);
+        assert.isFalse(workingTreeSource.truncated);
+        assert.isAbove(workingTreeSource.diff.length, 80_000);
+        assert.include(workingTreeSource.diff, `+untracked-${untrackedLineCount - 1}`);
+      }),
+    );
+
     it.effect("loads full file contents for working-tree diff expansion", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
