@@ -163,6 +163,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
       Effect.succeed({
         client: TEST_RPC_CLIENT,
         initialConfig: Effect.die(new Error("Initial config is not used by supervisor tests.")),
+        subscribeServerConfig: (input) => TEST_RPC_CLIENT.subscribeServerConfig(input),
         ready: options?.ready?.(attempt) ?? Effect.void,
         probe: options?.probe?.(attempt) ?? Effect.void,
         closed: Deferred.await(closed),

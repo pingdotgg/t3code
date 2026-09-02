@@ -102,6 +102,17 @@ describe("resolveThreadFeedLiveFollow", () => {
     ).toBe(false);
   });
 
+  it.each([
+    { isAtEnd: false, userScrollSessionActive: false, expected: false },
+    { isAtEnd: true, userScrollSessionActive: false, expected: true },
+    { isAtEnd: false, userScrollSessionActive: true, expected: false },
+    { isAtEnd: true, userScrollSessionActive: true, expected: false },
+  ])("reconciles follow after a disclosure settles: %j", ({ expected, ...state }) => {
+    expect(resolveThreadFeedLiveFollow(!expected, { type: "disclosure-settled", ...state })).toBe(
+      expected,
+    );
+  });
+
   it("re-arms at the actual end only after the user scroll session ends", () => {
     expect(
       resolveThreadFeedLiveFollow(false, {

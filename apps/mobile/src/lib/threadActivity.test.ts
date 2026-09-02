@@ -234,6 +234,83 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps setup failures visible without routine setup notices before or after a turn", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-worktree-setup"),
+      projectId: ProjectId.make("project-1"),
+      title: "Worktree setup",
+      activities: [
+        makeActivity({
+          id: EventId.make("setup-requested"),
+          kind: "setup-script.requested",
+          summary: "Starting setup script",
+          createdAt: "2026-08-30T00:00:00.000Z",
+        }),
+        makeActivity({
+          id: EventId.make("setup-started"),
+          kind: "setup-script.started",
+          summary: "Setup script started",
+          createdAt: "2026-08-30T00:00:01.000Z",
+        }),
+        makeActivity({
+          id: EventId.make("setup-failed"),
+          kind: "setup-script.failed",
+          summary: "Setup script failed to start",
+          createdAt: "2026-08-30T00:00:02.000Z",
+          tone: "error",
+          payload: { detail: "Setup command was not found" },
+        }),
+      ],
+    });
+    const latestTurn = {
+      turnId: TurnId.make("turn-after-setup"),
+      state: "running" as const,
+      requestedAt: "2026-08-30T00:00:03.000Z",
+      startedAt: "2026-08-30T00:00:04.000Z",
+      completedAt: null,
+      assistantMessageId: null,
+    };
+
+    for (const currentTurn of [null, latestTurn]) {
+      const feed = buildThreadFeed({ ...thread, latestTurn: currentTurn });
+      expect(feed).toMatchObject([
+        {
+          type: "activity-group",
+          activities: [{ id: "setup-failed", status: "failure" }],
+        },
+      ]);
+      const group = feed[0];
+      if (group?.type !== "activity-group") throw new Error("Expected the setup failure group");
+      expect(group.activities[0]?.getCopyText()).toContain("Setup command was not found");
+    }
+  });
+
+  it.each(["setup-script.requested", "setup-script.started"])(
+    "keeps error-toned %s notices visible",
+    (kind) => {
+      const feed = buildThreadFeed(
+        makeThread({
+          id: ThreadId.make("thread-setup-error"),
+          projectId: ProjectId.make("project-1"),
+          title: "Setup error",
+          activities: [
+            makeActivity({
+              id: EventId.make("setup-error"),
+              kind,
+              summary: "Setup failed",
+              createdAt: "2026-08-30T00:00:00.000Z",
+              tone: "error",
+            }),
+          ],
+        }),
+      );
+
+      expect(feed).toMatchObject([
+        { type: "activity-group", activities: [{ id: "setup-error", status: "failure" }] },
+      ]);
+    },
+  );
+
   it("keeps older local feedback before newer messages returned by the server", () => {
     const submission = {
       id: MessageId.make("feedback-command-ordering"),
@@ -942,8 +1019,27 @@ describe("buildThreadFeed", () => {
       summary: "Running pnpm",
       summaryKind: "command",
       live: true,
-      shimmer: false,
+      shimmer: true,
     });
+    expect(rows[0]).toMatchObject({ live: false, shimmer: false });
+
+    const stoppedRows = deriveThreadFeedPresentation(feed, latestTurn, new Set());
+    expect(stoppedRows.filter((entry) => entry.type === "work-toggle")).toMatchObject([
+      { live: false, shimmer: false },
+      { live: false, shimmer: false },
+    ]);
+
+    const completedRows = deriveThreadFeedPresentation(
+      feed,
+      { ...latestTurn, state: "completed", completedAt: "2026-04-01T00:00:04.000Z" },
+      new Set([turnId]),
+      new Set(),
+      latestTurn.startedAt,
+    );
+    expect(completedRows.filter((entry) => entry.type === "work-toggle")).toMatchObject([
+      { live: false, shimmer: false },
+      { live: false, shimmer: false },
+    ]);
   });
 
   it("does not revive cached in-progress tools after work stops", () => {

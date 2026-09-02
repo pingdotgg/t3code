@@ -269,8 +269,21 @@ function ComposerBannerStackAlert({
       className={item.className}
     >
       <ComposerBanner.Row layout="wrap-actions">
-        <ComposerBanner.Icon>{item.icon}</ComposerBanner.Icon>
-        <ComposerBanner.Content className="font-medium">{item.title}</ComposerBanner.Content>
+        <ComposerBanner.Icon className={item.description ? "min-h-4 self-start" : undefined}>
+          {item.icon}
+        </ComposerBanner.Icon>
+        <ComposerBanner.Content
+          className={item.description ? "flex-col items-start gap-0" : "font-medium"}
+        >
+          {item.description ? (
+            <>
+              <span className="font-medium">{item.title}</span>
+              <span className="text-muted-foreground">{item.description}</span>
+            </>
+          ) : (
+            item.title
+          )}
+        </ComposerBanner.Content>
         {item.actions || item.onDismiss ? (
           <ComposerBanner.Actions>
             {item.actions}
@@ -284,19 +297,7 @@ function ComposerBannerStackAlert({
           </ComposerBanner.Actions>
         ) : null}
       </ComposerBanner.Row>
-      {item.description || item.children ? (
-        <ComposerBanner.Children>
-          {item.description ? (
-            <ComposerBanner.Row>
-              <ComposerBanner.Icon />
-              <ComposerBanner.Content className="text-muted-foreground">
-                {item.description}
-              </ComposerBanner.Content>
-            </ComposerBanner.Row>
-          ) : null}
-          {item.children}
-        </ComposerBanner.Children>
-      ) : null}
+      {item.children ? <ComposerBanner.Children>{item.children}</ComposerBanner.Children> : null}
     </ComposerBanner.Root>
   );
 }

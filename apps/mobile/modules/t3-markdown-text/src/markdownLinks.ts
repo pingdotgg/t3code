@@ -1,3 +1,9 @@
+import {
+  inlineCodeFilePathCandidate,
+  isConventionalFilePosition,
+} from "@t3tools/client-runtime/markdown-links";
+import { videoMimeType } from "@t3tools/shared/video";
+
 import type { MARKDOWN_FILE_ICON_SOURCES } from "./markdownFileIcons.generated";
 
 const WINDOWS_DRIVE_PATH_PATTERN = /^[A-Za-z]:[\\/]/;
@@ -253,15 +259,22 @@ function normalizeDestination(value: string): string {
   return trimmed.startsWith("<") && trimmed.endsWith(">") ? trimmed.slice(1, -1) : trimmed;
 }
 
+/** Native link and media APIs have no document scheme to inherit from protocol-relative URLs. */
+export function normalizeNativeMarkdownUrl(value: string): string {
+  return value.startsWith("//") ? `https:${value}` : value;
+}
+
 function fileUrlTarget(href: string): { readonly path: string; readonly hash: string } | null {
   try {
     const parsed = new URL(href);
     if (parsed.protocol.toLowerCase() !== "file:") {
       return null;
     }
-    const path = /^\/[A-Za-z]:[\\/]/.test(parsed.pathname)
-      ? parsed.pathname.slice(1)
+    const uncHostname = parsed.hostname.toLowerCase() === "localhost" ? "" : parsed.hostname;
+    const rawPath = uncHostname
+      ? `\\\\${uncHostname}${parsed.pathname.replaceAll("/", "\\")}`
       : parsed.pathname;
+    const path = /^\/[A-Za-z]:[\\/]/.test(rawPath) ? rawPath.slice(1) : rawPath;
     return { path, hash: parsed.hash };
   } catch {
     return null;
@@ -327,6 +340,7 @@ function looksLikeFilePath(value: string): boolean {
   if (FILE_ICON_BY_NAME[value.replace(POSITION_SUFFIX_PATTERN, "").toLowerCase()]) {
     return true;
   }
+  if (isConventionalFilePosition(value)) return true;
   return RELATIVE_FILE_PATH_PATTERN.test(value) || RELATIVE_FILE_NAME_PATTERN.test(value);
 }
 
@@ -338,6 +352,7 @@ function fileLabel(value: string): string {
 
 export function resolveMarkdownFileIcon(value: string): MarkdownFileIcon {
   const basename = fileLabel(value).replace(POSITION_SUFFIX_PATTERN, "").toLowerCase();
+  if (videoMimeType({ name: basename, mimeType: "" }) !== null) return "video";
   const exactIcon = FILE_ICON_BY_NAME[basename];
   if (exactIcon) return exactIcon;
   if (basename.startsWith("tsconfig.") && basename.endsWith(".json")) {
@@ -354,7 +369,7 @@ export function resolveMarkdownFileIcon(value: string): MarkdownFileIcon {
 export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPresentation {
   const normalized = normalizeDestination(href);
   try {
-    const parsed = new URL(normalized);
+    const parsed = new URL(normalizeNativeMarkdownUrl(normalized));
     if (parsed.protocol === "http:" || parsed.protocol === "https:") {
       return {
         kind: "external",
@@ -398,4 +413,14 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
     kind: "link",
     href: /^(?:mailto|tel):/i.test(normalized) ? normalized : null,
   };
+}
+
+/** Backticks become file references only when the shared path heuristic recognizes the whole span. */
+export function resolveMarkdownInlineCodePresentation(
+  content: string,
+): Extract<MarkdownLinkPresentation, { readonly kind: "file" }> | null {
+  const candidate = inlineCodeFilePathCandidate(content);
+  if (candidate === null) return null;
+  const presentation = resolveMarkdownLinkPresentation(candidate);
+  return presentation.kind === "file" ? presentation : null;
 }

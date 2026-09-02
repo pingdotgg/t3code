@@ -2,13 +2,14 @@ import * as Haptics from "expo-haptics";
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import { MaskedView } from "@expo/ui/community/masked-view";
 import { useIsFocused } from "@react-navigation/native";
-import { useEffect, useId, useState, type ComponentProps } from "react";
+import { useEffect, useId, useLayoutEffect, useState, type ComponentProps } from "react";
 import {
   AccessibilityInfo,
   AppState,
   type ColorValue,
   Pressable,
   ScrollView,
+  StyleSheet,
   View,
 } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -16,7 +17,11 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
-import type { ToolGroupSummaryKind } from "@t3tools/client-runtime/work-log/presentation";
+import {
+  type ToolGroupSummaryKind,
+  workEntryViewedImagePath,
+} from "@t3tools/client-runtime/work-log/presentation";
+import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 import Animated, {
   cancelAnimation,
   Easing,
@@ -40,6 +45,44 @@ export const THREAD_DISCLOSURE_TRANSITION_MS = 180;
 const WORK_LOG_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
 const WORK_LOG_DETAIL_ENTER_TRANSITION = FadeIn.duration(140);
 const WORK_LOG_DETAIL_EXIT_TRANSITION = FadeOut.duration(120);
+
+export function ThreadDisclosureChevron(props: {
+  readonly expanded: boolean;
+  readonly collapsedDirection: "right" | "down";
+  readonly size: number;
+  readonly tintColor: ColorValue;
+}) {
+  const expandedAngle = props.collapsedDirection === "right" ? 90 : 180;
+  const rotation = useSharedValue(props.expanded ? expandedAngle : 0);
+
+  useLayoutEffect(() => {
+    rotation.value = withTiming(props.expanded ? expandedAngle : 0, {
+      duration: THREAD_DISCLOSURE_TRANSITION_MS,
+      reduceMotion: ReduceMotion.System,
+    });
+  }, [expandedAngle, props.expanded, rotation]);
+
+  const rotationStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${rotation.value}deg` }],
+  }));
+
+  return (
+    <Animated.View
+      accessible={false}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      pointerEvents="none"
+      style={[{ width: props.size, height: props.size }, rotationStyle]}
+    >
+      <SymbolView
+        name={props.collapsedDirection === "right" ? "chevron.right" : "chevron.down"}
+        size={props.size}
+        tintColor={props.tintColor}
+        type="monochrome"
+      />
+    </Animated.View>
+  );
+}
 
 function ShimmerWorkContent(props: {
   readonly highlighted: boolean;
@@ -78,7 +121,7 @@ function ShimmerWorkContent(props: {
   );
 }
 
-function ShimmeringWorkContent(props: {
+export function ShimmeringWorkContent(props: {
   readonly icon: AppSymbolName;
   readonly iconSubtleColor: ColorValue;
   readonly label: string;
@@ -143,7 +186,7 @@ function ShimmeringWorkContent(props: {
 
   return (
     <View
-      className="min-w-0 flex-1"
+      className="min-w-0 flex-1 overflow-hidden"
       onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width)}
     >
       <ShimmerWorkContent
@@ -164,7 +207,7 @@ function ShimmeringWorkContent(props: {
           style={[{ width: SHIMMER_WIDTH }, sweepStyle]}
         >
           <MaskedView
-            className="absolute inset-0"
+            style={StyleSheet.absoluteFill}
             maskElement={
               <Svg width="100%" height="100%">
                 <Defs>
@@ -259,7 +302,7 @@ const WORK_ROW_HEIGHT = 32; // min-h-8
 const WORK_ROW_GAP = 1; // gap-px
 const WORK_LOG_BOTTOM_MARGIN = 4; // mb-1
 
-export const WORK_GROUP_TOGGLE_HEIGHT = 36; // min-h-8 (32) + mb-1 (4)
+export const WORK_GROUP_TOGGLE_HEIGHT = 32; // min-h-8
 
 export function collapsedWorkLogHeight(activities: ReadonlyArray<ThreadFeedActivity>): number {
   const rows = activities;
@@ -276,6 +319,7 @@ export function ThreadWorkLog(props: {
   readonly iconSubtleColor: import("react-native").ColorValue;
   readonly onCopyRow: (rowId: string, value: string) => void;
   readonly onToggleRow: (rowId: string) => void;
+  readonly renderImage: MarkdownImageRenderer;
 }) {
   const rows = props.activities.map((activity) => ({
     ...activity,
@@ -293,6 +337,7 @@ export function ThreadWorkLog(props: {
           const expanded = props.expandedRows[row.id] ?? false;
           const canExpand = row.canExpand;
           const fullDetail = expanded ? row.getFullDetail() : null;
+          const viewedImagePath = workEntryViewedImagePath(row.workEntry);
           const displayText = row.detail ?? row.summary;
           const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
           const failed = row.status === "failure";
@@ -369,15 +414,11 @@ export function ThreadWorkLog(props: {
                     ) : null}
                     <View className="h-4 w-4 items-center justify-center">
                       {canExpand ? (
-                        <SymbolView
-                          name={
-                            expanded
-                              ? { ios: "chevron.up", android: "keyboard_arrow_up" }
-                              : { ios: "chevron.down", android: "keyboard_arrow_down" }
-                          }
+                        <ThreadDisclosureChevron
+                          expanded={expanded}
+                          collapsedDirection="down"
                           size={11}
                           tintColor={props.iconSubtleColor}
-                          type="monochrome"
                         />
                       ) : null}
                     </View>
@@ -392,6 +433,11 @@ export function ThreadWorkLog(props: {
                   layout={WORK_LOG_LAYOUT_TRANSITION}
                   className="ml-7 border-l border-adaptive-neutral-300-a60-white-a12 pb-1 pl-3 pt-0.5"
                 >
+                  {viewedImagePath ? (
+                    <View className="pb-1.5">
+                      {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
+                    </View>
+                  ) : null}
                   <ScrollView
                     nestedScrollEnabled
                     directionalLockEnabled
@@ -432,7 +478,7 @@ export function ThreadWorkGroupToggle(props: {
   const icon = toolGroupSummarySymbolName(props.summaryKind);
 
   return (
-    <View className="-mx-1 mb-1 px-1 py-0">
+    <View className="-mx-1 px-1 py-0">
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: props.expanded }}
@@ -467,15 +513,11 @@ export function ThreadWorkGroupToggle(props: {
             </Text>
           </>
         )}
-        <SymbolView
-          name={
-            props.expanded
-              ? { ios: "chevron.up", android: "keyboard_arrow_up" }
-              : { ios: "chevron.down", android: "keyboard_arrow_down" }
-          }
+        <ThreadDisclosureChevron
+          expanded={props.expanded}
+          collapsedDirection="down"
           size={11}
           tintColor={props.iconSubtleColor}
-          type="monochrome"
         />
       </Pressable>
     </View>

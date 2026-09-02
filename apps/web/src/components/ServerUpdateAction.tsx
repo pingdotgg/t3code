@@ -154,7 +154,7 @@ export function ServerUpdateAction({
   }
 
   return (
-    <Button size="xs" onClick={() => void handleUpdate()}>
+    <Button size="xs" variant="outline" onClick={() => void handleUpdate()}>
       {label}
     </Button>
   );
