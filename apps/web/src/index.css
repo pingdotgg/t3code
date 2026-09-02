@@ -206,7 +206,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius-xl: calc(var(--radius) + 4px);
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
-  --radius-4xl: calc(var(--radius) + 16px);
   @keyframes skeleton {
     /* Transform-only so the highlight sweep stays on the compositor, then a
        long hold with the band parked off-screen instead of a constant shimmer. */
@@ -510,7 +509,23 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   margin-left: var(--live-activity-focus-width);
 }
 
+@property --assistant-citation-highlight-opacity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
 @layer base {
+  ::highlight(t3-assistant-citation) {
+    background-color: color-mix(
+      in oklab,
+      var(--primary) calc(var(--assistant-citation-highlight-opacity) * 100%),
+      transparent
+    );
+  }
+  ::highlight(t3-assistant-citation-comment) {
+    background-color: color-mix(in oklab, var(--primary) 45%, transparent);
+  }
   :root {
     /* Keep the original T3 Code artwork palettes as the defaults. Built-in
        themes override them with their own pigments in the components layer. */
@@ -980,19 +995,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @variant dark {
     color-scheme: dark;
-    /* Keep the workspace in the same neutral-black family as sidebar v2.
-       Surfaces lift from this base instead of starting from a milky gray. */
+    /* Keep controls and floating surfaces close to the neutral-black canvas.
+       Borders and hover states provide separation without milky gray fills. */
     --background: var(--color-neutral-950);
-    --surface-raised: var(--secondary);
+    --surface-raised: color-mix(in srgb, var(--background) 97%, var(--color-white));
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--background) 97%, var(--color-white));
     --card-foreground: var(--color-neutral-100);
-    --popover: color-mix(in srgb, var(--background) 94%, var(--color-white));
+    --popover: color-mix(in srgb, var(--background) 97%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
     --primary: oklch(0.571 0.21 264);
-    --secondary: --alpha(var(--color-white) / 4%);
+    --secondary: --alpha(var(--color-white) / 3%);
     --secondary-foreground: var(--color-neutral-100);
-    --muted: --alpha(var(--color-white) / 4%);
+    --muted: --alpha(var(--color-white) / 3%);
     --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);

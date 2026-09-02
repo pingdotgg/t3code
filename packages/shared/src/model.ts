@@ -1,6 +1,4 @@
 import {
-  DEFAULT_MODEL,
-  DEFAULT_MODEL_BY_PROVIDER,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   type ModelCapabilities,
   type ModelSelection,
@@ -55,13 +53,6 @@ export function getProviderOptionBooleanSelectionValue(
 ): boolean | undefined {
   const value = getProviderOptionSelectionValue(selections, id);
   return typeof value === "boolean" ? value : undefined;
-}
-
-export function getModelSelectionOptionValue(
-  modelSelection: ModelSelection | null | undefined,
-  id: string,
-): string | boolean | undefined {
-  return getProviderOptionSelectionValue(modelSelection?.options, id);
 }
 
 export function getModelSelectionStringOptionValue(
@@ -213,20 +204,18 @@ export function buildProviderOptionSelectionsFromDescriptors(
   return nextSelections.length > 0 ? nextSelections : undefined;
 }
 
-export function getModelSelectionOptionDescriptors(
-  modelSelection: ModelSelection | null | undefined,
-  caps?: ModelCapabilities | null | undefined,
-): ReadonlyArray<ProviderOptionDescriptor> {
-  if (!modelSelection) {
-    return [];
+export function buildExplicitProviderOptionSelectionsFromDescriptors(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> | null | undefined,
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): Array<ProviderOptionSelection> | undefined {
+  if (!selections || selections.length === 0) {
+    return undefined;
   }
-  if (!caps) {
-    return [];
-  }
-  return getProviderOptionDescriptors({
-    caps,
-    selections: modelSelection.options,
-  });
+  const explicitIds = new Set(selections.map((selection) => selection.id));
+  const normalized = buildProviderOptionSelectionsFromDescriptors(descriptors)?.filter(
+    (selection) => explicitIds.has(selection.id),
+  );
+  return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {
@@ -296,21 +285,6 @@ export function resolveSelectableModel(
 
   const resolved = options.find((option) => option.slug === normalized);
   return resolved ? resolved.slug : null;
-}
-
-function resolveModelSlug(model: string | null | undefined, provider: ProviderDriverKind): string {
-  const normalized = normalizeModelSlug(model, provider);
-  if (!normalized) {
-    return DEFAULT_MODEL_BY_PROVIDER[provider] ?? DEFAULT_MODEL;
-  }
-  return normalized;
-}
-
-export function resolveModelSlugForProvider(
-  provider: ProviderDriverKind,
-  model: string | null | undefined,
-): string {
-  return resolveModelSlug(model, provider);
 }
 
 /** Trim a string, returning null for empty/missing values. */

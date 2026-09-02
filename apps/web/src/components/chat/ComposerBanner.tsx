@@ -11,7 +11,7 @@ export type ComposerBannerVariant = "default" | "error" | "info" | "success" | "
 
 const surfaceColors = cn(
   "[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--card))]",
-  "dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,color-mix(in_srgb,var(--background)_96%,var(--color-white)))]",
+  "dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--surface-raised))]",
   "[html[data-theme-id]_&]:[--chat-composer-attached-surface:var(--app-theme-surface-raised)]",
 );
 
@@ -27,9 +27,8 @@ const variantColors: Record<ComposerBannerVariant, string> = {
   default: neutralOutline,
   error:
     "[--chat-composer-attached-outline:color-mix(in_srgb,var(--error)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--error)_8%,transparent)]",
-  info: "[--chat-composer-attached-outline:color-mix(in_srgb,var(--info)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--info)_4%,transparent)]",
-  success:
-    "[--chat-composer-attached-outline:color-mix(in_srgb,var(--success)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--success)_4%,transparent)]",
+  info: neutralOutline,
+  success: neutralOutline,
   warning:
     "[--chat-composer-attached-outline:color-mix(in_srgb,var(--warning)_28%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--warning)_8%,transparent)]",
 };
@@ -71,8 +70,8 @@ function Surface({
 const peekBorder: Record<ComposerBannerVariant, string> = {
   default: "border-(--chat-composer-attached-outline)",
   error: "border-destructive/24",
-  info: "border-info/24",
-  success: "border-success/24",
+  info: "border-(--chat-composer-attached-outline)",
+  success: "border-(--chat-composer-attached-outline)",
   warning: "border-warning/24",
 };
 
@@ -144,11 +143,13 @@ function Column({ className, ...props }: ComponentProps<"div">) {
 
 function Root({
   className,
+  density = "default",
   placement = "attached",
   variant = "default",
   width = "fill",
   ...props
 }: ComponentProps<"div"> & {
+  density?: "default" | "comfortable";
   placement?: "attached" | "floating";
   variant?: ComposerBannerVariant;
   width?: "fill" | "content";
@@ -156,7 +157,8 @@ function Root({
   return (
     <Surface
       className={cn(
-        "min-w-0 p-1 pb-[calc(var(--chat-composer-attachment-overlap)+(--spacing(1)))] text-xs/4 [--composer-banner-icon-column:--spacing(7)] sm:[--composer-banner-icon-column:--spacing(6)]",
+        "min-w-0 px-1 pt-(--composer-banner-padding-block) pb-[calc(var(--chat-composer-attachment-overlap)+var(--composer-banner-padding-block))] text-xs/4 [--composer-banner-icon-column:--spacing(7)] [--composer-banner-padding-block:--spacing(1)] sm:[--composer-banner-icon-column:--spacing(6)]",
+        density === "comfortable" && "[--composer-banner-padding-block:--spacing(1.25)]",
         width === "content" ? "w-fit max-w-full flex-none" : "@container",
         className,
       )}
@@ -184,7 +186,7 @@ function Row({
       "not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)]",
       "[&:is(button)]:cursor-pointer [&:is(button)]:rounded-[0.5rem] [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring",
       layout === "wrap-actions" &&
-        "@max-[400px]:flex @max-[400px]:flex-wrap @max-[400px]:gap-y-1 @max-[400px]:*:data-[slot=composer-banner-actions]:ms-auto @max-[400px]:*:data-[slot=composer-banner-actions]:max-w-full @max-[400px]:has-[>[data-slot=composer-banner-icon]]:*:data-[slot=composer-banner-actions]:max-w-[calc(100%-var(--composer-banner-icon-column)-(--spacing(1)))] @max-[400px]:*:data-[slot=composer-banner-content]:min-h-(--composer-banner-icon-column) @max-[400px]:*:data-[slot=composer-banner-content]:flex-[1_1_10rem]",
+        "@max-[400px]:*:data-[slot=composer-banner-content]:min-h-(--composer-banner-icon-column)",
       className,
     ),
     "data-composer-banner-row": "true",
@@ -244,6 +246,7 @@ function Actions({ className, ...props }: ComponentProps<"span">) {
       data-slot="composer-banner-actions"
       className={cn(
         "col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1",
+        "@max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:col-start-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:col-end-4 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:row-start-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:-ms-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:justify-start",
         className,
       )}
       {...props}

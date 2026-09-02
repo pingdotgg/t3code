@@ -14,6 +14,7 @@ import {
   AssetWorkspaceRootNormalizationError,
 } from "@t3tools/contracts";
 import {
+  hostPreviewMimeTypeFromExtension,
   isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
   WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
@@ -41,6 +42,7 @@ import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../atta
 import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { openMediaFile, type OpenMediaFile } from "./MediaFile.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
 
@@ -74,6 +76,14 @@ const AssetClaimsSchema = Schema.Union([
     kind: Schema.Literal("workspace-file-exact"),
     workspaceRoot: Schema.String,
     relativePath: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("media-file-exact"),
+    filePath: Schema.String,
+    device: Schema.String,
+    inode: Schema.String,
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -115,6 +125,7 @@ export type ResolvedAsset = {
   readonly download?: boolean;
   readonly fileName?: string;
   readonly mimeType?: string;
+  readonly file?: OpenMediaFile;
 };
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
@@ -211,6 +222,55 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   let sourcePath: string | undefined;
 
   switch (input.resource._tag) {
+    case "media-file": {
+      let requestedPath = input.resource.path;
+      if (!path.isAbsolute(requestedPath)) {
+        if (!input.workspaceRoot) {
+          return yield* new AssetWorkspaceContextNotFoundError({ resource: input.resource });
+        }
+        const workspaceRoot = yield* workspacePaths
+          .normalizeWorkspaceRoot(input.workspaceRoot)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new AssetWorkspaceRootNormalizationError({ resource: input.resource, cause }),
+            ),
+          );
+        requestedPath = path.resolve(workspaceRoot, requestedPath);
+      }
+      const canonicalFile = yield* resolveCanonicalFile(requestedPath).pipe(
+        Effect.mapError(
+          (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+        ),
+      );
+      if (!canonicalFile) {
+        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      }
+      if (hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
+        return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
+      }
+      const identity = yield* openMediaFile(canonicalFile).pipe(
+        Effect.map((file) =>
+          file ? { device: file.info.dev.toString(), inode: file.info.ino.toString() } : null,
+        ),
+        Effect.scoped,
+        Effect.mapError(
+          (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+        ),
+      );
+      if (!identity) {
+        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      }
+      claims = {
+        version: 1,
+        kind: "media-file-exact",
+        filePath: canonicalFile,
+        ...identity,
+        expiresAt,
+      };
+      fileName = path.basename(canonicalFile);
+      break;
+    }
     case "workspace-file": {
       if (!input.workspaceRoot) {
         return yield* new AssetWorkspaceContextNotFoundError({
@@ -526,6 +586,30 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   const decodedPath = decodeRelativePath(relativePath);
   if (decodedPath === null) return null;
   const path = yield* Path.Path;
+  if (claims.kind === "media-file-exact") {
+    if (decodedPath !== path.basename(claims.filePath)) return null;
+    const canonicalFile = yield* resolveCanonicalFile(claims.filePath).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to resolve canonical media path.", {
+          filePath: claims.filePath,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    if (canonicalFile !== claims.filePath) return null;
+    const mimeType = hostPreviewMimeTypeFromExtension(path.extname(canonicalFile));
+    if (!mimeType) return null;
+    const file = yield* openMediaFile(canonicalFile, claims).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to open canonical media file.", { filePath: canonicalFile, cause }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    return file
+      ? ({ kind: "file", path: canonicalFile, mimeType, file } satisfies ResolvedAsset)
+      : null;
+  }
   if (claims.kind === "workspace-file-exact") {
     if (decodedPath !== path.basename(claims.relativePath)) return null;
     const exactWorkspaceFile = yield* resolveCanonicalWorkspaceFileForRequest({

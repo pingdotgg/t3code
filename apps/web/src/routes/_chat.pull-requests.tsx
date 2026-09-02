@@ -760,7 +760,16 @@ function PullRequestsRouteView() {
   // Built together so the two reads share one memo, and in the same field order the feed's own
   // input uses: the atoms are keyed by their input, so the Authored tab then reads this answer.
   const partitionTargets = useMemo(() => {
-    if (!partitionsWanted) return { authored: NO_LIST_TARGETS, reviewing: NO_LIST_TARGETS };
+    // The main list goes first. Besides putting the visible rows on screen sooner, it proves
+    // which repositories the host search indexes, so an empty partition does not trigger the
+    // expensive per-repository fallback. With no rows at all both partitions are already empty.
+    if (
+      !partitionsWanted ||
+      baselineQuery.data === null ||
+      baselineQuery.data.entries.length === 0
+    ) {
+      return { authored: NO_LIST_TARGETS, reviewing: NO_LIST_TARGETS };
+    }
     const targetsFor = (involvement: PullRequestInvolvement) =>
       environmentQueries.map(({ environmentId, projectIds }) => ({
         environmentId,
@@ -779,6 +788,7 @@ function PullRequestsRouteView() {
     menuFiltered,
     menuFilters,
     partitionsWanted,
+    baselineQuery.data,
     environmentQueries,
     scopedProjectId,
     search.host,

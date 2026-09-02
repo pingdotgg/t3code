@@ -73,7 +73,8 @@ processing is totally ordered. For each envelope `processEnvelope`:
 3. inside one SQL transaction, appends events to the event store, applies them to the in-memory read
    model via [`projector.ts`][projector], projects them into persisted tables, and writes the
    accepted receipt;
-4. after commit, swaps in the new read model and publishes committed events to subscribers.
+4. after commit, swaps in the new read model, cleans up attachments, and publishes committed events
+   to subscribers. Attachment cleanup failures are logged and do not reject committed commands.
 
 Because persistence and projection share a transaction, the read model cannot durably disagree with
 the event log. On dispatch failure the engine rereads persisted events past the starting sequence and
@@ -88,7 +89,10 @@ A turn is complete when its session leaves `running` status, projected by
 `settledTurnStateForSessionStatus` in [`projector.ts`][projector]. Checkpoint work settling later
 does not define turn end.
 
-Thread settlement is server-owned. Per-environment settings control PR and inactivity settlement.
+Thread settlement is server-owned. Each server's own settings control PR and inactivity
+settlement. Those keys are user preferences, so clients write them to every connected environment
+(`SHARED_SERVER_SETTING_KEYS` in `packages/client-runtime/src/state/sharedSettings.ts`) and warn
+when a connected environment drifts.
 [`ThreadSettlementReactor`][settlement] checks threads at startup, when those settings change, and
 once per minute, including when no client is connected. It dispatches the guarded internal
 `thread.auto-settle` command, which uses the existing settlement event lifecycle. Automatic

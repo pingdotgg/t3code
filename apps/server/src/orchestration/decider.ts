@@ -219,7 +219,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           workspaceRoot: command.workspaceRoot,
-          defaultModelSelection: command.defaultModelSelection ?? null,
+          // Project creation has no user model choice. Older clients sent an
+          // automatic seed here, but only a metadata update records an
+          // explicit project default.
+          defaultModelSelection: null,
           faviconPath: null,
           scripts: [],
           createdAt: command.createdAt,

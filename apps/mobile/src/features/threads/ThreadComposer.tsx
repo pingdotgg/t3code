@@ -151,6 +151,11 @@ export const COMPOSER_LAYOUT_TRANSITION =
     ? undefined
     : LinearTransition.duration(COMPOSER_TRANSITION_DURATION_MS).reduceMotion(ReduceMotion.System);
 
+const COMPOSER_ATTACHMENT_ENTERING =
+  Platform.OS === "android"
+    ? FadeIn.duration(160)
+    : FadeIn.delay(COMPOSER_TRANSITION_DURATION_MS).duration(160).reduceMotion(ReduceMotion.System);
+
 const AnimatedGlassSurface = Animated.createAnimatedComponent(GlassSurface);
 
 export function ComposerSurface(props: {
@@ -623,10 +628,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 onPickFiles={props.onPickDraftFiles}
               />
             ) : null}
-            {isExpanded ? (
+            {isExpanded && props.draftAttachments.length > 0 ? (
               <Animated.View
-                className={props.draftAttachments.length > 0 ? "px-[14px] pb-2.5" : undefined}
-                entering={FadeIn.duration(160)}
+                className="px-[14px] pb-2.5"
+                entering={COMPOSER_ATTACHMENT_ENTERING}
                 exiting={FadeOut.duration(120)}
               >
                 <ComposerAttachmentStrip

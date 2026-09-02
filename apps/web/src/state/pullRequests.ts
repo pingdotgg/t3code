@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
-  createLinkedPullRequestDetailAtomFamily,
+  createLinkedPullRequestSummaryAtomFamily,
   createPullRequestEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/pull-requests";
 import type {
@@ -23,7 +23,7 @@ import { formatEnvironmentQueryError } from "./query";
 
 export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime);
 export const linkedPullRequestDetailAtom =
-  createLinkedPullRequestDetailAtomFamily(connectionAtomRuntime);
+  createLinkedPullRequestSummaryAtomFamily(connectionAtomRuntime);
 
 export interface EnvironmentQueryTarget<Input> {
   readonly environmentId: EnvironmentId;
