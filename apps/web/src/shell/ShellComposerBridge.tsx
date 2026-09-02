@@ -175,6 +175,7 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
   useShellActions((action) => {
     switch (action.type) {
       case "composer.text.set":
+        if (action.target !== state.target) return;
         props.setPrompt(action.text);
         props.promptRef.current = action.text;
         if (action.cursor !== undefined) {

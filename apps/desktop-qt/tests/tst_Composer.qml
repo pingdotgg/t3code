@@ -57,5 +57,32 @@ Item {
             Shell.publishComposerText("", 0);
             tryCompare(input, "text", "");
         }
+
+        function test_textDispatchIncludesTarget() {
+            let composer = createTemporaryObject(composerComponent, root);
+            verify(!!composer, "Component exists");
+            let input = findChild(composer, "input");
+            verify(!!input, "Object exists");
+
+            input.text = qsTr("Scoped edit 123");
+
+            tryCompare(Shell, "dispatchCount", 1);
+            compare(Shell.dispatchedActions[0].action, "composer.text.set");
+            compare(Shell.dispatchedActions[0].payload.target, "thread-a");
+        }
+
+        function test_targetSwitchDropsPendingDraftEdit() {
+            let composer = createTemporaryObject(composerComponent, root);
+            verify(!!composer, "Component exists");
+            let input = findChild(composer, "input");
+            verify(!!input, "Object exists");
+
+            input.text = qsTr("Belongs to thread A");
+            Shell.publishComposerTarget("thread-b", "", 0);
+
+            wait(180);
+            compare(Shell.dispatchCount, 0);
+            compare(input.text, "");
+        }
     }
 }

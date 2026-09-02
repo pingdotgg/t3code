@@ -476,6 +476,7 @@ export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("palette.open") }),
   Schema.Struct({
     type: Schema.Literal("composer.text.set"),
+    target: Schema.String,
     text: Schema.String,
     /** Caret in `text`; drives @/$// suggestions. */
     cursor: Schema.optional(Schema.Number),

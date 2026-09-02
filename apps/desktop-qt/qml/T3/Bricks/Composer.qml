@@ -15,6 +15,7 @@ Rectangle {
     readonly property var model: Shell.state.composer ?? null
     readonly property var workspace: Shell.state.workspace ?? null
     readonly property bool ready: model !== null && model.target !== null
+    readonly property string publishedTarget: ready ? model.target : ""
     readonly property string publishedText: ready ? model.text : ""
     readonly property int publishedCursor: ready ? model.cursor : 0
     readonly property var suggestions: ready ? model.suggestions : []
@@ -89,6 +90,7 @@ Rectangle {
             composer.lastSentText = input.text;
             composer.lastSentCursor = input.cursorPosition;
             Shell.dispatch("composer.text.set", {
+                target: composer.publishedTarget,
                 text: input.text,
                 cursor: input.cursorPosition
             });
@@ -146,6 +148,18 @@ Rectangle {
             input.cursorPosition = Math.min(publishedCursor, input.text.length);
             lastSentCursor = input.cursorPosition;
         }
+    }
+
+    onPublishedTargetChanged: {
+        textDebounce.stop();
+        const text = ready ? model.text : "";
+        const cursor = Math.min(ready ? model.cursor : 0, text.length);
+        lastSentText = text;
+        lastSentCursor = cursor;
+        if (input.text !== text) {
+            input.text = text;
+        }
+        input.cursorPosition = cursor;
     }
 
     onSuggestionsChanged: suggestionList.currentIndex = suggestions.length > 0 ? 0 : -1

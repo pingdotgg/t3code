@@ -110,8 +110,8 @@ int main(int argc, char* argv[]) {
       QStringLiteral("file"));
   const QCommandLineOption actionOption(
       QStringLiteral("action"),
-      QStringLiteral("Dispatch a shell action after the page loads, e.g. rightPanel.toggle or "
-                     "composer.text.set={\"text\":\"hi\"}. Repeatable; runs in order."),
+      QStringLiteral("Dispatch a shell action after the page loads, e.g. rightPanel.toggle. "
+                     "Repeatable; runs in order."),
       QStringLiteral("name[=json]"));
   const QCommandLineOption keyOption(
       QStringLiteral("key"),

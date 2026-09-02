@@ -15,7 +15,7 @@ QtObject {
 
     function defaultComposer() {
         return {
-            target: {},
+            target: "thread-a",
             text: "",
             cursor: 0,
             suggestions: [],
@@ -59,13 +59,24 @@ QtObject {
         };
     }
 
+    function publishComposerTarget(target, text, cursor) {
+        state = {
+            composer: Object.assign({}, state.composer, {
+                target: target,
+                text: text,
+                cursor: cursor
+            }),
+            workspace: state.workspace
+        };
+    }
+
     function dispatch(action, payload) {
         dispatchedActions = dispatchedActions.concat([{
             action: action,
             payload: payload
         }]);
         dispatchCount += 1;
-        if (action === "composer.text.set") {
+        if (action === "composer.text.set" && payload.target === state.composer.target) {
             publishComposerText(payload.text, payload.cursor);
         }
         actionRequested(action, payload);
