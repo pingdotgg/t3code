@@ -573,16 +573,22 @@ describe("isSourceRunning for Firefox", () => {
   it.effect("reads a Firefox lock symlink's pid to tell live from crashed", () =>
     Effect.gen(function* () {
       const alive = (pid: number) => Effect.succeed(pid === 4242);
+      // The resolver may hand Firefox any of the machine's addresses, not
+      // just 127.0.0.1 — 127.0.1.1 on Debian-style hosts, a LAN address
+      // elsewhere — so every local address counts as ours.
+      const local = new Set(["127.0.0.1", "127.0.1.1", "192.168.1.20"]);
       // Both the plain and the fcntl-marked (`+`) forms carry the pid.
-      assert.isTrue(yield* firefoxSymlinkLockIsHeld("127.0.0.1:4242", alive));
-      assert.isTrue(yield* firefoxSymlinkLockIsHeld("127.0.0.1:+4242", alive));
-      // A crash leaves the symlink behind with a dead pid.
-      assert.isFalse(yield* firefoxSymlinkLockIsHeld("127.0.0.1:+9999", alive));
+      assert.isTrue(yield* firefoxSymlinkLockIsHeld("127.0.0.1:4242", local, alive));
+      assert.isTrue(yield* firefoxSymlinkLockIsHeld("127.0.1.1:+4242", local, alive));
+      assert.isTrue(yield* firefoxSymlinkLockIsHeld("192.168.1.20:+4242", local, alive));
+      // A crash leaves the symlink behind with a dead pid, on any local address.
+      assert.isFalse(yield* firefoxSymlinkLockIsHeld("127.0.0.1:+9999", local, alive));
+      assert.isFalse(yield* firefoxSymlinkLockIsHeld("192.168.1.20:+9999", local, alive));
       // Anything unparseable stays conservative.
-      assert.isTrue(yield* firefoxSymlinkLockIsHeld("garbage", alive));
+      assert.isTrue(yield* firefoxSymlinkLockIsHeld("garbage", local, alive));
       // A foreign owner (a shared profile locked from another machine) names
       // a pid we cannot probe, so it is held regardless of local liveness.
-      assert.isTrue(yield* firefoxSymlinkLockIsHeld("10.0.0.7:+9999", alive));
+      assert.isTrue(yield* firefoxSymlinkLockIsHeld("10.0.0.7:+9999", local, alive));
     }),
   );
 });

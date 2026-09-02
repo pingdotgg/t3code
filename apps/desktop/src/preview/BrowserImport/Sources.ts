@@ -18,6 +18,7 @@ import type { BrowserImportSourceId, BrowserImportSourceProfile } from "@t3tools
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import {
   HostProcessEnvironment,
+  HostProcessAddresses,
   HostProcessHostname,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
@@ -516,17 +517,19 @@ const windowsLockIsHeld = Effect.fnUntraced(function* (lockPath: string) {
  */
 export const firefoxSymlinkLockIsHeld = Effect.fnUntraced(function* (
   target: string,
+  localAddresses: ReadonlySet<string>,
   isProcessAlive: ProcessLivenessProbe,
 ) {
   const separator = target.lastIndexOf(":");
   if (separator < 0) return true;
-  // The owner half is the address Firefox resolved for its own hostname, so a
-  // pid is only meaningful when it is ours: a shared (NFS) profile locked from
-  // another machine names a foreign address and its pid cannot be probed here
-  // — nor could a reused local pid vouch for it. Anything but loopback stays
-  // conservatively held.
+  // The owner half is whatever Firefox's resolver returned for the machine's
+  // hostname — 127.0.0.1 when the lookup fails, but often 127.0.1.1 or a LAN
+  // address — so a pid is only meaningful when that address is one of ours.
+  // A shared (NFS) profile locked from another machine names a foreign
+  // address whose pid cannot be probed here, nor could a reused local pid
+  // vouch for it, so it stays conservatively held.
   const owner = target.slice(0, separator);
-  if (owner !== "127.0.0.1" && owner !== "::1") return true;
+  if (!localAddresses.has(owner)) return true;
   // A `+` marks an fcntl-holding owner; the pid follows either way.
   const pidText = target.slice(separator + 1).replace(/^\+/, "");
   if (!/^\d+$/.test(pidText)) return true;
@@ -597,13 +600,14 @@ const firefoxProfileIsHeld = Effect.fnUntraced(function* (
   context: BrowserImportPathContext,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
+  const localAddresses = yield* HostProcessAddresses;
   if (context.platform === "win32") {
     return yield* windowsLockIsHeld(context.path.join(directory, "parent.lock"));
   }
   // Linux additionally writes the `lock` symlink; a live pid there settles it
   // without spawning anything.
   const symlinkHeld = yield* fileSystem.readLink(context.path.join(directory, "lock")).pipe(
-    Effect.flatMap((target) => firefoxSymlinkLockIsHeld(target, processIsAlive)),
+    Effect.flatMap((target) => firefoxSymlinkLockIsHeld(target, localAddresses, processIsAlive)),
     Effect.orElseSucceed(() => false),
   );
   if (symlinkHeld) return true;

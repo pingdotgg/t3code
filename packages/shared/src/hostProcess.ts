@@ -51,6 +51,24 @@ export const HostProcessArguments = Context.Reference<ReadonlyArray<string>>(
   },
 );
 
+/**
+ * Every IP address this machine answers to, loopback included. A resolver
+ * may map the hostname to any of them (127.0.1.1 on Debian-style hosts, a
+ * LAN address elsewhere), so "is this address ours" has to check the whole
+ * set rather than assume 127.0.0.1.
+ */
+export const HostProcessAddresses = Context.Reference<ReadonlySet<string>>(
+  "@t3tools/shared/hostProcess/HostProcessAddresses",
+  {
+    defaultValue: () =>
+      new Set(
+        Object.values(NodeOS.networkInterfaces())
+          .flat()
+          .flatMap((entry) => (entry ? [entry.address] : [])),
+      ),
+  },
+);
+
 /** Undefined on platforms without POSIX uids (Windows). */
 export const HostProcessUserId = Context.Reference<number | undefined>(
   "@t3tools/shared/hostProcess/HostProcessUserId",
