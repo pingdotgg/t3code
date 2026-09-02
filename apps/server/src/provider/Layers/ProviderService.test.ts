@@ -637,6 +637,116 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect(
+  "ProviderServiceLive releases a compatible Codex writer before resuming on another instance",
+  () =>
+    Effect.gen(function* () {
+      const personalInstanceId = ProviderInstanceId.make("codex_personal");
+      const workInstanceId = ProviderInstanceId.make("codex_work");
+      const personal = makeFakeCodexAdapter();
+      const work = makeFakeCodexAdapter();
+      const workStartSession = work.startSession.getMockImplementation();
+      assert.isDefined(workStartSession);
+      const lifecycle: string[] = [];
+
+      const personalStopSession = personal.stopSession.getMockImplementation();
+      assert.isDefined(personalStopSession);
+      personal.stopSession.mockImplementation((threadId) =>
+        Effect.sync(() => lifecycle.push("personal.stop")).pipe(
+          Effect.andThen(personalStopSession(threadId)),
+        ),
+      );
+      work.startSession.mockImplementation((input) =>
+        Effect.gen(function* () {
+          lifecycle.push("work.start");
+          if (yield* personal.hasSession(input.threadId)) {
+            return yield* Effect.die(
+              new Error(`thread ${String(input.threadId)} already has an active writer`),
+            );
+          }
+          return yield* workStartSession(input);
+        }),
+      );
+
+      const adapters = new Map([
+        [personalInstanceId, personal.adapter],
+        [workInstanceId, work.adapter],
+      ]);
+      const unsupported = () =>
+        new ProviderUnsupportedError({
+          provider: CODEX_DRIVER,
+        });
+      const registry: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"] = {
+        getByInstance: (instanceId) => {
+          const adapter = adapters.get(instanceId);
+          return adapter ? Effect.succeed(adapter) : Effect.fail(unsupported());
+        },
+        getInstanceInfo: (instanceId) =>
+          adapters.has(instanceId)
+            ? Effect.succeed({
+                instanceId,
+                driverKind: CODEX_DRIVER,
+                displayName: undefined,
+                enabled: true,
+                continuationIdentity: {
+                  driverKind: CODEX_DRIVER,
+                  continuationKey: "codex:home:/shared-codex",
+                },
+              })
+            : Effect.fail(unsupported()),
+        listInstances: () => Effect.succeed(Array.from(adapters.keys())),
+        subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
+          PubSub.subscribe(pubsub),
+        ),
+      };
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+        Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("thread-compatible-codex-writer");
+        const initial = yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: personalInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+
+        lifecycle.length = 0;
+        const resumed = yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: workInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+
+        assert.equal(resumed.providerInstanceId, workInstanceId);
+        assert.deepEqual(resumed.resumeCursor, initial.resumeCursor);
+        assert.deepEqual(work.startSession.mock.calls[0]?.[0].resumeCursor, initial.resumeCursor);
+        assert.deepEqual(lifecycle, ["personal.stop", "work.start"]);
+        assert.equal(yield* personal.hasSession(threadId), false);
+        assert.equal(yield* work.hasSession(threadId), true);
+      }).pipe(Effect.provide(providerLayer));
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 const routing = makeProviderServiceLayer();
 
 it.effect(

@@ -620,33 +620,60 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+        const previousInstanceId = persistedBinding?.providerInstanceId;
+        const previousInfo =
+          previousInstanceId === undefined
+            ? undefined
+            : previousInstanceId === resolvedInstanceId
+              ? instanceInfo
+              : Option.getOrUndefined(
+                  yield* registry.getInstanceInfo(previousInstanceId).pipe(Effect.option),
+                );
+        const persistedContinuationCompatible =
+          previousInfo?.driverKind === instanceInfo.driverKind &&
+          previousInfo.continuationIdentity.continuationKey ===
+            instanceInfo.continuationIdentity.continuationKey;
         const effectiveResumeCursor =
           input.resumeCursor ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? persistedBinding.resumeCursor
-            : undefined);
+          (persistedContinuationCompatible ? persistedBinding?.resumeCursor : undefined);
         const effectiveCwd =
           input.cwd ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
+          (persistedContinuationCompatible && persistedBinding
             ? readPersistedCwd(persistedBinding.runtimePayload)
             : undefined);
+        if (
+          effectiveResumeCursor !== undefined &&
+          previousInstanceId !== undefined &&
+          previousInstanceId !== resolvedInstanceId &&
+          persistedContinuationCompatible
+        ) {
+          const previousAdapter = yield* registry.getByInstance(previousInstanceId);
+          if (yield* previousAdapter.hasSession(threadId)) {
+            yield* Effect.logInfo(
+              "provider session releasing compatible stale writer before resume",
+              {
+                threadId,
+                previousInstanceId,
+                resolvedInstanceId,
+              },
+            );
+            yield* previousAdapter.stopSession(threadId);
+            yield* analytics.record("provider.session.stopped", {
+              provider: previousAdapter.provider,
+            });
+          }
+        }
         yield* Effect.annotateCurrentSpan({
           "provider.kind": resolvedProvider,
           "provider.resume_cursor.source":
             input.resumeCursor !== undefined
               ? "request"
-              : effectiveResumeCursor !== undefined &&
-                  persistedBinding?.providerInstanceId === resolvedInstanceId
+              : effectiveResumeCursor !== undefined
                 ? "persisted"
                 : "none",
           "provider.resume_cursor.present": effectiveResumeCursor !== undefined,
           "provider.cwd.source":
-            input.cwd !== undefined
-              ? "request"
-              : effectiveCwd !== undefined &&
-                  persistedBinding?.providerInstanceId === resolvedInstanceId
-                ? "persisted"
-                : "none",
+            input.cwd !== undefined ? "request" : effectiveCwd !== undefined ? "persisted" : "none",
           "provider.cwd.effective": effectiveCwd ?? "",
         });
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
