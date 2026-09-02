@@ -23,7 +23,7 @@ export function SharedSettingsMismatchAlert() {
         every environment.
       </AlertDescription>
       <AlertAction>
-        <Button variant="outline" size="compact" onClick={applyToAll}>
+        <Button variant="outline" size="xs" onClick={applyToAll}>
           Apply to all
         </Button>
       </AlertAction>

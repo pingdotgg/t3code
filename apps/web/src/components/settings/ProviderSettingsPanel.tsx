@@ -869,7 +869,7 @@ export function EnvironmentProviderSettings({
                   <TooltipTrigger
                     render={
                       <Button
-                        size="compact"
+                        size="xs"
                         variant="ghost-muted"
                         disabled={isRefreshingProviders}
                         onClick={() => void refreshProviders()}
@@ -892,12 +892,12 @@ export function EnvironmentProviderSettings({
                   <TooltipTrigger
                     render={
                       <Button
-                        size="icon-micro"
+                        size="icon-xs"
                         variant="ghost-muted"
                         onClick={() => setIsAddInstanceDialogOpen(true)}
                         aria-label="Add provider"
                       >
-                        <PlusIcon className="size-3" />
+                        <PlusIcon />
                       </Button>
                     }
                   />

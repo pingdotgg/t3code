@@ -219,7 +219,7 @@ function ProviderSettingsFieldRow({
         )}
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
           {field.control === "switch" ? (
-            <span className="flex h-8 items-center">
+            <span className="flex h-8 items-center sm:h-7">
               <Switch
                 checked={readProviderConfigBoolean(value, field.key, field.defaultBooleanValue)}
                 onCheckedChange={(checked) =>
@@ -245,6 +245,7 @@ function ProviderSettingsFieldRow({
             <DraftInput
               id={inputId}
               aria-describedby={descriptionId}
+              size="sm"
               className="w-56"
               type={field.control === "password" ? "password" : undefined}
               autoComplete={field.control === "password" ? "off" : undefined}
@@ -313,6 +314,7 @@ function ProviderSettingsFieldRow({
         {variant === "card" ? (
           <DraftInput
             id={inputId}
+            size="sm"
             className="mt-1.5"
             type={type}
             autoComplete={field.control === "password" ? "off" : undefined}

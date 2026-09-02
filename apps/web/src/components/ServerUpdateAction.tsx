@@ -83,6 +83,7 @@ export function ServerUpdateAction({
   targetVersion,
   label = "Update",
   variant = "outline",
+  size = "xs",
 }: {
   readonly environmentId: EnvironmentId;
   readonly serverLabel: string;
@@ -95,6 +96,7 @@ export function ServerUpdateAction({
   readonly targetVersion: string;
   readonly label?: string;
   readonly variant?: ComponentProps<typeof Button>["variant"];
+  readonly size?: ComponentProps<typeof Button>["size"];
 }) {
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
   const continueThreadsAfterServerUpdate = useClientSettings(
@@ -185,14 +187,14 @@ export function ServerUpdateAction({
   if (selfUpdate === null) {
     const command = manualServerUpdateCommand(targetVersion);
     return (
-      <Button size="xs" variant={variant} onClick={() => copyToClipboard(command, { command })}>
+      <Button size={size} variant={variant} onClick={() => copyToClipboard(command, { command })}>
         Copy update command
       </Button>
     );
   }
 
   return (
-    <Button size="xs" variant={variant} onClick={() => void handleUpdate()}>
+    <Button size={size} variant={variant} onClick={() => void handleUpdate()}>
       {label}
     </Button>
   );

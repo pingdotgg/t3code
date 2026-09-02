@@ -312,7 +312,7 @@ function DiscoveryItemRow({
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
             {hasDetails ? (
               <Button
-                size="compact"
+                size="icon-xs"
                 variant="ghost-muted"
                 onClick={() => setIsExpanded((open) => !open)}
                 aria-expanded={isExpanded}
@@ -487,13 +487,7 @@ function EmptySourceControlDiscovery({
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 px-3 text-xs"
-            onClick={onScan}
-            disabled={isPending}
-          >
+          <Button size="sm" variant="outline" onClick={onScan} disabled={isPending}>
             <RefreshCwIcon className={cn("size-3.5", isPending && "animate-spin")} />
             Scan
           </Button>
@@ -533,13 +527,13 @@ export function SourceControlSettingsPanel() {
       <TooltipTrigger
         render={
           <Button
-            size="icon-micro"
+            size="icon-xs"
             variant="ghost-muted"
             onClick={handleScan}
             disabled={discovery.isPending}
             aria-label="Rescan server environment"
           >
-            <RefreshCwIcon className={cn("size-3", discovery.isPending && "animate-spin")} />
+            <RefreshCwIcon className={cn(discovery.isPending && "animate-spin")} />
           </Button>
         }
       />

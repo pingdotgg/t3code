@@ -354,7 +354,7 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
             if (next !== undefined) updateSettings({ browserDefaultZoomFactor: next });
           }}
         >
-          <SelectTrigger className="w-full sm:w-40" aria-label="Default browser zoom">
+          <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Default browser zoom">
             <SelectValue>{zoomLabel(zoomFactor)}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -396,7 +396,11 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
             }
           }}
         >
-          <SelectTrigger className="w-full sm:w-40" aria-label="Default browser appearance">
+          <SelectTrigger
+            size="sm"
+            className="w-full sm:w-40"
+            aria-label="Default browser appearance"
+          >
             <SelectValue>{APPEARANCE_LABELS[appearance]}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -441,7 +445,11 @@ function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boo
             }
           }}
         >
-          <SelectTrigger className="w-full sm:w-40" aria-label="Browser recording frame rate">
+          <SelectTrigger
+            size="sm"
+            className="w-full sm:w-40"
+            aria-label="Browser recording frame rate"
+          >
             <SelectValue>{frameRate} fps</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -706,7 +714,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                     render={
                       <span className="inline-flex" {...(!removalAvailable ? { tabIndex: 0 } : {})}>
                         <Button
-                          size="icon-sm"
+                          size="icon-xs"
                           variant="ghost-muted"
                           disabled={profileWritesDisabled || !removalAvailable}
                           aria-label={`Remove ${profile.name}`}
