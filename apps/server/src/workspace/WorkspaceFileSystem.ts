@@ -9,6 +9,7 @@
  *
  * @module WorkspaceFileSystem
  */
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 
 import type {
@@ -215,7 +216,13 @@ export const make = Effect.gen(function* () {
 
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
-        try: () => NodeFSP.open(realTargetPath, "r"),
+        // Non-blocking so a FIFO cannot hang the open; the stat below rejects
+        // it. Regular files ignore the flag. Windows lacks it.
+        try: () =>
+          NodeFSP.open(
+            realTargetPath,
+            NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NONBLOCK ?? 0),
+          ),
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,

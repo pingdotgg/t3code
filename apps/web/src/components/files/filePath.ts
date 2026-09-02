@@ -16,7 +16,7 @@ export function fileBreadcrumbs(projectName: string, relativePath: string): File
   const hostPath = isAbsolutePath(relativePath);
   const separator = isWindowsAbsolutePath(relativePath) ? "\\" : "/";
   const parts = relativePath.split(/[\\/]/).filter(Boolean);
-  const root = hostPath && separator === "/" ? "/" : "";
+  const root = relativePath.startsWith("\\\\") ? "\\\\" : hostPath && separator === "/" ? "/" : "";
   return [
     ...(hostPath ? [] : [{ label: projectName, path: "", kind: "project" as const }]),
     ...parts.map((part, index) => ({
