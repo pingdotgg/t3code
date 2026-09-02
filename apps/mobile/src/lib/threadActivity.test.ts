@@ -1858,6 +1858,19 @@ describe("buildThreadFeed", () => {
       ],
       activities: [
         makeActivity({
+          id: EventId.make("tool-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Read files",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId,
+          payload: {
+            title: "Read files",
+            itemType: "file_read",
+            status: "completed",
+          },
+        }),
+        makeActivity({
           id: EventId.make("spawned-agent"),
           kind: "task.progress",
           tone: "tool",
@@ -1878,8 +1891,11 @@ describe("buildThreadFeed", () => {
       new Set(),
     );
 
-    expect(rows.map((entry) => entry.id)).toEqual(["spawned-agent", "assistant-final"]);
-    expect(rows).not.toContainEqual(expect.objectContaining({ type: "turn-fold" }));
+    expect(rows.map((entry) => entry.id)).toEqual([
+      "turn-fold:turn-spawned-agent",
+      "agent-spawn:turn-spawned-agent",
+      "assistant-final",
+    ]);
   });
 
   it("keeps a substantive answer visible before trailing provider commentary", () => {
@@ -2899,7 +2915,7 @@ describe("quiet timeline: nested agents", () => {
     expect(allDone).toHaveLength(2);
   });
 
-  it("folds the tool call that launched an agent into its spawn card", () => {
+  it("absorbs the tool call that launched an agent into its spawn card", () => {
     const turnId = TurnId.make("turn-agent-tool");
     const at = (seconds: number) => `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`;
     const feed = buildThreadFeed(
@@ -2978,7 +2994,7 @@ describe("quiet timeline: nested agents", () => {
     expect(rows).toEqual(["agent-started"]);
     expect(
       deriveThreadFeedPresentation(feed, null, new Set([turnId])).map((row) => row.type),
-    ).toEqual(["turn-fold", "agent-spawn"]);
+    ).toEqual(["agent-spawn"]);
   });
 
   it("presents a spawn batch as one card whose status line follows the newest member activity", () => {

@@ -1534,12 +1534,13 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
     }
 
     const isCompaction = entry.activity.workEntry.sourceActivityKind === "context-compaction";
-    if (isCompaction || firstActivityEntry?.turnId !== entry.turnId) {
+    const isAgentSpawn = entry.activity.workEntry.agentSpawn !== undefined;
+    if (isCompaction || isAgentSpawn || firstActivityEntry?.turnId !== entry.turnId) {
       flushGroup();
     }
     firstActivityEntry ??= entry;
     openGroupActivities.push(entry.activity);
-    if (isCompaction) {
+    if (isCompaction || isAgentSpawn) {
       flushGroup();
     }
   }
@@ -1641,7 +1642,7 @@ function deriveThreadFeedTurnFolds(
         .filter(
           (entry) =>
             entry.type === "activity-group" &&
-            !entry.activities.some((activity) => activity.workEntry.agentSpawn === true),
+            !entry.activities.some((activity) => activity.workEntry.agentSpawn !== undefined),
         )
         .map((entry) => entry.id),
     );
@@ -1866,7 +1867,7 @@ function appendActivityGroupRows(
   const activities = omitSupersededLifecycleMarkers(
     entry.activities.filter(
       (activity) =>
-        activity.workEntry.agentSpawn === true ||
+        activity.workEntry.agentSpawn !== undefined ||
         !(activity.toolLike && activity.status === "neutral") ||
         (isWorking &&
           activity.lifecycleStatus === "inProgress" &&

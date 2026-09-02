@@ -618,6 +618,14 @@ function deriveTurnFolds(input: {
       : group.entries.length;
     for (const [index, entry] of group.entries.entries()) {
       if (entry.kind !== "work") {
+        if (
+          entry.kind === "message" &&
+          entry.message.role === "assistant" &&
+          entry.message.text.trim().length === 0 &&
+          !input.terminalAssistantMessageIds.has(entry.message.id)
+        ) {
+          hiddenEntryIds.add(entry.id);
+        }
         continue;
       }
       if (entry.id === group.terminalEntry?.id) {
