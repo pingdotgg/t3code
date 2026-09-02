@@ -868,6 +868,62 @@ struct FeatureComposerPowerTests {
         #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).count == 1)
     }
 
+    @Test @MainActor
+    func composerRedoPreservesTrailingSkillPill() throws {
+        let input = FeatureComposerTextInput(
+            text: .constant("$file-pr "),
+            focused: .constant(false),
+            placeholder: "",
+            acceptsImages: false,
+            isReadOnly: false,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")],
+            selectionRequest: nil,
+            onSelectionChange: { _ in },
+            onPasteImages: { _ in },
+            onDismissKeyboard: nil
+        )
+        let coordinator = FeatureComposerTextInput.Coordinator(input)
+        let textView = FeatureComposerUITextView()
+        textView.delegate = coordinator
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        _ = coordinator.synchronizeInlineSkills(
+            in: textView,
+            source: "$file-pr ",
+            selection: NSRange(location: 9, length: 0)
+        )
+
+        let viewController = UIViewController()
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.rootViewController = viewController
+        viewController.view.addSubview(textView)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        #expect(textView.becomeFirstResponder())
+
+        let undoManager = try #require(textView.undoManager)
+        undoManager.removeAllActions()
+        undoManager.groupsByEvent = false
+
+        let trailingSpace = NSRange(location: 1, length: 1)
+        #expect(coordinator.textView(
+            textView,
+            shouldChangeTextIn: trailingSpace,
+            replacementText: ""
+        ))
+        textView.selectedRange = trailingSpace
+        textView.insertText("")
+        #expect(FeatureInlineSkillProjection.plainText(from: textView.attributedText) == "$file-pr")
+        #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).count == 1)
+
+        undoManager.undo()
+        #expect(FeatureInlineSkillProjection.plainText(from: textView.attributedText) == "$file-pr ")
+        #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).count == 1)
+
+        undoManager.redo()
+        #expect(FeatureInlineSkillProjection.plainText(from: textView.attributedText) == "$file-pr")
+        #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).count == 1)
+    }
+
     @Test
     func changingInputQuestionsKeepsAValidActiveQuestionAndDropsStaleAnswers() {
         #expect(

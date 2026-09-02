@@ -164,6 +164,7 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         private struct UndoSnapshot: Equatable {
             let source: String
             let selection: NSRange
+            let trailingSkill: FeatureInlineSkillDescriptor?
         }
 
         var parent: FeatureComposerTextInput
@@ -220,7 +221,7 @@ struct FeatureComposerTextInput: UIViewRepresentable {
                 source: source,
                 selection: selection
             )
-            let updatedSnapshot = UndoSnapshot(source: source, selection: selection)
+            let updatedSnapshot = undoSnapshot(in: textView)
             if let pendingUndoSnapshot, pendingUndoSnapshot != updatedSnapshot {
                 registerUndo(
                     restoring: pendingUndoSnapshot,
@@ -236,14 +237,15 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         func synchronizeInlineSkills(
             in textView: FeatureComposerUITextView,
             source: String,
-            selection: NSRange
+            selection: NSRange,
+            preservingTrailing restoredTrailingSkill: FeatureInlineSkillDescriptor? = nil
         ) -> Bool {
             let currentText = textView.attributedText ?? NSAttributedString()
             let currentSource = FeatureInlineSkillProjection.plainText(from: currentText)
             let currentSignatures = FeatureInlineSkillProjection.signatures(in: currentText)
-            let preservedTrailing = currentSource == source
-                ? currentSignatures.last?.descriptor
-                : nil
+            let preservedTrailing = restoredTrailingSkill ?? (
+                currentSource == source ? currentSignatures.last?.descriptor : nil
+            )
             let descriptors = FeatureInlineSkillParser.descriptors(
                 in: source,
                 skills: parent.skills,
@@ -308,12 +310,18 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         }
 
         private func undoSnapshot(in textView: UITextView) -> UndoSnapshot {
-            UndoSnapshot(
-                source: FeatureInlineSkillProjection.plainText(from: textView.attributedText),
+            let source = FeatureInlineSkillProjection.plainText(from: textView.attributedText)
+            let trailingSkill = FeatureInlineSkillProjection.signatures(in: textView.attributedText)
+                .last?.descriptor
+            return UndoSnapshot(
+                source: source,
                 selection: FeatureInlineSkillProjection.plainRange(
                     for: textView.selectedRange,
                     in: textView.attributedText
-                )
+                ),
+                trailingSkill: trailingSkill.flatMap {
+                    NSMaxRange($0.range) == source.utf16.count ? $0 : nil
+                }
             )
         }
 
@@ -359,7 +367,8 @@ struct FeatureComposerTextInput: UIViewRepresentable {
             _ = synchronizeInlineSkills(
                 in: textView,
                 source: snapshot.source,
-                selection: snapshot.selection
+                selection: snapshot.selection,
+                preservingTrailing: snapshot.trailingSkill
             )
             parent.text = snapshot.source
             parent.onSelectionChange(snapshot.selection)
