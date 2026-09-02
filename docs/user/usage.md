@@ -15,4 +15,4 @@ covers the requested range. An older snapshot, or a range that reaches farther b
 source data first. Updates parse only new or changed transcript content.
 
 Any daily chart zooms: drag across it to make the selection the new date window, and double-click
-to return to the preset. The date fields beside the presets accept any custom range directly.
+to return to the preset. The date fields beside the presets accept custom ranges up to 90 days.
