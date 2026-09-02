@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { fileBreadcrumbs } from "./filePath";
+import { fileBreadcrumbChildren, fileBreadcrumbParent, fileBreadcrumbs } from "./filePath";
 
 describe("fileBreadcrumbs", () => {
   it("builds project, directory, and file crumbs", () => {
@@ -37,5 +37,54 @@ describe("fileBreadcrumbs", () => {
       "\\\\server\\share",
       "\\\\server\\share\\report.md",
     ]);
+  });
+});
+
+describe("fileBreadcrumbChildren", () => {
+  const entries = [
+    { path: "README.md", kind: "file" as const },
+    { path: "src", kind: "directory" as const },
+    { path: "src-old", kind: "directory" as const },
+    { path: "src/index.ts", kind: "file" as const },
+    { path: "src/lib", kind: "directory" as const },
+    { path: "src/lib/file10.ts", kind: "file" as const },
+    { path: "src/lib/file2.ts", kind: "file" as const },
+    { path: "src-old/index.ts", kind: "file" as const },
+  ];
+
+  it("returns only the immediate children of the project root", () => {
+    expect(fileBreadcrumbChildren(entries, "")).toEqual([
+      { path: "src", kind: "directory", label: "src" },
+      { path: "src-old", kind: "directory", label: "src-old" },
+      { path: "README.md", kind: "file", label: "README.md" },
+    ]);
+  });
+
+  it("honors segment boundaries and sorts folders before files", () => {
+    expect(fileBreadcrumbChildren(entries, "src")).toEqual([
+      { path: "src/lib", kind: "directory", label: "lib" },
+      { path: "src/index.ts", kind: "file", label: "index.ts" },
+    ]);
+  });
+
+  it("uses natural file-name ordering", () => {
+    expect(fileBreadcrumbChildren(entries, "src/lib").map((entry) => entry.label)).toEqual([
+      "file2.ts",
+      "file10.ts",
+    ]);
+  });
+
+  it("returns an empty list for an empty or missing directory", () => {
+    expect(fileBreadcrumbChildren(entries, "missing")).toEqual([]);
+  });
+});
+
+describe("fileBreadcrumbParent", () => {
+  it.each([
+    ["src/lib", "src"],
+    ["src", ""],
+    ["", null],
+  ])("returns the parent of %j", (path, expected) => {
+    expect(fileBreadcrumbParent(path)).toBe(expected);
   });
 });
