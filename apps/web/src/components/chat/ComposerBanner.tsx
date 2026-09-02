@@ -11,7 +11,7 @@ export type ComposerBannerVariant = "default" | "error" | "info" | "success" | "
 
 const surfaceColors = cn(
   "[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--card))]",
-  "dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,color-mix(in_srgb,var(--background)_96%,var(--color-white)))]",
+  "dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--surface-raised))]",
   "[html[data-theme-id]_&]:[--chat-composer-attached-surface:var(--app-theme-surface-raised)]",
 );
 
@@ -27,9 +27,8 @@ const variantColors: Record<ComposerBannerVariant, string> = {
   default: neutralOutline,
   error:
     "[--chat-composer-attached-outline:color-mix(in_srgb,var(--error)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--error)_8%,transparent)]",
-  info: "[--chat-composer-attached-outline:color-mix(in_srgb,var(--info)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--info)_4%,transparent)]",
-  success:
-    "[--chat-composer-attached-outline:color-mix(in_srgb,var(--success)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--success)_4%,transparent)]",
+  info: neutralOutline,
+  success: neutralOutline,
   warning:
     "[--chat-composer-attached-outline:color-mix(in_srgb,var(--warning)_28%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--warning)_8%,transparent)]",
 };
@@ -71,8 +70,8 @@ function Surface({
 const peekBorder: Record<ComposerBannerVariant, string> = {
   default: "border-(--chat-composer-attached-outline)",
   error: "border-destructive/24",
-  info: "border-info/24",
-  success: "border-success/24",
+  info: "border-(--chat-composer-attached-outline)",
+  success: "border-(--chat-composer-attached-outline)",
   warning: "border-warning/24",
 };
 

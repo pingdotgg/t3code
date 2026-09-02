@@ -177,7 +177,7 @@ describe("searchSlashCommandItems", () => {
     ]);
   });
 
-  it("hides skills from slash completion after the first message line", () => {
+  it("hides provider commands from slash completion after the first message line", () => {
     const items = [
       {
         id: "slash:model",
@@ -185,6 +185,14 @@ describe("searchSlashCommandItems", () => {
         command: "model",
         label: "/model",
         description: "Switch model",
+      },
+      {
+        id: "provider-slash-command:claudeAgent:compact",
+        type: "provider-slash-command",
+        provider: claudeDriver,
+        command: { name: "compact" },
+        label: "/compact",
+        description: "Compact the conversation",
       },
       {
         id: "skill:claudeAgent:unslop",
@@ -204,9 +212,11 @@ describe("searchSlashCommandItems", () => {
 
     expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
       "slash:model",
+      "skill:claudeAgent:unslop",
     ]);
     expect(slashCommandItemsForPromptPosition(items, true).map((item) => item.id)).toEqual([
       "slash:model",
+      "provider-slash-command:claudeAgent:compact",
       "skill:claudeAgent:unslop",
     ]);
   });

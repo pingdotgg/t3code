@@ -175,6 +175,7 @@ import {
   submitComposerDraft,
 } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
+import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
 
 function ComposerVideoThumbnail({ file }: { file: File }) {
   const setVideo = useCallback(
@@ -192,9 +193,7 @@ function ComposerVideoThumbnail({ file }: { file: File }) {
       playsInline
       preload="metadata"
       aria-hidden="true"
-      onLoadedMetadata={(event) => {
-        event.currentTarget.currentTime = Math.min(0.1, event.currentTarget.duration || 0);
-      }}
+      onLoadedMetadata={(event) => prepareVideoFirstFrame(event.currentTarget)}
       className="pointer-events-none absolute inset-0 size-full object-cover"
     />
   );

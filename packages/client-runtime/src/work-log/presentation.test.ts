@@ -2,7 +2,96 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ThreadId } from "@t3tools/contracts";
 
-import { resolveViewedImageAsset, workEntryViewedImagePath } from "./presentation.js";
+import {
+  commandDetailRepeatsCommand,
+  extractCommandOutputText,
+  resolveViewedImageAsset,
+  toolGroupAction,
+  workEntryViewedImagePath,
+} from "./presentation.js";
+
+describe("command work-log details", () => {
+  it("extracts Claude result blocks and projected output", () => {
+    expect(
+      extractCommandOutputText({
+        result: {
+          content: [
+            { type: "text", text: "first" },
+            { type: "text", text: "second" },
+          ],
+        },
+      }),
+    ).toBe("first\nsecond");
+    expect(extractCommandOutputText({ rawOutput: { content: "projected summary" } })).toBe(
+      "projected summary",
+    );
+  });
+
+  it("only removes a detail with the matching tool-name prefix", () => {
+    expect(
+      commandDetailRepeatsCommand({
+        detail: "Bash: printf hello",
+        command: "printf hello",
+        rawCommand: null,
+        toolName: "Bash",
+        data: { toolName: "Bash", command: "printf hello" },
+      }),
+    ).toBe(true);
+    expect(
+      commandDetailRepeatsCommand({
+        detail: "warning: printf hello",
+        command: "printf hello",
+        rawCommand: null,
+        toolName: "Bash",
+        data: { toolName: "Bash", command: "printf hello" },
+      }),
+    ).toBe(false);
+  });
+
+  it("treats an ingestion-truncated echo of a long command as a repeat", () => {
+    const command = `git add -A && git commit -m "${"x".repeat(200)}"`;
+    const truncated = `Bash: ${command}`.slice(0, 177) + "...";
+    expect(
+      commandDetailRepeatsCommand({
+        detail: truncated,
+        command,
+        rawCommand: null,
+        toolName: "Bash",
+        data: { toolName: "Bash", command },
+      }),
+    ).toBe(true);
+    expect(
+      commandDetailRepeatsCommand({
+        detail: "Bash: printf hello...",
+        command: "printf goodbye",
+        rawCommand: null,
+        toolName: "Bash",
+        data: { toolName: "Bash", command: "printf goodbye" },
+      }),
+    ).toBe(false);
+  });
+
+  it("treats ACP command echoes as synthetic even without a tool kind", () => {
+    expect(
+      commandDetailRepeatsCommand({
+        detail: "pnpm test",
+        command: "pnpm test",
+        rawCommand: null,
+        toolName: undefined,
+        data: { toolCallId: "tool-1", command: "pnpm test" },
+      }),
+    ).toBe(true);
+    expect(
+      commandDetailRepeatsCommand({
+        detail: "pnpm test",
+        command: "pnpm test",
+        rawCommand: null,
+        toolName: undefined,
+        data: { command: "pnpm test" },
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("workEntryViewedImagePath", () => {
   const entry = { label: "Read", tone: "tool" } as const;
@@ -19,6 +108,14 @@ describe("workEntryViewedImagePath", () => {
         detail: "C:\\workspace\\a.webp",
       }),
     ).toBe("C:\\workspace\\a.webp");
+    expect(
+      workEntryViewedImagePath({
+        ...entry,
+        itemType: "dynamic_tool_call",
+        detail: 'Read: {"file_path":"truncated..."}',
+        viewedImagePath: " /workspace/reference image.webp ",
+      }),
+    ).toBe("/workspace/reference image.webp");
   });
 
   it("rejects non-image, multi-line, and non-read details", () => {
@@ -29,6 +126,19 @@ describe("workEntryViewedImagePath", () => {
       workEntryViewedImagePath({ ...entry, itemType: "image_view", detail: "a.png\nb.png" }),
     ).toBeNull();
     expect(workEntryViewedImagePath({ ...entry, detail: "a.png" })).toBeNull();
+  });
+});
+
+describe("toolGroupAction", () => {
+  it("groups legacy Claude image reads with other reads", () => {
+    expect(
+      toolGroupAction({
+        label: "Tool call",
+        tone: "tool",
+        itemType: "dynamic_tool_call",
+        viewedImagePath: "/workspace/reference.png",
+      }),
+    ).toBe("read");
   });
 });
 
@@ -58,7 +168,7 @@ describe("resolveViewedImageAsset", () => {
       }),
     ).toEqual({
       resource: {
-        _tag: "workspace-file",
+        _tag: "media-file",
         threadId,
         path: "/workspace/screens/logo.svg",
       },
