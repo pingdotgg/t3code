@@ -21,7 +21,7 @@ WebEngineView {
     }
 
     Component.onCompleted: {
-        channel.registerObject("shell", Shell);
+        channel.registerObject("shell", Shell.channel);
 
         const tag = WebEngine.script();
         tag.name = "t3-surface-id";

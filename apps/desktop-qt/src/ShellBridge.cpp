@@ -6,7 +6,48 @@
 #include <QMimeDatabase>
 #include <QtLogging>
 
-ShellBridge::ShellBridge(QObject* parent) : QObject(parent) {}
+namespace {
+
+// Everything the web app publishes (see apps/web/src/shell/*Bridge.tsx) plus
+// the shell's own `backendError`.
+constexpr const char* kStateKeys[] = {
+    "backendError", "composer", "contextMenu", "git",      "layout", "notifications",
+    "rightPanel",   "settings", "sidebar",     "theme",    "workspace",
+};
+
+// Qt 6.11 deprecates the public constructor in favour of create(); the
+// minimum supported Qt (6.9) only has the constructor.
+QQmlPropertyMap* createStateMap(QObject* parent) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 11, 0)
+  return QQmlPropertyMap::create(parent);
+#else
+  return new QQmlPropertyMap(parent);
+#endif
+}
+
+}  // namespace
+
+ShellBridge::ShellBridge(QObject* parent)
+    : QObject(parent), m_state(createStateMap(this)), m_channel(new ShellChannel(this)) {
+  for (const char* key : kStateKeys) {
+    m_state->insert(QString::fromLatin1(key), QVariant());
+  }
+}
+
+QObject* ShellBridge::channel() const {
+  return m_channel;
+}
+
+QVariantMap ShellBridge::snapshot() const {
+  QVariantMap result;
+  for (const QString& key : m_state->keys()) {
+    const QVariant value = m_state->value(key);
+    if (value.isValid()) {
+      result.insert(key, value);
+    }
+  }
+  return result;
+}
 
 void ShellBridge::setPageUrl(const QUrl& url) {
   if (m_pageUrl == url) {
@@ -21,15 +62,13 @@ QUrl ShellBridge::webChannelScriptUrl() const {
 }
 
 void ShellBridge::publish(const QString& key, const QVariant& value) {
-  // Every brick binds to `state`, so an unchanged republish would re-evaluate
-  // all of them for nothing.
-  const auto existing = m_state.constFind(key);
-  if (existing != m_state.constEnd() && existing.value() == value) {
+  // An unchanged republish would re-evaluate every binding on the key for
+  // nothing, and echo it to every page following the state.
+  if (m_state->contains(key) && m_state->value(key) == value) {
     return;
   }
-  m_state.insert(key, value);
+  m_state->insert(key, value);
   emit stateEntryChanged(key, value);
-  emit stateChanged();
 }
 
 void ShellBridge::openExternal(const QUrl& url) {
@@ -87,4 +126,21 @@ QVariantList ShellBridge::readImageFiles(const QList<QUrl>& urls) const {
     });
   }
   return result;
+}
+
+ShellChannel::ShellChannel(ShellBridge* bridge) : QObject(bridge), m_bridge(bridge) {
+  connect(bridge, &ShellBridge::actionRequested, this, &ShellChannel::actionRequested);
+  connect(bridge, &ShellBridge::stateEntryChanged, this, &ShellChannel::stateEntryChanged);
+}
+
+void ShellChannel::publish(const QString& key, const QVariant& value) {
+  m_bridge->publish(key, value);
+}
+
+void ShellChannel::dispatch(const QString& action, const QVariant& payload) {
+  m_bridge->dispatch(action, payload);
+}
+
+QVariantMap ShellChannel::snapshot() const {
+  return m_bridge->snapshot();
 }

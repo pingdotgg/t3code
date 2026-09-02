@@ -33,9 +33,35 @@
     };
     connect();
   });
+  // Everything any document published, keyed as published; secondary
+  // documents (embed routes) read the primary's view models from here. The
+  // map is pulled on first use: a page that never reads it (the primary) is
+  // never sent its own publishes back.
+  const state = {};
+  const stateListeners = new Set();
+  let stateReady = null;
+  const ensureState = () => {
+    stateReady ??= ready.then(
+      (shell) =>
+        new Promise((resolve) => {
+          shell.stateEntryChanged.connect((key, value) => {
+            state[key] = value;
+            for (const listener of stateListeners) {
+              listener(state);
+            }
+          });
+          shell.snapshot((snapshot) => {
+            Object.assign(state, snapshot);
+            resolve(state);
+          });
+        }),
+    );
+    return stateReady;
+  };
   window.t3Shell = Object.freeze({
     protocolVersion: 1,
-    surfaceId: typeof window.__t3ShellSurfaceId === "string" ? window.__t3ShellSurfaceId : "primary",
+    surfaceId:
+      typeof window.__t3ShellSurfaceId === "string" ? window.__t3ShellSurfaceId : "primary",
     ready,
     publish: (key, value) => ready.then((shell) => shell.publish(key, value)),
     onAction: (listener) =>
@@ -43,16 +69,13 @@
         shell.actionRequested.connect(listener);
         return () => shell.actionRequested.disconnect(listener);
       }),
-    // Everything any document published, keyed as published; secondary
-    // documents (embed routes) read the primary's view models from here.
     dispatch: (action, payload) => ready.then((shell) => shell.dispatch(action, payload ?? null)),
-    getState: () => ready.then((shell) => shell.state),
+    getState: ensureState,
     onState: (listener) =>
-      ready.then((shell) => {
-        const handler = () => listener(shell.state);
-        shell.stateChanged.connect(handler);
-        handler();
-        return () => shell.stateChanged.disconnect(handler);
+      ensureState().then((current) => {
+        stateListeners.add(listener);
+        listener(current);
+        return () => stateListeners.delete(listener);
       }),
   });
 })();
