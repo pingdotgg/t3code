@@ -21,6 +21,7 @@ vi.mock("../ui/tooltip", async () => {
   };
 });
 vi.mock("./usageProviders", () => ({
+  ProviderMark: () => <span aria-hidden />,
   PROVIDER_PRESENTATION: {
     claude: { mark: "span" },
     codex: { mark: "span" },

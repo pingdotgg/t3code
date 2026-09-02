@@ -1,8 +1,4 @@
-import type {
-  UsageProviderKind,
-  UsageThreadBreakdownInput,
-  UsageThreadDayCost,
-} from "@t3tools/contracts";
+import type { UsageThreadBreakdownInput, UsageThreadDayCost } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -22,7 +18,8 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { PROVIDER_PRESENTATION } from "./usageProviders";
+import { CacheWriteCell } from "./UsageTableCells";
+import { ProviderMark } from "./usageProviders";
 
 /**
  * On-demand thread drill-down behind the summary. Mounted only while the
@@ -174,7 +171,7 @@ function ThreadRowGroup({
                 }
               >
                 <Chevron className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                <ProviderMark provider={row.provider} />
+                <ProviderMark provider={row.provider} className="size-3.5" />
                 <span className="truncate">{row.title}</span>
                 {row.agents.length > 0 ? (
                   <Badge
@@ -214,9 +211,10 @@ function ThreadRowGroup({
           </div>
         </td>
         <td className="py-2 text-right text-foreground tabular-nums">{formatUsd(row.costUsd)}</td>
-        <td className="py-2 text-right text-muted-foreground tabular-nums">
-          {formatCacheWriteCost(row.totals.cacheCreationTokens, row.cacheWriteUsd)}
-        </td>
+        <CacheWriteCell
+          cacheWriteTokens={row.totals.cacheCreationTokens}
+          cacheWriteUsd={row.cacheWriteUsd}
+        />
         <td className="py-2 text-right text-muted-foreground tabular-nums">
           {formatPercent(share)}
         </td>
@@ -256,11 +254,6 @@ function ThreadRowGroup({
       ) : null}
     </>
   );
-}
-
-function formatCacheWriteCost(cacheWriteTokens: number, cacheWriteUsd: number | null): string {
-  if (cacheWriteTokens === 0) return "-";
-  return cacheWriteUsd === null ? "Unavailable" : formatUsd(cacheWriteUsd);
 }
 
 const CHART_WIDTH = 760;
@@ -364,9 +357,4 @@ function LegendSwatch({
       {label}
     </span>
   );
-}
-
-function ProviderMark({ provider }: { readonly provider: UsageProviderKind }) {
-  const Mark = PROVIDER_PRESENTATION[provider].mark;
-  return <Mark className="size-3.5 shrink-0" aria-hidden />;
 }

@@ -1,5 +1,7 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
+import { createElement } from "react";
 
+import { cn } from "../../lib/utils";
 import { ClaudeAI, GrokIcon, type Icon, OpenAI } from "../Icons";
 
 type UsageProviderPresentation = {
@@ -34,6 +36,18 @@ export const PROVIDER_PRESENTATION = {
 
 /** Stable provider reading order across charts, summaries, tables, and hover rows. */
 export const PROVIDER_ORDER = Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[];
+
+/** Brand mark for a provider row. The call site owns its size. */
+export function ProviderMark({
+  provider,
+  className,
+}: {
+  readonly provider: UsageProviderKind;
+  readonly className: string;
+}) {
+  const Mark = PROVIDER_PRESENTATION[provider].mark;
+  return createElement(Mark, { className: cn("shrink-0", className), "aria-hidden": true });
+}
 
 /** Providers with real activity, independent of the metric currently displayed. */
 export function providersWithUsage(

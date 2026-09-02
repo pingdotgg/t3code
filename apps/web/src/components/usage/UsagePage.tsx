@@ -1,4 +1,3 @@
-import type { UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
@@ -41,8 +40,14 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
+import { CacheWriteCell } from "./UsageTableCells";
 import { UsageThreadTable } from "./UsageThreadTable";
-import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import {
+  PROVIDER_ORDER,
+  PROVIDER_PRESENTATION,
+  ProviderMark,
+  providersWithUsage,
+} from "./usageProviders";
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -832,18 +837,6 @@ function UsageProjectSelect({
   );
 }
 
-/** Brand mark for the harness a row belongs to. */
-function ProviderMark({
-  provider,
-  className,
-}: {
-  readonly provider: UsageProviderKind;
-  readonly className: string;
-}) {
-  const Mark = PROVIDER_PRESENTATION[provider].mark;
-  return <Mark className={cn("shrink-0", className)} aria-hidden />;
-}
-
 function Metric({
   label,
   value,
@@ -862,29 +855,6 @@ function Metric({
       )}
     </div>
   );
-}
-
-/**
- * Cache-write cost cell. Providers that bill no cache writes (Codex) show a
- * dash rather than a misleading $0.00.
- */
-function CacheWriteCell({
-  cacheWriteTokens,
-  cacheWriteUsd,
-}: {
-  readonly cacheWriteTokens: number;
-  readonly cacheWriteUsd: number | null;
-}) {
-  return (
-    <td className="py-2 text-right text-muted-foreground tabular-nums">
-      {formatCacheWriteCost(cacheWriteTokens, cacheWriteUsd)}
-    </td>
-  );
-}
-
-function formatCacheWriteCost(cacheWriteTokens: number, cacheWriteUsd: number | null): string {
-  if (cacheWriteTokens === 0) return "-";
-  return cacheWriteUsd === null ? "Unavailable" : formatUsd(cacheWriteUsd);
 }
 
 /**
