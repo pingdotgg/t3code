@@ -1,0 +1,1198 @@
+/**
+ * HermesAdapterLive — Hermes CLI (`hermes acp`) via ACP.
+ *
+ * @module HermesAdapterLive
+ */
+
+import {
+  ApprovalRequestId,
+  type HermesSettings,
+  EventId,
+  type ProviderApprovalDecision,
+  type ProviderInteractionMode,
+  type ProviderRuntimeEvent,
+  type ProviderSession,
+  type ProviderUserInputAnswers,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  RuntimeRequestId,
+  type RuntimeMode,
+  type ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/schema";
+
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import {
+  ProviderAdapterProcessError,
+  ProviderAdapterRequestError,
+  ProviderAdapterSessionNotFoundError,
+  ProviderAdapterValidationError,
+} from "../Errors.ts";
+import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
+import {
+  makeAcpAssistantItemEvent,
+  makeAcpContentDeltaEvent,
+  makeAcpPlanUpdatedEvent,
+  makeAcpRequestOpenedEvent,
+  makeAcpRequestResolvedEvent,
+  makeAcpToolCallEvent,
+} from "../acp/AcpCoreRuntimeEvents.ts";
+import {
+  type AcpSessionMode,
+  type AcpSessionModeState,
+  parsePermissionRequest,
+} from "../acp/AcpRuntimeModel.ts";
+import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
+import {
+  applyHermesAcpModelSelection,
+  currentHermesModelIdFromSessionSetup,
+  HERMES_DEFAULT_MODEL_SLUG,
+  makeHermesAcpRuntime,
+} from "../acp/HermesAcpSupport.ts";
+import { type HermesAdapterShape } from "../Services/HermesAdapter.ts";
+import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+
+const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+
+const PROVIDER = ProviderDriverKind.make("hermes");
+const HERMES_RESUME_VERSION = 1 as const;
+const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
+const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
+const ACP_APPROVAL_MODE_ALIASES = ["ask"];
+/**
+ * Normalized text fragments that mark a mode as one which acts without stopping
+ * to ask. Each entry is unambiguous on its own: bare "always" is not, because
+ * "always ask" and "always allow" mean opposite things, so only the allowing
+ * phrasings are listed.
+ */
+const ACP_PROMPT_SUPPRESSING_SIGNALS = [
+  "dont ask",
+  "don t ask",
+  "do not ask",
+  "never ask",
+  "without asking",
+  "auto",
+  "accept",
+  "always allow",
+  "allow always",
+  "skip",
+  "bypass",
+];
+
+function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
+  const result = encodeUnknownJsonStringExit(input);
+  return Exit.isSuccess(result) ? result.value : undefined;
+}
+
+export interface HermesAdapterLiveOptions {
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly nativeEventLogPath?: string;
+  readonly nativeEventLogger?: EventNdjsonLogger;
+  /**
+   * Selections are honored when `modelSelection.instanceId` matches this value.
+   * Defaults to the legacy built-in instance id (`hermes`).
+   */
+  readonly instanceId?: ProviderInstanceId;
+  /**
+   * Optional per-session settings resolver. When provided the adapter yields
+   * this effect at the start of every session and uses the result instead of
+   * the `hermesSettings` captured at construction.
+   *
+   * Production instances bind settings to the instance scope (the hydration
+   * layer rebuilds the adapter on config change) and leave this undefined.
+   * Test suites that mutate `ServerSettingsService` mid-flight — e.g. to
+   * swap `binaryPath` to a mock ACP wrapper — pass a resolver that reads
+   * the latest snapshot so the closure isn't stale.
+   */
+  readonly resolveSettings?: Effect.Effect<HermesSettings>;
+}
+
+interface PendingApproval {
+  readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
+  readonly kind: string | "unknown";
+}
+
+interface PendingUserInput {
+  readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+}
+
+interface HermesSessionContext {
+  readonly threadId: ThreadId;
+  session: ProviderSession;
+  readonly scope: Scope.Closeable;
+  readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  notificationFiber: Fiber.Fiber<void, never> | undefined;
+  readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
+  /** Satisfies `ProviderAdapterShape`; nothing fills it today. Cursor's producer
+   * is its `cursor/ask_question` extension, which Hermes lacks, so
+   * `respondToUserInput` can only settle nothing. */
+  readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
+  readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
+  lastPlanFingerprint: string | undefined;
+  activeTurnId: TurnId | undefined;
+  /** Whether `turn.started` has been published for `activeTurnId`. A steer
+   * arriving before the first prompt announced the turn must announce it, so
+   * exactly one start is emitted and no turn can settle without one. */
+  activeTurnAnnounced: boolean;
+  /** Number of sendTurn prompts currently in flight or being prepared.
+   * >0 means a turn is actively running, so a new sendTurn is a steer that
+   * continues it, and only the last remaining prompt settles the turn. */
+  promptsInFlight: number;
+  stopped: boolean;
+}
+
+function settlePendingApprovalsAsCancelled(
+  pendingApprovals: ReadonlyMap<ApprovalRequestId, PendingApproval>,
+): Effect.Effect<void> {
+  const pendingEntries = Array.from(pendingApprovals.values());
+  return Effect.forEach(
+    pendingEntries,
+    (pending) => Deferred.succeed(pending.decision, "cancel").pipe(Effect.ignore),
+    {
+      discard: true,
+    },
+  );
+}
+
+function settlePendingUserInputsAsEmptyAnswers(
+  pendingUserInputs: ReadonlyMap<ApprovalRequestId, PendingUserInput>,
+): Effect.Effect<void> {
+  const pendingEntries = Array.from(pendingUserInputs.values());
+  return Effect.forEach(
+    pendingEntries,
+    (pending) => Deferred.succeed(pending.answers, {}).pipe(Effect.ignore),
+    {
+      discard: true,
+    },
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseHermesResume(raw: unknown): { sessionId: string } | undefined {
+  if (!isRecord(raw)) return undefined;
+  if (raw.schemaVersion !== HERMES_RESUME_VERSION) return undefined;
+  if (typeof raw.sessionId !== "string" || !raw.sessionId.trim()) return undefined;
+  return { sessionId: raw.sessionId.trim() };
+}
+
+function normalizeModeSearchText(mode: AcpSessionMode): string {
+  return [mode.id, mode.name, mode.description]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * Whether a mode's own text says it acts without prompting first. Guards
+ * approval-intent matching: the live Hermes mode set is `default`
+ * ("Ask before edits."), `accept_edits` ("Auto-allow workspace and /tmp edits;
+ * still asks for sensitive paths.") and `dont_ask` ("Don't Ask"), so every one
+ * of them contains the "ask" alias. Plain substring matching therefore picked
+ * whichever auto-allowing mode Hermes happened to list first, which silently
+ * turns "approve every edit" into "approve nothing".
+ */
+function modeSuppressesPrompts(mode: AcpSessionMode): boolean {
+  const searchText = normalizeModeSearchText(mode);
+  return ACP_PROMPT_SUPPRESSING_SIGNALS.some((signal) => searchText.includes(signal));
+}
+
+/**
+ * Set `requireProactivePrompting` when the alias expresses "the user wants to be
+ * asked". It narrows only the substring pass, and only for that intent: an
+ * "Accept Edits" mode is a perfectly good implement-mode candidate.
+ */
+function findModeByAliases(
+  modes: ReadonlyArray<AcpSessionMode>,
+  aliases: ReadonlyArray<string>,
+  options?: { readonly requireProactivePrompting?: boolean },
+): AcpSessionMode | undefined {
+  const normalizedAliases = aliases.map((alias) => alias.toLowerCase());
+  for (const alias of normalizedAliases) {
+    const exact = modes.find((mode) => {
+      const id = mode.id.toLowerCase();
+      const name = mode.name.toLowerCase();
+      return id === alias || name === alias;
+    });
+    if (exact) {
+      return exact;
+    }
+  }
+  const partialCandidates = options?.requireProactivePrompting
+    ? modes.filter((mode) => !modeSuppressesPrompts(mode))
+    : modes;
+  for (const alias of normalizedAliases) {
+    const partial = partialCandidates.find((mode) => normalizeModeSearchText(mode).includes(alias));
+    if (partial) {
+      return partial;
+    }
+  }
+  return undefined;
+}
+
+function isPlanMode(mode: AcpSessionMode): boolean {
+  return findModeByAliases([mode], ACP_PLAN_MODE_ALIASES) !== undefined;
+}
+
+export function resolveRequestedModeId(input: {
+  readonly interactionMode: ProviderInteractionMode | undefined;
+  readonly runtimeMode: RuntimeMode;
+  readonly modeState: AcpSessionModeState | undefined;
+}): string | undefined {
+  const modeState = input.modeState;
+  if (!modeState) {
+    return undefined;
+  }
+
+  if (input.interactionMode === "plan") {
+    return findModeByAliases(modeState.availableModes, ACP_PLAN_MODE_ALIASES)?.id;
+  }
+
+  if (input.runtimeMode === "approval-required") {
+    return (
+      findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES, {
+        requireProactivePrompting: true,
+      })?.id ??
+      findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
+      modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
+      modeState.currentModeId
+    );
+  }
+
+  return (
+    findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
+    findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
+    modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
+    modeState.currentModeId
+  );
+}
+
+function applyRequestedSessionConfiguration<E>(input: {
+  readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode | undefined;
+  readonly modelSelection: { readonly model: string } | undefined;
+  readonly currentModelId: string | undefined;
+  readonly mapError: (context: {
+    readonly cause: EffectAcpErrors.AcpError;
+    readonly method: "session/set_model" | "session/set_mode";
+  }) => E;
+}): Effect.Effect<void, E> {
+  return Effect.gen(function* () {
+    if (input.modelSelection) {
+      yield* applyHermesAcpModelSelection({
+        runtime: input.runtime,
+        currentModelId: input.currentModelId,
+        model: input.modelSelection.model,
+        mapError: ({ cause }) =>
+          input.mapError({
+            cause,
+            method: "session/set_model",
+          }),
+      });
+    }
+
+    const requestedModeId = resolveRequestedModeId({
+      interactionMode: input.interactionMode,
+      runtimeMode: input.runtimeMode,
+      modeState: yield* input.runtime.getModeState,
+    });
+    if (!requestedModeId) {
+      return;
+    }
+
+    yield* input.runtime.setMode(requestedModeId).pipe(
+      Effect.mapError((cause) =>
+        input.mapError({
+          cause,
+          method: "session/set_mode",
+        }),
+      ),
+    );
+  });
+}
+
+/**
+ * Resolve a user's approval decision to an option id the agent actually
+ * advertised. Hermes mints its own option ids, so the decision must be matched
+ * by `kind` and answered with the advertised id — replying with a canonical
+ * literal leaves the permission-gated turn blocked whenever the agent uses
+ * opaque ids. Both persistent decisions (`acceptForSession`, `acceptAlways`)
+ * map to `allow_always`; they differ in T3's retention scope, not in what the
+ * agent is being told. Falls back to `allow_once` for either, since an agent
+ * that omits `allow_always` still honours a one-shot allow.
+ */
+export function selectHermesPermissionOptionId(
+  request: EffectAcpSchema.RequestPermissionRequest,
+  decision: Exclude<ProviderApprovalDecision, "cancel">,
+): string | undefined {
+  const preferredKind =
+    decision === "acceptForSession" || decision === "acceptAlways"
+      ? "allow_always"
+      : decision === "accept"
+        ? "allow_once"
+        : "reject_once";
+  const preferredId = request.options
+    .find((option) => option.kind === preferredKind)
+    ?.optionId.trim();
+  if (preferredId) {
+    return preferredId;
+  }
+  if (decision === "acceptForSession" || decision === "acceptAlways") {
+    const onceId = request.options.find((option) => option.kind === "allow_once")?.optionId.trim();
+    if (onceId) {
+      return onceId;
+    }
+  }
+  return undefined;
+}
+
+export function selectAutoApprovedPermissionOption(
+  request: EffectAcpSchema.RequestPermissionRequest,
+): string | undefined {
+  const allowAlwaysOption = request.options.find((option) => option.kind === "allow_always");
+  if (typeof allowAlwaysOption?.optionId === "string" && allowAlwaysOption.optionId.trim()) {
+    return allowAlwaysOption.optionId.trim();
+  }
+
+  const allowOnceOption = request.options.find((option) => option.kind === "allow_once");
+  if (typeof allowOnceOption?.optionId === "string" && allowOnceOption.optionId.trim()) {
+    return allowOnceOption.optionId.trim();
+  }
+
+  return undefined;
+}
+
+export function makeHermesAdapter(
+  hermesSettings: HermesSettings,
+  options?: HermesAdapterLiveOptions,
+) {
+  return Effect.gen(function* () {
+    const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("hermes");
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const serverConfig = yield* Effect.service(ServerConfig);
+    const crypto = yield* Crypto.Crypto;
+    const nativeEventLogger =
+      options?.nativeEventLogger ??
+      (options?.nativeEventLogPath !== undefined
+        ? yield* makeEventNdjsonLogger(options.nativeEventLogPath, {
+            stream: "native",
+          })
+        : undefined);
+    const managedNativeEventLogger =
+      options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
+    const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
+
+    const sessions = new Map<ThreadId, HermesSessionContext>();
+    const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
+    const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+
+    const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+    const randomUUIDv4 = crypto.randomUUIDv4.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "crypto/randomUUIDv4",
+            detail: "Failed to generate Hermes runtime identifier.",
+            cause,
+          }),
+      ),
+    );
+    const nextEventId = Effect.map(randomUUIDv4, (id) => EventId.make(id));
+    const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
+    const mapAcpCallbackFailure = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) =>
+            new EffectAcpErrors.AcpTransportError({
+              detail: "Failed to process Hermes ACP callback.",
+              cause,
+            }),
+        ),
+      );
+
+    const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
+      PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
+
+    const getThreadSemaphore = (threadId: string) =>
+      SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
+        const existing: Option.Option<Semaphore.Semaphore> = Option.fromNullishOr(
+          current.get(threadId),
+        );
+        return Option.match(existing, {
+          onNone: () =>
+            Semaphore.make(1).pipe(
+              Effect.map((semaphore) => {
+                const next = new Map(current);
+                next.set(threadId, semaphore);
+                return [semaphore, next] as const;
+              }),
+            ),
+          onSome: (semaphore) => Effect.succeed([semaphore, current] as const),
+        });
+      });
+
+    const withThreadLock = <A, E, R>(threadId: string, effect: Effect.Effect<A, E, R>) =>
+      Effect.flatMap(getThreadSemaphore(threadId), (semaphore) => semaphore.withPermit(effect));
+
+    const logNative = (threadId: ThreadId, method: string, payload: unknown) =>
+      Effect.gen(function* () {
+        if (!nativeEventLogger) return;
+        const observedAt = yield* nowIso;
+        yield* nativeEventLogger.write(
+          {
+            observedAt,
+            event: {
+              id: yield* randomUUIDv4,
+              kind: "notification",
+              provider: PROVIDER,
+              createdAt: observedAt,
+              method,
+              threadId,
+              payload,
+            },
+          },
+          threadId,
+        );
+      });
+
+    const emitPlanUpdate = (
+      ctx: HermesSessionContext,
+      payload: {
+        readonly explanation?: string | null;
+        readonly plan: ReadonlyArray<{
+          readonly step: string;
+          readonly status: "pending" | "inProgress" | "completed";
+        }>;
+      },
+      rawPayload: unknown,
+    ) =>
+      Effect.gen(function* () {
+        const fingerprint = `${ctx.activeTurnId ?? "no-turn"}:${encodeJsonStringForDiagnostics(payload) ?? "[unserializable payload]"}`;
+        if (ctx.lastPlanFingerprint === fingerprint) {
+          return;
+        }
+        ctx.lastPlanFingerprint = fingerprint;
+        yield* offerRuntimeEvent(
+          makeAcpPlanUpdatedEvent({
+            stamp: yield* makeEventStamp(),
+            provider: PROVIDER,
+            threadId: ctx.threadId,
+            turnId: ctx.activeTurnId,
+            payload,
+            source: "acp.jsonrpc",
+            method: "session/update",
+            rawPayload,
+          }),
+        );
+      });
+
+    const requireSession = (
+      threadId: ThreadId,
+    ): Effect.Effect<HermesSessionContext, ProviderAdapterSessionNotFoundError> => {
+      const ctx = sessions.get(threadId);
+      if (!ctx || ctx.stopped) {
+        return Effect.fail(
+          new ProviderAdapterSessionNotFoundError({ provider: PROVIDER, threadId }),
+        );
+      }
+      return Effect.succeed(ctx);
+    };
+
+    const stopSessionInternal = (ctx: HermesSessionContext) =>
+      Effect.gen(function* () {
+        if (ctx.stopped) return;
+        ctx.stopped = true;
+        yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+        yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+        if (ctx.notificationFiber) {
+          yield* Fiber.interrupt(ctx.notificationFiber);
+        }
+        yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
+        sessions.delete(ctx.threadId);
+        yield* offerRuntimeEvent({
+          type: "session.exited",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          payload: { exitKind: "graceful" },
+        });
+      });
+
+    const startSession: HermesAdapterShape["startSession"] = (input) =>
+      withThreadLock(
+        input.threadId,
+        Effect.gen(function* () {
+          if (input.provider !== undefined && input.provider !== PROVIDER) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "startSession",
+              issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
+            });
+          }
+          if (!input.cwd?.trim()) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "startSession",
+              issue: "cwd is required and must be non-empty.",
+            });
+          }
+
+          const cwd = path.resolve(input.cwd.trim());
+          const hermesModelSelection =
+            input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
+          const existing = sessions.get(input.threadId);
+          if (existing && !existing.stopped) {
+            yield* stopSessionInternal(existing);
+          }
+
+          const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
+          const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
+          const sessionScope = yield* Scope.make("sequential");
+          let sessionScopeTransferred = false;
+          yield* Effect.addFinalizer(() =>
+            sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
+          );
+          let ctx!: HermesSessionContext;
+
+          const resumeSessionId = parseHermesResume(input.resumeCursor)?.sessionId;
+          const acpNativeLoggers = makeAcpNativeLoggers({
+            nativeEventLogger,
+            provider: PROVIDER,
+            threadId: input.threadId,
+          });
+
+          // Resolve the HermesSettings used to spawn the ACP child. Production
+          // leaves `options.resolveSettings` undefined so we use the value
+          // captured at adapter construction — per-instance isolation is
+          // enforced by the hydration layer rebuilding this adapter whenever
+          // its config changes. Tests set `resolveSettings` to pull the latest
+          // snapshot from `ServerSettingsService` so that mid-suite
+          // `updateSettings({ providers: { hermes: { binaryPath } } })` calls
+          // actually take effect when the next session spawns.
+          const effectiveHermesSettings = options?.resolveSettings
+            ? yield* options.resolveSettings
+            : hermesSettings;
+
+          const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+          const acp = yield* makeHermesAcpRuntime({
+            hermesSettings: effectiveHermesSettings,
+            ...(options?.environment ? { environment: options.environment } : {}),
+            childProcessSpawner,
+            cwd,
+            ...(resumeSessionId ? { resumeSessionId } : {}),
+            clientInfo: { name: "t3-code", version: "0.0.0" },
+            ...(mcpSession
+              ? {
+                  mcpServers: [
+                    {
+                      type: "http" as const,
+                      name: "t3-code",
+                      url: mcpSession.endpoint,
+                      headers: [
+                        {
+                          name: "Authorization",
+                          value: mcpSession.authorizationHeader,
+                        },
+                      ],
+                    },
+                  ],
+                }
+              : {}),
+            ...acpNativeLoggers,
+          }).pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(Scope.Scope, sessionScope),
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapterProcessError({
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  detail: cause.message,
+                  cause,
+                }),
+            ),
+          );
+          const started = yield* Effect.gen(function* () {
+            yield* acp.handleRequestPermission((params) =>
+              mapAcpCallbackFailure(
+                Effect.gen(function* () {
+                  yield* logNative(input.threadId, "session/request_permission", params);
+                  if (input.runtimeMode === "full-access") {
+                    const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
+                    if (autoApprovedOptionId !== undefined) {
+                      return {
+                        outcome: {
+                          outcome: "selected" as const,
+                          optionId: autoApprovedOptionId,
+                        },
+                      };
+                    }
+                  }
+                  const permissionRequest = parsePermissionRequest(params);
+                  const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
+                  const runtimeRequestId = RuntimeRequestId.make(requestId);
+                  const decision = yield* Deferred.make<ProviderApprovalDecision>();
+                  pendingApprovals.set(requestId, {
+                    decision,
+                    kind: permissionRequest.kind,
+                  });
+                  yield* offerRuntimeEvent(
+                    makeAcpRequestOpenedEvent({
+                      stamp: yield* makeEventStamp(),
+                      provider: PROVIDER,
+                      threadId: input.threadId,
+                      turnId: ctx?.activeTurnId,
+                      requestId: runtimeRequestId,
+                      permissionRequest,
+                      detail:
+                        permissionRequest.detail ??
+                        encodeJsonStringForDiagnostics(params)?.slice(0, 2000) ??
+                        "[unserializable params]",
+                      args: params,
+                      source: "acp.jsonrpc",
+                      method: "session/request_permission",
+                      rawPayload: params,
+                    }),
+                  );
+                  const resolved = yield* Deferred.await(decision);
+                  pendingApprovals.delete(requestId);
+                  yield* offerRuntimeEvent(
+                    makeAcpRequestResolvedEvent({
+                      stamp: yield* makeEventStamp(),
+                      provider: PROVIDER,
+                      threadId: input.threadId,
+                      turnId: ctx?.activeTurnId,
+                      requestId: runtimeRequestId,
+                      permissionRequest,
+                      decision: resolved,
+                    }),
+                  );
+                  if (resolved === "cancel") {
+                    return { outcome: { outcome: "cancelled" } as const };
+                  }
+                  const selectedOptionId = selectHermesPermissionOptionId(params, resolved);
+                  // An agent that advertised no option matching the decision
+                  // cannot be answered with a synthesized id; cancelling is
+                  // the honest outcome and leaves the turn interruptible.
+                  return {
+                    outcome: selectedOptionId
+                      ? ({ outcome: "selected" as const, optionId: selectedOptionId } as const)
+                      : ({ outcome: "cancelled" } as const),
+                  };
+                }),
+              ),
+            );
+            return yield* acp.start();
+          }).pipe(
+            Effect.mapError((error) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, "session/start", error),
+            ),
+          );
+
+          yield* applyRequestedSessionConfiguration({
+            runtime: acp,
+            runtimeMode: input.runtimeMode,
+            interactionMode: undefined,
+            modelSelection: hermesModelSelection
+              ? { model: hermesModelSelection.model }
+              : undefined,
+            currentModelId: currentHermesModelIdFromSessionSetup(started.sessionSetupResult),
+            mapError: ({ cause, method }) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
+          });
+
+          const now = yield* nowIso;
+          // Track the session's real current model, not just the picker
+          // selection: after configuration the session is on the requested
+          // model when one switched, otherwise on the ACP setup's current
+          // model. The `default` product slug is not a real id, so it falls
+          // through to the discovered current. This baseline is what the
+          // per-turn skip-if-match guard compares against.
+          const startCurrentModelId = currentHermesModelIdFromSessionSetup(
+            started.sessionSetupResult,
+          );
+          const requestedStartModel = hermesModelSelection?.model;
+          const effectiveStartModel =
+            requestedStartModel && requestedStartModel !== HERMES_DEFAULT_MODEL_SLUG
+              ? requestedStartModel
+              : startCurrentModelId;
+          const session: ProviderSession = {
+            provider: PROVIDER,
+            providerInstanceId: boundInstanceId,
+            status: "ready",
+            runtimeMode: input.runtimeMode,
+            cwd,
+            model: effectiveStartModel,
+            threadId: input.threadId,
+            resumeCursor: {
+              schemaVersion: HERMES_RESUME_VERSION,
+              sessionId: started.sessionId,
+            },
+            createdAt: now,
+            updatedAt: now,
+          };
+
+          ctx = {
+            threadId: input.threadId,
+            session,
+            scope: sessionScope,
+            acp,
+            notificationFiber: undefined,
+            pendingApprovals,
+            pendingUserInputs,
+            turns: [],
+            lastPlanFingerprint: undefined,
+            activeTurnId: undefined,
+            activeTurnAnnounced: false,
+            promptsInFlight: 0,
+            stopped: false,
+          };
+
+          const nf = yield* Stream.runDrain(
+            Stream.mapEffect(acp.getEvents(), (event) =>
+              Effect.gen(function* () {
+                switch (event._tag) {
+                  case "EventStreamBarrier":
+                    yield* Deferred.succeed(event.acknowledge, undefined);
+                    return;
+                  case "ModeChanged":
+                    return;
+                  case "AssistantItemStarted":
+                    yield* offerRuntimeEvent(
+                      makeAcpAssistantItemEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: ctx.activeTurnId,
+                        itemId: event.itemId,
+                        lifecycle: "item.started",
+                      }),
+                    );
+                    return;
+                  case "AssistantItemCompleted":
+                    yield* offerRuntimeEvent(
+                      makeAcpAssistantItemEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: ctx.activeTurnId,
+                        itemId: event.itemId,
+                        lifecycle: "item.completed",
+                      }),
+                    );
+                    return;
+                  case "PlanUpdated":
+                    yield* logNative(ctx.threadId, "session/update", event.rawPayload);
+                    yield* emitPlanUpdate(ctx, event.payload, event.rawPayload);
+                    return;
+                  case "ToolCallUpdated":
+                    yield* logNative(ctx.threadId, "session/update", event.rawPayload);
+                    yield* offerRuntimeEvent(
+                      makeAcpToolCallEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: ctx.activeTurnId,
+                        toolCall: event.toolCall,
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
+                  case "ContentDelta":
+                    yield* logNative(ctx.threadId, "session/update", event.rawPayload);
+                    yield* offerRuntimeEvent(
+                      makeAcpContentDeltaEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: ctx.activeTurnId,
+                        ...(event.itemId ? { itemId: event.itemId } : {}),
+                        text: event.text,
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
+                }
+              }),
+            ),
+          ).pipe(
+            Effect.catch((cause) =>
+              Effect.logError("Failed to process Hermes runtime notification.", { cause }),
+            ),
+            // Fork into the session scope, not the calling fiber. `forkChild`
+            // makes this a child of `startSession`, and Effect interrupts a
+            // fiber's children when it completes, so the consumer died as soon
+            // as `startSession` returned and every later notification was
+            // dropped. The scope is created, stored on the context and closed
+            // on teardown already; only the fork target was wrong.
+            Effect.forkIn(ctx.scope),
+          );
+
+          ctx.notificationFiber = nf;
+          sessions.set(input.threadId, ctx);
+          sessionScopeTransferred = true;
+
+          yield* offerRuntimeEvent({
+            type: "session.started",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
+            threadId: input.threadId,
+            payload: { resume: started.initializeResult },
+          });
+          yield* offerRuntimeEvent({
+            type: "session.state.changed",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
+            threadId: input.threadId,
+            payload: { state: "ready", reason: "Hermes ACP session ready" },
+          });
+          yield* offerRuntimeEvent({
+            type: "thread.started",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
+            threadId: input.threadId,
+            payload: { providerThreadId: started.sessionId },
+          });
+
+          return session;
+        }).pipe(Effect.scoped),
+      );
+
+    const sendTurn: HermesAdapterShape["sendTurn"] = (input) =>
+      Effect.gen(function* () {
+        const ctx = yield* requireSession(input.threadId);
+        // A sendTurn while a prompt is in flight is a steer: the agent folds
+        // the new prompt into the ongoing work, so the active turn id is
+        // reused instead of opening a new turn.
+        const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
+        const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
+        // Count this prompt immediately so a superseded in-flight prompt
+        // resolving from here on does not settle the turn; the matching
+        // decrement is the `ensuring` below. The active turn id must land in
+        // the same synchronous window: a concurrent sendTurn arriving during
+        // the awaited session configuration below reads it to merge into this
+        // turn instead of opening a duplicate.
+        const previousActiveTurnId = ctx.activeTurnId;
+        ctx.promptsInFlight += 1;
+        ctx.activeTurnId = turnId;
+        if (steeringTurnId === undefined) {
+          ctx.activeTurnAnnounced = false;
+        }
+
+        return yield* Effect.gen(function* () {
+          const turnModelSelection =
+            input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
+          // The `default` product slug means "keep the configured model", so
+          // it resolves to the session's tracked model rather than being sent
+          // or stored as if it were a real ACP model id.
+          const requestedTurnModel =
+            turnModelSelection?.model && turnModelSelection.model !== HERMES_DEFAULT_MODEL_SLUG
+              ? turnModelSelection.model
+              : undefined;
+          const model = requestedTurnModel ?? ctx.session.model;
+          // Captured before the session record below adopts `model`: the
+          // skip-if-match guard must compare against the model the ACP session
+          // is actually on, not the one this turn is about to request.
+          const sessionModelBeforeTurn = ctx.session.model;
+
+          if (steeringTurnId === undefined) {
+            ctx.lastPlanFingerprint = undefined;
+          }
+          ctx.session = {
+            ...ctx.session,
+            activeTurnId: turnId,
+            model: model ?? ctx.session.model,
+            updatedAt: yield* nowIso,
+          };
+
+          const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
+          if (input.input?.trim()) {
+            promptParts.push({ type: "text", text: input.input.trim() });
+          }
+          if (input.attachments && input.attachments.length > 0) {
+            for (const attachment of input.attachments) {
+              // Hermes ingests images only. Generic files reach the agent
+              // through the path line ProviderService puts in the prompt.
+              if (attachment.type !== "image") {
+                continue;
+              }
+              const attachmentPath = resolveAttachmentPath({
+                attachmentsDir: serverConfig.attachmentsDir,
+                attachment,
+              });
+              if (!attachmentPath) {
+                return yield* new ProviderAdapterRequestError({
+                  provider: PROVIDER,
+                  method: "session/prompt",
+                  detail: `Invalid attachment id '${attachment.id}'.`,
+                });
+              }
+              const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterRequestError({
+                      provider: PROVIDER,
+                      method: "session/prompt",
+                      detail: cause.message,
+                      cause,
+                    }),
+                ),
+              );
+              promptParts.push({
+                type: "image",
+                data: Buffer.from(bytes).toString("base64"),
+                mimeType: attachment.mimeType,
+              });
+            }
+          }
+
+          if (promptParts.length === 0) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "sendTurn",
+              issue: "Turn requires non-empty text or attachments.",
+            });
+          }
+
+          yield* applyRequestedSessionConfiguration({
+            runtime: ctx.acp,
+            runtimeMode: ctx.session.runtimeMode,
+            interactionMode: input.interactionMode,
+            modelSelection: model === undefined ? undefined : { model },
+            currentModelId: sessionModelBeforeTurn,
+            mapError: ({ cause, method }) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
+          });
+
+          // Announced only once both fallible preparation steps — prompt
+          // validation and session configuration — have passed, so a turn
+          // consumers can see is always a turn that can settle. Keyed on the
+          // session flag rather than "am I a steer" so a steer that overtook a
+          // not-yet-announced turn still announces it, exactly once.
+          if (!ctx.activeTurnAnnounced) {
+            ctx.activeTurnAnnounced = true;
+            yield* offerRuntimeEvent({
+              type: "turn.started",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              turnId,
+              payload: model === undefined ? {} : { model },
+            });
+          }
+
+          const result = yield* ctx.acp
+            .prompt({
+              prompt: promptParts,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
+              ),
+            );
+
+          const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
+          if (turnRecord) {
+            turnRecord.items.push({ prompt: promptParts, result });
+          } else {
+            ctx.turns.push({ id: turnId, items: [{ prompt: promptParts, result }] });
+          }
+          ctx.session = {
+            ...ctx.session,
+            activeTurnId: turnId,
+            updatedAt: yield* nowIso,
+            ...(model === undefined ? {} : { model }),
+          };
+
+          // Only the last remaining prompt settles the turn — a steer-
+          // superseded prompt resolving (usually cancelled) while another is
+          // in flight or pending must leave the merged turn running.
+          if (ctx.promptsInFlight === 1) {
+            yield* offerRuntimeEvent({
+              type: "turn.completed",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              turnId,
+              payload: {
+                state: result.stopReason === "cancelled" ? "cancelled" : "completed",
+                stopReason: result.stopReason ?? null,
+              },
+            });
+          }
+
+          return {
+            threadId: input.threadId,
+            turnId,
+            resumeCursor: ctx.session.resumeCursor,
+          };
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
+              // Preparation failed before the turn was ever announced: release
+              // the claim so the next sendTurn opens a fresh turn instead of
+              // steering one consumers never saw.
+              if (
+                !ctx.activeTurnAnnounced &&
+                ctx.promptsInFlight === 0 &&
+                ctx.activeTurnId === turnId
+              ) {
+                ctx.activeTurnId = previousActiveTurnId;
+              }
+            }),
+          ),
+        );
+      });
+
+    const interruptTurn: HermesAdapterShape["interruptTurn"] = (threadId) =>
+      Effect.gen(function* () {
+        const ctx = yield* requireSession(threadId);
+        yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+        yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+        yield* Effect.ignore(
+          ctx.acp.cancel.pipe(
+            Effect.mapError((error) =>
+              mapAcpToAdapterError(PROVIDER, threadId, "session/cancel", error),
+            ),
+          ),
+        );
+      });
+
+    const respondToRequest: HermesAdapterShape["respondToRequest"] = (
+      threadId,
+      requestId,
+      decision,
+    ) =>
+      Effect.gen(function* () {
+        const ctx = yield* requireSession(threadId);
+        const pending = ctx.pendingApprovals.get(requestId);
+        if (!pending) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "session/request_permission",
+            detail: `Unknown pending approval request: ${requestId}`,
+          });
+        }
+        yield* Deferred.succeed(pending.decision, decision);
+      });
+
+    const respondToUserInput: HermesAdapterShape["respondToUserInput"] = (
+      threadId,
+      requestId,
+      answers,
+    ) =>
+      Effect.gen(function* () {
+        const ctx = yield* requireSession(threadId);
+        const pending = ctx.pendingUserInputs.get(requestId);
+        if (!pending) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "respondToUserInput",
+            detail: `Unknown pending user-input request: ${requestId}`,
+          });
+        }
+        yield* Deferred.succeed(pending.answers, answers);
+      });
+
+    const readThread: HermesAdapterShape["readThread"] = (threadId) =>
+      Effect.gen(function* () {
+        const ctx = yield* requireSession(threadId);
+        return { threadId, turns: ctx.turns };
+      });
+
+    const rollbackThread: HermesAdapterShape["rollbackThread"] = (threadId, numTurns) =>
+      Effect.gen(function* () {
+        const ctx = yield* requireSession(threadId);
+        if (!Number.isInteger(numTurns) || numTurns < 1) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "rollbackThread",
+            issue: "numTurns must be an integer >= 1.",
+          });
+        }
+        const nextLength = Math.max(0, ctx.turns.length - numTurns);
+        ctx.turns.splice(nextLength);
+        return { threadId, turns: ctx.turns };
+      });
+
+    const stopSession: HermesAdapterShape["stopSession"] = (threadId) =>
+      withThreadLock(
+        threadId,
+        Effect.gen(function* () {
+          const ctx = yield* requireSession(threadId);
+          yield* stopSessionInternal(ctx);
+        }),
+      );
+
+    const listSessions: HermesAdapterShape["listSessions"] = () =>
+      Effect.sync(() => Array.from(sessions.values(), (c) => ({ ...c.session })));
+
+    const hasSession: HermesAdapterShape["hasSession"] = (threadId) =>
+      Effect.sync(() => {
+        const c = sessions.get(threadId);
+        return c !== undefined && !c.stopped;
+      });
+
+    const stopAll: HermesAdapterShape["stopAll"] = () =>
+      Effect.forEach(sessions.values(), stopSessionInternal, { discard: true });
+
+    yield* Effect.addFinalizer(() =>
+      Effect.forEach(sessions.values(), stopSessionInternal, { discard: true }).pipe(
+        Effect.catch((cause) =>
+          Effect.logError("Failed to emit Hermes session shutdown event.", { cause }),
+        ),
+        Effect.tap(() => PubSub.shutdown(runtimeEventPubSub)),
+        Effect.tap(() => managedNativeEventLogger?.close() ?? Effect.void),
+      ),
+    );
+
+    const streamEvents = Stream.fromPubSub(runtimeEventPubSub);
+
+    return {
+      provider: PROVIDER,
+      capabilities: { sessionModelSwitch: "in-session" },
+      startSession,
+      sendTurn,
+      interruptTurn,
+      readThread,
+      rollbackThread,
+      respondToRequest,
+      respondToUserInput,
+      stopSession,
+      listSessions,
+      hasSession,
+      stopAll,
+      streamEvents,
+    } satisfies HermesAdapterShape;
+  });
+}

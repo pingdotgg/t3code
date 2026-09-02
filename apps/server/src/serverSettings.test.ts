@@ -586,10 +586,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
-        '{"providerInstances":{"cursor_work":{"driver":"cursor","config":{}},"grok":{"driver":"grok","config":{}},"opencode_work":{"driver":"opencode","config":{"serverUrl":"http://127.0.0.1:4096"}},"opencode_unused":{"driver":"opencode","config":{}}}}',
+        '{"providerInstances":{"cursor_work":{"driver":"cursor","config":{}},"grok":{"driver":"grok","config":{}},"hermes":{"driver":"hermes","config":{}},"opencode_work":{"driver":"opencode","config":{"serverUrl":"http://127.0.0.1:4096"}},"opencode_unused":{"driver":"opencode","config":{}}}}',
       );
       yield* recordProviderUsage("cursor", "cursor_work");
       yield* recordProviderUsage("grok", null);
+      yield* recordProviderUsage("hermes", null);
       yield* recordProviderUsage("opencode", "opencode_work");
 
       const settings = yield* serverSettings.getSettings;
@@ -597,6 +598,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.isTrue(settings.providers.cursor.enabled);
       assert.isTrue(settings.providerInstances[ProviderInstanceId.make("cursor_work")]?.enabled);
       assert.isTrue(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("hermes")]?.enabled);
       assert.isTrue(settings.providerInstances[ProviderInstanceId.make("opencode_work")]?.enabled);
       const unused = settings.providerInstances[ProviderInstanceId.make("opencode_unused")];
       assert.isDefined(unused);
@@ -611,18 +613,21 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
-        '{"providers":{"grok":{"enabled":false},"opencode":{"enabled":false},"cursor":{"enabled":false}},"providerInstances":{"grok":{"driver":"grok","enabled":false,"config":{}},"opencode":{"driver":"opencode","config":{"enabled":false}},"cursor":{"driver":"cursor","enabled":false,"config":{}}}}',
+        '{"providers":{"grok":{"enabled":false},"hermes":{"enabled":false},"opencode":{"enabled":false},"cursor":{"enabled":false}},"providerInstances":{"grok":{"driver":"grok","enabled":false,"config":{}},"hermes":{"driver":"hermes","enabled":false,"config":{}},"opencode":{"driver":"opencode","config":{"enabled":false}},"cursor":{"driver":"cursor","enabled":false,"config":{}}}}',
       );
       yield* recordProviderUsage("grok");
+      yield* recordProviderUsage("hermes");
       yield* recordProviderUsage("opencode");
       yield* recordProviderUsage("cursor");
 
       const settings = yield* serverSettings.getSettings;
 
       assert.isFalse(settings.providers.grok.enabled);
+      assert.isFalse(settings.providers.hermes.enabled);
       assert.isFalse(settings.providers.opencode.enabled);
       assert.isFalse(settings.providers.cursor.enabled);
       assert.isFalse(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("hermes")]?.enabled);
       assert.isFalse(settings.providerInstances[ProviderInstanceId.make("opencode")]?.enabled);
       assert.isFalse(settings.providerInstances[ProviderInstanceId.make("cursor")]?.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
@@ -651,6 +656,20 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const settings = yield* serverSettings.getSettings;
 
       assert.isTrue(settings.providers.grok.enabled);
+      assert.isFalse(settings.providers.opencode.enabled);
+      assert.isFalse(settings.providers.cursor.enabled);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("restores hermes from provider history when no settings file exists", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* recordProviderUsage("hermes");
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.isTrue(settings.providers.hermes.enabled);
+      assert.isFalse(settings.providers.grok.enabled);
       assert.isFalse(settings.providers.opencode.enabled);
       assert.isFalse(settings.providers.cursor.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
@@ -719,6 +738,27 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.isFalse(settings.providers.grok.enabled);
       assert.isTrue(settings.providers.opencode.enabled);
       assert.isFalse(settings.providers.cursor.enabled);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("falls back to the Hermes session model when only Hermes is enabled", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      const settings = yield* serverSettings.updateSettings({
+        providers: {
+          codex: { enabled: false },
+          claudeAgent: { enabled: false },
+          hermes: { enabled: true },
+        },
+      });
+
+      // "default" is Hermes's product slug, not an ACP model id: the adapter
+      // skips session/set_model for it and keeps Hermes's configured model.
+      // Without a DEFAULT_MODEL_BY_PROVIDER entry the fallback would hand
+      // Hermes the Codex text-generation slug, which Hermes rejects.
+      assert.deepEqual(settings.textGenerationModelSelection.instanceId, "hermes");
+      assert.deepEqual(settings.textGenerationModelSelection.model, "default");
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -992,6 +1032,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             enabled: false,
           },
           grok: {
+            enabled: false,
+          },
+          hermes: {
             enabled: false,
           },
           opencode: {

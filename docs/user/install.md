@@ -84,16 +84,19 @@ application files under `/mnt/c` instead and reinstalls the runtime on the next 
 T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
 to use, then authenticate it.
 
-| Provider   | CLI                                                   | Default binary | Log in with           |
-| ---------- | ----------------------------------------------------- | -------------- | --------------------- |
-| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`         |
-| Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login`   |
-| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
-| Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
-| OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
+| Provider   | CLI                                                          | Default binary | Log in with           |
+| ---------- | ------------------------------------------------------------ | -------------- | --------------------- |
+| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)         | `codex`        | `codex login`         |
+| Claude     | [Claude Code](https://claude.com/product/claude-code)        | `claude`       | `claude auth login`   |
+| Cursor     | [Cursor CLI](https://cursor.com/cli)                         | `cursor-agent` | `agent login`         |
+| Grok Build | [Grok Build CLI](https://x.ai/cli)                           | `grok`         | `grok login`          |
+| Hermes     | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `hermes`       | `hermes setup`        |
+| OpenCode   | [OpenCode](https://opencode.ai)                              | `opencode`     | `opencode auth login` |
 
-Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
-them on in **Settings** → the provider's card when you want to use them.
+Codex and Claude are on by default. Cursor, Grok Build, Hermes, and OpenCode are off by default;
+turn them on in **Settings** → the provider's card when you want to use them. Hermes is
+experimental — its provider card shows an **Experimental** badge; see
+[Hermes](./providers-hermes.md) for details.
 
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
