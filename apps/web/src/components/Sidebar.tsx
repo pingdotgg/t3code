@@ -215,6 +215,7 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 // Fresh keys deliberately reset both shelves to collapsed for existing users.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
+const PROJECT_SECTIONS_COLLAPSED_KEY = "t3code:sidebar:project-sections-collapsed";
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -2237,32 +2238,28 @@ export default function Sidebar() {
         : null,
     [activeThreads, projectGroups, projectScopeKey, projectSectionsEnabled],
   );
-  const [collapsedProjectSectionKeys, setCollapsedProjectSectionKeys] = useState<
-    ReadonlySet<string>
-  >(() => new Set());
-  useEffect(() => {
-    if (activeProjectSections === null) return;
-    const activeKeys = new Set(
-      activeProjectSections.sections.map(({ project }) => project.projectKey),
-    );
-    setCollapsedProjectSectionKeys((collapsedKeys) => {
-      const nextCollapsedKeys = new Set(
-        [...collapsedKeys].filter((projectKey) => activeKeys.has(projectKey)),
+  // Collapsed sections persist like the snoozed/settled shelves. Keys are
+  // never pruned: a section that momentarily empties (or a project that
+  // disappears and returns) keeps the way the user left it.
+  const [collapsedProjectSectionKeyList, setCollapsedProjectSectionKeyList] = useLocalStorage(
+    PROJECT_SECTIONS_COLLAPSED_KEY,
+    [] as readonly string[],
+    Schema.Array(Schema.String),
+  );
+  const collapsedProjectSectionKeys = useMemo(
+    () => new Set(collapsedProjectSectionKeyList),
+    [collapsedProjectSectionKeyList],
+  );
+  const toggleProjectSection = useCallback(
+    (projectKey: string) => {
+      setCollapsedProjectSectionKeyList((collapsedKeys) =>
+        collapsedKeys.includes(projectKey)
+          ? collapsedKeys.filter((key) => key !== projectKey)
+          : [...collapsedKeys, projectKey],
       );
-      return nextCollapsedKeys.size === collapsedKeys.size ? collapsedKeys : nextCollapsedKeys;
-    });
-  }, [activeProjectSections]);
-  const toggleProjectSection = useCallback((projectKey: string) => {
-    setCollapsedProjectSectionKeys((collapsedKeys) => {
-      const nextCollapsedKeys = new Set(collapsedKeys);
-      if (nextCollapsedKeys.has(projectKey)) {
-        nextCollapsedKeys.delete(projectKey);
-      } else {
-        nextCollapsedKeys.add(projectKey);
-      }
-      return nextCollapsedKeys;
-    });
-  }, []);
+    },
+    [setCollapsedProjectSectionKeyList],
+  );
   const visibleActiveThreads = useMemo(() => {
     if (activeProjectSections === null) return activeThreads;
     const sectionThreads = activeProjectSections.sections.flatMap(
