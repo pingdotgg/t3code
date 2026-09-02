@@ -252,7 +252,12 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
 
   if (record["type"] === "turn_context") {
     if (typeof payloadRecord["model"] === "string") state.model = payloadRecord["model"];
-    if (typeof payloadRecord["cwd"] === "string") state.cwd = payloadRecord["cwd"];
+    // A fork copies the parent's turn contexts after the child's session meta.
+    // Keep the child's cwd until the copied burst ends, or the first genuine
+    // token event can be attributed to the parent project.
+    if (!state.suppressingForkCopies && typeof payloadRecord["cwd"] === "string") {
+      state.cwd = payloadRecord["cwd"];
+    }
     return null;
   }
 

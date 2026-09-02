@@ -1,7 +1,11 @@
 import { ThreadId, UsageDay, type UsageThreadRow } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { makeThreadCostInput, summarizeThreadCost } from "./threadCost";
+import {
+  makeThreadCostInput,
+  millisecondsUntilNextThreadCostDay,
+  summarizeThreadCost,
+} from "./threadCost";
 
 const threadId = ThreadId.make("thread-cost-test");
 
@@ -37,6 +41,13 @@ describe("thread cost state", () => {
 
     expect(input.threadId).toBe(threadId);
     expect(input.sinceDay <= input.untilDay).toBe(true);
+  });
+
+  it("schedules a refresh at the next local calendar day", () => {
+    const delay = millisecondsUntilNextThreadCostDay(new Date(2026, 8, 2, 23, 59, 30));
+
+    expect(delay).toBeGreaterThan(30_000);
+    expect(delay).toBeLessThan(32_000);
   });
 
   it("combines provider rows and keeps provider-reported cost visible", () => {

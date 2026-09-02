@@ -30,6 +30,7 @@ describe("ThreadCostIndicator", () => {
     const markup = renderToStaticMarkup(<ThreadCostIndicator cost={cost} />);
 
     expect(markup).toContain('data-open-on-hover="true"');
+    expect(markup).toContain('data-slot="button"');
     expect(markup).toContain('aria-label="Thread API cost $4.25"');
     expect(markup).toContain("Cache writes, estimated");
     expect(markup).toContain("Cache reads");

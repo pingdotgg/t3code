@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { serverEnvironment } from "./server";
@@ -56,16 +56,27 @@ export function makeThreadCostInput(
   threadId: ThreadId,
   createdAt: string,
   now = new Date(),
+  untilDay?: UsageDay,
 ): UsageThreadBreakdownInput {
   const { timeZone, format } = dayFormatter();
   const created = new Date(createdAt);
   const validCreatedAt = Number.isNaN(created.getTime()) || created > now ? now : created;
   return {
     sinceDay: UsageDay.make(format.format(validCreatedAt)),
-    untilDay: UsageDay.make(format.format(now)),
+    untilDay: untilDay ?? UsageDay.make(format.format(now)),
     timeZone,
     threadId,
   };
+}
+
+function currentThreadCostDay(now = new Date()): UsageDay {
+  return UsageDay.make(dayFormatter().format.format(now));
+}
+
+export function millisecondsUntilNextThreadCostDay(now = new Date()): number {
+  const nextDay = new Date(now);
+  nextDay.setHours(24, 0, 0, 0);
+  return Math.max(1, nextDay.getTime() - now.getTime() + 1000);
 }
 
 export function summarizeThreadCost(
@@ -120,9 +131,24 @@ export function useThreadCost(input: {
   readonly createdAt: string;
   readonly refreshKey: string | null;
 }): { readonly cost: ThreadCostSnapshot | null; readonly isPending: boolean } {
+  const [currentDay, setCurrentDay] = useState(() => currentThreadCostDay());
+  useEffect(() => {
+    let timeout: number | undefined;
+    const schedule = () => {
+      timeout = window.setTimeout(() => {
+        setCurrentDay(currentThreadCostDay());
+        schedule();
+      }, millisecondsUntilNextThreadCostDay());
+    };
+    schedule();
+    return () => {
+      if (timeout !== undefined) window.clearTimeout(timeout);
+    };
+  }, []);
+
   const requestInput = useMemo(
-    () => makeThreadCostInput(input.threadId, input.createdAt),
-    [input.createdAt, input.threadId],
+    () => makeThreadCostInput(input.threadId, input.createdAt, new Date(), currentDay),
+    [currentDay, input.createdAt, input.threadId],
   );
   const query = useMemo(
     () =>

@@ -239,6 +239,43 @@ describe("parseCodexLine", () => {
       expect(next).not.toBeNull();
     });
 
+    it("keeps the child cwd while copied parent turn contexts are suppressed", () => {
+      const state = initialCodexScanState();
+      const forkInstant = "2026-08-01T05:00:00.000Z";
+      parseCodexLine(
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: forkInstant,
+          payload: {
+            type: "session_meta",
+            id: "child",
+            forked_from_id: "parent",
+            cwd: "/home/theo/child-project",
+          },
+        }),
+        state,
+      );
+      parseCodexLine(
+        JSON.stringify({
+          type: "turn_context",
+          timestamp: "2026-08-01T05:00:00.001Z",
+          payload: {
+            type: "turn_context",
+            model: "gpt-5.6-sol",
+            cwd: "/home/theo/parent-project",
+          },
+        }),
+        state,
+      );
+
+      const record = parseCodexLine(
+        stamped("2026-08-01T05:00:06.000Z", tokenCount(300, 0, 30, 0)),
+        state,
+      );
+
+      expect(record?.cwd).toBe("/home/theo/child-project");
+    });
+
     it("recognizes subagent spawns without forked_from_id", () => {
       const state = initialCodexScanState();
       const spawnInstant = "2026-08-01T05:00:00.000Z";

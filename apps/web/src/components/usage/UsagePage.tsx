@@ -75,6 +75,15 @@ export function UsagePage() {
   // totals while devices are still answering makes every number on the page
   // jump as each one lands.
   const settling = isPending || isPartial;
+  const relevantEnvironments = useMemo(
+    () =>
+      environments.filter(
+        (environment) =>
+          projectFilterForEnvironment(projectFilter, environment.environmentId) !==
+          "environment-mismatch:",
+      ),
+    [environments, projectFilter],
+  );
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
@@ -316,7 +325,7 @@ export function UsagePage() {
             ) : (
               <>
                 <UsageCoverageNotice
-                  environments={environments}
+                  environments={relevantEnvironments}
                   duplicateSources={merged.duplicateSources}
                   staleEnvironments={merged.staleEnvironments}
                 />
@@ -494,14 +503,10 @@ export function UsagePage() {
                       }}
                       providerContributions={merged.providerContributions}
                       summaryFailedEnvironments={
-                        environments.filter(
+                        relevantEnvironments.filter(
                           (environment) =>
-                            (environment.error !== null ||
-                              merged.staleEnvironments.includes(environment.environmentId)) &&
-                            projectFilterForEnvironment(
-                              projectFilter,
-                              environment.environmentId,
-                            ) !== "environment-mismatch:",
+                            environment.error !== null ||
+                            merged.staleEnvironments.includes(environment.environmentId),
                         ).length
                       }
                     />

@@ -258,7 +258,8 @@ describe("readTranscriptTitle", () => {
 
   it("uses the child prompt instead of copied parent history for a forked Codex rollout", async () => {
     const file = NodePath.join(dir, "session.jsonl");
-    const message = (timestamp: string, text: string) => ({
+    const message = (ordinal: number, timestamp: string, text: string) => ({
+      ordinal,
       type: "event_msg",
       timestamp,
       payload: { type: "message", role: "user", content: [{ type: "input_text", text }] },
@@ -268,18 +269,62 @@ describe("readTranscriptTitle", () => {
       [
         {
           type: "session_meta",
+          ordinal: 0,
           timestamp: "2026-08-01T05:00:00.000Z",
-          payload: { type: "session_meta", id: "child", forked_from_id: "parent" },
+          payload: {
+            type: "session_meta",
+            id: "child",
+            forked_from_id: "parent",
+            subagent_history_start_ordinal: 3,
+          },
         },
-        message("2026-08-01T05:00:00.600Z", "First copied parent prompt"),
-        message("2026-08-01T05:00:01.100Z", "Second copied parent prompt"),
-        message("2026-08-01T05:00:02.500Z", "Investigate the child task"),
+        message(1, "2026-08-01T05:00:00.600Z", "First copied parent prompt"),
+        message(2, "2026-08-01T05:00:01.100Z", "Second copied parent prompt"),
+        message(3, "2026-08-01T05:00:01.200Z", "Investigate the child task"),
       ]
         .map((line) => JSON.stringify(line))
         .join("\n"),
     );
 
     assert.strictEqual(await readTranscriptTitle(file, "codex"), "Investigate the child task");
+  });
+
+  it("does not guess a fork title from timing when no history boundary is present", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      [
+        {
+          type: "session_meta",
+          timestamp: "2026-08-01T05:00:00.000Z",
+          payload: { type: "session_meta", id: "child", forked_from_id: "parent" },
+        },
+        {
+          ordinal: 1,
+          type: "session_meta",
+          timestamp: "2026-08-01T05:00:00.100Z",
+          payload: {
+            type: "session_meta",
+            id: "parent",
+            subagent_history_start_ordinal: 1,
+          },
+        },
+        {
+          ordinal: 2,
+          type: "event_msg",
+          timestamp: "2026-08-01T05:00:05.000Z",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Ambiguous prompt" }],
+          },
+        },
+      ]
+        .map((line) => JSON.stringify(line))
+        .join("\n"),
+    );
+
+    assert.isNull(await readTranscriptTitle(file, "codex"));
   });
 
   it("truncates titles without splitting a Unicode code point", async () => {

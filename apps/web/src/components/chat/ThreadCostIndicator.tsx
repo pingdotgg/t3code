@@ -2,6 +2,7 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 
 import { type ThreadCostSnapshot, useThreadCost } from "../../state/threadCost";
+import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 
 const STANDARD_USD = new Intl.NumberFormat("en-US", {
@@ -53,15 +54,16 @@ export function ThreadCostIndicator({ cost }: { readonly cost: ThreadCostSnapsho
         delay={150}
         closeDelay={0}
         render={
-          <button
-            type="button"
+          <Button
+            size="compact"
+            variant="ghost-muted"
             data-thread-cost-indicator="true"
-            className="h-7 cursor-default rounded-full px-1.5 text-[11px] text-secondary-label tabular-nums outline-none transition-colors hover:bg-muted/60 hover:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            className="cursor-default rounded-full px-1.5 text-[11px] text-secondary-label tabular-nums hover:bg-muted/60 hover:text-muted-foreground data-pressed:text-muted-foreground"
             aria-label={`Thread API cost ${formattedTotal}`}
             onPointerDown={(event) => event.preventDefault()}
           >
             {formattedTotal}
-          </button>
+          </Button>
         }
       />
       <PopoverPopup
