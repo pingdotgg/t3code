@@ -4409,7 +4409,11 @@ export class PreviewManager extends Context.Service<
   PreviewManager,
   {
     readonly setMainWindow: (window: BrowserWindow) => Effect.Effect<void, PreviewManagerError>;
-    readonly getBrowserSession: (scope?: string) => Effect.Effect<Session, PreviewManagerError>;
+    readonly getBrowserSession: (
+      scope?: string,
+      persistent?: boolean,
+      namespace?: BrowserSession.BrowserSessionPartitionNamespace,
+    ) => Effect.Effect<Session, PreviewManagerError>;
     readonly isBrowserPartition: (partition: string) => boolean;
     readonly createTab: (
       tabId: string,
@@ -4440,9 +4444,17 @@ export class PreviewManager extends Context.Service<
       audioMuted: boolean,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-    readonly clearCookies: () => Effect.Effect<void, PreviewManagerError>;
-    readonly clearCache: () => Effect.Effect<void, PreviewManagerError>;
-    readonly getBrowserPartition: (scope?: string) => Effect.Effect<string, PreviewManagerError>;
+    readonly clearCookies: (
+      partitions?: ReadonlyArray<string>,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly clearCache: (
+      partitions?: ReadonlyArray<string>,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly getBrowserPartition: (
+      scope?: string,
+      persistent?: boolean,
+      namespace?: BrowserSession.BrowserSessionPartitionNamespace,
+    ) => Effect.Effect<string, PreviewManagerError>;
     readonly setAnnotationTheme: (
       theme: DesktopPreviewAnnotationTheme,
     ) => Effect.Effect<void, PreviewManagerError>;
@@ -4514,15 +4526,17 @@ export const make = Effect.gen(function* PreviewManagerMake() {
 
   return PreviewManager.of({
     setMainWindow: operations.setMainWindow,
-    getBrowserSession: Effect.fn("PreviewManager.getBrowserSession")(function* (scope) {
-      return yield* browserSession
-        .getSession(scope)
-        .pipe(
-          Effect.mapError(
-            (cause) => new PreviewOperationError({ operation: "getBrowserSession", cause }),
-          ),
-        );
-    }),
+    getBrowserSession: Effect.fn("PreviewManager.getBrowserSession")(
+      function* (scope, persistent, namespace) {
+        return yield* browserSession
+          .getSession(scope, persistent, namespace)
+          .pipe(
+            Effect.mapError(
+              (cause) => new PreviewOperationError({ operation: "getBrowserSession", cause }),
+            ),
+          );
+      },
+    ),
     isBrowserPartition: browserSession.isPartition,
     createTab: operations.createTab,
     closeTab: operations.closeTab,
@@ -4539,31 +4553,33 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     setColorScheme: operations.setColorScheme,
     setAudioMuted: operations.setAudioMuted,
     openDevTools: operations.openDevTools,
-    clearCookies: Effect.fn("PreviewManager.clearCookies")(function* () {
+    clearCookies: Effect.fn("PreviewManager.clearCookies")(function* (partitions) {
       yield* browserSession
-        .clearCookies()
+        .clearCookies(partitions)
         .pipe(
           Effect.mapError(
             (cause) => new PreviewOperationError({ operation: "clearCookies", cause }),
           ),
         );
     }),
-    clearCache: Effect.fn("PreviewManager.clearCache")(function* () {
+    clearCache: Effect.fn("PreviewManager.clearCache")(function* (partitions) {
       yield* browserSession
-        .clearCache()
+        .clearCache(partitions)
         .pipe(
           Effect.mapError((cause) => new PreviewOperationError({ operation: "clearCache", cause })),
         );
     }),
-    getBrowserPartition: Effect.fn("PreviewManager.getBrowserPartition")(function* (scope) {
-      return yield* browserSession
-        .getPartition(scope)
-        .pipe(
-          Effect.mapError(
-            (cause) => new PreviewOperationError({ operation: "getBrowserPartition", cause }),
-          ),
-        );
-    }),
+    getBrowserPartition: Effect.fn("PreviewManager.getBrowserPartition")(
+      function* (scope, persistent, namespace) {
+        return yield* browserSession
+          .getPartition(scope, persistent, namespace)
+          .pipe(
+            Effect.mapError(
+              (cause) => new PreviewOperationError({ operation: "getBrowserPartition", cause }),
+            ),
+          );
+      },
+    ),
     setAnnotationTheme: operations.setAnnotationTheme,
     pickElement: operations.pickElement,
     cancelPickElement: operations.cancelPickElement,

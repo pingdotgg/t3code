@@ -3,6 +3,11 @@ import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime"
 import { isPreviewableUrl } from "@t3tools/shared/preview";
 import * as Schema from "effect/Schema";
 
+import {
+  browserDefaultOpenProfileId,
+  browserDefaultOpenViewport,
+  resolveBrowserDefaults,
+} from "~/browser/browserDefaults";
 import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { recordVisitForThread } from "~/browserHistoryStore";
 import { applyPreviewServerSnapshot, isPreviewSupportedInRuntime } from "~/previewStateStore";
@@ -82,9 +87,17 @@ export async function openTerminalLinkInPreview<E>(
   }
 
   if (choice === "open-in-preview") {
+    const defaults = await resolveBrowserDefaults();
     const result = await input.openPreview({
       environmentId: input.threadRef.environmentId,
-      input: { threadId: input.threadRef.threadId, url: input.url },
+      input: {
+        threadId: input.threadRef.threadId,
+        url: input.url,
+        // Same reason as `openUrlInPreview`: this path handles its own result
+        // mapping, so the configured defaults are applied explicitly.
+        viewport: browserDefaultOpenViewport(defaults),
+        profileId: browserDefaultOpenProfileId(defaults),
+      },
     });
     if (result._tag === "Failure") {
       if (isAtomCommandInterrupted(result)) {

@@ -1,4 +1,6 @@
 import {
+  BUILT_IN_BROWSER_PROFILES,
+  DEFAULT_BROWSER_PROFILE_ID,
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   EnvironmentId,
@@ -37,6 +39,15 @@ const mocks = vi.hoisted(() => ({
 
 const EMPTY_HISTORY: never[] = [];
 
+const STUB_BROWSER_DEFAULTS = {
+  viewport: FILL_PREVIEW_VIEWPORT,
+  zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
+  appearance: DEFAULT_PREVIEW_APPEARANCE,
+  autoShowFloatingPreview: true,
+  profiles: BUILT_IN_BROWSER_PROFILES,
+  profileId: DEFAULT_BROWSER_PROFILE_ID,
+};
+
 vi.mock("~/browserHistoryStore", () => ({
   recordVisitForThread: mocks.recordVisitForThread,
   setTitleForThreadUrl: vi.fn(),
@@ -53,19 +64,10 @@ vi.mock("~/state/session", () => ({
 // `useSettings` -> `state/server`, which would drag the whole settings and
 // connection graph into a test that only cares about the browser chrome.
 vi.mock("~/browser/browserDefaults", () => ({
-  useBrowserDefaults: () => ({
-    viewport: FILL_PREVIEW_VIEWPORT,
-    zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
-    appearance: DEFAULT_PREVIEW_APPEARANCE,
-    autoShowFloatingPreview: true,
-  }),
-  getBrowserDefaults: () => ({
-    viewport: FILL_PREVIEW_VIEWPORT,
-    zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
-    appearance: DEFAULT_PREVIEW_APPEARANCE,
-    autoShowFloatingPreview: true,
-  }),
+  useBrowserDefaults: () => STUB_BROWSER_DEFAULTS,
+  getBrowserDefaults: () => STUB_BROWSER_DEFAULTS,
   browserDefaultOpenViewport: () => FILL_PREVIEW_VIEWPORT,
+  browserDefaultOpenProfileId: () => DEFAULT_BROWSER_PROFILE_ID,
   browserDefaultTabState: () => ({
     zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
     colorScheme: DEFAULT_PREVIEW_APPEARANCE,
@@ -249,7 +251,7 @@ vi.mock("./AgentBrowserCursor", () => ({ AgentBrowserCursor: () => null }));
 vi.mock("~/browser/BrowserSurfaceSlot", () => ({ BrowserSurfaceSlot: () => null }));
 vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
 
-import { PreviewView } from "./PreviewView";
+import { PreviewView, previewProfileName } from "./PreviewView";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 
 const TEST_THREAD_REF = {
@@ -345,6 +347,12 @@ describe("PreviewView navigation", () => {
     mocks.showEmptyState = false;
     mocks.loading = false;
     mocks.recordVisitForThread.mockClear();
+  });
+
+  it("labels a tab whose saved profile was removed", () => {
+    expect(previewProfileName(BUILT_IN_BROWSER_PROFILES, "profile-removed")).toBe(
+      "Removed profile",
+    );
   });
 
   it("does not rerender while loading time passes", async () => {

@@ -58,6 +58,37 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
     }),
   );
 
+  it.effect("keeps the tab's profile across navigation and status reports", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+
+      const opened = yield* manager.open({ threadId, profileId: "work" });
+      expect(opened.profileId).toBe("work");
+
+      // `navigate` and `reportStatus` rebuild the snapshot field by field
+      // rather than spreading it, so a new field is dropped unless carried
+      // explicitly — which would silently move the tab to another profile's
+      // partition on its first navigation.
+      const navigated = yield* manager.navigate({
+        threadId,
+        tabId: opened.tabId,
+        url: "localhost:5173",
+      });
+      expect(navigated.profileId).toBe("work");
+
+      yield* manager.reportStatus({
+        threadId,
+        tabId: opened.tabId,
+        navStatus: { _tag: "Success", url: "http://localhost:5173/", title: "Dev" },
+        canGoBack: true,
+        canGoForward: false,
+      });
+      const listed = yield* manager.list({ threadId });
+      expect(listed.sessions.find((s) => s.tabId === opened.tabId)?.profileId).toBe("work");
+    }),
+  );
+
   it.effect("opens an Idle tab when no URL is supplied", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();
