@@ -828,7 +828,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql`
         SELECT
           COUNT(*) AS "eventCount",
-          COALESCE(SUM(length(payload_json)), 0) AS "payloadBytes"
+          COALESCE(SUM(octet_length(payload_json)), 0) AS "payloadBytes"
         FROM orchestration_events
         WHERE sequence > ${fromSequenceExclusive}
           AND sequence <= ${toSequenceInclusive}

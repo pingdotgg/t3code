@@ -948,16 +948,22 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             'replay-event-3', 'thread', 'thread-replay', 3, 'thread.activity-appended',
             '2026-03-01T00:00:02.000Z', NULL, NULL, NULL, 'provider',
             json_object('output', printf('%.*c', 3000, 'x')), '{}'
+          ),
+          (
+            'replay-event-4', 'thread', 'thread-replay', 4, 'thread.activity-appended',
+            '2026-03-01T00:00:03.000Z', NULL, NULL, NULL, 'provider',
+            json_object('output', '😀'), '{}'
           )
       `;
 
+      // Bytes, not code points: the 4-byte emoji row is {"output":"😀"}, 17 bytes.
       const stats = yield* snapshotQuery.getEventReplayStats({
         fromSequenceExclusive: 1,
-        toSequenceInclusive: 3,
+        toSequenceInclusive: 4,
       });
       assert.deepStrictEqual(stats, {
-        eventCount: 2,
-        payloadBytes: 5026,
+        eventCount: 3,
+        payloadBytes: 5043,
       });
     }),
   );
