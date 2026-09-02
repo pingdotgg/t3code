@@ -6,10 +6,12 @@ import {
   buildBulkTitleRegenerationContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
+  filterSidebarProjectGroupsByEnvironment,
   filterSidebarProjectScopeItems,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
+  resolveSidebarEnvironmentScopeId,
   reduceSidebarProjectScopeMenuState,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
@@ -25,6 +27,7 @@ import {
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
+  sidebarEntryMatchesScope,
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
@@ -55,6 +58,7 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+const remoteEnvironmentId = EnvironmentId.make("environment-remote");
 
 describe("animatePinnedLayoutChanges", () => {
   const baseArgs: Parameters<AnimateLayoutChanges>[0] = {
@@ -776,6 +780,81 @@ describe("filterSidebarProjectScopeItems", () => {
   it("returns matching projects in source order and supports no-match results", () => {
     expect(filter(null, "WORK")).toEqual([items[1]]);
     expect(filter(null, "missing")).toEqual([]);
+  });
+});
+
+describe("sidebar environment scope", () => {
+  it("only keeps a selected environment while multiple environments remain available", () => {
+    expect(
+      resolveSidebarEnvironmentScopeId({
+        selectedEnvironmentId: remoteEnvironmentId,
+        availableEnvironmentIds: new Set([localEnvironmentId, remoteEnvironmentId]),
+      }),
+    ).toBe(remoteEnvironmentId);
+    expect(
+      resolveSidebarEnvironmentScopeId({
+        selectedEnvironmentId: remoteEnvironmentId,
+        availableEnvironmentIds: new Set([localEnvironmentId]),
+      }),
+    ).toBeNull();
+  });
+
+  it("drops a selection that is no longer in the environment catalog", () => {
+    expect(
+      resolveSidebarEnvironmentScopeId({
+        selectedEnvironmentId: EnvironmentId.make("environment-missing"),
+        availableEnvironmentIds: new Set([localEnvironmentId, remoteEnvironmentId]),
+      }),
+    ).toBeNull();
+  });
+
+  it("composes environment and project scopes", () => {
+    const projectScope = new Set([`${remoteEnvironmentId}:project-a`]);
+    expect(
+      sidebarEntryMatchesScope({
+        environmentId: remoteEnvironmentId,
+        projectId: "project-a",
+        selectedEnvironmentId: remoteEnvironmentId,
+        scopedProjectKeys: projectScope,
+      }),
+    ).toBe(true);
+    expect(
+      sidebarEntryMatchesScope({
+        environmentId: localEnvironmentId,
+        projectId: "project-a",
+        selectedEnvironmentId: remoteEnvironmentId,
+        scopedProjectKeys: projectScope,
+      }),
+    ).toBe(false);
+    expect(
+      sidebarEntryMatchesScope({
+        environmentId: remoteEnvironmentId,
+        projectId: "project-b",
+        selectedEnvironmentId: remoteEnvironmentId,
+        scopedProjectKeys: projectScope,
+      }),
+    ).toBe(false);
+  });
+
+  it("only offers project groups present in the selected environment", () => {
+    const localOnly = {
+      key: "local",
+      memberProjectRefs: [{ environmentId: localEnvironmentId }],
+    };
+    const shared = {
+      key: "shared",
+      memberProjectRefs: [
+        { environmentId: localEnvironmentId },
+        { environmentId: remoteEnvironmentId },
+      ],
+    };
+    expect(
+      filterSidebarProjectGroupsByEnvironment([localOnly, shared], remoteEnvironmentId),
+    ).toEqual([shared]);
+    expect(filterSidebarProjectGroupsByEnvironment([localOnly, shared], null)).toEqual([
+      localOnly,
+      shared,
+    ]);
   });
 });
 

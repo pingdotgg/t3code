@@ -1,6 +1,6 @@
 import * as React from "react";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, EnvironmentId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   activeThreadAnchorTimestampMs,
@@ -995,5 +995,45 @@ export function sortScopedProjectsForSidebar<
       left.title.localeCompare(right.title) ||
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
+  );
+}
+
+export function resolveSidebarEnvironmentScopeId(input: {
+  selectedEnvironmentId: EnvironmentId | null;
+  availableEnvironmentIds: ReadonlySet<EnvironmentId>;
+}): EnvironmentId | null {
+  if (input.availableEnvironmentIds.size <= 1 || input.selectedEnvironmentId === null) {
+    return null;
+  }
+  return input.availableEnvironmentIds.has(input.selectedEnvironmentId)
+    ? input.selectedEnvironmentId
+    : null;
+}
+
+export function sidebarEntryMatchesScope(input: {
+  environmentId: EnvironmentId;
+  projectId: string;
+  selectedEnvironmentId: EnvironmentId | null;
+  scopedProjectKeys: ReadonlySet<string> | null;
+}): boolean {
+  if (input.selectedEnvironmentId !== null && input.environmentId !== input.selectedEnvironmentId) {
+    return false;
+  }
+  return (
+    input.scopedProjectKeys === null ||
+    input.scopedProjectKeys.has(`${input.environmentId}:${input.projectId}`)
+  );
+}
+
+export function filterSidebarProjectGroupsByEnvironment<
+  TGroup extends {
+    readonly memberProjectRefs: ReadonlyArray<{ readonly environmentId: EnvironmentId }>;
+  },
+>(groups: readonly TGroup[], selectedEnvironmentId: EnvironmentId | null): readonly TGroup[] {
+  if (selectedEnvironmentId === null) return groups;
+  return groups.filter((group) =>
+    group.memberProjectRefs.some(
+      (projectRef) => projectRef.environmentId === selectedEnvironmentId,
+    ),
   );
 }

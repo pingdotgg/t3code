@@ -21,6 +21,10 @@ On web and desktop, drag a pinned thread to change its position. On mobile, open
 and choose **Move up** or **Move down**. The order is stored by the server and appears on your
 other connected devices.
 
+Use the filter above the web or desktop thread list to focus on one project. When T3 Code knows
+about more than one environment, the same control opens **Project** and **Environment** submenus.
+Choose **All projects** or **All environments** to clear that part of the filter.
+
 If reordering is unavailable for one environment, update the T3 Code server running in that
 environment. Older servers can still pin and unpin threads, but do not understand synced ordering;
 their pinned threads keep the default newest-first order below the ones you have arranged.
