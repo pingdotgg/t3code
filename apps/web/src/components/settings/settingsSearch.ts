@@ -192,6 +192,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["installed cli versions newer available codex claude cursor grok opencode"],
   },
   {
+    id: "provider-rate-limit-auto-switch",
+    title: "Switch accounts on usage limit",
+    to: "/settings/general",
+    searchTerms: ["rate limit usage limit quota reset auto switch account claude codex fallback"],
+  },
+  {
     id: "background-activity",
     title: "Background activity",
     to: "/settings/general",

@@ -14,6 +14,18 @@ export function providerInstanceInitials(label: string): string {
     .join("");
 }
 
+/**
+ * Accounts with an accent colour paint the provider logo itself in that
+ * colour, so two Claude accounts read as a blue Claude and a green Claude
+ * instead of identical logos with a tiny corner badge. The inline style wins
+ * over the brand `fill-*` class and any `grayscale` dimming a caller applies.
+ */
+export function providerAccentIconStyle(
+  accentColor: string | undefined,
+): CSSProperties | undefined {
+  return accentColor ? { fill: accentColor, color: accentColor, filter: "none" } : undefined;
+}
+
 export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
   displayName: string;
@@ -43,7 +55,11 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       data-provider-accent-color={props.accentColor}
     >
       {Icon ? (
-        <Icon className={cn("size-5 shrink-0", props.iconClassName)} aria-hidden />
+        <Icon
+          className={cn("size-5 shrink-0", props.iconClassName)}
+          style={providerAccentIconStyle(props.accentColor)}
+          aria-hidden
+        />
       ) : (
         <span className={cn("text-[10px] font-semibold leading-none", props.iconClassName)}>
           {providerInstanceInitials(props.displayName)}
@@ -59,13 +75,10 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           aria-hidden
         />
       ) : null}
-      {props.showBadge ? (
+      {props.showBadge && !props.accentColor ? (
         <span
           className={cn(
-            "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-0.5 text-[8px] font-semibold leading-none shadow-sm",
-            props.accentColor
-              ? "bg-[var(--provider-accent)] text-white"
-              : "bg-card text-muted-foreground",
+            "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border bg-card px-0.5 text-[8px] font-semibold leading-none text-muted-foreground shadow-sm",
             props.badgeClassName,
           )}
           style={{ borderColor: indicatorBackground }}

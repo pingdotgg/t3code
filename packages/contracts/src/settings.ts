@@ -657,6 +657,15 @@ export const ServerSettings = Schema.Struct({
   ),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
+   * When a provider account hits its usage limit, move the thread to another
+   * configured account of the same provider that can continue the session
+   * (for Claude, any other Claude provider; for Codex, one sharing the same
+   * home). Off by default: the client then only suggests the switch.
+   */
+  autoSwitchProviderOnRateLimit: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  /**
    * Whether agents may drive the in-app preview browser. Turning this off
    * withholds the MCP credential, so the `t3-code` server (and with it every
    * `preview_*` tool) is never attached to a provider session, and the prompt
@@ -896,6 +905,7 @@ export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
+  autoSwitchProviderOnRateLimit: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),

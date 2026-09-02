@@ -189,6 +189,7 @@ import {
   ChevronDownIcon,
   GitBranchIcon,
   Minimize2Icon,
+  GaugeIcon,
   PaperclipIcon,
   WifiOffIcon,
 } from "lucide-react";
@@ -326,6 +327,11 @@ import {
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import {
+  formatProviderRateLimitReset,
+  providerLabel,
+  resolveProviderRateLimitSuggestion,
+} from "./chat/providerRateLimitBanner.logic";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import {
   hasAvailableClaudeCompactionProvider,
@@ -5146,6 +5152,98 @@ function ChatViewContent(props: ChatViewProps) {
     resumeCompactionPermanentlyDismissed,
     selectedProvider,
   ]);
+  // Usage-limit suggestion: the thread's account is out of usage and the
+  // server is not switching accounts on its own. Dismissal is per limit
+  // window, so a fresh limit later resurfaces the banner.
+  const [dismissedRateLimitKeys, setDismissedRateLimitKeys] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  const rateLimitSuggestion = useMemo(
+    () =>
+      activeThread
+        ? resolveProviderRateLimitSuggestion({
+            providers: providerStatuses,
+            instanceId: activeThread.session?.providerInstanceId ?? activeProviderInstanceId,
+            autoSwitchEnabled: settings.autoSwitchProviderOnRateLimit,
+            nowMs: Date.parse(`${nowMinute}:00.000Z`),
+          })
+        : null,
+    [
+      activeProviderInstanceId,
+      activeThread,
+      nowMinute,
+      providerStatuses,
+      settings.autoSwitchProviderOnRateLimit,
+    ],
+  );
+  const handleSwitchRateLimitedAccount = useCallback(() => {
+    if (!activeThread || !rateLimitSuggestion?.fallback) return;
+    const fallback = rateLimitSuggestion.fallback;
+    const currentModel = activeThread.modelSelection.model;
+    const resolvedModel =
+      resolveAppModelSelectionForInstance(
+        fallback.instanceId,
+        settings,
+        providerStatuses,
+        currentModel,
+      ) ?? currentModel;
+    const nextModelSelection: ModelSelection = {
+      instanceId: fallback.instanceId,
+      model: resolvedModel,
+    };
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    setComposerDraftModelSelection(threadRef, nextModelSelection, { explicit: true });
+    setStickyComposerModelSelection(nextModelSelection);
+    // A turn that just failed on the limited account is worth re-sending
+    // as-is; put it back in the composer when nothing else is drafted.
+    if (activeThread.session?.status === "error" && !composerHasUnsentContent) {
+      const lastUserMessage = activeThread.messages
+        .toReversed()
+        .find((message) => message.role === "user" && message.text.trim().length > 0);
+      if (lastUserMessage) {
+        setComposerDraftPrompt(threadRef, lastUserMessage.text);
+      }
+    }
+    setDismissedRateLimitKeys((keys) => new Set(keys).add(rateLimitSuggestion.key));
+    scheduleComposerFocus();
+  }, [
+    activeThread,
+    composerHasUnsentContent,
+    providerStatuses,
+    rateLimitSuggestion,
+    scheduleComposerFocus,
+    setComposerDraftModelSelection,
+    setComposerDraftPrompt,
+    setStickyComposerModelSelection,
+    settings,
+  ]);
+  const rateLimitBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!rateLimitSuggestion || dismissedRateLimitKeys.has(rateLimitSuggestion.key)) {
+      return null;
+    }
+    const reset = formatProviderRateLimitReset(
+      rateLimitSuggestion.limited.rateLimit?.resetsAt,
+      Date.parse(`${nowMinute}:00.000Z`),
+    );
+    const fallback = rateLimitSuggestion.fallback;
+    return {
+      id: `provider-rate-limit:${rateLimitSuggestion.key}`,
+      variant: "warning",
+      icon: <GaugeIcon />,
+      title: `${providerLabel(rateLimitSuggestion.limited)} hit its usage limit`,
+      description: fallback
+        ? `${reset ? `${reset[0]!.toUpperCase()}${reset.slice(1)}. ` : ""}${providerLabel(fallback)} can continue this thread.`
+        : (reset ?? undefined),
+      actions: fallback ? (
+        <Button size="xs" variant="ghost" onClick={handleSwitchRateLimitedAccount}>
+          Switch to {providerLabel(fallback)}
+        </Button>
+      ) : undefined,
+      dismissLabel: "Dismiss usage limit notice",
+      onDismiss: () =>
+        setDismissedRateLimitKeys((keys) => new Set(keys).add(rateLimitSuggestion.key)),
+    };
+  }, [dismissedRateLimitKeys, handleSwitchRateLimitedAccount, nowMinute, rateLimitSuggestion]);
   const handleRestoreThreadBranch = useCallback(() => {
     if (gitStatusQuery.data?.hasWorkingTreeChanges) {
       setBranchRestoreConfirmOpen(true);
@@ -5158,12 +5256,14 @@ function ChatViewContent(props: ChatViewProps) {
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
     const resumeCompactionItems =
       resumeCompactionBannerItem === null ? [] : [resumeCompactionBannerItem];
+    const rateLimitItems = rateLimitBannerItem === null ? [] : [rateLimitBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...systemComposerBannerItems,
         ...backgroundLivenessItems,
+        ...rateLimitItems,
         ...resumeCompactionItems,
         ...wokeThreadItems,
         ...parkedThreadItems,
@@ -5172,6 +5272,7 @@ function ChatViewContent(props: ChatViewProps) {
     return [
       ...systemComposerBannerItems,
       ...backgroundLivenessItems,
+      ...rateLimitItems,
       ...resumeCompactionItems,
       ...wokeThreadItems,
       {
@@ -5221,6 +5322,7 @@ function ChatViewContent(props: ChatViewProps) {
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
     parkedThreadBannerItem,
+    rateLimitBannerItem,
     resumeCompactionBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,

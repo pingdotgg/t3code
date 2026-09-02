@@ -620,14 +620,27 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+        // A persisted binding is reusable when it belongs to this instance or
+        // to a sibling instance that can continue the same provider session
+        // (same driver, same continuation key).
+        const persistedBindingReusable =
+          persistedBinding?.providerInstanceId !== undefined &&
+          (persistedBinding.providerInstanceId === resolvedInstanceId ||
+            (yield* registry.getInstanceInfo(persistedBinding.providerInstanceId).pipe(
+              Effect.map(
+                (previousInfo) =>
+                  previousInfo.driverKind === instanceInfo.driverKind &&
+                  previousInfo.continuationIdentity.continuationKey ===
+                    instanceInfo.continuationIdentity.continuationKey,
+              ),
+              Effect.orElseSucceed(() => false),
+            )));
         const effectiveResumeCursor =
           input.resumeCursor ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? persistedBinding.resumeCursor
-            : undefined);
+          (persistedBindingReusable ? persistedBinding.resumeCursor : undefined);
         const effectiveCwd =
           input.cwd ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
+          (persistedBindingReusable
             ? readPersistedCwd(persistedBinding.runtimePayload)
             : undefined);
         yield* Effect.annotateCurrentSpan({
@@ -635,16 +648,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.resume_cursor.source":
             input.resumeCursor !== undefined
               ? "request"
-              : effectiveResumeCursor !== undefined &&
-                  persistedBinding?.providerInstanceId === resolvedInstanceId
+              : effectiveResumeCursor !== undefined && persistedBindingReusable
                 ? "persisted"
                 : "none",
           "provider.resume_cursor.present": effectiveResumeCursor !== undefined,
           "provider.cwd.source":
             input.cwd !== undefined
               ? "request"
-              : effectiveCwd !== undefined &&
-                  persistedBinding?.providerInstanceId === resolvedInstanceId
+              : effectiveCwd !== undefined && persistedBindingReusable
                 ? "persisted"
                 : "none",
           "provider.cwd.effective": effectiveCwd ?? "",
