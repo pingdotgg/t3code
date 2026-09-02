@@ -109,6 +109,11 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
   const offerOutgoing = Effect.fn("offerOutgoing")(function* (
     message: RpcMessage.FromClientEncoded | RpcMessage.FromServerEncoded,
   ) {
+    // RpcClient emits `@effect/rpc/Interrupt` when a pending request's fiber is interrupted.
+    // ACP has no such method; agents log it as an error and cannot act on it, so drop it.
+    if (message._tag === "Interrupt") {
+      return;
+    }
     yield* logProtocol({
       direction: "outgoing",
       stage: "decoded",
@@ -521,17 +526,24 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     supportsSpanPropagation: true,
   });
 
+  // JSON-RPC notifications carry no `id`. The generic Request encoder emits `id: ""` plus
+  // `headers`, which real agents (Grok CLI) parse as a malformed request and silently drop.
+  // That made `session/cancel` a no-op against Grok while the lenient mock agent accepted it.
   const sendNotification = Effect.fn("sendNotification")(function* (
     method: string,
     payload: unknown,
   ) {
-    yield* offerOutgoing({
-      _tag: "Request",
-      id: "",
-      tag: method,
-      payload,
-      headers: [],
+    yield* logProtocol({
+      direction: "outgoing",
+      stage: "decoded",
+      payload: { _tag: "Notification", tag: method, payload },
     });
+    const encoded = yield* Effect.try({
+      try: () => `${JSON.stringify({ jsonrpc: "2.0", method, params: payload })}\n`,
+      catch: (cause) => AcpError.AcpProtocolParseError.fromEncodingError(method, undefined, cause),
+    });
+    yield* logProtocol({ direction: "outgoing", stage: "raw", payload: encoded });
+    yield* Queue.offer(outgoing, encoded);
   });
 
   const sendRequest = Effect.fn("sendRequest")(function* (method: string, payload: unknown) {

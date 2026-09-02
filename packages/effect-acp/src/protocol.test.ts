@@ -229,25 +229,24 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
 
       yield* transport.notify("session/cancel", { sessionId: "session-1" });
 
+      // A notification must not carry `id` or `headers`. Grok CLI drops frames that do.
       assert.deepEqual(events, [
         {
           direction: "outgoing",
           stage: "decoded",
           payload: {
-            _tag: "Request",
-            id: "",
+            _tag: "Notification",
             tag: "session/cancel",
             payload: {
               sessionId: "session-1",
             },
-            headers: [],
           },
         },
         {
           direction: "outgoing",
           stage: "raw",
           payload:
-            '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"},"id":"","headers":[]}\n',
+            '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"}}\n',
         },
       ]);
     }),
