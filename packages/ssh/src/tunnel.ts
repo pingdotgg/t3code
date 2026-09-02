@@ -1411,14 +1411,16 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const cleanupTunnelKey = Effect.fn("ssh/tunnel.cleanupTunnelKey")(function* (
     key: string,
     fallbackTarget: DesktopSshEnvironmentTarget,
+    stopFallbackTarget = false,
   ) {
     const entry = tunnels.get(key) ?? null;
-    const cleanupTarget = entry?.target ?? resolvedTargetsByTunnelKey.get(key) ?? fallbackTarget;
+    const trackedTarget = entry?.target ?? resolvedTargetsByTunnelKey.get(key);
+    const cleanupTarget = trackedTarget ?? fallbackTarget;
     if (entry !== null) {
       yield* closeTunnelEntry(entry);
     }
     yield* cancelPendingTunnelEntry(key, cleanupTarget);
-    if (entry === null) {
+    if (entry === null && (trackedTarget !== undefined || stopFallbackTarget)) {
       yield* runWithSshAuth({
         key,
         target: cleanupTarget,
@@ -1479,6 +1481,23 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     }).pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit) ? Effect.void : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),
+      ),
+      Effect.tapError((cause) =>
+        runWithSshAuth({
+          key: input.key,
+          target: input.resolvedTarget,
+          operation: (authOptions) => stopRemoteServer(input.resolvedTarget, authOptions),
+        }).pipe(
+          Effect.tapError((cleanupCause) =>
+            Effect.logWarning("ssh.environment.remoteServer.cleanup.failed", {
+              ...sshTargetLogFields(input.resolvedTarget),
+              key: input.key,
+              cause,
+              cleanupCause,
+            }),
+          ),
+          Effect.ignore,
+        ),
       ),
     );
     tunnels.set(input.key, tunnelEntry);
@@ -1675,7 +1694,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       Effect.gen(function* () {
         yield* Effect.forEach(
           conflictingKeys,
-          (conflictingKey) => cleanupTunnelKey(conflictingKey, resolvedTarget),
+          (conflictingKey) => {
+            const isStillMapped =
+              tunnelKeysByTarget.get(requestedKey) === conflictingKey ||
+              tunnelKeysByTarget.get(resolvedKey) === conflictingKey;
+            return isStillMapped ? cleanupTunnelKey(conflictingKey, resolvedTarget) : Effect.void;
+          },
           { discard: true },
         );
         rememberTunnelTargetKeys(key, requestedKey, resolvedKey, resolvedTarget);
@@ -1746,7 +1770,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
             hasTunnel: entry !== null,
             hasPendingTunnel: pendingTunnelEntries.has(existingKey),
           });
-          yield* cleanupTunnelKey(existingKey, target);
+          yield* cleanupTunnelKey(existingKey, target, true);
           yield* Effect.logInfo("ssh.environment.disconnect.succeeded", {
             ...sshTargetLogFields(cleanupTarget),
             key: existingKey,

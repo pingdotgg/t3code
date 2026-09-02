@@ -524,7 +524,7 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
-  it.effect("disconnects the resolved target after tunnel creation fails", () => {
+  it.effect("stops the resolved target after tunnel creation fails", () => {
     const postLaunchCommands: Array<ReadonlyArray<string>> = [];
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.sync(() => {
@@ -566,14 +566,17 @@ describe("ssh tunnel scripts", () => {
       const manager = yield* SshEnvironmentManager;
       const ensureExit = yield* Effect.exit(manager.ensureEnvironment(target));
       assert.isTrue(Exit.isFailure(ensureExit));
-      assert.equal(postLaunchCommands.length, 1);
+      assert.equal(postLaunchCommands.length, 2);
+      const failedLaunchStopArgs = postLaunchCommands[1] ?? [];
+      assert.include(failedLaunchStopArgs, "2200");
+      assert.include(failedLaunchStopArgs, "resolved-user@devbox");
 
       yield* manager.disconnectEnvironment(target);
 
-      assert.equal(postLaunchCommands.length, 2);
-      const stopArgs = postLaunchCommands[1] ?? [];
-      assert.include(stopArgs, "2200");
-      assert.include(stopArgs, "resolved-user@devbox");
+      assert.equal(postLaunchCommands.length, 3);
+      const disconnectStopArgs = postLaunchCommands[2] ?? [];
+      assert.include(disconnectStopArgs, "2200");
+      assert.include(disconnectStopArgs, "resolved-user@devbox");
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
@@ -849,6 +852,93 @@ describe("ssh tunnel scripts", () => {
       assert.equal(tunnelKillCount, 1);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
+
+  it.effect("does not stop the selected target for a stale conflicting key", () =>
+    Effect.gen(function* () {
+      const stopStarted = yield* Deferred.make<void>();
+      const releaseStop = yield* Deferred.make<void>();
+      const conflictingResolveStarted = yield* Deferred.make<void>();
+      let resolveCount = 0;
+      let stopCount = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const args = commandArgs(command);
+          if (args.includes("-G")) {
+            resolveCount += 1;
+            const hostname = resolveCount === 1 ? "old.example.com" : "new.example.com";
+            if (resolveCount === 3) {
+              yield* Deferred.succeed(conflictingResolveStarted, undefined).pipe(Effect.ignore);
+            }
+            return makeSuccessfulProcess(
+              [`hostname ${hostname}`, "user julius", "port 2222", ""].join("\n"),
+            );
+          }
+          if (args.includes("-N")) {
+            return makeRunningProcess(() => undefined);
+          }
+          if (args.includes("sh") && args.includes("--")) {
+            return makeSuccessfulProcess('{"remotePort":3773}\n');
+          }
+          if (args.includes("sh")) {
+            stopCount += 1;
+            yield* Deferred.succeed(stopStarted, undefined).pipe(Effect.ignore);
+            const process = makeSuccessfulProcess('{"stopped":true}\n');
+            return {
+              ...process,
+              exitCode: Deferred.await(releaseStop).pipe(
+                Effect.as(ChildProcessSpawner.ExitCode(0)),
+              ),
+            };
+          }
+          return makeSuccessfulProcess("\n");
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshPasswordPrompt.disabledLayer,
+        SshEnvironmentManager.layer(),
+      );
+      const requestedTarget = {
+        alias: "devbox",
+        hostname: "devbox",
+        username: null,
+        port: null,
+      } as const;
+
+      yield* Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        const oldEnvironment = yield* manager.ensureEnvironment(requestedTarget);
+        yield* manager.ensureEnvironment({
+          alias: "devbox",
+          hostname: "new.example.com",
+          username: "julius",
+          port: 2222,
+        });
+
+        const disconnectFiber = yield* Effect.forkChild(
+          manager.disconnectEnvironment(requestedTarget),
+        );
+        yield* Deferred.await(stopStarted);
+        const ensureFiber = yield* Effect.forkChild(
+          manager.ensureEnvironment(oldEnvironment.target),
+        );
+        yield* Deferred.await(conflictingResolveStarted);
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseStop, undefined);
+
+        yield* Fiber.join(disconnectFiber);
+        yield* Fiber.join(ensureFiber);
+        assert.equal(stopCount, 1);
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(releaseStop, undefined).pipe(Effect.ignore)),
+        Effect.provide(layer),
+        Effect.scoped,
+      );
+    }),
+  );
 
   it.effect("does not block unrelated hosts behind an in-flight ensure", () =>
     Effect.gen(function* () {
