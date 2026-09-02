@@ -197,7 +197,7 @@ function WorkspaceImagePreview(props: {
   );
 }
 
-const isPdfPreviewFile = (path: string): boolean => /\.pdf$/i.test(path);
+const isPdfPreviewFile = (path: string): boolean => /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 
 /**
  * Renders an HTML or PDF file in place from its signed asset URL. HTML runs in
