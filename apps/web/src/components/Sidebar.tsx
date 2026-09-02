@@ -4073,7 +4073,7 @@ export default function Sidebar() {
                             aria-expanded={isExpanded}
                             aria-label={`${isExpanded ? "Collapse" : "Expand"} ${project.displayName} project section, ${projectThreads.length} ${projectThreads.length === 1 ? "thread" : "threads"}`}
                             onClick={() => toggleProjectSection(project.projectKey)}
-                            className="flex w-full cursor-pointer items-center gap-2 px-[var(--sidebar-row-content-inset)] text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            className="mb-1 flex w-full cursor-pointer items-center gap-2 rounded-md px-[var(--sidebar-row-content-inset)] text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
                             <ProjectFavicon
                               environmentId={project.environmentId}
