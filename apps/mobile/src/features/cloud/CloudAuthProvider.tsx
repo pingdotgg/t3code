@@ -1,6 +1,6 @@
 import { ClerkProvider, useAuth } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
-import { ManagedRelay, setManagedRelaySession } from "@t3tools/client-runtime/relay";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import {
   reportAtomCommandResult,
   settleAsyncResult,
@@ -11,7 +11,6 @@ import * as Effect from "effect/Effect";
 import { type ReactNode, useEffect, useRef } from "react";
 
 import { runtime } from "../../lib/runtime";
-import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   getComposerCloudAccountId,
@@ -23,6 +22,12 @@ import {
   unregisterAgentAwarenessDeviceForCurrentUser,
 } from "../agent-awareness/remoteRegistration";
 import { clearConnectOnboardingRequest, requestConnectOnboarding } from "./connectOnboarding";
+import {
+  holdBackgroundManagedRelayAuth,
+  invalidateBackgroundManagedRelayAuth,
+  refreshBackgroundManagedRelayAuth,
+} from "./backgroundManagedRelayAuth";
+import { managedRelaySessionOwnership } from "./managedRelaySessionOwnership";
 import { resolveCloudPublicConfig, resolveRelayClerkTokenOptions } from "./publicConfig";
 import { removeCloudEnvironments } from "./cloud-drafts";
 
@@ -34,9 +39,15 @@ function resetManagedRelayTokenCache() {
   );
 }
 
-export function deactivateCloudRelayAccount(): void {
+export function deactivateCloudRelayAccount(
+  options: { readonly refreshBackground?: boolean } = {},
+): void {
   setAgentAwarenessRelayTokenProvider(null);
-  setManagedRelaySession(appAtomRegistry, null);
+  invalidateBackgroundManagedRelayAuth();
+  managedRelaySessionOwnership.clear();
+  if (options.refreshBackground !== false) {
+    void refreshBackgroundManagedRelayAuth();
+  }
 }
 
 export function activateCloudRelayAccount(
@@ -44,10 +55,27 @@ export function activateCloudRelayAccount(
   tokenProvider: () => Promise<string | null>,
 ): void {
   setAgentAwarenessRelayTokenProvider(tokenProvider, accountId);
-  setManagedRelaySession(appAtomRegistry, {
+  managedRelaySessionOwnership.setOwner("ui", {
     accountId,
     readClerkToken: tokenProvider,
   });
+  void refreshBackgroundManagedRelayAuth();
+}
+
+export function releaseCloudRelayUiAccount(
+  options: { readonly refreshAfter?: Promise<void> | null } = {},
+): void {
+  releaseAgentAwarenessRelayTokenProvider();
+  managedRelaySessionOwnership.releaseOwner("ui");
+  const refreshBackground = () => {
+    void refreshBackgroundManagedRelayAuth();
+  };
+  const refreshAfter = options.refreshAfter ?? null;
+  if (refreshAfter === null) {
+    refreshBackground();
+    return;
+  }
+  void refreshAfter.then(refreshBackground, refreshBackground);
 }
 
 function CloudAuthBridge(props: { readonly children: ReactNode }) {
@@ -125,7 +153,11 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
       previousTokenProviderRef.current = null;
       deactivateCloudRelayAccount();
       if (previousObservedAccount !== null) {
-        void settlePromise(() => queueAccountCleanup(previous)).then((result) => {
+        const cleanup = queueAccountCleanup(previous);
+        // A sign-in that follows before this cleanup settles must not let a
+        // background retry publish the next account's relay session early.
+        holdBackgroundManagedRelayAuth(cleanup);
+        void settlePromise(() => cleanup).then((result) => {
           reportAtomCommandResult(result, { label: "cloud account cleanup" });
         });
       }
@@ -157,6 +189,11 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
         activateSession();
       })();
       accountTransitionRef.current = activation;
+      // Refresh requests already wait for the transition, but a scheduled
+      // retry or a cold headless start does not. Hold every background
+      // bootstrap until the previous account's cleanup and this activation
+      // settle; the refresh issued by activateSession resumes them.
+      holdBackgroundManagedRelayAuth(activation);
       void settlePromise(() => activation).then((result) => {
         reportAtomCommandResult(result, { label: "cloud account activation" });
       });
@@ -167,7 +204,10 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
       previousObservedAccount !== userId
     ) {
       previousTokenProviderRef.current = null;
-      deactivateCloudRelayAccount();
+      // Clerk already exposes the new account here. Keep background auth
+      // invalidated until the previous account's cleanup has completed;
+      // activateCloudRelayAccount refreshes it after the transition settles.
+      deactivateCloudRelayAccount({ refreshBackground: false });
       activateAfterTransition(queueAccountCleanup(previous));
     } else {
       // A failed disk write can be retried. The persisted account check above
@@ -186,8 +226,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
       // Unmounting is not a sign-out: the user is usually still signed in, so
       // detach the provider without ending lock-screen activities or wiping the
       // persisted registration (a remount reuses both).
-      releaseAgentAwarenessRelayTokenProvider();
-      setManagedRelaySession(appAtomRegistry, null);
+      releaseCloudRelayUiAccount({ refreshAfter: accountTransitionRef.current });
     },
     [],
   );

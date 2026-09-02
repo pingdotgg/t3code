@@ -1,4 +1,8 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ScopedThreadRef,
+  type ScopedThreadRef as ScopedThreadRefType,
+} from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -17,6 +21,15 @@ const CONNECTIONS_KEY = "t3code.connections";
 const AGENT_AWARENESS_DEVICE_ID_KEY = "t3code.agent-awareness.device-id";
 const AGENT_AWARENESS_REGISTRATION_KEY = "t3code.agent-awareness.registration";
 const RECENT_THREAD_SHORTCUTS_KEY = "t3code.recent-thread-shortcuts";
+const BACKGROUND_CONNECTION_RETAINED_THREAD_KEY = "t3code.background-connection.retained-thread";
+
+const BackgroundConnectionRetainedThread = Schema.fromJsonString(ScopedThreadRef);
+const decodeBackgroundConnectionRetainedThread = Schema.decodeUnknownEffect(
+  BackgroundConnectionRetainedThread,
+);
+const encodeBackgroundConnectionRetainedThread = Schema.encodeEffect(
+  BackgroundConnectionRetainedThread,
+);
 
 export class MobileStorageDecodeError extends Schema.TaggedErrorClass<MobileStorageDecodeError>()(
   "MobileStorageDecodeError",
@@ -113,6 +126,20 @@ export class MobileStorage extends Context.Service<
     ) => Effect.Effect<
       void,
       MobileSecureStorage.MobileSecureStorageError | MobileStorageEncodeError
+    >;
+    readonly loadBackgroundConnectionRetainedThread: Effect.Effect<
+      ScopedThreadRefType | null,
+      MobileSecureStorage.MobileSecureStorageError
+    >;
+    readonly saveBackgroundConnectionRetainedThread: (
+      thread: ScopedThreadRefType,
+    ) => Effect.Effect<
+      void,
+      MobileSecureStorage.MobileSecureStorageError | MobileStorageEncodeError
+    >;
+    readonly clearBackgroundConnectionRetainedThread: Effect.Effect<
+      void,
+      MobileSecureStorage.MobileSecureStorageError
     >;
   }
 >()("@t3tools/mobile/persistence/MobileStorage") {}
@@ -245,6 +272,44 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
     ),
   );
 
+  const loadBackgroundConnectionRetainedThread = secureStorage
+    .getItem(BACKGROUND_CONNECTION_RETAINED_THREAD_KEY)
+    .pipe(
+      Effect.flatMap((encoded) => {
+        if (encoded === null || encoded.trim().length === 0) {
+          return Effect.succeed(null);
+        }
+        return decodeBackgroundConnectionRetainedThread(encoded).pipe(
+          Effect.map((thread): ScopedThreadRefType | null => thread),
+          Effect.catch((cause) =>
+            Effect.logWarning("Ignored an invalid retained background thread.").pipe(
+              Effect.annotateLogs({
+                storageKey: BACKGROUND_CONNECTION_RETAINED_THREAD_KEY,
+                cause,
+              }),
+              Effect.andThen(secureStorage.removeItem(BACKGROUND_CONNECTION_RETAINED_THREAD_KEY)),
+              Effect.as(null),
+            ),
+          ),
+        );
+      }),
+    );
+
+  const saveBackgroundConnectionRetainedThread = Effect.fn(
+    "MobileStorage.saveBackgroundConnectionRetainedThread",
+  )(function* (thread: ScopedThreadRefType) {
+    const encoded = yield* encodeBackgroundConnectionRetainedThread(thread).pipe(
+      Effect.mapError(
+        (cause) =>
+          new MobileStorageEncodeError({
+            key: BACKGROUND_CONNECTION_RETAINED_THREAD_KEY,
+            cause,
+          }),
+      ),
+    );
+    yield* secureStorage.setItem(BACKGROUND_CONNECTION_RETAINED_THREAD_KEY, encoded);
+  });
+
   return MobileStorage.of({
     loadSavedConnections,
     saveConnection,
@@ -260,6 +325,11 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
     ),
     loadRecentThreadShortcuts,
     saveRecentThreadShortcuts: (threads) => writeJson(RECENT_THREAD_SHORTCUTS_KEY, { threads }),
+    loadBackgroundConnectionRetainedThread,
+    saveBackgroundConnectionRetainedThread,
+    clearBackgroundConnectionRetainedThread: secureStorage.removeItem(
+      BACKGROUND_CONNECTION_RETAINED_THREAD_KEY,
+    ),
   });
 });
 

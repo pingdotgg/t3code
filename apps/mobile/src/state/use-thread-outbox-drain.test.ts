@@ -6,6 +6,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { AtomRegistry } from "effect/unstable/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { PreparedTurnAttachments } from "../lib/attachmentUpload";
@@ -14,6 +15,7 @@ const harness = vi.hoisted(() => ({
   manager: null as unknown as ReturnType<
     typeof import("./thread-outbox-manager").createThreadOutboxManager
   >,
+  ensureThreadOutboxLoaded: vi.fn(),
   removePersistedFile: vi.fn(async () => undefined),
   removeOutboxMessage: vi.fn(async (_message: QueuedThreadMessage) => undefined),
   prepareTurnAttachments: vi.fn<typeof import("../lib/attachmentUpload").prepareTurnAttachments>(),
@@ -74,24 +76,34 @@ vi.mock("../lib/attachmentUpload", () => ({
   prepareTurnAttachments: harness.prepareTurnAttachments,
 }));
 
-vi.mock("./entities", () => ({
-  useProjects: () => [],
-  useServerConfigs: () => new Map(),
-  useThreadShells: () => [],
-}));
+vi.mock("./presentation", async () => {
+  const { Atom } = await import("effect/unstable/reactivity");
+  return { environmentPresentations: { presentationsAtom: Atom.make(new Map()) } };
+});
 
-vi.mock("./threads", () => ({
-  threadEnvironment: {},
-}));
+vi.mock("./projects", async () => {
+  const { Atom } = await import("effect/unstable/reactivity");
+  return { environmentProjects: { projectsAtom: Atom.make([]) } };
+});
 
-vi.mock("./use-atom-command", () => ({
-  useAtomCommand: () => async () => undefined,
-}));
+vi.mock("./server", async () => {
+  const { Atom } = await import("effect/unstable/reactivity");
+  return { environmentServerConfigsAtom: Atom.make(new Map()) };
+});
+
+vi.mock("./threads", async () => {
+  const { Atom } = await import("effect/unstable/reactivity");
+  return {
+    environmentThreadShells: { threadShellsAtom: Atom.make([]) },
+    threadEnvironment: {},
+  };
+});
 
 vi.mock("./use-thread-outbox", async () => {
   const { Atom } = await import("effect/unstable/reactivity");
   return {
     editingQueuedMessageIdsAtom: Atom.make<Record<string, boolean>>({}).pipe(Atom.keepAlive),
+    threadOutboxShellStatusesAtom: Atom.make(new Map()),
     useThreadOutboxMessages: () => ({}),
     useThreadOutboxShellStatuses: () => new Map(),
   };
@@ -117,7 +129,7 @@ vi.mock("./thread-outbox", async () => {
   return {
     threadOutboxManager: manager,
     flushThreadOutbox: async () => undefined,
-    ensureThreadOutboxLoaded: () => undefined,
+    ensureThreadOutboxLoaded: harness.ensureThreadOutboxLoaded,
     confirmThreadOutboxMessageQueued: (message: never) => manager.confirmQueued(message),
     updateThreadOutboxMessage: (message: never, expectedRevision?: number) =>
       manager.update(message, expectedRevision),
@@ -130,6 +142,7 @@ import type { QueuedThreadMessage } from "./thread-outbox-model";
 import * as composerDrafts from "./use-composer-drafts";
 import { editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import {
+  acquireThreadOutboxDrain,
   completeQueuedMessageDelivery,
   prepareQueuedMessageAttachments,
   recoverEditedCreationAfterDelivery,
@@ -200,6 +213,41 @@ afterEach(() => {
   harness.removeOutboxMessage.mockClear();
   harness.prepareTurnAttachments.mockReset();
   harness.setPendingConnectionError.mockClear();
+  harness.ensureThreadOutboxLoaded.mockClear();
+});
+
+describe("thread outbox drain ownership", () => {
+  it("shares one dispatcher until the final owner releases", async () => {
+    const registry = AtomRegistry.make();
+    const subscribe = vi.spyOn(registry, "subscribe");
+
+    const releaseUi = acquireThreadOutboxDrain(registry);
+    const subscriptionsPerDispatcher = subscribe.mock.calls.length;
+    expect(subscriptionsPerDispatcher).toBeGreaterThan(0);
+    expect(harness.ensureThreadOutboxLoaded).toHaveBeenCalledTimes(1);
+
+    const releaseBackground = acquireThreadOutboxDrain(registry);
+    expect(subscribe).toHaveBeenCalledTimes(subscriptionsPerDispatcher);
+    expect(harness.ensureThreadOutboxLoaded).toHaveBeenCalledTimes(1);
+
+    releaseUi();
+    releaseUi();
+    const releaseReplacementUi = acquireThreadOutboxDrain(registry);
+    expect(subscribe).toHaveBeenCalledTimes(subscriptionsPerDispatcher);
+    expect(harness.ensureThreadOutboxLoaded).toHaveBeenCalledTimes(1);
+
+    releaseBackground();
+    expect(harness.ensureThreadOutboxLoaded).toHaveBeenCalledTimes(1);
+    releaseReplacementUi();
+
+    const releaseNextOwner = acquireThreadOutboxDrain(registry);
+    expect(subscribe).toHaveBeenCalledTimes(subscriptionsPerDispatcher * 2);
+    expect(harness.ensureThreadOutboxLoaded).toHaveBeenCalledTimes(2);
+    releaseNextOwner();
+
+    await Promise.resolve();
+    registry.dispose();
+  });
 });
 
 describe("thread outbox attachment preparation", () => {
