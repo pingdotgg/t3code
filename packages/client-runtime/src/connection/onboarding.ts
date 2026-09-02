@@ -323,14 +323,13 @@ export const updateSshEnvironmentVariables = Effect.fn(
         Effect.ignore,
       ),
     ),
-    Effect.catchTag(
-      "EnvironmentNotRegisteredError",
-      () =>
+    Effect.catchTags({
+      EnvironmentNotRegisteredError: () =>
         new ConnectionBlockedError({
           reason: "configuration",
           detail: "The SSH environment was removed before the update could be saved.",
         }),
-    ),
+    }),
   );
 });
 
