@@ -4,6 +4,8 @@ import type {
   DesktopUpdateState,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -12,7 +14,6 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
-import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import {
@@ -25,31 +26,43 @@ const { logInfo, logError } = DesktopObservability.makeComponentLogger("desktop-
 
 /** Pause before retrying an action the updater refused for a held reservation. */
 const ACTION_RETRY_DELAY = Duration.millis(250);
+const PREPARED_UPDATE_TTL = Duration.minutes(5);
+const MAX_EARLY_CANCELLATIONS = 32;
 
 /**
- * Server-triggered desktop updates. Forks two fibers into the surrounding
- * scope: one mirrors every updater state change to the attached backend (so
- * the server always knows the desktop's update state), one consumes
- * requestDesktopUpdate control messages and drives check -> download ->
- * quit-and-install with no local confirmation. The remote click that caused
- * the request is the consent.
+ * Server-triggered desktop updates. Mirrors updater state, prepares downloads,
+ * cancels abandoned preparations, and commits installs after the remote client
+ * confirms that it received the preparation token.
  */
 export const listen: Effect.Effect<
   void,
   never,
-  | DesktopUpdates.DesktopUpdates
-  | DesktopTelemetryPublisher.DesktopTelemetryPublisher
-  | DesktopState.DesktopState
-  | Scope.Scope
+  DesktopUpdates.DesktopUpdates | DesktopTelemetryPublisher.DesktopTelemetryPublisher | Scope.Scope
 > = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
-  const desktopState = yield* DesktopState.DesktopState;
   const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
   const activeRequestIdRef = yield* Ref.make(Option.none<string>());
+  const requestControlRef = yield* Ref.make<{
+    readonly active: Option.Option<{
+      readonly requestId: string;
+      readonly signal: Deferred.Deferred<void>;
+    }>;
+    readonly cancelledBeforeStart: ReadonlyArray<string>;
+  }>({ active: Option.none(), cancelledBeforeStart: [] });
+  const preparedUpdateRef = yield* Ref.make(
+    Option.none<{
+      readonly requestId: string;
+      readonly downloadedVersion: string;
+      readonly status: "prepared" | "committing" | "failed";
+      readonly failureReason?: string;
+      readonly expiresAt: number;
+    }>(),
+  );
 
   const publishReport = (
     state: DesktopUpdateState,
     terminal?: { readonly outcome: DesktopUpdateRemoteOutcome; readonly reason?: string },
+    explicitRequestId?: string,
   ): Effect.Effect<void> => {
     const reason = normalizeRemoteUpdateReason(terminal?.reason);
     return Ref.get(activeRequestIdRef).pipe(
@@ -57,7 +70,11 @@ export const listen: Effect.Effect<
         publisher.publishUpdateReport({
           version: 1,
           type: "desktopUpdateStatus",
-          ...(Option.isSome(requestId) ? { requestId: requestId.value } : {}),
+          ...(explicitRequestId !== undefined
+            ? { requestId: explicitRequestId }
+            : Option.isSome(requestId)
+              ? { requestId: requestId.value }
+              : {}),
           ...(terminal === undefined ? {} : { outcome: terminal.outcome }),
           ...(reason ? { reason } : {}),
           state,
@@ -66,17 +83,94 @@ export const listen: Effect.Effect<
     );
   };
 
+  const recordPreparedFailure = (requestId: string, reason: string) =>
+    Ref.modify(preparedUpdateRef, (prepared) => {
+      if (
+        Option.isNone(prepared) ||
+        prepared.value.requestId !== requestId ||
+        prepared.value.status === "failed"
+      ) {
+        return [false, prepared] as const;
+      }
+      return [
+        true,
+        Option.some({ ...prepared.value, status: "failed" as const, failureReason: reason }),
+      ] as const;
+    });
+
+  const clearActiveRequest = (requestId: string) =>
+    Ref.update(activeRequestIdRef, (active) =>
+      Option.isSome(active) && active.value === requestId ? Option.none() : active,
+    );
+
   yield* Effect.scoped(
     Effect.gen(function* () {
       const { latest, changes } = yield* updates.subscribe;
       yield* publishReport(latest);
-      yield* Stream.runForEach(changes, (state) => publishReport(state));
+      yield* Stream.runForEach(changes, (state) =>
+        Effect.gen(function* () {
+          yield* publishReport(state);
+          const prepared = yield* Ref.get(preparedUpdateRef);
+          if (
+            Option.isSome(prepared) &&
+            prepared.value.status === "committing" &&
+            state.errorContext === "install"
+          ) {
+            const reason = state.message ?? "The desktop app failed to install the update.";
+            if (yield* recordPreparedFailure(prepared.value.requestId, reason)) {
+              yield* publishReport(state, { outcome: "failed", reason }, prepared.value.requestId);
+            }
+          }
+        }),
+      );
     }),
   ).pipe(Effect.forkScoped);
 
   const handleRequest = (request: DesktopTelemetryRequestDesktopUpdate): Effect.Effect<void> =>
     Effect.scoped(
       Effect.gen(function* () {
+        const cancellation = yield* Deferred.make<void>();
+        const shouldStart = yield* Ref.modify(requestControlRef, (control) => {
+          if (control.cancelledBeforeStart.includes(request.requestId)) {
+            return [
+              false,
+              {
+                ...control,
+                cancelledBeforeStart: control.cancelledBeforeStart.filter(
+                  (requestId) => requestId !== request.requestId,
+                ),
+              },
+            ] as const;
+          }
+          return [
+            true,
+            {
+              ...control,
+              active: Option.some({ requestId: request.requestId, signal: cancellation }),
+            },
+          ] as const;
+        });
+        if (!shouldStart) return;
+
+        const now = yield* Clock.currentTimeMillis;
+        const prepared = yield* Ref.modify(preparedUpdateRef, (current) =>
+          Option.isSome(current) &&
+          current.value.status === "prepared" &&
+          current.value.expiresAt <= now
+            ? ([Option.none<typeof current.value>(), Option.none()] as const)
+            : ([current, current] as const),
+        );
+        if (Option.isSome(prepared) && prepared.value.status !== "failed") {
+          yield* publishReport(
+            yield* updates.getState,
+            {
+              outcome: "failed",
+              reason: "A prepared desktop update is already in progress.",
+            },
+            request.requestId,
+          );
+          return;
+        }
         yield* Ref.set(activeRequestIdRef, Option.some(request.requestId));
         yield* logInfo("remote update requested", { requestId: request.requestId });
         const { latest, changes } = yield* updates.subscribe;
@@ -129,65 +223,47 @@ export const listen: Effect.Effect<
                 );
                 return false;
               case "install": {
-                // Another install (local, or an earlier remote request)
-                // already owns the shutdown and will relaunch the app. It
-                // also holds the reservation, so check this before the
-                // reservation wait below or the join path is unreachable.
-                if (yield* Ref.get(desktopState.quitting)) {
-                  yield* publishReport(state, { outcome: "installing" });
-                  yield* logInfo("remote update joining an in-progress install", {
-                    requestId: request.requestId,
-                  });
-                  return true;
-                }
-                // "downloaded" fires from inside the download action, so
-                // install may be refused for the reservation the download
-                // still holds. Wait for it to free up before reporting:
-                // the terminal report below is irrevocable.
+                // The download event fires before its action releases the
+                // updater reservation. Wait until the prepared install can
+                // be committed by the client in a separate RPC.
                 if (yield* updates.isActionActive) {
                   yield* retryLater(state);
                   return false;
                 }
-                // The terminal report must go out BEFORE installing:
-                // install stops the backend server first, so anything
-                // published after this point never reaches the requester.
-                yield* publishReport(state, { outcome: "installing" });
-                yield* logInfo("remote update installing", { requestId: request.requestId });
-                const before = yield* updates.getState;
-                const result = yield* updates.install;
-                if (!result.accepted) {
-                  // An install that started between the quitting check and
-                  // this call owns the relaunch: join it.
-                  if (yield* Ref.get(desktopState.quitting)) {
-                    return true;
-                  }
-                  // Lost a race for the reservation despite the check
-                  // above. The "installing" report is already out, so
-                  // this cannot be retried without a duplicate terminal.
-                  yield* publishReport(result.state, {
-                    outcome: "failed",
-                    reason: "The desktop app could not start the install.",
-                  });
+                if (state.downloadedVersion === null) {
+                  yield* publishReport(
+                    state,
+                    {
+                      outcome: "failed",
+                      reason: "The desktop app lost the downloaded update.",
+                    },
+                    request.requestId,
+                  );
                   return true;
                 }
-                if (result.state !== before) {
-                  // During an accepted install the only state writes are the
-                  // failure reducers, so a transition means this attempt
-                  // failed. Field checks cannot tell a fresh failure from a
-                  // lingering errorContext left by a previous attempt, which
-                  // success does not clear.
-                  yield* publishReport(result.state, {
-                    outcome: "failed",
-                    reason: result.state.message ?? "The desktop app failed to install the update.",
-                  });
-                }
+                yield* Ref.set(
+                  preparedUpdateRef,
+                  Option.some({
+                    requestId: request.requestId,
+                    downloadedVersion: state.downloadedVersion,
+                    status: "prepared",
+                    expiresAt:
+                      (yield* Clock.currentTimeMillis) + Duration.toMillis(PREPARED_UPDATE_TTL),
+                  }),
+                );
+                yield* publishReport(state, { outcome: "ready-to-install" }, request.requestId);
+                yield* logInfo("remote update prepared", { requestId: request.requestId });
                 return true;
               }
               case "done":
-                yield* publishReport(state, {
-                  outcome: next.outcome,
-                  ...(next.reason === undefined ? {} : { reason: next.reason }),
-                });
+                yield* publishReport(
+                  state,
+                  {
+                    outcome: next.outcome,
+                    ...(next.reason === undefined ? {} : { reason: next.reason }),
+                  },
+                  request.requestId,
+                );
                 yield* logInfo("remote update finished", {
                   requestId: request.requestId,
                   outcome: next.outcome,
@@ -197,15 +273,35 @@ export const listen: Effect.Effect<
             }
           });
 
-        if (yield* step(latest)) return;
-        yield* Stream.merge(changes, Stream.fromQueue(retries)).pipe(
-          Stream.mapEffect(step),
-          Stream.takeUntil((done) => done),
-          Stream.runDrain,
+        yield* Effect.raceFirst(
+          Effect.gen(function* () {
+            if (yield* step(latest)) return;
+            yield* Stream.merge(changes, Stream.fromQueue(retries)).pipe(
+              Stream.mapEffect(step),
+              Stream.takeUntil((done) => done),
+              Stream.runDrain,
+            );
+          }),
+          Deferred.await(cancellation),
         );
       }),
     ).pipe(
-      Effect.ensuring(Ref.set(activeRequestIdRef, Option.none())),
+      Effect.ensuring(
+        Effect.all(
+          [
+            clearActiveRequest(request.requestId),
+            Ref.update(requestControlRef, (control) => ({
+              ...control,
+              active:
+                Option.isSome(control.active) &&
+                control.active.value.requestId === request.requestId
+                  ? Option.none()
+                  : control.active,
+            })),
+          ],
+          { discard: true },
+        ),
+      ),
       Effect.catchCause((cause) =>
         logError("remote update request failed unexpectedly", {
           requestId: request.requestId,
@@ -217,4 +313,107 @@ export const listen: Effect.Effect<
   // Sequential by construction: a second remote request queued mid-run is
   // handled after the current one, when the state machine resolves it fast.
   yield* Stream.runForEach(publisher.updateRequests, handleRequest).pipe(Effect.forkScoped);
+
+  yield* Stream.runForEach(publisher.updateCancellations, (cancellation) =>
+    Effect.gen(function* () {
+      const activeSignal = yield* Ref.modify(requestControlRef, (control) => {
+        if (
+          Option.isSome(control.active) &&
+          control.active.value.requestId === cancellation.requestId
+        ) {
+          return [Option.some(control.active.value.signal), control] as const;
+        }
+        return [
+          Option.none<Deferred.Deferred<void>>(),
+          {
+            ...control,
+            cancelledBeforeStart: [
+              ...control.cancelledBeforeStart.filter(
+                (requestId) => requestId !== cancellation.requestId,
+              ),
+              cancellation.requestId,
+            ].slice(-MAX_EARLY_CANCELLATIONS),
+          },
+        ] as const;
+      });
+      if (Option.isSome(activeSignal)) {
+        yield* Deferred.succeed(activeSignal.value, undefined);
+      }
+      const clearedPrepared = yield* Ref.modify(preparedUpdateRef, (prepared) =>
+        Option.isSome(prepared) && prepared.value.requestId === cancellation.requestId
+          ? ([true, Option.none()] as const)
+          : ([false, prepared] as const),
+      );
+      if (clearedPrepared) {
+        yield* Ref.update(requestControlRef, (control) => {
+          return {
+            ...control,
+            cancelledBeforeStart: control.cancelledBeforeStart.filter(
+              (requestId) => requestId !== cancellation.requestId,
+            ),
+          };
+        });
+      }
+    }),
+  ).pipe(Effect.forkScoped);
+
+  yield* Stream.runForEach(publisher.updateCommits, (commit) =>
+    Effect.gen(function* () {
+      const prepared = yield* Ref.get(preparedUpdateRef);
+      const current = yield* updates.getState;
+      const now = yield* Clock.currentTimeMillis;
+      if (
+        Option.isNone(prepared) ||
+        prepared.value.requestId !== commit.requestId ||
+        (prepared.value.status === "prepared" && prepared.value.expiresAt <= now) ||
+        current.downloadedVersion !== prepared.value.downloadedVersion
+      ) {
+        yield* publishReport(
+          yield* updates.getState,
+          {
+            outcome: "failed",
+            reason: "This desktop update is no longer prepared.",
+          },
+          commit.requestId,
+        );
+        return;
+      }
+      if (prepared.value.status === "failed") {
+        yield* publishReport(
+          current,
+          {
+            outcome: "failed",
+            reason: prepared.value.failureReason ?? "The desktop app failed to install the update.",
+          },
+          commit.requestId,
+        );
+        return;
+      }
+      if (prepared.value.status === "committing") {
+        return;
+      }
+      yield* Ref.set(activeRequestIdRef, Option.some(commit.requestId));
+      yield* Ref.set(preparedUpdateRef, Option.some({ ...prepared.value, status: "committing" }));
+      const before = yield* updates.getState;
+      const result = yield* updates.installPrepared(prepared.value.downloadedVersion);
+      if (!result.accepted || result.state !== before) {
+        const reason = result.state.message ?? "The desktop app could not start the install.";
+        if (yield* recordPreparedFailure(commit.requestId, reason)) {
+          yield* publishReport(result.state, { outcome: "failed", reason }, commit.requestId);
+        }
+        return;
+      }
+      // A successful install tears down this backend. Do not send a success
+      // marker from the old process: transport loss followed by the target
+      // version is the only proof that the handoff succeeded.
+    }).pipe(
+      Effect.ensuring(clearActiveRequest(commit.requestId)),
+      Effect.catchCause((cause) =>
+        logError("remote update commit failed unexpectedly", {
+          requestId: commit.requestId,
+          cause: String(cause),
+        }),
+      ),
+    ),
+  ).pipe(Effect.forkScoped);
 });

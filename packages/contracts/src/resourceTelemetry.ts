@@ -246,7 +246,11 @@ export const DesktopHostTelemetryHello = Schema.Struct({
 export type DesktopHostTelemetryHello = typeof DesktopHostTelemetryHello.Type;
 
 /** Terminal marker for a server-triggered desktop update run. */
-export const DesktopUpdateRemoteOutcome = Schema.Literals(["installing", "up-to-date", "failed"]);
+export const DesktopUpdateRemoteOutcome = Schema.Literals([
+  "ready-to-install",
+  "up-to-date",
+  "failed",
+]);
 export type DesktopUpdateRemoteOutcome = typeof DesktopUpdateRemoteOutcome.Type;
 
 /**
@@ -303,10 +307,26 @@ export const DesktopTelemetryRequestDesktopUpdate = Schema.Struct({
 });
 export type DesktopTelemetryRequestDesktopUpdate = typeof DesktopTelemetryRequestDesktopUpdate.Type;
 
+export const DesktopTelemetryCommitDesktopUpdate = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("commitDesktopUpdate"),
+  requestId: TrimmedNonEmptyString,
+});
+export type DesktopTelemetryCommitDesktopUpdate = typeof DesktopTelemetryCommitDesktopUpdate.Type;
+
+export const DesktopTelemetryCancelDesktopUpdate = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("cancelDesktopUpdate"),
+  requestId: TrimmedNonEmptyString,
+});
+export type DesktopTelemetryCancelDesktopUpdate = typeof DesktopTelemetryCancelDesktopUpdate.Type;
+
 export const DesktopTelemetryControlMessage = Schema.Union([
   DesktopTelemetrySetDiagnosticsDemand,
   DesktopTelemetrySetHostPowerIntervals,
   DesktopTelemetryRequestDesktopUpdate,
+  DesktopTelemetryCommitDesktopUpdate,
+  DesktopTelemetryCancelDesktopUpdate,
 ]);
 export type DesktopTelemetryControlMessage = typeof DesktopTelemetryControlMessage.Type;
 

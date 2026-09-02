@@ -178,6 +178,12 @@ export class DesktopTelemetryReceiver extends Context.Service<
     readonly requestDesktopUpdate: (
       requestId: string,
     ) => Effect.Effect<void, DesktopTelemetryControlError>;
+    readonly commitDesktopUpdate: (
+      requestId: string,
+    ) => Effect.Effect<void, DesktopTelemetryControlError>;
+    readonly cancelDesktopUpdate: (
+      requestId: string,
+    ) => Effect.Effect<void, DesktopTelemetryControlError>;
     /** Latest desktop update state report plus subsequent reports. The
         desktop replays its latest report when the backend attaches, so this
         is populated shortly after startup on desktop-managed servers. */
@@ -651,6 +657,10 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
         type: "requestDesktopUpdate",
         requestId,
       }),
+    commitDesktopUpdate: (requestId) =>
+      sendControlMessage({ version: 1, type: "commitDesktopUpdate", requestId }),
+    cancelDesktopUpdate: (requestId) =>
+      sendControlMessage({ version: 1, type: "cancelDesktopUpdate", requestId }),
     desktopUpdates: Effect.gen(function* () {
       const subscription = yield* PubSub.subscribe(updateReportChanges);
       const initial = yield* Ref.get(latestUpdateReport);
@@ -700,6 +710,8 @@ export const layerTest = (
         ),
       setDiagnosticsDemand: () => Effect.void,
       requestDesktopUpdate: () => Effect.void,
+      commitDesktopUpdate: () => Effect.void,
+      cancelDesktopUpdate: () => Effect.void,
       desktopUpdates:
         overrides.desktopUpdates ??
         Effect.succeed({

@@ -130,13 +130,17 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
           // Reports from another run must be ignored.
           report("other-run", makeState({ status: "error", message: "unrelated" })),
           report(requestId, makeState({ status: "downloaded", downloadedVersion: "1.2.4" }), {
-            outcome: "installing",
+            outcome: "ready-to-install",
           }),
         ],
       });
       const stages: string[] = [];
       const result = yield* service.run((stage) => Effect.sync(() => void stages.push(stage)));
-      expect(result).toEqual({ targetVersion: "1.2.4", method: "desktop-app" });
+      expect(result).toEqual({
+        targetVersion: "1.2.4",
+        method: "desktop-app",
+        desktopUpdateToken: expect.any(String),
+      });
       // "downloading" is not repeated for every download report.
       expect(stages).toEqual(["downloading", "installing"]);
 
@@ -171,6 +175,33 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
       expect((yield* failed.service.run(() => Effect.void).pipe(Effect.flip)).reason).toBe(
         "feed unreachable",
       );
+    }),
+  );
+
+  it.effect("replays a retained commit failure for the preparation token", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness({
+        reports: (requestId) => [
+          report(requestId, makeState({ status: "downloaded", downloadedVersion: "1.2.4" }), {
+            outcome: "ready-to-install",
+          }),
+          report(
+            requestId,
+            makeState({
+              status: "downloaded",
+              downloadedVersion: "1.2.4",
+              errorContext: "install",
+              message: "installer refused",
+            }),
+            { outcome: "failed", reason: "installer refused" },
+          ),
+        ],
+      });
+      const prepared = yield* service.run(() => Effect.void);
+
+      expect(
+        (yield* service.commit(prepared.desktopUpdateToken ?? "missing").pipe(Effect.flip)).reason,
+      ).toBe("installer refused");
     }),
   );
 

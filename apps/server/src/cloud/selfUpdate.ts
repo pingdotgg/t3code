@@ -43,6 +43,9 @@ export class ServerSelfUpdate extends Context.Service<
       input: ServerSelfUpdateInput,
       reportProgress?: (stage: ServerSelfUpdateProgressStage) => Effect.Effect<void>,
     ) => Effect.Effect<ServerSelfUpdateResult, ServerSelfUpdateError>;
+    readonly commitDesktopUpdate: (
+      requestId: string,
+    ) => Effect.Effect<never, ServerSelfUpdateError>;
   }
 >()("t3/cloud/selfUpdate/ServerSelfUpdate") {}
 
@@ -199,7 +202,10 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     }).pipe(Effect.onError(() => Ref.set(inFlight, false)));
   });
 
-  return ServerSelfUpdate.of({ update });
+  return ServerSelfUpdate.of({
+    update,
+    commitDesktopUpdate: (requestId) => desktopAppUpdate.commit(requestId),
+  });
 });
 
 export const layer = Layer.effect(ServerSelfUpdate, make()).pipe(

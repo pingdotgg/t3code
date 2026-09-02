@@ -40,6 +40,8 @@ import {
   serverUpdateStateForProgressEvent,
   serverUpdateStateForServerVersion,
   validateServerUpdateReadyEvent,
+  waitForNextEnvironmentReconnect,
+  waitForDesktopUpdateTarget,
 } from "./server.ts";
 import { applyServerConfigProjection } from "./serverConfigProjection.ts";
 
@@ -81,6 +83,51 @@ function session(client: WsRpcProtocolClient): RpcSession {
 }
 
 describe("update restart reconnect nudges", () => {
+  it.effect("retries a desktop commit that was lost before delivery", () =>
+    Effect.gen(function* () {
+      const readyEvents =
+        yield* Queue.unbounded<Parameters<typeof matchesServerUpdateReadyEvent>[1]>();
+      const ready = (serverVersion: string) =>
+        ({
+          version: 1 as const,
+          sequence: 1,
+          type: "ready" as const,
+          payload: {
+            at: "2026-09-01T00:00:00.000Z",
+            environment: { serverVersion },
+          },
+        }) as Parameters<typeof matchesServerUpdateReadyEvent>[1];
+      yield* Queue.offerAll(readyEvents, [ready("0.0.30"), ready("0.0.31")]);
+      const retries = yield* Ref.make(0);
+      const disconnect = new RpcClientError.RpcClientError({
+        reason: new Socket.SocketCloseError({ code: 1006 }),
+      });
+
+      const result = yield* waitForDesktopUpdateTarget(
+        "0.0.31",
+        Queue.take(readyEvents),
+        Ref.update(retries, (count) => count + 1).pipe(Effect.andThen(Effect.fail(disconnect))),
+      );
+
+      expect(result.payload.environment.serverVersion).toBe("0.0.31");
+      expect(yield* Ref.get(retries)).toBe(1);
+    }),
+  );
+  it.effect("observes a fast reconnect even when the caller awaits it later", () =>
+    Effect.gen(function* () {
+      const states = yield* Queue.unbounded<{ readonly phase: string }>();
+      const reconnected = yield* waitForNextEnvironmentReconnect(Stream.fromQueue(states)).pipe(
+        Effect.forkChild,
+      );
+      yield* Queue.offerAll(states, [
+        { phase: "connected" },
+        { phase: "backoff" },
+        { phase: "connected" },
+      ]);
+
+      yield* Fiber.join(reconnected);
+    }),
+  );
   it.effect("retries once per backoff entry instead of only the first", () =>
     Effect.gen(function* () {
       const retries = yield* Ref.make(0);

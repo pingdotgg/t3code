@@ -21,6 +21,7 @@ import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetry
 /** Backstop for a desktop updater that hangs without ever reporting a
     terminal outcome. Generous: it covers a slow download of a full build. */
 const DESKTOP_UPDATE_TIMEOUT = Duration.minutes(20);
+const DESKTOP_INSTALL_TIMEOUT = Duration.minutes(2);
 
 /** Progress stage a desktop update state maps to, or null when the state
     carries no progress worth streaming. */
@@ -45,12 +46,14 @@ export class DesktopAppUpdate extends Context.Service<
     /** True when this server was spawned by a desktop app that can be
         driven over the telemetry control channel. */
     readonly available: boolean;
-    /** Drives the desktop app's check -> download -> quit-and-install flow
-        and translates its status reports into self-update progress. On
-        success the desktop app is about to stop this server and relaunch. */
+    /** Checks and downloads through the desktop app, then returns a token
+        while this server is still connected. `commit` starts installation. */
     readonly run: (
       reportProgress: (stage: ServerSelfUpdateProgressStage) => Effect.Effect<void>,
     ) => Effect.Effect<ServerSelfUpdateResult, ServerSelfUpdateError>;
+    /** Starts the prepared install. Success stops this server, so this effect
+        returns only when installation fails or times out. */
+    readonly commit: (requestId: string) => Effect.Effect<never, ServerSelfUpdateError>;
   }
 >()("t3/desktopUpdate/DesktopAppUpdate") {}
 
@@ -107,21 +110,17 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
       }
 
       const report = terminal.value;
-      if (report.outcome === "installing") {
+      if (report.outcome === "ready-to-install") {
         yield* emitStage("installing");
         const targetVersion =
           report.state.downloadedVersion ??
           report.state.availableVersion ??
           report.state.currentVersion;
-        yield* Effect.logInfo("Desktop app update installing; the app will relaunch this server.", {
+        yield* Effect.logInfo("Desktop app update prepared for install.", {
           targetVersion,
         });
-        // If the app really is relaunching, this process stops moments
-        // later and the flag never matters. If the desktop rejected the
-        // install after reporting (app already quitting), clearing it lets
-        // the user retry instead of wedging this server until restart.
         yield* Ref.set(inFlight, false);
-        return { targetVersion, method: "desktop-app" as const };
+        return { targetVersion, method: "desktop-app" as const, desktopUpdateToken: requestId };
       }
       if (report.outcome === "up-to-date") {
         return yield* failWith(
@@ -161,7 +160,9 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
                 failWith("Could not reach the T3 Code desktop app on this machine.", error),
               ),
             );
-          return yield* consumeReports(requestId, changes, reportProgress);
+          return yield* consumeReports(requestId, changes, reportProgress).pipe(
+            Effect.onInterrupt(() => receiver.cancelDesktopUpdate(requestId).pipe(Effect.ignore)),
+          );
         }),
       ).pipe(
         Effect.timeout(DESKTOP_UPDATE_TIMEOUT),
@@ -173,7 +174,46 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
     },
   );
 
-  return DesktopAppUpdate.of({ available, run });
+  const commit: DesktopAppUpdate["Service"]["commit"] = Effect.fn(
+    "desktopUpdate.desktopAppUpdate.commit",
+  )(function* (requestId) {
+    if (!available) {
+      return yield* failWith("This server cannot commit a desktop app update.");
+    }
+    const terminal = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const { latest, changes } = yield* receiver.desktopUpdates;
+        const reports = Option.match(latest, {
+          onNone: () => changes,
+          onSome: (report) => Stream.concat(Stream.make(report), changes),
+        });
+        yield* receiver
+          .commitDesktopUpdate(requestId)
+          .pipe(
+            Effect.mapError((error) => failWith("Could not reach the T3 Code desktop app.", error)),
+          );
+        return yield* reports.pipe(
+          Stream.filter((report) => report.requestId === requestId && report.outcome === "failed"),
+          Stream.runHead,
+          Effect.timeout(DESKTOP_INSTALL_TIMEOUT),
+          Effect.catchTags({
+            TimeoutError: () =>
+              failWith("The desktop app did not report an install result in time."),
+          }),
+        );
+      }),
+    );
+    if (Option.isNone(terminal)) {
+      return yield* failWith("The desktop app stopped reporting the install.");
+    }
+    return yield* failWith(
+      terminal.value.reason ??
+        terminal.value.state.message ??
+        "The desktop app failed to install the update.",
+    );
+  });
+
+  return DesktopAppUpdate.of({ available, run, commit });
 });
 
 export const layer = Layer.effect(DesktopAppUpdate, make());

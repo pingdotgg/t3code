@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -199,6 +200,43 @@ export function nudgeReconnectDuringUpdateRestart(input: {
     Effect.ignore,
   );
 }
+
+export function waitForNextEnvironmentReconnect<E>(
+  stateChanges: Stream.Stream<{ readonly phase: string }, E>,
+): Effect.Effect<void, E> {
+  return stateChanges.pipe(
+    Stream.dropWhile((state) => state.phase === "connected"),
+    Stream.filter((state) => state.phase === "connected"),
+    Stream.runHead,
+    Effect.asVoid,
+  );
+}
+
+export const waitForDesktopUpdateTarget = Effect.fn("waitForDesktopUpdateTarget")(function* <
+  EReady,
+  ECommit,
+>(
+  targetVersion: string,
+  nextReady: Effect.Effect<ServerLifecycleStreamReadyEvent, EReady>,
+  retryCommit: Effect.Effect<void, ECommit>,
+  maxCommitAttempts = 3,
+): Effect.fn.Return<ServerLifecycleStreamReadyEvent, EReady | ECommit | ServerUpdateTerminalError> {
+  for (let attempt = 1; attempt <= maxCommitAttempts; attempt += 1) {
+    const ready = yield* nextReady;
+    if (ready.payload.environment.serverVersion === targetVersion) return ready;
+    if (attempt === maxCommitAttempts) break;
+    const retryExit = yield* retryCommit.pipe(Effect.exit);
+    if (Exit.isSuccess(retryExit)) break;
+    if (!isLegacyUpdateHandoffLoss(retryExit.cause)) {
+      return yield* Effect.failCause(retryExit.cause);
+    }
+  }
+  return yield* new ServerUpdateTerminalError({
+    targetVersion,
+    status: "failed",
+    reason: "The desktop app resumed without installing the prepared update.",
+  });
+});
 
 export function serverUpdateStateForProgressEvent(
   fromVersion: string,
@@ -497,11 +535,12 @@ export function createServerEnvironmentAtoms<R, E>(
     concurrency: configConcurrency,
     execute: (target, atomRegistry) => {
       const stateAtom = serverUpdateStateAtom(target.environmentId);
-      const targetVersion = target.input.targetVersion;
+      let targetVersion = target.input.targetVersion;
       let fromVersion =
         atomRegistry.get(configValueAtom(target.environmentId))?.environment.serverVersion ??
         targetVersion;
       let currentStage: ServerUpdateStage = "downloading";
+      let desktopCommitLostTransport = false;
       atomRegistry.set(stateAtom, {
         status: "running",
         stage: currentStage,
@@ -511,6 +550,21 @@ export function createServerEnvironmentAtoms<R, E>(
 
       return Effect.gen(function* () {
         const environmentRegistry = yield* EnvironmentRegistry;
+        const desktopCommitStarting = yield* Deferred.make<void>();
+        const desktopReconnectObserverArmed = yield* Deferred.make<void>();
+        const desktopReconnected = yield* Deferred.make<void>();
+        yield* Deferred.await(desktopCommitStarting).pipe(
+          Effect.andThen(
+            environmentRegistry.stateChanges(target.environmentId).pipe(
+              Stream.tap(() => Deferred.succeed(desktopReconnectObserverArmed, undefined)),
+              Stream.dropWhile((state) => state.phase === "connected"),
+              Stream.filter((state) => state.phase === "connected"),
+              Stream.runHead,
+            ),
+          ),
+          Effect.andThen(Deferred.succeed(desktopReconnected, undefined)),
+          Effect.forkChild,
+        );
         const result = yield* scheduleAtomCommandEffect(
           atomRegistry,
           configScheduler,
@@ -582,6 +636,28 @@ export function createServerEnvironmentAtoms<R, E>(
                   return yield* Effect.failCause(exit.cause);
                 });
 
+            if (
+              updateResult.method === "desktop-app" &&
+              updateResult.desktopUpdateToken !== undefined
+            ) {
+              yield* Deferred.succeed(desktopCommitStarting, undefined);
+              yield* Deferred.await(desktopReconnectObserverArmed);
+              const commitExit = yield* environmentRegistry
+                .run(
+                  target.environmentId,
+                  request(WS_METHODS.serverCommitDesktopUpdate, {
+                    requestId: updateResult.desktopUpdateToken,
+                  }),
+                )
+                .pipe(Effect.exit);
+              if (Exit.isFailure(commitExit) && !isLegacyUpdateHandoffLoss(commitExit.cause)) {
+                return yield* Effect.failCause(commitExit.cause);
+              }
+              desktopCommitLostTransport = Exit.isFailure(commitExit);
+            }
+
+            targetVersion = updateResult.targetVersion;
+
             currentStage = "resuming";
             atomRegistry.set(stateAtom, {
               status: "running",
@@ -601,24 +677,70 @@ export function createServerEnvironmentAtoms<R, E>(
           retryNow: environmentRegistry.retryNow(target.environmentId),
         }).pipe(Effect.forkChild);
 
-        const resumed = yield* environmentRegistry
+        if (result.method === "desktop-app" && desktopCommitLostTransport) {
+          yield* Deferred.await(desktopReconnected).pipe(
+            Effect.timeout(SERVER_UPDATE_RESUME_TIMEOUT),
+          );
+        }
+
+        const waitForReady = environmentRegistry
           .followStream(target.environmentId, subscribe(WS_METHODS.subscribeServerLifecycle, {}))
           .pipe(
             Stream.filter(
               (event): event is ServerLifecycleStreamReadyEvent =>
-                event.type === "ready" && matchesServerUpdateReadyEvent(result, event),
+                event.type === "ready" &&
+                (result.method === "desktop-app" || matchesServerUpdateReadyEvent(result, event)),
             ),
             Stream.runHead,
             Effect.timeoutOption(SERVER_UPDATE_RESUME_TIMEOUT),
             Effect.map(Option.flatten),
           );
-        if (Option.isNone(resumed)) {
-          return yield* new ServerUpdateResumeTimeoutError({
-            environmentId: target.environmentId,
-            targetVersion,
-          });
-        }
-        yield* validateServerUpdateReadyEvent(result, resumed.value);
+        const nextReady = waitForReady.pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                new ServerUpdateResumeTimeoutError({
+                  environmentId: target.environmentId,
+                  targetVersion,
+                }),
+              onSome: Effect.succeed,
+            }),
+          ),
+        );
+        const desktopUpdateToken = result.desktopUpdateToken;
+        const resumed =
+          result.method === "desktop-app" && desktopUpdateToken !== undefined
+            ? yield* waitForDesktopUpdateTarget(
+                result.targetVersion,
+                nextReady,
+                Effect.gen(function* () {
+                  const reconnected = yield* Deferred.make<void>();
+                  yield* waitForNextEnvironmentReconnect(
+                    environmentRegistry.stateChanges(target.environmentId),
+                  ).pipe(
+                    Effect.andThen(Deferred.succeed(reconnected, undefined)),
+                    Effect.forkChild,
+                  );
+                  const retryExit = yield* environmentRegistry
+                    .run(
+                      target.environmentId,
+                      request(WS_METHODS.serverCommitDesktopUpdate, {
+                        requestId: desktopUpdateToken,
+                      }),
+                    )
+                    .pipe(Effect.exit);
+                  if (Exit.isSuccess(retryExit)) return;
+                  if (!isLegacyUpdateHandoffLoss(retryExit.cause)) {
+                    return yield* Effect.failCause(retryExit.cause);
+                  }
+                  yield* Deferred.await(reconnected).pipe(
+                    Effect.timeout(SERVER_UPDATE_RESUME_TIMEOUT),
+                  );
+                  return yield* Effect.failCause(retryExit.cause);
+                }),
+              )
+            : yield* nextReady;
+        yield* validateServerUpdateReadyEvent(result, resumed);
 
         atomRegistry.set(stateAtom, IDLE_SERVER_UPDATE_STATE);
         return result;
