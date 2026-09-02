@@ -32,11 +32,13 @@ function makeHarness(options?: {
   getMode?: () => Promise<QuitConfirmationMode>;
 }) {
   const notifications: Array<QuitShortcutHintEvent> = [];
+  const concealWindow = vi.fn();
   const quit = vi.fn();
   const handler = makeQuitShortcutHandler({
     platform: options?.platform ?? "darwin",
     getMode: options?.getMode ?? (() => Promise.resolve(options?.mode ?? "hold")),
     notify: (event) => notifications.push(event),
+    concealWindow,
     quit,
   });
   const preventDefault = vi.fn();
@@ -57,7 +59,7 @@ function makeHarness(options?: {
       await send(makeInput({ isAutoRepeat: true, ...repeatOverrides }));
     }
   };
-  return { notifications, quit, preventDefault, send, holdFor };
+  return { notifications, concealWindow, quit, preventDefault, send, holdFor };
 }
 
 describe("makeQuitShortcutHandler", () => {
@@ -82,16 +84,43 @@ describe("makeQuitShortcutHandler", () => {
     expect(harness.notifications).toEqual([HOLD_DOWN, UP]);
   });
 
-  it("quits after a completed hold is released", async () => {
+  it("conceals a completed hold, then quits after release", async () => {
     const harness = makeHarness();
     await harness.send(makeInput({}));
     await harness.holdFor(QUIT_HOLD_DURATION_MS + 200);
+    expect(harness.concealWindow).toHaveBeenCalledTimes(1);
     expect(harness.quit).not.toHaveBeenCalled();
     await harness.send(makeInput({ type: "keyUp", key: "Meta", meta: false }));
     expect(harness.quit).not.toHaveBeenCalled();
     vi.advanceTimersByTime(QUIT_HOLD_RELEASE_GRACE_MS);
     expect(harness.quit).toHaveBeenCalledTimes(1);
     expect(harness.notifications).toEqual([HOLD_DOWN, UP]);
+  });
+
+  it("keeps a concealed hold committed when another key is pressed", async () => {
+    const harness = makeHarness();
+    await harness.send(makeInput({}));
+    await harness.holdFor(QUIT_HOLD_DURATION_MS);
+
+    await harness.send(makeInput({ key: "Shift", shift: true }));
+    expect(harness.concealWindow).toHaveBeenCalledTimes(1);
+    expect(harness.quit).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(QUIT_HOLD_RELEASE_GRACE_MS);
+    expect(harness.quit).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a concealed hold committed through a fresh Cmd+Q press", async () => {
+    const harness = makeHarness();
+    await harness.send(makeInput({}));
+    await harness.holdFor(QUIT_HOLD_DURATION_MS);
+
+    await harness.send(makeInput({}));
+    expect(harness.concealWindow).toHaveBeenCalledTimes(1);
+    expect(harness.quit).not.toHaveBeenCalled();
+
+    await harness.send(makeInput({ type: "keyUp" }));
+    expect(harness.quit).toHaveBeenCalledTimes(1);
   });
 
   it("quits when a completed hold goes quiet without release events", async () => {
@@ -164,6 +193,7 @@ describe("makeQuitShortcutHandler", () => {
     await harness.send(makeInput({ type: "keyUp" }));
     expect(harness.notifications).toEqual([HOLD_DOWN, UP]);
     vi.advanceTimersByTime((QUIT_HOLD_DURATION_MS + QUIT_HOLD_RELEASE_GRACE_MS) * 2);
+    expect(harness.concealWindow).not.toHaveBeenCalled();
     expect(harness.quit).not.toHaveBeenCalled();
   });
 
@@ -179,6 +209,7 @@ describe("makeQuitShortcutHandler", () => {
   it("quits without showing a hint in direct mode", async () => {
     const harness = makeHarness({ mode: "direct" });
     await harness.send(makeInput({}));
+    expect(harness.concealWindow).not.toHaveBeenCalled();
     expect(harness.quit).toHaveBeenCalledTimes(1);
     expect(harness.notifications).toEqual([]);
   });
@@ -272,6 +303,7 @@ describe("makeQuitShortcutHandler", () => {
     await harness.send(makeInput({}));
     vi.advanceTimersByTime(QUIT_DOUBLE_PRESS_MS - 100);
     await harness.send(makeInput({}));
+    expect(harness.concealWindow).not.toHaveBeenCalled();
     expect(harness.quit).toHaveBeenCalledTimes(1);
     expect(harness.notifications).toEqual([DOUBLE_CLICK_DOWN, UP]);
   });

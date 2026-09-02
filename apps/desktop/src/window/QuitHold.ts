@@ -32,6 +32,7 @@ export interface QuitShortcutOptions {
   readonly platform: NodeJS.Platform;
   readonly getMode: () => Promise<QuitConfirmationMode>;
   readonly notify: (event: QuitShortcutHintEvent) => void;
+  readonly concealWindow: () => void;
   readonly quit: () => void;
 }
 
@@ -120,12 +121,14 @@ export function makeQuitShortcutHandler(
       repeatCadenceMs = now - (lastRepeatAt === 0 ? heldSince : lastRepeatAt);
       lastRepeatAt = now;
     }
-    if (quitOnRelease && input.isAutoRepeat && key === "q") {
+    if (quitOnRelease) {
       event.preventDefault();
-      if (modifierDown) {
-        quitAfterQuietPeriod();
-      } else {
-        clearWatchdog();
+      if (key === "q") {
+        if (modifierDown) {
+          quitAfterQuietPeriod();
+        } else {
+          clearWatchdog();
+        }
       }
       return;
     }
@@ -154,6 +157,7 @@ export function makeQuitShortcutHandler(
       if (mode === "hold" && armed && Date.now() - heldSince >= QUIT_HOLD_DURATION_MS) {
         armed = false;
         quitOnRelease = true;
+        options.concealWindow();
         quitAfterQuietPeriod();
       }
       return;
