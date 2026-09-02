@@ -69,6 +69,14 @@ the text is an unedited recalled prompt, with the caret on the first visual line
 the last visual line for `ArrowDown`, counting wrapped lines. Editing a recalled prompt turns it
 into a normal draft.
 
+## Continue an interrupted turn
+
+When you stop a turn, or it ends with an error, the composer offers to pick up where it stopped.
+Press **Continue** to resume without retyping anything.
+T3 Code tells the agent which command or file change was in flight and asks it to carry on from that step without repeating finished work.
+The conversation marks the resumed point instead of adding a message you did not write.
+The offer goes away once you continue or send something yourself.
+
 ## Prompt stash
 
 On web and desktop, press `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux to save
