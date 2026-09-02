@@ -19,11 +19,17 @@ Button {
     property color iconTint: tint
     property real radius: Math.min(Theme.radius, 8)
     readonly property bool iconOnly: text.length === 0 && iconName.length > 0 && !chevron
+    readonly property bool chevronOnly: text.length === 0 && iconName.length === 0 && chevron
     readonly property color hoverFill: Qt.alpha(Theme.color("accentSurface", "#27272a"), control.subtle ? 1 : 0.5)
+    // A lone glyph sits on the button's centre: the padding is what is left
+    // of the height, so a 24px chevron half stays square and centred.
+    readonly property real glyphPadding: iconOnly ? (height - iconSize) / 2 : (height - chevronSize) / 2
 
     implicitHeight: 28
-    leftPadding: iconOnly ? (implicitHeight - iconSize) / 2 : 8
-    rightPadding: iconOnly ? (implicitHeight - iconSize) / 2 : chevron && text.length === 0 && iconName.length === 0 ? 5 : 8
+    topPadding: 0
+    bottomPadding: 0
+    leftPadding: iconOnly || chevronOnly ? glyphPadding : 8
+    rightPadding: iconOnly || chevronOnly ? glyphPadding : 8
     font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
     font.pixelSize: 13
     font.weight: Font.Medium
