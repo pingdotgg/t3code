@@ -88,7 +88,7 @@ import { EnvironmentId } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
-import type { ClientSettings } from "./settings.ts";
+import type { ClientSettings, QuitConfirmationMode } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
 import type {
   SourceControlCloneRepositoryInput,
@@ -98,6 +98,10 @@ import type {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import type {
+  DesktopAppActivationRequest,
+  DesktopAppActivationResponse,
+} from "./desktopAppActivation.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -1103,11 +1107,10 @@ export interface DesktopBridge {
   probeRemoteEditors?: () => Promise<readonly EditorId[]>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   /**
-   * Hold-to-quit hint pushes: "down" when the quit shortcut is first pressed,
-   * "up" when it is released before the hold completes. Optional: older
-   * desktop builds never emit it.
+   * Quit-confirmation hint pushes. Optional: older desktop builds never emit
+   * them.
    */
-  onQuitShortcut?: (listener: (state: "down" | "up") => void) => () => void;
+  onQuitShortcut?: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;

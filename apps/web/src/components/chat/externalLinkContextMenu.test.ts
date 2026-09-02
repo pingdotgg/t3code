@@ -203,6 +203,7 @@ describe("external chat link context menu", () => {
       "https://example.com/docs?topic=security#links",
     ],
     ["HTTP://EXAMPLE.COM", "http://example.com/"],
+    ["//example.com/path", "https://example.com/path"],
   ])("resolves the safe external web-link href for %s as %s", (href, expected) => {
     expect(resolveExternalWebLinkHref(href)).toBe(expected);
   });
@@ -213,7 +214,6 @@ describe("external chat link context menu", () => {
     "data:text/html,<script>alert(document.domain)</script>",
     "file:///tmp/example.txt",
     "mailto:hello@example.com",
-    "//example.com/path",
     "/relative/path",
     "not a URL",
     "",

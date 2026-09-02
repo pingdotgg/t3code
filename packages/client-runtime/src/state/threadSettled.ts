@@ -138,7 +138,6 @@ export function threadLastActivityAt(shell: SettlementThreadShell): string | nul
  * such threads would be permanently unsettleable.
  */
 export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
-const DAY_MS = 24 * 60 * 60 * 1_000;
 
 /**
  * A user message no turn has picked up yet: the turn.start command was

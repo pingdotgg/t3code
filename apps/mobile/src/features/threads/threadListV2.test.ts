@@ -578,7 +578,9 @@ describe("buildThreadListV2Items", () => {
       ],
       environmentId: null,
       searchQuery: "",
-      now: "2026-06-02T00:01:07.500Z",
+      // Minute-floored partition clock vs precise snooze clock.
+      now: "2026-06-02T00:01:00.000Z",
+      snoozeNow: "2026-06-02T00:01:07.500Z",
     });
 
     expect(layout.items.map((item) => item.thread.id)).toEqual(["just-woke"]);

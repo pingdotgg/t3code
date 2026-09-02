@@ -1018,34 +1018,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
 
         case "thread.message-sent": {
-          if (event.payload.streaming) {
-            const attachments =
-              event.payload.attachments !== undefined
-                ? yield* materializeAttachmentsForProjection({
-                    attachments: event.payload.attachments,
-                  })
-                : undefined;
-            yield* projectionThreadMessageRepository.appendStreaming({
-              messageId: event.payload.messageId,
-              threadId: event.payload.threadId,
-              turnId: event.payload.turnId,
-              role: event.payload.role,
-              text: event.payload.text,
-              ...(attachments !== undefined ? { attachments: [...attachments] } : {}),
-              createdAt: event.payload.createdAt,
-              updatedAt: event.payload.updatedAt,
-            });
-            return;
-          }
-
           const existingMessage = yield* projectionThreadMessageRepository.getByMessageId({
             messageId: event.payload.messageId,
           });
           const previousMessage = Option.getOrUndefined(existingMessage);
           const nextText = Option.match(existingMessage, {
             onNone: () => event.payload.text,
-            onSome: (message) =>
-              event.payload.text.length === 0 ? message.text : event.payload.text,
+            onSome: (message) => {
+              if (event.payload.streaming) {
+                return `${message.text}${event.payload.text}`;
+              }
+              if (event.payload.text.length === 0) {
+                return message.text;
+              }
+              return event.payload.text;
+            },
           });
           const nextAttachments =
             event.payload.attachments !== undefined
@@ -1060,7 +1047,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             role: event.payload.role,
             text: nextText,
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
-            isStreaming: false,
+            isStreaming: event.payload.streaming,
             createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
           });

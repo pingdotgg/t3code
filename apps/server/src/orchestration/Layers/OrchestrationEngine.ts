@@ -166,42 +166,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
-        if (
-          envelope.command.type === "thread.auto-settle" &&
-          (yield* eventStore.hasEventAfter({
-            aggregateKind: "thread",
-            aggregateId: envelope.command.threadId,
-            sequenceExclusive: envelope.command.snapshotSequence,
-          }))
-        ) {
-          return yield* new OrchestrationCommandInvariantError({
-            commandType: envelope.command.type,
-            detail: `thread ${envelope.command.threadId} changed before automatic settlement`,
-          });
-        }
-
-        if (
-          envelope.command.type === "thread.auto-settle" &&
-          threadBackgroundLiveness.getThreadBackgroundLiveness(envelope.command.threadId) !== null
-        ) {
-          return yield* new OrchestrationCommandInvariantError({
-            commandType: envelope.command.type,
-            detail: `thread ${envelope.command.threadId} has live background work`,
-          });
-        }
-
-        // Command snapshots omit activities at startup and cap them while running.
-        // Read this request's durable state before deciding how to send the answer.
-        const userInputActivity =
-          envelope.command.type === "thread.user-input.respond"
-            ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
-            : Option.none();
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
-          ...(Option.isSome(userInputActivity)
-            ? { userInputActivity: userInputActivity.value }
-            : {}),
         }).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError((cause) =>

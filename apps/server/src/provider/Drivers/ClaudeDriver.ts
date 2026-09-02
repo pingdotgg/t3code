@@ -40,6 +40,7 @@ import {
 } from "../Layers/ClaudeProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import * as ModelManifest from "../ModelManifest.ts";
+import { resolveClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -116,6 +117,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
+      const modelCatalog = modelManifest.current.pipe(Effect.map(resolveClaudeModelCatalog));
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -153,7 +155,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             }),
         ),
       );
-      const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, processEnv);
+      const textGeneration = yield* makeClaudeTextGeneration(
+        effectiveConfig,
+        processEnv,
+        modelCatalog,
+      );
 
       // Per-instance capabilities cache: keyed on binary + resolved HOME so
       // account-specific probes never share auth metadata across instances.
@@ -167,22 +173,21 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
 
-      // Kick the TTL-gated manifest refresh in the background and classify
-      // with the in-memory manifest, so a slow or hung fetch never delays the
-      // provider check. A refresh that lands mid-probe applies on the next one.
+      // Start the TTL-gated refresh without delaying provider readiness. The
+      // next check observes a remote manifest after the background fetch lands.
       const checkProvider = modelManifest.refreshInBackground.pipe(
         Effect.andThen(
-          Effect.zipWith(
-            checkClaudeProviderStatus(
-              effectiveConfig,
-              () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
-              processEnv,
-              cwd,
+          modelManifest.current.pipe(
+            Effect.flatMap((manifest) =>
+              checkClaudeProviderStatus(
+                effectiveConfig,
+                () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
+                processEnv,
+                cwd,
+                resolveClaudeModelCatalog(manifest),
+              ),
             ),
-            modelManifest.current,
-            (draft, manifest) =>
-              stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
-            { concurrent: true },
+            Effect.map(stampIdentity),
           ),
         ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -197,11 +202,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          Effect.zipWith(
-            makePendingClaudeProvider(settings.provider),
-            modelManifest.current,
-            (draft, manifest) =>
-              stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
+          modelManifest.current.pipe(
+            Effect.flatMap((manifest) =>
+              makePendingClaudeProvider(settings.provider, resolveClaudeModelCatalog(manifest)),
+            ),
+            Effect.map(stampIdentity),
           ),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>

@@ -19,6 +19,7 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
   canSnooze,
+  effectiveSettled,
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
@@ -99,7 +100,7 @@ import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, usePrimarySettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -171,7 +172,7 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import {
-  deriveProviderInstanceEntries,
+  deriveProviderEntriesByEnvironment,
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../providerInstances";
@@ -851,10 +852,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const isWoke =
     wokeAtDate !== null &&
     (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
-    !changeRequestAutoSettles(pr, {
-      autoSettleOnMerge: props.autoSettleOnMerge,
-      thread,
-    });
+    thread.settledOverride !== "settled";
   // In-flight rows (working, or waiting on approval/input) fade as a whole:
   // there is nothing for the user to do yet, so prominence is reserved for
   // rows that need a human — done (unread), read-but-unsettled, failed, and
@@ -1772,6 +1770,8 @@ export default function Sidebar() {
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
+  const autoSettleAfterDays = usePrimarySettings((s) => s.sidebarAutoSettleAfterDays);
+  const autoSettleOnMerge = usePrimarySettings((s) => s.sidebarAutoSettleOnMerge);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -1925,15 +1925,20 @@ export default function Sidebar() {
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const providerEntryByInstanceId = useMemo(
+  const projectGroupsRef = useRef(projectGroups);
+  projectGroupsRef.current = projectGroups;
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  // Threads on non-primary environments (T3 Connect, hosted) resolve their
+  // provider entry from their own environment's config: default instance ids
+  // are driver slugs, so a flat map would collide across environments.
+  const providerEntriesByEnvironment = useMemo(
     () =>
-      new Map(
-        deriveProviderInstanceEntries(serverProviders).map(
-          (entry) => [entry.instanceId as string, entry] as const,
+      deriveProviderEntriesByEnvironment(
+        [...serverConfigs].map(
+          ([environmentId, config]) => [environmentId, config.providers] as const,
         ),
       ),
-    [serverProviders],
+    [serverConfigs],
   );
   const projectCwdByKey = useMemo(
     () =>
@@ -2081,11 +2086,8 @@ export default function Sidebar() {
     clearSelection();
   }, [clearSelection, projectScopeKey]);
 
-  const handleProjectSettings = useCallback(
-    (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
-      event.preventDefault();
-      event.stopPropagation();
-      dispatchProjectScopeMenu({ type: "project-settings-opened" });
+  const openProjectSettings = useCallback(
+    (projectGroup: SidebarProjectSnapshot) => {
       if (isMobile) {
         setOpenMobile(false);
       }
@@ -2110,7 +2112,6 @@ export default function Sidebar() {
   // the partition works directly off live shells: no archived-snapshot
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
-  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const {
     pinnedThreads,
     reorderablePinnedKeys,
@@ -2125,6 +2126,7 @@ export default function Sidebar() {
     // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
+    const now = `${nowMinute}:00.000Z`;
     // Subagent child threads live in the parent's Agents surface, not the
     // sidebar roster (v2 models them as real threads with lineage).
     const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
@@ -2201,16 +2203,7 @@ export default function Sidebar() {
       settledThreads: sortSettledThreadsForSidebar(settled),
       snoozeNow: preciseNow,
     };
-  }, [
-    autoSettleAfterDays,
-    autoSettleOnMerge,
-    changeRequestSnapshotByKey,
-    nowMinute,
-    scopedProjectKeys,
-    serverConfigs,
-    snoozeWakeTick,
-    threads,
-  ]);
+  }, [nowMinute, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -3778,7 +3771,10 @@ export default function Sidebar() {
                           ) ?? null
                         }
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
-                        providerEntryByInstanceId={providerEntryByInstanceId}
+                        providerEntryByInstanceId={
+                          providerEntriesByEnvironment.get(thread.environmentId) ??
+                          EMPTY_PROVIDER_ENTRIES
+                        }
                         isHighlighted={activeSearchResultIndex === index}
                         isRouteActive={routeThreadKey === threadKey}
                         resultId={`sidebar-thread-search-result-${index}`}
@@ -3884,7 +3880,10 @@ export default function Sidebar() {
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
                         }
-                        providerEntryByInstanceId={providerEntryByInstanceId}
+                        providerEntryByInstanceId={
+                          providerEntriesByEnvironment.get(thread.environmentId) ??
+                          EMPTY_PROVIDER_ENTRIES
+                        }
                         timestampFormat={timestampFormat}
                         onThreadClick={handleThreadClick}
                         onThreadActivate={navigateToThread}
@@ -4089,4 +4088,5 @@ export default function Sidebar() {
       <SidebarChromeFooter />
     </>
   );
+  const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new Map();
 }

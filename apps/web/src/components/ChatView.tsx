@@ -40,11 +40,6 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import { useThreadActions } from "../hooks/useThreadActions";
 import {
-  resolveDisplayedThreadPr,
-  threadChangeRequestSnapshotsAtom,
-  useLinkedThreadPullRequest,
-} from "./ThreadStatusIndicators";
-import {
   deriveThreadActivityRun,
   deriveLatestThreadRun,
   deriveThreadRuntime,
@@ -74,7 +69,12 @@ import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
-import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
+import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
+import {
+  getTerminalLabel,
+  nextTerminalId,
+  resolveTerminalSessionLabel,
+} from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -325,8 +325,14 @@ import {
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
 import { resolveThreadPr } from "./ThreadStatusIndicators";
-import { type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { QueuedRunsControl, type EditQueuedRunRequest } from "./chat/QueuedRunsControl";
+import {
+  resolveDisplayedThreadPr,
+  threadPullRequestRefreshSource,
+  threadChangeRequestSnapshotsAtom,
+  useLinkedThreadPullRequest,
+} from "./ThreadStatusIndicators";
+import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { resolveThreadSyncPhase } from "../threadSync";
 import {
@@ -1338,6 +1344,7 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const createAttachmentAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
+    refresh: true,
   });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
@@ -1907,7 +1914,7 @@ function ChatViewContent(props: ChatViewProps) {
   >({});
   const activePullRequestSurfaceId =
     activeRightPanelSurface?.kind === "pull-request" ? activeRightPanelSurface.id : undefined;
-  const handlePullRequestTabStatusChange = useCallback(
+  const updatePullRequestTabStatusFromPanel = useCallback(
     (status: PullRequestTabStatus) => {
       const id = activePullRequestSurfaceId;
       if (id === undefined) return;
@@ -1915,6 +1922,8 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activePullRequestSurfaceId],
   );
+  const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
+  const sidebarPrRefreshKeyRef = useRef<string | null>(null);
   const activeFileSurface =
     activeRightPanelSurface?.kind === "file" ? activeRightPanelSurface : null;
   const activePreviewState = useThreadPreviewState(activeThreadRef);
@@ -2758,14 +2767,8 @@ function ChatViewContent(props: ChatViewProps) {
         toastManager.add({ type: "error", title: "The environment is not connected." });
         return;
       }
-      const videoMime = videoMimeType(attachment);
-      const isVideo = videoMime !== null;
+      const isVideo = videoMimeType(attachment) !== null;
       const action = isVideo ? "play" : "download";
-      const videoPreviewAbortController = isVideo ? new AbortController() : null;
-      if (isVideo) {
-        videoPreviewAbortControllerRef.current?.abort();
-        videoPreviewAbortControllerRef.current = videoPreviewAbortController;
-      }
       const videoPreviewRequestId = isVideo ? ++videoPreviewRequestIdRef.current : 0;
       const isCurrentRequest = () =>
         !isVideo ||
@@ -2775,75 +2778,37 @@ function ChatViewContent(props: ChatViewProps) {
           videoPreviewRequestId,
           videoPreviewRequestIdRef.current,
         );
-      const finishVideoPreviewRequest = () => {
-        if (videoPreviewRequestIdRef.current === videoPreviewRequestId) {
-          setOpeningVideoAttachmentId(null);
-          videoPreviewAbortControllerRef.current = null;
-        }
-      };
       if (isVideo) setOpeningVideoAttachmentId(attachment.id);
 
-      // fileName and mimeType ride in the signed claims so videos render
-      // inline while other files keep their real download name and type.
-      const result = await createAttachmentAssetUrl({
-        environmentId,
-        input: {
-          resource: {
-            _tag: "attachment",
-            attachmentId: attachment.id,
-            fileName: attachment.name,
-            mimeType: videoMime ?? attachment.mimeType,
-          },
-        },
-      });
-      if (!isCurrentRequest()) {
-        finishVideoPreviewRequest();
-        return;
-      }
-      if (result._tag === "Failure") {
-        finishVideoPreviewRequest();
-        const error = squashAtomCommandFailure(result);
+      try {
+        const url = await resolveFileAttachmentUrl({
+          attachment,
+          environmentId,
+          httpBaseUrl: connection.httpBaseUrl,
+          createAssetUrl: createAttachmentAssetUrl,
+        });
+        if (!isCurrentRequest()) return;
+        if (isVideo) {
+          setExpandedImage({
+            images: [{ src: url, name: attachment.name, type: "video" }],
+            index: 0,
+          });
+          return;
+        }
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = attachment.name;
+        anchor.click();
+      } catch (error) {
+        if (!isCurrentRequest()) return;
         toastManager.add({
           type: "error",
           title: "Could not " + action + " " + attachment.name,
           description: error instanceof Error ? error.message : "The attachment is unavailable.",
         });
-        return;
+      } finally {
+        if (isVideo && isCurrentRequest()) setOpeningVideoAttachmentId(null);
       }
-
-      const url = resolveAssetUrl(connection.httpBaseUrl, result.value.relativeUrl);
-      if (!url) {
-        finishVideoPreviewRequest();
-        toastManager.add({ type: "error", title: "Could not " + action + " " + attachment.name });
-        return;
-      }
-      if (isVideo) {
-        try {
-          const previewUrl = await loadVideoPreviewUrl(url, videoPreviewAbortController?.signal);
-          if (!isCurrentRequest()) {
-            revokeBlobPreviewUrl(previewUrl);
-            return;
-          }
-          setExpandedImage({
-            images: [{ src: previewUrl, name: attachment.name, type: "video" }],
-            index: 0,
-          });
-        } catch (error) {
-          if (!isCurrentRequest()) return;
-          toastManager.add({
-            type: "error",
-            title: "Could not play " + attachment.name,
-            description: error instanceof Error ? error.message : "The attachment is unavailable.",
-          });
-        } finally {
-          finishVideoPreviewRequest();
-        }
-        return;
-      }
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = attachment.name;
-      anchor.click();
     },
     [createAttachmentAssetUrl, environmentId, routeThreadKey],
   );
@@ -4881,8 +4846,14 @@ function ChatViewContent(props: ChatViewProps) {
   );
   // The server-projected settled state keeps the banner and sidebar in sync.
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
-  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
-  const autoSettleOnMerge = useClientSettings((settings) => settings.sidebarAutoSettleOnMerge);
+  const autoSettleAfterDays = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.sidebarAutoSettleAfterDays,
+  );
+  const autoSettleOnMerge = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.sidebarAutoSettleOnMerge,
+  );
   const changeRequestSnapshotByKey = useAtomValue(threadChangeRequestSnapshotsAtom);
   // The thread's own change request, placed against the project it belongs to.
   const linkedThreadPullRequest = activeThread?.linkedPullRequest ?? null;
@@ -4898,6 +4869,97 @@ function ChatViewContent(props: ChatViewProps) {
     linkedPullRequest: linkedThreadPullRequest,
     linkedPullRequestStatus,
   });
+  const handlePullRequestTabStatusChange = useCallback(
+    (status: PullRequestTabStatus) => {
+      updatePullRequestTabStatusFromPanel(status);
+      const source = threadPullRequestRefreshSource({
+        panel: status,
+        thread: {
+          repository: threadRepository,
+          number: linkedThreadPullRequest?.number ?? activeThreadPr?.number ?? null,
+          state: activeThreadPr?.state ?? null,
+          linked: linkedThreadPullRequest !== null,
+        },
+      });
+      if (source === null) {
+        sidebarPrRefreshKeyRef.current = null;
+        return;
+      }
+      const refreshKey = `${activeThreadKey}:${source}:${status.repository}#${status.number}:${status.state}`;
+      if (sidebarPrRefreshKeyRef.current === refreshKey) return;
+      sidebarPrRefreshKeyRef.current = refreshKey;
+
+      if (source === "linked-detail" && activeThreadRef && linkedThreadPullRequest) {
+        appAtomRegistry.refresh(
+          linkedPullRequestDetailAtom({
+            environmentId: activeThreadRef.environmentId,
+            input: {
+              projectId: linkedThreadPullRequest.projectId,
+              repository: linkedThreadPullRequest.repository,
+              number: linkedThreadPullRequest.number,
+            },
+          }),
+        );
+        return;
+      }
+      if (source === "vcs" && activeThreadRef && gitCwd !== null) {
+        void refreshVcsStatus({
+          environmentId: activeThreadRef.environmentId,
+          input: { cwd: gitCwd },
+        }).then(() => {
+          if (sidebarPrRefreshKeyRef.current === refreshKey) {
+            sidebarPrRefreshKeyRef.current = null;
+          }
+        });
+      }
+    },
+    [
+      activeThreadKey,
+      activeThreadPr?.number,
+      activeThreadPr?.state,
+      activeThreadRef,
+      gitCwd,
+      linkedThreadPullRequest,
+      refreshVcsStatus,
+      threadRepository,
+      updatePullRequestTabStatusFromPanel,
+    ],
+  );
+  const activeThreadReferenceCopyTarget = useMemo(
+    () =>
+      activeThreadId === null || !isServerThread
+        ? null
+        : resolveThreadReferenceCopyTarget({
+            threadId: activeThreadId,
+            linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
+            detectedPullRequestUrl: activeThreadPr?.url ?? null,
+          }),
+    [activeThreadId, activeThreadPr?.url, isServerThread, linkedThreadPullRequest?.url],
+  );
+  const copyActiveThreadReference = useCallback(() => {
+    const target = activeThreadReferenceCopyTarget;
+    if (target === null) return;
+    void writeTextToClipboard(target.value, target.clipboardTarget).then(
+      (didCopy) => {
+        if (!didCopy) return;
+        toastManager.add({
+          type: "success",
+          title: target.successTitle,
+          description: target.value,
+        });
+      },
+      (error) => {
+        console.error(error);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: target.failureTitle,
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      },
+    );
+  }, [activeThreadReferenceCopyTarget]);
   // The right panel offers the thread's own change request, so it can only offer it once the
   // branch has one; until then the picker says so rather than opening an empty panel.
   const addPullRequestSurface = useCallback(() => {
@@ -4946,21 +5008,13 @@ function ChatViewContent(props: ChatViewProps) {
     if (activeThreadRef === null || activeThreadWokeAt === null) return;
     markThreadVisited(scopedThreadKey(activeThreadRef), activeThreadWokeAt);
   }, [activeThreadRef, activeThreadWokeAt, markThreadVisited]);
-  // Mirror of the sidebar's Woke pill for the open thread. It uses the same
-  // visit comparison and change request settle rule.
+  // Mirror of the sidebar's Woke pill for the open thread.
   const activeThreadLastVisitedAt = useUiStateStore((store) =>
     activeThreadKey === null ? undefined : store.threadLastVisitedAtById[activeThreadKey],
   );
   const activeThreadWokeVisible = useMemo(() => {
     if (activeThreadWokeAt === null) return false;
-    if (
-      changeRequestAutoSettles(activeThreadChangeRequest, {
-        autoSettleOnMerge,
-        thread: activeThreadShell,
-      })
-    ) {
-      return false;
-    }
+    if (activeThreadShell?.settledOverride === "settled") return false;
     const wokeAtMs = Date.parse(activeThreadWokeAt);
     if (Number.isNaN(wokeAtMs)) return false;
     // Having the thread open counts as a visit at completedAt (the effect
@@ -4980,7 +5034,6 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeLatestRun?.completedAt,
     activeThreadLastVisitedAt,
-    activeThreadChangeRequest,
     activeThreadShell,
     activeThreadWokeAt,
     autoSettleOnMerge,
@@ -5002,8 +5055,6 @@ function ChatViewContent(props: ChatViewProps) {
     nowMinute,
     supportsSettlement,
   ]);
-  const activeThreadSettled =
-    supportsSettlement && activeThreadShell?.settledOverride === "settled";
   const unsettleThreadMutation = useAtomCommand(threadEnvironment.unsettle, {
     reportFailure: false,
   });
@@ -5390,6 +5441,13 @@ function ChatViewContent(props: ChatViewProps) {
       });
       if (!command) return;
 
+      if (command === "thread.copyReference") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) copyActiveThreadReference();
+        return;
+      }
+
       if (command === "thread.settle") {
         event.preventDefault();
         event.stopPropagation();
@@ -5557,6 +5615,7 @@ function ChatViewContent(props: ChatViewProps) {
     supportsPinning,
     supportsSettlement,
     confirmAndUnpinThread,
+    copyActiveThreadReference,
     toggleRightPanel,
     toggleThreadPanel,
     toggleTerminalVisibility,
@@ -7507,6 +7566,7 @@ function ChatViewContent(props: ChatViewProps) {
                         }
                       >
                         <DraftHeroHeadline
+                          draftId={draftId}
                           activeProjectRef={activeProjectRef}
                           activeProjectTitle={activeProject?.title ?? null}
                         />

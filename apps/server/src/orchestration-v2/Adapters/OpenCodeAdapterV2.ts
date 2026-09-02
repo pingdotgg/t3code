@@ -3027,6 +3027,36 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                       }),
                 ),
               );
+              // Child agents run in their own sessions and outlive a root
+              // abort (#9005). Best-effort: walk session.children and abort
+              // each descendant; the root abort above already settled the
+              // interrupt contract.
+              yield* Effect.gen(function* () {
+                const visited = new Set([sessionId]);
+                const abortDescendants = (parentId: string): Effect.Effect<void> =>
+                  Effect.gen(function* () {
+                    const children = yield* sdkCall(
+                      "session.children",
+                      { sessionID: parentId },
+                      () => client.session.children({ sessionID: parentId }),
+                    ).pipe(Effect.option);
+                    const rows = Option.isSome(children) ? (children.value.data ?? []) : [];
+                    const fresh = rows.filter((child) => {
+                      if (visited.has(child.id)) return false;
+                      visited.add(child.id);
+                      return true;
+                    });
+                    yield* Effect.forEach(
+                      fresh,
+                      (child) =>
+                        sdkCall("session.abort", { sessionID: child.id }, () =>
+                          client.session.abort({ sessionID: child.id }),
+                        ).pipe(Effect.ignore, Effect.andThen(abortDescendants(child.id))),
+                      { concurrency: 8, discard: true },
+                    );
+                  });
+                yield* abortDescendants(sessionId);
+              }).pipe(Effect.timeout("15 seconds"), Effect.ignore);
             }).pipe(
               Effect.mapError(
                 (cause) =>

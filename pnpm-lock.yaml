@@ -472,7 +472,7 @@ importers:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.205
-        version: 0.3.251(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
+        version: 0.3.252(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
       '@connectrpc/connect':
         specifier: 1.7.0
         version: 1.7.0(@bufbuild/protobuf@1.10.0)
@@ -1012,8 +1012,8 @@ packages:
   '@alchemy.run/node-utils@0.0.5':
     resolution: {integrity: sha512-5agdhQxWBodxa5hDRyjnpx91RTU3g+qd5fxYB7uNDCaOzB0XC47UU/KHR6zf6jhz/NXf61gJS+vhYwn8NHeRoQ==}
 
-  '@anthropic-ai/claude-agent-sdk@0.3.251':
-    resolution: {integrity: sha512-DqSi8mH2tQYRlVV0G+lJnQ/WbjJZ/a+8cJ3vPuYoqh8esIIvXHm1ZOXV1UPGsFYRnbBytEoiSGitguEXd+sQ+Q==}
+  '@anthropic-ai/claude-agent-sdk@0.3.252':
+    resolution: {integrity: sha512-hCkyZFn3J46aAMNqS6AZbYz91FaLUmX5VvJOzYZqzlVBJN47OxXQugqOzqa6b6GOZRmwiqW2ck8J8TE7bQZswQ==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.93.0'
@@ -10540,7 +10540,7 @@ snapshots:
 
   '@alchemy.run/node-utils@0.0.5': {}
 
-  '@anthropic-ai/claude-agent-sdk@0.3.251(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)':
+  '@anthropic-ai/claude-agent-sdk@0.3.252(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)':
     dependencies:
       '@anthropic-ai/sdk': 0.93.0(zod@4.4.3)
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)

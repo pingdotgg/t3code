@@ -45,6 +45,7 @@ import {
   type TerminalContextDraft,
   ensureInlineTerminalContextPlaceholders,
   normalizeTerminalContextText,
+  stripInlineTerminalContextPlaceholders,
 } from "./lib/terminalContext";
 import {
   type ElementContextDraft,
@@ -660,6 +661,13 @@ interface ComposerDraftStoreState {
    * prompt stash. Session-bound context stays in the source draft.
    */
   clearComposerPromptAndImages: (threadRef: ComposerThreadTarget) => void;
+  /**
+   * Moves prompt text and transferable attachments into another composer.
+   * Attachments over the destination limit and uploaded files that belong to
+   * another environment stay in the source draft. Terminal and element
+   * context, preview annotations, and review comments also stay in the source.
+   */
+  moveComposerPromptAndImages: (from: ComposerThreadTarget, to: ComposerThreadTarget) => void;
 }
 
 export interface EffectiveComposerModelState {
@@ -3896,6 +3904,117 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               delete nextDraftsByThreadKey[threadKey];
             } else {
               nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        moveComposerPromptAndImages: (from, to) => {
+          const fromKey = resolveComposerDraftKey(get(), from) ?? "";
+          const toKey = resolveComposerDraftKey(get(), to) ?? "";
+          if (fromKey.length === 0 || toKey.length === 0 || fromKey === toKey) {
+            return;
+          }
+          set((state) => {
+            const source = state.draftsByThreadKey[fromKey];
+            if (!source) {
+              return state;
+            }
+            const destination = state.draftsByThreadKey[toKey] ?? createEmptyThreadDraft();
+            const destinationEnvironmentId =
+              typeof to === "string"
+                ? (state.draftThreadsByThreadKey[toKey]?.environmentId ??
+                  parseScopedThreadKey(toKey)?.environmentId ??
+                  null)
+                : to.environmentId;
+            // A file the destination already holds (same id, or same
+            // metadata key) stays behind instead of duplicating there.
+            const destinationFileIds = new Set(destination.files.map((file) => file.id));
+            const destinationFileKeys = new Set(destination.files.map(composerFileDedupKey));
+            const transferableFiles = source.files.filter(
+              (file) =>
+                (file.file !== null || file.uploadEnvironmentId === destinationEnvironmentId) &&
+                !destinationFileIds.has(file.id) &&
+                !destinationFileKeys.has(composerFileDedupKey(file)),
+            );
+            const remainingAttachmentSlots = Math.max(
+              0,
+              PROVIDER_SEND_TURN_MAX_ATTACHMENTS -
+                destination.images.length -
+                destination.files.length,
+            );
+            const movedImages = source.images.slice(0, remainingAttachmentSlots);
+            const movedImageIds = new Set(movedImages.map((image) => image.id));
+            const retainedImages = source.images.filter((image) => !movedImageIds.has(image.id));
+            const movedFiles = transferableFiles
+              .slice(0, remainingAttachmentSlots - movedImages.length)
+              .map((file) => {
+                // A byte-backed file moving across environments re-uploads at
+                // the destination. Keeping the source-environment upload id
+                // would mark it uploaded after a reload with no local bytes
+                // and no valid upload anywhere the destination can reach. The
+                // upload queue keeps the source upload as fallback, then
+                // deletes it after the destination upload succeeds. Abandoned
+                // uploads still expire through the server sweep.
+                if (
+                  file.file === null ||
+                  file.uploadEnvironmentId === undefined ||
+                  file.uploadEnvironmentId === destinationEnvironmentId
+                ) {
+                  return file;
+                }
+                const { uploadedAttachmentId: _a, uploadEnvironmentId: _e, ...rest } = file;
+                return rest;
+              });
+            const movedFileIds = new Set(movedFiles.map((file) => file.id));
+            const retainedFiles = source.files.filter((file) => !movedFileIds.has(file.id));
+            // Inline placeholders reference the source's terminal contexts,
+            // which stay behind; re-anchor the moved prompt to whatever
+            // contexts the destination already holds.
+            const movedPrompt = ensureInlineTerminalContextPlaceholders(
+              stripInlineTerminalContextPlaceholders(source.prompt),
+              destination.terminalContexts.length,
+            );
+            const nextDestination: ComposerThreadDraftState = {
+              ...destination,
+              prompt: movedPrompt,
+              images: [...destination.images, ...movedImages],
+              files: [...destination.files, ...movedFiles],
+              nonPersistedImageIds: [
+                ...destination.nonPersistedImageIds,
+                ...source.nonPersistedImageIds.filter((imageId) => movedImageIds.has(imageId)),
+              ],
+              persistedAttachments: [
+                ...destination.persistedAttachments,
+                ...source.persistedAttachments.filter((attachment) =>
+                  movedImageIds.has(attachment.id),
+                ),
+              ],
+            };
+            // Same clearing shape as clearComposerPromptAndImages, but the
+            // preview URLs are NOT revoked: the images moved and their blobs
+            // are still referenced from the destination.
+            const nextSource: ComposerThreadDraftState = {
+              ...source,
+              prompt: ensureInlineTerminalContextPlaceholders("", source.terminalContexts.length),
+              images: retainedImages,
+              files: retainedFiles,
+              nonPersistedImageIds: source.nonPersistedImageIds.filter(
+                (imageId) => !movedImageIds.has(imageId),
+              ),
+              persistedAttachments: source.persistedAttachments.filter(
+                (attachment) => !movedImageIds.has(attachment.id),
+              ),
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextSource)) {
+              delete nextDraftsByThreadKey[fromKey];
+            } else {
+              nextDraftsByThreadKey[fromKey] = nextSource;
+            }
+            if (shouldRemoveDraft(nextDestination)) {
+              delete nextDraftsByThreadKey[toKey];
+            } else {
+              nextDraftsByThreadKey[toKey] = nextDestination;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
