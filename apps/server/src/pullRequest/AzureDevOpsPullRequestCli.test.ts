@@ -97,6 +97,46 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads an Azure pull request page larger than the VCS default output limit", () =>
+    Effect.gen(function* () {
+      const rows = pullRequestRows(100, 1).map((row) => ({
+        ...row,
+        description: "x".repeat(10_000),
+      }));
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const response = JSON.stringify(rows);
+      expect(Buffer.byteLength(response)).toBeGreaterThan(1_000_000);
+
+      mockedExecute.mockImplementationOnce((input) => {
+        const maxOutputBytes =
+          "maxOutputBytes" in input && typeof input.maxOutputBytes === "number"
+            ? input.maxOutputBytes
+            : 1_000_000;
+        return Effect.succeed(
+          maxOutputBytes >= Buffer.byteLength(response)
+            ? output(response)
+            : {
+                ...output(response.slice(0, maxOutputBytes)),
+                stdoutTruncated: true,
+              },
+        );
+      });
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "web",
+        state: "merged",
+        involvement: "all",
+        viewer: "bilal@acme.dev",
+        limit: 99,
+      });
+
+      assert.strictEqual(batch.items.length, 99);
+      assert.isTrue(batch.truncated);
+    }),
+  );
+
   it.effect("reads the page unnarrowed when asked to search, having nothing to search with", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(3, 1))));

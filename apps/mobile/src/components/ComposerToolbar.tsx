@@ -113,6 +113,7 @@ export function ComposerToolbarRow(props: {
 
 export function ComposerToolbarScroller(props: {
   readonly children: ReactNode;
+  readonly align?: "start" | "end";
   /** Only for non-Uniwind surfaces such as the native terminal palette. */
   readonly fadeOpaque?: string;
   /** Only for non-Uniwind surfaces such as the native terminal palette. */
@@ -167,6 +168,8 @@ export function ComposerToolbarScroller(props: {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{
           alignItems: "center",
+          flexGrow: props.align === "end" ? 1 : undefined,
+          justifyContent: props.align === "end" ? "flex-end" : undefined,
           gap: COMPOSER_TOOLBAR_GAP,
           paddingLeft: 0,
           paddingRight: props.contentPaddingRight ?? 1,
@@ -211,6 +214,46 @@ export function ComposerToolbarScroller(props: {
         />
       ) : null}
     </View>
+  );
+}
+
+export function ComposerActionButton(props: {
+  readonly accessibilityLabel: string;
+  readonly disabled?: boolean;
+  readonly icon: ComponentProps<typeof SymbolView>["name"];
+  readonly onPress: () => void;
+  readonly variant?: "primary" | "danger";
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={props.accessibilityLabel}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: props.disabled }}
+      className="size-[44px] shrink-0 items-center justify-center active:opacity-70"
+      disabled={props.disabled}
+      onPress={props.onPress}
+    >
+      <View
+        className={cn(
+          "size-[30px] items-center justify-center rounded-full",
+          props.variant === "danger"
+            ? "bg-danger"
+            : props.disabled
+              ? "bg-primary/15"
+              : "bg-primary",
+        )}
+      >
+        <SymbolView
+          name={props.icon}
+          size={16}
+          weight="semibold"
+          tintColorClassName={
+            props.variant === "danger" ? "accent-danger-foreground" : "accent-primary-foreground"
+          }
+          type="monochrome"
+        />
+      </View>
+    </Pressable>
   );
 }
 

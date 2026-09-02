@@ -254,11 +254,19 @@ export interface OpenCodeRuntimeShape {
   readonly loadOpenCodeInventory: (
     client: OpencodeClient,
   ) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
+  readonly loadOpenCodeSkills: (
+    client: OpencodeClient,
+  ) => Effect.Effect<ReadonlyArray<OpenCodeSkill>, OpenCodeRuntimeError>;
   readonly loadInventoryFromCli: (input: {
     readonly binaryPath: string;
     readonly cwd: string;
     readonly environment?: NodeJS.ProcessEnv;
   }) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
+  readonly loadSkillsFromCli: (input: {
+    readonly binaryPath: string;
+    readonly cwd: string;
+    readonly environment?: NodeJS.ProcessEnv;
+  }) => Effect.Effect<ReadonlyArray<OpenCodeSkill>, OpenCodeRuntimeError>;
 }
 
 function parseServerUrlFromOutput(output: string): string | null {
@@ -555,11 +563,23 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const spawnCommand = yield* resolveCommand(input.binaryPath, input.args, input.environment);
       const child = yield* spawner.spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          detached: hostPlatform !== "win32",
           shell: spawnCommand.shell,
           ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(input.environment ? { env: input.environment } : { extendEnv: true }),
         }),
       );
+      const terminateCommandGroup =
+        hostPlatform === "win32"
+          ? child.kill({ killSignal: "SIGKILL" }).pipe(Effect.asVoid)
+          : Effect.sync(() => {
+              try {
+                process.kill(-Number(child.pid), "SIGKILL");
+              } catch {
+                // The command and its process group may already have exited.
+              }
+            });
+      yield* Effect.addFinalizer(() => terminateCommandGroup.pipe(Effect.ignore));
       const collectOptions =
         input.maxOutputBytes === undefined ? undefined : { maxBytes: input.maxOutputBytes };
       const [stdout, stderr, code] = yield* Effect.all(
@@ -855,8 +875,8 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       Effect.orElseSucceed((): ReadonlyArray<Agent> => []),
     );
 
-  const loadSkills = (client: OpencodeClient) =>
-    runOpenCodeSdk("app.skills", () => client.app.skills()).pipe(
+  const loadOpenCodeSkills: OpenCodeRuntimeShape["loadOpenCodeSkills"] = (client) =>
+    runOpenCodeSdk("app.skills", (signal) => client.app.skills(undefined, { signal })).pipe(
       Effect.map((result) =>
         (result.data ?? []).map((skill) => ({
           name: skill.name,
@@ -864,8 +884,9 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           location: skill.location,
         })),
       ),
-      Effect.orElseSucceed((): ReadonlyArray<OpenCodeSkill> => []),
     );
+  const loadSkills = (client: OpencodeClient) =>
+    loadOpenCodeSkills(client).pipe(Effect.orElseSucceed((): ReadonlyArray<OpenCodeSkill> => []));
 
   const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
     Effect.all([loadProviders(client), loadAgents(client), loadSkills(client)], {
@@ -971,13 +992,35 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       };
     });
 
+  const loadSkillsFromCli: OpenCodeRuntimeShape["loadSkillsFromCli"] = (input) =>
+    runOpenCodeCommand({
+      binaryPath: input.binaryPath,
+      args: ["debug", "skill"],
+      cwd: input.cwd,
+      maxOutputBytes: OPENCODE_SKILL_DISCOVERY_MAX_OUTPUT_BYTES,
+      ...(input.environment !== undefined ? { environment: input.environment } : {}),
+    }).pipe(
+      Effect.flatMap((result) =>
+        result.code === 0
+          ? Effect.succeed(parseSkillsCliOutput(result.stdout))
+          : Effect.fail(
+              new OpenCodeRuntimeError({
+                operation: "loadSkillsFromCli",
+                detail: `OpenCode skills command exited with code ${result.code}.`,
+              }),
+            ),
+      ),
+    );
+
   return {
     startOpenCodeServerProcess,
     connectToOpenCodeServer,
     runOpenCodeCommand,
     createOpenCodeSdkClient,
     loadOpenCodeInventory,
+    loadOpenCodeSkills,
     loadInventoryFromCli,
+    loadSkillsFromCli,
   } satisfies OpenCodeRuntimeShape;
 });
 

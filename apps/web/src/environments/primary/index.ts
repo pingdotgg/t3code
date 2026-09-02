@@ -4,8 +4,6 @@ export {
   resetPrimaryEnvironmentDescriptorForTests,
   resolveInitialPrimaryEnvironmentDescriptor,
   writePrimaryEnvironmentDescriptor,
-  __resetPrimaryEnvironmentBootstrapForTests,
-  __resetPrimaryEnvironmentDescriptorBootstrapForTests,
 } from "./context";
 
 export {

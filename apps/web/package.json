@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/web",
-  "version": "0.0.36",
+  "version": "0.0.38",
   "private": true,
   "type": "module",
   "scripts": {
@@ -65,7 +65,6 @@
     "@vitejs/plugin-react": "^6.0.0",
     "babel-plugin-react-compiler": "1.0.0",
     "compression": "^1.8.1",
-    "msw": "2.12.11",
     "tailwindcss": "^4.0.0",
     "vite": "catalog:",
     "vite-plus": "catalog:"
