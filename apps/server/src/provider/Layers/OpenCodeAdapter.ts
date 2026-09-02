@@ -328,6 +328,7 @@ interface OpenCodeSessionContext {
   readonly openCodeSessionId: string;
   readonly relatedSessionIds: Set<string>;
   readonly resolvedRequestIds: Set<string>;
+  readonly autoRepliedRequestIds: Set<string>;
   readonly emittedTerminalRequestIds: Set<string>;
   readonly requestRelationRetries: Map<string, OpenCodeRequestRelationRetry>;
   readonly pendingPermissions: Map<string, PermissionRequest>;
@@ -1615,6 +1616,23 @@ export function makeOpenCodeAdapter(
         if (context.pendingPermissions.has(request.id)) {
           return;
         }
+        if (context.session.runtimeMode === "full-access") {
+          // OpenCode still asks in full access when it detects a doom loop
+          // (evaluated against the agent ruleset only) and inside subagent
+          // sessions (which drop the parent's wildcard allow). Answer those
+          // here so the user never sees an approval they already granted.
+          const replied = yield* runOpenCodeSdk("permission.reply", () =>
+            context.client.permission.reply({ requestID: request.id, reply: "always" }),
+          ).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          );
+          if (replied) {
+            context.resolvedRequestIds.add(request.id);
+            context.autoRepliedRequestIds.add(request.id);
+            return;
+          }
+        }
         context.pendingPermissions.set(request.id, request);
         yield* emit({
           ...(yield* buildEventBase({
@@ -1671,6 +1689,9 @@ export function makeOpenCodeAdapter(
         return;
       }
       context.emittedTerminalRequestIds.add(requestId);
+      if (context.autoRepliedRequestIds.delete(requestId)) {
+        return;
+      }
       if (event.type === "permission.replied") {
         yield* emit({
           ...(yield* buildEventBase({
@@ -2554,6 +2575,7 @@ export function makeOpenCodeAdapter(
           openCodeSessionId: started.openCodeSession.id,
           relatedSessionIds: new Set([started.openCodeSession.id]),
           resolvedRequestIds: new Set(),
+          autoRepliedRequestIds: new Set(),
           emittedTerminalRequestIds: new Set(),
           requestRelationRetries: new Map(),
           pendingPermissions: new Map(),
