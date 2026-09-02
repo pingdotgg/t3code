@@ -79,7 +79,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 :root {
   --app-scrollbar-width: 6px;
   --app-scrollbar-firefox-width: thin;
-  --app-native-horizontal-scrollbar-height: auto;
   --app-scrollbar-thumb-radius: 3px;
   --appearance-contrast-base: 100%;
   --appearance-contrast-boost: 0%;
@@ -128,7 +127,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 :root[data-wider-scrollbars] {
   --app-scrollbar-width: 12px;
   --app-scrollbar-firefox-width: auto;
-  --app-native-horizontal-scrollbar-height: 12px;
   --app-scrollbar-thumb-radius: 6px;
 }
 
@@ -1583,8 +1581,12 @@ code {
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  height: var(--app-native-horizontal-scrollbar-height);
   width: var(--app-scrollbar-width);
+}
+
+:root[data-wider-scrollbars]::-webkit-scrollbar,
+:root[data-wider-scrollbars] ::-webkit-scrollbar {
+  height: var(--app-scrollbar-width);
 }
 
 ::-webkit-scrollbar-track {
