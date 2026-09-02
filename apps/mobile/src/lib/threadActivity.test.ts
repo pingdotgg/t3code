@@ -1831,6 +1831,57 @@ describe("buildThreadFeed", () => {
     expect(collapsed[1]).toMatchObject({ type: "turn-fold", label: "Worked for 17s" });
   });
 
+  it("keeps spawned agents visible after their parent turn settles", () => {
+    const turnId = TurnId.make("turn-spawned-agent");
+    const thread = makeThread({
+      id: ThreadId.make("thread-spawned-agent"),
+      projectId: ProjectId.make("project-1"),
+      title: "Spawned agent",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:04.000Z",
+        assistantMessageId: MessageId.make("assistant-final"),
+      },
+      messages: [
+        {
+          id: MessageId.make("assistant-final"),
+          role: "assistant",
+          text: "The parent task is complete.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:03.000Z",
+          updatedAt: "2026-04-01T00:00:04.000Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("spawned-agent"),
+          kind: "task.progress",
+          tone: "tool",
+          summary: "Research agent is still running",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: {
+            agentKind: "agent",
+            taskId: "research-agent",
+          },
+        }),
+      ],
+    });
+
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      thread.latestTurn,
+      new Set(),
+    );
+
+    expect(rows.map((entry) => entry.id)).toEqual(["spawned-agent", "assistant-final"]);
+    expect(rows).not.toContainEqual(expect.objectContaining({ type: "turn-fold" }));
+  });
+
   it("keeps a substantive answer visible before trailing provider commentary", () => {
     const turnId = TurnId.make("turn-1");
     const thread = makeThread({

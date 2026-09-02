@@ -1637,7 +1637,13 @@ function deriveThreadFeedTurnFolds(
 
     const terminalAssistantMessageId = terminalAssistantMessageIdByTurn.get(turnId);
     const hiddenEntryIds = new Set(
-      entries.filter((entry) => entry.type === "activity-group").map((entry) => entry.id),
+      entries
+        .filter(
+          (entry) =>
+            entry.type === "activity-group" &&
+            !entry.activities.some((activity) => activity.workEntry.agentSpawn === true),
+        )
+        .map((entry) => entry.id),
     );
     if (hiddenEntryIds.size === 0) {
       continue;
@@ -1860,6 +1866,7 @@ function appendActivityGroupRows(
   const activities = omitSupersededLifecycleMarkers(
     entry.activities.filter(
       (activity) =>
+        activity.workEntry.agentSpawn === true ||
         !(activity.toolLike && activity.status === "neutral") ||
         (isWorking &&
           activity.lifecycleStatus === "inProgress" &&
