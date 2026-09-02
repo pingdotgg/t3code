@@ -660,11 +660,15 @@ ShellWindow {
                                 // Where you are: project, thread, branch, git.
                                 DashCard {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 108
+                                    Layout.preferredHeight: whereColumn.implicitHeight + 26
                                     order: 0
 
                                     ColumnLayout {
-                                        anchors.fill: parent
+                                        id: whereColumn
+
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
                                         spacing: 4
 
                                         Text {
@@ -686,12 +690,9 @@ ShellWindow {
                                             font.pixelSize: 11
                                         }
 
-                                        Item {
-                                            Layout.fillHeight: true
-                                        }
-
                                         Flow {
                                             Layout.fillWidth: true
+                                            Layout.topMargin: 4
                                             spacing: 6
 
                                             Chip {
