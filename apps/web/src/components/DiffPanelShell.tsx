@@ -46,20 +46,6 @@ export function DiffPanelShell(props: {
   );
 }
 
-export function DiffPanelHeaderSkeleton() {
-  return (
-    <>
-      <div className="min-w-0 flex-1">
-        <Skeleton className="h-8 w-32 rounded-lg" />
-      </div>
-      <div className="flex shrink-0 gap-1">
-        <Skeleton className="size-7 rounded-md" />
-        <Skeleton className="size-7 rounded-md" />
-      </div>
-    </>
-  );
-}
-
 function DiffFileHeaderSkeleton({ titleClassName }: { titleClassName: string }) {
   return (
     <div className="flex h-8 items-center gap-2 px-2 pr-3">

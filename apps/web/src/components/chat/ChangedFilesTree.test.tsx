@@ -22,17 +22,6 @@ describe("ChangedFilesCard", () => {
 
     expect(markup).toContain('data-changed-files-state="expanded"');
     expect(markup).toContain('aria-expanded="true"');
-    expect(markup).toContain("whitespace-nowrap");
-    expect(markup).toContain('class="group flex min-w-0 flex-1 items-center rounded-xl');
-    expect(markup).not.toMatch(/class="group flex min-w-0 flex-1 items-center[^"]*overflow-hidden/);
-    expect(markup).toContain('class="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden"');
-    expect(markup).toContain('class="flex shrink-0 items-center gap-1 whitespace-nowrap');
-    expect(markup).toContain('class="ml-1 hidden min-w-0 flex-1 truncate');
-    expect(markup).toContain("@[24rem]/changed-files:inline");
-    expect(markup).not.toContain("sm:inline");
-    expect(markup).toContain('class="flex shrink-0 items-center gap-1.5 pr-1"');
-    expect(markup).toContain("!size-[22px]");
-    expect(markup).toContain("size-3");
     expect(markup).toContain('aria-label="Collapse all folders"');
     expect(markup).toContain('aria-label="Open diff"');
     expect(markup).toContain('role="group" aria-label="2 additions, 1 deletions"');

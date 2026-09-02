@@ -45,7 +45,7 @@ import {
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
 import { makeProviderRegistryLayer } from "../../provider/testUtils/providerRegistryMock.ts";
-import { TextGeneration, type TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
+import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
@@ -310,7 +310,7 @@ describe("ProviderCommandReactor", () => {
         pr: null,
       }),
     );
-    const generateBranchName = vi.fn<TextGenerationShape["generateBranchName"]>((_) =>
+    const generateBranchName = vi.fn<TextGeneration["Service"]["generateBranchName"]>((_) =>
       Effect.fail(
         new TextGenerationError({
           operation: "generateBranchName",
@@ -318,7 +318,7 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
-    const generateThreadTitle = vi.fn<TextGenerationShape["generateThreadTitle"]>((_) =>
+    const generateThreadTitle = vi.fn<TextGeneration["Service"]["generateThreadTitle"]>((_) =>
       Effect.fail(
         new TextGenerationError({
           operation: "generateThreadTitle",

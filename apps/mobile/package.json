@@ -52,7 +52,6 @@
     "@expo/ui": "~57.0.14",
     "@legendapp/list": "catalog:",
     "@noble/curves": "catalog:",
-    "@noble/hashes": "catalog:",
     "@pierre/diffs": "catalog:",
     "@react-native-ai/apple": "0.12.0",
     "@react-native-menu/menu": "^2.0.0",

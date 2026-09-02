@@ -411,28 +411,12 @@ export function isDiffToggleShortcut(
   return matchesCommandShortcut(event, keybindings, "diff.toggle", options);
 }
 
-export function isPreviewToggleShortcut(
-  event: ShortcutEventLike,
-  keybindings: ResolvedKeybindingsConfig,
-  options?: ShortcutMatchOptions,
-): boolean {
-  return matchesCommandShortcut(event, keybindings, "preview.toggle", options);
-}
-
 export function isPreviewRefreshShortcut(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "preview.refresh", options);
-}
-
-export function isPreviewFocusUrlShortcut(
-  event: ShortcutEventLike,
-  keybindings: ResolvedKeybindingsConfig,
-  options?: ShortcutMatchOptions,
-): boolean {
-  return matchesCommandShortcut(event, keybindings, "preview.focusUrl", options);
 }
 
 export function isChatNewShortcut(

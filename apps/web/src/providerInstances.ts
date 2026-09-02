@@ -300,17 +300,6 @@ export function getProviderInstanceEntry(
 }
 
 /**
- * Model list for a specific instance. Returns `[]` when the instance isn't
- * present so callers don't have to thread optionality through render code.
- */
-export function getProviderInstanceModels(
-  providers: ReadonlyArray<ServerProvider>,
-  instanceId: ProviderInstanceId,
-): ReadonlyArray<ServerProviderModel> {
-  return getProviderInstanceEntry(providers, instanceId)?.models ?? [];
-}
-
-/**
  * Default model slug for a specific instance: its declared built-in default,
  * then its first built-in model, then any model it reports, then the driver-level default. Custom
  * instances can serve a different model list than the default instance of

@@ -25,7 +25,7 @@ import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 
 import * as CheckpointStore from "../src/checkpointing/CheckpointStore.ts";
-import { TextGeneration, type TextGenerationShape } from "../src/textGeneration/TextGeneration.ts";
+import { TextGeneration } from "../src/textGeneration/TextGeneration.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../src/persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../src/persistence/Layers/OrchestrationEventStore.ts";
 import { ProjectionCheckpointRepositoryLive } from "../src/persistence/Layers/ProjectionCheckpoints.ts";
@@ -335,7 +335,7 @@ export const makeOrchestrationIntegrationHarness = (
     const textGenerationLayer = Layer.succeed(TextGeneration, {
       generateBranchName: () => Effect.succeed({ branch: "update" }),
       generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
-    } as unknown as TextGenerationShape);
+    } as unknown as TextGeneration["Service"]);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(gitWorkflowLayer),
