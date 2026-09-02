@@ -3,10 +3,10 @@
 // so ShellIcon needs a single PathSvg. Add a name to ICONS and run
 // `node apps/desktop-qt/scripts/gen-icons.mjs` from the repo root; the icon
 // data comes from the lucide-react package the web app depends on.
-import { createRequire } from "node:module";
-import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 const ICONS = [
   "alarm-clock",
@@ -66,11 +66,11 @@ const ICONS = [
   "x",
 ];
 
-const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(here, "..", "..", "..");
-const require = createRequire(join(repoRoot, "apps/web/package.json"));
-const iconsDir = dirname(require.resolve("lucide-react/dist/esm/icons/x.js"));
-const output = join(here, "..", "qml/T3/Bricks/js/lucide.js");
+const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+const repoRoot = NodePath.join(here, "..", "..", "..");
+const require = NodeModule.createRequire(NodePath.join(repoRoot, "apps/web/package.json"));
+const iconsDir = NodePath.dirname(require.resolve("lucide-react/dist/esm/icons/x.js"));
+const output = NodePath.join(here, "..", "qml/T3/Bricks/js/lucide.js");
 
 const num = (value) => Number(value);
 const arc = (cx, cy, rx, ry) =>
@@ -123,7 +123,7 @@ const toPath = ([tag, a]) => {
 
 const paths = {};
 for (const name of ICONS) {
-  const source = readFileSync(join(iconsDir, `${name}.js`), "utf8");
+  const source = NodeFS.readFileSync(NodePath.join(iconsDir, `${name}.js`), "utf8");
   const match = source.match(/const __iconNode = (\[[\s\S]*?\]);\nconst /);
   if (!match) throw new Error(`no icon node in ${name}`);
   const nodes = new Function(`return ${match[1]}`)();
@@ -134,7 +134,7 @@ const body = Object.entries(paths)
   .map(([name, d]) => `    "${name}": "${d}"`)
   .join(",\n");
 
-writeFileSync(
+NodeFS.writeFileSync(
   output,
   `.pragma library
 

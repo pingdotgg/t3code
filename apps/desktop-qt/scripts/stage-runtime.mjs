@@ -1,5 +1,5 @@
 import * as NodeChildProcess from "node:child_process";
-import * as NodeFS from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
@@ -8,6 +8,10 @@ import { selectCliRuntimeExternalDependencies } from "../../../scripts/lib/cli-e
 const scriptDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const repoRoot = NodePath.resolve(scriptDir, "../../..");
 const destinationArg = process.argv[2];
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone packaging script has no Effect runtime.
+const hostPlatform = process.platform;
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone packaging script has no Effect runtime.
+const hostArchitecture = process.arch;
 
 if (destinationArg === undefined) {
   throw new Error("Usage: stage-runtime.mjs <destination>");
@@ -16,30 +20,30 @@ if (destinationArg === undefined) {
 const destination = NodePath.resolve(destinationArg);
 const serverDist = NodePath.join(repoRoot, "apps/server/dist");
 const serverManifest = JSON.parse(
-  await NodeFS.readFile(NodePath.join(repoRoot, "apps/server/package.json"), "utf8"),
+  await NodeFSP.readFile(NodePath.join(repoRoot, "apps/server/package.json"), "utf8"),
 );
 const rootManifest = JSON.parse(
-  await NodeFS.readFile(NodePath.join(repoRoot, "package.json"), "utf8"),
+  await NodeFSP.readFile(NodePath.join(repoRoot, "package.json"), "utf8"),
 );
 
-await NodeFS.access(NodePath.join(serverDist, "bin.mjs"));
-await NodeFS.access(NodePath.join(serverDist, "client/index.html"));
-await NodeFS.rm(destination, { recursive: true, force: true });
-await NodeFS.mkdir(NodePath.join(destination, "host"), { recursive: true });
+await NodeFSP.access(NodePath.join(serverDist, "bin.mjs"));
+await NodeFSP.access(NodePath.join(serverDist, "client/index.html"));
+await NodeFSP.rm(destination, { recursive: true, force: true });
+await NodeFSP.mkdir(NodePath.join(destination, "host"), { recursive: true });
 await Promise.all([
-  NodeFS.copyFile(
+  NodeFSP.copyFile(
     NodePath.join(repoRoot, "apps/desktop-qt/host/main.ts"),
     NodePath.join(destination, "host/main.ts"),
   ),
-  NodeFS.copyFile(
+  NodeFSP.copyFile(
     NodePath.join(repoRoot, "apps/desktop-qt/host/pairingUrl.ts"),
     NodePath.join(destination, "host/pairingUrl.ts"),
   ),
-  NodeFS.cp(serverDist, NodePath.join(destination, "server"), { recursive: true }),
+  NodeFSP.cp(serverDist, NodePath.join(destination, "server"), { recursive: true }),
 ]);
 
 const dependencies = selectCliRuntimeExternalDependencies(serverManifest.dependencies);
-await NodeFS.writeFile(
+await NodeFSP.writeFile(
   NodePath.join(destination, "package.json"),
   `${JSON.stringify(
     {
@@ -57,16 +61,16 @@ await NodeFS.writeFile(
 
 const supportedArchitectures = [
   "supportedArchitectures:",
-  `  os: [${process.platform}]`,
-  `  cpu: [${process.arch}]`,
-  ...(process.platform === "linux" ? ["  libc: [glibc]"] : []),
+  `  os: [${hostPlatform}]`,
+  `  cpu: [${hostArchitecture}]`,
+  ...(hostPlatform === "linux" ? ["  libc: [glibc]"] : []),
   "allowBuilds:",
   "  msgpackr-extract: true",
   "  node-pty: true",
   "nodeLinker: hoisted",
   "",
 ].join("\n");
-await NodeFS.writeFile(NodePath.join(destination, "pnpm-workspace.yaml"), supportedArchitectures);
+await NodeFSP.writeFile(NodePath.join(destination, "pnpm-workspace.yaml"), supportedArchitectures);
 
 const install = NodeChildProcess.spawnSync("vp", ["install", "--prod"], {
   cwd: destination,
