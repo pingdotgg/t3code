@@ -14,8 +14,12 @@ import type {
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import {
+  commandDetailRepeatsCommand,
+  extractCommandOutputText,
+  isWorktreeSetupActivity,
   normalizeCompactToolLabel,
   omitSupersededLifecycleMarkers,
+  resolveWorkEntryToolPresentation,
   summarizeToolGroup,
   toolGroupSummaryKind,
   type ToolGroupSummaryKind,
@@ -87,6 +91,7 @@ export interface WorkLogEntry {
   turnId: TurnId | null;
   label: string;
   detail?: string;
+  viewedImagePath?: string;
   command?: string;
   rawCommand?: string;
   changedFiles?: ReadonlyArray<string>;
@@ -142,6 +147,7 @@ export type ThreadFeedEntry =
       readonly expanded: boolean;
       readonly summary: string;
       readonly summaryKind: ToolGroupSummaryKind;
+      readonly summaryToolIcon?: "browser" | "t3-code";
       readonly hasFailure: boolean;
       readonly live: boolean;
       readonly shimmer: boolean;
@@ -343,6 +349,7 @@ function deriveWorkLogEntries(
   const ordered = Arr.sort(activities, activityOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
+    if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
     if (activity.kind === "tool.started") continue;
     if (activity.kind === "task.started") continue;
     // Terminal bypassed updates pass: Codex children's only terminal signal.
@@ -436,16 +443,27 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
-  if (
-    !taskDetailAsLabel &&
-    payload &&
-    typeof payload.detail === "string" &&
-    payload.detail.length > 0
-  ) {
+  const viewedImagePath = asTrimmedString(asRecord(payload?.data)?.imagePath);
+  const commandOutput = commandPreview.command ? extractCommandOutputText(payload?.data) : null;
+  const output = commandOutput ? stripTrailingExitCode(commandOutput).output : null;
+  if (!taskDetailAsLabel && output) {
+    entry.detail = output;
+  } else if (!taskDetailAsLabel && typeof payload?.detail === "string") {
     const detail = stripTrailingExitCode(payload.detail).output;
-    if (detail) {
-      entry.detail = detail;
-    }
+    const data = asRecord(payload.data);
+    const repeatsCommand =
+      detail !== null &&
+      commandDetailRepeatsCommand({
+        detail,
+        command: commandPreview.command,
+        rawCommand: commandPreview.rawCommand,
+        toolName: data?.toolName,
+        data,
+      });
+    if (detail && !repeatsCommand) entry.detail = detail;
+  }
+  if (viewedImagePath) {
+    entry.viewedImagePath = viewedImagePath;
   }
   if (commandPreview.command) {
     entry.command = commandPreview.command;
@@ -461,8 +479,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (itemType === "mcp_tool_call") {
     const data = asRecord(payload?.data);
-    if (data?.item !== undefined) {
-      entry.toolData = data.item;
+    const toolData = typeof data?.toolName === "string" ? (data.item ?? data) : data?.item;
+    if (toolData !== undefined) {
+      entry.toolData = toolData;
     }
   }
   if (itemType) {
@@ -589,6 +608,7 @@ function mergeDerivedWorkLogEntries(
 ): DerivedWorkLogEntry {
   const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
   const detail = next.detail ?? previous.detail;
+  const viewedImagePath = next.viewedImagePath ?? previous.viewedImagePath;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
@@ -604,6 +624,7 @@ function mergeDerivedWorkLogEntries(
     id: previous.id,
     createdAt: previous.createdAt,
     ...(detail ? { detail } : {}),
+    ...(viewedImagePath ? { viewedImagePath } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
@@ -748,20 +769,18 @@ function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
 
 function buildWorkEntryExpandedBody(entry: WorkLogEntry): string | null {
   const blocks: string[] = [];
-  const appendUniqueBlock = (value: string | null | undefined) => {
+  const appendBlock = (value: string | null | undefined) => {
     const trimmed = value?.trim();
-    if (trimmed && !blocks.includes(trimmed)) {
-      blocks.push(trimmed);
-    }
+    if (trimmed && (entry.command || !blocks.includes(trimmed))) blocks.push(trimmed);
   };
 
   if (entry.itemType === "mcp_tool_call" && entry.toolData !== undefined) {
-    appendUniqueBlock(`MCP call\n${JSON.stringify(entry.toolData, null, 2)}`);
+    appendBlock(`MCP call\n${JSON.stringify(entry.toolData, null, 2)}`);
   }
-  appendUniqueBlock(entry.rawCommand ?? entry.command);
-  appendUniqueBlock(entry.detail);
+  appendBlock(entry.rawCommand ?? entry.command);
+  appendBlock(entry.detail);
   if ((entry.changedFiles?.length ?? 0) > 0) {
-    appendUniqueBlock(entry.changedFiles!.join("\n"));
+    appendBlock(entry.changedFiles!.join("\n"));
   }
 
   return blocks.length > 0 ? blocks.join("\n\n") : null;
@@ -810,6 +829,8 @@ function capitalizePhrase(value: string): string {
 }
 
 function workEntryHeading(workEntry: WorkLogEntry): string {
+  const presentation = resolveWorkEntryToolPresentation(workEntry);
+  if (presentation) return presentation.displayName;
   if (!workEntry.toolTitle) {
     return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
   }
@@ -1485,19 +1506,26 @@ function appendToolGroupRows(
     : activities[0]!.id;
   const groupId = `work-group:${identity}`;
   const expanded = expandedWorkGroupIds.has(groupId);
-  const latestInProgressActivity = activities.findLast(
+  const latestActiveActivity = activities.findLast(
     (activity) =>
-      isWorking && activity.lifecycleStatus === "inProgress" && activity.turnId === unsettledTurnId,
+      isWorking &&
+      activity.turnId === unsettledTurnId &&
+      (activity.lifecycleStatus === "inProgress" ||
+        (activeTail &&
+          activity.lifecycleStatus === undefined &&
+          (activity.workEntry.sourceActivityKind === "task.progress" || activity.toolLike))),
   );
-  const live = activeTail || latestInProgressActivity !== undefined;
-  const latestActivity = activeTail
-    ? activities.at(-1)!
-    : (latestInProgressActivity ?? activities.at(-1)!);
+  const active = latestActiveActivity !== undefined;
+  const live = activeTail || active;
+  const latestActivity = latestActiveActivity ?? activities.at(-1)!;
   const summary = live
-    ? liveToolActivitySummary(latestActivity)
+    ? liveToolActivitySummary(latestActivity, active)
     : activities.length === 1 && !activities[0]!.toolLike
       ? activities[0]!.workEntry.label
       : summarizeToolGroup(activities.map((activity) => activity.workEntry));
+  const summaryToolIcon = live
+    ? resolveWorkEntryToolPresentation(latestActivity.workEntry)?.icon
+    : undefined;
   result.push({
     type: "work-toggle",
     id: `${live ? "work-live" : "work-toggle"}:${groupId}`,
@@ -1510,42 +1538,52 @@ function appendToolGroupRows(
     summaryKind: toolGroupSummaryKind(
       (live ? [latestActivity] : activities).map((activity) => activity.workEntry),
     ),
+    ...(summaryToolIcon ? { summaryToolIcon } : {}),
     hasFailure: activities.findLast((activity) => activity.toolLike)?.status === "failure",
     live,
-    shimmer:
-      isWorking &&
-      latestActivity.lifecycleStatus === "inProgress" &&
-      latestActivity.turnId === unsettledTurnId,
+    shimmer: active,
   });
   if (!expanded) {
     return;
   }
-  for (const activity of activities) {
-    result.push({
-      type: "activity-group",
-      id: activity.id,
-      createdAt: activity.createdAt,
-      turnId: activity.turnId,
-      activities: [
-        {
-          ...activity,
-          groupedToolDetail: true,
-          live:
-            isWorking &&
-            activity.id === latestActivity.id &&
-            activity.lifecycleStatus === "inProgress" &&
-            activity.turnId === unsettledTurnId,
-        },
-      ],
-    });
-  }
+  result.push({
+    type: "activity-group",
+    id: `work-details:${groupId}`,
+    createdAt: activities[0]!.createdAt,
+    turnId: activities[0]!.turnId,
+    activities: activities.map((activity) => ({
+      ...activity,
+      groupedToolDetail: true,
+      live:
+        isWorking &&
+        activity.id === latestActivity.id &&
+        activity.lifecycleStatus === "inProgress" &&
+        activity.turnId === unsettledTurnId,
+    })),
+  });
 }
 
-function liveToolActivitySummary(activity: ThreadFeedActivity): string {
+function liveToolActivitySummary(activity: ThreadFeedActivity, active: boolean): string {
+  const presentation = resolveWorkEntryToolPresentation(
+    activity.workEntry,
+    active ? "inProgress" : "completed",
+  );
+  if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
   if (command) {
     const program = commandProgramName(command);
-    return program ? `Running ${program}` : "Running command";
+    const status = activity.lifecycleStatus ?? (active ? "inProgress" : "completed");
+    const verb =
+      status === "inProgress"
+        ? "Running"
+        : status === "failed"
+          ? "Failed"
+          : status === "declined"
+            ? "Declined"
+            : status === "stopped"
+              ? "Stopped"
+              : "Ran";
+    return `${verb} ${program ?? "command"}`;
   }
   return activity.detail ?? activity.summary;
 }
@@ -1758,13 +1796,26 @@ export function buildThreadFeed(
           const summary = workEntryHeading(entry);
           const detail = workEntryPreview(entry);
           const getFullDetail = memoizeValue(() => buildWorkEntryExpandedBody(entry));
-          const getCopyText = memoizeValue(() =>
-            [summary, detail, getFullDetail()]
+          const getCopyText = memoizeValue(() => {
+            const copyLabel = capitalizePhrase(
+              normalizeCompactToolLabel(entry.toolTitle || entry.label),
+            );
+            const fullDetail = getFullDetail();
+            if (entry.command) {
+              const normalizedCommand =
+                entry.rawCommand && copyLabel.trim() !== entry.command.trim()
+                  ? entry.command
+                  : null;
+              return [copyLabel, normalizedCommand, fullDetail ?? entry.command]
+                .filter((value): value is string => Boolean(value))
+                .join("\n");
+            }
+            return [copyLabel, detail, fullDetail]
               .filter((value, index, values): value is string => {
                 return Boolean(value) && values.indexOf(value) === index;
               })
-              .join("\n"),
-          );
+              .join("\n");
+          });
           return {
             type: "activity",
             id: entry.id,

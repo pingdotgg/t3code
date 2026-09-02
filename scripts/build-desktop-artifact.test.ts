@@ -32,9 +32,14 @@ import {
   UnsupportedDesktopBuildArchitectureError,
   isMacPasskeySigningConfigurationError,
   LinuxIconResizeError,
+  LinuxDesktopBuildPrerequisitesMissingError,
+  MacDesktopBuildPrerequisitesMissingError,
   MacPasskeySigningConfigurationResolutionError,
   MissingMacPasskeyProvisioningProfileError,
   packWindowsServerAsar,
+  preflightLinuxDesktopBuild,
+  preflightMacDesktopBuild,
+  preflightWindowsDesktopBuild,
   renderMacPasskeyEntitlements,
   resolveClerkPasskeyNativeArtifacts,
   resolveMacPasskeySigningConfiguration,
@@ -63,6 +68,7 @@ import {
   copyDirectoryPreservingSymlinks,
   validateWindowsPackagedPayload,
   WindowsPrimaryNativeProbeError,
+  WindowsDesktopBuildPrerequisitesMissingError,
   WindowsPackagedPayloadValidationError,
   WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT,
   WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
@@ -102,7 +108,8 @@ const stageWslRuntimeTreeFixture = Effect.fn("stageWslRuntimeTreeFixture")(funct
   );
 });
 
-function mockProcess(exitCode: number) {
+function mockProcess(exitCode: number, stdout = "") {
+  const encodedStdout = new TextEncoder().encode(stdout);
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(1),
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
@@ -110,7 +117,7 @@ function mockProcess(exitCode: number) {
     kill: () => Effect.void,
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
-    stdout: Stream.empty,
+    stdout: stdout ? Stream.make(encodedStdout) : Stream.empty,
     stderr: Stream.empty,
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -808,6 +815,206 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           ),
           "cached monitor",
         );
+      }),
+    ),
+  );
+
+  it.effect("reports every missing Linux desktop build prerequisite with an install command", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
+          [];
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const childProcess = command as unknown as {
+              readonly command: string;
+              readonly args: ReadonlyArray<string>;
+            };
+            commands.push(childProcess);
+            const fails = childProcess.command === "cargo" || childProcess.command === "rustc";
+            return Effect.succeed(mockProcess(fails ? 1 : 0));
+          }),
+        );
+
+        const error = yield* preflightLinuxDesktopBuild("arm64").pipe(
+          Effect.provide(spawner),
+          Effect.flip,
+        );
+
+        assert.instanceOf(error, LinuxDesktopBuildPrerequisitesMissingError);
+        assert.deepStrictEqual(error.missing, ["cargo", "rust-target"]);
+        assert.include(error.message, "Rust compiler and Cargo (cargo, rustc)");
+        assert.include(error.message, "Requested Rust standard library");
+        assert.include(error.message, "sudo apt-get install cargo rustc");
+        assert.include(error.message, "rustup target add aarch64-unknown-linux-gnu");
+        assert.isTrue(
+          commands.some(
+            (command) =>
+              command.command === "rustc" && command.args.includes("aarch64-unknown-linux-gnu"),
+          ),
+        );
+      }),
+    ),
+  );
+
+  it.effect("reports missing macOS tools and Rust targets before building", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const childProcess = command as unknown as {
+              readonly command: string;
+              readonly args: ReadonlyArray<string>;
+            };
+            const fails =
+              childProcess.command === "rustc" ||
+              (childProcess.command === "xcrun" && childProcess.args.includes("iconutil"));
+            return Effect.succeed(mockProcess(fails ? 1 : 0));
+          }),
+        );
+        const error = yield* preflightMacDesktopBuild("universal").pipe(
+          Effect.provide(spawner),
+          Effect.flip,
+        );
+
+        assert.instanceOf(error, MacDesktopBuildPrerequisitesMissingError);
+        assert.deepStrictEqual(error.missing, ["rust", "iconutil"]);
+        assert.deepStrictEqual(error.rustTargets, ["aarch64-apple-darwin", "x86_64-apple-darwin"]);
+        assert.include(error.message, "xcode-select --install");
+        assert.include(error.message, "rustup target add aarch64-apple-darwin x86_64-apple-darwin");
+      }),
+    ),
+  );
+
+  it.effect("reports missing Windows toolchain capabilities before building", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-windows-preflight-" });
+        const pythonPath = path.join(tempDir, "python.exe");
+        yield* fs.writeFileString(pythonPath, "python");
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const childProcess = command as unknown as { readonly command: string };
+            const fails =
+              childProcess.command === "rustc" ||
+              childProcess.command === "powershell.exe" ||
+              childProcess.command === pythonPath;
+            return Effect.succeed(mockProcess(fails ? 1 : 0));
+          }),
+        );
+        const error = yield* preflightWindowsDesktopBuild({
+          arch: "x64",
+          bundlesWslRuntime: true,
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              spawner,
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({ env: { npm_config_python: pythonPath } }),
+              ),
+            ),
+          ),
+          Effect.flip,
+        );
+
+        assert.instanceOf(error, WindowsDesktopBuildPrerequisitesMissingError);
+        assert.deepStrictEqual(error.missing, ["rust", "python", "msvc"]);
+        assert.equal(error.rustTarget, "x86_64-pc-windows-msvc");
+        assert.include(error.message, "Visual Studio Build Tools components");
+      }),
+    ),
+  );
+
+  it.effect("does not require MSVC when reusing a prebuilt Windows resource monitor", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-windows-preflight-" });
+        const pythonPath = path.join(tempDir, "python.exe");
+        yield* fs.writeFileString(pythonPath, "python");
+        const commands: string[] = [];
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const childProcess = command as unknown as { readonly command: string };
+            commands.push(childProcess.command);
+            return Effect.succeed(mockProcess(childProcess.command === "powershell.exe" ? 1 : 0));
+          }),
+        );
+
+        yield* preflightWindowsDesktopBuild({
+          arch: "x64",
+          bundlesWslRuntime: true,
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              spawner,
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: {
+                    npm_config_python: pythonPath,
+                    T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true",
+                  },
+                }),
+              ),
+            ),
+          ),
+        );
+
+        assert.notInclude(commands, "powershell.exe");
+      }),
+    ),
+  );
+
+  it.effect("rejects a PATH-discovered Python executable that is not Python 3", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-python2-preflight-" });
+        const pythonPath = path.join(tempDir, "python");
+        yield* fs.writeFileString(pythonPath, "python2");
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const childProcess = command as unknown as {
+              readonly command: string;
+              readonly args: ReadonlyArray<string>;
+            };
+            if (childProcess.command === "python") {
+              return Effect.succeed(mockProcess(0, `${pythonPath}\n`));
+            }
+            if (childProcess.command === pythonPath) {
+              return Effect.succeed(mockProcess(1));
+            }
+            return Effect.succeed(mockProcess(0));
+          }),
+        );
+        const error = yield* preflightWindowsDesktopBuild({
+          arch: "x64",
+          bundlesWslRuntime: false,
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              spawner,
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: { T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true" },
+                }),
+              ),
+            ),
+          ),
+          Effect.flip,
+        );
+
+        assert.instanceOf(error, WindowsDesktopBuildPrerequisitesMissingError);
+        assert.deepStrictEqual(error.missing, ["python"]);
       }),
     ),
   );

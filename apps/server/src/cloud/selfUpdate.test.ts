@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
+import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
@@ -19,6 +20,7 @@ interface HarnessOptions {
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked";
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
+  readonly desktopAppUpdate?: DesktopAppUpdate.DesktopAppUpdate["Service"];
 }
 
 const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
@@ -88,6 +90,13 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const selfUpdate = yield* ServerSelfUpdate.make().pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
+    Effect.provideService(
+      DesktopAppUpdate.DesktopAppUpdate,
+      options.desktopAppUpdate ?? {
+        available: false,
+        run: () => Effect.die("unexpected desktop app update run"),
+      },
+    ),
     Effect.provideService(HostProcessExecutablePath, "/usr/bin/node"),
     Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
   );
@@ -118,6 +127,31 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         (yield* desktop.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
       ).toContain("desktop app");
       expect([...web.order, ...desktop.order]).toEqual([]);
+    }),
+  );
+
+  it.effect("delegates desktop-managed updates to the desktop app when available", () =>
+    Effect.gen(function* () {
+      const stages: string[] = [];
+      const { selfUpdate, order } = yield* makeHarness({
+        mode: "desktop",
+        desktopAppUpdate: {
+          available: true,
+          run: (reportProgress) =>
+            reportProgress("downloading").pipe(
+              Effect.andThen(reportProgress("installing")),
+              Effect.as({ targetVersion: "1.2.0", method: "desktop-app" as const }),
+            ),
+          commit: () => Effect.never,
+        },
+      });
+      const result = yield* selfUpdate.update({ targetVersion: "1.1.0" }, (stage) =>
+        Effect.sync(() => void stages.push(stage)),
+      );
+      expect(result).toEqual({ targetVersion: "1.2.0", method: "desktop-app" });
+      expect(stages).toEqual(["downloading", "installing"]);
+      // The launcher staging path must not run on the desktop path.
+      expect(order).toEqual([]);
     }),
   );
 
