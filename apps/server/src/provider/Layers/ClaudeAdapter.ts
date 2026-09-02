@@ -3198,36 +3198,32 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
         return;
-      case "compact_boundary": {
+      case "compact_boundary":
         if (context.turnState) {
           context.turnState.latestAssistantUsage = undefined;
           context.turnState.compactedSinceLatestAssistantUsage = true;
         }
-        const compactedUsage = compactBoundaryTokenUsageSnapshot(
-          message as unknown as Record<string, unknown>,
-          context.lastKnownContextWindow,
-          context.lastKnownTotalProcessedTokens,
+        yield* emitThreadTokenUsage(
+          context,
+          compactBoundaryTokenUsageSnapshot(
+            message as unknown as Record<string, unknown>,
+            context.lastKnownContextWindow,
+            context.lastKnownTotalProcessedTokens,
+          ),
+          {
+            rawMethod: "claude/system/compact_boundary",
+            rawPayload: message,
+          },
         );
-        yield* emitThreadTokenUsage(context, compactedUsage, {
-          rawMethod: "claude/system/compact_boundary",
-          rawPayload: message,
-        });
         yield* offerRuntimeEvent({
           ...base,
           type: "thread.state.changed",
           payload: {
             state: "compacted",
-            ...(compactedUsage?.lastUsedTokens !== undefined
-              ? { beforeTokens: compactedUsage.lastUsedTokens }
-              : {}),
-            ...(compactedUsage?.usedTokens !== undefined
-              ? { afterTokens: compactedUsage.usedTokens }
-              : {}),
             detail: message,
           },
         });
         return;
-      }
       case "hook_started":
         yield* offerRuntimeEvent({
           ...base,
@@ -3786,7 +3782,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     // Same reason as the approvals above: a request nobody can answer any more
     // must not stay open, or the thread can never be settled.
-    for (const pending of context.pendingUserInputs.values()) {
+    for (const pending of [...context.pendingUserInputs.values()]) {
       yield* pending.cancel;
     }
 
@@ -4694,16 +4690,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     };
   });
 
-  const compactThread: NonNullable<ClaudeAdapterShape["compactThread"]> = (
-    threadId,
-    modelSelection,
-  ) =>
-    sendTurn({
-      threadId,
-      input: "/compact",
-      ...(modelSelection !== undefined ? { modelSelection } : {}),
-    }).pipe(Effect.asVoid);
-
   const interruptTurn: ClaudeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
     function* (threadId, _turnId) {
       const context = yield* requireSession(threadId);
@@ -4818,7 +4804,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
     startSession,
     sendTurn,
-    compactThread,
     interruptTurn,
     readThread,
     rollbackThread,
