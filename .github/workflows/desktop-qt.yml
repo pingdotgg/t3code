@@ -4,10 +4,30 @@ on:
   push:
     paths:
       - "apps/desktop-qt/**"
+      - "apps/server/**"
+      - "apps/web/**"
+      - "packages/**"
+      - "patches/**"
+      - "assets/prod/black-universal-1024.png"
+      - "scripts/lib/cli-external-packages.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "vite.config.ts"
       - ".github/workflows/desktop-qt.yml"
   pull_request:
     paths:
       - "apps/desktop-qt/**"
+      - "apps/server/**"
+      - "apps/web/**"
+      - "packages/**"
+      - "patches/**"
+      - "assets/prod/black-universal-1024.png"
+      - "scripts/lib/cli-external-packages.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "vite.config.ts"
       - ".github/workflows/desktop-qt.yml"
   workflow_dispatch:
 
