@@ -20,10 +20,10 @@ import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useClientSettings } from "../hooks/useSettings";
 import { useThreadActions } from "../hooks/useThreadActions";
+import { readLocalApi } from "../localApi";
 import { readThreadShell } from "../state/entities";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
-import { showShellContextMenu } from "./shellContextMenu";
 
 interface ShellThreadRowActionsInput {
   readonly partition: SidebarThreadPartition;
@@ -173,8 +173,10 @@ export function useShellThreadRowActions(input: ShellThreadRowActionsInput) {
       const threadRef = parseScopedThreadKey(key);
       if (threadRef === null) return;
       void (async () => {
+        const api = readLocalApi();
+        if (!api) return;
         const presets = resolveSnoozePresets(new Date(), timestampFormatRef.current);
-        const chosen = await showShellContextMenu(
+        const chosen = await api.contextMenu.show(
           presets.map((preset) => ({
             id: `snooze:${preset.id}` as const,
             label: `${preset.label} (${preset.whenLabel})`,
