@@ -39,6 +39,12 @@ const WINDOW: UsageSummaryInput = {
   untilDay: UsageDay.make("2026-08-02"),
 };
 
+const NARROW_WINDOW: UsageSummaryInput = {
+  ...WINDOW,
+  sinceDay: UsageDay.make("2026-08-01"),
+  untilDay: UsageDay.make("2026-08-01"),
+};
+
 const setup = Effect.gen(function* () {
   const home = yield* Effect.promise(() =>
     NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "usage-service-test-")),
@@ -101,10 +107,12 @@ describe("UsageService", () => {
         Effect.provide(serviceLayers({ prefix: "usage-service-grow-test", home, settings })),
       );
 
-      const first = yield* service.readSummary(WINDOW);
+      const first = yield* service.readSummary(NARROW_WINDOW);
       assert.strictEqual(totalOutputTokens(first), 5);
 
       yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+      // Expanding beyond the cached coverage requires a source update. The
+      // grown transcript resumes at its cached byte position.
       const second = yield* service.readSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(second), 12);
     }).pipe(Effect.scoped),
@@ -136,9 +144,36 @@ describe("UsageService", () => {
       assert.deepStrictEqual(first, second);
       assert.strictEqual(ratesFetches, 1);
 
-      // A later request is fresh work again, not a stale cached answer.
+      // A later request within the freshness window reuses the source snapshot.
       yield* service.readSummary(WINDOW);
-      assert.strictEqual(ratesFetches, 2);
+      assert.strictEqual(ratesFetches, 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("reuses a recent scan when only the date range changes", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      let ratesFetches = 0;
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-window-cache-test",
+            home,
+            settings,
+            onRatesFetch: () => {
+              ratesFetches += 1;
+            },
+          }),
+        ),
+      );
+
+      yield* service.readSummary(WINDOW);
+      const narrower = yield* service.readSummary(NARROW_WINDOW);
+
+      assert.strictEqual(totalOutputTokens(narrower), 5);
+      assert.strictEqual(ratesFetches, 1);
     }).pipe(Effect.scoped),
   );
 

@@ -34,6 +34,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
@@ -69,6 +70,9 @@ const RATES_TTL_MS = 24 * 60 * 60 * 1000;
  */
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Match the client query TTL so changing a date range does not rescan fresh sources. */
+const SOURCE_SCAN_TTL_MS = 60 * 1000;
 
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
@@ -349,6 +353,15 @@ export const make = Effect.gen(function* () {
       | null;
   }
 
+  interface SourceSnapshot {
+    readonly completedAtMs: number;
+    readonly windowStartMs: number;
+    readonly dirs: readonly ScannedDir[];
+  }
+
+  let sourceSnapshot: SourceSnapshot | null = null;
+  const sourceScanSemaphore = yield* Semaphore.make(1);
+
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (windowStartMs: number) {
     // The home resolvers ask for `Path` themselves; satisfy them from the
     // instance we already hold so the scan stays context-free.
@@ -374,6 +387,54 @@ export const make = Effect.gen(function* () {
       scanned.push({ provider, dir, volumeId, files: parsedFiles });
     }
     return scanned;
+  });
+
+  const getSourceSnapshot = Effect.fn("UsageService.getSourceSnapshot")(function* (
+    windowStartMs: number,
+  ) {
+    return yield* sourceScanSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const startedAtMs = yield* Clock.currentTimeMillis;
+        const currentSnapshot = sourceSnapshot;
+        const snapshotAgeMs =
+          currentSnapshot === null
+            ? Number.POSITIVE_INFINITY
+            : startedAtMs - currentSnapshot.completedAtMs;
+        const snapshotCoversWindow =
+          currentSnapshot !== null && currentSnapshot.windowStartMs <= windowStartMs;
+
+        if (
+          currentSnapshot !== null &&
+          snapshotCoversWindow &&
+          snapshotAgeMs < SOURCE_SCAN_TTL_MS
+        ) {
+          return currentSnapshot;
+        }
+
+        // Preserve the widest coverage already loaded. A stale narrow request
+        // should update changed files, not discard older records and force the
+        // next wider range to read them again.
+        const scanWindowStartMs = Math.min(
+          windowStartMs,
+          currentSnapshot?.windowStartMs ?? windowStartMs,
+        );
+
+        // Pricing only matters once records are aggregated, so the rate table
+        // loads while transcripts stream instead of gating them: a cold rates
+        // fetch on a slow network no longer delays the scan by its own timeout.
+        const [, dirs] = yield* Effect.all([ensureRates(), collectDirs(scanWindowStartMs)], {
+          concurrency: 2,
+        });
+        const completedAtMs = yield* Clock.currentTimeMillis;
+        const nextSnapshot = {
+          completedAtMs,
+          windowStartMs: scanWindowStartMs,
+          dirs,
+        } satisfies SourceSnapshot;
+        sourceSnapshot = nextSnapshot;
+        return nextSnapshot;
+      }),
+    );
   });
 
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (input: UsageSummaryInput) {
@@ -421,13 +482,9 @@ export const make = Effect.gen(function* () {
     }
     const windowStartMs =
       (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
-
-    // Pricing only matters once records are aggregated, so the rate table
-    // loads while transcripts stream instead of gating them: a cold rates
-    // fetch on a slow network no longer delays the scan by its own timeout.
-    const [, scannedDirs] = yield* Effect.all([ensureRates(), collectDirs(windowStartMs)], {
-      concurrency: 2,
-    });
+    const currentSnapshot = yield* getSourceSnapshot(windowStartMs);
+    const scannedDirs = currentSnapshot.dirs;
+    const sourceReadAtMs = currentSnapshot.completedAtMs;
 
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
@@ -500,12 +557,11 @@ export const make = Effect.gen(function* () {
     yield* persistScanCache();
 
     const aggregated = aggregator.finish();
-    const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
 
     return {
       contractVersion: USAGE_CONTRACT_VERSION,
-      readAt: DateTime.formatIso(readAt),
+      readAt: DateTime.formatIso(DateTime.makeUnsafe(sourceReadAtMs)),
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
