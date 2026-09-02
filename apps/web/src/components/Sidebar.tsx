@@ -995,7 +995,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const detailsTooltip = (
     <SidebarThreadTooltip
       thread={thread}
-      projectTitle={props.showProjectIdentity ? props.projectTitle : null}
+      projectTitle={props.projectTitle}
       projectCwd={props.projectCwd}
       projectFaviconPath={props.projectFaviconPath}
       projectIcon={props.projectIcon}
@@ -4134,6 +4134,18 @@ export default function Sidebar() {
                     // Threads whose project is in no group (e.g. removed
                     // projects) render after the sections; hiding them would
                     // make live work unreachable.
+                    if (
+                      activeProjectSections.sections.length > 0 &&
+                      activeProjectSections.ungroupedThreads.length > 0
+                    ) {
+                      items.push(
+                        <li
+                          key="ungrouped-divider"
+                          aria-hidden
+                          className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
+                        />,
+                      );
+                    }
                     for (const thread of activeProjectSections.ungroupedThreads) {
                       items.push(renderThreadRow(thread, "active"));
                     }
