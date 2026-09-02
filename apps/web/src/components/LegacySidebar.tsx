@@ -205,8 +205,7 @@ import {
 } from "../logicalProject";
 import type { SidebarThreadSummary } from "../types";
 import {
-  buildPhysicalToLogicalProjectKeyMap,
-  buildSidebarProjectSnapshots,
+  buildSidebarProjectGrouping,
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
@@ -2650,6 +2649,7 @@ type SortableProjectHandleProps = Pick<
 
 function ProjectSortMenu({
   projectSortOrder,
+  environmentGroupingEnabled,
   threadSortOrder,
   threadPreviewCount,
   onProjectSortOrderChange,
@@ -2657,6 +2657,7 @@ function ProjectSortMenu({
   onThreadPreviewCountChange,
 }: {
   projectSortOrder: SidebarProjectSortOrder;
+  environmentGroupingEnabled: boolean;
   threadSortOrder: SidebarThreadSortOrder;
   threadPreviewCount: SidebarThreadPreviewCount;
   onProjectSortOrderChange: (sortOrder: SidebarProjectSortOrder) => void;
@@ -2702,8 +2703,15 @@ function ProjectSortMenu({
           >
             {(Object.entries(SIDEBAR_SORT_LABELS) as Array<[SidebarProjectSortOrder, string]>).map(
               ([value, label]) => (
-                <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
-                  {label}
+                <MenuRadioItem
+                  key={value}
+                  value={value}
+                  disabled={environmentGroupingEnabled && value === "manual"}
+                  className="min-h-7 py-1 sm:text-xs"
+                >
+                  {environmentGroupingEnabled && value === "manual"
+                    ? "Manual (unavailable with environment grouping)"
+                    : label}
                 </MenuRadioItem>
               ),
             )}
@@ -2828,6 +2836,8 @@ interface SidebarProjectsContentProps {
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   sortedProjects: readonly SidebarProjectSnapshot[];
+  environmentGroupingEnabled: boolean;
+  environmentLabelById: ReadonlyMap<string, string>;
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
   routeThreadKey: string | null;
@@ -2870,6 +2880,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     archiveThread,
     deleteThread,
     sortedProjects,
+    environmentGroupingEnabled,
+    environmentLabelById,
     expandedThreadListsByProject,
     activeRouteProjectKey,
     routeThreadKey,
@@ -2905,6 +2917,26 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     },
     [updateSettings],
   );
+  const projectSections = useMemo(() => {
+    if (!environmentGroupingEnabled) {
+      return [{ environmentId: null, label: null, projects: sortedProjects }] as const;
+    }
+
+    const projectsByEnvironment = new Map<string, SidebarProjectSnapshot[]>();
+    for (const project of sortedProjects) {
+      const projects = projectsByEnvironment.get(project.environmentId);
+      if (projects) {
+        projects.push(project);
+      } else {
+        projectsByEnvironment.set(project.environmentId, [project]);
+      }
+    }
+    return [...projectsByEnvironment].map(([environmentId, projects]) => ({
+      environmentId,
+      label: environmentLabelById.get(environmentId) ?? "Unknown environment",
+      projects,
+    }));
+  }, [environmentGroupingEnabled, environmentLabelById, sortedProjects]);
 
   return (
     <SidebarContent
@@ -2966,6 +2998,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           <div className="flex items-center gap-1">
             <ProjectSortMenu
               projectSortOrder={projectSortOrder}
+              environmentGroupingEnabled={environmentGroupingEnabled}
               threadSortOrder={threadSortOrder}
               threadPreviewCount={threadPreviewCount}
               onProjectSortOrderChange={handleProjectSortOrderChange}
@@ -2992,7 +3025,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </div>
         </div>
 
-        {isManualProjectSorting ? (
+        {isManualProjectSorting && !environmentGroupingEnabled ? (
           <DndContext
             sensors={projectDnDSensors}
             collisionDetection={projectCollisionDetection}
@@ -3040,30 +3073,43 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </DndContext>
         ) : (
           <SidebarMenu ref={attachProjectListAutoAnimateRef}>
-            {sortedProjects.map((project) => (
-              <SidebarProjectListRow
-                key={project.projectKey}
-                project={project}
-                isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
-                activeRouteThreadKey={
-                  activeRouteProjectKey === project.projectKey ? routeThreadKey : null
-                }
-                openPullRequestsInRightPanel={openPullRequestsInRightPanel}
-                newThreadShortcutLabel={newThreadShortcutLabel}
-                handleNewThread={handleNewThread}
-                archiveThread={archiveThread}
-                deleteThread={deleteThread}
-                threadJumpLabelByKey={threadJumpLabelByKey}
-                attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
-                expandThreadListForProject={expandThreadListForProject}
-                collapseThreadListForProject={collapseThreadListForProject}
-                dragInProgressRef={dragInProgressRef}
-                suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
-                suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
-                isManualProjectSorting={isManualProjectSorting}
-                dragHandleProps={null}
-              />
-            ))}
+            {projectSections.flatMap((section) => [
+              section.label ? (
+                <li
+                  key={`environment:${section.environmentId}`}
+                  className="mb-1 mt-3 flex items-center gap-2 px-2 first:mt-0"
+                >
+                  <span className="min-w-0 truncate text-xs font-medium text-sidebar-muted-foreground/80">
+                    {section.label}
+                  </span>
+                  <span className="h-px flex-1 bg-sidebar-border/60" />
+                </li>
+              ) : null,
+              ...section.projects.map((project) => (
+                <SidebarProjectListRow
+                  key={project.projectKey}
+                  project={project}
+                  isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
+                  activeRouteThreadKey={
+                    activeRouteProjectKey === project.projectKey ? routeThreadKey : null
+                  }
+                  openPullRequestsInRightPanel={openPullRequestsInRightPanel}
+                  newThreadShortcutLabel={newThreadShortcutLabel}
+                  handleNewThread={handleNewThread}
+                  archiveThread={archiveThread}
+                  deleteThread={deleteThread}
+                  threadJumpLabelByKey={threadJumpLabelByKey}
+                  attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+                  expandThreadListForProject={expandThreadListForProject}
+                  collapseThreadListForProject={collapseThreadListForProject}
+                  dragInProgressRef={dragInProgressRef}
+                  suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
+                  suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
+                  isManualProjectSorting={isManualProjectSorting}
+                  dragHandleProps={null}
+                />
+              )),
+            ])}
           </SidebarMenu>
         )}
 
@@ -3085,6 +3131,9 @@ export default function LegacySidebar() {
   const sidebarThreadSortOrder = useClientSettings((s) => s.sidebarThreadSortOrder);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const sidebarEnvironmentGroupingEnabled = useClientSettings(
+    (s) => s.sidebarEnvironmentGroupingEnabled,
+  );
   const sidebarThreadPreviewCount = useClientSettings((s) => s.sidebarThreadPreviewCount);
   const updateSettings = useUpdateClientSettings();
   const handleNewThread = useNewThreadHandler();
@@ -3159,13 +3208,24 @@ export default function LegacySidebar() {
   // Build a mapping from physical project key → logical project key for
   // cross-environment grouping.  Projects that share a repositoryIdentity
   // canonicalKey are treated as one logical project in the sidebar.
-  const physicalToLogicalKey = useMemo(() => {
-    return buildPhysicalToLogicalProjectKeyMap({
+  const sidebarProjectGrouping = useMemo(() => {
+    return buildSidebarProjectGrouping({
       projects: orderedProjects,
       settings: projectGroupingSettings,
       primaryEnvironmentId,
+      resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
+      isDesktopLocalEnvironment: (environmentId) => desktopLocalEnvironmentIds.has(environmentId),
+      groupByEnvironment: sidebarEnvironmentGroupingEnabled,
     });
-  }, [orderedProjects, projectGroupingSettings, primaryEnvironmentId]);
+  }, [
+    desktopLocalEnvironmentIds,
+    environmentLabelById,
+    orderedProjects,
+    primaryEnvironmentId,
+    projectGroupingSettings,
+    sidebarEnvironmentGroupingEnabled,
+  ]);
+  const physicalToLogicalKey = sidebarProjectGrouping.physicalToLogicalKey;
   const projectPhysicalKeyByScopedRef = useMemo(
     () =>
       new Map(
@@ -3177,21 +3237,7 @@ export default function LegacySidebar() {
     [orderedProjects],
   );
 
-  const sidebarProjects = useMemo<SidebarProjectSnapshot[]>(() => {
-    return buildSidebarProjectSnapshots({
-      projects: orderedProjects,
-      settings: projectGroupingSettings,
-      primaryEnvironmentId,
-      resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
-      isDesktopLocalEnvironment: (environmentId) => desktopLocalEnvironmentIds.has(environmentId),
-    });
-  }, [
-    environmentLabelById,
-    desktopLocalEnvironmentIds,
-    orderedProjects,
-    projectGroupingSettings,
-    primaryEnvironmentId,
-  ]);
+  const sidebarProjects = sidebarProjectGrouping.projects;
 
   const sidebarProjectByKey = useMemo(
     () => new Map(sidebarProjects.map((project) => [project.projectKey, project] as const)),
@@ -3383,7 +3429,8 @@ export default function LegacySidebar() {
     sidebarProjects,
     visibleThreads,
   ]);
-  const isManualProjectSorting = sidebarProjectSortOrder === "manual";
+  const isManualProjectSorting =
+    sidebarProjectSortOrder === "manual" && !sidebarEnvironmentGroupingEnabled;
   const visibleSidebarThreadKeys = useMemo(
     () =>
       sortedProjects.flatMap((project) => {
@@ -3732,6 +3779,8 @@ export default function LegacySidebar() {
         archiveThread={archiveThread}
         deleteThread={deleteThread}
         sortedProjects={sortedProjects}
+        environmentGroupingEnabled={sidebarEnvironmentGroupingEnabled}
+        environmentLabelById={environmentLabelById}
         expandedThreadListsByProject={expandedThreadListsByProject}
         activeRouteProjectKey={activeRouteProjectKey}
         routeThreadKey={routeThreadKey}

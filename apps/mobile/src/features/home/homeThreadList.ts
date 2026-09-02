@@ -52,25 +52,40 @@ export function buildHomeProjectScopes(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly environmentId: EnvironmentId | null;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly environmentGroupingEnabled?: boolean;
 }): ReadonlyArray<HomeProjectScope> {
   const projects = input.projects.filter(
     (project) => input.environmentId === null || project.environmentId === input.environmentId,
   );
-  return buildProjectGroups({
-    projects,
-    settings: {
-      sidebarProjectGroupingMode: input.projectGroupingMode,
-      sidebarProjectGroupingOverrides: {},
-    },
-  }).map((group) => {
-    return {
-      key: group.key,
+  const projectsByEnvironment = new Map<EnvironmentId, EnvironmentProject[]>();
+  if (input.environmentGroupingEnabled) {
+    for (const project of projects) {
+      const environmentProjects = projectsByEnvironment.get(project.environmentId);
+      if (environmentProjects) {
+        environmentProjects.push(project);
+      } else {
+        projectsByEnvironment.set(project.environmentId, [project]);
+      }
+    }
+  }
+  const projectSets = input.environmentGroupingEnabled
+    ? [...projectsByEnvironment]
+    : ([[null, projects]] as const);
+  return projectSets.flatMap(([environmentId, environmentProjects]) =>
+    buildProjectGroups({
+      projects: environmentProjects,
+      settings: {
+        sidebarProjectGroupingMode: input.projectGroupingMode,
+        sidebarProjectGroupingOverrides: {},
+      },
+    }).map((group) => ({
+      key: environmentId === null ? group.key : JSON.stringify([environmentId, group.key]),
       title: group.label,
       representative: group.representative,
       projects: group.members.map((member) => member.project),
       projectRefs: group.memberProjectRefs,
-    };
-  });
+    })),
+  );
 }
 
 export function sortHomeProjectScopes(input: {
@@ -210,6 +225,7 @@ export function buildHomeThreadGroups(input: {
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly environmentGroupingEnabled?: boolean;
   /** Current time used for the recency window; defaults to now. Injectable for tests. */
   readonly now?: number;
 }): ReadonlyArray<HomeThreadGroup> {
@@ -369,7 +385,7 @@ export function buildHomeThreadGroups(input: {
     });
   }
 
-  return Arr.sort(
+  const sortedGroups = Arr.sort(
     result,
     Order.mapInput(
       Order.Struct({
@@ -384,4 +400,18 @@ export function buildHomeThreadGroups(input: {
       }),
     ),
   );
+  if (!input.environmentGroupingEnabled) {
+    return sortedGroups;
+  }
+
+  const groupsByEnvironment = new Map<EnvironmentId, HomeThreadGroup[]>();
+  for (const group of sortedGroups) {
+    const environmentGroups = groupsByEnvironment.get(group.representative.environmentId);
+    if (environmentGroups) {
+      environmentGroups.push(group);
+    } else {
+      groupsByEnvironment.set(group.representative.environmentId, [group]);
+    }
+  }
+  return [...groupsByEnvironment.values()].flat();
 }

@@ -165,6 +165,7 @@ describe("ClientSettings environment identification", () => {
 describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar", () => {
     expect(decodeClientSettings({}).legacySidebarEnabled).toBe(false);
+    expect(decodeClientSettings({}).sidebarEnvironmentGroupingEnabled).toBe(false);
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
@@ -182,6 +183,18 @@ describe("ClientSettings sidebar", () => {
     expect(decodeClientSettingsPatch({ legacySidebarEnabled: true }).legacySidebarEnabled).toBe(
       true,
     );
+  });
+
+  it("preserves an explicit environment grouping preference", () => {
+    expect(
+      decodeClientSettings({ sidebarEnvironmentGroupingEnabled: true })
+        .sidebarEnvironmentGroupingEnabled,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ sidebarEnvironmentGroupingEnabled: true })
+        .sidebarEnvironmentGroupingEnabled,
+    ).toBe(true);
+    expect(() => decodeClientSettingsPatch({ sidebarEnvironmentGroupingEnabled: "yes" })).toThrow();
   });
 
   it("keeps unpin confirmation opt-in and patchable", () => {

@@ -28,7 +28,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
@@ -1630,6 +1630,42 @@ function latestTurnDiff(
   return null;
 }
 
+interface SidebarEnvironmentThreadSection {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+}
+
+function groupSidebarThreadsByEnvironment(input: {
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly environmentIds: ReadonlyArray<EnvironmentId>;
+  readonly environmentLabelById: ReadonlyMap<EnvironmentId, string>;
+}): ReadonlyArray<SidebarEnvironmentThreadSection> {
+  const threadsByEnvironment = new Map<EnvironmentId, EnvironmentThreadShell[]>();
+  for (const environmentId of input.environmentIds) {
+    threadsByEnvironment.set(environmentId, []);
+  }
+  for (const thread of input.threads) {
+    const environmentThreads = threadsByEnvironment.get(thread.environmentId);
+    if (environmentThreads) {
+      environmentThreads.push(thread);
+    } else {
+      threadsByEnvironment.set(thread.environmentId, [thread]);
+    }
+  }
+  return [...threadsByEnvironment].flatMap(([environmentId, threads]) =>
+    threads.length === 0
+      ? []
+      : [
+          {
+            environmentId,
+            label: input.environmentLabelById.get(environmentId) ?? "Unknown environment",
+            threads,
+          },
+        ],
+  );
+}
+
 const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   thread: SidebarThreadSummary;
   projectCwd: string | null;
@@ -1754,6 +1790,9 @@ export default function Sidebar() {
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
+  const sidebarEnvironmentGroupingEnabled = useClientSettings(
+    (s) => s.sidebarEnvironmentGroupingEnabled,
+  );
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
@@ -2283,9 +2322,68 @@ export default function Sidebar() {
     return routeThread === undefined ? [] : [routeThread];
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
+  const environmentIds = useMemo(
+    () => environments.map((environment) => environment.environmentId),
+    [environments],
+  );
+  const activeThreadSections = useMemo(
+    () =>
+      groupSidebarThreadsByEnvironment({
+        threads: activeThreads,
+        environmentIds,
+        environmentLabelById,
+      }),
+    [activeThreads, environmentIds, environmentLabelById],
+  );
+  const pinnedCanonicalThreadSections = useMemo(
+    () =>
+      groupSidebarThreadsByEnvironment({
+        threads: pinnedThreads,
+        environmentIds,
+        environmentLabelById,
+      }),
+    [environmentIds, environmentLabelById, pinnedThreads],
+  );
+  const snoozedThreadSections = useMemo(
+    () =>
+      groupSidebarThreadsByEnvironment({
+        threads: visibleSnoozedThreads,
+        environmentIds,
+        environmentLabelById,
+      }),
+    [environmentIds, environmentLabelById, visibleSnoozedThreads],
+  );
+  const settledThreadSections = useMemo(
+    () =>
+      groupSidebarThreadsByEnvironment({
+        threads: renderedSettledThreads,
+        environmentIds,
+        environmentLabelById,
+      }),
+    [environmentIds, environmentLabelById, renderedSettledThreads],
+  );
+
   const orderedThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
-    [pinnedThreads, activeThreads, visibleSnoozedThreads, renderedSettledThreads],
+    () =>
+      sidebarEnvironmentGroupingEnabled
+        ? [
+            ...pinnedCanonicalThreadSections.flatMap((section) => section.threads),
+            ...activeThreadSections.flatMap((section) => section.threads),
+            ...snoozedThreadSections.flatMap((section) => section.threads),
+            ...settledThreadSections.flatMap((section) => section.threads),
+          ]
+        : [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
+    [
+      activeThreads,
+      activeThreadSections,
+      pinnedThreads,
+      pinnedCanonicalThreadSections,
+      renderedSettledThreads,
+      settledThreadSections,
+      sidebarEnvironmentGroupingEnabled,
+      snoozedThreadSections,
+      visibleSnoozedThreads,
+    ],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -2636,6 +2734,15 @@ export default function Sidebar() {
       getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
     });
   }, [optimisticPinnedOrder, pinnedThreads]);
+  const pinnedThreadSections = useMemo(
+    () =>
+      groupSidebarThreadsByEnvironment({
+        threads: orderedPinnedThreads,
+        environmentIds,
+        environmentLabelById,
+      }),
+    [environmentIds, environmentLabelById, orderedPinnedThreads],
+  );
   useEffect(() => {
     if (optimisticPinnedOrder === null) return;
     const canonical = pinnedThreads.filter((thread) =>
@@ -3853,6 +3960,72 @@ export default function Sidebar() {
                       />
                     );
                   };
+                  const pushThreadSections = (
+                    items: ReactNode[],
+                    threads: ReadonlyArray<EnvironmentThreadShell>,
+                    sections: ReadonlyArray<SidebarEnvironmentThreadSection>,
+                    section: "active" | "snoozed" | "settled",
+                  ) => {
+                    if (!sidebarEnvironmentGroupingEnabled) {
+                      for (const thread of threads) items.push(renderThreadRow(thread, section));
+                      return;
+                    }
+                    for (const environment of sections) {
+                      items.push(
+                        <li
+                          key={`environment:${section}:${environment.environmentId}`}
+                          className="mb-1 mt-3 flex list-none items-center gap-2 px-2.5"
+                        >
+                          <span className="min-w-0 truncate text-xs font-medium text-sidebar-muted-foreground/80">
+                            {environment.label}
+                          </span>
+                          <span className="h-px flex-1 bg-sidebar-border/60" />
+                        </li>,
+                      );
+                      for (const thread of environment.threads) {
+                        items.push(renderThreadRow(thread, section));
+                      }
+                    }
+                  };
+                  const renderPinnedRows = (
+                    sectionThreads: ReadonlyArray<EnvironmentThreadShell>,
+                  ) => (
+                    <DndContext
+                      sensors={pinnedDndSensors}
+                      collisionDetection={closestCenter}
+                      modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+                      onDragEnd={handlePinnedDragEnd}
+                    >
+                      <SortableContext
+                        items={sectionThreads
+                          .map((thread) =>
+                            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+                          )
+                          .filter((threadKey) => reorderablePinnedKeys.has(threadKey))}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        <ul
+                          role="list"
+                          aria-label="Pinned threads"
+                          className="flex flex-col gap-px"
+                        >
+                          {sectionThreads.map((thread) => {
+                            const threadKey = scopedThreadKey(
+                              scopeThreadRef(thread.environmentId, thread.id),
+                            );
+                            if (!reorderablePinnedKeys.has(threadKey)) {
+                              return renderThreadRow(thread, "pinned");
+                            }
+                            return (
+                              <SortablePinnedThreadRow key={threadKey} id={threadKey}>
+                                {(bag) => renderThreadRow(thread, "pinned", bag)}
+                              </SortablePinnedThreadRow>
+                            );
+                          })}
+                        </ul>
+                      </SortableContext>
+                    </DndContext>
+                  );
                   // Draft block above everything, then the pinned block:
                   // full cards above the inbox, closed by a thin divider (the
                   // pin glyphs carry the meaning, so no header text). Both
@@ -3872,41 +4045,19 @@ export default function Sidebar() {
                     />,
                     pinnedThreads.length > 0 ? (
                       <li key="pinned-dnd" className="list-none">
-                        <DndContext
-                          sensors={pinnedDndSensors}
-                          collisionDetection={closestCenter}
-                          modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
-                          onDragEnd={handlePinnedDragEnd}
-                        >
-                          <SortableContext
-                            items={orderedPinnedThreads
-                              .map((thread) =>
-                                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-                              )
-                              .filter((threadKey) => reorderablePinnedKeys.has(threadKey))}
-                            strategy={verticalListSortingStrategy}
-                          >
-                            <ul
-                              role="list"
-                              aria-label="Pinned threads"
-                              className="flex flex-col gap-px"
-                            >
-                              {orderedPinnedThreads.map((thread) => {
-                                const threadKey = scopedThreadKey(
-                                  scopeThreadRef(thread.environmentId, thread.id),
-                                );
-                                if (!reorderablePinnedKeys.has(threadKey)) {
-                                  return renderThreadRow(thread, "pinned");
-                                }
-                                return (
-                                  <SortablePinnedThreadRow key={threadKey} id={threadKey}>
-                                    {(bag) => renderThreadRow(thread, "pinned", bag)}
-                                  </SortablePinnedThreadRow>
-                                );
-                              })}
-                            </ul>
-                          </SortableContext>
-                        </DndContext>
+                        {sidebarEnvironmentGroupingEnabled
+                          ? pinnedThreadSections.map((environment) => (
+                              <div key={environment.environmentId} className="mt-3 first:mt-0">
+                                <div className="mb-1 flex items-center gap-2 px-2.5">
+                                  <span className="min-w-0 truncate text-xs font-medium text-sidebar-muted-foreground/80">
+                                    {environment.label}
+                                  </span>
+                                  <span className="h-px flex-1 bg-sidebar-border/60" />
+                                </div>
+                                {renderPinnedRows(environment.threads)}
+                              </div>
+                            ))
+                          : renderPinnedRows(orderedPinnedThreads)}
                       </li>
                     ) : null,
                   ];
@@ -3920,9 +4071,7 @@ export default function Sidebar() {
                       />,
                     );
                   }
-                  for (const thread of activeThreads) {
-                    items.push(renderThreadRow(thread, "active"));
-                  }
+                  pushThreadSections(items, activeThreads, activeThreadSections, "active");
                   // Snoozed shelf: between the inbox and Settled — out of the
                   // way, never gone. The header always renders while anything
                   // is snoozed (the count is the whole footprint when
@@ -3958,9 +4107,12 @@ export default function Sidebar() {
                         </button>
                       </li>,
                     );
-                    for (const thread of visibleSnoozedThreads) {
-                      items.push(renderThreadRow(thread, "snoozed"));
-                    }
+                    pushThreadSections(
+                      items,
+                      visibleSnoozedThreads,
+                      snoozedThreadSections,
+                      "snoozed",
+                    );
                   }
                   if (settledThreads.length > 0) {
                     items.push(
@@ -3993,9 +4145,12 @@ export default function Sidebar() {
                       </li>,
                     );
                   }
-                  for (const thread of renderedSettledThreads) {
-                    items.push(renderThreadRow(thread, "settled"));
-                  }
+                  pushThreadSections(
+                    items,
+                    renderedSettledThreads,
+                    settledThreadSections,
+                    "settled",
+                  );
                   return items;
                 })()}
                 {settledShelfExpanded && hiddenSettledCount > 0 ? (

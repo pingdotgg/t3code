@@ -198,6 +198,7 @@ export function AdaptiveWorkspaceLayout(props: {
       <AdaptiveWorkspaceLayoutContent
         {...props}
         projectGroupingMode={DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS.sidebarProjectGroupingMode}
+        environmentGroupingEnabled={false}
       />
     ) : null;
   }
@@ -206,6 +207,7 @@ export function AdaptiveWorkspaceLayout(props: {
     <AdaptiveWorkspaceLayoutContent
       {...props}
       projectGroupingMode={groupingSettings.sidebarProjectGroupingMode}
+      environmentGroupingEnabled={preferencesResult.value.environmentGroupingEnabled ?? false}
     />
   );
 }
@@ -216,6 +218,7 @@ function AdaptiveWorkspaceLayoutContent(
     readonly pathname: string;
   } & {
     readonly projectGroupingMode: SidebarProjectGroupingMode;
+    readonly environmentGroupingEnabled: boolean;
   },
 ) {
   const projectGroupingMode = props.projectGroupingMode;
@@ -519,7 +522,10 @@ function AdaptiveWorkspaceLayoutContent(
   );
 
   return (
-    <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
+    <HomeListOptionsProvider
+      projectGroupingMode={projectGroupingMode}
+      environmentGroupingEnabled={props.environmentGroupingEnabled}
+    >
       <AdaptiveWorkspaceContext.Provider value={contextValue}>
         <View testID="adaptive-workspace-layout" className="flex-1 flex-row">
           {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (

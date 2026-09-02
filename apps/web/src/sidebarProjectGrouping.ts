@@ -31,6 +31,54 @@ export interface SidebarProjectPickerEntry {
   isPreferred: boolean;
 }
 
+export interface SidebarProjectGroupingResult {
+  readonly projects: ReadonlyArray<SidebarProjectSnapshot>;
+  readonly physicalToLogicalKey: ReadonlyMap<string, string>;
+}
+
+export function buildSidebarProjectGrouping(input: {
+  projects: ReadonlyArray<Project>;
+  settings: ProjectGroupingSettings;
+  primaryEnvironmentId: EnvironmentId | null;
+  resolveEnvironmentLabel: (environmentId: EnvironmentId) => string | null;
+  isDesktopLocalEnvironment?: (environmentId: EnvironmentId) => boolean;
+  groupByEnvironment: boolean;
+}): SidebarProjectGroupingResult {
+  if (!input.groupByEnvironment) {
+    return {
+      projects: buildSidebarProjectSnapshots(input),
+      physicalToLogicalKey: buildPhysicalToLogicalProjectKeyMap(input),
+    };
+  }
+
+  const projectsByEnvironment = new Map<EnvironmentId, Project[]>();
+  for (const project of input.projects) {
+    const projects = projectsByEnvironment.get(project.environmentId);
+    if (projects) {
+      projects.push(project);
+    } else {
+      projectsByEnvironment.set(project.environmentId, [project]);
+    }
+  }
+
+  const projects: SidebarProjectSnapshot[] = [];
+  const physicalToLogicalKey = new Map<string, string>();
+  for (const [environmentId, environmentProjects] of projectsByEnvironment) {
+    for (const project of buildSidebarProjectSnapshots({
+      ...input,
+      projects: environmentProjects,
+    })) {
+      const projectKey = JSON.stringify([environmentId, project.projectKey]);
+      projects.push({ ...project, projectKey });
+      for (const member of project.memberProjects) {
+        physicalToLogicalKey.set(member.physicalProjectKey, projectKey);
+      }
+    }
+  }
+
+  return { projects, physicalToLogicalKey };
+}
+
 export function buildPhysicalToLogicalProjectKeyMap(input: {
   projects: ReadonlyArray<Project>;
   settings: ProjectGroupingSettings;

@@ -507,6 +507,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
         ? ["Project Grouping"]
         : []),
+      ...(settings.sidebarEnvironmentGroupingEnabled !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarEnvironmentGroupingEnabled
+        ? ["Environment grouping"]
+        : []),
       ...(settings.sidebarAutoSettleAfterDays !==
       DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
         ? ["Auto-settle inactive threads"]
@@ -599,6 +603,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
+      settings.sidebarEnvironmentGroupingEnabled,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
@@ -682,6 +687,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
+      sidebarEnvironmentGroupingEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarEnvironmentGroupingEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
@@ -1989,6 +1995,38 @@ export function GeneralSettingsPanel() {
                 });
               }}
               aria-label="Project grouping"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("environment-grouping")}
+          description={
+            settings.legacySidebarEnabled
+              ? "Section projects by environment. Environments appear above projects when both are enabled."
+              : "Section sidebar threads by the environment where they run."
+          }
+          resetAction={
+            settings.sidebarEnvironmentGroupingEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarEnvironmentGroupingEnabled ? (
+              <SettingResetButton
+                label="environment grouping"
+                onClick={() =>
+                  updateSettings({
+                    sidebarEnvironmentGroupingEnabled:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarEnvironmentGroupingEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarEnvironmentGroupingEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarEnvironmentGroupingEnabled: Boolean(checked) })
+              }
+              aria-label="Environment grouping"
             />
           }
         />

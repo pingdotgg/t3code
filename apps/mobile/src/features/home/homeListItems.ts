@@ -27,6 +27,12 @@ export interface HomeHeaderListItem {
   readonly isFirst: boolean;
 }
 
+export interface HomeEnvironmentHeaderListItem {
+  readonly type: "environment-header";
+  readonly key: string;
+  readonly label: string;
+}
+
 export interface HomeThreadListItem {
   readonly type: "thread";
   readonly key: string;
@@ -52,6 +58,7 @@ export interface HomeShowMoreListItem {
 }
 
 export type HomeListItem =
+  | HomeEnvironmentHeaderListItem
   | HomeHeaderListItem
   | HomePendingTaskListItem
   | HomeThreadListItem
@@ -87,6 +94,8 @@ export function nextGroupDisplayState(
  */
 export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem): boolean {
   switch (item.type) {
+    case "environment-header":
+      return previous.type === "environment-header" && previous.label === item.label;
     case "header":
       return (
         previous.type === "header" &&
@@ -123,11 +132,24 @@ export function buildHomeListLayout(input: {
    * When searching, pagination is suspended so every match stays visible.
    */
   readonly showAllThreads?: boolean;
+  readonly environmentLabelById?: ReadonlyMap<string, string>;
 }): HomeListLayout {
   const items: HomeListItem[] = [];
   const stickyHeaderIndices: number[] = [];
 
+  let previousEnvironmentId: string | null = null;
   for (const [groupIndex, group] of input.groups.entries()) {
+    const environmentId = String(group.representative.environmentId);
+    const environmentLabel = input.environmentLabelById?.get(environmentId);
+    const startsEnvironment = Boolean(environmentLabel && environmentId !== previousEnvironmentId);
+    if (environmentLabel && startsEnvironment) {
+      items.push({
+        type: "environment-header",
+        key: `environment-header:${environmentId}`,
+        label: environmentLabel,
+      });
+      previousEnvironmentId = environmentId;
+    }
     const display = input.displayStates.get(group.key) ?? DEFAULT_GROUP_DISPLAY_STATE;
     const collapsed = display.collapsed && input.showAllThreads !== true;
 
@@ -137,7 +159,7 @@ export function buildHomeListLayout(input: {
       key: `header:${group.key}`,
       group,
       collapsed,
-      isFirst: groupIndex === 0,
+      isFirst: groupIndex === 0 || startsEnvironment,
     });
 
     if (collapsed) {

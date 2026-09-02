@@ -87,6 +87,43 @@ function displayStates(
 }
 
 describe("buildHomeListLayout", () => {
+  it("adds an environment header before each environment's project groups", () => {
+    const local = makeGroup("local", 1);
+    const remoteEnvironmentId = EnvironmentId.make("environment-2");
+    const remoteProject = {
+      ...makeProject("remote", "remote"),
+      environmentId: remoteEnvironmentId,
+    };
+    const remote = {
+      ...makeGroup("remote", 1),
+      representative: remoteProject,
+      projects: [remoteProject],
+      newThreadTarget: remoteProject,
+    };
+
+    const layout = buildHomeListLayout({
+      groups: [local, remote],
+      displayStates: displayStates({}),
+      environmentLabelById: new Map([
+        [String(environmentId), "MacBook Pro"],
+        [String(remoteEnvironmentId), "Linux VM"],
+      ]),
+    });
+
+    expect(layout.items.filter((item) => item.type === "environment-header")).toEqual([
+      {
+        type: "environment-header",
+        key: `environment-header:${environmentId}`,
+        label: "MacBook Pro",
+      },
+      {
+        type: "environment-header",
+        key: `environment-header:${remoteEnvironmentId}`,
+        label: "Linux VM",
+      },
+    ]);
+  });
+
   it("renders a header plus all threads for a small group without a show-more row", () => {
     const layout = buildHomeListLayout({
       groups: [makeGroup("alpha", 3)],

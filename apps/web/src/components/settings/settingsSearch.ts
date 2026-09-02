@@ -146,6 +146,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["combine matching repositories environments sidebar"],
   },
   {
+    id: "environment-grouping",
+    title: "Environment grouping",
+    to: "/settings/general",
+    searchTerms: ["computer machine vm sections sidebar projects"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",

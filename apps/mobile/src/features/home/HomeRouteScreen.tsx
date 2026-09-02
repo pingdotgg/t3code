@@ -228,6 +228,7 @@ export function HomeRouteScreen() {
           onThreadSortOrderChange={setThreadSortOrder}
           pendingTasks={pendingTasks}
           projectGroupingMode={listOptions.projectGroupingMode}
+          environmentGroupingEnabled={listOptions.environmentGroupingEnabled}
           projects={projects}
           projectSortOrder={listOptions.projectSortOrder}
           savedConnectionsById={savedConnectionsById}

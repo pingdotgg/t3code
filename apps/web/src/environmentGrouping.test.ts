@@ -10,6 +10,7 @@ import {
 } from "./logicalProject";
 import {
   buildPhysicalToLogicalProjectKeyMap,
+  buildSidebarProjectGrouping,
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
 } from "./sidebarProjectGrouping";
@@ -79,6 +80,32 @@ describe("environment grouping", () => {
     }).length;
 
     expect(projectGroupCount).toBe(1);
+  });
+
+  it("keeps matching repositories in separate environment sections", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+
+    const result = buildSidebarProjectGrouping({
+      projects: [primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: (environmentId) =>
+        environmentId === primaryEnvironmentId ? "Primary" : "Remote",
+      groupByEnvironment: true,
+    });
+
+    expect(result.projects).toHaveLength(2);
+    expect(new Set(result.projects.map((project) => project.projectKey)).size).toBe(2);
+    expect(
+      result.projects.map((project) =>
+        project.memberProjects.map((member) => [member.environmentId, member.id]),
+      ),
+    ).toEqual([[[primary.environmentId, primary.id]], [[remote.environmentId, remote.id]]]);
   });
 
   it("keeps projects without repository identity physically scoped", () => {

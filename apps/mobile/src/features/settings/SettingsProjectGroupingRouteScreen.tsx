@@ -15,6 +15,7 @@ import {
 } from "../../state/project-grouping";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
 const GROUPING_OPTIONS: ReadonlyArray<{
   readonly mode: SidebarProjectGroupingMode;
@@ -47,6 +48,9 @@ export function SettingsProjectGroupingRouteScreen() {
   const selectedMode = AsyncResult.isSuccess(preferencesResult)
     ? resolveMobileProjectGroupingSettings(preferencesResult.value).sidebarProjectGroupingMode
     : null;
+  const environmentGroupingEnabled = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.environmentGroupingEnabled ?? false)
+    : false;
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -63,6 +67,16 @@ export function SettingsProjectGroupingRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        <SettingsSection title="Environment sections">
+          <SettingsSwitchRow
+            disabled={!preferencesReady}
+            icon="desktopcomputer"
+            label="Group by environment"
+            subtitle="Show environments above project groups in the legacy thread list."
+            value={environmentGroupingEnabled}
+            onValueChange={(value) => savePreferences({ environmentGroupingEnabled: value })}
+          />
+        </SettingsSection>
         <SettingsSection title="Default grouping">
           {GROUPING_OPTIONS.map((option, index) => (
             <Pressable

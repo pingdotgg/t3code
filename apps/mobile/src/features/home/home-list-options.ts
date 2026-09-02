@@ -29,6 +29,7 @@ export interface HomeListOptions {
 
 export interface ResolvedHomeListOptions extends HomeListOptions {
   readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly environmentGroupingEnabled: boolean;
 }
 
 export const PROJECT_SORT_OPTIONS: ReadonlyArray<{
@@ -62,6 +63,7 @@ interface HomeListOptionsContextValue {
   readonly options: HomeListOptions;
   readonly setOptions: Dispatch<SetStateAction<HomeListOptions>>;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly environmentGroupingEnabled: boolean;
 }
 
 const HomeListOptionsContext = createContext<HomeListOptionsContextValue | null>(null);
@@ -70,13 +72,15 @@ const HomeListOptionsContext = createContext<HomeListOptionsContextValue | null>
 export function HomeListOptionsProvider({
   children,
   projectGroupingMode,
+  environmentGroupingEnabled,
 }: PropsWithChildren<{
   readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly environmentGroupingEnabled: boolean;
 }>) {
   const [options, setOptions] = useState<HomeListOptions>(defaultHomeListOptions);
   const value = useMemo(
-    () => ({ options, setOptions, projectGroupingMode }),
-    [options, projectGroupingMode],
+    () => ({ options, setOptions, projectGroupingMode, environmentGroupingEnabled }),
+    [environmentGroupingEnabled, options, projectGroupingMode],
   );
   return createElement(HomeListOptionsContext, { value }, children);
 }
@@ -115,6 +119,7 @@ export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<Environm
   const resolvedOptions: ResolvedHomeListOptions = {
     ...availableOptions,
     projectGroupingMode: shared?.projectGroupingMode ?? "repository",
+    environmentGroupingEnabled: shared?.environmentGroupingEnabled ?? false,
   };
 
   const setSelectedEnvironmentId = useCallback((value: EnvironmentId | null) => {

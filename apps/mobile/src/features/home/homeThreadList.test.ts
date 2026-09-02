@@ -115,6 +115,44 @@ describe("buildHomeThreadGroups", () => {
     );
   });
 
+  it("keeps matching repositories in separate environment sections", () => {
+    const localEnvironmentId = EnvironmentId.make("environment-local");
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const repositoryIdentity = {
+      canonicalKey: "github.com/pingdotgg/t3code",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "git@github.com:pingdotgg/t3code.git",
+      },
+    };
+    const projects = [
+      makeProject({
+        environmentId: localEnvironmentId,
+        id: ProjectId.make("project-local"),
+        title: "t3code",
+        repositoryIdentity,
+      }),
+      makeProject({
+        environmentId: remoteEnvironmentId,
+        id: ProjectId.make("project-remote"),
+        title: "t3code",
+        repositoryIdentity,
+      }),
+    ];
+
+    const scopes = buildHomeProjectScopes({
+      projects,
+      environmentId: null,
+      projectGroupingMode: "repository",
+      environmentGroupingEnabled: true,
+    });
+
+    expect(scopes).toHaveLength(2);
+    expect(scopes.map((scope) => scope.projects)).toEqual([[projects[0]], [projects[1]]]);
+    expect(new Set(scopes.map((scope) => scope.key)).size).toBe(2);
+  });
+
   it("routes stale duplicate project refs through the canonical repository group", () => {
     const localEnvironmentId = EnvironmentId.make("environment-local");
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");

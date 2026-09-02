@@ -308,6 +308,8 @@ function ThreadNavigationSidebarPane(
         projectSortOrder: options.projectSortOrder,
         threadSortOrder: options.threadSortOrder,
         projectGroupingMode: options.projectGroupingMode,
+        environmentGroupingEnabled:
+          options.environmentGroupingEnabled && options.selectedEnvironmentId === null,
       }),
     [
       matchedThreadKeys,
@@ -338,8 +340,24 @@ function ThreadNavigationSidebarPane(
         groups,
         displayStates: groupDisplayStates,
         showAllThreads: hasSearchQuery,
+        environmentLabelById:
+          options.environmentGroupingEnabled && options.selectedEnvironmentId === null
+            ? new Map(
+                environments.map((environment) => [
+                  String(environment.environmentId),
+                  environment.label,
+                ]),
+              )
+            : undefined,
       }),
-    [groups, groupDisplayStates, hasSearchQuery],
+    [
+      environments,
+      groupDisplayStates,
+      groups,
+      hasSearchQuery,
+      options.environmentGroupingEnabled,
+      options.selectedEnvironmentId,
+    ],
   );
   const projectCwdByKey = useMemo(() => {
     const map = new Map<string, string>();
@@ -803,6 +821,13 @@ function ThreadNavigationSidebarPane(
   const renderListItem = useCallback(
     ({ item }: { readonly item: SidebarListItem }) => {
       switch (item.type) {
+        case "environment-header":
+          return (
+            <View className="mx-4 mt-4 flex-row items-center gap-2">
+              <Text className="text-xs font-t3-medium text-foreground-muted">{item.label}</Text>
+              <View className="h-px flex-1 bg-border-subtle" />
+            </View>
+          );
         case "v2-pending": {
           const pendingScopeKey = scopedProjectKey(
             item.pendingTask.message.environmentId,

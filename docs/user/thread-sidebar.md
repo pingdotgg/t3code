@@ -1,5 +1,19 @@
 # Organizing threads
 
+## Grouping by environment
+
+On web and desktop, enable **Settings > General > Environment grouping** to section the sidebar by
+the computer or VM where each thread runs. The default sidebar adds environment headings within its
+pinned, active, snoozed, and settled areas. When the legacy per-project sidebar is enabled, the
+hierarchy is environment, then project, then thread. Matching repositories are still grouped within
+each environment, but never combined across environment sections.
+
+On mobile, use **Settings > Project Grouping > Group by environment**. Environment sections apply to
+the legacy thread list.
+
+This preference is stored on the current client. Web browser profiles, desktop installations, and
+mobile devices can each use a different grouping choice.
+
 Pin a thread from its context menu to keep it in the pinned section above your active work.
 `mod+shift+p` pins or unpins the thread you have open. Pinned threads are shown independently of
 their project, including when you connect to more than one environment.

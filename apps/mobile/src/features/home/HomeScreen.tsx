@@ -91,6 +91,7 @@ interface HomeScreenProps {
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly environmentGroupingEnabled: boolean;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
@@ -378,9 +379,12 @@ export function HomeScreen(props: HomeScreenProps) {
         projectSortOrder: props.projectSortOrder,
         threadSortOrder: props.threadSortOrder,
         projectGroupingMode: props.projectGroupingMode,
+        environmentGroupingEnabled:
+          props.environmentGroupingEnabled && props.selectedEnvironmentId === null,
       }),
     [
       props.projectGroupingMode,
+      props.environmentGroupingEnabled,
       props.projectSortOrder,
       props.searchQuery,
       props.selectedEnvironmentId,
@@ -399,8 +403,24 @@ export function HomeScreen(props: HomeScreenProps) {
         groups: projectGroups,
         displayStates: effectiveGroupDisplayStates,
         showAllThreads: hasSearchQuery,
+        environmentLabelById:
+          props.environmentGroupingEnabled && props.selectedEnvironmentId === null
+            ? new Map(
+                props.environments.map((environment) => [
+                  String(environment.environmentId),
+                  environment.label,
+                ]),
+              )
+            : undefined,
       }),
-    [projectGroups, effectiveGroupDisplayStates, hasSearchQuery],
+    [
+      effectiveGroupDisplayStates,
+      hasSearchQuery,
+      projectGroups,
+      props.environmentGroupingEnabled,
+      props.environments,
+      props.selectedEnvironmentId,
+    ],
   );
 
   const projectCwdByKey = useMemo(() => {
@@ -910,6 +930,13 @@ export function HomeScreen(props: HomeScreenProps) {
   const renderItem = useCallback(
     ({ item }: LegendListRenderItemProps<HomeListItem>) => {
       switch (item.type) {
+        case "environment-header":
+          return (
+            <View className="mx-4 mt-4 flex-row items-center gap-2">
+              <Text className="text-xs font-t3-medium text-foreground-muted">{item.label}</Text>
+              <View className="h-px flex-1 bg-border-subtle" />
+            </View>
+          );
         case "header":
           return (
             <ThreadListGroupHeader
