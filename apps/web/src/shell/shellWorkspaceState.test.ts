@@ -34,6 +34,8 @@ function baseInput() {
     canOpenPullRequest: true,
     terminalAvailable: true,
     terminalOpen: false,
+    terminalHeight: 320,
+    terminalEmbedPath: "/embed/env/thread?surface=terminal",
     availableEditors: ["vscode", "zed"] as EditorId[],
     preferredEditorId: "zed" as EditorId,
     scripts: [script],
@@ -74,6 +76,8 @@ describe("buildShellWorkspaceState", () => {
     expect(state.canOpenPullRequest).toBe(true);
     expect(state.terminalAvailable).toBe(true);
     expect(state.terminalOpen).toBe(false);
+    expect(state.terminalHeight).toBe(320);
+    expect(state.terminalEmbedPath).toBe("/embed/env/thread?surface=terminal");
     expect(state.editors).toEqual([
       { id: "vscode", label: "VS Code" },
       { id: "zed", label: "Zed" },

@@ -242,9 +242,16 @@ export const ShellWorkspaceState = Schema.Struct({
     }),
   ),
   canOpenPullRequest: Schema.Boolean,
-  /** The thread's terminal drawer: whether one can open here, and whether it is open. */
+  /**
+   * The thread's terminal drawer, which the shell places as its own web
+   * surface (loading `terminalEmbedPath`): whether one can open here, whether
+   * it is open, and its height in CSS pixels. `terminal.resize` hands a
+   * dragged height back so the page persists it with the drawer's other state.
+   */
   terminalAvailable: Schema.Boolean,
   terminalOpen: Schema.Boolean,
+  terminalHeight: Schema.Number,
+  terminalEmbedPath: Schema.String,
   editors: Schema.Array(Schema.Struct({ id: Schema.String, label: Schema.String })),
   preferredEditorId: Schema.NullOr(Schema.String),
   scripts: Schema.Array(
@@ -464,6 +471,7 @@ export const ShellAction = Schema.Union([
   }),
   Schema.Struct({ type: Schema.Literal("rightPanel.toggle") }),
   Schema.Struct({ type: Schema.Literal("terminal.toggle") }),
+  Schema.Struct({ type: Schema.Literal("terminal.resize"), height: Schema.Number }),
   Schema.Struct({ type: Schema.Literal("rightPanel.activate"), id: Schema.String }),
   Schema.Struct({ type: Schema.Literal("rightPanel.close"), id: Schema.String }),
   Schema.Struct({

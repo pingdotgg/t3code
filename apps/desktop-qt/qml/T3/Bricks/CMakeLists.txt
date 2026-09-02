@@ -29,6 +29,7 @@ qt_add_qml_module(t3bricks
     Sidebar.qml
     SidebarThreadRow.qml
     T3Wordmark.qml
+    TerminalDrawer.qml
     TitleBar.qml
     WebSurface.qml
     WindowControls.qml

@@ -987,7 +987,12 @@ export function TerminalViewport({
 }
 
 interface ThreadTerminalDrawerProps {
-  mode?: "drawer" | "panel";
+  /**
+   * `panel` sits inside the right panel; `fill` is the shell's own drawer
+   * surface. Both fill their host and leave the height to it, so neither
+   * draws the drawer's border or resize handle.
+   */
+  mode?: "drawer" | "panel" | "fill";
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
   cwd: string;
@@ -1077,6 +1082,7 @@ export default function ThreadTerminalDrawer({
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
   const isPanel = mode === "panel";
+  const fillsHost = isPanel || mode === "fill";
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
     false,
@@ -1395,11 +1401,11 @@ export default function ThreadTerminalDrawer({
         data-terminal-owner={isPanel ? "right-panel" : "drawer"}
         className={cn(
           "thread-terminal-drawer relative flex min-w-0 flex-col overflow-hidden bg-background",
-          isPanel ? "h-full flex-1" : "shrink-0 border-t border-border/80",
+          fillsHost ? "h-full flex-1" : "shrink-0 border-t border-border/80",
         )}
-        style={isPanel ? undefined : { height: `${drawerHeight}px` }}
+        style={fillsHost ? undefined : { height: `${drawerHeight}px` }}
       >
-        {!isPanel ? (
+        {!fillsHost ? (
           <div
             className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
             onPointerDown={handleResizePointerDown}
@@ -1425,11 +1431,11 @@ export default function ThreadTerminalDrawer({
       data-terminal-owner={isPanel ? "right-panel" : "drawer"}
       className={cn(
         "thread-terminal-drawer relative flex min-w-0 flex-col overflow-hidden bg-background",
-        isPanel ? "h-full flex-1" : "shrink-0 border-t border-border/80",
+        fillsHost ? "h-full flex-1" : "shrink-0 border-t border-border/80",
       )}
-      style={isPanel ? undefined : { height: `${drawerHeight}px` }}
+      style={fillsHost ? undefined : { height: `${drawerHeight}px` }}
     >
-      {!isPanel ? (
+      {!fillsHost ? (
         <div
           className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
           onPointerDown={handleResizePointerDown}

@@ -657,8 +657,8 @@ type ChatViewProps =
       threadSyncPhase?: ThreadSyncPhase | null;
       routeKind: "server";
       draftId?: never;
-      /** `rightPanel` renders only the right panel's content (the shell's embed route). */
-      presentation?: "full" | "rightPanel";
+      /** `rightPanel` and `terminal` render only that part of the thread (the shell's embed route). */
+      presentation?: "full" | "rightPanel" | "terminal";
     }
   | {
       environmentId: EnvironmentId;
@@ -669,7 +669,7 @@ type ChatViewProps =
       threadSyncPhase?: never;
       routeKind: "draft";
       draftId: DraftId;
-      presentation?: "full" | "rightPanel";
+      presentation?: "full" | "rightPanel" | "terminal";
     };
 
 interface TerminalLaunchContext {
@@ -800,6 +800,7 @@ interface PersistentThreadTerminalDrawerProps {
   threadRef: { environmentId: EnvironmentId; threadId: ThreadId };
   threadId: ThreadId;
   active: boolean;
+  fill: boolean;
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
   splitShortcutLabel: string | undefined;
@@ -810,10 +811,13 @@ interface PersistentThreadTerminalDrawerProps {
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
 }
 
+const ignoreHeightChange = () => undefined;
+
 const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDrawer({
   threadRef,
   threadId,
   active,
+  fill,
   launchContext,
   focusRequestId,
   splitShortcutLabel,
@@ -1129,15 +1133,16 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   return (
     <div
       className={cn(
-        "grid shrink-0 overflow-clip",
-        active ? (visible ? "grid-rows-[1fr]" : "grid-rows-[0fr]") : "hidden",
-        active &&
+        fill ? "flex min-h-0 flex-1 flex-col" : "grid shrink-0 overflow-clip",
+        fill ? (!visible && "hidden") : active ? (visible ? "grid-rows-[1fr]" : "grid-rows-[0fr]") : "hidden",
+        !fill && active &&
           "[[data-panel-animations=true]_&]:transition-[grid-template-rows] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
-        active && visible && "[[data-panel-animations=true]_&]:starting:grid-rows-[0fr]!",
+        !fill && active && visible && "[[data-panel-animations=true]_&]:starting:grid-rows-[0fr]!",
       )}
     >
-      <div className="min-h-0 overflow-clip">
+      <div className={cn("min-h-0 overflow-clip", fill && "flex flex-1 flex-col")}>
         <ThreadTerminalDrawer
+          mode={fill ? "fill" : "drawer"}
           threadRef={threadRef}
           threadId={threadId}
           cwd={cwd}
@@ -1161,7 +1166,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
           keybindings={keybindings}
           onActiveTerminalChange={activateTerminal}
           onCloseTerminal={closeTerminal}
-          onHeightChange={setTerminalHeight}
+          onHeightChange={fill ? ignoreHeightChange : setTerminalHeight}
           onAddTerminalContext={handleAddTerminalContext}
           terminalLabelsById={terminalLabelsById}
           terminalLaunchLocationsById={terminalLaunchLocationsById}
@@ -1704,6 +1709,7 @@ function ChatViewContent(props: ChatViewProps) {
     ),
   );
   const storeSetTerminalOpen = useTerminalUiStateStore((s) => s.setTerminalOpen);
+  const storeSetTerminalHeight = useTerminalUiStateStore((s) => s.setTerminalHeight);
   const storeEnsureTerminal = useTerminalUiStateStore((state) => state.ensureTerminal);
   const storeSplitTerminal = useTerminalUiStateStore((s) => s.splitTerminal);
   const storeSplitTerminalVertical = useTerminalUiStateStore((s) => s.splitTerminalVertical);
@@ -3454,8 +3460,8 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
-      // The embed document has no composer; the primary's bridge adds it.
-      if (presentation === "rightPanel" && window.t3Shell) {
+      // The embed documents have no composer; the primary's bridge adds it.
+      if ((presentation === "rightPanel" || presentation === "terminal") && window.t3Shell) {
         void window.t3Shell.dispatch("composer.terminalContext.add", selection);
         return;
       }
@@ -3469,6 +3475,14 @@ function ChatViewContent(props: ChatViewProps) {
       storeSetTerminalOpen(activeThreadRef, open);
     },
     [activeThreadRef, storeSetTerminalOpen],
+  );
+  // The shell's terminal drawer hands its dragged height back; the drawer's
+  // own document only fills what the shell gives it.
+  const resizeTerminal = useCallback(
+    (height: number) => {
+      if (activeThreadRef) storeSetTerminalHeight(activeThreadRef, height);
+    },
+    [activeThreadRef, storeSetTerminalHeight],
   );
   const toggleTerminalVisibility = useCallback(() => {
     if (!activeThreadRef) return;
@@ -7849,10 +7863,43 @@ function ChatViewContent(props: ChatViewProps) {
     addFiles: (files) => composerRef.current?.addDroppedFiles(files),
   });
 
+  // The thread's terminal drawers, kept mounted across thread switches. When
+  // the shell hosts the chrome they live in their own document (the embed
+  // route with `surface=terminal`), which the shell places under its composer.
+  const terminalDrawers = mountedTerminalThreadRefs.map(
+    ({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
+      <PersistentThreadTerminalDrawer
+        key={mountedThreadKey}
+        threadRef={mountedThreadRef}
+        threadId={mountedThreadRef.threadId}
+        fill={presentation === "terminal"}
+        active={mountedThreadKey === activeThreadKey}
+        launchContext={
+          mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
+        }
+        focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
+        splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+        splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
+        newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+        closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+        keybindings={keybindings}
+        onAddTerminalContext={addTerminalContextToDraft}
+      />
+    ),
+  );
+
   if (presentation === "rightPanel") {
     return (
       <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
         {rightPanelContent}
+      </div>
+    );
+  }
+
+  if (presentation === "terminal") {
+    return (
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+        {terminalDrawers}
       </div>
     );
   }
@@ -7885,6 +7932,7 @@ function ChatViewContent(props: ChatViewProps) {
           canOpenPullRequest={supportsPullRequests && activeProjectRepository !== null}
           terminalAvailable={activeProject !== null}
           terminalOpen={terminalUiState.terminalOpen}
+          terminalHeight={terminalUiState.terminalHeight}
           availableEditors={availableEditors}
           scripts={activeProject?.scripts ?? []}
           preferredScriptId={
@@ -7900,6 +7948,7 @@ function ChatViewContent(props: ChatViewProps) {
           threadTitleForRename={activeThread.title}
           onNewThread={handleNewThreadInActiveProject}
           onToggleTerminal={toggleTerminalVisibility}
+          onResizeTerminal={resizeTerminal}
           onRunScript={runProjectScript}
           onEnvModeChange={onEnvModeChange}
           onStartFromOriginChange={onStartFromOriginChange}
@@ -8398,24 +8447,7 @@ function ChatViewContent(props: ChatViewProps) {
         </div>
         {/* end horizontal flex container */}
 
-        {mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
-          <PersistentThreadTerminalDrawer
-            key={mountedThreadKey}
-            threadRef={mountedThreadRef}
-            threadId={mountedThreadRef.threadId}
-            active={mountedThreadKey === activeThreadKey}
-            launchContext={
-              mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
-            }
-            focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            keybindings={keybindings}
-            onAddTerminalContext={addTerminalContextToDraft}
-          />
-        ))}
+        {shellHostsChrome ? null : terminalDrawers}
       </div>
 
       {!shellHostsChrome && rightPanelPresent && !shouldUseRightPanelSheet && activeThreadRef ? (

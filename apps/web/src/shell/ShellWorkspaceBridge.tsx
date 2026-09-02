@@ -20,6 +20,7 @@ import { useRenameThread } from "../hooks/useRenameThread";
 import { useThreadBranchSelection } from "../hooks/useThreadBranchSelection";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { subscribeShellRenameRequests } from "./shellRenameRequest";
+import { buildEmbedPath } from "./shellRightPanelState";
 import { shellEnvironment } from "../state/shell";
 import { buildShellWorkspaceState } from "./shellWorkspaceState";
 
@@ -47,6 +48,7 @@ export interface ShellWorkspaceBridgeProps {
   readonly canOpenPullRequest: boolean;
   readonly terminalAvailable: boolean;
   readonly terminalOpen: boolean;
+  readonly terminalHeight: number;
   readonly availableEditors: ReadonlyArray<EditorId>;
   readonly scripts: ReadonlyArray<ProjectScript>;
   readonly preferredScriptId: string | null;
@@ -54,6 +56,7 @@ export interface ShellWorkspaceBridgeProps {
   readonly environmentChangeable: boolean;
   readonly onNewThread: () => void;
   readonly onToggleTerminal: () => void;
+  readonly onResizeTerminal: (height: number) => void;
   readonly onRunScript: (script: ProjectScript) => void;
   readonly onEnvModeChange: (mode: EnvMode) => void;
   readonly onStartFromOriginChange: (enabled: boolean) => void;
@@ -127,6 +130,12 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
         canOpenPullRequest: props.onOpenPullRequest !== undefined && props.canOpenPullRequest,
         terminalAvailable: props.terminalAvailable,
         terminalOpen: props.terminalOpen,
+        terminalHeight: props.terminalHeight,
+        terminalEmbedPath: buildEmbedPath(
+          props.threadRef.environmentId,
+          props.threadRef.threadId,
+          "terminal",
+        ),
         availableEditors: props.availableEditors,
         preferredEditorId,
         scripts: props.scripts,
@@ -165,6 +174,9 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
         return;
       case "terminal.toggle":
         if (props.terminalAvailable) props.onToggleTerminal();
+        return;
+      case "terminal.resize":
+        if (props.terminalAvailable) props.onResizeTerminal(action.height);
         return;
       case "workspace.openInEditor": {
         if (props.openInCwd === null) return;

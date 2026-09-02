@@ -13,8 +13,14 @@ export interface ShellRightPanelStateInput {
   readonly canAdd: ShellRightPanelState["canAdd"];
 }
 
-export function buildEmbedPath(environmentId: string, threadId: string): string {
-  return `/embed/${encodeURIComponent(environmentId)}/${encodeURIComponent(threadId)}`;
+/** The thread's embed route: the right panel's content, or the terminal drawer's. */
+export function buildEmbedPath(
+  environmentId: string,
+  threadId: string,
+  surface: "panel" | "terminal" = "panel",
+): string {
+  const path = `/embed/${encodeURIComponent(environmentId)}/${encodeURIComponent(threadId)}`;
+  return surface === "terminal" ? `${path}?surface=terminal` : path;
 }
 
 export function buildShellRightPanelState(input: ShellRightPanelStateInput): ShellRightPanelState {

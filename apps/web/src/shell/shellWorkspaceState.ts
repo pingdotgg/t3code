@@ -28,6 +28,8 @@ export interface ShellWorkspaceStateInput {
   readonly canOpenPullRequest: boolean;
   readonly terminalAvailable: boolean;
   readonly terminalOpen: boolean;
+  readonly terminalHeight: number;
+  readonly terminalEmbedPath: string;
   readonly availableEditors: ReadonlyArray<EditorId>;
   readonly preferredEditorId: EditorId | null;
   readonly scripts: ReadonlyArray<ProjectScript>;
@@ -83,6 +85,8 @@ export function buildShellWorkspaceState(input: ShellWorkspaceStateInput): Shell
     canOpenPullRequest: input.canOpenPullRequest && git?.pr != null,
     terminalAvailable: input.terminalAvailable,
     terminalOpen: input.terminalOpen,
+    terminalHeight: input.terminalHeight,
+    terminalEmbedPath: input.terminalEmbedPath,
     editors: input.availableEditors.map((id) => ({ id, label: editorLabelById.get(id) ?? id })),
     preferredEditorId: input.preferredEditorId,
     scripts: input.scripts.map((script) => ({

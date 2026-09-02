@@ -42,16 +42,16 @@ running dev server; this is what `vp run dev:qt` uses.
   profile and registers it as the `WebProfile` singleton: storage and a 64 MiB
   disk HTTP cache under `<T3 home>/userdata/shell-web` (`--home-dir`, then
   `T3CODE_HOME`, then `~/.t3`), cookies forced persistent, permissions stored.
-  Every `WebSurface` shares it, so the embed panel reuses the primary's
+  Every `WebSurface` shares it, so the embed surfaces reuse the primary's
   session and the bundle comes from cache on the next start. Chromium cannot
   share a profile directory between processes: a second shell on the same
   home finds the lock file taken and stays off-the-record for its run.
 - **One renderer per surface.** Chromium gives each top-level view its own
   renderer process (roughly the app bundle's footprint each), which is the
-  price of the panel being a separate document. The panel surface sets
-  `sleepsWhenHidden`, so its page is frozen (no timers, no painting) while the
-  panel is closed and resumes where it was; discarding it would also drop the
-  terminals it holds. The primary surface never sleeps.
+  price of the panel and the terminal drawer being separate documents. Both
+  surfaces set `sleepsWhenHidden`, so their pages are frozen (no timers, no
+  painting) while closed and resume where they were; discarding them would
+  also drop the terminals they hold. The primary surface never sleeps.
 - **The channel carries no properties.** QWebChannel re-sends a changed
   property to every connected page, so `Shell.state` is not on it: pages talk
   to `ShellChannel` (`publish`, `dispatch`, `snapshot`, `actionRequested`,
@@ -90,7 +90,7 @@ works compiled into the binary and as an on-disk import path.
 
 The bricks come in two layers. Chrome bricks each own one piece of the page's
 chrome and read one key of `Shell.state`: `Sidebar`, `Workspace` (the header
-strip), `Composer`, `RightPanel`, `SettingsNav`, `GitActions`,
+strip), `Composer`, `RightPanel`, `TerminalDrawer`, `SettingsNav`, `GitActions`,
 `Notifications`, `ContextMenuHost`, plus `WebSurface`, `DefaultShell` and
 `ShellErrorOverlay`. Under them sit the primitives a rice composes its own
 chrome from, all styled from `Theme`: `ShellWindow` (the root every rice
@@ -327,9 +327,8 @@ and layout toggles when hosted. Actions: `rightPanel.toggle`,
 follows the primary one through `ShellEmbedRouteBridge`, which navigates in
 place when `rightPanel.threadKey` changes.
 
-Known gaps: the browser/preview surface needs the Electron preview host and
-is unavailable under the shell; "add to composer" from a terminal selection in
-the embed document has no composer to reach yet.
+Known gap: the browser/preview surface needs the Electron preview host and
+is unavailable under the shell.
 
 ### `workspace`
 
@@ -338,19 +337,37 @@ the embed document has no composer to reach yet.
 it can still change), branch and worktree, a git summary (dirty, ahead/behind,
 linked PR), the environments the logical project spans, available editors
 with the preferred one, project scripts, and the terminal drawer's state
-(`terminalAvailable`, `terminalOpen`; the drawer itself stays in the page,
-under the timeline). `ChatHeader` keeps only the git
+(`terminalAvailable`, `terminalOpen`, `terminalHeight`, `terminalEmbedPath`;
+see below). `ChatHeader` keeps only the git
 control (`shellHosted`), since commit/push/PR flows carry dialogs and progress
 UI that live with that control; the branch toolbar under the composer is not
 rendered. The `Workspace` brick renders the breadcrumb and the run / open
 pills; the branch toolbar's contents (environment, checkout mode, branch
 picker, PR badge) are the context strip under the `Composer` brick, where the
 page puts them, and the terminal and panel toggles from the page's header.
-Actions: `workspace.newThread`, `terminal.toggle`, `workspace.openInEditor
-{editorId?}` (same command and preference as the HTML picker),
-`workspace.runScript {scriptId}`, `workspace.envMode.set {mode}`,
+Actions: `workspace.newThread`, `terminal.toggle`, `terminal.resize {height}`,
+`workspace.openInEditor {editorId?}` (same command and preference as the HTML
+picker), `workspace.runScript {scriptId}`, `workspace.envMode.set {mode}`,
 `workspace.startFromOrigin.set {enabled}`, `workspace.openPullRequest`,
 `workspace.environment.set {environmentId}`.
+
+The terminal drawer is HTML content in a shell-placed surface, like the right
+panel: `TerminalDrawer` loads the embed route with `?surface=terminal` in a
+third `WebSurface` (kept once created, frozen while closed) and sizes it from
+`terminalHeight`, so the page's order, timeline over composer over drawer,
+survives the composer moving out of the page. The embed route renders
+`ChatView` with `presentation="terminal"`, which returns only the thread's
+terminal drawers filling the document (`ThreadTerminalDrawer` in `fill` mode:
+no border, no handle, no height of its own); the primary renders no drawer
+when hosted. The drawer's open flag and height are the page's
+(`terminalUiStateStore`, synced across documents through localStorage), so
+`Workspace`'s toggle keeps dispatching `terminal.toggle`, and dragging the
+brick's top edge dispatches `terminal.resize` on release, which the primary
+persists and publishes back. Known gap: the run pill's terminal is opened by
+the primary and the drawer document attaches to the same server-side session,
+but the launch context the primary derives for it (cwd and worktree) stays in
+the primary; terminals the drawer document opens on its own use the thread's
+checkout.
 
 Branch switching is native too: the selector's brain moved into
 `hooks/useThreadBranchSelection.ts` (thread/draft resolution, paginated ref
@@ -496,12 +513,14 @@ documented tooling but has only been exercised in CI, not on this machine.
 ## Splitting chrome out
 
 Every piece of chrome from the original list now has a brick: `Sidebar`,
-`Composer`, `RightPanel` (+ embed route), `Workspace`, `SettingsNav`. The
-timeline and the settings pages stay HTML by design. The timeline and terminal stay HTML. Each split-out piece becomes one
-brick with a documented state/action surface; in the shell the SPA simply does
-not render the parts that moved out. When an HTML brick needs to live somewhere QML decides, it becomes a second
-`WebEngineView` loading an embed route with its own server connection (the
-right panel is the precedent); the primary view stays the brain.
+`Composer`, `RightPanel` (+ embed route), `TerminalDrawer` (+ embed route),
+`Workspace`, `SettingsNav`. The timeline, the terminal and the settings pages
+stay HTML by design. Each split-out piece becomes one brick with a documented
+state/action surface; in the shell the SPA simply does not render the parts
+that moved out. When an HTML brick needs to live somewhere QML decides, it
+becomes another `WebEngineView` loading an embed route with its own server
+connection (the right panel and the terminal drawer are the precedents); the
+primary view stays the brain.
 
 ## Release targets
 
