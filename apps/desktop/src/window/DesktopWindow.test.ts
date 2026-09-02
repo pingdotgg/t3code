@@ -1336,57 +1336,34 @@ describe("DesktopWindow", () => {
           return yield* Effect.die("before-input-event listener was not registered");
         }
 
-        let prevented = false;
-        beforeInput({ preventDefault: () => { prevented = true; } }, {
-          type: "keyDown",
-          isAutoRepeat: false,
-          key: ",",
-          control: true,
-          meta: false,
-          alt: false,
-          shift: false,
-        });
-        assert.isTrue(prevented);
+        const sendKey = (key: string) => {
+          let prevented = false;
+          beforeInput(
+            { preventDefault: () => (prevented = true) },
+            {
+              type: "keyDown",
+              isAutoRepeat: false,
+              key,
+              control: true,
+              meta: false,
+              alt: false,
+              shift: false,
+            },
+          );
+          return prevented;
+        };
+
+        assert.isTrue(sendKey(","));
         assert.deepEqual(fake.send.mock.calls, [[MENU_ACTION_CHANNEL, "open-settings"]]);
 
-        prevented = false;
-        beforeInput({ preventDefault: () => { prevented = true; } }, {
-          type: "keyDown",
-          isAutoRepeat: false,
-          key: "=",
-          control: true,
-          meta: false,
-          alt: false,
-          shift: false,
-        });
-        assert.isTrue(prevented);
+        assert.isTrue(sendKey("="));
         assert.equal(fake.window.webContents.getZoomLevel(), 0.5);
 
-        prevented = false;
-        beforeInput({ preventDefault: () => { prevented = true; } }, {
-          type: "keyDown",
-          isAutoRepeat: false,
-          key: "-",
-          control: true,
-          meta: false,
-          alt: false,
-          shift: false,
-        });
-        assert.isTrue(prevented);
+        assert.isTrue(sendKey("-"));
         assert.equal(fake.window.webContents.getZoomLevel(), 0);
 
         fake.window.webContents.setZoomLevel(1.5);
-        prevented = false;
-        beforeInput({ preventDefault: () => { prevented = true; } }, {
-          type: "keyDown",
-          isAutoRepeat: false,
-          key: "0",
-          control: true,
-          meta: false,
-          alt: false,
-          shift: false,
-        });
-        assert.isTrue(prevented);
+        assert.isTrue(sendKey("0"));
         assert.equal(fake.window.webContents.getZoomLevel(), 0);
       }).pipe(Effect.provide(layer));
     }),

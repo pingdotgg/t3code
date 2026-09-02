@@ -600,37 +600,40 @@ export const make = Effect.gen(function* () {
     });
     window.webContents.on("before-input-event", (event, input) => {
       quitShortcutHandler(event, input);
-      if (input.type !== "keyDown") return;
-
-      const modifier = environment.platform === "darwin" ? input.meta : input.control;
-      if (input.isAutoRepeat && modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {
-        event.preventDefault();
+      if (input.type !== "keyDown") {
         return;
       }
 
-      if (environment.platform === "win32" && input.control && !input.alt) {
-        if (!input.shift && input.key === ",") {
+      const modifier = environment.platform === "darwin" ? input.meta : input.control;
+      if (input.isAutoRepeat) {
+        if (modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (environment.platform === "win32" && input.control && !input.alt && !input.shift) {
+        if (input.key === ",") {
           event.preventDefault();
           window.webContents.send(MENU_ACTION_CHANNEL, "open-settings");
           return;
         }
-        if (!input.shift && (input.key === "=" || input.key === "+")) {
+        if (input.key === "=" || input.key === "+") {
           event.preventDefault();
           window.webContents.setZoomLevel(window.webContents.getZoomLevel() + 0.5);
           void runPromise(previewManager.reapplyZoom());
           return;
         }
-        if (!input.shift && (input.key === "-" || input.key === "_")) {
+        if (input.key === "-" || input.key === "_") {
           event.preventDefault();
           window.webContents.setZoomLevel(window.webContents.getZoomLevel() - 0.5);
           void runPromise(previewManager.reapplyZoom());
           return;
         }
-        if (!input.shift && input.key === "0") {
+        if (input.key === "0") {
           event.preventDefault();
           window.webContents.setZoomLevel(0);
           void runPromise(previewManager.reapplyZoom());
-          return;
         }
       }
     });
