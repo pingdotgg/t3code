@@ -132,6 +132,10 @@ interface HermesSessionContext {
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
+  /** Whether `turn.started` has been published for `activeTurnId`. A steer
+   * arriving before the first prompt announced the turn must announce it, so
+   * exactly one start is emitted and no turn can settle without one. */
+  activeTurnAnnounced: boolean;
   /** Number of sendTurn prompts currently in flight or being prepared.
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
@@ -294,15 +298,17 @@ function applyRequestedSessionConfiguration<E>(input: {
  * advertised. Hermes mints its own option ids, so the decision must be matched
  * by `kind` and answered with the advertised id — replying with a canonical
  * literal leaves the permission-gated turn blocked whenever the agent uses
- * opaque ids. Falls back to `allow_once` for a session-wide accept, since an
- * agent that omits `allow_always` still honours a one-shot allow.
+ * opaque ids. Both persistent decisions (`acceptForSession`, `acceptAlways`)
+ * map to `allow_always`; they differ in T3's retention scope, not in what the
+ * agent is being told. Falls back to `allow_once` for either, since an agent
+ * that omits `allow_always` still honours a one-shot allow.
  */
 export function selectHermesPermissionOptionId(
   request: EffectAcpSchema.RequestPermissionRequest,
   decision: Exclude<ProviderApprovalDecision, "cancel">,
 ): string | undefined {
   const preferredKind =
-    decision === "acceptForSession"
+    decision === "acceptForSession" || decision === "acceptAlways"
       ? "allow_always"
       : decision === "accept"
         ? "allow_once"
@@ -313,7 +319,7 @@ export function selectHermesPermissionOptionId(
   if (preferredId) {
     return preferredId;
   }
-  if (decision === "acceptForSession") {
+  if (decision === "acceptForSession" || decision === "acceptAlways") {
     const onceId = request.options.find((option) => option.kind === "allow_once")?.optionId.trim();
     if (onceId) {
       return onceId;
@@ -722,6 +728,7 @@ export function makeHermesAdapter(
             turns: [],
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
+            activeTurnAnnounced: false,
             promptsInFlight: 0,
             stopped: false,
           };
@@ -850,8 +857,12 @@ export function makeHermesAdapter(
         // the same synchronous window: a concurrent sendTurn arriving during
         // the awaited session configuration below reads it to merge into this
         // turn instead of opening a duplicate.
+        const previousActiveTurnId = ctx.activeTurnId;
         ctx.promptsInFlight += 1;
         ctx.activeTurnId = turnId;
+        if (steeringTurnId === undefined) {
+          ctx.activeTurnAnnounced = false;
+        }
 
         return yield* Effect.gen(function* () {
           const turnModelSelection =
@@ -878,31 +889,6 @@ export function makeHermesAdapter(
             model: model ?? ctx.session.model,
             updatedAt: yield* nowIso,
           };
-
-          // Announce the turn before the awaited configuration below. A steer
-          // that merges into this turn skips its own `turn.started`, so if
-          // preparation could fail after the id was published the merged turn
-          // would settle without ever having started.
-          if (steeringTurnId === undefined) {
-            yield* offerRuntimeEvent({
-              type: "turn.started",
-              ...(yield* makeEventStamp()),
-              provider: PROVIDER,
-              threadId: input.threadId,
-              turnId,
-              payload: model === undefined ? {} : { model },
-            });
-          }
-
-          yield* applyRequestedSessionConfiguration({
-            runtime: ctx.acp,
-            runtimeMode: ctx.session.runtimeMode,
-            interactionMode: input.interactionMode,
-            modelSelection: model === undefined ? undefined : { model },
-            currentModelId: sessionModelBeforeTurn,
-            mapError: ({ cause, method }) =>
-              mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
-          });
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           if (input.input?.trim()) {
@@ -950,6 +936,33 @@ export function makeHermesAdapter(
               provider: PROVIDER,
               operation: "sendTurn",
               issue: "Turn requires non-empty text or attachments.",
+            });
+          }
+
+          yield* applyRequestedSessionConfiguration({
+            runtime: ctx.acp,
+            runtimeMode: ctx.session.runtimeMode,
+            interactionMode: input.interactionMode,
+            modelSelection: model === undefined ? undefined : { model },
+            currentModelId: sessionModelBeforeTurn,
+            mapError: ({ cause, method }) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
+          });
+
+          // Announced only once both fallible preparation steps — prompt
+          // validation and session configuration — have passed, so a turn
+          // consumers can see is always a turn that can settle. Keyed on the
+          // session flag rather than "am I a steer" so a steer that overtook a
+          // not-yet-announced turn still announces it, exactly once.
+          if (!ctx.activeTurnAnnounced) {
+            ctx.activeTurnAnnounced = true;
+            yield* offerRuntimeEvent({
+              type: "turn.started",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              turnId,
+              payload: model === undefined ? {} : { model },
             });
           }
 
@@ -1002,6 +1015,16 @@ export function makeHermesAdapter(
           Effect.ensuring(
             Effect.sync(() => {
               ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
+              // Preparation failed before the turn was ever announced: release
+              // the claim so the next sendTurn opens a fresh turn instead of
+              // steering one consumers never saw.
+              if (
+                !ctx.activeTurnAnnounced &&
+                ctx.promptsInFlight === 0 &&
+                ctx.activeTurnId === turnId
+              ) {
+                ctx.activeTurnId = previousActiveTurnId;
+              }
             }),
           ),
         );

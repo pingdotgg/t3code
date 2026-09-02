@@ -107,6 +107,34 @@ it("answers a manual decision with the agent's advertised option id", () => {
   assert.equal(selectHermesPermissionOptionId(request, "decline"), "deny-9");
 });
 
+it("treats acceptAlways as a persistent allow, never a rejection", () => {
+  const options = [
+    { optionId: "permit-42", name: "Allow once", kind: "allow_once" as const },
+    { optionId: "permit-always-7", name: "Always allow", kind: "allow_always" as const },
+    { optionId: "deny-9", name: "Reject", kind: "reject_once" as const },
+  ];
+  assert.equal(
+    selectHermesPermissionOptionId(
+      { sessionId: "mock-session-1", toolCall: { toolCallId: "tool-1" }, options },
+      "acceptAlways",
+    ),
+    "permit-always-7",
+  );
+  // Without allow_always the persistent accept degrades to a one-shot allow,
+  // never to the reject option.
+  assert.equal(
+    selectHermesPermissionOptionId(
+      {
+        sessionId: "mock-session-1",
+        toolCall: { toolCallId: "tool-1" },
+        options: options.filter((option) => option.kind !== "allow_always"),
+      },
+      "acceptAlways",
+    ),
+    "permit-42",
+  );
+});
+
 it("falls back to allow_once for a session accept when allow_always is absent", () => {
   const optionId = selectHermesPermissionOptionId(
     {
@@ -231,7 +259,7 @@ it.layer(hermesAdapterTestLayer)("HermesAdapter (mock ACP agent)", (it) => {
     }),
   );
 
-  it.effect("announces the turn before configuration that can fail", () =>
+  it.effect("never announces a turn whose preparation fails", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("hermes-failed-preparation");
       const wrapperPath = yield* Effect.promise(() => makeMockHermesWrapper());
@@ -253,10 +281,10 @@ it.layer(hermesAdapterTestLayer)("HermesAdapter (mock ACP agent)", (it) => {
         runtimeMode: "full-access",
       });
 
-      // The mock rejects model ids it does not advertise, so this turn fails
-      // inside session configuration. It must still have announced itself: a
-      // steer merging into it skips its own turn.started, so a turn that can
-      // settle without ever starting is the regression.
+      // Rejected prompt: whitespace-only text with no usable attachments.
+      yield* Effect.flip(adapter.sendTurn({ threadId, input: "   \n  ", attachments: [] }));
+
+      // Rejected configuration: the mock refuses model ids it never advertised.
       yield* Effect.flip(
         adapter.sendTurn({
           threadId,
@@ -269,8 +297,19 @@ it.layer(hermesAdapterTestLayer)("HermesAdapter (mock ACP agent)", (it) => {
         }),
       );
 
-      const started = runtimeEvents.filter((event) => event.type === "turn.started");
-      assert.lengthOf(started, 1);
+      // Neither failure may surface a turn: a started turn that cannot settle
+      // leaves consumers with a permanently running turn.
+      assert.lengthOf(
+        runtimeEvents.filter((event) => event.type === "turn.started"),
+        0,
+      );
+
+      // The claim was released, so a good turn afterwards still runs normally.
+      yield* adapter.sendTurn({ threadId, input: "now a real prompt", attachments: [] });
+      assert.lengthOf(
+        runtimeEvents.filter((event) => event.type === "turn.started"),
+        1,
+      );
 
       yield* Fiber.interrupt(runtimeEventsFiber);
       yield* adapter.stopSession(threadId);
