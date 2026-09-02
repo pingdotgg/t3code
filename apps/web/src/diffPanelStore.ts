@@ -1,11 +1,11 @@
-export const DIFF_PANEL_STORAGE_KEY = "t3code:diff-panel-state:v1";
-
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef, TurnId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
+
+export const DIFF_PANEL_STORAGE_KEY = "t3code:diff-panel-state:v1";
 
 export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }

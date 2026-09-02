@@ -56,9 +56,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-new(t3-mobil
   }
 }
 
-html[data-mobile-composer-route-transition="true"]::view-transition-group(
-    t3-mobile-draft-headline
-  ) {
+html[data-mobile-composer-route-transition="true"]::view-transition-group(t3-mobile-draft-headline) {
   animation-duration: 130ms;
 }
 

@@ -582,7 +582,9 @@ function Toasts({ position, onlyRich = false }: { position: ToastPosition; onlyR
   const scopedToasts = toasts.filter((toast) =>
     shouldRenderThreadScopedToast(toast.data, activeThreadRef),
   );
-  const visibleToasts = scopedToasts.filter((toast) => !onlyRich || !isShellMirrorableToast(toast));
+  const visibleToasts = onlyRich
+    ? scopedToasts.filter((toast) => !isShellMirrorableToast(toast))
+    : scopedToasts;
   // Base UI only drops a closed toast once its root finishes leaving, so the
   // ones the shell renders still need a (hidden) root here or they never go.
   const mirroredToasts = onlyRich ? scopedToasts.filter(isShellMirrorableToast) : [];
