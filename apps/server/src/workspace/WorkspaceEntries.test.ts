@@ -701,6 +701,37 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("includes symlinked directories and ignores non-directory targets", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-symlink-" });
+        const realDirectory = path.join(cwd, "projects");
+        const linkedDirectory = path.join(cwd, "linked-projects");
+        const linkedFile = path.join(cwd, "linked-file");
+        const brokenLink = path.join(cwd, "broken-projects");
+
+        yield* fileSystem.makeDirectory(realDirectory);
+        yield* fileSystem.writeFileString(path.join(cwd, "README.md"), "");
+        yield* fileSystem.symlink(realDirectory, linkedDirectory);
+        yield* fileSystem.symlink(path.join(cwd, "README.md"), linkedFile);
+        yield* fileSystem.symlink(path.join(cwd, "missing"), brokenLink);
+
+        const result = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(cwd),
+        });
+
+        expect(result).toEqual({
+          parentPath: cwd,
+          entries: [
+            { name: "linked-projects", fullPath: linkedDirectory },
+            { name: "projects", fullPath: realDirectory },
+          ],
+        });
+      }),
+    );
+
     it.effect("rejects relative paths without cwd", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;

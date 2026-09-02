@@ -209,10 +209,26 @@ export const make = Effect.gen(function* () {
       const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
       for (const dirent of dirents) {
         if (
-          dirent.isDirectory() &&
-          dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-          (showHidden || !dirent.name.startsWith("."))
+          !dirent.name.toLowerCase().startsWith(lowerPrefix) ||
+          (!showHidden && dirent.name.startsWith("."))
         ) {
+          continue;
+        }
+
+        let isDirectory = dirent.isDirectory();
+        if (!isDirectory && dirent.isSymbolicLink()) {
+          // `readdir` reports symlinks as non-directories. Follow the target
+          // only to classify it; broken or cyclic links are not browseable.
+          isDirectory = yield* Effect.promise(async () => {
+            try {
+              return (await NodeFSP.stat(path.join(parentPath, dirent.name))).isDirectory();
+            } catch {
+              return false;
+            }
+          });
+        }
+
+        if (isDirectory) {
           entries.push({
             name: dirent.name,
             fullPath: path.join(parentPath, dirent.name),
