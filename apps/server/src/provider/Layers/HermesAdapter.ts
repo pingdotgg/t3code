@@ -48,7 +48,7 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { acpPermissionOutcome, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -287,6 +287,39 @@ function applyRequestedSessionConfiguration<E>(input: {
       ),
     );
   });
+}
+
+/**
+ * Resolve a user's approval decision to an option id the agent actually
+ * advertised. Hermes mints its own option ids, so the decision must be matched
+ * by `kind` and answered with the advertised id — replying with a canonical
+ * literal leaves the permission-gated turn blocked whenever the agent uses
+ * opaque ids. Falls back to `allow_once` for a session-wide accept, since an
+ * agent that omits `allow_always` still honours a one-shot allow.
+ */
+export function selectHermesPermissionOptionId(
+  request: EffectAcpSchema.RequestPermissionRequest,
+  decision: Exclude<ProviderApprovalDecision, "cancel">,
+): string | undefined {
+  const preferredKind =
+    decision === "acceptForSession"
+      ? "allow_always"
+      : decision === "accept"
+        ? "allow_once"
+        : "reject_once";
+  const preferredId = request.options
+    .find((option) => option.kind === preferredKind)
+    ?.optionId.trim();
+  if (preferredId) {
+    return preferredId;
+  }
+  if (decision === "acceptForSession") {
+    const onceId = request.options.find((option) => option.kind === "allow_once")?.optionId.trim();
+    if (onceId) {
+      return onceId;
+    }
+  }
+  return undefined;
 }
 
 export function selectAutoApprovedPermissionOption(
@@ -613,14 +646,17 @@ export function makeHermesAdapter(
                       decision: resolved,
                     }),
                   );
+                  if (resolved === "cancel") {
+                    return { outcome: { outcome: "cancelled" } as const };
+                  }
+                  const selectedOptionId = selectHermesPermissionOptionId(params, resolved);
+                  // An agent that advertised no option matching the decision
+                  // cannot be answered with a synthesized id; cancelling is
+                  // the honest outcome and leaves the turn interruptible.
                   return {
-                    outcome:
-                      resolved === "cancel"
-                        ? ({ outcome: "cancelled" } as const)
-                        : {
-                            outcome: "selected" as const,
-                            optionId: acpPermissionOutcome(resolved),
-                          },
+                    outcome: selectedOptionId
+                      ? ({ outcome: "selected" as const, optionId: selectedOptionId } as const)
+                      : ({ outcome: "cancelled" } as const),
                   };
                 }),
               ),

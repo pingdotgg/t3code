@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - the suite writes a real shell wrapper for the mock ACP agent to a temp dir with Node fs/path/url.
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 import * as NodeFSP from "node:fs/promises";
@@ -27,6 +27,7 @@ import {
   makeHermesAdapter,
   resolveRequestedModeId,
   selectAutoApprovedPermissionOption,
+  selectHermesPermissionOptionId,
 } from "./HermesAdapter.ts";
 
 const decodeHermesSettings = Schema.decodeSync(HermesSettings);
@@ -88,6 +89,48 @@ it("auto-approves nothing when the agent offers no allow options", () => {
     toolCall: { toolCallId: "tool-1" },
     options: [{ optionId: "reject-once", name: "Reject", kind: "reject_once" }],
   });
+  assert.isUndefined(optionId);
+});
+
+it("answers a manual decision with the agent's advertised option id", () => {
+  const request = {
+    sessionId: "mock-session-1",
+    toolCall: { toolCallId: "tool-1" },
+    options: [
+      { optionId: "permit-42", name: "Allow once", kind: "allow_once" as const },
+      { optionId: "permit-always-7", name: "Always allow", kind: "allow_always" as const },
+      { optionId: "deny-9", name: "Reject", kind: "reject_once" as const },
+    ],
+  };
+  assert.equal(selectHermesPermissionOptionId(request, "accept"), "permit-42");
+  assert.equal(selectHermesPermissionOptionId(request, "acceptForSession"), "permit-always-7");
+  assert.equal(selectHermesPermissionOptionId(request, "decline"), "deny-9");
+});
+
+it("falls back to allow_once for a session accept when allow_always is absent", () => {
+  const optionId = selectHermesPermissionOptionId(
+    {
+      sessionId: "mock-session-1",
+      toolCall: { toolCallId: "tool-1" },
+      options: [
+        { optionId: "permit-42", name: "Allow once", kind: "allow_once" },
+        { optionId: "deny-9", name: "Reject", kind: "reject_once" },
+      ],
+    },
+    "acceptForSession",
+  );
+  assert.equal(optionId, "permit-42");
+});
+
+it("selects no option when the agent advertised none matching the decision", () => {
+  const optionId = selectHermesPermissionOptionId(
+    {
+      sessionId: "mock-session-1",
+      toolCall: { toolCallId: "tool-1" },
+      options: [{ optionId: "permit-42", name: "Allow once", kind: "allow_once" }],
+    },
+    "decline",
+  );
   assert.isUndefined(optionId);
 });
 
