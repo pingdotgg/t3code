@@ -91,14 +91,17 @@ const decodeSchemaVersion = Schema.decodeUnknownEffect(
 );
 
 /**
- * Chromium stores `SameSite` as an int; unspecified (-1) behaves as Lax in
- * modern Chromium, so it maps there rather than to `no_restriction`, which
- * would widen the cookie's scope on import.
+ * Chromium stores `SameSite` as an int: -1 = unspecified, 0 = none, 1 = lax,
+ * 2 = strict. Unspecified is imported as Electron's own `unspecified` rather
+ * than pinned to Lax, so the target browser applies its default just as the
+ * source did; anything unrecognised lands there too, since guessing "none"
+ * would widen a cookie's scope on import.
  */
 const sameSiteFromColumn = (value: number): ImportedCookie["sameSite"] => {
   if (value === 0) return "no_restriction";
+  if (value === 1) return "lax";
   if (value === 2) return "strict";
-  return "lax";
+  return "unspecified";
 };
 
 /**

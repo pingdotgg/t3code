@@ -44,15 +44,23 @@ export class FirefoxCookieReadError extends Schema.TaggedErrorClass<FirefoxCooki
 }
 
 /**
- * `moz_cookies.sameSite` uses 0 = none, 1 = lax, 2 = strict. Unlike Chromium
- * there is no "unspecified" sentinel, but treat anything unrecognised as lax:
- * that is the modern default, and guessing "none" would widen a cookie's scope
- * on import.
+ * `moz_cookies.sameSite` holds nsICookie's constants: 0 = None, 1 = Lax,
+ * 2 = Strict, and 256 = Unset for a cookie that carried no SameSite attribute
+ * at all. Unset is not the same thing as None — None is an explicit opt-in to
+ * cross-site use — so it is imported as Electron's `unspecified`, which lets
+ * the target browser apply its own default exactly as Firefox did. Anything
+ * unrecognised also lands there rather than on `no_restriction`, since
+ * guessing "none" would widen a cookie's scope on import.
  */
+const SAMESITE_NONE = 0;
+const SAMESITE_LAX = 1;
+const SAMESITE_STRICT = 2;
+
 const sameSiteFromColumn = (value: number): ImportedCookie["sameSite"] => {
-  if (value === 0) return "no_restriction";
-  if (value === 2) return "strict";
-  return "lax";
+  if (value === SAMESITE_NONE) return "no_restriction";
+  if (value === SAMESITE_LAX) return "lax";
+  if (value === SAMESITE_STRICT) return "strict";
+  return "unspecified";
 };
 
 const CookieRow = Schema.Struct({

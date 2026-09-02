@@ -170,7 +170,6 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
 ];
 
 /**
-/**
  * Where a profile's cookie database may live, most current first. Chromium 96
  * moved the live jar to `Network/Cookies`; a root-level `Cookies` is either a
  * pre-96 install or a leftover from before the move. Importing the leftover

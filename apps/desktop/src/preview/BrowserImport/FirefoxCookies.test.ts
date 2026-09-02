@@ -167,6 +167,35 @@ describe("readFirefoxCookies", () => {
     ),
   );
 
+  it.effect("keeps an unset SameSite unspecified instead of widening it to none", () =>
+    run(
+      Effect.gen(function* () {
+        // nsICookie::SAMESITE_UNSET is 256, a cookie that carried no SameSite
+        // attribute. It is not SAMESITE_NONE (0), which is an explicit opt-in
+        // to cross-site use; importing it as "none" would widen its scope.
+        const row = {
+          host: "example.test",
+          name: "c",
+          value: "v",
+          path: "/",
+          expiry: 0,
+          isSecure: 0,
+          isHttpOnly: 0,
+        };
+        const cookies = yield* readFirefoxCookies(
+          yield* writeFirefoxCookieDatabase([
+            { ...row, name: "unset", sameSite: 256 },
+            { ...row, name: "none", sameSite: 0 },
+          ]),
+        );
+        expect(cookies.map(({ name, sameSite }) => ({ name, sameSite }))).toEqual([
+          { name: "unset", sameSite: "unspecified" },
+          { name: "none", sameSite: "no_restriction" },
+        ]);
+      }),
+    ),
+  );
+
   it.effect("imports only the default container", () =>
     run(
       Effect.gen(function* () {

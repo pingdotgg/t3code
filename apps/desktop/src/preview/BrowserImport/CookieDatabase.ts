@@ -29,7 +29,7 @@ export interface ImportedCookie {
   readonly httpOnly: boolean;
   /** Seconds since the UNIX epoch, or undefined for a session cookie. */
   readonly expirationDate: number | undefined;
-  readonly sameSite: "no_restriction" | "lax" | "strict";
+  readonly sameSite: "unspecified" | "no_restriction" | "lax" | "strict";
 }
 
 /**
