@@ -182,6 +182,35 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     );
   });
 
+  it("does not resurrect cached custom models that settings no longer declare", () => {
+    const builtIn = {
+      slug: "gpt-5.4",
+      name: "GPT-5.4",
+      isCustom: false,
+      capabilities: emptyCapabilities,
+    } as const;
+    const cachedCodex = makeProvider(CODEX_DRIVER, {
+      models: [
+        builtIn,
+        {
+          slug: "removed-custom",
+          name: "removed-custom",
+          isCustom: true,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    });
+    const fallbackCodex = makeProvider(CODEX_DRIVER, { models: [builtIn] });
+
+    assert.deepStrictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedCodex,
+        fallbackProvider: fallbackCodex,
+      }).models,
+      [builtIn],
+    );
+  });
+
   it("ignores stale cached enabled state when the provider is now disabled", () => {
     const cachedCodex = makeProvider(CODEX_DRIVER, {
       checkedAt: "2026-04-10T12:00:00.000Z",

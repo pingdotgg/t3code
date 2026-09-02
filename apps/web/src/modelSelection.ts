@@ -179,7 +179,12 @@ export function getAppModelOptions(
   selectedModel?: string | null,
 ): AppModelOption[] {
   const rawModels = getProviderModels(providers, provider);
-  const options: AppModelOption[] = rawModels.map(toAppModelOption);
+  // Server-reported custom rows mirror settings and can lag a removal, so
+  // only built-ins are taken from the snapshot; custom rows are rebuilt from
+  // settings below.
+  const options: AppModelOption[] = rawModels
+    .filter((model) => !model.isCustom)
+    .map(toAppModelOption);
   const seen = new Set(options.map((option) => option.slug));
   const builtInModelSlugs = new Set(
     Arr.filterMap(getProviderModels(providers, provider), (model) =>
@@ -225,14 +230,18 @@ export function getAppModelOptions(
  * when present, falling back to the legacy per-kind
  * `settings.providers[driverKind].customModels` bucket for default
  * instances only. This keeps two instances of the same kind from leaking
- * custom slugs into each other.
+ * custom slugs into each other. Custom rows reported by the server are
+ * ignored so a slug removed in Settings disappears without waiting for the
+ * next provider probe.
  */
 export function getAppModelOptionsForInstance(
   settings: UnifiedSettings,
   entry: ProviderInstanceEntry,
   selectedModel?: string | null,
 ): AppModelOption[] {
-  const options: AppModelOption[] = entry.models.map(toAppModelOption);
+  const options: AppModelOption[] = entry.models
+    .filter((model) => !model.isCustom)
+    .map(toAppModelOption);
   const seen = new Set(options.map((option) => option.slug));
   const builtInModelSlugs = new Set(
     Arr.filterMap(entry.models, (model) =>
