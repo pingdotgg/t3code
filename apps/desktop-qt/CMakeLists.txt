@@ -38,7 +38,6 @@ endif()
 # qwebchannel.js is the browser half of Qt WebChannel. Qt installs it as data
 # (share/qt6/webchannel); bundling it makes the injected script independent of
 # whether the runtime Qt exposes it as a qrc resource.
-get_target_property(_qt_core_location Qt6::Core LOCATION)
 get_filename_component(_qt_prefix "${QT6_INSTALL_PREFIX}" ABSOLUTE)
 find_file(T3_QWEBCHANNEL_JS qwebchannel.js
   HINTS
