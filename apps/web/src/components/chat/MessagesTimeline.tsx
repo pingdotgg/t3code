@@ -24,6 +24,7 @@ import {
   CommandText,
   CwdChip,
   firstOutputLine,
+  TOOL_ROW_META_CLASS,
   TOOL_ROW_MONO_CLASS,
   ToolFileDiffs,
   ToolOutputBlock,
@@ -2295,7 +2296,7 @@ function WorkGroupToggleTimelineRow({
       </span>
       <span className="min-w-0 flex-1 truncate text-secondary-label">{row.summary}</span>
       {failureLabel || durationLabel ? (
-        <span className="ms-2 flex shrink-0 items-center gap-2 text-[0.6875rem] tabular-nums text-muted-foreground">
+        <span className={TOOL_ROW_META_CLASS}>
           {failureLabel ? <span>{failureLabel}</span> : null}
           {durationLabel ? <span>{durationLabel}</span> : null}
         </span>
@@ -3461,7 +3462,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         </span>
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <div className="min-w-0 flex-1 overflow-hidden">
-            {commandParts && !expanded ? (
+            {commandParts && !expanded && !showWarningIndicator && !showDestructiveRowStyle ? (
               <p className="flex min-w-0 w-full items-baseline text-sm leading-relaxed">
                 {commandParts.cwd ? (
                   <CwdChip cwd={commandParts.cwd} workspaceRoot={workspaceRoot} />
@@ -3486,6 +3487,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
               </p>
             )}
           </div>
+          {showFailedIndicator && toolPresentation ? (
+            <XIcon aria-hidden className="size-3 shrink-0 text-icon-muted" />
+          ) : null}
           {isToolLike ? (
             <ToolRowMeta
               durationMs={durationMs}

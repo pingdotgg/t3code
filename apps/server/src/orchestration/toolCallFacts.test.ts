@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boundFiles,
   boundToolOutput,
   deriveToolCallFacts,
   textPairStat,
+  TOOL_DIFF_TOTAL_MAX_CHARS,
+  TOOL_FILES_MAX,
   TOOL_OUTPUT_MAX_LINES,
   unifiedDiffStat,
 } from "./toolCallFacts.ts";
@@ -159,5 +162,35 @@ describe("diff stats", () => {
   it("counts before/after line changes", () => {
     expect(textPairStat("a\nb\nc", "a\nc\nd")).toEqual({ additions: 1, deletions: 1 });
     expect(textPairStat("", "one\ntwo")).toEqual({ additions: 2, deletions: 0 });
+  });
+
+  it("still detects a same-sized rewrite of a large file", () => {
+    const before = Array.from({ length: 700 }, (_, i) => `a${i}`).join("\n");
+    const after = Array.from({ length: 700 }, (_, i) => `b${i}`).join("\n");
+    expect(textPairStat(before, after)).toEqual({ additions: 700, deletions: 700 });
+  });
+
+  it("bounds file count and total hunk size", () => {
+    const hunk = "+".repeat(10_000);
+    const files = Array.from({ length: 30 }, (_, i) => ({
+      path: `f${i}.ts`,
+      additions: 1,
+      deletions: 0,
+      diff: hunk,
+    }));
+    const bounded = boundFiles(files);
+    expect(bounded).toHaveLength(TOOL_FILES_MAX);
+    const kept = bounded.filter((file) => file.diff !== undefined);
+    expect(kept.length * hunk.length).toBeLessThanOrEqual(TOOL_DIFF_TOTAL_MAX_CHARS);
+    expect(bounded.every((file) => file.additions === 1)).toBe(true);
+  });
+
+  it("combines ACP stdout and stderr", () => {
+    expect(
+      deriveToolCallFacts({
+        provider: "cursor",
+        data: { kind: "execute", rawOutput: { stdout: "ok", stderr: "warn: x" } },
+      })?.output?.text,
+    ).toBe("ok\nwarn: x");
   });
 });

@@ -23,6 +23,10 @@ import type {
 export const TOOL_OUTPUT_MAX_LINES = 40;
 export const TOOL_OUTPUT_MAX_CHARS = 4_000;
 export const TOOL_DIFF_MAX_CHARS = 8_000;
+/** Most files a single call may list; bulk edits keep the first N with stats. */
+export const TOOL_FILES_MAX = 20;
+/** Total hunk bytes across a call's files; later hunks are dropped, stats stay. */
+export const TOOL_DIFF_TOTAL_MAX_CHARS = 24_000;
 const DIFF_STAT_MAX_LINES = 600;
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -94,10 +98,14 @@ export function textPairStat(
   const a = before.length === 0 ? [] : before.split("\n");
   const b = after.length === 0 ? [] : after.split("\n");
   if (a.length > DIFF_STAT_MAX_LINES || b.length > DIFF_STAT_MAX_LINES) {
-    return {
-      additions: Math.max(0, b.length - a.length),
-      deletions: Math.max(0, a.length - b.length),
-    };
+    // Too large for an LCS: compare positionally so a same-sized rewrite
+    // still counts as changed, at the cost of over-counting shifted blocks.
+    const shared = Math.min(a.length, b.length);
+    let changed = 0;
+    for (let i = 0; i < shared; i += 1) {
+      if (a[i] !== b[i]) changed += 1;
+    }
+    return { additions: changed + (b.length - shared), deletions: changed + (a.length - shared) };
   }
   let previous = Array.from({ length: b.length + 1 }, () => 0);
   for (let i = 1; i <= a.length; i += 1) {
@@ -128,7 +136,24 @@ function fileFact(input: {
   };
 }
 
+/** Keep at most `TOOL_FILES_MAX` files and `TOOL_DIFF_TOTAL_MAX_CHARS` of hunks. */
+export function boundFiles(files: ReadonlyArray<ToolCallFactsFile>): ToolCallFactsFile[] {
+  let budget = TOOL_DIFF_TOTAL_MAX_CHARS;
+  return files.slice(0, TOOL_FILES_MAX).map((file) => {
+    if (file.diff === undefined) return file;
+    if (file.diff.length <= budget) {
+      budget -= file.diff.length;
+      return file;
+    }
+    const { diff: _diff, ...withoutDiff } = file;
+    return withoutDiff;
+  });
+}
+
 function compact(facts: ToolCallFacts): ToolCallFacts | undefined {
+  if (facts.files !== undefined) {
+    return { ...facts, files: boundFiles(facts.files) };
+  }
   return Object.keys(facts).length > 0 ? facts : undefined;
 }
 
@@ -203,11 +228,12 @@ function acpOutputText(data: Record<string, unknown>): string | undefined {
   const rawOutput = data.rawOutput;
   if (typeof rawOutput === "string") return rawOutput;
   const rawRecord = asRecord(rawOutput);
+  const stdout = asString(rawRecord?.stdout);
+  const stderr = asString(rawRecord?.stderr);
   const direct =
-    asString(rawRecord?.output) ??
-    asString(rawRecord?.stdout) ??
-    asString(rawRecord?.content) ??
-    asString(rawRecord?.stderr);
+    stdout !== undefined || stderr !== undefined
+      ? [stdout, stderr].filter((part): part is string => part !== undefined).join("\n")
+      : (asString(rawRecord?.output) ?? asString(rawRecord?.content));
   if (direct) return direct;
   if (Array.isArray(data.content)) {
     const text = data.content

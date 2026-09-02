@@ -23,6 +23,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export const TOOL_ROW_MONO_CLASS =
   "font-mono text-[length:var(--font-size-code,0.6875rem)] leading-relaxed";
+/** Right-edge meta strip shared by the group header and each call row. */
+export const TOOL_ROW_META_CLASS =
+  "ms-2 flex shrink-0 items-center gap-2 text-[0.6875rem] tabular-nums text-muted-foreground";
 
 /** Working directory as a short chip: workspace-relative, root shown as its basename. */
 export const CwdChip = memo(function CwdChip(props: {
@@ -138,7 +141,7 @@ export const ToolRowMeta = memo(function ToolRowMeta(props: {
     return null;
   }
   return (
-    <span className="ms-2 flex shrink-0 items-center gap-2 text-[0.6875rem] tabular-nums text-muted-foreground">
+    <span className={TOOL_ROW_META_CLASS}>
       {props.diffStat ? (
         <DiffStatLabel
           additions={props.diffStat.additions}
@@ -178,15 +181,17 @@ export const ToolOutputBlock = memo(function ToolOutputBlock(props: {
       <pre
         className={cn(
           TOOL_ROW_MONO_CLASS,
-          "max-h-64 cursor-text overflow-auto whitespace-pre rounded-md bg-code-background/60 px-2.5 py-1.5 select-text",
+          "max-h-64 cursor-text overflow-auto whitespace-pre rounded-md bg-[var(--code-background)] px-2.5 py-1.5 select-text",
           props.failed ? "text-foreground/85" : "text-secondary-label",
         )}
       >
         {props.output.text}
       </pre>
-      {hiddenLines > 0 ? (
+      {props.output.truncated ? (
         <p className="mt-1 text-[0.6875rem] text-muted-foreground">
-          {hiddenLines} more {hiddenLines === 1 ? "line" : "lines"} in the full output
+          {hiddenLines > 0
+            ? `${hiddenLines} more ${hiddenLines === 1 ? "line" : "lines"} in the full output`
+            : "Output cut short; the full output is longer"}
         </p>
       ) : null}
     </div>
