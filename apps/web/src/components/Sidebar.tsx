@@ -1556,7 +1556,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           <div
             className={cn(
               "relative z-10 px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]",
-              props.showProjectIdentity ? "h-[4.875rem]" : "h-[3.5rem]",
+              props.showProjectIdentity ? "h-[4.875rem]" : "h-[3.375rem]",
             )}
           >
             {props.showProjectIdentity ? (
