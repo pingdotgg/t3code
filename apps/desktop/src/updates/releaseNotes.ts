@@ -59,6 +59,7 @@ function stripMarkup(input: string): string {
     input
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<li\b[^>]*>/gi, "\n- ")
+      .replace(/<h([1-6])\b[^>]*>/gi, (_, level: string) => `\n${"#".repeat(Number(level))} `)
       .replace(/<\/(?:p|div|li|h[1-6]|ul|ol|blockquote)>/gi, "\n")
       .replace(/<[^>]*>/g, "")
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
@@ -107,6 +108,7 @@ function extractReleaseNoteItems(note: string | null | undefined): ExtractedRele
       .replace(/\s+/g, " ");
     const normalized = normalizeReleaseNoteLine(item);
     if (normalized === "new contributors" || normalized === "full changelog") break;
+    if (/^#{1,6}\s+/.test(item)) continue;
     if (isIgnoredReleaseNoteLine(item)) continue;
     totalItems += 1;
     items.push(truncateReleaseNoteItem(item));

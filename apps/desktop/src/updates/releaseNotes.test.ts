@@ -58,6 +58,25 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     });
   });
 
+  it("does not count Markdown or HTML section headings as changes", () => {
+    const changes = Array.from({ length: 8 }, (_, index) => `Change ${index + 1}`);
+    const result = normalizeDesktopUpdateReleaseNotes(
+      [
+        { version: "1.2.4", note: ["### Features", ...changes].join("\n- ") },
+        {
+          version: "1.2.3",
+          note: `<h3>Fixes</h3><ul>${changes.map((change) => `<li>${change}</li>`).join("")}</ul>`,
+        },
+      ],
+      "1.2.4",
+    );
+
+    expect(result.releaseNotes).toEqual([
+      { version: "1.2.4", items: changes.toReversed(), totalItems: 8 },
+      { version: "1.2.3", items: changes.toReversed(), totalItems: 8 },
+    ]);
+  });
+
   it("keeps per-version order and drops empty groups", () => {
     const result = normalizeDesktopUpdateReleaseNotes(
       [
