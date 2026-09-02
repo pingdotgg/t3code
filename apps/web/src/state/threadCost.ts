@@ -93,6 +93,7 @@ export function summarizeThreadCost(
   const matching = rows.filter((row) => row.threadId === threadId);
   let costUsd = 0;
   let cacheWriteUsd = 0;
+  let pricedCacheWriteUsd = 0;
   let cacheWriteComplete = true;
   let cacheReadUsd = 0;
   let freshUsd = 0;
@@ -112,12 +113,13 @@ export function summarizeThreadCost(
     cacheCreationTokens += row.totals.cacheCreationTokens;
     outputTokens += row.totals.outputTokens;
     for (const day of row.daily) {
+      pricedCacheWriteUsd += day.cacheWriteUsd;
       cacheReadUsd += day.cacheReadUsd;
       freshUsd += day.freshUsd;
     }
   }
 
-  const pricedComponents = cacheWriteUsd + cacheReadUsd + freshUsd;
+  const pricedComponents = pricedCacheWriteUsd + cacheReadUsd + freshUsd;
   const providerReportedUsd = Math.max(0, costUsd - pricedComponents);
   return {
     costUsd,

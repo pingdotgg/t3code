@@ -680,21 +680,9 @@ export const make = Effect.gen(function* () {
       .list()
       .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
     for (const runtime of runtimes) {
-      const cursor = runtime.resumeCursor;
-      if (typeof cursor !== "object" || cursor === null) continue;
-      const cursorRecord = cursor as Record<string, unknown>;
-      // Claude cursors carry the transcript uuid as `resume`; Codex cursors
-      // carry the rollout uuid as `threadId`. Other providers do not surface
-      // usage transcripts, so their cursors are irrelevant here.
-      const sessionId =
-        runtime.providerName === "claudeAgent"
-          ? cursorRecord["resume"]
-          : runtime.providerName === "codex"
-            ? cursorRecord["threadId"]
-            : undefined;
-      if (typeof sessionId !== "string" || sessionId.length === 0) continue;
-      const provider = runtime.providerName === "claudeAgent" ? "claude" : "codex";
-      sessionToThread.set(`${provider}:${sessionId}`, {
+      const sessionKey = runtimeUsageSessionKey(runtime.providerName, runtime.resumeCursor);
+      if (sessionKey === null) continue;
+      sessionToThread.set(sessionKey, {
         threadId: runtime.threadId,
         title: titles.get(runtime.threadId) ?? runtime.threadId,
       });
@@ -865,6 +853,31 @@ export function shortSessionLabel(sessionKey: string): string {
   if (sessionKey.includes(":file:")) return "Untitled session";
   const sessionId = sessionKey.slice(sessionKey.lastIndexOf(":") + 1);
   return sessionId.length > 8 ? `Session ${sessionId.slice(0, 8)}` : `Session ${sessionId}`;
+}
+
+/** Maps a persisted provider cursor to the transcript session key it owns. */
+export function runtimeUsageSessionKey(providerName: string, cursor: unknown): string | null {
+  if (typeof cursor !== "object" || cursor === null) return null;
+  const cursorRecord = cursor as Record<string, unknown>;
+  let provider: UsageProviderKind;
+  let sessionId: unknown;
+  switch (providerName) {
+    case "claudeAgent":
+      provider = "claude";
+      sessionId = cursorRecord["resume"];
+      break;
+    case "codex":
+      provider = "codex";
+      sessionId = cursorRecord["threadId"];
+      break;
+    case "grok":
+      provider = "grok";
+      sessionId = cursorRecord["sessionId"];
+      break;
+    default:
+      return null;
+  }
+  return typeof sessionId === "string" && sessionId.length > 0 ? `${provider}:${sessionId}` : null;
 }
 
 export const layer = Layer.effect(UsageService, make);

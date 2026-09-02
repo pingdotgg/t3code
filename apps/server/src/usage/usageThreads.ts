@@ -25,6 +25,7 @@ import { cacheWriteUsd, priceUsage, usageComponentCosts, type RateTable } from "
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
 
 const MAX_DATE_TIMESTAMP_MS = 8_640_000_000_000_000;
+const UNKNOWN_PROJECT_KEY = "unknown:";
 
 /** How the caller identifies the transcript a record came from. */
 export interface ThreadRecordContext {
@@ -137,7 +138,11 @@ export class ThreadUsageAccumulator {
 
     const resolvedProject = this.#options.resolveProject?.(record.cwd) ?? null;
     const projectKey =
-      resolvedProject === null ? null : `id:${resolvedProject.projectId.replaceAll("\u0000", "")}`;
+      resolvedProject !== null
+        ? `id:${resolvedProject.projectId.replaceAll("\u0000", "")}`
+        : this.#options.resolveProject === undefined || record.cwd.length === 0
+          ? UNKNOWN_PROJECT_KEY
+          : null;
     const groupKey = JSON.stringify([context.sessionKey, record.cwd]);
     let group = this.#groups.get(groupKey);
     if (group === undefined) {

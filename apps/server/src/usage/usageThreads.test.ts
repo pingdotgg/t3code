@@ -261,6 +261,25 @@ describe("foldThreadRows", () => {
     expect(rows[0]?.title).toBe("Nested worktree");
   });
 
+  it("attributes a Grok session without a cwd through its resume cursor", () => {
+    const groups = accumulate([
+      [
+        record({ provider: "grok", sessionId: "grok-session", cwd: "" }),
+        { sessionKey: "grok:grok-session", agentId: null },
+      ],
+    ]);
+    const attribution: ThreadAttribution = {
+      sessionToThread: new Map([["grok:grok-session", { threadId, title: "Review Grok usage" }]]),
+      worktreeToThread: new Map(),
+    };
+
+    const { rows } = foldThreadRows(groups, attribution, { cap: 40, threadFilter: threadId });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.threadId).toBe(threadId);
+    expect(rows[0]?.costUsd).toBeGreaterThan(0);
+  });
+
   it("scopes one T3 thread by provider and project", () => {
     const accumulator = new ThreadUsageAccumulator({
       timeZone: "UTC",
@@ -459,6 +478,10 @@ describe("foldThreadRows", () => {
     accumulator.add(record(), { sessionKey: "claude:session-a", agentId: null });
     accumulator.add(record({ sessionId: "session-b", cwd: "/elsewhere" }), {
       sessionKey: "claude:session-b",
+      agentId: null,
+    });
+    accumulator.add(record({ provider: "grok", sessionId: "session-c", cwd: "" }), {
+      sessionKey: "grok:session-c",
       agentId: null,
     });
     const groups = accumulator.finish();

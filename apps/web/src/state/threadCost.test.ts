@@ -96,5 +96,6 @@ describe("thread cost state", () => {
     const result = summarizeThreadCost([row({ cacheWriteUsd: null })], threadId);
 
     expect(result.cacheWriteUsd).toBeNull();
+    expect(result.providerReportedUsd).toBe(0.5);
   });
 });

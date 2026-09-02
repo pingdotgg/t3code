@@ -280,3 +280,26 @@ describe("shortSessionLabel", () => {
     );
   });
 });
+
+describe("runtimeUsageSessionKey", () => {
+  it("maps every provider with usage transcripts to its persisted session cursor", () => {
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("claudeAgent", { resume: "claude-session" }),
+      "claude:claude-session",
+    );
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("codex", { threadId: "codex-session" }),
+      "codex:codex-session",
+    );
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("grok", { schemaVersion: 1, sessionId: "grok-session" }),
+      "grok:grok-session",
+    );
+  });
+
+  it("ignores providers and cursors without a usage transcript session", () => {
+    assert.isNull(UsageService.runtimeUsageSessionKey("opencode", { sessionId: "session" }));
+    assert.isNull(UsageService.runtimeUsageSessionKey("grok", { sessionId: "" }));
+    assert.isNull(UsageService.runtimeUsageSessionKey("grok", null));
+  });
+});
