@@ -2,6 +2,11 @@ import type { KeybindingShortcut, ResolvedKeybindingsConfig } from "@t3tools/con
 import type { ShellKeybinding, ShellKeybindingsState } from "@t3tools/contracts/shell";
 
 import { isMacPlatform } from "../lib/utils";
+import {
+  resolveShortcutCommand,
+  type ShortcutEventLike,
+  type ShortcutMatchContext,
+} from "../keybindings";
 
 /** Web `event.key` names (lowercased by the parser) → portable QKeySequence names. */
 const QT_KEY_NAMES: Readonly<Record<string, string>> = {
@@ -81,4 +86,32 @@ export function buildShellKeybindings(
     result.push(binding);
   }
   return result;
+}
+
+export type ShellKeybindingPress = Omit<ShellKeybinding, "sequence">;
+
+/**
+ * The `keybinding.press` a secondary document forwards for a keydown it
+ * received, or null when the key is not the primary's to act on. The primary
+ * replays a press on its body, that is with nothing focused, so only a chord
+ * that resolves to the same command with the embed's focus context and
+ * without one is forwarded: `mod+1` jumps threads either way, while `mod+d`
+ * splits the focused terminal here and would toggle the diff there.
+ */
+export function shellKeybindingPressToForward(
+  event: ShortcutEventLike,
+  config: ResolvedKeybindingsConfig,
+  platform: string,
+  context: Partial<ShortcutMatchContext>,
+): ShellKeybindingPress | null {
+  const command = resolveShortcutCommand(event, config, { platform, context });
+  if (command === null) return null;
+  if (resolveShortcutCommand(event, config, { platform }) !== command) return null;
+  return {
+    key: event.key,
+    ctrlKey: event.ctrlKey,
+    metaKey: event.metaKey,
+    shiftKey: event.shiftKey,
+    altKey: event.altKey,
+  };
 }

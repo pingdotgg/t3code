@@ -484,6 +484,17 @@ runs. A body target reads as "not typing", so chords scoped to a focused
 editor do nothing from chrome; the QML composer submits through
 `composer.submit` instead.
 
+Secondary documents (the terminal drawer, the right panel) carry no
+`T3ShellBridge` and no sidebar, so the handlers behind thread jumps or the
+sidebar toggle do not exist there, and while one has focus the shell's own
+shortcuts are off. `ShellEmbedRouteBridge` therefore forwards a keydown its
+document did not consume as `keybinding.press` when the chord resolves to the
+same command with and without the embed's focus context
+(`shellKeybindingPressToForward`): Mod+1 jumps threads either way and is
+forwarded, Mod+D splits a focused terminal there and is not. A focused
+terminal consumes Mod+1 as terminal input before that listener runs, exactly
+as in the web app.
+
 ### `notifications`
 
 `ToastProvider` accepts a `shellMirror` rendered inside it; the mirrored
