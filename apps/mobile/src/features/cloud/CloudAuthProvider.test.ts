@@ -24,6 +24,7 @@ vi.mock("@clerk/expo/token-cache", () => ({
 }));
 
 vi.mock("./backgroundManagedRelayAuth", () => ({
+  holdBackgroundManagedRelayAuth: vi.fn(),
   invalidateBackgroundManagedRelayAuth: vi.fn(),
   refreshBackgroundManagedRelayAuth: vi.fn(async () => undefined),
 }));

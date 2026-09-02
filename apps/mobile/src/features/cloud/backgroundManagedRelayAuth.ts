@@ -47,17 +47,49 @@ const defaultDependencies: BackgroundManagedRelayAuthDependencies = {
 };
 
 let authenticationEpoch = 0;
+const pendingHolds = new Set<Promise<void>>();
 
 /** Prevent an in-flight Clerk load from restoring ownership after sign-out. */
 export function invalidateBackgroundManagedRelayAuth(): void {
   authenticationEpoch += 1;
 }
 
+/**
+ * Defers every background bootstrap until `transition` settles. Account
+ * switches invalidate the epoch, but that only stops attempts already in
+ * flight; a scheduled retry or a cold headless start would otherwise read the
+ * new Clerk account and publish its relay session before the previous
+ * account's environment removal and token-cache reset have finished.
+ */
+export function holdBackgroundManagedRelayAuth(transition: Promise<void>): void {
+  const hold: Promise<void> = transition
+    .then(
+      () => undefined,
+      () => undefined,
+    )
+    .finally(() => {
+      pendingHolds.delete(hold);
+    });
+  pendingHolds.add(hold);
+}
+
+async function awaitBackgroundManagedRelayAuthHolds(): Promise<void> {
+  while (pendingHolds.size > 0) {
+    await Promise.all(pendingHolds);
+  }
+}
+
 export async function bootstrapBackgroundManagedRelayAuth(
   dependencies: BackgroundManagedRelayAuthDependencies = defaultDependencies,
 ): Promise<BackgroundManagedRelayAuthAttempt> {
+  // Capture the epoch before yielding so an invalidation issued right after
+  // this attempt started still supersedes it, then wait out any transition.
   const attemptEpoch = authenticationEpoch;
   try {
+    await awaitBackgroundManagedRelayAuthHolds();
+    if (attemptEpoch !== authenticationEpoch) {
+      return { state: { status: "superseded" } };
+    }
     const config = dependencies.resolveConfig();
     if (!config.clerk.publishableKey || !config.clerk.jwtTemplate || !config.relay.url) {
       return { state: { status: "unconfigured" } };

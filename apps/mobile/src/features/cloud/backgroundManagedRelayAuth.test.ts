@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   bootstrapBackgroundManagedRelayAuth,
+  holdBackgroundManagedRelayAuth,
   invalidateBackgroundManagedRelayAuth,
   refreshBackgroundManagedRelayAuth,
   startBackgroundManagedRelayAuth,
@@ -186,6 +187,63 @@ describe("background managed relay authentication", () => {
 
     await expect(attempt).resolves.toEqual({ state: { status: "superseded" } });
     expect(acquireSession).not.toHaveBeenCalled();
+  });
+
+  it("holds bootstrap attempts until an account transition settles", async () => {
+    const transition = deferred<void>();
+    const release = vi.fn();
+    const acquireSession = vi.fn(() => release);
+    const load = vi.fn(async () => undefined);
+    holdBackgroundManagedRelayAuth(transition.promise);
+
+    // A retry timer or cold headless start that fires mid-transition must not
+    // publish the new account's relay session before the old account's
+    // cleanup has finished.
+    const attempt = bootstrapBackgroundManagedRelayAuth({
+      resolveConfig: () => configuredPublicConfig,
+      createClerk: () => ({
+        loaded: false,
+        load,
+        session: {
+          user: { id: "new-account" },
+          getToken: vi.fn(async () => "new-token"),
+        },
+      }),
+      resolveTokenOptions: vi.fn(() => ({
+        template: "relay-template",
+        skipCache: true as const,
+      })),
+      acquireSession,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(load).not.toHaveBeenCalled();
+    expect(acquireSession).not.toHaveBeenCalled();
+
+    transition.resolve();
+
+    await expect(attempt).resolves.toEqual({
+      state: { status: "active", accountId: "new-account" },
+      release,
+    });
+    expect(acquireSession).toHaveBeenCalledOnce();
+  });
+
+  it("releases a hold whose transition fails", async () => {
+    const failed = Promise.reject(new Error("cleanup failed"));
+    holdBackgroundManagedRelayAuth(failed);
+
+    await expect(
+      bootstrapBackgroundManagedRelayAuth({
+        resolveConfig: () => configuredPublicConfig,
+        createClerk: () => ({ loaded: true, load: async () => undefined, session: null }),
+        resolveTokenOptions: vi.fn(() => ({
+          template: "relay-template",
+          skipCache: true as const,
+        })),
+        acquireSession: vi.fn(() => vi.fn()),
+      }),
+    ).resolves.toEqual({ state: { status: "signed-out" } });
   });
 
   it("keeps the controller alive and retries transient Clerk failures", async () => {

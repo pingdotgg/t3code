@@ -23,6 +23,7 @@ import {
 } from "../agent-awareness/remoteRegistration";
 import { clearConnectOnboardingRequest, requestConnectOnboarding } from "./connectOnboarding";
 import {
+  holdBackgroundManagedRelayAuth,
   invalidateBackgroundManagedRelayAuth,
   refreshBackgroundManagedRelayAuth,
 } from "./backgroundManagedRelayAuth";
@@ -152,7 +153,11 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
       previousTokenProviderRef.current = null;
       deactivateCloudRelayAccount();
       if (previousObservedAccount !== null) {
-        void settlePromise(() => queueAccountCleanup(previous)).then((result) => {
+        const cleanup = queueAccountCleanup(previous);
+        // A sign-in that follows before this cleanup settles must not let a
+        // background retry publish the next account's relay session early.
+        holdBackgroundManagedRelayAuth(cleanup);
+        void settlePromise(() => cleanup).then((result) => {
           reportAtomCommandResult(result, { label: "cloud account cleanup" });
         });
       }
@@ -184,6 +189,11 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
         activateSession();
       })();
       accountTransitionRef.current = activation;
+      // Refresh requests already wait for the transition, but a scheduled
+      // retry or a cold headless start does not. Hold every background
+      // bootstrap until the previous account's cleanup and this activation
+      // settle; the refresh issued by activateSession resumes them.
+      holdBackgroundManagedRelayAuth(activation);
       void settlePromise(() => activation).then((result) => {
         reportAtomCommandResult(result, { label: "cloud account activation" });
       });

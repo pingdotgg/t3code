@@ -201,8 +201,11 @@ T3 Connect authentication has matching `ui` and `background` owners. UI
 ownership wins while the app is visible. A cold headless start loads the
 persisted Clerk session and installs its token provider into the existing
 `managedRelaySessionAtom`; direct and Tailscale startup is not blocked when
-Clerk is signed out, unconfigured, or temporarily unavailable. There is no
-background-only relay transport or authentication path.
+Clerk is signed out, unconfigured, or temporarily unavailable. Sign-out and
+account switches hold every background bootstrap, including scheduled retries
+and cold headless starts, until the previous account's cleanup settles, so the
+next account's relay session is never published before that cleanup finishes.
+There is no background-only relay transport or authentication path.
 
 The service is deliberately opt-in and defaults off. While enabled, Android
 requires a silent ongoing notification. React Native owns a partial CPU wake
