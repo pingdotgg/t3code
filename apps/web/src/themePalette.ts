@@ -1521,8 +1521,6 @@ export class ThemeLibraryStorageError extends Schema.TaggedErrorClass<ThemeLibra
   }
 }
 
-export const isThemeLibraryStorageError = Schema.is(ThemeLibraryStorageError);
-
 function saveCustomThemes(
   storedThemes: ReadonlyArray<unknown>,
   themes: ReadonlyArray<ThemeDefinition>,

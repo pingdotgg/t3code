@@ -1,4 +1,4 @@
-import { CommandId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { type CxOptions, cx } from "class-variance-authority";
 import * as Encoding from "effect/Encoding";
 import { twMerge } from "tailwind-merge";
@@ -14,10 +14,6 @@ export function isMacPlatform(platform: string): boolean {
 
 export function isWindowsPlatform(platform: string): boolean {
   return /^win(dows)?/i.test(platform);
-}
-
-export function isLinuxPlatform(platform: string): boolean {
-  return /linux/i.test(platform);
 }
 
 export function normalizeSearchText(value: string): string {
@@ -45,8 +41,6 @@ export function randomUUID(): string {
   const hex = Encoding.encodeHex(bytes);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
-
-export const newCommandId = (): CommandId => CommandId.make(randomUUID());
 
 export const newProjectId = (): ProjectId => ProjectId.make(randomUUID());
 
