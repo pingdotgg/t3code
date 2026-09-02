@@ -3870,7 +3870,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           ) : null}
         </ComposerBanner.Column>
         {showStashMenu ? (
-          <ComposerBanner.Attachment>
+          <ComposerBanner.Attachment className="w-full">
             <ComposerStashMenu
               entries={stashQueue}
               stashShortcutLabel={shortcutLabelForCommand(keybindings, "composer.stash", {
@@ -3886,7 +3886,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             />
           </ComposerBanner.Attachment>
         ) : showShoulderTabs && !showInlineStashBadge && stashQueue.length > 0 ? (
-          <ComposerBanner.Attachment className="ml-auto w-auto shrink-0">
+          <ComposerBanner.Attachment className="mr-0 ml-auto w-auto shrink-0">
             <ComposerStashBadge
               count={stashQueue.length}
               menuOpen={isStashMenuOpen}
