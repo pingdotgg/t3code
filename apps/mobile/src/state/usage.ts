@@ -148,7 +148,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
 
   const refresh = useCallback(() => {
     const nextToken = makeUsageRefreshToken(answered);
-    if (nextToken !== undefined) {
+    if (nextToken !== undefined && nextToken !== refreshToken) {
       setRefreshToken(nextToken);
       return;
     }
@@ -162,7 +162,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
         }),
       );
     }
-  }, [answered, environments, windowKey]);
+  }, [answered, environments, refreshToken, windowKey]);
 
   const merged = useMemo(() => mergeUsage(answered, USAGE_CONTRACT_VERSION), [answered]);
 
