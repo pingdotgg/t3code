@@ -23,7 +23,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
-import { readProjects, readThreadShell, useProjects, useThread } from "../state/entities";
+import { readProjects, readThreadShell, useProjects, useThreadShell } from "../state/entities";
 import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
