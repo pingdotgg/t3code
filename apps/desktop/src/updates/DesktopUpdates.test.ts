@@ -336,6 +336,11 @@ describe("DesktopUpdates", () => {
               version: "1.2.4-nightly.20260709.765",
               note: "- [codex] Upgrade Clerk stack by @juliusmarminge in #3821",
             },
+            { version: "1.2.4-nightly.20260709.764", note: "- Change 764" },
+            { version: "1.2.4-nightly.20260709.763", note: "- Change 763" },
+            { version: "1.2.4-nightly.20260709.762", note: "- Change 762" },
+            { version: "1.2.4-nightly.20260709.761", note: "- Change 761" },
+            { version: "1.2.4-nightly.20260709.760", note: "- Change 760" },
           ],
         });
         yield* flushCallbacks;
@@ -346,13 +351,21 @@ describe("DesktopUpdates", () => {
           {
             version: "1.2.4-nightly.20260709.766",
             items: ["feat(client): persist offline environment data by @juliusmarminge in #3795"],
+            totalItems: 1,
           },
           {
             version: "1.2.4-nightly.20260709.765",
             items: ["[codex] Upgrade Clerk stack by @juliusmarminge in #3821"],
+            totalItems: 1,
           },
+          { version: "1.2.4-nightly.20260709.764", items: ["Change 764"], totalItems: 1 },
+          { version: "1.2.4-nightly.20260709.763", items: ["Change 763"], totalItems: 1 },
+          { version: "1.2.4-nightly.20260709.762", items: ["Change 762"], totalItems: 1 },
+          { version: "1.2.4-nightly.20260709.761", items: ["Change 761"], totalItems: 1 },
         ]);
+        assert.equal(state.omittedReleaseCount, 1);
         assert.deepEqual(harness.sentStates.at(-1)?.releaseNotes, state.releaseNotes);
+        assert.equal(harness.sentStates.at(-1)?.omittedReleaseCount, 1);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -383,8 +396,9 @@ describe("DesktopUpdates", () => {
         assert.equal(unchangedState.status, "downloaded");
         assert.equal(unchangedState.downloadedVersion, "1.2.4");
         assert.deepEqual(unchangedState.releaseNotes, [
-          { version: "1.2.4", items: ["fix: queued update"] },
+          { version: "1.2.4", items: ["fix: queued update"], totalItems: 1 },
         ]);
+        assert.equal(unchangedState.omittedReleaseCount, 0);
 
         const nextResult = yield* updates.check("poll");
         assert.isTrue(nextResult.checked);
@@ -424,7 +438,10 @@ describe("DesktopUpdates", () => {
         assert.equal(state.status, "downloaded");
         assert.equal(state.availableVersion, "1.2.4");
         assert.equal(state.downloadedVersion, "1.2.4");
-        assert.deepEqual(state.releaseNotes, [{ version: "1.2.4", items: ["fix: queued update"] }]);
+        assert.deepEqual(state.releaseNotes, [
+          { version: "1.2.4", items: ["fix: queued update"], totalItems: 1 },
+        ]);
+        assert.equal(state.omittedReleaseCount, 0);
         assert.equal(state.downloadPercent, 100);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
@@ -454,7 +471,10 @@ describe("DesktopUpdates", () => {
         assert.equal(state.status, "downloaded");
         assert.equal(state.availableVersion, "1.2.4");
         assert.equal(state.downloadedVersion, "1.2.4");
-        assert.deepEqual(state.releaseNotes, [{ version: "1.2.4", items: ["fix: queued update"] }]);
+        assert.deepEqual(state.releaseNotes, [
+          { version: "1.2.4", items: ["fix: queued update"], totalItems: 1 },
+        ]);
+        assert.equal(state.omittedReleaseCount, 0);
         assert.equal(state.downloadPercent, 100);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
