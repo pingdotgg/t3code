@@ -85,8 +85,16 @@ recorded reason. Older servers without an ID retain version-only reconnect behav
 
 The existing additive RPC and lifecycle schemas remain compatible with older clients. New servers
 advertise remote self-update only when they have valid launcher context and a live IPC channel.
-Desktop-managed servers direct the user to update the desktop app. Other process shapes provide a
-manual command; the old detached foreground respawn path no longer exists.
+Desktop-managed servers advertise `desktopAppUpdate` when the desktop telemetry control fd is
+attached. The progress RPC asks the desktop app to check and download, then returns a preparation
+token while the backend is still connected. Only after the client receives that result does it send
+`server.commitDesktopUpdate`. A successful commit closes the connection and must reconnect at the
+prepared version. The desktop app and bundled server versions stay equal because
+`scripts/update-release-package-versions.ts` bumps them together. If install fails, the desktop keeps its windows, restarts stopped backends, and
+replays the failure for the same token. This two-phase handoff prevents backend shutdown from
+dropping the only successful RPC result. Desktop servers without the capability direct the user to
+update the desktop app locally. Other process shapes provide a manual command; the old detached
+foreground respawn path no longer exists.
 
 ## Source Map
 

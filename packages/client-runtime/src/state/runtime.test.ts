@@ -1,12 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -828,6 +830,55 @@ describe("runtime command runner", () => {
       expect(yield* Effect.promise(() => update)).toMatchObject({
         _tag: "Success",
         waiting: false,
+      });
+      registry.dispose();
+    }),
+  );
+
+  it.effect("keeps an outer reconnect observer alive after a scheduled handoff returns", () =>
+    Effect.gen(function* () {
+      const commitStarting = yield* Deferred.make<void>();
+      const observerArmed = yield* Deferred.make<void>();
+      const reconnected = yield* Deferred.make<void>();
+      const states = yield* Queue.unbounded<{ readonly phase: string }>();
+      yield* Queue.offer(states, { phase: "connected" });
+      const runtime = Atom.runtime(Layer.empty);
+      const scheduler = createAtomCommandScheduler();
+      const concurrency = { mode: "serial" as const, key: () => "shared" };
+      const command = createRuntimeCommand(runtime, {
+        label: "test.desktop-update-handoff",
+        execute: (_input: void, registry) =>
+          Effect.gen(function* () {
+            yield* Deferred.await(commitStarting).pipe(
+              Effect.andThen(
+                Stream.fromQueue(states).pipe(
+                  Stream.tap(() => Deferred.succeed(observerArmed, undefined)),
+                  Stream.dropWhile((state) => state.phase === "connected"),
+                  Stream.filter((state) => state.phase === "connected"),
+                  Stream.runHead,
+                ),
+              ),
+              Effect.andThen(Deferred.succeed(reconnected, undefined)),
+              Effect.forkChild,
+            );
+            yield* scheduleAtomCommandEffect(
+              registry,
+              scheduler,
+              concurrency,
+              undefined,
+              Deferred.succeed(commitStarting, undefined).pipe(
+                Effect.andThen(Deferred.await(observerArmed)),
+              ),
+            );
+            yield* Queue.offer(states, { phase: "backoff" });
+            yield* Queue.offer(states, { phase: "connected" });
+            yield* Deferred.await(reconnected);
+          }),
+      });
+      const registry = AtomRegistry.make();
+
+      expect(yield* Effect.promise(() => command.run(registry, undefined))).toMatchObject({
+        _tag: "Success",
       });
       registry.dispose();
     }),
