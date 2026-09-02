@@ -25,6 +25,22 @@ describe("parseSshEnvironmentVariables", () => {
     expect(Object.hasOwn(environment ?? {}, "__proto__")).toBe(true);
   });
 
+  it("does not count blank rows toward the variable limit", () => {
+    const blankRows = Array.from({ length: 129 }, () => ({ name: "", value: "" }));
+
+    expect(parseSshEnvironmentVariables([...blankRows, { name: "TOKEN", value: "value" }])).toEqual(
+      { TOKEN: "value" },
+    );
+    expect(() =>
+      parseSshEnvironmentVariables(
+        Array.from({ length: 129 }, (_, index) => ({
+          name: `VARIABLE_${index}`,
+          value: "value",
+        })),
+      ),
+    ).toThrow("limited to 128");
+  });
+
   it("rejects missing, invalid, and duplicate names", () => {
     expect(() => parseSshEnvironmentVariables([{ name: "", value: "secret" }])).toThrow(
       "needs a name",

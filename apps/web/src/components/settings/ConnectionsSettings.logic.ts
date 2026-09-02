@@ -18,20 +18,22 @@ const SSH_ENVIRONMENT_VARIABLE_VALUE_MAX_LENGTH = 8_192;
 export function parseSshEnvironmentVariables(
   drafts: ReadonlyArray<SshEnvironmentVariableDraft>,
 ): Readonly<Record<string, string>> | undefined {
-  if (drafts.length > SSH_ENVIRONMENT_VARIABLE_MAX_COUNT) {
-    throw new Error(
-      `SSH environment variables are limited to ${SSH_ENVIRONMENT_VARIABLE_MAX_COUNT}.`,
-    );
-  }
   const environmentVariables: Record<string, string> = Object.create(null) as Record<
     string,
     string
   >;
+  let nonEmptyDraftCount = 0;
 
   for (const draft of drafts) {
     const name = draft.name.trim();
     if (name.length === 0 && draft.value.length === 0) {
       continue;
+    }
+    nonEmptyDraftCount += 1;
+    if (nonEmptyDraftCount > SSH_ENVIRONMENT_VARIABLE_MAX_COUNT) {
+      throw new Error(
+        `SSH environment variables are limited to ${SSH_ENVIRONMENT_VARIABLE_MAX_COUNT}.`,
+      );
     }
     if (!SSH_ENVIRONMENT_VARIABLE_NAME_PATTERN.test(name)) {
       throw new Error(
