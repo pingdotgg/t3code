@@ -2,7 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ThreadId } from "@t3tools/contracts";
 
-import { resolveViewedImageAsset, workEntryViewedImagePath } from "./presentation.js";
+import {
+  resolveViewedImageAsset,
+  toolGroupAction,
+  workEntryViewedImagePath,
+} from "./presentation.js";
 
 describe("workEntryViewedImagePath", () => {
   const entry = { label: "Read", tone: "tool" } as const;
@@ -19,6 +23,14 @@ describe("workEntryViewedImagePath", () => {
         detail: "C:\\workspace\\a.webp",
       }),
     ).toBe("C:\\workspace\\a.webp");
+    expect(
+      workEntryViewedImagePath({
+        ...entry,
+        itemType: "dynamic_tool_call",
+        detail: 'Read: {"file_path":"truncated..."}',
+        viewedImagePath: " /workspace/reference image.webp ",
+      }),
+    ).toBe("/workspace/reference image.webp");
   });
 
   it("rejects non-image, multi-line, and non-read details", () => {
@@ -29,6 +41,19 @@ describe("workEntryViewedImagePath", () => {
       workEntryViewedImagePath({ ...entry, itemType: "image_view", detail: "a.png\nb.png" }),
     ).toBeNull();
     expect(workEntryViewedImagePath({ ...entry, detail: "a.png" })).toBeNull();
+  });
+});
+
+describe("toolGroupAction", () => {
+  it("groups legacy Claude image reads with other reads", () => {
+    expect(
+      toolGroupAction({
+        label: "Tool call",
+        tone: "tool",
+        itemType: "dynamic_tool_call",
+        viewedImagePath: "/workspace/reference.png",
+      }),
+    ).toBe("read");
   });
 });
 

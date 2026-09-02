@@ -3,6 +3,7 @@ import type {
   OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
 } from "@t3tools/contracts";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -141,6 +142,21 @@ function projectCommandValue(data: Record<string, unknown>): unknown {
   }
 
   return undefined;
+}
+
+function projectViewedImagePath(data: Record<string, unknown>): string | undefined {
+  const directPath = asTrimmedString(data.imagePath);
+  if (directPath && isWorkspaceImagePreviewPath(directPath)) {
+    return directPath;
+  }
+
+  const toolName = asTrimmedString(data.toolName)?.toLowerCase();
+  if (toolName !== "read" && toolName !== "read file") {
+    return undefined;
+  }
+  const input = asRecord(data.input);
+  const inputPath = asTrimmedString(input?.file_path) ?? asTrimmedString(input?.path);
+  return inputPath && isWorkspaceImagePreviewPath(inputPath) ? inputPath : undefined;
 }
 
 function summarizeToolTextOutput(value: string): string | null {
@@ -373,6 +389,10 @@ export function projectActivityPayload(
   const command = projectCommandValue(data);
   if (command !== undefined) {
     projectedData.command = command;
+  }
+  const imagePath = projectViewedImagePath(data);
+  if (imagePath) {
+    projectedData.imagePath = imagePath;
   }
 
   const changedFiles: string[] = [];

@@ -46,6 +46,7 @@ import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
 class ClaudeAdapter extends Context.Service<ClaudeAdapter, ClaudeAdapterShape>()(
@@ -1428,6 +1429,167 @@ describe("ClaudeAdapterLive", () => {
           "src/example.ts:1:foo",
         );
       }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("classifies only streamed Read image inputs as image views", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "inspect both files",
+        attachments: [],
+      });
+
+      const imagePath = `/workspace/${"nested folder/".repeat(16)}reference image.webp`;
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-read-image",
+        uuid: "read-image-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "tool-read-image",
+            name: "Read",
+            input: {},
+          },
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-read-image",
+        uuid: "read-image-input",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: {
+            type: "input_json_delta",
+            partial_json: encodeUnknownJsonString({ file_path: imagePath }),
+          },
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "user",
+        session_id: "sdk-session-read-image",
+        uuid: "read-image-result",
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-read-image",
+              content: "Image Size: 1280x720.",
+            },
+          ],
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-read-image",
+        uuid: "read-text-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: {
+            type: "tool_use",
+            id: "tool-read-text",
+            name: "Read",
+            input: { file_path: "/workspace/src/index.ts" },
+          },
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "user",
+        session_id: "sdk-session-read-image",
+        uuid: "read-text-result",
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-read-text",
+              content: "export {};",
+            },
+          ],
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-read-image",
+        uuid: "read-image-turn-result",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const imageEvents = runtimeEvents.filter(
+        (
+          event,
+        ): event is Extract<
+          ProviderRuntimeEvent,
+          { type: "item.started" | "item.updated" | "item.completed" }
+        > =>
+          (event.type === "item.started" ||
+            event.type === "item.updated" ||
+            event.type === "item.completed") &&
+          String(event.itemId) === "tool-read-image",
+      );
+      assert.deepEqual(
+        imageEvents.map((event) => [event.type, event.payload.itemType]),
+        [
+          ["item.started", "dynamic_tool_call"],
+          ["item.updated", "image_view"],
+          ["item.updated", "image_view"],
+          ["item.completed", "image_view"],
+        ],
+      );
+      for (const event of imageEvents.slice(1)) {
+        assert.equal(event.payload.detail, imagePath);
+        assert.equal(
+          (event.payload.data as { input?: { file_path?: string } } | undefined)?.input?.file_path,
+          imagePath,
+        );
+      }
+
+      const textEvents = runtimeEvents.filter(
+        (
+          event,
+        ): event is Extract<
+          ProviderRuntimeEvent,
+          { type: "item.started" | "item.updated" | "item.completed" }
+        > =>
+          (event.type === "item.started" ||
+            event.type === "item.updated" ||
+            event.type === "item.completed") &&
+          String(event.itemId) === "tool-read-text",
+      );
+      assert.deepEqual(
+        textEvents.map((event) => event.payload.itemType),
+        ["dynamic_tool_call", "dynamic_tool_call", "dynamic_tool_call"],
+      );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
