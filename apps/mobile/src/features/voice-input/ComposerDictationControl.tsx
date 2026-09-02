@@ -87,11 +87,6 @@ const DICTATION_TOOLBAR_EXITING = toolbarFlip(0, -90);
 const WAVEFORM_BAR_HEIGHT = 32;
 const WAVEFORM_MIN_BAR_HEIGHT = 2;
 const WAVEFORM_BAR_SPACING = 5;
-const WAVEFORM_TIMING = {
-  duration: 100,
-  easing: Easing.out(Easing.quad),
-  reduceMotion: ReduceMotion.System,
-} as const;
 
 /** Rotates the compact draft away without unmounting or resizing its native editor. */
 export function ComposerDictationDraftContent(props: {
@@ -162,14 +157,12 @@ const WaveformBar = memo(function WaveformBar(props: {
   const animatedStyle = useAnimatedStyle(() => {
     const level = audioLevels.value[sampleIndex] ?? 0;
     return {
-      opacity: withTiming(0.22 + level * 0.78, WAVEFORM_TIMING),
+      opacity: 0.22 + level * 0.78,
       transform: [
         {
-          scaleY: withTiming(
+          scaleY:
             (WAVEFORM_MIN_BAR_HEIGHT + level * (WAVEFORM_BAR_HEIGHT - WAVEFORM_MIN_BAR_HEIGHT)) /
-              WAVEFORM_BAR_HEIGHT,
-            WAVEFORM_TIMING,
-          ),
+            WAVEFORM_BAR_HEIGHT,
         },
       ],
     };
