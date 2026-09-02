@@ -86,8 +86,14 @@ export function BrowserImportWizard({
   // Stable across retries so a keychain re-approval lands in one profile, not
   // a new one each time.
   const newProfileId = useRef(`profile-${randomUUID()}`);
+  // A second Import click before React has left the configure screen would
+  // start a second run; the parent refuses it, and applying that refusal here
+  // would drop the wizard out of the importing step while the first write is
+  // still going. The ref settles synchronously where state does not.
+  const importInFlight = useRef(false);
 
   const runImport = () => {
+    if (importInFlight.current) return;
     const chosen = resolveWizardTarget(target, newProfileId.current, targetProfiles);
     if (chosen === undefined) {
       setTargetError("That profile is no longer available. Choose where to import these cookies.");
@@ -95,10 +101,14 @@ export function BrowserImportWizard({
       return;
     }
     setTargetError(undefined);
+    importInFlight.current = true;
     setStep({ step: "importing" });
     void onImport({ sourceProfileDirectory, target: chosen })
       .then((outcome) => setStep(outcomeToStep(outcome)))
-      .catch(() => setStep({ step: "blocked", reason: "readFailed" }));
+      .catch(() => setStep({ step: "blocked", reason: "readFailed" }))
+      .finally(() => {
+        importInFlight.current = false;
+      });
   };
 
   const recheckAfterQuit = () => {

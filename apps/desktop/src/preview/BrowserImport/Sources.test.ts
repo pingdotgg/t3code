@@ -13,7 +13,8 @@ import {
   BROWSER_IMPORT_SOURCES,
   chromiumProcessIsAlive,
   chromiumSingletonLockIsHeld,
-  cookieDatabasePath,
+  cookieDatabaseCandidatePaths,
+  resolveCookieDatabase,
   isSourceInstalled,
   isSourceRunning,
   listSourceProfiles,
@@ -300,15 +301,39 @@ describe("listSourceProfiles", () => {
   );
 });
 
-describe("cookieDatabasePath", () => {
-  it.effect("places the database under the requested source profile", () =>
+describe("cookieDatabaseCandidatePaths", () => {
+  it.effect("prefers Network/Cookies and falls back to the legacy Cookies", () =>
     run(
       Effect.gen(function* () {
         const paths = yield* withSourceHome();
+        const profile = `${paths.home}/Library/Application Support/net.imput.helium/Profile 1`;
+        assert.deepEqual(cookieDatabaseCandidatePaths(helium, paths, "Profile 1"), [
+          `${profile}/Network/Cookies`,
+          `${profile}/Cookies`,
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("resolves the live Network/ jar over a leftover root Cookies", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const paths = yield* withSourceHome();
+        const root = helium.userDataDirectory(paths);
+        // Chromium 96+ keeps sessions in Network/; a root Cookies left behind
+        // by the move is stale and must not be the one imported.
+        yield* fileSystem.makeDirectory(`${root}/Default/Network`, { recursive: true });
+        yield* fileSystem.writeFileString(`${root}/Default/Network/Cookies`, "live");
+        yield* fileSystem.writeFileString(`${root}/Default/Cookies`, "stale");
+
         assert.equal(
-          cookieDatabasePath(helium, paths, "Profile 1"),
-          `${paths.home}/Library/Application Support/net.imput.helium/Profile 1/Cookies`,
+          yield* resolveCookieDatabase(helium, paths, "Default"),
+          `${root}/Default/Network/Cookies`,
         );
+        // A fresh install with only the Network/ jar is installed, not hidden.
+        yield* fileSystem.remove(`${root}/Default/Cookies`);
+        assert.isTrue(yield* isSourceInstalled(helium, paths));
       }),
     ),
   );

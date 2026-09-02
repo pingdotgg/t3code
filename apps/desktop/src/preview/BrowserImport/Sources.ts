@@ -54,11 +54,33 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
   },
 ];
 
-export const cookieDatabasePath = (
+/**
+ * Where a profile's cookie database may live, most current first. Chromium 96
+ * moved the live jar to `Network/Cookies`; a root-level `Cookies` is either a
+ * pre-96 install or a leftover from before the move. Importing the leftover
+ * while sessions live in `Network/` would snapshot a stale or empty database,
+ * and a fresh install with only `Network/Cookies` would read as not installed.
+ */
+export const cookieDatabaseCandidatePaths = (
   definition: BrowserImportSourceDefinition,
   paths: SourcePaths,
   profileDirectory: string,
-): string => paths.path.join(definition.userDataDirectory(paths), profileDirectory, "Cookies");
+): ReadonlyArray<string> => {
+  const profile = paths.path.join(definition.userDataDirectory(paths), profileDirectory);
+  return [paths.path.join(profile, "Network", "Cookies"), paths.path.join(profile, "Cookies")];
+};
+
+/** The first candidate that is a regular file, or undefined when none is. */
+export const resolveCookieDatabase = Effect.fnUntraced(function* (
+  definition: BrowserImportSourceDefinition,
+  paths: SourcePaths,
+  profileDirectory: string,
+) {
+  for (const candidate of cookieDatabaseCandidatePaths(definition, paths, profileDirectory)) {
+    if (yield* databaseFileExists(candidate)) return candidate;
+  }
+  return undefined;
+});
 
 /** Shape of the slice of Chromium's `Local State` that names its profiles. */
 const LocalState = Schema.Struct({
@@ -93,19 +115,16 @@ const countProfileCookies = Effect.fnUntraced(function* (
   definition: BrowserImportSourceDefinition,
   paths: SourcePaths,
   directory: string,
-): Effect.fn.Return<number | undefined, never> {
+): Effect.fn.Return<number | undefined, never, FileSystem.FileSystem> {
+  const database = yield* resolveCookieDatabase(definition, paths, directory);
+  if (database === undefined) return undefined;
   return yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* sql`select count(*) as count from cookies`;
     const [row] = yield* decodeCookieCount(rows);
     return row?.count;
   }).pipe(
-    Effect.provide(
-      NodeSqliteClient.layer({
-        filename: cookieDatabasePath(definition, paths, directory),
-        readonly: true,
-      }),
-    ),
+    Effect.provide(NodeSqliteClient.layer({ filename: database, readonly: true })),
     Effect.orElseSucceed(() => undefined),
   );
 });
@@ -164,8 +183,10 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
     .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
   const candidates = entries.filter(isSafeProfileDirectory);
   const found = yield* Effect.forEach(candidates, (directory) =>
-    databaseFileExists(cookieDatabasePath(definition, paths, directory)).pipe(
-      Effect.map((exists) => (exists ? { directory, name: directory } : undefined)),
+    resolveCookieDatabase(definition, paths, directory).pipe(
+      Effect.map((database) =>
+        database === undefined ? undefined : { directory, name: directory },
+      ),
     ),
   );
   return yield* withCookieCounts(
@@ -278,7 +299,9 @@ export const isSourceInstalled = Effect.fn("BrowserImportSources.isSourceInstall
 ) {
   const profiles = yield* listSourceProfiles(definition, paths);
   const found = yield* Effect.forEach(profiles, (profile) =>
-    databaseFileExists(cookieDatabasePath(definition, paths, profile.directory)),
+    resolveCookieDatabase(definition, paths, profile.directory).pipe(
+      Effect.map((database) => database !== undefined),
+    ),
   );
   return found.some(Boolean);
 });

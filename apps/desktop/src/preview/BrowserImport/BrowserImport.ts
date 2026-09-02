@@ -25,7 +25,7 @@ import * as BrowserSession from "../BrowserSession.ts";
 import { readChromiumCookies, type CookieReadResult } from "./ChromiumCookies.ts";
 import {
   BROWSER_IMPORT_SOURCES,
-  cookieDatabasePath,
+  resolveCookieDatabase,
   isSourceInstalled,
   isSourceRunning,
   listSourceProfiles,
@@ -208,8 +208,19 @@ export const make = Effect.gen(function* BrowserImportMake() {
       });
     }
 
+    // The profile was listed against a database moments ago; resolve it again
+    // rather than assume a path, since the live jar may sit under `Network/`.
+    const databasePath = yield* resolveCookieDatabase(
+      definition,
+      paths,
+      requestedProfile.directory,
+    ).pipe(Effect.provide(platformServices));
+    if (databasePath === undefined) {
+      return yield* new BrowserImportFailedError({ sourceId: definition.id, reason: "readFailed" });
+    }
+
     const read = yield* readChromiumCookies({
-      cookieDatabasePath: cookieDatabasePath(definition, paths, requestedProfile.directory),
+      cookieDatabasePath: databasePath,
       keychainService: definition.keychainService,
       keychainAccount: definition.keychainAccount,
       platform,
