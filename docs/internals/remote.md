@@ -41,6 +41,10 @@ It is identified by a stable `environmentId`, persisted by the server at `<state
 and generated on first start (`apps/server/src/environment/ServerEnvironment.ts`). Desktop, mobile,
 and web all reason about the same concept.
 
+Initialization publishes a complete ID atomically. Empty or whitespace-only ID files are repaired
+using a retained `<stateDir>/environment-id.recovery` file so concurrent and delayed repairs choose
+the same ID. Existing nonempty ID files remain authoritative.
+
 ### Known environments and connection targets
 
 A saved client-side entry for an environment the client knows how to reach. It is not

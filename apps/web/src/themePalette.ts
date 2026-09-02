@@ -402,12 +402,12 @@ const T3_CODE_DARK_THEME_COLORS: ThemeColors = {
   toolbar: "#0a0a0a",
   toolbarForeground: "#f5f5f5",
   toolbarBorder: "#191919",
-  toolbarControl: "#191919",
+  toolbarControl: "#111111",
   toolbarControlForeground: "#f5f5f5",
   toolbarControlHover: "#141414",
   surface: "#111111",
-  surfaceRaised: "#141414",
-  surfaceOverlay: "#191919",
+  surfaceRaised: "#111111",
+  surfaceOverlay: "#111111",
   text: "#f5f5f5",
   textMuted: "#818181",
   border: "#191919",
@@ -415,9 +415,9 @@ const T3_CODE_DARK_THEME_COLORS: ThemeColors = {
   focus: "#346bf1",
   accent: "#346bf1",
   accentForeground: "#ffffff",
-  secondary: "#141414",
+  secondary: "#111111",
   secondaryForeground: "#f5f5f5",
-  muted: "#141414",
+  muted: "#111111",
   mutedForeground: "#818181",
   placeholder: "#818181",
   secondaryLabel: "#818181",
@@ -916,8 +916,8 @@ export function createVividThemeColors(
     themeOklchToThemeColor(
       solveOklchLightness(textBase, surfaceRgb, 4.6, dark ? "lighter" : "darker"),
     );
-  const mutedForeground = foregroundOn(mutedRgb);
-  const placeholder = foregroundOn(surfaceRaisedRgb);
+  const mutedForeground = themeRgbToThemeColor(readableThemeText(mutedRgb, textRgb, 1, 4.6));
+  const placeholder = themeRgbToThemeColor(readableThemeText(surfaceRaisedRgb, textRgb, 1, 4.6));
 
   const actionHover: ThemeOklch = { ...action, L: action.L + (dark ? 0.06 : -0.06) };
 
@@ -1520,8 +1520,6 @@ export class ThemeLibraryStorageError extends Schema.TaggedErrorClass<ThemeLibra
     return `Failed to ${this.operation} the theme library ${direction} ${this.storageKey}.`;
   }
 }
-
-export const isThemeLibraryStorageError = Schema.is(ThemeLibraryStorageError);
 
 function saveCustomThemes(
   storedThemes: ReadonlyArray<unknown>,

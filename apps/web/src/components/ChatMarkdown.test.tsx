@@ -102,6 +102,214 @@ describe("ChatMarkdown file option chips", () => {
     expect(html).toContain('aria-haspopup="menu"');
     expect(html).toContain("select-text");
   });
+
+  it.each([true, false])(
+    "renders Codex file citations as file chips with parseRawHtml=%s",
+    (parseRawHtml) => {
+      const html = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="/tmp/project"
+          text={
+            'Created :codex-file-citation{path="/tmp/project/outputs/report.xlsx" purpose="output"}.'
+          }
+          lineBreaks={!parseRawHtml}
+          parseRawHtml={parseRawHtml}
+        />,
+      );
+
+      expect(html).not.toContain("codex-file-citation");
+      expect(html).toContain("chat-markdown-file-link");
+      expect(html).toContain(
+        'data-markdown-copy="[report.xlsx](/tmp/project/outputs/report.xlsx)"',
+      );
+      expect(html).toContain("report.xlsx");
+    },
+  );
+
+  it("leaves an unfinished streaming citation visible until it is complete", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={'Created :codex-file-citation{path="/tmp/project/outputs/report.xlsx"'}
+        isStreaming
+      />,
+    );
+
+    expect(html).toContain(":codex-file-citation");
+    expect(html).not.toContain("chat-markdown-file-link");
+  });
+
+  it("leaves malformed and similarly named file directives literal", () => {
+    for (const text of [
+      ':codex-file-citation{purpose="output"}',
+      ':codex-file-citation-extra{path="/tmp/project/outputs/report.xlsx"}',
+    ]) {
+      const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />);
+
+      expect(html).toContain(text.replaceAll('"', "&quot;"));
+      expect(html).not.toContain("chat-markdown-file-link");
+    }
+  });
+
+  it("preserves Codex file citation examples inside code", () => {
+    const directive = ':codex-file-citation{path="/tmp/project/outputs/report.xlsx"}';
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={`Example: \`${directive}\`\n\n\`\`\`text\n${directive}\n\`\`\``}
+      />,
+    );
+
+    expect(html.match(/:codex-file-citation/g)).toHaveLength(2);
+    expect(html).not.toContain("chat-markdown-file-link");
+  });
+
+  it("preserves escaped Codex file citations as literal text", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={'Example: \\:codex-file-citation{path="/tmp/project/outputs/report.xlsx"}'}
+      />,
+    );
+
+    expect(html).toContain(":codex-file-citation");
+    expect(html).not.toContain("chat-markdown-file-link");
+  });
+
+  it("does not create a nested link for citations inside link text", () => {
+    const directive = ':codex-file-citation{path="/tmp/project/outputs/report.xlsx"}';
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text={`[See ${directive}](https://example.com)`} />,
+    );
+    const renderedText = html.replace(/<[^>]+>/g, "");
+
+    expect(renderedText).toContain("codex-file-citation");
+    expect(html).not.toContain("chat-markdown-file-link");
+  });
+
+  it("renders file citations created by over-indented list recovery", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={'-       Created :codex-file-citation{path="/tmp/project/outputs/report.xlsx"}'}
+      />,
+    );
+
+    expect(html).not.toContain("<pre>");
+    expect(html).toContain("Created ");
+    expect(html).toContain("chat-markdown-file-link");
+    expect(html).toContain("report.xlsx");
+  });
+
+  it("disambiguates Codex citations with the same basename", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={
+          'Changed :codex-file-citation{path="/tmp/project/src/index.ts"} and :codex-file-citation{path="/tmp/project/test/index.ts"}.'
+        }
+      />,
+    );
+
+    expect(html).toContain("index.ts · project/src");
+    expect(html).toContain("index.ts · project/test");
+  });
+
+  it("preserves rejected citations created by over-indented list recovery", () => {
+    const malformedHtml = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={'Leading text before list.\n\n-       Bad :codex-file-citation{purpose="output"}'}
+      />,
+    );
+    const nestedLinkHtml = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={
+          'Leading text before list.\n\n-       [Bad :codex-file-citation{path="/tmp/project/report.xlsx"}](https://example.com)'
+        }
+      />,
+    );
+    const nestedLinkText = nestedLinkHtml.replace(/<[^>]+>/g, "");
+
+    expect(malformedHtml).toContain(
+      "<li>Bad :codex-file-citation{purpose=&quot;output&quot;}</li>",
+    );
+    expect(nestedLinkText).toContain(
+      "Bad :codex-file-citation{path=&quot;/tmp/project/report.xlsx&quot;}",
+    );
+  });
+});
+
+const ARTIFACT_TEMPLATE_DIRECTIVE =
+  '::artifact-template{skill_name="artifact-template-hello-world" skill_directory="/Users/test/.codex/skills/artifact-template-hello-world" display_name="Hello World" artifact_kind="document"}';
+
+describe("ChatMarkdown artifact-template cards", () => {
+  it.each([true, false])("renders the Codex result card with parseRawHtml=%s", (parseRawHtml) => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={ARTIFACT_TEMPLATE_DIRECTIVE}
+        parseRawHtml={parseRawHtml}
+        onUseArtifactTemplate={() => undefined}
+      />,
+    );
+
+    expect(html).not.toContain("::artifact-template");
+    expect(html).toContain("chat-markdown-artifact-template");
+    expect(html).toContain('data-artifact-kind="document"');
+    expect(html).toContain('data-markdown-copy="Hello World (Document template)\n\n"');
+    expect(html).toContain('data-skill-name="artifact-template-hello-world"');
+    expect(html).toContain("Hello World");
+    expect(html).toContain("Document template");
+    expect(html).toContain("Use template");
+    expect(html).not.toContain("<p><div");
+  });
+
+  it("renders a passive card outside a composer-backed timeline", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text={ARTIFACT_TEMPLATE_DIRECTIVE} />,
+    );
+
+    expect(html).toContain("chat-markdown-artifact-template");
+    expect(html).not.toContain("Use template");
+  });
+
+  it("leaves malformed and unfinished artifact-template directives literal", () => {
+    const malformed =
+      '::artifact-template{skill_name="artifact-template-hello-world" display_name="Hello World" artifact_kind="document"}';
+    const unfinished = ARTIFACT_TEMPLATE_DIRECTIVE.slice(0, -1);
+
+    for (const text of [malformed, unfinished]) {
+      const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />);
+      expect(html).toContain("::artifact-template");
+      expect(html).not.toContain("chat-markdown-artifact-template");
+    }
+  });
+
+  it("leaves escaped and similarly named artifact-template directives literal", () => {
+    for (const text of [
+      `\\${ARTIFACT_TEMPLATE_DIRECTIVE}`,
+      ARTIFACT_TEMPLATE_DIRECTIVE.replace("::artifact-template", "::artifact-template-extra"),
+    ]) {
+      const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />);
+
+      expect(html).toContain("::artifact-template");
+      expect(html).not.toContain("chat-markdown-artifact-template");
+    }
+  });
+
+  it("preserves artifact-template examples inside code", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={`\`${ARTIFACT_TEMPLATE_DIRECTIVE}\`\n\n\`\`\`text\n${ARTIFACT_TEMPLATE_DIRECTIVE}\n\`\`\``}
+      />,
+    );
+
+    expect(html.match(/::artifact-template/g)).toHaveLength(2);
+    expect(html).not.toContain("chat-markdown-artifact-template");
+  });
 });
 
 describe("shouldUseMarkdownFileBrowserPrimaryAction", () => {

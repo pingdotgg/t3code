@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { serializeRenderedMarkdownFragment } from "./markdown-clipboard";
+import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import {
+  collectAssistantCitations,
+  serializeAssistantCitation,
+} from "@t3tools/shared/assistantCitations";
 
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
@@ -47,7 +52,7 @@ class FakeElement {
   }
 
   hasAttribute(name: string): boolean {
-    return name in this.attributes;
+    return Object.hasOwn(this.attributes, name);
   }
 
   closest(): FakeElement | null {
@@ -121,6 +126,32 @@ describe("serializeRenderedMarkdownFragment", () => {
     const container = new FakeElement("DIV").append(paragraph);
 
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("run `git status` first");
+  });
+
+  it("copies the complete quote, source, and comment instead of the comment-only chip label", () => {
+    const citation = {
+      version: 1 as const,
+      environmentId: EnvironmentId.make("environment-one"),
+      threadId: ThreadId.make("thread-one"),
+      messageId: MessageId.make("assistant-one"),
+      text: "A complete quote, including the part hidden by the chip preview.",
+      comment: "What does this mean?\nPlease expand on the hidden part.",
+      start: 0,
+      end: 66,
+      prefix: "",
+      suffix: "",
+    };
+    const anchor = new FakeElement("A", [], {
+      "data-markdown-copy": serializeAssistantCitation(citation),
+      href: "/environment-one/thread-one#citation",
+    }).append(new FakeText("What does this mean?…"));
+    const chip = new FakeElement("SPAN", [], {
+      "data-markdown-copy": serializeAssistantCitation(citation),
+    }).append(anchor, new FakeElement("BUTTON").append(new FakeText("Edit comment")));
+    const container = new FakeElement("DIV").append(new FakeText("Explain "), chip);
+    const copied = serializeRenderedMarkdownFragment(asNode(container));
+    expect(copied).toBe(`Explain ${serializeAssistantCitation(citation)}`);
+    expect(collectAssistantCitations(copied).map((entry) => entry.citation)).toEqual([citation]);
   });
 
   it("keeps a highlighted block code selection plain when its pre wrapper is outside the range", () => {
@@ -214,6 +245,21 @@ describe("serializeRenderedMarkdownFragment", () => {
 
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
       "Run this:\n\n```\ngh workflow run Deploy --ref main\n```",
+    );
+  });
+
+  it("uses a rendered card's explicit Markdown copy representation", () => {
+    const card = new FakeElement("DIV", [], {
+      "data-markdown-copy": "Hello World (Document template)\n\n",
+    }).append(
+      new FakeElement("SPAN").append(new FakeText("Hello World")),
+      new FakeElement("SPAN").append(new FakeText("Document template")),
+      new FakeElement("BUTTON").append(new FakeText("Use template")),
+    );
+    const container = new FakeElement("DIV").append(card);
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "Hello World (Document template)",
     );
   });
 });
