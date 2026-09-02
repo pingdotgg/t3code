@@ -66,6 +66,8 @@ export const ServerProviderModel = Schema.Struct({
   name: TrimmedNonEmptyString,
   shortName: Schema.optional(TrimmedNonEmptyString),
   subProvider: Schema.optional(TrimmedNonEmptyString),
+  aliases: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  badge: Schema.optional(Schema.Literal("new")),
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
@@ -93,6 +95,18 @@ export const ServerProviderSkill = Schema.Struct({
   enabled: Schema.Boolean,
   displayName: Schema.optional(TrimmedNonEmptyString),
   shortDescription: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * The skill is hidden from the agent's own skill tool, so only the user can
+   * start it — Claude Code's `disable-model-invocation`. Composers must offer
+   * it as a slash command; naming it in prose does nothing.
+   */
+  userInvocationOnly: Schema.optional(Schema.Boolean),
+  /**
+   * The mirror of {@link ServerProviderSkill.userInvocationOnly}: Claude Code's
+   * `user-invocable: false` keeps the skill out of its own slash commands, so
+   * only the agent can start it. Composers must not offer it under `/`.
+   */
+  userInvocable: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
@@ -741,8 +755,15 @@ export const ServerSelfUpdateResult = Schema.Struct({
   method: ServerSelfUpdateMethod,
   /** Launcher-generated correlation ID. Absent when talking to older servers. */
   updateId: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Desktop preparation token. Present only for the desktop-app method. */
+  desktopUpdateToken: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerSelfUpdateResult = typeof ServerSelfUpdateResult.Type;
+
+export const DesktopUpdateCommitInput = Schema.Struct({
+  requestId: TrimmedNonEmptyString,
+});
+export type DesktopUpdateCommitInput = typeof DesktopUpdateCommitInput.Type;
 
 export const ServerSelfUpdateProgressStage = Schema.Literals(["downloading", "installing"]);
 export type ServerSelfUpdateProgressStage = typeof ServerSelfUpdateProgressStage.Type;

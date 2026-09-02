@@ -1,10 +1,10 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useMemo } from "react";
 
-import { useAssetUrl } from "../../state/assets";
-import { resolveWorkspaceFilePath } from "./filePath";
+import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { isVideoPreviewFile, resolveWorkspaceFilePath } from "./filePath";
 
-export function useWorkspaceFileAssetUrl(props: {
+export function useWorkspaceFileAssetUrlState(props: {
   readonly cwd: string | null;
   readonly environmentId: EnvironmentId | null;
   readonly relativePath: string | null;
@@ -18,14 +18,18 @@ export function useWorkspaceFileAssetUrl(props: {
     [props.cwd, props.relativePath],
   );
 
-  return useAssetUrl(
-    props.environmentId,
-    absolutePath !== null && props.threadId !== null
-      ? {
-          _tag: "workspace-file",
-          threadId: props.threadId,
-          path: absolutePath,
-        }
-      : null,
+  const resource = useMemo<AssetResource | null>(
+    () =>
+      absolutePath !== null && props.threadId !== null
+        ? {
+            _tag: isVideoPreviewFile(absolutePath) ? "media-file" : "workspace-file",
+            threadId: props.threadId,
+            path: absolutePath,
+          }
+        : null,
+    [absolutePath, props.threadId],
   );
+  const state = useAssetUrlState(props.environmentId, resource);
+  const refresh = useRefreshAssetUrl(props.environmentId, resource);
+  return { ...state, resource, refresh };
 }

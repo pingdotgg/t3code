@@ -1,7 +1,7 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { MenuAction } from "@react-native-menu/menu";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -11,6 +11,13 @@ import {
   type ProjectReadFileResult,
   ThreadId,
 } from "@t3tools/contracts";
+import { videoMimeType } from "@t3tools/shared/video";
+import {
+  isWorkspaceBrowserPreviewPath,
+  isWorkspaceImagePreviewPath,
+  mediaMimeTypeFromExtension,
+} from "@t3tools/shared/filePreview";
+import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { SymbolView } from "../../components/AppSymbol";
@@ -24,6 +31,8 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { isPdfFile } from "../../lib/filePreview";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import type { MediaVideoPreviewSource } from "../../lib/videoPreviewSource";
+import { useMediaActions, type MediaActionsSource } from "../../lib/mediaActions";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useEnvironmentQuery } from "../../state/query";
@@ -47,15 +56,15 @@ import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
 import { WorkspaceFileImagePreview } from "./WorkspaceFileImagePreview";
+import { WorkspaceFileVideoPreview } from "./WorkspaceFileVideoPreview";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
 import {
   basename,
-  isBrowserPreviewFile,
-  isImagePreviewFile,
   isMarkdownPreviewFile,
   isSvgImagePreviewFile,
+  isVideoPreviewFile,
 } from "./filePath";
-import { useWorkspaceFileAssetUrl } from "./workspaceFileAssetUrl";
+import { useWorkspaceFileAssetUrlState } from "./workspaceFileAssetUrl";
 
 type FileViewMode = "preview" | "source";
 
@@ -84,7 +93,10 @@ function normalizeRouteLine(value: string | null): number | null {
 }
 
 function defaultViewMode(path: string | null): FileViewMode {
-  return path !== null && (isBrowserPreviewFile(path) || isImagePreviewFile(path))
+  return path !== null &&
+    (isWorkspaceBrowserPreviewPath(path) ||
+      isWorkspaceImagePreviewPath(path) ||
+      isVideoPreviewFile(path))
     ? "preview"
     : "source";
 }
@@ -92,6 +104,10 @@ function defaultViewMode(path: string | null): FileViewMode {
 function FileContent(props: {
   readonly activeMode: FileViewMode;
   readonly previewUri: string | null;
+  readonly previewUnavailable: boolean;
+  readonly videoSource: MediaVideoPreviewSource | null;
+  readonly mediaSource?: MediaActionsSource;
+  readonly resolveVideoUri: () => Promise<string | null>;
   readonly fileContents: string | null;
   readonly fileError: string | null;
   readonly relativePath: string;
@@ -99,9 +115,24 @@ function FileContent(props: {
   readonly truncated: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
+  // Reopening a mutable host file must not reuse a poster from an earlier visit.
+  const thumbnailInstanceId = useId();
   const isMarkdown = isMarkdownPreviewFile(props.relativePath);
-  const isBrowserFile = isBrowserPreviewFile(props.relativePath);
-  const isImageFile = isImagePreviewFile(props.relativePath);
+  const isBrowserFile = isWorkspaceBrowserPreviewPath(props.relativePath);
+  const isImageFile = isWorkspaceImagePreviewPath(props.relativePath);
+
+  if (isVideoPreviewFile(props.relativePath)) {
+    return (
+      <WorkspaceFileVideoPreview
+        name={basename(props.relativePath)}
+        thumbnailKey={`workspace-video:${thumbnailInstanceId}`}
+        uri={props.previewUri}
+        source={props.videoSource}
+        resolvePlaybackUri={props.resolveVideoUri}
+        unavailable={props.previewUnavailable}
+      />
+    );
+  }
 
   if (props.activeMode === "preview" && isImageFile) {
     if (isSvgImagePreviewFile(props.relativePath)) {
@@ -111,6 +142,7 @@ function FileContent(props: {
       <WorkspaceFileImagePreview
         accessibilityLabel={basename(props.relativePath)}
         uri={props.previewUri}
+        actionsSource={props.mediaSource}
       />
     );
   }
@@ -489,29 +521,75 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     readonly mode: FileViewMode;
   } | null>(null);
   const [previewRevision, setPreviewRevision] = useState(0);
+  const previewKey = JSON.stringify([environmentId, cwd, relativePath, previewRevision]);
   const [fullScreenPreview, setFullScreenPreview] = useState<FilePreviewSource | null>(null);
-  const isBrowserFile = relativePath !== null && isBrowserPreviewFile(relativePath);
-  const isImageFile = relativePath !== null && isImagePreviewFile(relativePath);
+  const isVideoFile = relativePath !== null && isVideoPreviewFile(relativePath);
+  const isBrowserFile =
+    relativePath !== null && !isVideoFile && isWorkspaceBrowserPreviewPath(relativePath);
+  const isImageFile =
+    relativePath !== null && !isVideoFile && isWorkspaceImagePreviewPath(relativePath);
   const canPreview =
-    relativePath !== null && (isMarkdownPreviewFile(relativePath) || isBrowserFile || isImageFile);
+    relativePath !== null &&
+    (isMarkdownPreviewFile(relativePath) || isBrowserFile || isImageFile || isVideoFile);
   const activeMode =
     relativePath !== null && modeOverride?.path === relativePath
       ? modeOverride.mode
       : defaultViewMode(relativePath);
-  const resolvedActiveMode = canPreview ? activeMode : "source";
-  const assetPreviewPath = isBrowserFile || isImageFile ? relativePath : null;
-  const assetPreviewUri = useWorkspaceFileAssetUrl({
+  const resolvedActiveMode = isVideoFile ? "preview" : canPreview ? activeMode : "source";
+  const assetPreviewPath = isBrowserFile || isImageFile || isVideoFile ? relativePath : null;
+  const assetPreview = useWorkspaceFileAssetUrlState({
     cwd,
     environmentId,
     relativePath: assetPreviewPath,
     threadId,
   });
+  const assetPreviewUri = assetPreview._tag === "Success" ? assetPreview.url : null;
+  const mediaSource = useMemo<MediaActionsSource | undefined>(
+    () =>
+      environmentId !== null &&
+      threadId !== null &&
+      relativePath !== null &&
+      assetPreview.resource !== null &&
+      "path" in assetPreview.resource &&
+      typeof assetPreview.resource.path === "string" &&
+      (isImageFile || isVideoFile)
+        ? {
+            reference: mediaFileReference(assetPreview.resource.path, cwd),
+            name: basename(relativePath),
+            mimeType:
+              mediaMimeTypeFromExtension(relativePath.slice(relativePath.lastIndexOf("."))) ??
+              "application/octet-stream",
+            environmentId,
+            threadId,
+            resource: assetPreview.resource,
+          }
+        : undefined,
+    [assetPreview.resource, cwd, environmentId, isImageFile, isVideoFile, relativePath, threadId],
+  );
+  const mediaActions = useMediaActions(mediaSource);
+  const videoSource = useMemo<MediaVideoPreviewSource | null>(
+    () =>
+      environmentId !== null &&
+      relativePath !== null &&
+      assetPreview.resource?._tag === "media-file"
+        ? {
+            type: "media",
+            environmentId,
+            resource: assetPreview.resource,
+            name: basename(relativePath),
+            mimeType: videoMimeType({ name: relativePath, mimeType: "" }) ?? "video/mp4",
+            actionsSource: mediaSource,
+          }
+        : null,
+    [assetPreview.resource, environmentId, relativePath, mediaSource],
+  );
   const previewUri =
     assetPreviewUri === null || previewRevision === 0
       ? assetPreviewUri
       : `${assetPreviewUri}${assetPreviewUri.includes("?") ? "&" : "?"}revision=${previewRevision}`;
   const needsFileContents =
     relativePath !== null &&
+    !isVideoFile &&
     (resolvedActiveMode === "source" || isMarkdownPreviewFile(relativePath));
   const fileQuery = useEnvironmentQuery(
     environmentId !== null && cwd !== null && relativePath !== null && needsFileContents
@@ -562,7 +640,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
 
   const fileMenuActions = useMemo(() => {
     if (relativePath === null) return [];
-    const canToggleMode = canPreview && !isImageFile;
+    const canToggleMode = canPreview && !isImageFile && !isVideoFile;
     return [
       canToggleMode
         ? ({
@@ -582,13 +660,26 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             onPress: () => setModeOverride({ path: relativePath, mode: "source" }),
           } as const)
         : null,
-      {
-        id: "copy-path",
-        title: "Copy path",
-        icon: "doc.on.doc",
-        inline: false,
-        onPress: () => copyTextWithHaptic(relativePath),
-      } as const,
+      ...(mediaSource
+        ? mediaActions.actions
+            .filter(({ id }) => id !== "open-file")
+            .map((action) => ({
+              id: action.id,
+              title: action.title,
+              icon:
+                action.id === "share" ? ("square.and.arrow.up" as const) : ("doc.on.doc" as const),
+              inline: false,
+              onPress: action.run,
+            }))
+        : [
+            {
+              id: "copy-path",
+              title: "Copy path",
+              icon: "doc.on.doc",
+              inline: false,
+              onPress: () => copyTextWithHaptic(relativePath),
+            } as const,
+          ]),
       isPdfFile({ name: relativePath }) && previewUri !== null
         ? ({
             id: "open-pdf",
@@ -612,24 +703,31 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             onPress: () => tryOpenExternalUrl(assetPreviewUri, "file-preview"),
           } as const)
         : null,
-      resolvedActiveMode === "preview" && (isBrowserFile || isImageFile)
+      resolvedActiveMode === "preview" && (isBrowserFile || isImageFile || isVideoFile)
         ? ({
             id: "refresh",
             title: "Refresh",
             icon: "arrow.clockwise",
             inline: false,
-            onPress: () => setPreviewRevision((current) => current + 1),
+            onPress: async () => {
+              if (isVideoFile) await assetPreview.refresh();
+              setPreviewRevision((current) => current + 1);
+            },
           } as const)
         : null,
     ].filter((action) => action !== null);
   }, [
     assetPreviewUri,
+    assetPreview.refresh,
     previewUri,
     canPreview,
     isBrowserFile,
     isImageFile,
+    isVideoFile,
     relativePath,
     resolvedActiveMode,
+    mediaSource,
+    mediaActions.actions,
   ]);
 
   const androidFileMenuActions = useMemo<MenuAction[]>(
@@ -782,8 +880,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           </NativeHeaderToolbar.Menu>
         </NativeHeaderToolbar>
         <FileContent
+          key={previewKey}
           activeMode={resolvedActiveMode}
           previewUri={previewUri}
+          previewUnavailable={assetPreview._tag === "Failure"}
+          videoSource={videoSource}
+          mediaSource={mediaSource}
+          resolveVideoUri={assetPreview.refresh}
           fileContents={fileData?.contents ?? null}
           fileError={fileQuery.error}
           initialLine={targetLine}

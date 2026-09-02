@@ -19,6 +19,14 @@
       "types": "./src/markdownImages.ts",
       "default": "./src/markdownImages.ts"
     },
+    "./markdown-links": {
+      "types": "./src/markdownLinks.ts",
+      "default": "./src/markdownLinks.ts"
+    },
+    "./media-reference": {
+      "types": "./src/mediaReference.ts",
+      "default": "./src/mediaReference.ts"
+    },
     "./codex-file-citations": {
       "types": "./src/codexFileCitations.ts",
       "default": "./src/codexFileCitations.ts"
@@ -138,6 +146,10 @@
     "./state/session": {
       "types": "./src/state/session.ts",
       "default": "./src/state/session.ts"
+    },
+    "./state/shared-settings": {
+      "types": "./src/state/sharedSettings.ts",
+      "default": "./src/state/sharedSettings.ts"
     },
     "./state/shell": {
       "types": "./src/state/shell.ts",

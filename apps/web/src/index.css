@@ -206,7 +206,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius-xl: calc(var(--radius) + 4px);
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
-  --radius-4xl: calc(var(--radius) + 16px);
   @keyframes skeleton {
     /* Transform-only so the highlight sweep stays on the compositor, then a
        long hold with the band parked off-screen instead of a constant shimmer. */

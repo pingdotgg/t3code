@@ -34,7 +34,7 @@ viewer and PDFs open the system chooser.
 Select a video attachment before or after sending to play it. Web and desktop use the browser's
 built-in controls. On mobile, videos open in a full-screen player with native playback controls.
 Supported videos show a thumbnail in the conversation and composer.
-On iOS, received videos stream from their environment as they play. Supported formats and codecs
+On web, desktop, and iOS, received videos stream from their environment as they play. Supported formats and codecs
 depend on the browser or device; you can save an unsupported video to open it in another app.
 
 On iOS, the system player zooms from the attachment. Swipe down or tap Close to return to the
@@ -51,6 +51,53 @@ converts them to JPEG. The 10 MB image limit applies to the converted photo.
 On mobile, the model picker shows each OpenCode model's upstream provider, such as Anthropic,
 GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list
 when starting a thread or changing an existing thread's model.
+
+## Images and videos in messages
+
+On web, desktop, and mobile, select a link to an image or video to open it inside T3 Code.
+Workspace image and video links open the file viewer. Links to media outside the workspace
+open a media preview.
+Videos opened from the file explorer or a file-viewer tab also play inside T3 Code. They
+stream from the environment as needed, rather than downloading the entire video before playback.
+Paths in inline code, such as `/tmp/recording.mp4`, work the same way. Image embeds stay inline;
+video embeds show a player with controls and an option to expand. Visible video previews load
+an initial frame when supported, but stay paused until you press Play. Video file references use
+a filmstrip icon.
+
+On web and desktop, hover over a preview to see its full file path or original URL. Right-click
+to copy that reference, save an image, or copy an image to the clipboard. Use the video player's
+built-in controls to download videos. If the player cannot decode a video, its error message
+offers a link to open the source in the browser. Workspace media also offers **Copy relative
+path** and **Open in file viewer**. These actions are available in expanded previews too.
+
+On mobile, touch and hold an inline image or use a preview's **Media actions** menu to see its
+source, copy the path or URL, or choose **Save or share**. Workspace media can open in the file
+viewer from the same menu. Saving downloads a copy only when you request it; it does not change
+how the video buffers during playback.
+
+Use Markdown image syntax to embed either kind of media:
+
+```markdown
+![Screenshot](/tmp/screenshot.png)
+![Recording](/tmp/recording.mp4)
+[Open recording](/tmp/recording.mp4)
+```
+
+Relative paths resolve from the thread's workspace. Absolute paths and `file://` links refer to
+the environment's machine, even when you connect remotely or use your phone. Supported media
+can live outside the workspace, including in Downloads or `/tmp`.
+
+T3 Code serves the original file without adding it to attachment storage. If that file is moved
+or deleted, its preview can no longer load from the environment. A browser or device may still
+have a cached copy. Supported video formats and codecs depend on the browser or device.
+
+Bare paths in ordinary prose and paths inside code blocks stay text. Raw HTML `<video>` tags
+are not supported; use the Markdown embed syntax above.
+
+## Changing projects
+
+On web and desktop, changing the project from a new thread keeps the current environment when that
+project exists there. If it does not, T3 Code selects another environment that has the project.
 
 ## Notices above the composer
 
@@ -102,6 +149,15 @@ slash menu** in **Settings → General**. Skill results use the `/skill:Skill Na
 same `$name` skill token to your message. The original skill name remains searchable. If the provider
 also reports that skill as a native slash command, T3 Code hides the duplicate native entry and keeps
 the `/skill:Skill Name` label.
+
+A skill token runs the skill wherever it sits in your message. T3 Code sends it to each provider in
+the form that provider runs, so the text before and after the token is kept. Skills that only you may
+start, and never the agent on its own, work the same way. A skill you switched off in the provider's
+settings does not appear in either menu.
+
+Provider commands such as `/compact` only run when they open the message, so the `/` menu offers
+them only there. T3 Code's own commands, such as `/model` and `/plan`, and skills stay available on
+any line.
 
 On desktop, press `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux from a new thread to
 start it in the background. T3 Code opens another new thread and shows an **Open** action for the

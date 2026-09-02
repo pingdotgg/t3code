@@ -663,8 +663,10 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   const fullDetail = expanded ? row.getFullDetail() : null;
   const viewedImagePath = workEntryViewedImagePath(row.workEntry);
   const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
-  const displayText =
+  const previewText =
     toolPresentation?.displayName ?? compactActivityDetail(row.detail) ?? row.summary;
+  const displayText =
+    !toolPresentation && expanded && row.workEntry.command?.trim() ? "Command" : previewText;
   const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
   const failed = row.status === "failure";
   const icon = toolPresentation?.icon ?? (failed ? "xmark" : workRowSymbolName(row.icon));
@@ -677,7 +679,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
     >
       <Pressable
         accessibilityRole={canExpand ? "button" : undefined}
-        accessibilityLabel={failed ? `${displayText}, tool call failed` : displayText}
+        accessibilityLabel={failed ? `${previewText}, tool call failed` : previewText}
         accessibilityHint={
           canExpand ? "Double tap to show full details. Long press to copy." : "Long press to copy."
         }
