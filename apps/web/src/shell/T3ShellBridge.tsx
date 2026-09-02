@@ -3,6 +3,7 @@ import {
   parseScopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
+  scopedProjectKey,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -57,9 +58,7 @@ export function T3ShellBridge() {
     select: (params) => resolveThreadRouteTarget(params),
   });
   const activeThreadKey =
-    routeTarget?.kind === "server"
-      ? `${routeTarget.threadRef.environmentId}:${routeTarget.threadRef.threadId}`
-      : null;
+    routeTarget?.kind === "server" ? scopedThreadKey(routeTarget.threadRef) : null;
   const [menuTarget, setMenuTarget] = useState<{
     key: string;
     x: number;
@@ -123,11 +122,7 @@ export function T3ShellBridge() {
   );
   const scopedProjectKeys = useMemo(
     () =>
-      scopedGroup === null
-        ? null
-        : new Set(
-            scopedGroup.memberProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`),
-          ),
+      scopedGroup === null ? null : new Set(scopedGroup.memberProjectRefs.map(scopedProjectKey)),
     [scopedGroup],
   );
   useEffect(() => {
@@ -158,7 +153,9 @@ export function T3ShellBridge() {
     const counts = new Map<string, number>();
     for (const thread of threads) {
       if (thread.archivedAt !== null) continue;
-      const key = logicalKeyByPhysicalKey.get(`${thread.environmentId}:${thread.projectId}`);
+      const key = logicalKeyByPhysicalKey.get(
+        scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
+      );
       if (key === undefined) continue;
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
@@ -171,7 +168,9 @@ export function T3ShellBridge() {
     for (const [draftId, session] of Object.entries(draftSessions)) {
       if (session.promotedTo != null) continue;
       if (!composerDraftHasUserContent(draftContents[draftId])) continue;
-      const physicalKey = `${session.environmentId}:${session.projectId}`;
+      const physicalKey = scopedProjectKey(
+        scopeProjectRef(session.environmentId, session.projectId),
+      );
       if (scopedProjectKeys !== null && !scopedProjectKeys.has(physicalKey)) continue;
       result.push({
         draftId,

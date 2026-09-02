@@ -1,6 +1,11 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  scopeProjectRef,
+  scopeThreadRef,
+  scopedProjectKey,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
 import {
   canSnooze,
   snoozeWakeLabel,
@@ -43,7 +48,7 @@ export function buildLogicalProjectKeyMap(
   const map = new Map<string, string>();
   for (const group of projectGroups) {
     for (const ref of group.memberProjectRefs) {
-      map.set(`${ref.environmentId}:${ref.projectId}`, group.projectKey);
+      map.set(scopedProjectKey(ref), group.projectKey);
     }
   }
   return map;
@@ -86,13 +91,14 @@ function toShellThread(
   const lastVisitedAt = options.lastVisitedAtByKey[key];
   const statusInput = { ...thread, lastVisitedAt };
   const capabilities = options.capabilitiesFor(thread.environmentId);
+  const physicalProjectKey = scopedProjectKey(
+    scopeProjectRef(thread.environmentId, thread.projectId),
+  );
   return {
     key,
     threadId: thread.id,
     environmentId: thread.environmentId,
-    projectKey:
-      options.logicalKeyByPhysicalKey.get(`${thread.environmentId}:${thread.projectId}`) ??
-      `${thread.environmentId}:${thread.projectId}`,
+    projectKey: options.logicalKeyByPhysicalKey.get(physicalProjectKey) ?? physicalProjectKey,
     title: thread.title,
     status: resolveSidebarThreadStatus(thread),
     statusLabel: resolveThreadStatusPill({ thread: statusInput })?.label ?? null,
