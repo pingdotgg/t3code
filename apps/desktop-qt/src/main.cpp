@@ -106,8 +106,13 @@ int main(int argc, char* argv[]) {
       QStringLiteral("Dispatch a shell action after the page loads, e.g. rightPanel.toggle or "
                      "composer.text.set={\"text\":\"hi\"}. Repeatable; runs in order."),
       QStringLiteral("name[=json]"));
+  const QCommandLineOption keyOption(
+      QStringLiteral("key"),
+      QStringLiteral("Press a key chord after the page loads, e.g. Ctrl+1 (portable QKeySequence "
+                     "names). Repeatable; runs in command-line order together with --action."),
+      QStringLiteral("chord"));
   parser.addOptions({urlOption, configDirOption, qmlDirOption, hostEntryOption, nodeOption,
-                     screenshotOption, actionOption});
+                     screenshotOption, actionOption, keyOption});
   parser.process(app);
 
   const QString homeDir = resolveHomeDir(parser.positionalArguments());
@@ -156,15 +161,31 @@ int main(int argc, char* argv[]) {
     backend.start();
   }
 
-  // Scripted runs: dispatch queued actions once the page is up, then
-  // optionally grab the window and quit. Only the first load triggers this.
-  const QStringList scriptedActions = parser.values(actionOption);
+  // Scripted runs: replay --action and --key steps in command-line order once
+  // the page is up, then optionally grab the window and quit. Only the first
+  // load triggers this.
+  struct ScriptedStep {
+    bool isKey;
+    QString spec;
+  };
+  QList<ScriptedStep> scriptedSteps;
+  {
+    QStringList actions = parser.values(actionOption);
+    QStringList keys = parser.values(keyOption);
+    for (const QString& name : parser.optionNames()) {
+      if (name == QStringLiteral("action")) {
+        scriptedSteps.append({false, actions.takeFirst()});
+      } else if (name == QStringLiteral("key")) {
+        scriptedSteps.append({true, keys.takeFirst()});
+      }
+    }
+  }
   const bool screenshotRequested = parser.isSet(screenshotOption);
-  if (!scriptedActions.isEmpty() || screenshotRequested) {
+  if (!scriptedSteps.isEmpty() || screenshotRequested) {
     const QString target = parser.value(screenshotOption);
     auto* armed = new bool(false);
     QObject::connect(&bridge, &ShellBridge::pageLoaded, &runtime,
-                     [&runtime, &bridge, &app, target, scriptedActions, screenshotRequested,
+                     [&runtime, &bridge, &app, target, scriptedSteps, screenshotRequested,
                       armed](bool ok) {
                        if (*armed) {
                          return;
@@ -178,7 +199,16 @@ int main(int argc, char* argv[]) {
                          return;
                        }
                        int delay = 1500;
-                       for (const QString& spec : scriptedActions) {
+                       for (const ScriptedStep& step : scriptedSteps) {
+                         if (step.isKey) {
+                           QTimer::singleShot(delay, &runtime, [&runtime, step] {
+                             qInfo().noquote() << "[shell] scripted key" << step.spec;
+                             runtime.pressKey(step.spec);
+                           });
+                           delay += 1500;
+                           continue;
+                         }
+                         const QString spec = step.spec;
                          QTimer::singleShot(delay, &bridge, [&bridge, spec] {
                            const int eq = spec.indexOf(QLatin1Char('='));
                            const QString name = eq < 0 ? spec : spec.left(eq);

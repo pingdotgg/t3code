@@ -5,11 +5,13 @@
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QImage>
+#include <QKeySequence>
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QQmlError>
 #include <QtLogging>
 #include <QtQml/qqml.h>
+#include <qpa/qwindowsysteminterface.h>
 
 #include "PlatformWindow.h"
 #include "ShellBridge.h"
@@ -227,22 +229,56 @@ QString ShellRuntime::sourceFingerprint() const {
   return QString::fromLatin1(hash.result().toHex());
 }
 
-bool ShellRuntime::captureWindow(const QString& path) {
+QQuickWindow* ShellRuntime::rootWindow() const {
   if (m_engine == nullptr) {
-    return false;
+    return nullptr;
   }
   for (QObject* root : m_engine->rootObjects()) {
-    auto* window = qobject_cast<QQuickWindow*>(root);
-    if (window == nullptr) {
-      continue;
+    if (auto* window = qobject_cast<QQuickWindow*>(root)) {
+      return window;
     }
-    const QImage image = window->grabWindow();
-    if (image.isNull() || !image.save(path)) {
-      qWarning().noquote() << "[shell] screenshot failed:" << path;
-      return false;
-    }
-    qInfo().noquote() << "[shell] screenshot written:" << path;
-    return true;
   }
-  return false;
+  return nullptr;
+}
+
+bool ShellRuntime::captureWindow(const QString& path) {
+  QQuickWindow* window = rootWindow();
+  if (window == nullptr) {
+    return false;
+  }
+  const QImage image = window->grabWindow();
+  if (image.isNull() || !image.save(path)) {
+    qWarning().noquote() << "[shell] screenshot failed:" << path;
+    return false;
+  }
+  qInfo().noquote() << "[shell] screenshot written:" << path;
+  return true;
+}
+
+bool ShellRuntime::pressKey(const QString& chord) {
+  const QKeySequence sequence(chord, QKeySequence::PortableText);
+  if (sequence.count() != 1) {
+    qWarning().noquote() << "[shell] not a single key chord:" << chord;
+    return false;
+  }
+  QQuickWindow* window = rootWindow();
+  if (window == nullptr) {
+    return false;
+  }
+  const QKeyCombination combination = sequence[0];
+  const Qt::KeyboardModifiers modifiers = combination.keyboardModifiers();
+  const int key = combination.key();
+  // Printable keys carry their text like a real press would; chords with
+  // Ctrl/Alt/Meta produce none.
+  QString text;
+  if ((modifiers & ~Qt::ShiftModifier) == Qt::NoModifier && key >= Qt::Key_Space &&
+      key <= Qt::Key_ydiaeresis) {
+    const QChar character(key);
+    text = modifiers.testFlag(Qt::ShiftModifier) ? character.toUpper() : character.toLower();
+  }
+  using Delivery = QWindowSystemInterface::SynchronousDelivery;
+  QWindowSystemInterface::handleKeyEvent<Delivery>(window, QEvent::KeyPress, key, modifiers, text);
+  QWindowSystemInterface::handleKeyEvent<Delivery>(window, QEvent::KeyRelease, key, modifiers,
+                                                   text);
+  return true;
 }

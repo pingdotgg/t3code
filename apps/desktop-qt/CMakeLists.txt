@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui Quick WebEngineQuick WebChannel)
+find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui GuiPrivate Quick WebEngineQuick WebChannel)
 qt_standard_project_setup(REQUIRES 6.9)
 qt_policy(SET QTP0001 NEW)
 
@@ -82,6 +82,7 @@ add_subdirectory(qml/T3/Bricks)
 target_link_libraries(t3code-qt PRIVATE
   Qt6::Core
   Qt6::Gui
+  Qt6::GuiPrivate
   Qt6::Quick
   Qt6::WebEngineQuick
   Qt6::WebChannel

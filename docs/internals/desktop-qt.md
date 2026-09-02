@@ -149,8 +149,11 @@ which starts the server against a built `apps/web` (`vp run build`).
 CLI: `--url`, `--config-dir`, `--qml-dir`, `--host-entry`, `--node`, `--screenshot <png>`
 (grab the window after the page loads, then quit — PR evidence without a
 screen-recording permission), `--action name[=json]` (repeatable; dispatch shell
-actions after the page loads, e.g. `--action rightPanel.toggle`); env
-`T3CODE_HOME`, `T3CODE_QML_DIR`, `T3CODE_NODE`, `T3CODE_SERVER_ENTRY`.
+actions after the page loads, e.g. `--action rightPanel.toggle`), `--key <chord>`
+(repeatable; press a key chord after the page loads, e.g. `--key Ctrl+1`, portable
+`QKeySequence` names — `--action` and `--key` run in command-line order, 1.5 s
+apart, so a key test can open a thread first); env `T3CODE_HOME`,
+`T3CODE_QML_DIR`, `T3CODE_NODE`, `T3CODE_SERVER_ENTRY`.
 
 ## Ricing contract
 

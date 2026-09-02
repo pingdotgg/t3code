@@ -3,6 +3,7 @@
 #include <QFileSystemWatcher>
 #include <QObject>
 #include <QQmlApplicationEngine>
+#include <QQuickWindow>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -48,6 +49,10 @@ public:
   // Grabs the current root window into a PNG; used by --screenshot and
   // available to bricks for the same purpose.
   Q_INVOKABLE bool captureWindow(const QString& path);
+  // Presses a chord ("Ctrl+1", "Shift+Tab") on the root window through the
+  // platform input path, so shortcuts and focus behave as for a real key.
+  // Used by --key.
+  Q_INVOKABLE bool pressKey(const QString& chord);
 
 signals:
   void generationChanged();
@@ -57,6 +62,7 @@ private:
   void rebuildWatchList();
   QString sourceFingerprint() const;
   QUrl defaultShellUrl() const;
+  QQuickWindow* rootWindow() const;
 
   Options m_options;
   ShellBridge* m_bridge;
