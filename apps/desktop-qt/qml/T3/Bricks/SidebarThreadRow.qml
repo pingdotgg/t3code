@@ -20,6 +20,7 @@ Item {
     property string section: "active"
     // Keyboard cursor: draws the focus ring and shows the actions.
     property bool focused: false
+    property double ageNow: Date.now()
 
     signal activated
     signal menuRequested(real windowX, real windowY)
@@ -106,13 +107,13 @@ Item {
     // In-flight and read-ready rows recede: prominence is for rows that need
     // a human (done, failed, woke) and the one that is open.
     readonly property bool recedes: !active && !woke && item.unread !== true && item.status !== "failed"
-    readonly property string ageLabel: item.wakeLabel ? item.wakeLabel : relativeAge(item.updatedAt)
+    readonly property string ageLabel: item.wakeLabel ? item.wakeLabel : relativeAge(item.updatedAt, ageNow)
 
-    function relativeAge(iso) {
+    function relativeAge(iso, now) {
         if (!iso) {
             return "";
         }
-        const seconds = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+        const seconds = Math.max(0, (now - Date.parse(iso)) / 1000);
         if (seconds < 60) {
             return qsTr("now");
         }
@@ -127,6 +128,18 @@ Item {
         }
         return qsTr("%1mo").arg(Math.floor(seconds / (86400 * 30)));
     }
+
+    Timer {
+        id: ageRefreshTimer
+        objectName: "ageRefreshTimer"
+
+        interval: 60000
+        repeat: true
+        running: row.visible && !row.item.wakeLabel
+        onTriggered: row.ageNow = Date.now()
+    }
+
+    onItemChanged: ageNow = Date.now()
 
     function requestSnooze(button) {
         const p = button.mapToItem(null, 0, button.height);

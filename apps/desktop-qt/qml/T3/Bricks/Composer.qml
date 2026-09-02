@@ -127,8 +127,10 @@ Rectangle {
         }
         textDebounce.stop();
         const text = input.text;
-        composer.lastSentText = "";
-        input.text = "";
+        // The page clears its published prompt only after accepting the send.
+        // Until then this remains the user's recoverable draft.
+        composer.lastSentText = text;
+        composer.lastSentCursor = input.cursorPosition;
         Shell.dispatch("composer.submit", {
             text: text,
             intent: intent
@@ -333,6 +335,7 @@ Rectangle {
 
                     TextArea {
                         id: input
+                        objectName: "input"
 
                         padding: 0
                         enabled: composer.ready && !composer.model.editorDisabled
