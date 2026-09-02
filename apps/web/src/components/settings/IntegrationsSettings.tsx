@@ -826,17 +826,16 @@ function BrowserDefaultProfileSetting({ disabled }: { readonly disabled: boolean
             Capped and truncated like the tab menu's profile list: names are
             user-supplied and run to 48 characters, which would otherwise
             widen the popup to fit the longest one. The cap goes on the glass
-            shell (`popupClassName`) and not just the list, and the trigger
-            width is not matched, or a full-width trigger on small screens
-            would leave empty chrome beside a 16rem list. `ItemText` renders a
-            block, so the label must be a block too for `truncate` to apply.
+            shell (`popupClassName`), and the list fills that shell so it is
+            never narrower than the trigger it opens from — the same floor
+            every other settings select keeps. `ItemText` renders a block, so
+            the label must be a block too for `truncate` to apply.
           */}
           <SelectPopup
             align="end"
             alignItemWithTrigger={false}
-            matchTriggerWidth={false}
             popupClassName="max-w-64"
-            className="max-w-64"
+            className="w-full"
           >
             {profiles.map((profile) => (
               <SelectItem hideIndicator key={profile.id} value={profile.id}>
