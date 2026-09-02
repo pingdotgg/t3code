@@ -94,6 +94,55 @@ describe("makeQuitShortcutHandler", () => {
     expect(harness.notifications).toEqual([HOLD_DOWN, UP]);
   });
 
+  it("quits when a completed hold goes quiet without release events", async () => {
+    const harness = makeHarness();
+    await harness.send(makeInput({}));
+    await harness.holdFor(QUIT_HOLD_DURATION_MS + QUIT_HOLD_RELEASE_GRACE_MS * 2);
+
+    // If neither keyUp reaches the handler, continued repeats must keep the
+    // app alive. Once they stop, the quiet period is the release signal.
+    expect(harness.quit).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(QUIT_HOLD_RELEASE_GRACE_MS);
+
+    expect(harness.quit).toHaveBeenCalledTimes(1);
+    expect(harness.notifications).toEqual([HOLD_DOWN, UP]);
+  });
+
+  it("waits for slow repeats to stop before quitting", async () => {
+    const harness = makeHarness();
+    await harness.send(makeInput({}));
+
+    vi.advanceTimersByTime(300);
+    await harness.send(makeInput({ isAutoRepeat: true }));
+    vi.advanceTimersByTime(900);
+    await harness.send(makeInput({ isAutoRepeat: true }));
+
+    vi.advanceTimersByTime(QUIT_HOLD_RELEASE_GRACE_MS);
+    expect(harness.quit).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(300);
+    await harness.send(makeInput({ isAutoRepeat: true }));
+    vi.advanceTimersByTime(1_799);
+    expect(harness.quit).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(harness.quit).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the initial repeat delay when the first repeat completes the hold", async () => {
+    const harness = makeHarness();
+    await harness.send(makeInput({}));
+
+    vi.advanceTimersByTime(QUIT_HOLD_DURATION_MS + 100);
+    await harness.send(makeInput({ isAutoRepeat: true }));
+
+    vi.advanceTimersByTime(QUIT_HOLD_RELEASE_GRACE_MS);
+    expect(harness.quit).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1_999);
+    expect(harness.quit).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(harness.quit).toHaveBeenCalledTimes(1);
+  });
+
   it("waits for Q release when Cmd is released first", async () => {
     const harness = makeHarness();
     await harness.send(makeInput({}));
