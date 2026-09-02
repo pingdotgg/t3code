@@ -8,25 +8,15 @@ import * as Schema from "effect/Schema";
 import * as Electron from "electron";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
-// Electron's blocking safeStorage calls run the OS credential-store lookup on the main
-// thread. A locked GNOME Keyring, KWallet or KeePassXC never answers, so the main process
-// stops pumping its message loop and the app shows a black, unresizable window instead of
-// a UI. Electron 42 added promise-based calls that resolve off the main thread; this
-// deadline is how long a caller waits on one of those before giving up on the store. It is
-// long enough for someone to answer an unlock prompt, because giving up early hides the
-// environments they just unlocked for. Nothing is cached, so a store unlocked after the
-// deadline starts working on the next call rather than after a restart.
+// Long enough to answer a keyring unlock prompt. Nothing is cached, so a store unlocked
+// after the deadline works on the next call.
 const SAFE_STORAGE_DEADLINE = Duration.seconds(30);
 
-// Electron 42 answers "is the key ready" synchronously and Electron 43 answers with a
-// promise, so ask the question both versions answer the same way instead: encrypting a
-// throwaway string resolves exactly when the credential store has handed over the key.
+// isAsyncEncryptionAvailable is sync in Electron 42 and a promise in 43; encrypting a
+// throwaway string answers the same question on both.
 const AVAILABILITY_PROBE_PLAINTEXT = "t3code-safe-storage-probe";
 
-// Linux without a usable secret store selects `basic_text`, which "encrypts" with a
-// hardcoded password. The blocking API reports that as unavailable and callers then decline
-// to persist the secret at all, which is the behavior we want to keep: credentials belong
-// in a real keyring or nowhere.
+// Encrypts with a hardcoded password, so callers must keep treating it as unavailable.
 const UNPROTECTED_LINUX_BACKEND = "basic_text";
 
 const electronSafeStorageErrorFields = {
@@ -93,8 +83,7 @@ interface AsyncSafeStorage {
   readonly decryptStringAsync: (encrypted: Buffer) => Promise<{ readonly result: string }>;
 }
 
-// The desktop app still builds against Electron runtimes that predate the promise-based
-// calls, so detect them instead of assuming them. Drop this once the minimum Electron is 42.
+// The promise-based calls arrived in Electron 42; drop this once that is the minimum.
 export function resolveAsyncSafeStorage(candidate: unknown): Option.Option<AsyncSafeStorage> {
   if (typeof candidate !== "object" || candidate === null) {
     return Option.none();
@@ -152,9 +141,8 @@ export const make = Effect.gen(function* () {
       onSome: (safeStorage) =>
         withDeadline(
           Effect.tryPromise({
-            // The unused signal parameter is load-bearing: Effect only registers an
-            // interrupt handler for a thunk that asks for the abort signal, and without one
-            // the deadline below would wait for the credential store anyway.
+            // Asking for the signal is what makes the thunk interruptible, and the
+            // deadline effective.
             try: (_signal) => safeStorage.encryptStringAsync(value),
             catch: (cause) => new ElectronSafeStorageEncryptError({ cause }),
           }),
@@ -174,7 +162,6 @@ export const make = Effect.gen(function* () {
       onSome: (safeStorage) =>
         withDeadline(
           Effect.tryPromise({
-            // See encryptString: the signal parameter is what makes the deadline effective.
             try: (_signal) =>
               safeStorage
                 .decryptStringAsync(Buffer.from(value))

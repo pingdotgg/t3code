@@ -135,7 +135,7 @@ describe("ElectronSafeStorage", () => {
   );
 
   it.effect("falls back to the blocking calls on runtimes without the async ones", () => {
-    // Deleted before the layer is built: the service picks its calls once, at construction.
+    // Before the layer is built: the service picks its calls at construction.
     delete safeStorage.encryptStringAsync;
     delete safeStorage.decryptStringAsync;
 
