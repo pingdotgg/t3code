@@ -130,20 +130,25 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       const threadId = ThreadId.make("thread-resume-history");
 
       yield* directory.upsert({
-        provider: ProviderDriverKind.make("codex"),
+        provider: ProviderDriverKind.make("claudeAgent"),
         threadId,
-        resumeCursor: { threadId: "provider-session-old" },
+        resumeCursor: { resume: "provider-session-old", resumeSessionAt: "turn-1", turnCount: 1 },
         runtimePayload: { cwd: "/tmp/project" },
       });
       yield* directory.upsert({
-        provider: ProviderDriverKind.make("codex"),
+        provider: ProviderDriverKind.make("claudeAgent"),
         threadId,
-        resumeCursor: { threadId: "provider-session-new" },
+        resumeCursor: { resume: "provider-session-old", resumeSessionAt: "turn-2", turnCount: 2 },
       });
       yield* directory.upsert({
-        provider: ProviderDriverKind.make("codex"),
+        provider: ProviderDriverKind.make("claudeAgent"),
         threadId,
-        resumeCursor: { threadId: "provider-session-new" },
+        resumeCursor: { resume: "provider-session-new", resumeSessionAt: "turn-1", turnCount: 1 },
+      });
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        threadId,
+        resumeCursor: { resume: "provider-session-new", resumeSessionAt: "turn-2", turnCount: 2 },
       });
 
       const runtime = yield* runtimeRepository.getByThreadId({ threadId });
@@ -151,8 +156,12 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       if (Option.isSome(runtime)) {
         assert.deepEqual(readProviderResumeCursorHistory(runtime.value.runtimePayload), [
           {
-            providerName: "codex",
-            resumeCursor: { threadId: "provider-session-old" },
+            providerName: "claudeAgent",
+            resumeCursor: {
+              resume: "provider-session-old",
+              resumeSessionAt: "turn-2",
+              turnCount: 2,
+            },
           },
         ]);
         assert.equal(

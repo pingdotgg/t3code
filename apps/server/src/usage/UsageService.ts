@@ -46,7 +46,10 @@ import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.t
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
-import { readProviderResumeCursorHistory } from "../provider/providerResumeCursorHistory.ts";
+import {
+  providerResumeCursorSessionId,
+  readProviderResumeCursorHistory,
+} from "../provider/providerResumeCursorHistory.ts";
 import { makeProjectResolver, UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -862,27 +865,22 @@ export function shortSessionLabel(sessionKey: string): string {
 
 /** Maps a persisted provider cursor to the transcript session key it owns. */
 export function runtimeUsageSessionKey(providerName: string, cursor: unknown): string | null {
-  if (typeof cursor !== "object" || cursor === null) return null;
-  const cursorRecord = cursor as Record<string, unknown>;
   let provider: UsageProviderKind;
-  let sessionId: unknown;
   switch (providerName) {
     case "claudeAgent":
       provider = "claude";
-      sessionId = cursorRecord["resume"];
       break;
     case "codex":
       provider = "codex";
-      sessionId = cursorRecord["threadId"];
       break;
     case "grok":
       provider = "grok";
-      sessionId = cursorRecord["sessionId"];
       break;
     default:
       return null;
   }
-  return typeof sessionId === "string" && sessionId.length > 0 ? `${provider}:${sessionId}` : null;
+  const sessionId = providerResumeCursorSessionId(providerName, cursor);
+  return sessionId === null ? null : `${provider}:${sessionId}`;
 }
 
 /** Maps current and replaced provider cursors to every transcript session owned by a thread. */

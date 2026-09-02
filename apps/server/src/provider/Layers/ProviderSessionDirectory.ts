@@ -127,7 +127,8 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       });
     }
     const runtimePayload = preservePreviousResumeCursor({
-      providerName: existingRuntime?.providerName ?? binding.provider,
+      previousProviderName: existingRuntime?.providerName ?? binding.provider,
+      nextProviderName: binding.provider,
       previousResumeCursor: existingRuntime?.resumeCursor ?? null,
       nextResumeCursor: binding.resumeCursor,
       runtimePayload: mergeRuntimePayload(
