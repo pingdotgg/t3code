@@ -119,6 +119,77 @@ describe("applyProviderInstanceSettings", () => {
 
     expect(entry?.enabled).toBe(false);
   });
+
+  it.each(["constructor", "toString"])(
+    "treats a removed custom instance named %s as disabled",
+    (instanceId) => {
+      const entries = deriveProviderInstanceEntries([
+        provider({
+          provider: ProviderDriverKind.make("claudeAgent"),
+          instanceId,
+        }),
+      ]);
+      const [entry] = applyProviderInstanceSettings(entries, {
+        providerInstances: {},
+        providers: {} as never,
+      });
+
+      expect(entry?.enabled).toBe(false);
+    },
+  );
+
+  it("uses settings for a configured custom instance named constructor", () => {
+    const instanceId = ProviderInstanceId.make("constructor");
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId,
+      }),
+    ]);
+    const [entry] = applyProviderInstanceSettings(entries, {
+      providerInstances: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: false,
+        },
+      },
+      providers: {} as never,
+    });
+
+    expect(entry?.enabled).toBe(false);
+  });
+
+  it("treats a removed default instance for a fork driver as disabled", () => {
+    const driver = ProviderDriverKind.make("constructor");
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: driver,
+        instanceId: "constructor",
+      }),
+    ]);
+    const [entry] = applyProviderInstanceSettings(entries, {
+      providerInstances: {},
+      providers: {} as never,
+    });
+
+    expect(entry?.isDefault).toBe(true);
+    expect(entry?.enabled).toBe(false);
+  });
+
+  it("uses legacy settings for a built-in default instance", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: "codex",
+      }),
+    ]);
+    const [entry] = applyProviderInstanceSettings(entries, {
+      providerInstances: {},
+      providers: { codex: { enabled: false } } as never,
+    });
+
+    expect(entry?.enabled).toBe(false);
+  });
 });
 
 describe("deriveProviderInstanceEntries", () => {
