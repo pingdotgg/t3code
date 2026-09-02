@@ -165,13 +165,26 @@ void ThemeStore::reload() {
 QString ThemeStore::injectionScript() const {
   // Applies the theme the same way the web app applies its own
   // (applyThemeColorPreview in themePalette.ts): `data-theme-id` on <html>
-  // plus inline `--app-theme-*` variables. The web app re-applies its stored
-  // preference on boot and on changes, so an observer re-asserts ours until
-  // the SPA takes shell themes over itself. An empty theme removes the hook.
+  // plus inline `--app-theme-*` variables. It runs as a user script at
+  // document creation so the first paint is already in the shell's colours,
+  // and again on theme changes. The web app re-applies its stored preference
+  // on boot and on changes (and paints its own chrome colour behind the
+  // page), so an observer re-asserts ours until the SPA takes shell themes
+  // over itself. An empty theme removes the hook.
   QJsonObject vars;
   for (auto it = m_colors.cbegin(); it != m_colors.cend(); ++it) {
     vars.insert(cssVariableForRole(it.key()), it.value().toString());
   }
+  // The boot splash in index.html paints `--boot-*` until React mounts.
+  const auto boot = [&](const char* variable, const char* role) {
+    const QString value = m_colors.value(QLatin1String(role)).toString();
+    if (!value.isEmpty()) {
+      vars.insert(QLatin1String(variable), value);
+    }
+  };
+  boot("--boot-background", "canvas");
+  boot("--boot-foreground", "text");
+  boot("--boot-accent", "accent");
   const QJsonObject theme{
       {QStringLiteral("id"), m_loaded ? m_id : QString()},
       {QStringLiteral("dark"), m_appearance != QStringLiteral("light")},
@@ -180,26 +193,43 @@ QString ThemeStore::injectionScript() const {
   return QStringLiteral(
              "(() => {"
              "  const theme = %1;"
-             "  const root = document.documentElement;"
-             "  const state = (window.__t3ShellTheme ||= {});"
-             "  if (state.observer) { state.observer.disconnect(); state.observer = null; }"
-             "  if (!theme.id) {"
-             "    for (const name of state.applied || []) root.style.removeProperty(name);"
-             "    state.applied = [];"
-             "    return;"
-             "  }"
-             "  const apply = () => {"
-             "    root.dataset.themeId = theme.id;"
-             "    root.classList.toggle('dark', theme.dark);"
-             "    for (const [name, value] of Object.entries(theme.vars)) root.style.setProperty(name, value);"
+             "  const run = () => {"
+             "    const root = document.documentElement;"
+             "    const state = (window.__t3ShellTheme ||= {});"
+             "    if (state.observer) { state.observer.disconnect(); state.observer = null; }"
+             "    if (!theme.id) {"
+             "      for (const name of state.applied || []) root.style.removeProperty(name);"
+             "      state.applied = [];"
+             "      return;"
+             "    }"
+             "    const chrome = theme.vars['--app-theme-chrome'] || '';"
+             "    const probe = document.createElement('div');"
+             "    probe.style.backgroundColor = chrome;"
+             "    const chromeCss = probe.style.backgroundColor;"
+             "    const stale = () =>"
+             "      root.dataset.themeId !== theme.id ||"
+             "      root.classList.contains('dark') !== theme.dark ||"
+             "      (chromeCss && root.style.backgroundColor !== chromeCss) ||"
+             "      Object.entries(theme.vars).some(([name, value]) => root.style.getPropertyValue(name) !== value);"
+             "    const apply = () => {"
+             "      root.dataset.themeId = theme.id;"
+             "      root.dataset.themeSelected = 'true';"
+             "      root.classList.toggle('dark', theme.dark);"
+             "      for (const [name, value] of Object.entries(theme.vars)) root.style.setProperty(name, value);"
+             "      if (chromeCss) root.style.backgroundColor = chromeCss;"
+             "    };"
+             "    for (const name of state.applied || []) if (!(name in theme.vars)) root.style.removeProperty(name);"
+             "    state.applied = Object.keys(theme.vars);"
+             "    apply();"
+             "    state.observer = new MutationObserver(() => {"
+             "      if (stale()) apply();"
+             "    });"
+             "    state.observer.observe(root, { attributes: true, attributeFilter: ['data-theme-id', 'class', 'style'] });"
              "  };"
-             "  for (const name of state.applied || []) if (!(name in theme.vars)) root.style.removeProperty(name);"
-             "  state.applied = Object.keys(theme.vars);"
-             "  apply();"
-             "  state.observer = new MutationObserver(() => {"
-             "    if (root.dataset.themeId !== theme.id) apply();"
-             "  });"
-             "  state.observer.observe(root, { attributes: true, attributeFilter: ['data-theme-id'] });"
+             "  if (document.documentElement) run();"
+             "  else new MutationObserver((_, observer) => {"
+             "    if (document.documentElement) { observer.disconnect(); run(); }"
+             "  }).observe(document, { childList: true });"
              "})();")
       .arg(jsLiteral(theme));
 }

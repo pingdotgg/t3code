@@ -4,7 +4,9 @@ import QtWebEngine
 import T3.Shell
 
 // The web app, as-is. Wires the WebChannel (`window.t3Shell` on the page side)
-// and pushes theme.json into the page as CSS custom properties.
+// and pushes theme.json into the page as CSS custom properties: as a user
+// script at document creation, so the first paint is already themed, and
+// into the live document when the theme changes.
 WebEngineView {
     id: view
 
@@ -17,6 +19,10 @@ WebEngineView {
     // must keep running out of view (the primary page) leaves this off.
     property bool sleepsWhenHidden: false
 
+    // The source of the installed theme user script, to skip reinstalling on
+    // theme signals that leave the page side unchanged.
+    property string installedThemeScript: ""
+
     backgroundColor: Theme.windowTransparent ? "transparent" : Theme.color("chrome", "#0b0b0d")
 
     profile: WebProfile
@@ -28,8 +34,29 @@ WebEngineView {
         id: channel
     }
 
+    function syncThemeScript() {
+        const source = Theme.loaded ? Theme.injectionScript : "";
+        if (source === view.installedThemeScript) {
+            return;
+        }
+        view.installedThemeScript = source;
+        for (const stale of view.userScripts.find("t3-theme")) {
+            view.userScripts.remove(stale);
+        }
+        if (source.length === 0) {
+            return;
+        }
+        const script = WebEngine.script();
+        script.name = "t3-theme";
+        script.sourceCode = source;
+        script.injectionPoint = WebEngineScript.DocumentCreation;
+        script.worldId = WebEngineScript.MainWorld;
+        view.userScripts.insert(script);
+    }
+
     Component.onCompleted: {
         channel.registerObject("shell", Shell.channel);
+        view.syncThemeScript();
 
         const tag = WebEngine.script();
         tag.name = "t3-surface-id";
@@ -83,6 +110,7 @@ WebEngineView {
     Connections {
         target: Theme
         function onThemeChanged() {
+            view.syncThemeScript();
             if (!view.loading) {
                 view.runJavaScript(Theme.injectionScript);
             }
