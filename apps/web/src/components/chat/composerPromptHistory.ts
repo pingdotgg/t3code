@@ -1,7 +1,6 @@
 import { extractTrailingElementContexts } from "../../lib/elementContext";
 import { extractTrailingPreviewAnnotation } from "../../lib/previewAnnotation";
 import { extractTrailingTerminalContexts } from "../../lib/terminalContext";
-import { parseReviewCommentMessageSegments } from "../../reviewCommentContext";
 
 /**
  * Terminal-style prompt recall for the composer. ArrowUp on an empty
@@ -13,6 +12,7 @@ import { parseReviewCommentMessageSegments } from "../../reviewCommentContext";
  */
 
 const CLAUDE_ULTRATHINK_PREFIX = "Ultrathink:\n";
+const REVIEW_COMMENT_BLOCK_PATTERN = /<review_comment\b[^>]*>[\s\S]*?<\/review_comment>/g;
 
 /** Text sent in place of an empty prompt when a message is attachments only. */
 export const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
@@ -62,25 +62,17 @@ export interface ComposerPromptHistoryStep {
 
 /**
  * Drop only the review comments appended at send time, which sit at the
- * end. A review comment block the user typed mid-prompt stays put.
+ * end. Cuts the original string at the start of the trailing run of blocks
+ * so any review comment block the user typed earlier stays byte-for-byte.
  */
 function stripTrailingReviewComments(prompt: string): string {
-  const segments = [...parseReviewCommentMessageSegments(prompt)];
-  let changed = false;
-  while (segments.length > 0) {
-    const last = segments[segments.length - 1]!;
-    if (last.kind === "review-comment" || (changed && last.text.trim().length === 0)) {
-      segments.pop();
-      changed = true;
-      continue;
-    }
-    break;
+  let cut = prompt.length;
+  for (const match of [...prompt.matchAll(REVIEW_COMMENT_BLOCK_PATTERN)].toReversed()) {
+    const blockEnd = match.index + match[0].length;
+    if (prompt.slice(blockEnd, cut).trim().length > 0) break;
+    cut = match.index;
   }
-  if (!changed) return prompt;
-  return segments
-    .map((segment) => (segment.kind === "text" ? segment.text : ""))
-    .join("")
-    .trimEnd();
+  return cut === prompt.length ? prompt : prompt.slice(0, cut).trimEnd();
 }
 
 /**
@@ -91,13 +83,20 @@ function stripTrailingReviewComments(prompt: string): string {
  * the prompt is touched, so indented code and typed labels survive. Block
  * headers look like `Terminal 1 lines 12-13`.
  */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string>): string {
   let result = prompt;
   for (const header of headers) {
     const match = /^(.+?) lines? (\d+(?:-\d+)?)$/.exec(header);
     if (!match) continue;
     const label = `@${match[1]!.trim().toLowerCase().replace(/\s+/g, "-")}:${match[2]}`;
-    const index = result.indexOf(label);
+    // Whole label only: `@terminal-1:4` must not match inside `@terminal-1:40`
+    // or `@terminal-1:4-12`.
+    const labelPattern = new RegExp(`${escapeRegExp(label)}(?![\\d-])`);
+    const index = result.search(labelPattern);
     if (index < 0) continue;
     let end = index + label.length;
     let start = index;

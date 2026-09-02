@@ -82,6 +82,19 @@ describe("recallableComposerPrompt", () => {
     expect(recallableComposerPrompt(sent)).toBe("typed twice: @terminal-1:4\n    indented  code");
   });
 
+  it("does not strip a typed label that only starts with the chip label", () => {
+    const context = {
+      terminalId: "default",
+      terminalLabel: "Terminal 1",
+      lineStart: 4,
+      lineEnd: 4,
+      text: "ls",
+    };
+    const typed = "see @terminal-1:40 and @terminal-1:4-12 then @terminal-1:4";
+    const sent = appendTerminalContextsToPrompt(typed, [context]);
+    expect(recallableComposerPrompt(sent)).toBe("see @terminal-1:40 and @terminal-1:4-12 then");
+  });
+
   it("strips only the review comments appended at the end", () => {
     const comment = buildFileReviewComment({
       id: "comment-1",
@@ -95,6 +108,9 @@ describe("recallableComposerPrompt", () => {
     expect(recallableComposerPrompt(sent)).toBe("Please update this.");
     const midPrompt = appendReviewCommentsToPrompt("Before", [comment]) + "\n\nAfter";
     expect(recallableComposerPrompt(midPrompt)).toBe(midPrompt);
+    // A typed block earlier in the prompt survives when the trailing one goes.
+    const both = appendReviewCommentsToPrompt(midPrompt, [comment]);
+    expect(recallableComposerPrompt(both)).toBe(midPrompt);
   });
 
   it("returns an empty string for attachment-only sends", () => {
