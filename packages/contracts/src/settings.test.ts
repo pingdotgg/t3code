@@ -191,6 +191,18 @@ describe("ClientSettings sidebar", () => {
   });
 });
 
+describe("ClientSettings context window meter", () => {
+  it("defaults off and preserves an explicit legacy opt-in", () => {
+    expect(decodeClientSettings({}).contextWindowMeterEnabled).toBe(false);
+    expect(
+      decodeClientSettings({ contextWindowMeterEnabled: true }).contextWindowMeterEnabled,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ contextWindowMeterEnabled: true }).contextWindowMeterEnabled,
+    ).toBe(true);
+  });
+});
+
 describe("ServerSettings thread settlement", () => {
   it("defaults merge settlement on and inactivity settlement to three days", () => {
     const settings = decodeServerSettings({});

@@ -265,6 +265,9 @@ export const ClientSettingsSchema = Schema.Struct({
   // default UI; this beta flag restores it (plus the /plan and /default slash
   // commands) for users who still rely on the old workflow.
   planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Legacy context window meter. The composer hides it by default; users who
+  // still want the old usage indicator can restore it from Settings.
+  contextWindowMeterEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // Legacy sidebar (the original per-project tree). Deliberately a fresh key
   // (was `sidebarV2Enabled` + `sidebarV2ConfiguredByUser`): decoding drops the
@@ -990,6 +993,7 @@ export const ClientSettingsPatch = Schema.Struct({
     ),
   ),
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
+  contextWindowMeterEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
