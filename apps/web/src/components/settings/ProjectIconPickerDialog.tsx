@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 const DEFAULT_ICON: IconName = "folder-code";
@@ -125,47 +126,51 @@ export function ProjectIconPickerDialog({
                 placeholder="Search all Lucide icons"
                 onChange={(event) => setQuery(event.currentTarget.value)}
               />
-              <div className="grid max-h-64 grid-cols-8 gap-1 overflow-y-auto p-0.5 sm:grid-cols-10">
-                {icons.map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    aria-label={iconLabel(name)}
-                    aria-pressed={iconName === name}
-                    className={cn(
-                      "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
-                      iconName === name && "border-border bg-accent",
-                      selectedColorClassName,
-                    )}
-                    onClick={() => setIconName(name)}
-                  >
-                    <DynamicIcon name={name} className="size-5" />
-                  </button>
-                ))}
-              </div>
+              <ScrollArea scrollFade className="max-h-64">
+                <div className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10">
+                  {icons.map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      aria-label={iconLabel(name)}
+                      aria-pressed={iconName === name}
+                      className={cn(
+                        "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+                        iconName === name && "border-border bg-accent",
+                        selectedColorClassName,
+                      )}
+                      onClick={() => setIconName(name)}
+                    >
+                      <DynamicIcon name={name} className="size-5" />
+                    </button>
+                  ))}
+                </div>
+              </ScrollArea>
               {icons.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">No icons found.</p>
               ) : null}
             </>
           ) : (
             <>
-              <div className="grid max-h-64 grid-cols-8 gap-1 overflow-y-auto p-0.5 sm:grid-cols-10">
-                {PROJECT_EMOJIS.map((option) => (
-                  <button
-                    key={option.emoji}
-                    type="button"
-                    aria-label={option.label}
-                    aria-pressed={emoji === option.emoji}
-                    className={cn(
-                      "flex aspect-square items-center justify-center rounded-md border border-transparent text-xl outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
-                      emoji === option.emoji && "border-border bg-accent",
-                    )}
-                    onClick={() => setEmoji(option.emoji)}
-                  >
-                    {option.emoji}
-                  </button>
-                ))}
-              </div>
+              <ScrollArea scrollFade className="max-h-64">
+                <div className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10">
+                  {PROJECT_EMOJIS.map((option) => (
+                    <button
+                      key={option.emoji}
+                      type="button"
+                      aria-label={option.label}
+                      aria-pressed={emoji === option.emoji}
+                      className={cn(
+                        "flex aspect-square items-center justify-center rounded-md border border-transparent text-xl outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+                        emoji === option.emoji && "border-border bg-accent",
+                      )}
+                      onClick={() => setEmoji(option.emoji)}
+                    >
+                      {option.emoji}
+                    </button>
+                  ))}
+                </div>
+              </ScrollArea>
               <div>
                 <div className="mb-2 text-xs font-medium text-muted-foreground">
                   Or paste any emoji
