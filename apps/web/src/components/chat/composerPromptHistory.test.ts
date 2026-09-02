@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { appendElementContextsToPrompt } from "../../lib/elementContext";
 import { appendTerminalContextsToPrompt } from "../../lib/terminalContext";
 import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   buildComposerPromptHistoryEntries,
   recallableComposerPrompt,
   stepComposerPromptHistory,
@@ -50,8 +51,9 @@ describe("recallableComposerPrompt", () => {
     expect(recallableComposerPrompt(`Ultrathink:\n${withElement}`)).toBe("Investigate this");
   });
 
-  it("returns an empty string for image-only sends", () => {
+  it("returns an empty string for attachment-only sends", () => {
     expect(recallableComposerPrompt("   ")).toBe("");
+    expect(recallableComposerPrompt(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT)).toBe("");
   });
 });
 
@@ -122,12 +124,27 @@ describe("stepComposerPromptHistory", () => {
       currentPrompt: "A",
     });
     expect(older?.prompt).toBe("zeroth");
+    // Unknown id with no matching text: browsing is over.
     const missing = stepComposerPromptHistory({
       direction: "forward",
       entries: grown,
-      position: { entryId: "gone", recalled: "A" },
-      currentPrompt: "A",
+      position: { entryId: "gone", recalled: "not sent" },
+      currentPrompt: "not sent",
     });
     expect(missing).toBeNull();
+  });
+
+  it("falls back to matching text when a duplicate collapse retires the id", () => {
+    const collapsed = buildComposerPromptHistoryEntries([
+      { id: "m1", role: "user", text: "first" },
+      { id: "m3", role: "user", text: "A" },
+    ]);
+    const step = stepComposerPromptHistory({
+      direction: "backward",
+      entries: collapsed,
+      position: { entryId: "m2", recalled: "A" },
+      currentPrompt: "A",
+    });
+    expect(step?.prompt).toBe("first");
   });
 });

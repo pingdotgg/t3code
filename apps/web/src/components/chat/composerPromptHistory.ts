@@ -14,6 +14,10 @@ import { parseReviewCommentMessageSegments } from "../../reviewCommentContext";
 
 const CLAUDE_ULTRATHINK_PREFIX = "Ultrathink:\n";
 
+/** Text sent in place of an empty prompt when a message is attachments only. */
+export const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
+  "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]";
+
 export interface ComposerPromptHistoryMessage {
   readonly id: string;
   readonly role: string;
@@ -35,6 +39,20 @@ export interface ComposerPromptHistoryEntry {
 export interface ComposerPromptHistoryPosition {
   readonly entryId: string;
   readonly recalled: string;
+}
+
+/**
+ * Prefer the id. A consecutive duplicate collapse can retire the recalled
+ * id while the same text lives on under a newer one, so fall back to the
+ * newest entry with matching text.
+ */
+function findActive(
+  entries: ReadonlyArray<ComposerPromptHistoryEntry>,
+  position: ComposerPromptHistoryPosition,
+): number {
+  const byId = entries.findIndex((entry) => entry.id === position.entryId);
+  if (byId >= 0) return byId;
+  return entries.findLastIndex((entry) => entry.prompt === position.recalled);
 }
 
 export interface ComposerPromptHistoryStep {
@@ -90,7 +108,8 @@ export function recallableComposerPrompt(messageText: string): string {
     break;
   }
 
-  return prompt.trim();
+  const trimmed = prompt.trim();
+  return trimmed === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ? "" : trimmed;
 }
 
 /**
@@ -131,9 +150,7 @@ export function stepComposerPromptHistory(input: {
 }): ComposerPromptHistoryStep | null {
   const { entries, position, currentPrompt } = input;
   const activeIndex =
-    position && position.recalled === currentPrompt
-      ? entries.findIndex((entry) => entry.id === position.entryId)
-      : -1;
+    position && position.recalled === currentPrompt ? findActive(entries, position) : -1;
 
   if (input.direction === "backward") {
     if (activeIndex < 0 && currentPrompt.length > 0) return null;
