@@ -216,7 +216,8 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const PROJECT_SECTIONS_COLLAPSED_KEY = "t3code:sidebar:project-sections-collapsed";
-
+const PROJECT_SECTIONS_COLLAPSED_DEFAULT: readonly string[] = [];
+const PROJECT_SECTIONS_COLLAPSED_SCHEMA = Schema.Array(Schema.String);
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
   return label.endsWith(" ago") ? label.slice(0, -4) : label;
@@ -2243,8 +2244,8 @@ export default function Sidebar() {
   // disappears and returns) keeps the way the user left it.
   const [collapsedProjectSectionKeyList, setCollapsedProjectSectionKeyList] = useLocalStorage(
     PROJECT_SECTIONS_COLLAPSED_KEY,
-    [] as readonly string[],
-    Schema.Array(Schema.String),
+    PROJECT_SECTIONS_COLLAPSED_DEFAULT,
+    PROJECT_SECTIONS_COLLAPSED_SCHEMA,
   );
   const collapsedProjectSectionKeys = useMemo(
     () => new Set(collapsedProjectSectionKeyList),
