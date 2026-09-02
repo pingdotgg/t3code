@@ -460,6 +460,16 @@ function resultUserFacingError(result: SDKResultMessage): string | undefined {
       return "Claude could not resume a deferred tool call: the tool is no longer available.";
     case "turn_setup_failed":
       return "Claude could not start the turn.";
+    case "blocking_limit":
+      return "Claude stopped: a usage limit blocked the request.";
+    case "rapid_refill_breaker":
+      return "Claude stopped: the context refilled too quickly after compaction.";
+    case "prompt_too_long":
+      return "Claude stopped: the prompt exceeds the model's context window.";
+    case "image_error":
+      return "Claude stopped: an image in the conversation could not be processed.";
+    case "model_error":
+      return "Claude stopped: the model returned an error.";
     default:
       return undefined;
   }
@@ -1416,9 +1426,10 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
 });
 
 /**
- * terminal_reason values that mean the turn died rather than finished, even
- * when the CLI stamps the result subtype as success (exhausted API retries,
- * repeated malformed tool calls, budget or structured-output exhaustion).
+ * terminal_reason values the CLI classifies as dead turns: the turn died
+ * rather than finished, even when the result subtype is success and the
+ * error list is empty. Kept in sync with the messages in
+ * resultUserFacingError.
  */
 const FAILED_TERMINAL_REASONS: ReadonlySet<NonNullable<SDKResultMessage["terminal_reason"]>> =
   new Set([
@@ -1428,6 +1439,11 @@ const FAILED_TERMINAL_REASONS: ReadonlySet<NonNullable<SDKResultMessage["termina
     "structured_output_retry_exhausted",
     "tool_deferred_unavailable",
     "turn_setup_failed",
+    "blocking_limit",
+    "rapid_refill_breaker",
+    "prompt_too_long",
+    "image_error",
+    "model_error",
   ]);
 
 /**
