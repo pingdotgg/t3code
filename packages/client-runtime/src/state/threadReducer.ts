@@ -35,6 +35,15 @@ const activityOrder = O.combineAll<OrchestrationThreadActivity>([
   O.mapInput(O.String, (a) => a.id),
 ]);
 
+// Per-array id index so the streaming append path can reject a re-delivered
+// id without rescanning the history. Only arrays this reducer produced are
+// indexed: presence also proves the array is activityOrder-sorted, which
+// snapshot-loaded arrays (DB order, null sequences first) are not.
+const activityIdIndex = new WeakMap<
+  ReadonlyArray<OrchestrationThreadActivity>,
+  Set<OrchestrationThreadActivity["id"]>
+>();
+
 /**
  * Matches the validity rule in `deriveLatestContextWindowSnapshot` (and the
  * server's snapshot-side `dropStaleContextWindowActivities`): rows without a
@@ -582,6 +591,31 @@ export function applyThreadDetailEvent(
       // thread.reverted that discards turns can still resolve a value from
       // the turns that survive.
       const supersedesContextWindow = isResolvableContextWindowActivity(activity);
+      // Live streams append in order: an unseen id sorting at/after the tail
+      // of a known-sorted array appends without re-filtering and re-sorting
+      // the whole history on every event. The id set moves forward to the new
+      // array; a superseded array falls back to the sorting path.
+      const ids = activityIdIndex.get(thread.activities);
+      const lastActivity = thread.activities.at(-1);
+      if (
+        !supersedesContextWindow &&
+        ids !== undefined &&
+        (lastActivity === undefined || activityOrder(lastActivity, activity) <= 0) &&
+        !ids.has(activity.id)
+      ) {
+        const activities = Arr.append(thread.activities, activity);
+        activityIdIndex.delete(thread.activities);
+        ids.add(activity.id);
+        activityIdIndex.set(activities, ids);
+        return {
+          kind: "updated",
+          thread: {
+            ...thread,
+            activities,
+            updatedAt: event.occurredAt,
+          },
+        };
+      }
       const activities = pipe(
         thread.activities,
         Arr.filter(
@@ -596,6 +630,7 @@ export function applyThreadDetailEvent(
         Arr.append(activity),
         Arr.sort(activityOrder),
       );
+      activityIdIndex.set(activities, new Set(activities.map((entry) => entry.id)));
 
       return {
         kind: "updated",

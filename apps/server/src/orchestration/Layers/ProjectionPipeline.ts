@@ -130,12 +130,8 @@ function isStalePendingApprovalFailureDetail(detail: string | null): boolean {
   );
 }
 
-// A refresh reads each persisted summary source, so skip events that cannot change the result.
+// A refresh reads each persisted summary source, so skip activities that cannot change the result.
 function shouldRefreshThreadShellSummary(event: OrchestrationEvent): boolean {
-  if (event.type === "thread.message-sent") {
-    return event.payload.role === "user";
-  }
-
   if (event.type !== "thread.activity-appended") {
     return true;
   }
@@ -897,7 +893,29 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
-        case "thread.message-sent":
+        // A message cannot change any summary field except latestUserMessageAt,
+        // which is a monotonic maximum that folds in directly. The full refresh
+        // would re-read every message body in the thread per user message.
+        case "thread.message-sent": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          const previousLatest = existingRow.value.latestUserMessageAt;
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            updatedAt: event.occurredAt,
+            latestUserMessageAt:
+              event.payload.role === "user" &&
+              (previousLatest === null || event.payload.createdAt > previousLatest)
+                ? event.payload.createdAt
+                : previousLatest,
+          });
+          return;
+        }
+
         case "thread.proposed-plan-upserted":
         case "thread.activity-appended":
         case "thread.approval-response-requested":
