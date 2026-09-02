@@ -225,7 +225,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
     toneClassName: "text-muted-foreground/70",
     ringClassName: "ring-2 ring-muted-foreground/60",
     staleRingClassName:
-      "ring-2 ring-[color-mix(in_srgb,var(--muted-foreground)_30%,var(--background))]",
+      "ring-2 ring-[color-mix(in_srgb,var(--contrast-muted-foreground)_30%,var(--background))]",
     badgeVariant: "outline",
   },
 } as const satisfies Record<
@@ -339,17 +339,19 @@ export function PullRequestActorAvatar({
 export function PullRequestActorLabel({
   actor,
   className,
+  labelClassName,
   tooltip = true,
 }: {
   actor: PullRequestActor | null;
   className?: string;
+  labelClassName?: string;
   tooltip?: boolean;
 }) {
   const login = actor?.login ?? "ghost";
   const label = (
     <>
       <PullRequestActorAvatar actor={actor} />
-      <span className="truncate">{login}</span>
+      <span className={cn("truncate", labelClassName)}>{login}</span>
     </>
   );
   if (!tooltip) {

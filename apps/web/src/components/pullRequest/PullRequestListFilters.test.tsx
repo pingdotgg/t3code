@@ -34,7 +34,8 @@ function findLabeledGroup(node: ReactNode, label: string): ReactNode {
     if (!isValidElement(child)) continue;
     const props = child.props as { readonly children?: ReactNode; readonly label?: string };
     if (props.label === label && typeof child.type === "function") {
-      return (child.type as (properties: unknown) => ReactNode)(child.props);
+      const rendered = (child.type as (properties: unknown) => ReactNode)(child.props);
+      return findLabeledGroup(rendered, label) ?? rendered;
     }
     const nested = findLabeledGroup(props.children, label);
     if (nested !== undefined) return nested;
@@ -126,7 +127,7 @@ describe("pull request filters menu", () => {
       projectEnvironmentId: environmentId,
       onProject,
     });
-    const radioGroup = findValueChange(view);
+    const radioGroup = findValueChange(findLabeledGroup(view, "Project"));
     expect(radioGroup).toBeDefined();
 
     radioGroup?.props.onValueChange(pullRequestProjectKey({ id: projectId, environmentId }));
@@ -156,7 +157,7 @@ describe("pull request filters menu", () => {
       ],
       onProject,
     });
-    const radioGroup = findValueChange(view);
+    const radioGroup = findValueChange(findLabeledGroup(view, "Project"));
     expect(radioGroup).toBeDefined();
 
     radioGroup?.props.onValueChange(

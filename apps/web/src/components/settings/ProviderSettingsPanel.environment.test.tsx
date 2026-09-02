@@ -31,15 +31,29 @@ const settingsState = vi.hoisted(() => ({
   updateSettings: vi.fn(),
 }));
 
+const settingsSearchState = vi.hoisted(() => ({
+  targetId: null as string | null,
+  effects: [] as Array<() => void>,
+}));
+
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   const { reactHookHarness } = await import("../../test/reactHookHarness");
   return {
     ...actual,
     useCallback: reactHookHarness.useCallback,
+    useEffect: (effect: () => void) => settingsSearchState.effects.push(effect),
     useMemo: reactHookHarness.useMemo,
     useRef: reactHookHarness.useRef,
     useState: reactHookHarness.useState,
+  };
+});
+
+vi.mock("./settingsLayout", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./settingsLayout")>();
+  return {
+    ...actual,
+    useSettingsSearchTargetId: () => settingsSearchState.targetId,
   };
 });
 
@@ -127,6 +141,21 @@ function renderPanel(options?: {
   }) as ReactElement<Record<string, unknown>>;
 }
 
+function isAddProviderButton(element: ReactElement<Record<string, unknown>>): boolean {
+  return element.props["aria-label"] === "Add provider";
+}
+
+function findAdvancedPanel(panel: ReactElement<Record<string, unknown>>) {
+  return visitElements(
+    panel,
+    (element) => element.props.className === "mt-1" && typeof element.props.open === "boolean",
+  );
+}
+
+function flushEffects(): void {
+  for (const effect of settingsSearchState.effects.splice(0)) effect();
+}
+
 async function flushPromises(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
@@ -140,6 +169,8 @@ describe("EnvironmentProviderSettings routing", () => {
     settingsState.readEnvironmentIds = [];
     settingsState.updateEnvironmentIds = [];
     settingsState.updateSettings.mockReset();
+    settingsSearchState.targetId = null;
+    settingsSearchState.effects = [];
     commands.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
   });
@@ -178,24 +209,44 @@ describe("EnvironmentProviderSettings routing", () => {
     });
   });
 
-  it("renders the provider layout inert with a limited-permissions notice when read only", () => {
+  it("keeps provider selection available while write controls are read only", () => {
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+        },
+      },
+    };
     atoms.providers = [provider()];
-    const panel = renderPanel({ readOnly: true });
+    let panel = renderPanel({ readOnly: true });
 
     const inertWrapper = visitElements(panel, (element) => element.props.inert === true);
     expect(inertWrapper).not.toBeNull();
-    const providerCard = visitElements(panel, (element) => element.props.instanceId === codexId);
-    expect(providerCard).not.toBeNull();
+
+    const customRow = visitElements(
+      panel,
+      (element) => element.props.instanceId === customId && element.props.mode === "list",
+    );
+    expect(customRow?.props.readOnly).toBe(true);
+    expect(customRow?.props.onSelect).toBeTypeOf("function");
+    (customRow?.props.onSelect as (() => void) | undefined)?.();
+
+    panel = renderPanel({ readOnly: true });
+    const customEditor = visitElements(
+      panel,
+      (element) => element.props.instanceId === customId && element.props.mode === "editor",
+    );
+    expect(customEditor).not.toBeNull();
 
     const notice = visitElements(panel, (element) => element.props.title === "Limited permissions");
     expect(notice).not.toBeNull();
 
     expect(
-      visitElements(panel, (element) => element.props["aria-label"] === "Add provider instance"),
-    ).toBeNull();
-    expect(
       visitElements(panel, (element) => element.props["aria-label"] === "Refresh provider status"),
     ).toBeNull();
+    expect(visitElements(panel, isAddProviderButton)).toBeNull();
   });
 
   it("keeps the editable layout interactive when not read only", () => {
@@ -205,6 +256,21 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(
       visitElements(panel, (element) => element.props.title === "Limited permissions"),
     ).toBeNull();
+    expect(
+      visitElements(panel, (element) => element.props["aria-label"] === "Refresh provider status"),
+    ).not.toBeNull();
+    expect(visitElements(panel, isAddProviderButton)).not.toBeNull();
+  });
+
+  it("opens Advanced when search targets the provider health interval", () => {
+    settingsSearchState.targetId = "provider-health-check-interval";
+    let panel = renderPanel();
+
+    expect(findAdvancedPanel(panel)?.props.open).toBe(false);
+    flushEffects();
+
+    panel = renderPanel();
+    expect(findAdvancedPanel(panel)?.props.open).toBe(true);
   });
 
   it("deletes and resets provider configuration without erasing shared preferences", () => {
@@ -225,8 +291,17 @@ describe("EnvironmentProviderSettings routing", () => {
       },
       favorites: [{ provider: customId, model: "favorite" }],
     };
-    const panel = renderPanel();
-    const customCard = visitElements(panel, (element) => element.props.instanceId === customId);
+    let panel = renderPanel();
+    const customRow = visitElements(
+      panel,
+      (element) => element.props.instanceId === customId && element.props.mode === "list",
+    );
+    (customRow?.props.onSelect as (() => void) | undefined)?.();
+    panel = renderPanel();
+    const customCard = visitElements(
+      panel,
+      (element) => element.props.instanceId === customId && element.props.mode === "editor",
+    );
     expect(customCard).not.toBeNull();
     (customCard?.props.onDelete as (() => void) | undefined)?.();
 
@@ -237,7 +312,16 @@ describe("EnvironmentProviderSettings routing", () => {
     });
 
     settingsState.updateSettings.mockClear();
-    const defaultCard = visitElements(panel, (element) => element.props.instanceId === codexId);
+    const defaultRow = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "list",
+    );
+    (defaultRow?.props.onSelect as (() => void) | undefined)?.();
+    panel = renderPanel();
+    const defaultCard = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+    );
     const resetAction = defaultCard?.props.headerAction;
     const resetButton = visitElements(
       resetAction,

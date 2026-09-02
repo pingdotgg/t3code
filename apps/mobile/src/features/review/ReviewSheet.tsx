@@ -37,7 +37,7 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
@@ -80,13 +80,11 @@ const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 const ReviewNotice = memo(function ReviewNotice(props: { readonly notice: string }) {
   return (
-    <View className="border-b border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/60 dark:bg-amber-950/40">
-      <Text className="text-xs font-t3-bold uppercase text-amber-700 dark:text-amber-300">
+    <View className="border-b border-adaptive-amber-200-900-a60 bg-adaptive-amber-50-950-a40 px-4 py-3">
+      <Text className="text-xs font-t3-bold uppercase text-adaptive-amber-700-300">
         Partial diff
       </Text>
-      <Text className="text-xs leading-normal text-amber-800 dark:text-amber-200">
-        {props.notice}
-      </Text>
+      <Text className="text-xs leading-normal text-adaptive-amber-800-200">{props.notice}</Text>
     </View>
   );
 });
@@ -97,7 +95,6 @@ function ReviewSelectionActionBar(props: {
   readonly onOpenComment: (() => void) | null;
   readonly onClear: () => void;
 }) {
-  const foreground = useThemeColor("--color-primary-foreground");
   if (!props.title) {
     return null;
   }
@@ -107,7 +104,7 @@ function ReviewSelectionActionBar(props: {
       <SymbolView
         name={props.onOpenComment ? "text.bubble" : "line.3.horizontal.decrease.circle"}
         size={16}
-        tintColor={foreground}
+        tintColorClassName={"accent-primary-foreground"}
         type="monochrome"
       />
       <Text className="text-base font-t3-bold text-primary-foreground">{props.title}</Text>
@@ -144,7 +141,12 @@ function ReviewSelectionActionBar(props: {
         className="h-12 w-12 items-center justify-center rounded-full bg-primary"
         onPress={props.onClear}
       >
-        <SymbolView name="xmark" size={16} tintColor={foreground} type="monochrome" />
+        <SymbolView
+          name="xmark"
+          size={16}
+          tintColorClassName={"accent-primary-foreground"}
+          type="monochrome"
+        />
       </Pressable>
     </View>
   );
@@ -217,8 +219,9 @@ function ReviewFileNavigator({
   ref,
 }: ReviewFileNavigatorProps) {
   const insets = useSafeAreaInsets();
-  const sheetColor = String(useThemeColor("--color-sheet"));
-  const foregroundColor = String(useThemeColor("--color-foreground"));
+  const theme = useUniwindTheme();
+  const sheetColor = theme["--color-sheet"];
+  const foregroundColor = theme["--color-foreground"];
   const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
   const [fileSelection, setFileSelection] = useState<{
     readonly sectionId: string | null;
@@ -348,7 +351,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { themeAppearance: selectedTheme } = useAppearancePreferences();
-  const headerIcon = String(useThemeColor("--color-icon"));
+  const headerIcon = String(useUniwindTheme()["--color-icon"]);
   const { environmentId, threadId } = props.route.params;
   const environment = useEnvironmentPresentation(environmentId);
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");

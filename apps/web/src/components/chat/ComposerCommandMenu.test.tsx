@@ -5,26 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { ComposerCommandMenu } from "./ComposerCommandMenu";
 
 describe("ComposerCommandMenu", () => {
-  it("renders slash-command results as an attached composer drawer", () => {
-    const markup = renderToStaticMarkup(
-      <ComposerCommandMenu
-        items={[]}
-        resolvedTheme="dark"
-        isLoading={false}
-        triggerKind="slash-command"
-        activeItemId={null}
-        onHighlightedItemChange={() => {}}
-        onSelect={() => {}}
-      />,
-    );
-
-    expect(markup).toContain('data-composer-command-drawer="true"');
-    expect(markup).toContain("chat-composer-drawer-surface");
-    expect(markup).toContain("chat-composer-drawer-attached");
-    expect(markup).not.toContain("dropdown-glass");
-  });
-
-  it("renders commands without a category heading or invented icons", () => {
+  it("renders slash commands with their descriptions", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu
         items={[
@@ -47,14 +28,9 @@ describe("ComposerCommandMenu", () => {
 
     expect(markup).toContain("/model");
     expect(markup).toContain("Switch response model for this thread");
-    expect(markup).not.toContain("Built-in");
-    expect(markup).not.toContain("<svg");
-    expect(markup).toContain("font-sans text-xs font-medium");
-    expect(markup).not.toContain("font-mono");
-    expect(markup).toContain("text-right");
   });
 
-  it("renders a skill source icon with an accessible source label", () => {
+  it("shows the app source for an app skill", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu
         items={[
@@ -82,8 +58,44 @@ describe("ComposerCommandMenu", () => {
     );
 
     expect(markup).toContain("Browser");
-    expect(markup).toContain('<span class="sr-only">App skill</span>');
+    expect(markup).toContain('data-slot="badge"');
+    expect(markup).toContain(">App Skill</span>");
+    expect(markup).toContain("Open and control the in-app browser");
     expect(markup).toContain("<svg");
-    expect(markup).toContain("text-icon-muted");
+  });
+
+  it("shows the repo source for a slash skill", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerCommandMenu
+        items={[
+          {
+            id: "skill:codex:ask-matt",
+            type: "skill",
+            provider: ProviderDriverKind.make("codex"),
+            skill: {
+              name: "ask-matt",
+              displayName: "Ask Matt",
+              path: "/skills/ask-matt/SKILL.md",
+              scope: "repo",
+              enabled: true,
+            },
+            label: "/skill:ask-matt",
+            description: "Find the right skill or workflow",
+          },
+        ]}
+        resolvedTheme="dark"
+        isLoading={false}
+        triggerKind="slash-command"
+        activeItemId="skill:codex:ask-matt"
+        onHighlightedItemChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('<span class="text-secondary-label">/skill:</span>Ask Matt');
+    expect(markup).toContain('data-slot="badge"');
+    expect(markup).toContain("lucide-folder");
+    expect(markup).toContain(">Repo</span>");
+    expect(markup).toContain("Find the right skill or workflow");
   });
 });

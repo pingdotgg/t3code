@@ -1,11 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 
 import { assetEnvironment } from "~/state/assets";
 import { usePreparedConnection } from "~/state/session";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 export { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 
@@ -47,6 +49,21 @@ export function useAssetUrl(environmentId: EnvironmentId, resource: AssetResourc
     return null;
   }
   return result.url;
+}
+
+/** Re-mints an exact-file capability after a file change or an explicit retry. */
+export function useAssetUrlRefresh(
+  environmentId: EnvironmentId,
+  resource: AssetResource,
+): () => Promise<void> {
+  const refresh = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+    refresh: true,
+  });
+  return useCallback(async () => {
+    const result = await refresh({ environmentId, input: { resource } });
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+  }, [environmentId, resource, refresh]);
 }
 
 export function useAssetUrls(

@@ -30,15 +30,18 @@ import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
 import { useTheme } from "../hooks/useTheme";
 import {
-  buildFileDiffRenderKey,
+  buildFileDiffContentVersion,
+  buildFileDiffIdentityKey,
   getDiffCollapseIconClassName,
   getDiffLineStat,
   getRenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
 } from "../lib/diffRendering";
+import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
+import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { useProject, useThread } from "../state/entities";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { useClientSettings } from "../hooks/useSettings";
@@ -90,6 +93,7 @@ interface DiffPanelProps {
   mode?: DiffPanelMode;
   composerDraftTarget: ScopedThreadRef | DraftId;
   initialGitScope: "branch" | "unstaged";
+  workspaceMutationId: string | null;
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
@@ -98,6 +102,7 @@ export default function DiffPanel({
   mode = "inline",
   composerDraftTarget,
   initialGitScope: initialGitScopeProp,
+  workspaceMutationId,
 }: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
@@ -113,10 +118,6 @@ export default function DiffPanel({
   }));
   const [codeViewRevision, setCodeViewRevision] = useState(0);
   const codeViewRef = useRef<AnnotatableCodeViewHandle>(null);
-  const lastCompletedTurnRefreshRef = useRef<{
-    readonly threadKey: string | null;
-    readonly turnId: TurnId | null;
-  } | null>(null);
 
   const routeThreadRef = useParams({
     strict: false,
@@ -290,28 +291,17 @@ export default function DiffPanel({
     return () => window.removeEventListener("focus", refreshOnFocus);
   }, [canRefreshGitDiff, refreshBranchDiffPreview]);
 
-  useEffect(() => {
-    const current = {
-      threadKey: activeThreadRefreshKey,
-      turnId: latestTurn?.turnId ?? null,
-    };
-    const previous = lastCompletedTurnRefreshRef.current;
-    if (!canRefreshGitDiff) {
-      return;
-    }
-    if (previous === null || previous.threadKey !== current.threadKey) {
-      lastCompletedTurnRefreshRef.current = current;
-      return;
-    }
-    if (previous.turnId === current.turnId) return;
-    refreshBranchDiffPreview();
-    lastCompletedTurnRefreshRef.current = current;
-  }, [activeThreadRefreshKey, canRefreshGitDiff, latestTurn?.turnId, refreshBranchDiffPreview]);
+  useWorkspaceMutationRefresh({
+    enabled: canRefreshGitDiff,
+    mutationId: workspaceMutationId,
+    refresh: refreshBranchDiffPreview,
+    resourceKey: `diff:${activeThreadRefreshKey ?? ""}`,
+  });
 
   const selectedGitSource = branchDiffPreview.data?.sources.find(
     (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
   );
-  const loadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
+  const currentLoadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
     const preview = branchDiffPreview.data;
     if (selectedTurnId !== null || !activeThread || !preview || !selectedGitSource) {
       return undefined;
@@ -332,6 +322,13 @@ export default function DiffPanel({
     selectedGitSource,
     selectedTurnId,
   ]);
+  const loadDiffFilesRef = useRef(currentLoadDiffFiles);
+  loadDiffFilesRef.current = currentLoadDiffFiles;
+  const loadDiffFiles = useCallback<FileDiffContentsLoader>(async (fileDiff) => {
+    const loader = loadDiffFilesRef.current;
+    if (!loader) throw new Error("Diff file contents are unavailable for this selection.");
+    return loader(fileDiff);
+  }, []);
   const localBranchRefs = useEnvironmentQuery(
     selectedTurnId === null &&
       selectedGitScope === "branch" &&
@@ -412,17 +409,19 @@ export default function DiffPanel({
     () =>
       renderableFiles.map((fileDiff) => ({
         fileDiff,
-        fileKey: buildFileDiffRenderKey(fileDiff),
+        fileKey: buildFileDiffIdentityKey(fileDiff),
+        fileVersion: buildFileDiffContentVersion(fileDiff),
       })),
     [renderableFiles],
   );
   const codeViewFiles = useMemo(
     () =>
-      renderableFileEntries.map(({ fileDiff, fileKey }) => {
+      renderableFileEntries.map(({ fileDiff, fileKey, fileVersion }) => {
         return {
           fileDiff,
           filePath: resolveFileDiffPath(fileDiff),
           fileKey,
+          fileVersion,
           collapsed: collapsedDiffFileKeys.has(fileKey),
         };
       }),
@@ -617,7 +616,7 @@ export default function DiffPanel({
               </ComboboxTrigger>
               <ComboboxPopup
                 align="start"
-                className="w-72 min-w-0 max-w-[calc(100vw-1rem)] overflow-hidden [&>[data-slot=combobox-popup]]:min-w-0 [&>[data-slot=combobox-popup]]:overflow-hidden"
+                className="w-72 min-w-0 max-w-[calc(100vw-1rem)] overflow-hidden"
               >
                 <div className="min-w-0 shrink-0 px-3 pt-2.5">
                   <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
@@ -960,9 +959,10 @@ export default function DiffPanel({
                     lineDiffType: "none",
                     overflow: wordWrap ? "wrap" : "scroll",
                     theme: resolveDiffThemeName(resolvedTheme),
+                    preferredHighlighter: PREFERRED_HIGHLIGHTER,
                     themeType: resolvedTheme as DiffThemeType,
                     stickyHeaders: true,
-                    ...(loadDiffFiles ? { loadDiffFiles } : {}),
+                    ...(currentLoadDiffFiles ? { loadDiffFiles } : {}),
                   }}
                 />
               </div>

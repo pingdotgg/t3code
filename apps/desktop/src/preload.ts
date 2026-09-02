@@ -11,6 +11,9 @@ import * as IpcChannels from "./ipc/channels.ts";
 
 exposeClerkBridge({ passkeys: true });
 
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Electron exposes the client platform in its sandboxed preload process.
+const clientPlatform = process.platform;
+
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
     typeof result === "object" &&
@@ -35,6 +38,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }
     return result as ReturnType<DesktopBridge["getAppBranding"]>;
   },
+  getClientPlatform: () => clientPlatform,
   getSystemLocale: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
     return typeof result === "string" ? result : null;
@@ -101,6 +105,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setWslDistro: (distro) => ipcRenderer.invoke(IpcChannels.SET_WSL_DISTRO_CHANNEL, distro),
   setWslOnly: (enabled) => ipcRenderer.invoke(IpcChannels.SET_WSL_ONLY_CHANNEL, enabled),
   pickFolder: (options) => ipcRenderer.invoke(IpcChannels.PICK_FOLDER_CHANNEL, options),
+  pickProjectFavicon: (initialPath) =>
+    ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
   setTheme: (theme) => ipcRenderer.invoke(IpcChannels.SET_THEME_CHANNEL, theme),
   showContextMenu: (items, position) =>
@@ -122,9 +128,19 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     };
   },
   onQuitShortcut: (listener) => {
-    const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
-      if (state !== "down" && state !== "up") return;
-      listener(state);
+    const wrappedListener = (_event: Electron.IpcRendererEvent, hint: unknown) => {
+      if (typeof hint !== "object" || hint === null || !("state" in hint)) return;
+      if (hint.state === "up") {
+        listener({ state: "up" });
+        return;
+      }
+      if (
+        hint.state === "down" &&
+        "mode" in hint &&
+        (hint.mode === "hold" || hint.mode === "double-click")
+      ) {
+        listener({ state: "down", mode: hint.mode });
+      }
     };
 
     ipcRenderer.on(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
@@ -161,6 +177,25 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return () => {
       ipcRenderer.removeListener(IpcChannels.UPDATE_STATE_CHANNEL, wrappedListener);
     };
+  },
+  appActivation: {
+    setReady: (ready) =>
+      ipcRenderer.invoke(IpcChannels.DESKTOP_APP_ACTIVATION_READY_CHANNEL, ready),
+    complete: (response) =>
+      ipcRenderer.invoke(IpcChannels.DESKTOP_APP_ACTIVATION_COMPLETE_CHANNEL, response),
+    onRequest: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, request: unknown) => {
+        if (typeof request !== "object" || request === null) return;
+        listener(request as Parameters<typeof listener>[0]);
+      };
+      ipcRenderer.on(IpcChannels.DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, wrappedListener);
+      return () => {
+        ipcRenderer.removeListener(
+          IpcChannels.DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL,
+          wrappedListener,
+        );
+      };
+    },
   },
   preview: {
     createTab: (tabId, defaults) =>

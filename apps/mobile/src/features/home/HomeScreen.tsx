@@ -12,7 +12,6 @@ import {
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
-import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
 import type {
   EnvironmentId,
   SidebarProjectGroupingMode,
@@ -20,11 +19,11 @@ import type {
 } from "@t3tools/contracts";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
+import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Platform, Pressable, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
@@ -56,6 +55,7 @@ import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
 } from "../threads/threadListV2";
+import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeListLayout,
@@ -208,14 +208,10 @@ export function HomeScreen(props: HomeScreenProps) {
   >(() => new Map());
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
-  const autoSettleOnMerge =
-    !AsyncResult.isSuccess(preferencesResult) ||
-    preferencesResult.value.autoSettleOnMerge !== false;
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
   const insets = useSafeAreaInsets();
-  const accentColor = useThemeColor("--color-icon-muted");
   const iosBottomToolbarClearance =
     Platform.OS === "ios" && !NATIVE_LIQUID_GLASS_SUPPORTED
       ? PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT
@@ -487,32 +483,6 @@ export function HomeScreen(props: HomeScreenProps) {
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells — no snapshot merging or
   // optimistic holds.
-  // PR states stream in per-row. The next partition applies the configured
-  // merge rule and the always-on close rule, matching web.
-  const [changeRequestByKey, setChangeRequestByKey] = useState<
-    ReadonlyMap<string, ChangeRequestSettleSource>
-  >(() => new Map());
-  const handleChangeRequestState = useCallback(
-    (threadKey: string, changeRequest: ChangeRequestSettleSource | null) => {
-      setChangeRequestByKey((current) => {
-        const existing = current.get(threadKey) ?? null;
-        if (
-          (existing?.state ?? null) === (changeRequest?.state ?? null) &&
-          (existing?.updatedAt ?? null) === (changeRequest?.updatedAt ?? null)
-        ) {
-          return current;
-        }
-        const next = new Map(current);
-        if (changeRequest === null) {
-          next.delete(threadKey);
-        } else {
-          next.set(threadKey, changeRequest);
-        }
-        return next;
-      });
-    },
-    [],
-  );
   const handleSettleThread = useCallback(
     (thread: EnvironmentThreadShell) => {
       void props.onSettleThread(thread);
@@ -572,27 +542,28 @@ export function HomeScreen(props: HomeScreenProps) {
     () => setSettledVisibleCount((count) => count + THREAD_LIST_V2_SETTLED_PAGE_COUNT),
     [],
   );
-  const [snoozedShelfExpanded, setSnoozedShelfExpanded] = useState(false);
-  const toggleSnoozedShelf = useCallback(() => setSnoozedShelfExpanded((value) => !value), []);
-  const [settledShelfExpanded, setSettledShelfExpanded] = useState(true);
-  const toggleSettledShelf = useCallback(() => setSettledShelfExpanded((value) => !value), []);
-  // now is quantized to the minute and ticks so the inactivity auto-settle
-  // boundary is actually crossed while the app stays open (mirrors web);
-  // without a clock dependency the partition memoizes a frozen "now".
+  const {
+    loaded: shelfPreferencesLoaded,
+    settledShelfExpanded,
+    snoozedShelfExpanded,
+    toggleSettledShelf,
+    toggleSnoozedShelf,
+  } = useThreadListV2ShelfPreferences();
+  // The queued-start and snooze helpers need a clock while the list stays open.
   const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
   // Snooze wake times are second-precise; a counter bumped exactly at the
   // next wake boundary re-runs the partition with a fresh clock so a woken
   // thread reappears immediately instead of on the next minute tick.
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
-  useEffect(() => {
-    if (!threadListV2Enabled) return;
-    // Refresh immediately on enable: the mount-time value can be hours old
-    // by the time the beta is switched on, which would misclassify the
-    // inactivity auto-settle boundary until the first tick.
-    setNowMinute(new Date().toISOString().slice(0, 16));
-    const id = setInterval(() => setNowMinute(new Date().toISOString().slice(0, 16)), 60_000);
-    return () => clearInterval(id);
-  }, [threadListV2Enabled]);
+  useFocusEffect(
+    useCallback(() => {
+      if (!threadListV2Enabled) return;
+      // Refresh immediately on enable or focus because the previous value can be hours old.
+      setNowMinute(new Date().toISOString().slice(0, 16));
+      const id = setInterval(() => setNowMinute(new Date().toISOString().slice(0, 16)), 60_000);
+      return () => clearInterval(id);
+    }, [threadListV2Enabled]),
+  );
   // Threads on servers without the settlement capability never classify as
   // settled (the user could neither un-settle nor pin them).
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
@@ -674,20 +645,15 @@ export function HomeScreen(props: HomeScreenProps) {
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
       matchedThreadKeys,
-      changeRequestByKey,
-      autoSettleOnMerge,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
-      now: `${nowMinute}:00.000Z`,
-      snoozeNow: new Date().toISOString(),
+      now: new Date().toISOString(),
       snoozedShelfExpanded,
       settledShelfExpanded,
       selectedThreadKey: null,
     });
   }, [
-    changeRequestByKey,
-    autoSettleOnMerge,
     nowMinute,
     snoozeWakeTick,
     snoozedShelfExpanded,
@@ -785,6 +751,7 @@ export function HomeScreen(props: HomeScreenProps) {
         return (
           <ThreadListV2SnoozedShelfHeader
             count={item.count}
+            disabled={!shelfPreferencesLoaded}
             expanded={item.expanded}
             onToggle={toggleSnoozedShelf}
           />
@@ -794,6 +761,7 @@ export function HomeScreen(props: HomeScreenProps) {
         return (
           <ThreadListV2SettledShelfHeader
             count={item.count}
+            disabled={!shelfPreferencesLoaded}
             expanded={item.expanded}
             onToggle={toggleSettledShelf}
           />
@@ -857,7 +825,6 @@ export function HomeScreen(props: HomeScreenProps) {
           onPinThread={handlePinThread}
           onUnpinThread={handleUnpinThread}
           onMovePinnedThread={handleMovePinnedThread}
-          onChangeRequestState={handleChangeRequestState}
           projectCwd={
             projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null
           }
@@ -867,7 +834,6 @@ export function HomeScreen(props: HomeScreenProps) {
       );
     },
     [
-      handleChangeRequestState,
       handleDeleteThread,
       arrangedPinnedKeys,
       handleMovePinnedThread,
@@ -890,6 +856,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onSelectThread,
       props.savedConnectionsById,
       serverConfigs,
+      shelfPreferencesLoaded,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       threadListV2Items,
@@ -1080,7 +1047,7 @@ export function HomeScreen(props: HomeScreenProps) {
           />
           {emptyState.loading ? (
             <View className="mt-4 items-center">
-              <ActivityIndicator color={accentColor} />
+              <ActivityIndicator colorClassName={"accent-icon-muted"} />
             </View>
           ) : null}
         </View>

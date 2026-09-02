@@ -3,6 +3,22 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
 
 describe("resolveMarkdownLinkPresentation", () => {
+  it("treats protocol-relative media as an external URL, not a filesystem path", () => {
+    expect(resolveMarkdownLinkPresentation("//cdn.example.com/clip.mp4?sig=a%2fb#t=2")).toEqual({
+      kind: "external",
+      href: "https://cdn.example.com/clip.mp4?sig=a%2fb#t=2",
+      host: "cdn.example.com",
+    });
+  });
+
+  it("separates encoded filename characters from a video playback fragment", () => {
+    expect(resolveMarkdownLinkPresentation("/tmp/clip%23one.mp4#t=2")).toMatchObject({
+      path: "/tmp/clip#one.mp4",
+      label: "clip#one.mp4",
+      icon: "video",
+    });
+  });
+
   it("extracts external link hosts", () => {
     expect(resolveMarkdownLinkPresentation("https://example.com/docs?q=1")).toEqual({
       kind: "external",
@@ -11,15 +27,16 @@ describe("resolveMarkdownLinkPresentation", () => {
     });
   });
 
-  it("renders file URLs as basename pills with positions", () => {
-    expect(
-      resolveMarkdownLinkPresentation("file:///Users/julius/project/src/main.ts#L42C7"),
-    ).toEqual({
+  it.each([
+    ["file:///Users/julius/project/src/main.ts#L42C7", "/Users/julius/project/src/main.ts"],
+    ["file://server/share/src/main.ts#L42C7", "\\\\server\\share\\src\\main.ts"],
+  ])("preserves the file URL path and position for %s", (href, path) => {
+    expect(resolveMarkdownLinkPresentation(href)).toEqual({
       kind: "file",
-      href: "file:///Users/julius/project/src/main.ts#L42C7",
+      href,
       icon: "typescript",
       label: "main.ts:42:7",
-      path: "/Users/julius/project/src/main.ts",
+      path,
       line: 42,
       column: 7,
     });
@@ -47,6 +64,24 @@ describe("resolveMarkdownLinkPresentation", () => {
       icon: "package",
       label: "package.json",
       path: "package.json",
+    });
+  });
+
+  it.each(["md", "html", "xml"])("recognizes a bare spaced .%s filename", (extension) => {
+    expect(
+      resolveMarkdownLinkPresentation(`Updated%20cutover%20checklist.${extension}`),
+    ).toMatchObject({
+      kind: "file",
+      path: `Updated cutover checklist.${extension}`,
+      label: `Updated cutover checklist.${extension}`,
+    });
+  });
+
+  it("recognizes spaced relative paths", () => {
+    expect(resolveMarkdownLinkPresentation("docs/My%20Folder/checklist.xml")).toMatchObject({
+      kind: "file",
+      path: "docs/My Folder/checklist.xml",
+      label: "checklist.xml",
     });
   });
 

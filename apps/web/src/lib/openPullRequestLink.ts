@@ -1,4 +1,10 @@
-import type { EnvironmentId, LocalApi, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  LocalApi,
+  RepositoryIdentity,
+  ScopedThreadRef,
+  ThreadLinkedPullRequest,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { type MouseEvent, useCallback } from "react";
@@ -45,6 +51,42 @@ export async function openPullRequestLink(
     await shell.openExternal(targetUrl);
   } catch (cause) {
     throw PullRequestLinkOpenError.fromCause(targetUrl, cause);
+  }
+}
+
+/** Builds a GitHub URL that remains available when the pull request API cannot be read. */
+export function gitHubPullRequestBrowserUrl(
+  identity: RepositoryIdentity | null | undefined,
+  repository: string,
+  number: number,
+): string | null {
+  if (identity?.provider !== "github" || !Number.isSafeInteger(number) || number < 1) return null;
+  const repositoryPath = repository.split("/");
+  if (
+    repositoryPath.length !== 2 ||
+    repositoryPath.some((segment) => segment.length === 0 || segment === "." || segment === "..")
+  ) {
+    return null;
+  }
+
+  let origin: string | null = null;
+  try {
+    const remoteUrl = new URL(identity.locator.remoteUrl.trim());
+    if (remoteUrl.protocol === "http:" || remoteUrl.protocol === "https:") {
+      origin = remoteUrl.origin;
+    }
+  } catch {
+    // SCP-style remotes are read from their normalized identity below.
+  }
+  const hostname = identity.canonicalKey.split("/")[0];
+  if (origin === null && !hostname) return null;
+
+  try {
+    const url = new URL(origin ?? `https://${hostname}`);
+    url.pathname = `/${repositoryPath.join("/")}/pull/${number}`;
+    return url.toString();
+  } catch {
+    return null;
   }
 }
 
@@ -116,6 +158,22 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     return claim(host, match);
   }
   return null;
+}
+
+/** Match a stored PR without requiring its project to remain available. */
+export function matchesLinkedPullRequestUrl(
+  linkedPullRequest: ThreadLinkedPullRequest,
+  targetUrl: string,
+): boolean {
+  const linked = parseChangeRequestUrl(linkedPullRequest.url);
+  const target = parseChangeRequestUrl(targetUrl);
+  return (
+    linked !== null &&
+    target !== null &&
+    linked.host === target.host &&
+    linked.repository === target.repository &&
+    linked.number === target.number
+  );
 }
 
 /** The repository root behind a recognised change-request URL, without PR-specific state. */

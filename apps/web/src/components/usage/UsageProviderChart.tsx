@@ -19,6 +19,7 @@ const PLOT_TOP = 8;
 export type UsageChartMetric = "tokens" | "cost";
 
 interface UsageProviderChartProps {
+  readonly providers: readonly UsageProviderKind[];
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
   readonly hours: readonly string[];
@@ -187,6 +188,7 @@ export function buildDayColumns(
 }
 
 export function UsageProviderChart({
+  providers,
   days,
   daily,
   hours,
@@ -209,7 +211,7 @@ export function UsageProviderChart({
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverPositionRef = useRef<{ x: number; y: number } | null>(null);
 
-  const { paths, series, stepX, ticks, toY } = useMemo(() => {
+  const { paths, ticks, stepX, toY, series } = useMemo(() => {
     if (periods.length === 0) {
       return {
         paths: [],
@@ -235,7 +237,8 @@ export function UsageProviderChart({
     const toY = (value: number) =>
       max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
 
-    const built = PROVIDER_ORDER.map((provider, providerIndex) => {
+    const built = providers.map((provider) => {
+      const providerIndex = PROVIDER_ORDER.indexOf(provider);
       const line = curvePath(
         smoothCurve(
           columns.map((column, periodIndex) => ({
@@ -260,7 +263,7 @@ export function UsageProviderChart({
       ticks: tickValues,
       toY,
     };
-  }, [byPeriod, metric, periods]);
+  }, [byPeriod, metric, periods, providers]);
 
   const format = metric === "tokens" ? formatTokens : formatUsd;
 
@@ -422,7 +425,7 @@ export function UsageProviderChart({
               }}
             >
               <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
-              {PROVIDER_ORDER.map((provider) => {
+              {providers.map((provider) => {
                 const { label, mark: Mark } = PROVIDER_PRESENTATION[provider];
                 return (
                   <div key={provider} className="flex items-center justify-between gap-3">

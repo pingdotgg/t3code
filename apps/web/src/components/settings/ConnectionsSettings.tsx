@@ -43,6 +43,7 @@ import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls
 import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
+  isWslSettingsRowVisible,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
 import {
@@ -103,6 +104,8 @@ import { useUiStateStore } from "~/uiStateStore";
 import {
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
+  supportsDesktopAppUpdate,
+  supportsServerUpdateThreadContinuation,
 } from "~/versionSkew";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
@@ -1484,6 +1487,8 @@ function SavedBackendListRow({
               environmentId={environmentId}
               serverLabel={`${environment.label} server`}
               selfUpdate={resolveServerSelfUpdateCapability(environment.serverConfig)}
+              desktopAppUpdate={supportsDesktopAppUpdate(environment.serverConfig)}
+              threadContinuation={supportsServerUpdateThreadContinuation(environment.serverConfig)}
               targetVersion={versionMismatch.clientVersion}
               label={serverUpdateState.status === "failed" ? "Retry" : "Update"}
             />
@@ -1669,7 +1674,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     <>
       {window.desktopBridge ? (
         <SettingsRow
-          title="T3 Connect"
+          title={searchableSetting("t3-connect").title}
           description={
             managedTunnelActive
               ? "This environment is available to your other devices through T3 Connect."
@@ -1687,7 +1692,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
         />
       ) : null}
       <SettingsRow
-        title="Publish agent activity"
+        title={searchableSetting("publish-agent-activity").title}
         description="Send activity from this environment to your mobile clients for push notifications and Live Activities. Works without a T3 Connect tunnel."
         control={
           <CloudLinkSwitch
@@ -2766,10 +2771,13 @@ export function ConnectionsSettings() {
       // retry so the row doesn't flicker away, and the button reflects the
       // loading state. With no error we simply haven't loaded yet (or WSL
       // management isn't available), so render nothing.
-      if (desktopWslError && canManageLocalBackend) {
+      if (
+        isWslSettingsRowVisible({ state: null, error: desktopWslError }) &&
+        canManageLocalBackend
+      ) {
         return (
           <SettingsRow
-            title="WSL backend"
+            {...searchableSetting("wsl-backend")}
             description="Couldn't load the WSL backend state."
             status={<span className="block text-destructive">{desktopWslError}</span>}
             control={
@@ -2794,11 +2802,13 @@ export function ConnectionsSettings() {
     // be stranded on a WSL preference they can't clear, so render a recovery
     // row that switches back to Windows. When WSL is unavailable AND unused,
     // there's nothing to recover — keep the section hidden as before.
+    if (!isWslSettingsRowVisible({ state: desktopWslState, error: desktopWslError })) {
+      return null;
+    }
     if (!desktopWslState.available) {
-      if (!desktopWslState.enabled && !desktopWslState.wslOnly) return null;
       return (
         <SettingsRow
-          title="WSL backend"
+          {...searchableSetting("wsl-backend")}
           description="WSL is no longer available, so the Windows backend is running instead. Switch off the WSL backend to clear this preference."
           status={
             desktopWslError ? (
@@ -2835,7 +2845,7 @@ export function ConnectionsSettings() {
     return (
       <>
         <SettingsRow
-          title="WSL backend"
+          {...searchableSetting("wsl-backend")}
           description="Run a second backend inside a WSL distro alongside the Windows one. Pick a distro to start it; pick Off to stop it. Projects opened against the WSL backend live on the Linux side; Windows projects stay where they are."
           status={
             desktopWslError ? (
@@ -2902,7 +2912,7 @@ export function ConnectionsSettings() {
 
   const renderTailscaleRow = () => (
     <SettingsRow
-      title="Tailscale HTTPS"
+      title={searchableSetting("tailscale-https").title}
       description={
         tailscaleHttpsEndpoint
           ? tailscaleHttpsEndpoint.status === "available"
@@ -2952,7 +2962,7 @@ export function ConnectionsSettings() {
   );
   const renderNetworkAccessRow = () => (
     <SettingsRow
-      title="Network access"
+      title={searchableSetting("network-access").title}
       description={
         isLocalBackendNetworkAccessible ? (
           <NetworkAccessDescription
@@ -2984,7 +2994,7 @@ export function ConnectionsSettings() {
   );
   const renderDisabledNetworkAccessRow = () => (
     <SettingsRow
-      title="Network access"
+      title={searchableSetting("network-access").title}
       description={
         currentAuthPolicy === "remote-reachable"
           ? "This backend is already configured for remote access. Network exposure changes must be made where the server is launched."
@@ -3016,7 +3026,7 @@ export function ConnectionsSettings() {
     <SettingsPageContainer>
       {canManageLocalBackend ? (
         <>
-          <SettingsSection title="This environment">
+          <SettingsSection {...searchableSetting("connections-environment")}>
             {primaryVersionMismatch || primaryServerUpdateState.status !== "idle" ? (
               <SettingsRow
                 title={
@@ -3051,8 +3061,14 @@ export function ConnectionsSettings() {
                   primaryServerUpdateState.status !== "running" ? (
                     <ServerUpdateAction
                       environmentId={primaryEnvironmentId}
-                      serverLabel={primaryEnvironment?.label ?? "this server"}
+                      serverLabel={
+                        primaryEnvironment ? `${primaryEnvironment.label} server` : "server"
+                      }
                       selfUpdate={resolveServerSelfUpdateCapability(primaryServerConfig)}
+                      desktopAppUpdate={supportsDesktopAppUpdate(primaryServerConfig)}
+                      threadContinuation={supportsServerUpdateThreadContinuation(
+                        primaryServerConfig,
+                      )}
                       targetVersion={primaryVersionMismatch.clientVersion}
                       label={primaryServerUpdateState.status === "failed" ? "Retry" : "Update"}
                     />
@@ -3371,7 +3387,7 @@ export function ConnectionsSettings() {
           </Dialog>
         </>
       ) : (
-        <SettingsSection title="This environment">
+        <SettingsSection {...searchableSetting("connections-environment")}>
           <SettingsRow
             title="Administrative access"
             description="Pairing links and client-session management require the access:write scope for this backend."

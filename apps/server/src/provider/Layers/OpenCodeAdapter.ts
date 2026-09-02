@@ -15,13 +15,17 @@ import {
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -175,6 +179,79 @@ type OpenCodeSubscribedEvent =
     ? TEvent
     : never;
 
+type OpenCodeSessionStatusEvent = Extract<
+  OpenCodeSubscribedEvent,
+  { readonly type: "session.status" }
+>;
+
+const OpenCodeSessionStatusMap = Schema.Record(
+  Schema.String,
+  Schema.Struct({ type: Schema.String }),
+);
+const decodeOpenCodeSessionStatusMap = Schema.decodeUnknownOption(OpenCodeSessionStatusMap);
+
+interface OpenCodeCancellation {
+  readonly turnId: TurnId | undefined;
+  readonly acknowledgment: Deferred.Deferred<void>;
+  readonly completion: Deferred.Deferred<void, ProviderAdapterRequestError>;
+  acknowledged?: boolean;
+  turnSettled?: boolean;
+  deferredIdleEvent?: OpenCodeSessionStatusEvent;
+}
+
+interface OpenCodeIdleReconciliation {
+  readonly turnId: TurnId;
+  readonly promptGeneration: number;
+  raw: unknown;
+  warned: boolean;
+  dirty: boolean;
+  fiber?: Fiber.Fiber<void, never>;
+}
+
+interface OpenCodePromptAdmission {
+  readonly generation: number;
+  readonly turnId: TurnId;
+  readonly messageId: string;
+  readonly priorAwaitingBusy: boolean;
+  readonly priorIdle: { readonly turnId: TurnId; readonly raw: unknown } | undefined;
+  idleDuringAdmission: { readonly turnId: TurnId; readonly raw: unknown } | undefined;
+  idleObservedAfterMessage: boolean;
+  messageObserved: boolean;
+  busyObserved: boolean;
+  idleStatusConfirmations: number;
+  accepted: boolean;
+  cancelled: boolean;
+  readonly acceptance: Deferred.Deferred<void>;
+  readonly submissionSettled: Deferred.Deferred<void>;
+  promptFiber?: Fiber.Fiber<void, ProviderAdapterRequestError>;
+  recoveryFiber?: Fiber.Fiber<void, never>;
+  recoveryRaw: unknown;
+}
+
+type OpenCodeTerminalRequestEvent = Extract<
+  OpenCodeSubscribedEvent,
+  {
+    readonly type: "permission.replied" | "question.replied" | "question.rejected";
+  }
+>;
+
+type OpenCodeAskedRequestEvent = Extract<
+  OpenCodeSubscribedEvent,
+  { readonly type: "permission.asked" | "question.asked" }
+>;
+
+type OpenCodeRoutedRequestEvent = OpenCodeAskedRequestEvent | OpenCodeTerminalRequestEvent;
+
+interface OpenCodeRequestRelationRetry {
+  warned: boolean;
+  fiber?: Fiber.Fiber<void, never>;
+}
+
+interface OpenCodePendingRequestRecovery {
+  warned: boolean;
+  rerun: boolean;
+}
+
 function trimText(value: string | undefined | null): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
@@ -214,6 +291,28 @@ function openCodeEventSessionTitle(event: OpenCodeSubscribedEvent): string | und
   return title;
 }
 
+function isOpenCodeAbortError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "MessageAbortedError"
+  );
+}
+
+function isOpenCodeChildRequestEvent(event: OpenCodeSubscribedEvent): boolean {
+  switch (event.type) {
+    case "permission.asked":
+    case "permission.replied":
+    case "question.asked":
+    case "question.replied":
+    case "question.rejected":
+      return true;
+    default:
+      return false;
+  }
+}
+
 const OPENCODE_DEFAULT_TITLE_PATTERN =
   /^(New session - |Child session - )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
@@ -227,6 +326,10 @@ interface OpenCodeSessionContext {
   readonly server: OpenCodeServerConnection;
   readonly directory: string;
   readonly openCodeSessionId: string;
+  readonly relatedSessionIds: Set<string>;
+  readonly resolvedRequestIds: Set<string>;
+  readonly emittedTerminalRequestIds: Set<string>;
+  readonly requestRelationRetries: Map<string, OpenCodeRequestRelationRetry>;
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
@@ -237,6 +340,16 @@ interface OpenCodeSessionContext {
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
+  cancellation: OpenCodeCancellation | undefined;
+  interruptedTurnId: TurnId | undefined;
+  reconcileIdleStatus: boolean;
+  awaitingBusyAfterInterruption: boolean;
+  pendingIdleReconciliation: OpenCodeIdleReconciliation | undefined;
+  pendingRequestRecovery: OpenCodePendingRequestRecovery | undefined;
+  promptGeneration: number;
+  promptAdmission: OpenCodePromptAdmission | undefined;
+  readonly promptSemaphore: Semaphore.Semaphore;
+  readonly firstConnection: Deferred.Deferred<void, ProviderAdapterRequestError>;
   /**
    * One-shot guard flipped by `stopOpenCodeContext` / `emitUnexpectedExit`.
    * The session lifecycle is owned by `sessionScope`; this Ref exists only
@@ -454,9 +567,13 @@ export function mergeOpenCodeAssistantText(
   readonly deltaToEmit: string;
 } {
   const latestText = resolveLatestAssistantText(previousText, nextText);
+  const previous = previousText ?? "";
+  const prefixLength = latestText.startsWith(previous)
+    ? previous.length
+    : commonPrefixLength(previous, latestText);
   return {
     latestText,
-    deltaToEmit: latestText.slice(commonPrefixLength(previousText ?? "", latestText)),
+    deltaToEmit: latestText.slice(prefixLength),
   };
 }
 
@@ -537,23 +654,176 @@ function updateProviderSession(
   },
 ): Effect.Effect<ProviderSession> {
   return Effect.gen(function* () {
-    const updatedAt = yield* nowIso;
-    const nextSession = {
-      ...context.session,
-      ...patch,
-      updatedAt,
-    } as ProviderSession & Record<string, unknown>;
-    const mutableSession = nextSession as Record<string, unknown>;
-    if (options?.clearActiveTurnId) {
-      delete mutableSession.activeTurnId;
-    }
-    if (options?.clearLastError) {
-      delete mutableSession.lastError;
-    }
-    context.session = nextSession;
-    return nextSession;
+    return applyProviderSessionUpdate(context, patch, options, yield* nowIso);
   });
 }
+
+function applyProviderSessionUpdate(
+  context: OpenCodeSessionContext,
+  patch: Partial<ProviderSession>,
+  options:
+    | {
+        readonly clearActiveTurnId?: boolean;
+        readonly clearLastError?: boolean;
+      }
+    | undefined,
+  updatedAt: string,
+): ProviderSession {
+  const nextSession = {
+    ...context.session,
+    ...patch,
+    updatedAt,
+  } as ProviderSession & Record<string, unknown>;
+  const mutableSession = nextSession as Record<string, unknown>;
+  if (options?.clearActiveTurnId) {
+    delete mutableSession.activeTurnId;
+  }
+  if (options?.clearLastError) {
+    delete mutableSession.lastError;
+  }
+  context.session = nextSession;
+  return nextSession;
+}
+
+const failPendingOpenCodeCancellation = Effect.fn("failPendingOpenCodeCancellation")(function* (
+  context: OpenCodeSessionContext,
+  detail: string,
+) {
+  const cancellation = context.cancellation;
+  if (!cancellation) {
+    return;
+  }
+  context.cancellation = undefined;
+  yield* Deferred.fail(
+    cancellation.completion,
+    new ProviderAdapterRequestError({
+      provider: PROVIDER,
+      method: "session.abort",
+      detail,
+    }),
+  ).pipe(Effect.ignore);
+});
+
+const abortOpenCodeDescendants = Effect.fn("abortOpenCodeDescendants")(function* (
+  context: OpenCodeSessionContext,
+) {
+  const visited = new Set([context.openCodeSessionId]);
+  const requestSemaphore = Semaphore.makeUnsafe(8);
+
+  const visit = (
+    sessionId: string,
+    abortSession: boolean,
+  ): Effect.Effect<OpenCodeRuntimeError | undefined> =>
+    Effect.gen(function* () {
+      let firstFailure: OpenCodeRuntimeError | undefined;
+      if (abortSession) {
+        const abortResult = yield* requestSemaphore
+          .withPermit(
+            runOpenCodeSdk("session.abort", (signal) =>
+              context.client.session.abort({ sessionID: sessionId }, { signal }),
+            ),
+          )
+          .pipe(
+            Effect.catchIf(
+              (cause) => isOpenCodeNotFound(cause),
+              () => Effect.void,
+            ),
+            Effect.result,
+          );
+        if (abortResult._tag === "Failure") {
+          firstFailure = abortResult.failure;
+        }
+      }
+
+      const childrenResult = yield* requestSemaphore
+        .withPermit(
+          runOpenCodeSdk("session.children", (signal) =>
+            context.client.session.children({ sessionID: sessionId }, { signal }),
+          ),
+        )
+        .pipe(
+          Effect.catchIf(
+            (cause) => isOpenCodeNotFound(cause),
+            () => Effect.void,
+          ),
+          Effect.result,
+        );
+      if (childrenResult._tag === "Failure") {
+        return firstFailure ?? childrenResult.failure;
+      }
+
+      const children = childrenResult.success?.data ?? [];
+      const newChildren = children.filter((child) => {
+        if (visited.has(child.id)) {
+          return false;
+        }
+        visited.add(child.id);
+        return true;
+      });
+      const childFailures = yield* Effect.forEach(newChildren, (child) => visit(child.id, true), {
+        concurrency: 8,
+      });
+      firstFailure ??= childFailures.find((failure) => failure !== undefined);
+      return firstFailure;
+    });
+
+  const firstFailure = yield* visit(context.openCodeSessionId, false);
+  if (firstFailure) {
+    return yield* firstFailure;
+  }
+});
+
+const abortOpenCodeSessionForTeardown = Effect.fn("abortOpenCodeSessionForTeardown")(function* (
+  context: OpenCodeSessionContext,
+) {
+  // Stop the parent before the snapshot so it cannot add another child after
+  // the adapter reads the tree.
+  yield* runOpenCodeSdk("session.abort", (signal) =>
+    context.client.session.abort({ sessionID: context.openCodeSessionId }, { signal }),
+  ).pipe(Effect.timeout("1 second"), Effect.ignore({ log: true }));
+  yield* abortOpenCodeDescendants(context).pipe(
+    Effect.timeout("1 second"),
+    Effect.ignore({ log: true }),
+  );
+});
+
+const cancelPendingOpenCodePrompt = Effect.fn("cancelPendingOpenCodePrompt")(function* (
+  context: OpenCodeSessionContext,
+) {
+  const admission = context.promptAdmission;
+  if (!admission) {
+    return;
+  }
+  admission.cancelled = true;
+  if (admission.promptFiber) {
+    yield* Fiber.interrupt(admission.promptFiber);
+  }
+  yield* Deferred.await(admission.submissionSettled);
+});
+
+const closeStartingOpenCodeContext = Effect.fn("closeStartingOpenCodeContext")(function* (
+  context: OpenCodeSessionContext,
+  abortRemote: boolean,
+) {
+  if (yield* Ref.getAndSet(context.stopped, true)) {
+    return;
+  }
+  yield* Deferred.fail(
+    context.firstConnection,
+    new ProviderAdapterRequestError({
+      provider: PROVIDER,
+      method: "event.subscribe",
+      detail: "OpenCode session startup ended before the event stream connected.",
+    }),
+  ).pipe(Effect.ignore);
+  yield* cancelPendingOpenCodePrompt(context);
+  yield* failPendingOpenCodeCancellation(context, "OpenCode session startup was cancelled.");
+  context.promptAdmission = undefined;
+  if (abortRemote) {
+    yield* abortOpenCodeSessionForTeardown(context);
+  }
+  yield* Scope.close(context.sessionScope, Exit.void).pipe(Effect.ignore);
+});
 
 const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   context: OpenCodeSessionContext,
@@ -562,13 +832,26 @@ const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   if (yield* Ref.getAndSet(context.stopped, true)) {
     return false;
   }
+  yield* Deferred.fail(
+    context.firstConnection,
+    new ProviderAdapterRequestError({
+      provider: PROVIDER,
+      method: "event.subscribe",
+      detail: "OpenCode session stopped before the event stream connected.",
+    }),
+  ).pipe(Effect.ignore);
+  yield* cancelPendingOpenCodePrompt(context);
+  const cancellation = context.cancellation;
+  context.cancellation = undefined;
+  if (cancellation) {
+    yield* Deferred.succeed(cancellation.completion, undefined).pipe(Effect.ignore);
+  }
+  context.promptAdmission = undefined;
 
   // Best-effort remote abort. The scope close below tears down the local
   // handles (event-pump fiber, server-exit fiber, event-subscribe fetch),
   // but we still want to tell OpenCode that this session is done.
-  yield* runOpenCodeSdk("session.abort", () =>
-    context.client.session.abort({ sessionID: context.openCodeSessionId }),
-  ).pipe(Effect.ignore({ log: true }));
+  yield* abortOpenCodeSessionForTeardown(context);
 
   // Closing the session scope interrupts every fiber forked into it and
   // runs each finalizer we registered — the `AbortController.abort()` call,
@@ -603,6 +886,24 @@ export function makeOpenCodeAdapter(
       options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
     const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
     const sessions = new Map<ThreadId, OpenCodeSessionContext>();
+    const deleteContextIfCurrent = (context: OpenCodeSessionContext) => {
+      if (sessions.get(context.session.threadId) === context) {
+        sessions.delete(context.session.threadId);
+      }
+    };
+    const awaitOpenCodeContextReady = Effect.fn("awaitOpenCodeContextReady")(function* (
+      context: OpenCodeSessionContext,
+    ) {
+      yield* Deferred.await(context.firstConnection);
+      const current = yield* ensureSessionContext(sessions, context.session.threadId);
+      if (current !== context) {
+        return yield* new ProviderAdapterSessionClosedError({
+          provider: PROVIDER,
+          threadId: context.session.threadId,
+        });
+      }
+      return current;
+    });
     const randomUUIDv4 = crypto.randomUUIDv4.pipe(
       Effect.mapError(
         (cause) =>
@@ -614,6 +915,37 @@ export function makeOpenCodeAdapter(
           }),
       ),
     );
+    let messageIdEpochMillis = -1;
+    let messageIdCounter = 0;
+    // T3 supplies the message ID to match prompt admission events. Keep OpenCode's sortable native shape so equal-time messages retain their upstream order.
+    const makeOpenCodeMessageId = Effect.fn("makeOpenCodeMessageId")(function* () {
+      const epochMillis = DateTime.toEpochMillis(yield* DateTime.now);
+      if (epochMillis !== messageIdEpochMillis) {
+        messageIdEpochMillis = epochMillis;
+        messageIdCounter = 0;
+      }
+      messageIdCounter += 1;
+      const encodedTime = BigInt.asUintN(
+        48,
+        BigInt(epochMillis) * 0x1000n + BigInt(messageIdCounter),
+      )
+        .toString(16)
+        .padStart(12, "0");
+      const randomBytes = yield* crypto.randomBytes(14).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "crypto/randomBytes",
+              detail: "Failed to generate an OpenCode message identifier.",
+              cause,
+            }),
+        ),
+      );
+      const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+      const random = Array.from(randomBytes, (byte) => alphabet[byte % alphabet.length]).join("");
+      return `msg_${encodedTime}${random}`;
+    });
     const buildEventBase = (input: EventBaseInput) =>
       Effect.all({
         eventId: randomUUIDv4.pipe(Effect.map(EventId.make)),
@@ -683,6 +1015,424 @@ export function makeOpenCodeAdapter(
       },
     ) => writeNativeEvent(threadId, event).pipe(Effect.catchCause(() => Effect.void));
 
+    const cancelIdleReconciliation = Effect.fn("cancelIdleReconciliation")(function* (
+      context: OpenCodeSessionContext,
+    ) {
+      const pending = context.pendingIdleReconciliation;
+      context.pendingIdleReconciliation = undefined;
+      if (pending?.fiber) {
+        yield* Fiber.interrupt(pending.fiber);
+      }
+    });
+
+    const completeOpenCodeTurn = Effect.fn("completeOpenCodeTurn")(function* (
+      context: OpenCodeSessionContext,
+      turnId: TurnId,
+      promptGeneration: number,
+      raw: unknown,
+    ) {
+      const updatedAt = yield* nowIso;
+      const stopped = yield* Ref.get(context.stopped);
+      if (
+        stopped ||
+        context.activeTurnId !== turnId ||
+        context.promptGeneration !== promptGeneration ||
+        context.cancellation?.turnId === turnId
+      ) {
+        return;
+      }
+      const pendingIdleReconciliation = context.pendingIdleReconciliation;
+      if (
+        pendingIdleReconciliation?.turnId === turnId &&
+        pendingIdleReconciliation.promptGeneration === promptGeneration
+      ) {
+        context.pendingIdleReconciliation = undefined;
+      }
+      context.activeTurnId = undefined;
+      context.activeAgent = undefined;
+      context.activeVariant = undefined;
+      context.interruptedTurnId = undefined;
+      context.awaitingBusyAfterInterruption = false;
+      context.reconcileIdleStatus = false;
+      applyProviderSessionUpdate(
+        context,
+        { status: "ready" },
+        { clearActiveTurnId: true },
+        updatedAt,
+      );
+      if (pendingIdleReconciliation?.fiber) {
+        yield* Fiber.interrupt(pendingIdleReconciliation.fiber);
+      }
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId,
+          raw,
+        })),
+        type: "turn.completed",
+        payload: {
+          state: "completed",
+        },
+      });
+    });
+
+    const scheduleIdleReconciliation = Effect.fn("scheduleIdleReconciliation")(function* (
+      context: OpenCodeSessionContext,
+      turnId: TurnId,
+      raw: unknown,
+    ) {
+      const existing = context.pendingIdleReconciliation;
+      if (existing?.turnId === turnId && existing.promptGeneration === context.promptGeneration) {
+        existing.raw = raw;
+        existing.dirty = true;
+        return;
+      }
+      yield* cancelIdleReconciliation(context);
+
+      const pending: OpenCodeIdleReconciliation = {
+        turnId,
+        promptGeneration: context.promptGeneration,
+        raw,
+        warned: false,
+        dirty: false,
+      };
+      context.pendingIdleReconciliation = pending;
+      const reconcile = Effect.gen(function* () {
+        let retryCount = 0;
+        while (context.pendingIdleReconciliation === pending) {
+          if (
+            context.activeTurnId !== turnId ||
+            context.awaitingBusyAfterInterruption ||
+            context.promptGeneration !== pending.promptGeneration
+          ) {
+            context.pendingIdleReconciliation = undefined;
+            return;
+          }
+          const result = yield* runOpenCodeSdk("session.status", (signal) =>
+            context.client.session.status(undefined, { signal }),
+          ).pipe(
+            Effect.timeout("1 second"),
+            Effect.retry({ times: 1 }),
+            Effect.match({
+              onFailure: (cause) => ({ type: "unknown" as const, cause }),
+              onSuccess: (response) => {
+                const data = Option.getOrUndefined(decodeOpenCodeSessionStatusMap(response.data));
+                if (data === undefined) {
+                  return { type: "unknown" as const, cause: undefined };
+                }
+                const status = data[context.openCodeSessionId];
+                if (status === undefined || status.type === "idle") {
+                  return { type: "idle" as const };
+                }
+                if (status.type === "busy" || status.type === "retry") {
+                  return { type: "busy" as const };
+                }
+                return { type: "unknown" as const, cause: undefined };
+              },
+            }),
+          );
+
+          if (
+            context.pendingIdleReconciliation !== pending ||
+            context.activeTurnId !== turnId ||
+            context.promptGeneration !== pending.promptGeneration
+          ) {
+            return;
+          }
+          if (result.type === "idle") {
+            context.pendingIdleReconciliation = undefined;
+            yield* completeOpenCodeTurn(context, turnId, pending.promptGeneration, pending.raw);
+            return;
+          }
+          if (result.type === "busy") {
+            if (pending.dirty) {
+              pending.dirty = false;
+              continue;
+            }
+            context.pendingIdleReconciliation = undefined;
+            return;
+          }
+          if (!pending.warned) {
+            pending.warned = true;
+            yield* emit({
+              ...(yield* buildEventBase({ threadId: context.session.threadId, turnId })),
+              type: "runtime.warning",
+              payload: {
+                message: "OpenCode turn completion is waiting for session status.",
+                detail:
+                  result.cause === undefined
+                    ? "session.status returned missing or invalid status data."
+                    : openCodeRuntimeErrorDetail(result.cause),
+              },
+            });
+          }
+          const delayMs = Math.min(250 * 2 ** retryCount, 5_000);
+          retryCount += 1;
+          yield* Effect.sleep(`${delayMs} millis`);
+        }
+      }).pipe(
+        Effect.catchCause(() => Effect.void),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (context.pendingIdleReconciliation === pending) {
+              context.pendingIdleReconciliation = undefined;
+            }
+          }),
+        ),
+      );
+      pending.fiber = yield* reconcile.pipe(Effect.forkIn(context.sessionScope));
+    });
+
+    const failPromptAdmissionRecovery = Effect.fn("failPromptAdmissionRecovery")(function* (
+      context: OpenCodeSessionContext,
+      promptAdmission: OpenCodePromptAdmission,
+    ) {
+      if (
+        context.promptAdmission !== promptAdmission ||
+        context.activeTurnId !== promptAdmission.turnId ||
+        context.promptGeneration !== promptAdmission.generation
+      ) {
+        return;
+      }
+      const detail =
+        "OpenCode accepted the prompt, but T3 Code could not confirm its message or session status.";
+      const abortExit = yield* Effect.exit(
+        runOpenCodeSdk("session.abort", (signal) =>
+          context.client.session.abort({ sessionID: context.openCodeSessionId }, { signal }),
+        ).pipe(Effect.timeout("1 second")),
+      );
+      if (Exit.isFailure(abortExit)) {
+        yield* emitUnexpectedExit(
+          context,
+          `${detail} The cleanup abort also failed: ${openCodeRuntimeErrorDetail(Cause.squash(abortExit.cause))}`,
+        );
+        deleteContextIfCurrent(context);
+        return;
+      }
+      context.promptAdmission = undefined;
+      context.activeTurnId = undefined;
+      context.activeAgent = undefined;
+      context.activeVariant = undefined;
+      context.awaitingBusyAfterInterruption = false;
+      context.reconcileIdleStatus = false;
+      yield* updateProviderSession(
+        context,
+        { status: "error", lastError: detail },
+        { clearActiveTurnId: true },
+      );
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: promptAdmission.turnId,
+          raw: promptAdmission.recoveryRaw,
+        })),
+        type: "turn.completed",
+        payload: {
+          state: "failed",
+          errorMessage: detail,
+        },
+      });
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: promptAdmission.turnId,
+          raw: promptAdmission.recoveryRaw,
+        })),
+        type: "runtime.error",
+        payload: {
+          message: detail,
+          class: "transport_error",
+        },
+      });
+    });
+
+    const schedulePromptAdmissionRecovery = Effect.fn("schedulePromptAdmissionRecovery")(function* (
+      context: OpenCodeSessionContext,
+      raw: unknown,
+    ) {
+      const promptAdmission = context.promptAdmission;
+      if (!promptAdmission || promptAdmission.cancelled) {
+        return;
+      }
+      if (raw !== undefined) {
+        promptAdmission.recoveryRaw = raw;
+      }
+      if (promptAdmission.recoveryFiber) {
+        return;
+      }
+      const recover = Effect.gen(function* () {
+        yield* Deferred.await(promptAdmission.acceptance);
+        for (let retryCount = 0; retryCount < 5; retryCount += 1) {
+          if (
+            context.promptAdmission !== promptAdmission ||
+            context.activeTurnId !== promptAdmission.turnId ||
+            context.promptGeneration !== promptAdmission.generation ||
+            promptAdmission.cancelled ||
+            (yield* Ref.get(context.stopped))
+          ) {
+            return;
+          }
+
+          if (!promptAdmission.messageObserved) {
+            const response = yield* runOpenCodeSdk("session.message", (signal) =>
+              context.client.session.message(
+                {
+                  sessionID: context.openCodeSessionId,
+                  messageID: promptAdmission.messageId,
+                },
+                { signal },
+              ),
+            ).pipe(Effect.timeout("1 second"), Effect.option);
+            const stopped = yield* Ref.get(context.stopped);
+            if (
+              stopped ||
+              sessions.get(context.session.threadId) !== context ||
+              context.promptAdmission !== promptAdmission ||
+              context.activeTurnId !== promptAdmission.turnId ||
+              context.promptGeneration !== promptAdmission.generation ||
+              promptAdmission.cancelled
+            ) {
+              return;
+            }
+            const message = Option.isSome(response) ? response.value.data : undefined;
+            if (message?.info.id === promptAdmission.messageId && message.info.role === "user") {
+              promptAdmission.messageObserved = true;
+              context.messageRoleById.set(promptAdmission.messageId, "user");
+            }
+          }
+
+          const statusResponse = yield* runOpenCodeSdk("session.status", (signal) =>
+            context.client.session.status(undefined, { signal }),
+          ).pipe(Effect.timeout("1 second"), Effect.option);
+          const stopped = yield* Ref.get(context.stopped);
+          if (
+            stopped ||
+            sessions.get(context.session.threadId) !== context ||
+            context.promptAdmission !== promptAdmission ||
+            context.activeTurnId !== promptAdmission.turnId ||
+            context.promptGeneration !== promptAdmission.generation ||
+            promptAdmission.cancelled
+          ) {
+            return;
+          }
+          const statusData = Option.isSome(statusResponse)
+            ? Option.getOrUndefined(decodeOpenCodeSessionStatusMap(statusResponse.value.data))
+            : undefined;
+          const status = statusData?.[context.openCodeSessionId];
+          const isIdle =
+            statusData !== undefined && (status === undefined || status.type === "idle");
+          const isBusy = status?.type === "busy" || status?.type === "retry";
+          if (isBusy) {
+            promptAdmission.busyObserved = true;
+            promptAdmission.idleStatusConfirmations = 0;
+            context.awaitingBusyAfterInterruption = false;
+            context.promptAdmission = undefined;
+            return;
+          }
+
+          const idle = promptAdmission.idleDuringAdmission ?? promptAdmission.priorIdle;
+          if (
+            isIdle &&
+            idle !== undefined &&
+            (promptAdmission.messageObserved || promptAdmission.busyObserved)
+          ) {
+            context.promptAdmission = undefined;
+            context.awaitingBusyAfterInterruption = false;
+            yield* scheduleIdleReconciliation(context, promptAdmission.turnId, idle.raw);
+            return;
+          }
+          if (isIdle && promptAdmission.messageObserved) {
+            promptAdmission.idleStatusConfirmations += 1;
+            if (promptAdmission.idleStatusConfirmations >= 2) {
+              context.promptAdmission = undefined;
+              context.awaitingBusyAfterInterruption = false;
+              yield* completeOpenCodeTurn(
+                context,
+                promptAdmission.turnId,
+                promptAdmission.generation,
+                {
+                  type: "session.status.recovered",
+                  status: statusData,
+                },
+              );
+              return;
+            }
+          } else if (!isIdle) {
+            promptAdmission.idleStatusConfirmations = 0;
+          }
+          if (
+            isIdle &&
+            promptAdmission.messageObserved &&
+            promptAdmission.recoveryRaw !== undefined
+          ) {
+            context.promptAdmission = undefined;
+            context.awaitingBusyAfterInterruption = false;
+            yield* scheduleIdleReconciliation(
+              context,
+              promptAdmission.turnId,
+              promptAdmission.recoveryRaw,
+            );
+            return;
+          }
+
+          const delayMs = Math.min(250 * 2 ** retryCount, 2_000);
+          yield* Effect.sleep(`${delayMs} millis`);
+        }
+        yield* failPromptAdmissionRecovery(context, promptAdmission);
+      }).pipe(
+        Effect.catchCause(() => Effect.void),
+        Effect.ensuring(
+          Effect.sync(() => {
+            delete promptAdmission.recoveryFiber;
+          }),
+        ),
+      );
+      promptAdmission.recoveryFiber = yield* recover.pipe(Effect.forkIn(context.sessionScope));
+    });
+
+    const interruptOpenCodeTurn = Effect.fn("interruptOpenCodeTurn")(function* (
+      context: OpenCodeSessionContext,
+      turnId: TurnId,
+      raw?: unknown,
+    ) {
+      if (context.interruptedTurnId === turnId) {
+        return;
+      }
+      yield* cancelIdleReconciliation(context);
+      context.interruptedTurnId = turnId;
+      context.reconcileIdleStatus = true;
+      context.awaitingBusyAfterInterruption = false;
+      const cancellation =
+        context.cancellation?.turnId === turnId ? context.cancellation : undefined;
+      if (cancellation) {
+        context.cancellation = undefined;
+      }
+      if (context.activeTurnId === turnId) {
+        context.activeTurnId = undefined;
+        context.activeAgent = undefined;
+        context.activeVariant = undefined;
+        yield* updateProviderSession(
+          context,
+          { status: "ready" },
+          { clearActiveTurnId: true, clearLastError: true },
+        );
+      }
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId,
+          raw,
+        })),
+        type: "turn.aborted",
+        payload: {
+          reason: "Interrupted by user.",
+        },
+      });
+      if (cancellation) {
+        yield* Deferred.succeed(cancellation.completion, undefined).pipe(Effect.ignore);
+      }
+    });
+
     const emitUnexpectedExit = Effect.fn("emitUnexpectedExit")(function* (
       context: OpenCodeSessionContext,
       message: string,
@@ -694,8 +1444,21 @@ export function makeOpenCodeAdapter(
       if (yield* Ref.getAndSet(context.stopped, true)) {
         return;
       }
+      yield* Deferred.fail(
+        context.firstConnection,
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "event.subscribe",
+          detail: "OpenCode session exited before the event stream connected.",
+        }),
+      ).pipe(Effect.ignore);
+      yield* failPendingOpenCodeCancellation(
+        context,
+        "OpenCode session exited during cancellation.",
+      );
+      context.promptAdmission = undefined;
       const turnId = context.activeTurnId;
-      sessions.delete(context.session.threadId);
+      deleteContextIfCurrent(context);
       // Emit lifecycle events BEFORE tearing down the scope. Both call sites
       // run this inside a fiber forked via `Effect.forkIn(context.sessionScope)`;
       // closing that scope triggers the fiber-interrupt finalizer, so any
@@ -726,9 +1489,7 @@ export function makeOpenCodeAdapter(
       // Inline the teardown that `stopOpenCodeContext` would do; we can't
       // delegate to it because our `getAndSet` above already flipped the
       // one-shot guard, so the call would no-op.
-      yield* runOpenCodeSdk("session.abort", () =>
-        context.client.session.abort({ sessionID: context.openCodeSessionId }),
-      ).pipe(Effect.ignore({ log: true }));
+      yield* abortOpenCodeSessionForTeardown(context);
       yield* Scope.close(context.sessionScope, Exit.void);
     });
 
@@ -799,12 +1560,411 @@ export function makeOpenCodeAdapter(
       }
     });
 
+    const isRelatedOpenCodeSession = Effect.fn("isRelatedOpenCodeSession")(function* (
+      context: OpenCodeSessionContext,
+      candidateSessionId: string,
+    ) {
+      if (context.relatedSessionIds.has(candidateSessionId)) {
+        return true;
+      }
+
+      const seen = new Set<string>();
+      const getSession = (sessionID: string) =>
+        runOpenCodeSdk("session.get", () => context.client.session.get({ sessionID })).pipe(
+          Effect.catchIf(
+            (cause) => isOpenCodeNotFound(cause),
+            () => Effect.succeed(undefined),
+          ),
+        );
+      let sessionId: string | undefined = candidateSessionId;
+      for (let depth = 0; sessionId !== undefined && depth < 32; depth += 1) {
+        if (context.relatedSessionIds.has(sessionId)) {
+          context.relatedSessionIds.add(candidateSessionId);
+          return true;
+        }
+        if (seen.has(sessionId)) {
+          return false;
+        }
+        seen.add(sessionId);
+        const currentSessionId: string = sessionId;
+        const response = yield* getSession(currentSessionId);
+        if (response === undefined) {
+          return false;
+        }
+        if (!response.data) {
+          return yield* new OpenCodeRuntimeError({
+            operation: "session.get",
+            detail: `OpenCode session.get returned no session payload for '${currentSessionId}'.`,
+          });
+        }
+        sessionId = response.data.parentID;
+      }
+      return false;
+    });
+
+    const emitPendingOpenCodeRequest = Effect.fn("emitPendingOpenCodeRequest")(function* (
+      context: OpenCodeSessionContext,
+      event: OpenCodeAskedRequestEvent,
+      raw: unknown,
+    ) {
+      if (context.resolvedRequestIds.has(event.properties.id)) {
+        return;
+      }
+      if (event.type === "permission.asked") {
+        const request = event.properties;
+        if (context.pendingPermissions.has(request.id)) {
+          return;
+        }
+        context.pendingPermissions.set(request.id, request);
+        yield* emit({
+          ...(yield* buildEventBase({
+            threadId: context.session.threadId,
+            turnId: context.activeTurnId,
+            requestId: request.id,
+            raw,
+          })),
+          type: "request.opened",
+          payload: {
+            requestType: mapPermissionToRequestType(request.permission),
+            detail: request.patterns.length > 0 ? request.patterns.join("\n") : request.permission,
+            args: request.metadata,
+          },
+        });
+        return;
+      }
+
+      const request = event.properties;
+      if (context.pendingQuestions.has(request.id)) {
+        return;
+      }
+      context.pendingQuestions.set(request.id, request);
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: context.activeTurnId,
+          requestId: request.id,
+          raw,
+        })),
+        type: "user-input.requested",
+        payload: { questions: normalizeQuestionRequest(request) },
+      });
+    });
+
+    const resolvePendingOpenCodeRequest = Effect.fn("resolvePendingOpenCodeRequest")(function* (
+      context: OpenCodeSessionContext,
+      requestId: string,
+    ) {
+      context.resolvedRequestIds.add(requestId);
+      const retry = context.requestRelationRetries.get(requestId);
+      context.requestRelationRetries.delete(requestId);
+      if (retry?.fiber) {
+        yield* Fiber.interrupt(retry.fiber);
+      }
+    });
+
+    const emitTerminalOpenCodeRequest = Effect.fn("emitTerminalOpenCodeRequest")(function* (
+      context: OpenCodeSessionContext,
+      event: OpenCodeTerminalRequestEvent,
+    ) {
+      const requestId = event.properties.requestID;
+      if (context.emittedTerminalRequestIds.has(requestId)) {
+        return;
+      }
+      context.emittedTerminalRequestIds.add(requestId);
+      if (event.type === "permission.replied") {
+        yield* emit({
+          ...(yield* buildEventBase({
+            threadId: context.session.threadId,
+            turnId: context.activeTurnId,
+            requestId,
+            raw: event,
+          })),
+          type: "request.resolved",
+          payload: {
+            requestType: "unknown",
+            decision: mapPermissionDecision(event.properties.reply),
+          },
+        });
+        return;
+      }
+
+      const request = context.pendingQuestions.get(requestId);
+      const answers =
+        event.type === "question.replied" && request
+          ? Object.fromEntries(
+              request.questions.map((question, index) => [
+                openCodeQuestionId(index, question),
+                event.properties.answers[index]?.join(", ") ?? "",
+              ]),
+            )
+          : {};
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: context.activeTurnId,
+          requestId,
+          raw: event,
+        })),
+        type: "user-input.resolved",
+        payload: { answers },
+      });
+    });
+
+    const scheduleRequestRelationRetry = Effect.fn("scheduleRequestRelationRetry")(function* (
+      context: OpenCodeSessionContext,
+      event: OpenCodeRoutedRequestEvent,
+      raw: unknown = event,
+    ) {
+      const isAskedEvent = event.type === "permission.asked" || event.type === "question.asked";
+      const requestId = isAskedEvent ? event.properties.id : event.properties.requestID;
+      if (context.requestRelationRetries.has(requestId)) {
+        return;
+      }
+      if (isAskedEvent && context.resolvedRequestIds.has(requestId)) {
+        return;
+      }
+      const retry: OpenCodeRequestRelationRetry = { warned: false };
+      context.requestRelationRetries.set(requestId, retry);
+      const run = Effect.gen(function* () {
+        let retryCount = 0;
+        while (context.requestRelationRetries.get(requestId) === retry) {
+          const relation = yield* isRelatedOpenCodeSession(
+            context,
+            event.properties.sessionID,
+          ).pipe(
+            Effect.match({
+              onFailure: (cause) => ({ type: "unknown" as const, cause }),
+              onSuccess: (related) => ({ type: "known" as const, related }),
+            }),
+          );
+          if (context.requestRelationRetries.get(requestId) !== retry) {
+            return;
+          }
+          if (relation.type === "known") {
+            context.requestRelationRetries.delete(requestId);
+            if (relation.related) {
+              if (isAskedEvent) {
+                yield* emitPendingOpenCodeRequest(context, event, raw);
+              } else {
+                yield* emitTerminalOpenCodeRequest(context, event);
+              }
+            }
+            return;
+          }
+          if (!retry.warned) {
+            retry.warned = true;
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                requestId,
+              })),
+              type: "runtime.warning",
+              payload: {
+                message: "OpenCode request routing is waiting for session ancestry.",
+                detail: openCodeRuntimeErrorDetail(relation.cause),
+              },
+            });
+          }
+          const delayMs = Math.min(250 * 2 ** retryCount, 5_000);
+          retryCount += 1;
+          if (!isAskedEvent && retryCount >= 5) {
+            return;
+          }
+          yield* Effect.sleep(`${delayMs} millis`);
+        }
+      }).pipe(
+        Effect.catchCause(() => Effect.void),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (context.requestRelationRetries.get(requestId) === retry) {
+              context.requestRelationRetries.delete(requestId);
+            }
+          }),
+        ),
+      );
+      retry.fiber = yield* run.pipe(Effect.forkIn(context.sessionScope));
+    });
+
+    const schedulePendingRequestRecovery = Effect.fn("schedulePendingRequestRecovery")(function* (
+      context: OpenCodeSessionContext,
+    ) {
+      if (context.pendingRequestRecovery) {
+        context.pendingRequestRecovery.rerun = true;
+        return;
+      }
+      const recovery: OpenCodePendingRequestRecovery = { warned: false, rerun: false };
+      context.pendingRequestRecovery = recovery;
+      const run = Effect.gen(function* () {
+        let retryCount = 0;
+        while (context.pendingRequestRecovery === recovery) {
+          const responses = yield* Effect.all({
+            permissions: runOpenCodeSdk("permission.list", () => context.client.permission.list()),
+            questions: runOpenCodeSdk("question.list", () => context.client.question.list()),
+          }).pipe(
+            Effect.match({
+              onFailure: (cause) => ({ type: "failure" as const, cause }),
+              onSuccess: (value) => ({ type: "success" as const, value }),
+            }),
+          );
+          if (context.pendingRequestRecovery !== recovery) {
+            return;
+          }
+          if (responses.type === "failure") {
+            if (!recovery.warned) {
+              recovery.warned = true;
+              yield* emit({
+                ...(yield* buildEventBase({ threadId: context.session.threadId })),
+                type: "runtime.warning",
+                payload: {
+                  message: "OpenCode pending request recovery failed and will retry.",
+                  detail: openCodeRuntimeErrorDetail(responses.cause),
+                },
+              });
+            }
+            const delayMs = Math.min(250 * 2 ** retryCount, 5_000);
+            retryCount += 1;
+            yield* Effect.sleep(`${delayMs} millis`);
+            continue;
+          }
+          const permissions = responses.value.permissions.data;
+          const questions = responses.value.questions.data;
+          if (permissions === undefined || questions === undefined) {
+            if (!recovery.warned) {
+              recovery.warned = true;
+              yield* emit({
+                ...(yield* buildEventBase({ threadId: context.session.threadId })),
+                type: "runtime.warning",
+                payload: {
+                  message: "OpenCode pending request recovery returned no data and will retry.",
+                },
+              });
+            }
+            const delayMs = Math.min(250 * 2 ** retryCount, 5_000);
+            retryCount += 1;
+            yield* Effect.sleep(`${delayMs} millis`);
+            continue;
+          }
+          yield* Effect.forEach(
+            permissions,
+            (request) =>
+              scheduleRequestRelationRetry(
+                context,
+                { id: `recovered:${request.id}`, type: "permission.asked", properties: request },
+                { type: "permission.asked", properties: request, recovered: true },
+              ),
+            { discard: true },
+          );
+          yield* Effect.forEach(
+            questions,
+            (request) =>
+              scheduleRequestRelationRetry(
+                context,
+                { id: `recovered:${request.id}`, type: "question.asked", properties: request },
+                { type: "question.asked", properties: request, recovered: true },
+              ),
+            { discard: true },
+          );
+          if (recovery.rerun) {
+            recovery.rerun = false;
+            recovery.warned = false;
+            continue;
+          }
+          context.pendingRequestRecovery = undefined;
+          return;
+        }
+      }).pipe(
+        Effect.catchCause(() => Effect.void),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (context.pendingRequestRecovery === recovery) {
+              context.pendingRequestRecovery = undefined;
+            }
+          }),
+        ),
+      );
+      yield* run.pipe(Effect.forkIn(context.sessionScope));
+    });
+
     const handleSubscribedEvent = Effect.fn("handleSubscribedEvent")(function* (
       context: OpenCodeSessionContext,
       event: OpenCodeSubscribedEvent,
     ) {
+      if (event.type === "server.connected") {
+        if (
+          (yield* Ref.get(context.stopped)) ||
+          sessions.get(context.session.threadId) !== context
+        ) {
+          return;
+        }
+        const isFirstConnection = !(yield* Deferred.isDone(context.firstConnection));
+        if (isFirstConnection) {
+          const updatedAt = yield* nowIso;
+          if (
+            (yield* Ref.get(context.stopped)) ||
+            sessions.get(context.session.threadId) !== context
+          ) {
+            return;
+          }
+          applyProviderSessionUpdate(context, { status: "ready" }, undefined, updatedAt);
+          if (!(yield* Deferred.succeed(context.firstConnection, undefined))) {
+            return;
+          }
+        }
+        yield* schedulePendingRequestRecovery(context);
+        if (!isFirstConnection) {
+          yield* schedulePromptAdmissionRecovery(context, event);
+        }
+        return;
+      }
+      const terminalRequestId =
+        event.type === "permission.replied" ||
+        event.type === "question.replied" ||
+        event.type === "question.rejected"
+          ? event.properties.requestID
+          : undefined;
+      if (terminalRequestId !== undefined) {
+        yield* resolvePendingOpenCodeRequest(context, terminalRequestId);
+      }
+      if (event.type === "session.created" || event.type === "session.updated") {
+        const session = event.properties.info;
+        if (session.parentID && context.relatedSessionIds.has(session.parentID)) {
+          context.relatedSessionIds.add(session.id);
+        }
+      } else if (event.type === "session.deleted") {
+        context.relatedSessionIds.delete(event.properties.info.id);
+      }
+
       const payloadSessionId = openCodeEventSessionId(event);
-      if (payloadSessionId !== context.openCodeSessionId) {
+      const isParentEvent = payloadSessionId === context.openCodeSessionId;
+      let isKnownPendingTerminalEvent = false;
+      if (
+        payloadSessionId !== undefined &&
+        !context.relatedSessionIds.has(payloadSessionId) &&
+        isOpenCodeChildRequestEvent(event)
+      ) {
+        if (event.type === "permission.asked") {
+          yield* scheduleRequestRelationRetry(context, event);
+        } else if (event.type === "question.asked") {
+          yield* scheduleRequestRelationRetry(context, event);
+        } else if (
+          event.type === "permission.replied" ||
+          event.type === "question.replied" ||
+          event.type === "question.rejected"
+        ) {
+          const requestId = event.properties.requestID;
+          isKnownPendingTerminalEvent =
+            context.pendingPermissions.has(requestId) || context.pendingQuestions.has(requestId);
+          if (!isKnownPendingTerminalEvent) {
+            yield* scheduleRequestRelationRetry(context, event);
+            return;
+          }
+        }
+      }
+      const isChildRequestEvent =
+        payloadSessionId !== undefined &&
+        isOpenCodeChildRequestEvent(event) &&
+        (context.relatedSessionIds.has(payloadSessionId) || isKnownPendingTerminalEvent);
+      if (!isParentEvent && !isChildRequestEvent) {
         return;
       }
 
@@ -817,9 +1977,22 @@ export function makeOpenCodeAdapter(
           providerThreadId: context.openCodeSessionId,
           type: event.type,
           ...(turnId ? { turnId } : {}),
+          ...(!isParentEvent && payloadSessionId ? { childSessionId: payloadSessionId } : {}),
           payload: event,
         },
       });
+
+      const suppressInterruptedParentOutput =
+        isParentEvent &&
+        ((context.activeTurnId === undefined &&
+          (context.interruptedTurnId !== undefined || context.reconcileIdleStatus)) ||
+          context.awaitingBusyAfterInterruption) &&
+        (event.type === "message.part.delta" ||
+          event.type === "message.part.updated" ||
+          (event.type === "message.updated" && event.properties.info.role === "assistant"));
+      if (suppressInterruptedParentOutput) {
+        return;
+      }
 
       switch (event.type) {
         case "session.updated": {
@@ -843,6 +2016,24 @@ export function makeOpenCodeAdapter(
         }
 
         case "message.updated": {
+          const promptAdmission = context.promptAdmission;
+          if (
+            event.properties.info.role === "user" &&
+            promptAdmission?.messageId === event.properties.info.id
+          ) {
+            promptAdmission.messageObserved = true;
+            if (promptAdmission.accepted) {
+              const idle = promptAdmission.idleDuringAdmission;
+              context.awaitingBusyAfterInterruption = false;
+              context.promptAdmission = undefined;
+              if (promptAdmission.recoveryFiber) {
+                yield* Fiber.interrupt(promptAdmission.recoveryFiber);
+              }
+              if (idle) {
+                yield* scheduleIdleReconciliation(context, idle.turnId, idle.raw);
+              }
+            }
+          }
           context.messageRoleById.set(event.properties.info.id, event.properties.info.role);
           if (event.properties.info.role === "assistant") {
             for (const part of context.partById.values()) {
@@ -956,101 +2147,44 @@ export function makeOpenCodeAdapter(
         }
 
         case "permission.asked": {
-          context.pendingPermissions.set(event.properties.id, event.properties);
-          yield* emit({
-            ...(yield* buildEventBase({
-              threadId: context.session.threadId,
-              turnId,
-              requestId: event.properties.id,
-              raw: event,
-            })),
-            type: "request.opened",
-            payload: {
-              requestType: mapPermissionToRequestType(event.properties.permission),
-              detail:
-                event.properties.patterns.length > 0
-                  ? event.properties.patterns.join("\n")
-                  : event.properties.permission,
-              args: event.properties.metadata,
-            },
-          });
+          yield* emitPendingOpenCodeRequest(context, event, event);
           break;
         }
 
         case "permission.replied": {
           context.pendingPermissions.delete(event.properties.requestID);
-          yield* emit({
-            ...(yield* buildEventBase({
-              threadId: context.session.threadId,
-              turnId,
-              requestId: event.properties.requestID,
-              raw: event,
-            })),
-            type: "request.resolved",
-            payload: {
-              requestType: "unknown",
-              decision: mapPermissionDecision(event.properties.reply),
-            },
-          });
+          yield* emitTerminalOpenCodeRequest(context, event);
           break;
         }
 
         case "question.asked": {
-          context.pendingQuestions.set(event.properties.id, event.properties);
-          yield* emit({
-            ...(yield* buildEventBase({
-              threadId: context.session.threadId,
-              turnId,
-              requestId: event.properties.id,
-              raw: event,
-            })),
-            type: "user-input.requested",
-            payload: {
-              questions: normalizeQuestionRequest(event.properties),
-            },
-          });
+          yield* emitPendingOpenCodeRequest(context, event, event);
           break;
         }
 
         case "question.replied": {
-          const request = context.pendingQuestions.get(event.properties.requestID);
+          yield* emitTerminalOpenCodeRequest(context, event);
           context.pendingQuestions.delete(event.properties.requestID);
-          const answers = Object.fromEntries(
-            (request?.questions ?? []).map((question, index) => [
-              openCodeQuestionId(index, question),
-              event.properties.answers[index]?.join(", ") ?? "",
-            ]),
-          );
-          yield* emit({
-            ...(yield* buildEventBase({
-              threadId: context.session.threadId,
-              turnId,
-              requestId: event.properties.requestID,
-              raw: event,
-            })),
-            type: "user-input.resolved",
-            payload: { answers },
-          });
           break;
         }
 
         case "question.rejected": {
           context.pendingQuestions.delete(event.properties.requestID);
-          yield* emit({
-            ...(yield* buildEventBase({
-              threadId: context.session.threadId,
-              turnId,
-              requestId: event.properties.requestID,
-              raw: event,
-            })),
-            type: "user-input.resolved",
-            payload: { answers: {} },
-          });
+          yield* emitTerminalOpenCodeRequest(context, event);
           break;
         }
 
         case "session.status": {
           if (event.properties.status.type === "busy") {
+            if (turnId === undefined) {
+              break;
+            }
+            yield* cancelIdleReconciliation(context);
+            context.awaitingBusyAfterInterruption = false;
+            if (context.promptAdmission?.turnId === turnId) {
+              context.promptAdmission.busyObserved = true;
+              yield* schedulePromptAdmissionRecovery(context, event);
+            }
             yield* updateProviderSession(context, {
               status: "running",
               activeTurnId: turnId,
@@ -1074,19 +2208,25 @@ export function makeOpenCodeAdapter(
           }
 
           if (event.properties.status.type === "idle" && turnId) {
-            context.activeTurnId = undefined;
-            yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
-            yield* emit({
-              ...(yield* buildEventBase({
-                threadId: context.session.threadId,
-                turnId,
-                raw: event,
-              })),
-              type: "turn.completed",
-              payload: {
-                state: "completed",
-              },
-            });
+            if (context.cancellation?.turnId === turnId) {
+              context.cancellation.deferredIdleEvent = event;
+              break;
+            }
+            if (context.promptAdmission?.turnId === turnId) {
+              context.promptAdmission.idleDuringAdmission = { turnId, raw: event };
+              context.promptAdmission.idleObservedAfterMessage =
+                context.promptAdmission.messageObserved;
+              yield* schedulePromptAdmissionRecovery(context, event);
+              break;
+            }
+            if (context.awaitingBusyAfterInterruption) {
+              break;
+            }
+            if (context.reconcileIdleStatus) {
+              yield* scheduleIdleReconciliation(context, turnId, event);
+              break;
+            }
+            yield* completeOpenCodeTurn(context, turnId, context.promptGeneration, event);
           }
           break;
         }
@@ -1094,7 +2234,35 @@ export function makeOpenCodeAdapter(
         case "session.error": {
           const message = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
+          const cancellation = context.cancellation;
+          if (isOpenCodeAbortError(event.properties.error)) {
+            if (cancellation !== undefined && cancellation.turnId === undefined) {
+              cancellation.acknowledged = true;
+              yield* Deferred.succeed(cancellation.acknowledgment, undefined).pipe(Effect.ignore);
+              break;
+            }
+            if (activeTurnId !== undefined && cancellation?.turnId === activeTurnId) {
+              cancellation.acknowledged = true;
+              yield* Deferred.succeed(cancellation.acknowledgment, undefined).pipe(Effect.ignore);
+              break;
+            }
+            if (context.interruptedTurnId !== undefined || context.reconcileIdleStatus) {
+              break;
+            }
+          }
+          yield* cancelIdleReconciliation(context);
+          const terminalCancellation =
+            activeTurnId !== undefined && cancellation?.turnId === activeTurnId
+              ? cancellation
+              : undefined;
+          if (terminalCancellation) {
+            terminalCancellation.turnSettled = true;
+            terminalCancellation.acknowledged = true;
+          }
           context.activeTurnId = undefined;
+          context.activeAgent = undefined;
+          context.activeVariant = undefined;
+          context.reconcileIdleStatus = false;
           yield* updateProviderSession(
             context,
             {
@@ -1129,6 +2297,11 @@ export function makeOpenCodeAdapter(
               detail: event.properties.error,
             },
           });
+          if (terminalCancellation) {
+            yield* Deferred.succeed(terminalCancellation.acknowledgment, undefined).pipe(
+              Effect.ignore,
+            );
+          }
           break;
         }
 
@@ -1210,8 +2383,11 @@ export function makeOpenCodeAdapter(
         const resumeSessionId = parseOpenCodeResume(input.resumeCursor)?.sessionId;
         const existing = sessions.get(input.threadId);
         if (existing) {
+          if (existing.session.status === "connecting" && !(yield* Ref.get(existing.stopped))) {
+            return (yield* awaitOpenCodeContextReady(existing)).session;
+          }
           yield* stopOpenCodeContext(existing);
-          sessions.delete(input.threadId);
+          deleteContextIfCurrent(existing);
         }
 
         const started = yield* Effect.gen(function* () {
@@ -1223,13 +2399,15 @@ export function makeOpenCodeAdapter(
               // process automatically. No manual `server.close()` needed.
               const server = yield* openCodeRuntime.connectToOpenCodeServer({
                 binaryPath,
+                directory,
                 serverUrl,
+                ...(serverPassword ? { serverPassword } : {}),
                 ...(options?.environment ? { environment: options.environment } : {}),
               });
               const client = openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
                 directory,
-                ...(server.external && serverPassword ? { serverPassword } : {}),
+                ...(server.serverPassword ? { serverPassword: server.serverPassword } : {}),
               });
               const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
               if (mcpSession && !server.external) {
@@ -1348,29 +2526,11 @@ export function makeOpenCodeAdapter(
           return startedExit.value;
         });
 
-        // Guard against a concurrent startSession call that may have raced
-        // and already inserted a session while we were awaiting async work.
-        const raceWinner = sessions.get(input.threadId);
-        if (raceWinner) {
-          // Another call won the race — clean up. Only abort the remote
-          // session if we created it here; a resumed one is shared upstream
-          // state the winner is now using.
-          if (started.created) {
-            yield* runOpenCodeSdk("session.abort", () =>
-              started.client.session.abort({
-                sessionID: started.openCodeSession.id,
-              }),
-            ).pipe(Effect.ignore);
-          }
-          yield* Scope.close(started.sessionScope, Exit.void).pipe(Effect.ignore);
-          return raceWinner.session;
-        }
-
         const createdAt = yield* nowIso;
         const session: ProviderSession = {
           provider: PROVIDER,
           providerInstanceId: boundInstanceId,
-          status: "ready",
+          status: "connecting",
           runtimeMode: input.runtimeMode,
           cwd: directory,
           ...(input.modelSelection ? { model: input.modelSelection.model } : {}),
@@ -1392,6 +2552,10 @@ export function makeOpenCodeAdapter(
           server: started.server,
           directory,
           openCodeSessionId: started.openCodeSession.id,
+          relatedSessionIds: new Set([started.openCodeSession.id]),
+          resolvedRequestIds: new Set(),
+          emittedTerminalRequestIds: new Set(),
+          requestRelationRetries: new Map(),
           pendingPermissions: new Map(),
           pendingQuestions: new Map(),
           partById: new Map(),
@@ -1402,11 +2566,56 @@ export function makeOpenCodeAdapter(
           activeTurnId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
+          cancellation: undefined,
+          interruptedTurnId: undefined,
+          reconcileIdleStatus: false,
+          awaitingBusyAfterInterruption: false,
+          pendingIdleReconciliation: undefined,
+          pendingRequestRecovery: undefined,
+          promptGeneration: 0,
+          promptAdmission: undefined,
+          promptSemaphore: Semaphore.makeUnsafe(1),
+          firstConnection: Deferred.makeUnsafe<void, ProviderAdapterRequestError>(),
           stopped: yield* Ref.make(false),
           sessionScope: started.sessionScope,
         };
+        const raceWinner = sessions.get(input.threadId);
+        if (raceWinner) {
+          // Another start published first. A newly created remote session
+          // belongs to this loser; a resumed session is shared upstream state.
+          yield* closeStartingOpenCodeContext(context, started.created);
+          return (yield* awaitOpenCodeContextReady(raceWinner)).session;
+        }
         sessions.set(input.threadId, context);
-        yield* startEventPump(context);
+        const cleanupStartingContext = closeStartingOpenCodeContext(context, started.created).pipe(
+          Effect.ensuring(Effect.sync(() => deleteContextIfCurrent(context))),
+        );
+        const connectionExit = yield* Effect.gen(function* () {
+          yield* startEventPump(context);
+          yield* Deferred.await(context.firstConnection).pipe(
+            Effect.timeout("10 seconds"),
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapterRequestError({
+                  provider: PROVIDER,
+                  method: "event.subscribe",
+                  detail: "OpenCode event stream did not connect within 10 seconds.",
+                  cause,
+                }),
+            ),
+          );
+        }).pipe(
+          Effect.onInterrupt(() => cleanupStartingContext),
+          Effect.exit,
+        );
+        if (Exit.isFailure(connectionExit)) {
+          yield* cleanupStartingContext;
+          return yield* Effect.failCause(connectionExit.cause);
+        }
+        yield* awaitOpenCodeContextReady(context);
+        if (!started.created) {
+          yield* schedulePendingRequestRecovery(context);
+        }
 
         yield* emit({
           ...(yield* buildEventBase({ threadId: input.threadId })),
@@ -1423,17 +2632,13 @@ export function makeOpenCodeAdapter(
           },
         });
 
-        return session;
+        return context.session;
       },
     );
 
     const sendTurn: OpenCodeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
       const context = yield* ensureSessionContext(sessions, input.threadId);
-      // A sendTurn while a turn is active is a steer: OpenCode queues the
-      // prompt into the busy session and the work continues as one turn, so
-      // the active turn id is reused instead of opening a new turn.
-      const steeringTurnId = context.activeTurnId;
-      const turnId = steeringTurnId ?? TurnId.make(`opencode-turn-${yield* randomUUIDv4}`);
+      yield* awaitOpenCodeContextReady(context);
       const modelSelection =
         input.modelSelection ??
         (context.session.model
@@ -1456,6 +2661,8 @@ export function makeOpenCodeAdapter(
       }
 
       const text = input.input?.trim();
+      // OpenCode ingests images, text, and PDFs natively; formats its model
+      // paths reject ride only as the prompt's file path line.
       const fileParts = toOpenCodeFileParts({
         attachments: input.attachments,
         resolveAttachmentPath: (attachment) =>
@@ -1472,107 +2679,446 @@ export function makeOpenCodeAdapter(
         });
       }
 
-      const agent = getModelSelectionStringOptionValue(modelSelection, "agent");
-      const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
+      return yield* context.promptSemaphore.withPermit(
+        Effect.gen(function* () {
+          const freshTurnId = TurnId.make(`opencode-turn-${yield* randomUUIDv4}`);
+          const messageId = yield* makeOpenCodeMessageId();
+          const pendingCancellation = context.cancellation;
+          if (pendingCancellation) {
+            const cancellationResult = yield* Deferred.await(pendingCancellation.completion).pipe(
+              Effect.result,
+            );
+            if ((yield* Ref.get(context.stopped)) || sessions.get(input.threadId) !== context) {
+              return yield* Effect.interrupt;
+            }
+            if (cancellationResult._tag === "Failure") {
+              return yield* cancellationResult.failure;
+            }
+          }
+          if (sessions.get(input.threadId) !== context || (yield* Ref.get(context.stopped))) {
+            return yield* Effect.interrupt;
+          }
+          // A sendTurn while a turn is active is a steer. OpenCode queues the
+          // prompt into the running session, so the active turn id is reused.
+          const steeringTurnId = context.activeTurnId;
+          const turnId = steeringTurnId ?? freshTurnId;
+          const agent = getModelSelectionStringOptionValue(modelSelection, "agent");
+          const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
+          const pendingIdleReconciliation = context.pendingIdleReconciliation;
+          const priorAwaitingBusy = context.awaitingBusyAfterInterruption;
+          const priorIdleCandidate = pendingIdleReconciliation
+            ? {
+                turnId: pendingIdleReconciliation.turnId,
+                raw: pendingIdleReconciliation.raw,
+              }
+            : undefined;
+          context.pendingIdleReconciliation = undefined;
+          const promptGeneration = context.promptGeneration + 1;
+          const promptAdmission: OpenCodePromptAdmission = {
+            generation: promptGeneration,
+            turnId,
+            messageId,
+            priorAwaitingBusy,
+            priorIdle: priorIdleCandidate,
+            idleDuringAdmission: undefined,
+            idleObservedAfterMessage: false,
+            messageObserved: false,
+            busyObserved: false,
+            idleStatusConfirmations: 0,
+            accepted: false,
+            cancelled: false,
+            acceptance: Deferred.makeUnsafe<void>(),
+            submissionSettled: Deferred.makeUnsafe<void>(),
+            recoveryRaw: undefined,
+          };
+          context.promptGeneration = promptGeneration;
+          context.promptAdmission = promptAdmission;
 
-      context.activeTurnId = turnId;
-      context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
-      context.activeVariant = variant;
-      yield* updateProviderSession(
-        context,
-        {
-          status: "running",
-          activeTurnId: turnId,
-          model: modelSelection?.model ?? context.session.model,
-        },
-        { clearLastError: true },
-      );
+          context.activeTurnId = turnId;
+          context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
+          context.activeVariant = variant;
+          if (steeringTurnId === undefined) {
+            context.awaitingBusyAfterInterruption = context.interruptedTurnId !== undefined;
+          }
+          if (pendingIdleReconciliation?.fiber) {
+            yield* Fiber.interrupt(pendingIdleReconciliation.fiber);
+          }
+          yield* updateProviderSession(
+            context,
+            {
+              status: "running",
+              activeTurnId: turnId,
+              model: modelSelection?.model ?? context.session.model,
+            },
+            { clearLastError: true },
+          );
 
-      if (steeringTurnId === undefined) {
-        yield* emit({
-          ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
-          type: "turn.started",
-          payload: {
-            model: modelSelection?.model ?? context.session.model,
-            ...(variant ? { effort: variant } : {}),
-          },
-        });
-      }
+          if (steeringTurnId === undefined) {
+            yield* emit({
+              ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
+              type: "turn.started",
+              payload: {
+                model: modelSelection?.model ?? context.session.model,
+                ...(variant ? { effort: variant } : {}),
+              },
+            });
+          }
 
-      yield* runOpenCodeSdk("session.promptAsync", () =>
-        context.client.session.promptAsync({
-          sessionID: context.openCodeSessionId,
-          model: parsedModel,
-          ...(context.activeAgent ? { agent: context.activeAgent } : {}),
-          ...(context.activeVariant ? { variant: context.activeVariant } : {}),
-          parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
-        }),
-      ).pipe(
-        Effect.mapError(toRequestError),
-        // On failure of a fresh turn: clear active-turn state, flip the
-        // session back to ready with lastError set, emit turn.aborted, then
-        // let the typed error propagate. We don't need to rebuild the error
-        // here — `toRequestError` already produced the right shape. A failed
-        // steer leaves the still-running original turn untouched.
-        Effect.tapError((requestError) =>
-          steeringTurnId !== undefined
-            ? Effect.void
-            : Effect.gen(function* () {
-                context.activeTurnId = undefined;
-                context.activeAgent = undefined;
-                context.activeVariant = undefined;
-                yield* updateProviderSession(
-                  context,
-                  {
-                    status: "ready",
-                    model: modelSelection?.model ?? context.session.model,
-                    lastError: requestError.detail,
-                  },
-                  { clearActiveTurnId: true },
+          if (promptAdmission.cancelled || (yield* Ref.get(context.stopped))) {
+            yield* Deferred.succeed(promptAdmission.submissionSettled, undefined).pipe(
+              Effect.ignore,
+            );
+            const cancellation = context.cancellation;
+            if (cancellation?.turnId === turnId) {
+              yield* Deferred.await(cancellation.completion).pipe(Effect.result);
+            }
+            return yield* Effect.interrupt;
+          }
+
+          let promptTimedOut = false;
+          const promptEffect = runOpenCodeSdk("session.promptAsync", (signal) =>
+            context.client.session.promptAsync(
+              {
+                sessionID: context.openCodeSessionId,
+                messageID: messageId,
+                model: parsedModel,
+                ...(context.activeAgent ? { agent: context.activeAgent } : {}),
+                ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+                parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
+              },
+              { signal },
+            ),
+          ).pipe(
+            Effect.timeout("10 seconds"),
+            Effect.catchTags({
+              OpenCodeRuntimeError: (cause) => Effect.fail(toRequestError(cause)),
+              TimeoutError: (cause) => {
+                promptTimedOut = true;
+                return Effect.fail(
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "session.promptAsync",
+                    detail: "OpenCode prompt submission did not complete within 10 seconds.",
+                    cause,
+                  }),
                 );
-                yield* emit({
-                  ...(yield* buildEventBase({
-                    threadId: input.threadId,
-                    turnId,
-                  })),
-                  type: "turn.aborted",
-                  payload: {
-                    reason: requestError.detail,
-                  },
-                });
+              },
+            }),
+            Effect.tapError((requestError) =>
+              context.promptAdmission !== promptAdmission || context.activeTurnId !== turnId
+                ? Effect.void
+                : Effect.gen(function* () {
+                    if (!promptTimedOut) {
+                      if (steeringTurnId !== undefined) {
+                        context.promptAdmission = undefined;
+                        context.awaitingBusyAfterInterruption = promptAdmission.priorAwaitingBusy;
+                        const idle =
+                          promptAdmission.idleDuringAdmission ?? promptAdmission.priorIdle;
+                        if (idle) {
+                          yield* scheduleIdleReconciliation(context, idle.turnId, idle.raw);
+                        }
+                        return;
+                      }
+                      context.promptAdmission = undefined;
+                      context.activeTurnId = undefined;
+                      context.activeAgent = undefined;
+                      context.activeVariant = undefined;
+                      yield* updateProviderSession(
+                        context,
+                        {
+                          status: "ready",
+                          model: modelSelection?.model ?? context.session.model,
+                          lastError: requestError.detail,
+                        },
+                        { clearActiveTurnId: true },
+                      );
+                      yield* emit({
+                        ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
+                        type: "turn.aborted",
+                        payload: { reason: requestError.detail },
+                      });
+                      return;
+                    }
+                    const cleanupExit = yield* Effect.exit(
+                      runOpenCodeSdk("session.abort", (signal) =>
+                        context.client.session.abort(
+                          { sessionID: context.openCodeSessionId },
+                          { signal },
+                        ),
+                      ).pipe(Effect.timeout("1 second")),
+                    );
+                    if (Exit.isFailure(cleanupExit)) {
+                      yield* emit({
+                        ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
+                        type: "runtime.warning",
+                        payload: {
+                          message:
+                            "OpenCode prompt submission failed and its cleanup abort did not complete.",
+                          detail: openCodeRuntimeErrorDetail(Cause.squash(cleanupExit.cause)),
+                        },
+                      });
+                      yield* schedulePromptAdmissionRecovery(context, {
+                        requestError,
+                        cleanupError: Cause.squash(cleanupExit.cause),
+                      });
+                      return;
+                    }
+                    context.promptAdmission = undefined;
+                    context.activeTurnId = undefined;
+                    context.activeAgent = undefined;
+                    context.activeVariant = undefined;
+                    context.awaitingBusyAfterInterruption = false;
+                    context.reconcileIdleStatus = false;
+                    yield* updateProviderSession(
+                      context,
+                      {
+                        status: "ready",
+                        model: modelSelection?.model ?? context.session.model,
+                        lastError: requestError.detail,
+                      },
+                      { clearActiveTurnId: true },
+                    );
+                    yield* emit({
+                      ...(yield* buildEventBase({
+                        threadId: input.threadId,
+                        turnId,
+                      })),
+                      type: "turn.aborted",
+                      payload: {
+                        reason: requestError.detail,
+                      },
+                    });
+                  }),
+            ),
+            Effect.onExit((exit) =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(promptAdmission.submissionSettled, undefined).pipe(
+                  Effect.ignore,
+                );
+                if (Exit.isFailure(exit)) {
+                  yield* Deferred.succeed(promptAdmission.acceptance, undefined).pipe(
+                    Effect.ignore,
+                  );
+                }
               }),
-        ),
-      );
+            ),
+            Effect.asVoid,
+          );
+          const promptFiber = yield* promptEffect.pipe(Effect.forkIn(context.sessionScope));
+          promptAdmission.promptFiber = promptFiber;
+          const promptExit = yield* Effect.exit(Fiber.join(promptFiber));
+          delete promptAdmission.promptFiber;
 
-      return {
-        threadId: input.threadId,
-        turnId,
-        // Re-surface the durable cursor on every turn so the persisted binding
-        // is refreshed alongside last-seen/runtime state (mirrors Grok/Codex).
-        ...(context.session.resumeCursor !== undefined
-          ? { resumeCursor: context.session.resumeCursor }
-          : {}),
-      };
+          const intentionallyCancelled =
+            promptAdmission.cancelled ||
+            (yield* Ref.get(context.stopped)) ||
+            sessions.get(input.threadId) !== context;
+          if (Exit.isFailure(promptExit) && !intentionallyCancelled) {
+            return yield* Effect.failCause(promptExit.cause);
+          }
+          const cancelled =
+            intentionallyCancelled ||
+            context.activeTurnId !== turnId ||
+            context.promptGeneration !== promptAdmission.generation;
+          if (cancelled) {
+            const cancellation = context.cancellation;
+            if (cancellation?.turnId === turnId) {
+              yield* Deferred.await(cancellation.completion).pipe(Effect.result);
+            }
+            if (context.promptAdmission === promptAdmission) {
+              context.promptAdmission = undefined;
+            }
+            return yield* Effect.interrupt;
+          }
+          promptAdmission.accepted = true;
+          yield* Deferred.succeed(promptAdmission.acceptance, undefined).pipe(Effect.ignore);
+          if (
+            context.promptAdmission === promptAdmission &&
+            context.activeTurnId === turnId &&
+            context.promptGeneration === promptAdmission.generation &&
+            promptAdmission.messageObserved
+          ) {
+            context.awaitingBusyAfterInterruption = false;
+            const idle = promptAdmission.idleDuringAdmission;
+            if (idle && !promptAdmission.idleObservedAfterMessage) {
+              yield* schedulePromptAdmissionRecovery(context, idle.raw);
+            } else {
+              context.promptAdmission = undefined;
+            }
+            if (idle && promptAdmission.idleObservedAfterMessage) {
+              yield* scheduleIdleReconciliation(context, turnId, idle.raw);
+            }
+          } else {
+            yield* schedulePromptAdmissionRecovery(context, promptAdmission.recoveryRaw);
+          }
+
+          const stopped = yield* Ref.get(context.stopped);
+          const finalCancellation = context.cancellation;
+          if (
+            stopped ||
+            sessions.get(input.threadId) !== context ||
+            promptAdmission.cancelled ||
+            context.activeTurnId !== turnId ||
+            context.promptGeneration !== promptAdmission.generation ||
+            finalCancellation?.turnId === turnId
+          ) {
+            if (finalCancellation?.turnId === turnId) {
+              yield* Deferred.await(finalCancellation.completion).pipe(Effect.result);
+            }
+            if (context.promptAdmission === promptAdmission) {
+              context.promptAdmission = undefined;
+            }
+            return yield* Effect.interrupt;
+          }
+
+          return {
+            threadId: input.threadId,
+            turnId,
+            // Re-surface the durable cursor on every turn so the persisted binding
+            // is refreshed alongside last-seen/runtime state (mirrors Grok/Codex).
+            ...(context.session.resumeCursor !== undefined
+              ? { resumeCursor: context.session.resumeCursor }
+              : {}),
+          };
+        }),
+      );
     });
 
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
         const context = yield* ensureSessionContext(sessions, threadId);
-        yield* runOpenCodeSdk("session.abort", () =>
-          context.client.session.abort({ sessionID: context.openCodeSessionId }),
-        ).pipe(Effect.mapError(toRequestError));
-        if (turnId ?? context.activeTurnId) {
-          yield* emit({
-            ...(yield* buildEventBase({
-              threadId,
-              turnId: turnId ?? context.activeTurnId,
-            })),
-            type: "turn.aborted",
-            payload: {
-              reason: "Interrupted by user.",
-            },
-          });
+        const activeTurnId = context.activeTurnId;
+        if (turnId !== undefined && activeTurnId !== turnId) {
+          return;
         }
+        const interruptedTurnId = turnId ?? activeTurnId;
+        yield* cancelIdleReconciliation(context);
+        if (interruptedTurnId && context.interruptedTurnId === interruptedTurnId) {
+          return;
+        }
+        const existingCancellation = context.cancellation;
+        if (existingCancellation !== undefined) {
+          return yield* Deferred.await(existingCancellation.completion);
+        }
+        const cancellation: OpenCodeCancellation = {
+          turnId: interruptedTurnId,
+          acknowledgment: Deferred.makeUnsafe<void>(),
+          completion: Deferred.makeUnsafe<void, ProviderAdapterRequestError>(),
+        };
+        context.cancellation = cancellation;
+        const promptAdmission = context.promptAdmission;
+        if (promptAdmission !== undefined && promptAdmission.turnId === interruptedTurnId) {
+          promptAdmission.cancelled = true;
+          if (promptAdmission.promptFiber) {
+            yield* Fiber.interrupt(promptAdmission.promptFiber);
+          }
+          yield* Deferred.await(promptAdmission.submissionSettled);
+        }
+
+        const parentAbortOutcome = yield* Effect.raceFirst(
+          runOpenCodeSdk("session.abort", (signal) =>
+            context.client.session.abort({ sessionID: context.openCodeSessionId }, { signal }),
+          ).pipe(
+            Effect.asVoid,
+            Effect.timeout("10 seconds"),
+            Effect.catchTags({
+              OpenCodeRuntimeError: (cause) => Effect.fail(toRequestError(cause)),
+              TimeoutError: (cause) =>
+                Effect.fail(
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "session.abort",
+                    detail: "OpenCode session abort did not complete within 10 seconds.",
+                    cause,
+                  }),
+                ),
+            }),
+            Effect.exit,
+            Effect.map((exit) => ({ source: "request" as const, exit })),
+          ),
+          Effect.raceFirst(
+            Deferred.await(cancellation.acknowledgment).pipe(
+              Effect.map(() => ({ source: "acknowledgment" as const })),
+            ),
+            Deferred.await(cancellation.completion).pipe(
+              Effect.exit,
+              Effect.map((exit) => ({ source: "completion" as const, exit })),
+            ),
+          ),
+        );
+        if (parentAbortOutcome.source === "completion") {
+          return Exit.isFailure(parentAbortOutcome.exit)
+            ? yield* Effect.failCause(parentAbortOutcome.exit.cause)
+            : undefined;
+        }
+        const parentAbortExit =
+          parentAbortOutcome.source === "request" ? parentAbortOutcome.exit : Exit.void;
+
+        const descendantAbortOutcome = yield* Effect.raceFirst(
+          abortOpenCodeDescendants(context).pipe(
+            Effect.timeout("10 seconds"),
+            Effect.catchTags({
+              OpenCodeRuntimeError: (cause) => Effect.fail(toRequestError(cause)),
+              TimeoutError: (cause) =>
+                Effect.fail(
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "session.abort",
+                    detail: "OpenCode child session cleanup did not complete within 10 seconds.",
+                    cause,
+                  }),
+                ),
+            }),
+            Effect.exit,
+            Effect.map((exit) => ({ source: "request" as const, exit })),
+          ),
+          Deferred.await(cancellation.completion).pipe(
+            Effect.exit,
+            Effect.map((exit) => ({ source: "completion" as const, exit })),
+          ),
+        );
+        if (descendantAbortOutcome.source === "completion") {
+          return Exit.isFailure(descendantAbortOutcome.exit)
+            ? yield* Effect.failCause(descendantAbortOutcome.exit.cause)
+            : undefined;
+        }
+
+        const parentAbortFailed = Exit.isFailure(parentAbortExit) && !cancellation.acknowledged;
+        const failedExit = parentAbortFailed
+          ? parentAbortExit
+          : Exit.isFailure(descendantAbortOutcome.exit)
+            ? descendantAbortOutcome.exit
+            : undefined;
+        if (failedExit !== undefined && Exit.isFailure(failedExit)) {
+          if (context.cancellation === cancellation) {
+            context.cancellation = undefined;
+            if (
+              parentAbortFailed &&
+              cancellation.turnId !== undefined &&
+              cancellation.deferredIdleEvent
+            ) {
+              yield* scheduleIdleReconciliation(
+                context,
+                cancellation.turnId,
+                cancellation.deferredIdleEvent,
+              );
+            }
+          }
+          yield* Deferred.done(cancellation.completion, failedExit).pipe(Effect.ignore);
+          return yield* Effect.failCause(failedExit.cause);
+        }
+
+        if (context.cancellation === cancellation) {
+          if (cancellation.turnSettled) {
+            context.cancellation = undefined;
+          } else if (cancellation.turnId !== undefined) {
+            yield* interruptOpenCodeTurn(context, cancellation.turnId);
+          } else {
+            context.cancellation = undefined;
+            context.reconcileIdleStatus = true;
+          }
+        }
+        yield* Deferred.succeed(cancellation.completion, undefined).pipe(Effect.ignore);
       },
     );
 
@@ -1627,7 +3173,7 @@ export function makeOpenCodeAdapter(
           });
         }
         const stopped = yield* stopOpenCodeContext(context);
-        sessions.delete(threadId);
+        deleteContextIfCurrent(context);
         if (!stopped) {
           return;
         }

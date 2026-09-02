@@ -5,7 +5,7 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { canSettle, canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -20,6 +20,7 @@ import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
+import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsPinning,
@@ -60,18 +61,6 @@ export class ThreadSettlementUnsupportedError extends Schema.TaggedErrorClass<Th
 ) {
   override get message(): string {
     return "This environment's server does not support settling yet. Update the server to use Settle.";
-  }
-}
-
-export class ThreadSettleBlockedError extends Schema.TaggedErrorClass<ThreadSettleBlockedError>()(
-  "ThreadSettleBlockedError",
-  {
-    environmentId: EnvironmentId,
-    threadId: ThreadId,
-  },
-) {
-  override get message(): string {
-    return "This thread still needs attention. Resolve or interrupt it first, then try again.";
   }
 }
 
@@ -135,6 +124,26 @@ export class ThreadPinReorderUnsupportedError extends Schema.TaggedErrorClass<Th
   }
 }
 
+export async function requestThreadUnpinConfirmation(input: {
+  enabled: boolean;
+  title: string;
+  confirm: ((message: string) => Promise<boolean>) | null;
+}) {
+  const { confirm } = input;
+  if (!input.enabled || confirm === null) {
+    return AsyncResult.success(true);
+  }
+
+  return settlePromise(() =>
+    confirm(
+      [
+        `Unpin thread "${input.title}"?`,
+        "This will move the thread out of your pinned section.",
+      ].join("\n"),
+    ),
+  );
+}
+
 export function useThreadActions() {
   const closeTerminal = useAtomCommand(terminalEnvironment.close);
   const archiveThreadMutation = useAtomCommand(threadEnvironment.archive, {
@@ -176,6 +185,7 @@ export function useThreadActions() {
   });
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
+  const confirmThreadUnpin = useClientSettings((settings) => settings.confirmThreadUnpin);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const clearProjectDraftThreadById = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadById,
@@ -364,6 +374,7 @@ export function useThreadActions() {
         return deleteResult;
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+      releaseComposerDraftUploads(threadRef);
       clearComposerDraftForThread(threadRef);
       clearProjectDraftThreadById(
         scopeProjectRef(threadRef.environmentId, thread.projectId),
@@ -483,19 +494,6 @@ export function useThreadActions() {
         );
       }
       const resolved = resolveThreadTarget(target);
-      // Settle may only target what effectiveSettled could classify as
-      // settled: not starting/running sessions, not threads waiting on
-      // approvals or user input. Anything else would hide live work.
-      if (resolved && !canSettle(resolved.thread, { now: new Date().toISOString() })) {
-        return AsyncResult.failure(
-          Cause.fail(
-            new ThreadSettleBlockedError({
-              environmentId: resolved.threadRef.environmentId,
-              threadId: resolved.threadRef.threadId,
-            }),
-          ),
-        );
-      }
       const wokeAt = resolved
         ? threadWokeAt(resolved.thread, { now: new Date().toISOString() })
         : null;
@@ -586,6 +584,26 @@ export function useThreadActions() {
       });
     },
     [unpinThreadMutation],
+  );
+
+  const confirmAndUnpinThread = useCallback(
+    async (target: ScopedThreadRef) => {
+      const localApi = readLocalApi();
+      const resolved = resolveThreadTarget(target);
+      const confirmationResult = await requestThreadUnpinConfirmation({
+        enabled: confirmThreadUnpin,
+        title: resolved?.thread.title ?? "this thread",
+        confirm: localApi ? (message) => localApi.dialogs.confirm(message) : null,
+      });
+      if (confirmationResult._tag === "Failure") {
+        return confirmationResult;
+      }
+      if (!confirmationResult.value) {
+        return AsyncResult.success(undefined);
+      }
+      return unpinThread(target);
+    },
+    [confirmThreadUnpin, resolveThreadTarget, unpinThread],
   );
 
   const reorderPinnedThread = useCallback(
@@ -707,11 +725,13 @@ export function useThreadActions() {
       unsnoozeThread,
       pinThread,
       unpinThread,
+      confirmAndUnpinThread,
       reorderPinnedThread,
     }),
     [
       archiveThread,
       confirmAndDeleteThread,
+      confirmAndUnpinThread,
       deleteThread,
       pinThread,
       reorderPinnedThread,
