@@ -6,6 +6,7 @@ import {
   omitSupersededLifecycleMarkers,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
+  toolGroupStats,
   toolGroupSummaryKind,
   type ToolGroupSummaryKind,
 } from "@t3tools/client-runtime/work-log/presentation";
@@ -296,6 +297,10 @@ export type MessagesTimelineRow =
       summary: string;
       summaryKind: ToolGroupSummaryKind;
       hasFailure: boolean;
+      /** Tool calls in the group that failed (non-zero exit or failed status). */
+      failureCount: number;
+      /** Total duration when every tool call in the group reported one. */
+      durationMs: number | null;
     }
   | {
       kind: "turn-fold";
@@ -840,6 +845,7 @@ export function deriveMessagesTimelineRows(input: {
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
           const summaryKind = toolGroupSummaryKind(visibleGroupedEntries);
           const latestToolEntry = visibleGroupedEntries.findLast(workLogEntryIsToolLike);
+          const groupStats = toolGroupStats(visibleGroupedEntries);
           nextRows.push({
             kind: "work-toggle",
             id: `work-toggle:${timelineEntry.id}`,
@@ -856,6 +862,8 @@ export function deriveMessagesTimelineRows(input: {
             hasFailure:
               latestToolEntry !== undefined &&
               workEntryDisplayIndicatesToolFailure(latestToolEntry),
+            failureCount: groupStats.failureCount,
+            durationMs: groupStats.durationMs,
           });
           if (expanded) {
             nextRows.push(
@@ -994,7 +1002,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.expanded === bw.expanded &&
         a.summary === bw.summary &&
         a.summaryKind === bw.summaryKind &&
-        a.hasFailure === bw.hasFailure
+        a.hasFailure === bw.hasFailure &&
+        a.failureCount === bw.failureCount &&
+        a.durationMs === bw.durationMs
       );
     }
 

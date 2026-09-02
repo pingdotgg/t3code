@@ -1,7 +1,16 @@
 # Tool activity
 
-Open a tool-group summary in the conversation to see its individual calls. Each row has an icon;
-select a row to inspect its details. Select the group summary again to collapse it.
+Open a tool-group summary in the conversation to see its individual calls.
+The summary line names what happened ("Ran 8 commands and changed 3 files") and, on the right, how
+many calls failed and how long the group took when the provider reports timings.
+Select the group summary again to collapse it.
+
+Inside a group, each call is one row.
+Commands show the directory they ran in as a small chip instead of a `cd` prefix, the command itself,
+and on the right the duration, a non-zero exit code, or the +/- line counts for file changes.
+A failed command shows the first line of its output under the command without expanding.
+The agent's progress notes read as quiet section labels above the calls they describe.
+Select a row to see the full output excerpt or the diff for changed files.
 
 Long groups scroll inside a bounded area without expanding the whole conversation. Faded edges
 indicate more calls above or below. Short groups use only the space they need.

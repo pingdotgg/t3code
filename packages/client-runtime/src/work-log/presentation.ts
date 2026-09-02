@@ -2,6 +2,7 @@ import {
   isToolLifecycleItemType,
   type AssetResource,
   type ThreadId,
+  type ToolCallFacts,
   type ToolLifecycleItemType,
 } from "@t3tools/contracts";
 import {
@@ -30,6 +31,10 @@ export interface WorkLogPresentationEntry {
   readonly toolLifecycleStatus?: string;
   readonly sourceActivityKind?: string;
   readonly taskId?: string;
+  /** Server-derived, provider-neutral facts (cwd, exit code, duration, output, files). */
+  readonly facts?: ToolCallFacts;
+  /** Wall-clock duration when the server did not report one (started→completed). */
+  readonly durationMs?: number;
 }
 
 export type ToolGroupAction =
@@ -423,6 +428,82 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
     case "update":
       return `Received ${count} ${count === 1 ? "update" : "updates"}`;
   }
+}
+
+/**
+ * Agents usually prefix commands with `cd <dir> && …` or `cd <dir>; …`.
+ * Pull that prefix out so the directory can render as a chip and the real
+ * command gets the width. Quoted paths and `\ ` escapes are honoured.
+ */
+export function splitLeadingCd(command: string): { cwd: string | null; command: string } {
+  const match =
+    /^\s*cd\s+(?<dir>"(?:[^"\\]|\\.)*"|'[^']*'|(?:[^\s;&|\\]|\\.)+)\s*(?:&&|;)\s*(?<rest>[\s\S]+)$/u.exec(
+      command,
+    );
+  const dir = match?.groups?.dir;
+  const rest = match?.groups?.rest?.trim();
+  if (!dir || !rest) return { cwd: null, command };
+  const unquoted =
+    (dir.startsWith('"') && dir.endsWith('"')) || (dir.startsWith("'") && dir.endsWith("'"))
+      ? dir.slice(1, -1)
+      : dir.replace(/\\(.)/g, "$1");
+  return { cwd: unquoted, command: rest };
+}
+
+export function toolEntryDurationMs(entry: WorkLogPresentationEntry): number | undefined {
+  return entry.facts?.durationMs ?? entry.durationMs;
+}
+
+export function toolEntryExitCode(entry: WorkLogPresentationEntry): number | undefined {
+  return entry.facts?.exitCode;
+}
+
+export function toolEntryDiffStat(
+  entry: WorkLogPresentationEntry,
+): { additions: number; deletions: number } | null {
+  const files = entry.facts?.files;
+  if (!files || files.length === 0) return null;
+  let additions = 0;
+  let deletions = 0;
+  let counted = false;
+  for (const file of files) {
+    if (file.additions === undefined && file.deletions === undefined) continue;
+    counted = true;
+    additions += file.additions ?? 0;
+    deletions += file.deletions ?? 0;
+  }
+  return counted ? { additions, deletions } : null;
+}
+
+export function workEntryFailed(entry: WorkLogPresentationEntry): boolean {
+  if (entry.toolLifecycleStatus === "failed") return true;
+  const exitCode = toolEntryExitCode(entry);
+  return exitCode !== undefined && exitCode !== 0;
+}
+
+/**
+ * Group-level numbers for the collapsed header: how many calls failed and
+ * how long the group took in total. Duration sums per-call durations when
+ * every tool call reports one, otherwise it is unknown rather than partial.
+ */
+export function toolGroupStats(entries: ReadonlyArray<WorkLogPresentationEntry>): {
+  failureCount: number;
+  durationMs: number | null;
+} {
+  let failureCount = 0;
+  let durationMs = 0;
+  let missingDuration = false;
+  let sawTool = false;
+  for (const entry of entries) {
+    // Thinking rows are tool-like for grouping but are notes, not calls.
+    if (!workLogEntryIsToolLike(entry) || entry.tone === "thinking") continue;
+    sawTool = true;
+    if (workEntryFailed(entry)) failureCount += 1;
+    const duration = toolEntryDurationMs(entry);
+    if (duration === undefined) missingDuration = true;
+    else durationMs += duration;
+  }
+  return { failureCount, durationMs: sawTool && !missingDuration ? durationMs : null };
 }
 
 export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEntry>): string {

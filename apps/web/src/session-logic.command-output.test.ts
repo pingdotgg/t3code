@@ -170,3 +170,53 @@ describe("deriveWorkLogEntries command output", () => {
     expect(entry?.detail).toBeUndefined();
   });
 });
+
+describe("deriveWorkLogEntries tool call facts", () => {
+  it("carries server-derived facts and fills the exit code from the detail suffix", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeCommandActivity("claude-command", {
+        itemType: "command_execution",
+        title: "Command run",
+        detail: "Bash: pnpm test\n<exited with exit code 2>",
+        toolCallId: "toolu_1",
+        facts: {
+          intent: "Run the unit tests",
+          durationMs: 4200,
+          output: { text: "FAIL a.test.ts", lineCount: 1, truncated: false },
+        },
+        data: { toolName: "Bash", input: { command: "pnpm test" } },
+      }),
+    ]);
+
+    expect(entry?.facts).toEqual({
+      intent: "Run the unit tests",
+      durationMs: 4200,
+      exitCode: 2,
+      output: { text: "FAIL a.test.ts", lineCount: 1, truncated: false },
+    });
+  });
+
+  it("measures wall-clock duration from tool.started when the provider reports none", () => {
+    const started: OrchestrationThreadActivity = {
+      id: EventId.make("started"),
+      createdAt: "2026-07-17T10:00:00.000Z",
+      kind: "tool.started",
+      summary: "Ran command started",
+      tone: "tool",
+      payload: { itemType: "command_execution", toolCallId: "call-1", status: "inProgress" },
+      turnId: TurnId.make("turn-1"),
+    };
+    const completed: OrchestrationThreadActivity = {
+      ...makeCommandActivity("completed", {
+        itemType: "command_execution",
+        toolCallId: "call-1",
+        status: "completed",
+        data: { command: "ls" },
+      }),
+      createdAt: "2026-07-17T10:00:03.500Z",
+    };
+
+    const [entry] = deriveWorkLogEntries([started, completed]);
+    expect(entry?.durationMs).toBe(3500);
+  });
+});
