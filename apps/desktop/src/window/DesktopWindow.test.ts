@@ -211,7 +211,7 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
-  readonly environmentLayer?: Layer.Layer<DesktopEnvironment.DesktopEnvironment>;
+  readonly environmentLayer?: Layer.Layer<DesktopEnvironment.DesktopEnvironment, never, never>;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -1280,6 +1280,7 @@ describe("DesktopWindow", () => {
             }),
           ),
         ),
+        Layer.orDie,
       );
 
       const layer = makeTestLayer({
@@ -1294,6 +1295,99 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.syncAppearance;
         assert.equal(setMenu.mock.calls.length, 1);
         assert.deepEqual(setMenu.mock.calls[0], [null]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("handles settings and zoom shortcuts on Windows via before-input-event", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make(Option.none());
+      const windowsEnvironmentLayer = DesktopEnvironment.layer({
+        ...environmentInput,
+        platform: "win32",
+      }).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            DesktopConfig.layerTest({
+              T3CODE_PORT: "3773",
+              VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+            }),
+          ),
+        ),
+        Layer.orDie,
+      );
+
+      const layer = makeTestLayer({
+        window: fake.window,
+        createCount,
+        mainWindow,
+        environmentLayer: windowsEnvironmentLayer,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const beforeInput = fake.webContentsListeners.get("before-input-event");
+        if (!beforeInput) {
+          return yield* Effect.die("before-input-event listener was not registered");
+        }
+
+        let prevented = false;
+        beforeInput({ preventDefault: () => { prevented = true; } }, {
+          type: "keyDown",
+          isAutoRepeat: false,
+          key: ",",
+          control: true,
+          meta: false,
+          alt: false,
+          shift: false,
+        });
+        assert.isTrue(prevented);
+        assert.deepEqual(fake.send.mock.calls, [[MENU_ACTION_CHANNEL, "open-settings"]]);
+
+        prevented = false;
+        beforeInput({ preventDefault: () => { prevented = true; } }, {
+          type: "keyDown",
+          isAutoRepeat: false,
+          key: "=",
+          control: true,
+          meta: false,
+          alt: false,
+          shift: false,
+        });
+        assert.isTrue(prevented);
+        assert.equal(fake.window.webContents.getZoomLevel(), 0.5);
+
+        prevented = false;
+        beforeInput({ preventDefault: () => { prevented = true; } }, {
+          type: "keyDown",
+          isAutoRepeat: false,
+          key: "-",
+          control: true,
+          meta: false,
+          alt: false,
+          shift: false,
+        });
+        assert.isTrue(prevented);
+        assert.equal(fake.window.webContents.getZoomLevel(), 0);
+
+        fake.window.webContents.setZoomLevel(1.5);
+        prevented = false;
+        beforeInput({ preventDefault: () => { prevented = true; } }, {
+          type: "keyDown",
+          isAutoRepeat: false,
+          key: "0",
+          control: true,
+          meta: false,
+          alt: false,
+          shift: false,
+        });
+        assert.isTrue(prevented);
+        assert.equal(fake.window.webContents.getZoomLevel(), 0);
       }).pipe(Effect.provide(layer));
     }),
   );
