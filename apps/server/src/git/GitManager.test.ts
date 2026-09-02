@@ -994,6 +994,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         sourceControlProviderKind: () => providerKind,
         ghScenario: {
+          // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
           // @effect-diagnostics-next-line preferSchemaOverJson:off
           prListSequence: [JSON.stringify([existingPr])],
         },
@@ -1038,6 +1039,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const { manager } = yield* makeManager({
         sourceControlProviderKind: () => providerKind,
         ghScenario: {
+          // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
           // @effect-diagnostics-next-line preferSchemaOverJson:off
           prListSequence: [JSON.stringify([existingPr])],
         },
