@@ -1,5 +1,9 @@
 import type { ShellThemeState } from "@t3tools/contracts/shell";
 
+import type { ThemeColorRole } from "../themePalette";
+
+type ShellProjectedThemeRole = ThemeColorRole | "success" | "info";
+
 /** Theme role → the semantic CSS variable the page paints it with. */
 export const SHELL_THEME_ROLE_VARIABLES: Readonly<Record<string, string>> = {
   canvas: "--background",
@@ -53,7 +57,7 @@ export const SHELL_THEME_ROLE_VARIABLES: Readonly<Record<string, string>> = {
   sidebarBorder: "--sidebar-border",
   success: "--success",
   info: "--info",
-};
+} satisfies Readonly<Partial<Record<ShellProjectedThemeRole, string>>>;
 
 function toHex(channel: number): string {
   return channel.toString(16).padStart(2, "0");
