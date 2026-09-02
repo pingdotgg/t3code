@@ -12,6 +12,13 @@ import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 /** Auth method advertised by `hermes acp` for pre-configured runtime credentials. */
 const HERMES_AUTH_METHOD_ID = "custom";
 
+/**
+ * The product slug T3 publishes for "whatever model Hermes is configured to
+ * use". It is never a real ACP model id, so it must never reach
+ * `session/set_model` — selecting it keeps the session on its current model.
+ */
+export const HERMES_DEFAULT_MODEL_SLUG = "default";
+
 type HermesAcpRuntimeHermesSettings = Pick<HermesSettings, "binaryPath">;
 
 interface HermesAcpRuntimeInput extends Omit<
@@ -82,10 +89,11 @@ export function currentHermesModelIdFromSessionSetup(
  * Applies a model selection to a live Hermes ACP session. Hermes model ids
  * (e.g. `anthropic:claude-fable-5`) go to `session/set_model` verbatim —
  * there is no trait suffix to strip and no reasoning metadata to attach.
- * A selection matching the session's current model sends nothing: the
- * session is already there, and a redundant `session/set_model` risks a
- * rejection for ids the agent reports as current but does not advertise
- * as switchable.
+ * Nothing is sent when the selection is empty, is the `default` product slug
+ * (which stands for the session's already-configured model, not a real ACP
+ * id), or already matches the session's current model — a redundant
+ * `session/set_model` risks a rejection for ids the agent reports as current
+ * but does not advertise as switchable.
  *
  * `session/set_config_option` is not usable here: the real `hermes acp`
  * binary treats configId `"model"` as a silent no-op (it always returns
@@ -99,7 +107,11 @@ export function applyHermesAcpModelSelection<E>(input: {
   readonly mapError: (context: HermesAcpModelSelectionErrorContext) => E;
 }): Effect.Effect<void, E> {
   const requestedModelId = input.model.trim();
-  if (requestedModelId.length === 0 || requestedModelId === input.currentModelId) {
+  if (
+    requestedModelId.length === 0 ||
+    requestedModelId === HERMES_DEFAULT_MODEL_SLUG ||
+    requestedModelId === input.currentModelId
+  ) {
     return Effect.void;
   }
   return input.runtime.setSessionModel(requestedModelId).pipe(

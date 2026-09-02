@@ -33,7 +33,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import { makeHermesAcpRuntime } from "../acp/HermesAcpSupport.ts";
+import { HERMES_DEFAULT_MODEL_SLUG, makeHermesAcpRuntime } from "../acp/HermesAcpSupport.ts";
 
 const HERMES_PRESENTATION = {
   displayName: "Hermes",
@@ -54,9 +54,10 @@ const HERMES_ACP_MODEL_DISCOVERY_FAILED_MESSAGE = [
 
 const HERMES_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
-    slug: "default",
+    slug: HERMES_DEFAULT_MODEL_SLUG,
     name: "Hermes (configured default)",
     isCustom: false,
+    isDefault: true,
     capabilities: EMPTY_CAPABILITIES,
   },
 ];
@@ -106,6 +107,11 @@ function buildHermesDiscoveredModelsFromSessionModelState(
   if (!modelState || modelState.availableModels.length === 0) {
     return [];
   }
+  // Mark the session's current model as the default so the model resolver
+  // binds new sessions to it instead of the catalog's first entry — without
+  // this a session/set_model fires on every start, switching the agent away
+  // from its own configured model.
+  const currentModelId = modelState.currentModelId?.trim();
   const seen = new Set<string>();
   return modelState.availableModels.flatMap((model) => {
     const slug = model.modelId.trim();
@@ -118,6 +124,7 @@ function buildHermesDiscoveredModelsFromSessionModelState(
         slug,
         name: model.name.trim() || slug,
         isCustom: false,
+        ...(slug === currentModelId ? { isDefault: true } : {}),
         capabilities: EMPTY_CAPABILITIES,
       } satisfies ServerProviderModel,
     ];

@@ -67,6 +67,7 @@ import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
   applyHermesAcpModelSelection,
   currentHermesModelIdFromSessionSetup,
+  HERMES_DEFAULT_MODEL_SLUG,
   makeHermesAcpRuntime,
 } from "../acp/HermesAcpSupport.ts";
 import { type HermesAdapterShape } from "../Services/HermesAdapter.ts";
@@ -212,7 +213,7 @@ function isPlanMode(mode: AcpSessionMode): boolean {
   return findModeByAliases([mode], ACP_PLAN_MODE_ALIASES) !== undefined;
 }
 
-function resolveRequestedModeId(input: {
+export function resolveRequestedModeId(input: {
   readonly interactionMode: ProviderInteractionMode | undefined;
   readonly runtimeMode: RuntimeMode;
   readonly modeState: AcpSessionModeState | undefined;
@@ -288,7 +289,7 @@ function applyRequestedSessionConfiguration<E>(input: {
   });
 }
 
-function selectAutoApprovedPermissionOption(
+export function selectAutoApprovedPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): string | undefined {
   const allowAlwaysOption = request.options.find((option) => option.kind === "allow_always");
@@ -644,13 +645,27 @@ export function makeHermesAdapter(
           });
 
           const now = yield* nowIso;
+          // Track the session's real current model, not just the picker
+          // selection: after configuration the session is on the requested
+          // model when one switched, otherwise on the ACP setup's current
+          // model. The `default` product slug is not a real id, so it falls
+          // through to the discovered current. This baseline is what the
+          // per-turn skip-if-match guard compares against.
+          const startCurrentModelId = currentHermesModelIdFromSessionSetup(
+            started.sessionSetupResult,
+          );
+          const requestedStartModel = hermesModelSelection?.model;
+          const effectiveStartModel =
+            requestedStartModel && requestedStartModel !== HERMES_DEFAULT_MODEL_SLUG
+              ? requestedStartModel
+              : startCurrentModelId;
           const session: ProviderSession = {
             provider: PROVIDER,
             providerInstanceId: boundInstanceId,
             status: "ready",
             runtimeMode: input.runtimeMode,
             cwd,
-            model: hermesModelSelection?.model,
+            model: effectiveStartModel,
             threadId: input.threadId,
             resumeCursor: {
               schemaVersion: HERMES_RESUME_VERSION,
@@ -795,13 +810,24 @@ export function makeHermesAdapter(
         const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
         // Count this prompt immediately so a superseded in-flight prompt
         // resolving from here on does not settle the turn; the matching
-        // decrement is the `ensuring` below.
+        // decrement is the `ensuring` below. The active turn id must land in
+        // the same synchronous window: a concurrent sendTurn arriving during
+        // the awaited session configuration below reads it to merge into this
+        // turn instead of opening a duplicate.
         ctx.promptsInFlight += 1;
+        ctx.activeTurnId = turnId;
 
         return yield* Effect.gen(function* () {
           const turnModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
-          const model = turnModelSelection?.model ?? ctx.session.model;
+          // The `default` product slug means "keep the configured model", so
+          // it resolves to the session's tracked model rather than being sent
+          // or stored as if it were a real ACP model id.
+          const requestedTurnModel =
+            turnModelSelection?.model && turnModelSelection.model !== HERMES_DEFAULT_MODEL_SLUG
+              ? turnModelSelection.model
+              : undefined;
+          const model = requestedTurnModel ?? ctx.session.model;
           yield* applyRequestedSessionConfiguration({
             runtime: ctx.acp,
             runtimeMode: ctx.session.runtimeMode,
@@ -811,7 +837,6 @@ export function makeHermesAdapter(
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
           });
-          ctx.activeTurnId = turnId;
           if (steeringTurnId === undefined) {
             ctx.lastPlanFingerprint = undefined;
           }

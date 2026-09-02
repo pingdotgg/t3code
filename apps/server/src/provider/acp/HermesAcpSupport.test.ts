@@ -63,6 +63,28 @@ describe("applyHermesAcpModelSelection", () => {
     }),
   );
 
+  it.effect("never sends the default product slug as an ACP model id", () =>
+    Effect.gen(function* () {
+      const modelCalls: Array<string> = [];
+      const runtime = {
+        setSessionModel: (modelId: string) =>
+          Effect.sync(() => {
+            modelCalls.push(modelId);
+            return {};
+          }),
+      };
+
+      yield* applyHermesAcpModelSelection({
+        runtime,
+        currentModelId: "anthropic:claude-fable-5",
+        model: "default",
+        mapError: ({ cause }) => `failed to set model: ${cause.message}`,
+      });
+
+      expect(modelCalls).toEqual([]);
+    }),
+  );
+
   it.effect("skips session/set_model when the session is already on the model", () =>
     Effect.gen(function* () {
       const modelCalls: Array<string> = [];
