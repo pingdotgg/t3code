@@ -125,7 +125,7 @@ describe("ProjectFavicon", () => {
     }>;
 
     expect(element.props.icon).toBe(DatabaseIcon);
-    expect(element.props.colorClassName).toBe("text-cyan-500");
+    expect(element.props.colorClassName).toBe("text-cyan-600 dark:text-cyan-400");
   });
 
   it("falls back when the displayed favicon fails without discarding a valid older image early", () => {

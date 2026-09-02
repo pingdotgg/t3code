@@ -319,7 +319,7 @@ function SidebarThreadTooltip({
                 cwd={projectCwd ?? ""}
                 projectName={projectTitle}
                 faviconPath={projectFaviconPath}
-                className="size-3 shrink-0 stroke-muted-foreground"
+                className="size-3 shrink-0"
               />
               <div className="min-w-0 truncate text-foreground/75">{projectTitle}</div>
             </div>
@@ -1436,7 +1436,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 cwd={props.projectCwd ?? ""}
-                projectName={props.projectTitle ?? thread.title}
+                projectName={props.projectTitle ?? ""}
                 faviconPath={props.projectFaviconPath}
                 className="size-4 shrink-0"
               />
