@@ -171,6 +171,7 @@ describe("UsagePage hourly breakdown", () => {
     expect(markup.match(/aria-label="From day"/g)).toHaveLength(2);
     expect(markup.match(/aria-label="To day"/g)).toHaveLength(2);
     expect(testState.useUsage).toHaveBeenLastCalledWith(expect.anything(), undefined, false);
+    expect(markup.match(/pointer-coarse:h-8\.5/g)).toHaveLength(4);
   });
 
   it("keeps recent activity visible first without empty hourly rows", () => {
