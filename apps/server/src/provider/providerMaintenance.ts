@@ -55,6 +55,8 @@ export interface ProviderMaintenanceCapabilityResolutionOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly resolvedCommandPath?: string | null;
   readonly realCommandPath?: string | null;
+  /** Contents of the resolved command when it is a small script, so wrappers can be recognised. */
+  readonly commandScript?: string | null;
 }
 
 export interface ProviderMaintenanceCapabilitiesResolver {
@@ -188,6 +190,21 @@ function makeVitePlusGlobalProviderMaintenanceCapabilities(
   });
 }
 
+function makeMiseProviderMaintenanceCapabilities(
+  definition: PackageManagedProviderMaintenanceDefinition,
+  tool: string,
+): ProviderMaintenanceCapabilities {
+  return makeProviderMaintenanceCapabilities({
+    provider: definition.provider,
+    packageName: definition.npmPackageName,
+    updateExecutable: "mise",
+    // `--bump` moves past an exact version pin in the user's config; the
+    // usual `latest` pin stays `latest`.
+    updateArgs: ["upgrade", "--bump", tool],
+    updateLockKey: "mise",
+  });
+}
+
 function makeHomebrewProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
 ): ProviderMaintenanceCapabilities {
@@ -259,6 +276,40 @@ function isNpmGlobalCommandPath(commandPath: string): boolean {
   );
 }
 
+const MISE_INSTALL_PATH_PATTERN = /\/mise\/installs\/([^/]+)\//;
+const MISE_SHIM_PATH_PATTERN = /\/mise\/shims\/([^/]+)$/;
+// Wrapper scripts such as Omarchy's `exec mise x "codex" -- "codex" "$@"`.
+const MISE_EXEC_SCRIPT_PATTERN = /\bmise\s+(?:x|exec)\s+"?([^\s"]+)"?/;
+
+/**
+ * Maps a mise-managed command to the tool spec `mise upgrade` expects, or
+ * null when mise does not manage it. Recognises binaries under mise's install
+ * tree, mise shims, and small wrapper scripts that `mise x` the tool. Binaries
+ * under mise's `node` install are ordinary npm globals and are left to npm.
+ * Install directories are kebab-cased tool specs, so only the npm backend can
+ * be mapped back to a spec; shims and wrappers name the tool by its bin name.
+ */
+function resolveMiseTool(input: {
+  readonly commandPaths: ReadonlyArray<string>;
+  readonly commandScript: string | null | undefined;
+  readonly npmPackageName: string;
+}): string | null {
+  for (const commandPath of input.commandPaths) {
+    const normalized = normalizeCommandPath(commandPath);
+    const installDir = MISE_INSTALL_PATH_PATTERN.exec(normalized)?.[1];
+    if (installDir && installDir !== "node") {
+      return installDir.startsWith("npm-") ? `npm:${input.npmPackageName}` : installDir;
+    }
+    const shim = MISE_SHIM_PATH_PATTERN.exec(normalized)?.[1];
+    if (shim) {
+      return shim.replace(/\.(exe|cmd)$/, "");
+    }
+  }
+  return input.commandScript
+    ? (MISE_EXEC_SCRIPT_PATTERN.exec(input.commandScript)?.[1] ?? null)
+    : null;
+}
+
 function isHomebrewCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
   return (
@@ -291,6 +342,17 @@ export function resolvePackageManagedProviderMaintenance(
       ...(options?.realCommandPath ? [options.realCommandPath] : []),
     ];
 
+    // Checked before native installers: a mise wrapper for claude lives at
+    // `~/.local/bin/claude`, where the native check would otherwise send
+    // `claude update` at a binary that mise owns.
+    const miseTool = resolveMiseTool({
+      commandPaths,
+      commandScript: options?.commandScript,
+      npmPackageName: definition.npmPackageName,
+    });
+    if (miseTool) {
+      return makeMiseProviderMaintenanceCapabilities(definition, miseTool);
+    }
     const nativeUpdate = definition.nativeUpdate;
     if (
       nativeUpdate &&
@@ -353,11 +415,28 @@ function makeManualProviderMaintenanceCapabilities(
   });
 }
 
+const COMMAND_SCRIPT_MAX_BYTES = 4_096n;
+
+/** Reads the resolved command when it is a small file; binaries and large launchers yield null. */
+const readCommandScript = Effect.fn("readCommandScript")(function* (
+  fileSystem: FileSystem.FileSystem,
+  commandPath: string,
+) {
+  const info = yield* fileSystem.stat(commandPath).pipe(Effect.orElseSucceed(() => null));
+  if (!info || info.type !== "File" || info.size > COMMAND_SCRIPT_MAX_BYTES) {
+    return null;
+  }
+  return yield* fileSystem.readFileString(commandPath).pipe(Effect.orElseSucceed(() => null));
+});
+
 export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   "resolveProviderMaintenanceCapabilitiesEffect",
 )(function* (
   resolver: ProviderMaintenanceCapabilitiesResolver,
-  options?: Omit<ProviderMaintenanceCapabilityResolutionOptions, "realCommandPath">,
+  options?: Omit<
+    ProviderMaintenanceCapabilityResolutionOptions,
+    "realCommandPath" | "commandScript"
+  >,
 ) {
   const binaryPath = nonEmptyString(options?.binaryPath);
   if (!binaryPath) {
@@ -377,11 +456,13 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   const realCommandPath = yield* fileSystem
     .realPath(resolvedCommandPath)
     .pipe(Effect.orElseSucceed(() => resolvedCommandPath));
+  const commandScript = yield* readCommandScript(fileSystem, realCommandPath);
   return resolver.resolve({
     ...options,
     env,
     resolvedCommandPath,
     realCommandPath,
+    commandScript,
   });
 });
 
