@@ -971,8 +971,13 @@ function caretLineRect(range: Range): DOMRect | null {
     const neighbourRect = neighbour.getBoundingClientRect();
     if (neighbourRect.height > 0) return neighbourRect;
   } else if (neighbour instanceof Text && neighbour.data.length > 0) {
+    // Probe the character on the caret's side. A soft-wrapped text node's
+    // first rect is its first visual line, which may not be the caret's.
+    const isBeforeCaret = neighbour === container.childNodes[range.startOffset - 1];
+    const probeStart = isBeforeCaret ? neighbour.data.length - 1 : 0;
     const probeRange = document.createRange();
-    probeRange.selectNodeContents(neighbour);
+    probeRange.setStart(neighbour, probeStart);
+    probeRange.setEnd(neighbour, probeStart + 1);
     const probeRect = Array.from(probeRange.getClientRects()).find((rect) => rect.height > 0);
     if (probeRect) return probeRect;
   }
