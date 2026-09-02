@@ -141,6 +141,26 @@ const selectSessions = (
     ([partition]) => partitions === undefined || partitions.includes(partition),
   );
 
+/**
+ * Scope bytes for the partition digest.
+ *
+ * `TextEncoder` replaces a lone UTF-16 surrogate with U+FFFD, so `"p\ud800"`
+ * and `"p\ufffd"` would hash to the same partition and share cookies. Those
+ * are distinct, supported ids, so lone surrogates are escaped to `\uXXXX`
+ * first — and a literal backslash is doubled so the escape cannot be forged.
+ * Every well-formed scope passes through byte-for-byte unchanged, which keeps
+ * existing partitions (and the logins in them) where they are.
+ */
+const encodeScopeForDigest = (scope: string): Uint8Array =>
+  new TextEncoder().encode(
+    scope
+      .replace(/\\/g, "\\\\")
+      .replace(
+        /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g,
+        (unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`,
+      ),
+  );
+
 export const make = Effect.gen(function* BrowserSessionMake() {
   const crypto = yield* Crypto.Crypto;
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
@@ -150,7 +170,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     persistent = true,
     namespace?: BrowserSessionPartitionNamespace,
   ) {
-    const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(scope)).pipe(
+    const digest = yield* crypto.digest("SHA-256", encodeScopeForDigest(scope)).pipe(
       Effect.mapError(
         (cause) =>
           new BrowserSessionPartitionDerivationError({

@@ -63,6 +63,28 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("keeps scopes that differ only by a lone surrogate in separate partitions", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+
+      // TextEncoder folds a lone surrogate to U+FFFD, so without escaping these
+      // two supported ids would hash to one partition and share every cookie.
+      const loneSurrogate = yield* browserSessions.getPartition("p\ud800");
+      const replacementChar = yield* browserSessions.getPartition("p\ufffd");
+      assert.notStrictEqual(loneSurrogate, replacementChar);
+
+      // The escape can't be forged with a literal backslash either.
+      const literal = yield* browserSessions.getPartition("p\\ud800");
+      assert.notStrictEqual(literal, loneSurrogate);
+
+      // And a well-formed scope still lands on its historical partition.
+      assert.strictEqual(
+        yield* browserSessions.getPartition("scope-a"),
+        "persist:t3code-preview-f051bb2c68cb7b2fe969",
+      );
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("keeps legacy defaults disjoint from nondefault profile partitions", () =>
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
