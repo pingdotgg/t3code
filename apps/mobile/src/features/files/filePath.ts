@@ -88,7 +88,12 @@ export function resolveWorkspaceRelativeFilePath(
     return null;
   }
 
-  return normalizeRelativePath(normalizedTarget.slice(normalizedRoot.length + 1));
+  const relativePath = normalizedTarget.slice(normalizedRoot.length + 1);
+  // `/repo/../x` starts with the root but escapes it.
+  if (relativePath.split("/").includes("..")) {
+    return null;
+  }
+  return normalizeRelativePath(relativePath);
 }
 
 export function isVideoPreviewFile(path: string): boolean {

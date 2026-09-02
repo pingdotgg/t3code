@@ -15,8 +15,7 @@ using namespace facebook::react;
 
 @implementation T3MarkdownTextRun {
   NSString * _text;
-  RCTBubblingEventBlock _onPress;
-  RCTBubblingEventBlock _onLongPress;
+  NSString * _contextMenuConfig;
 }
 
 + (ComponentDescriptorProvider)componentDescriptorProvider
@@ -43,7 +42,76 @@ using namespace facebook::react;
     _text = text;
   }
 
+  if (newViewProps.contextMenuConfig != oldViewProps.contextMenuConfig) {
+    _contextMenuConfig = [NSString stringWithUTF8String:newViewProps.contextMenuConfig.c_str()];
+  }
+
   [super updateProps:props oldProps:oldProps];
+}
+
+- (BOOL)hasContextMenu
+{
+  return _contextMenuConfig.length > 0;
+}
+
+- (nullable UIMenu *)contextMenu
+{
+  if (_contextMenuConfig.length == 0) {
+    return nil;
+  }
+
+  NSData *data = [_contextMenuConfig dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *config = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  if (![config isKindOfClass:[NSDictionary class]]) {
+    return nil;
+  }
+
+  NSArray *actionConfigs = config[@"actions"];
+  if (![actionConfigs isKindOfClass:[NSArray class]] || actionConfigs.count == 0) {
+    return nil;
+  }
+
+  NSMutableArray<UIMenuElement *> *actions = [NSMutableArray arrayWithCapacity:actionConfigs.count];
+  __weak T3MarkdownTextRun *weakSelf = self;
+  for (NSDictionary *actionConfig in actionConfigs) {
+    if (![actionConfig isKindOfClass:[NSDictionary class]]) {
+      continue;
+    }
+    NSString *actionIdentifier = actionConfig[@"id"];
+    NSString *title = actionConfig[@"title"];
+    if (![actionIdentifier isKindOfClass:[NSString class]] ||
+        ![title isKindOfClass:[NSString class]]) {
+      continue;
+    }
+
+    UIAction *action = [UIAction actionWithTitle:title
+                                           image:nil
+                                      identifier:actionIdentifier
+                                         handler:^(__kindof UIAction *selectedAction) {
+      [weakSelf onContextMenuAction:selectedAction.identifier];
+    }];
+    if ([actionConfig[@"disabled"] boolValue]) {
+      action.attributes = UIMenuElementAttributesDisabled;
+    }
+    [actions addObject:action];
+  }
+
+  if (actions.count == 0) {
+    return nil;
+  }
+  NSString *title = [config[@"title"] isKindOfClass:[NSString class]] ? config[@"title"] : @"";
+  return [UIMenu menuWithTitle:title children:actions];
+}
+
+- (void)onContextMenuAction:(NSString *)actionIdentifier
+{
+  if (_eventEmitter != nullptr) {
+    std::dynamic_pointer_cast<const facebook::react::T3MarkdownTextRunEventEmitter>(_eventEmitter)
+    ->onContextMenuAction(facebook::react::T3MarkdownTextRunEventEmitter::OnContextMenuAction{
+      static_cast<int>(self.tag),
+      actionIdentifier.UTF8String,
+    });
+  }
 }
 
 - (void)onPress {

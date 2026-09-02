@@ -50,6 +50,17 @@ export interface MarkdownImageRequest {
  */
 export type MarkdownImageRenderer = (image: MarkdownImageRequest) => import("react").ReactNode;
 
+export interface MarkdownFileContextMenuAction {
+  readonly id: string;
+  readonly title: string;
+  readonly disabled?: boolean;
+}
+
+export interface MarkdownFileContextMenu {
+  readonly title?: string;
+  readonly actions: ReadonlyArray<MarkdownFileContextMenuAction>;
+}
+
 export interface SelectableMarkdownTextProps {
   readonly markdown: string;
   readonly textStyle: NativeMarkdownTextStyle;
@@ -57,6 +68,8 @@ export interface SelectableMarkdownTextProps {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly preserveSoftBreaks?: boolean;
   readonly onLinkPress?: (href: string) => void;
+  readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;
+  readonly onFileContextMenuAction?: (href: string, actionId: string) => void;
   readonly renderImage?: MarkdownImageRenderer;
   readonly marginTop?: number;
   readonly marginBottom?: number;

@@ -24,8 +24,14 @@ export type SelectionChangeEvent = {
   nativeEvent: { target: number; start: number; end: number };
 };
 
+export type ContextMenuActionEvent = {
+  nativeEvent: { target: number; actionIdentifier: string };
+};
+
 export type MarkdownTextPrimitiveProps = TextProps & {
   uiTextView?: boolean;
+  contextMenuConfig?: string;
+  onContextMenuAction?: (event: ContextMenuActionEvent) => void;
   /**
    * Fired when the native text selection changes. Only fires on iOS when
    * `uiTextView` is true. Note: fires on every selection-edge adjustment
