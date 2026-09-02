@@ -584,7 +584,11 @@ describe("PreviewView navigation", () => {
     );
     mocks.toggleAnnotation?.();
 
-    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(annotation, null));
+    // The forwarded and stored annotation both drop the screenshot, so the
+    // prompt does not claim a crop that was never attached.
+    const sent = { ...annotation, screenshot: null };
+    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(sent, null));
+    expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, sent);
     expect(mocks.addImage).not.toHaveBeenCalled();
   });
 });
