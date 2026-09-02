@@ -20,8 +20,10 @@ describe("resolveFileChipTarget", () => {
     expect(resolveFileChipTarget("src/app.ts", null)).toEqual({ relativePath: "src/app.ts" });
   });
 
-  it("ignores links that are not files", () => {
+  it("ignores links that are not files or cannot be opened", () => {
     expect(resolveFileChipTarget("https://example.com/app.ts", "/repo")).toBeNull();
+    expect(resolveFileChipTarget("~/report.md", "/repo")).toBeNull();
+    expect(resolveFileChipTarget("../other/file.ts", "/repo")).toBeNull();
   });
 });
 
