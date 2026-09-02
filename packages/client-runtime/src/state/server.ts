@@ -134,6 +134,16 @@ export function matchesServerUpdateReadyEvent(
     : event.payload.updateOutcome?.id === result.updateId;
 }
 
+export function matchesServerUpdateResumeEvent(
+  result: ServerSelfUpdateResult,
+  event: ServerLifecycleStreamReadyEvent,
+): boolean {
+  return (
+    (result.method === "desktop-app" && result.desktopUpdateToken !== undefined) ||
+    matchesServerUpdateReadyEvent(result, event)
+  );
+}
+
 export function validateServerUpdateReadyEvent(
   result: ServerSelfUpdateResult,
   event: ServerLifecycleStreamReadyEvent,
@@ -717,8 +727,7 @@ export function createServerEnvironmentAtoms<R, E>(
           .pipe(
             Stream.filter(
               (event): event is ServerLifecycleStreamReadyEvent =>
-                event.type === "ready" &&
-                (result.method === "desktop-app" || matchesServerUpdateReadyEvent(result, event)),
+                event.type === "ready" && matchesServerUpdateResumeEvent(result, event),
             ),
             Stream.runHead,
             Effect.timeoutOption(SERVER_UPDATE_RESUME_TIMEOUT),

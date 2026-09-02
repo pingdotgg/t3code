@@ -34,6 +34,7 @@ import {
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
   matchesServerUpdateReadyEvent,
+  matchesServerUpdateResumeEvent,
   nudgeReconnectDuringUpdateRestart,
   projectServerWelcome,
   resolveServerConfigValue,
@@ -372,6 +373,36 @@ describe("server state projection", () => {
       expect(rollback.message).toBe("prepared-timeout");
     }),
   );
+
+  it("requires tokenless desktop updates to reach the target version", () => {
+    const ready = (serverVersion: string) =>
+      ({
+        version: 1 as const,
+        sequence: 1,
+        type: "ready" as const,
+        payload: {
+          at: "2026-09-01T00:00:00.000Z",
+          environment: { serverVersion },
+        },
+      }) as Parameters<typeof matchesServerUpdateResumeEvent>[1];
+
+    expect(
+      matchesServerUpdateResumeEvent(
+        { targetVersion: "0.0.31", method: "desktop-app" },
+        ready("0.0.30"),
+      ),
+    ).toBe(false);
+    expect(
+      matchesServerUpdateResumeEvent(
+        {
+          targetVersion: "0.0.31",
+          method: "desktop-app",
+          desktopUpdateToken: "update-1",
+        },
+        ready("0.0.30"),
+      ),
+    ).toBe(true);
+  });
 
   it("applies every config category to the projected snapshot", () => {
     const snapshot = applyServerConfigProjection(Option.none(), {
