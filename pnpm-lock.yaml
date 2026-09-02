@@ -368,7 +368,7 @@ importers:
         specifier: ~57.0.2
         version: 57.0.2(expo@57.0.18)
       expo-sharing:
-        specifier: ~57.0.16
+        specifier: 57.0.16
         version: 57.0.16(patch_hash=8d2e3b10eb3f52036a9a086800180ec6cebf3b75bccc5b1775117a7244d4ac45)(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@6.0.3)
       expo-splash-screen:
         specifier: ~57.0.8
