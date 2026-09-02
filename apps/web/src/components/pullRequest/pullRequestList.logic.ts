@@ -8,8 +8,11 @@ import {
   resolvePullRequestAuthorFilter,
 } from "@t3tools/contracts";
 import type {
+  ProjectId,
+  PullRequestActor,
   PullRequestDiffStat,
   PullRequestInvolvement,
+  PullRequestLabel,
   PullRequestListCursors,
   PullRequestListFilters,
   PullRequestListState,
@@ -40,6 +43,16 @@ export interface PullRequestGroup<Entry extends PullRequestListEntry = PullReque
   readonly entries: ReadonlyArray<Entry>;
 }
 
+export interface PullRequestAuthorFacet {
+  readonly actor: PullRequestActor;
+  readonly count: number;
+  readonly mergedCount: number;
+}
+
+export interface PullRequestLabelFacet extends PullRequestLabel {
+  readonly count: number;
+}
+
 /**
  * The signed-in account per host. Keyed `"<environmentId> <host>"` once a listing spans more than
  * one environment: two machines can both reach github.com signed in as different people, and a
@@ -63,6 +76,59 @@ const GROUP_LABELS: Record<PullRequestGroupKey, string> = {
 function normalize(value: string | null | undefined): string | null {
   const trimmed = value?.trim().toLowerCase() ?? "";
   return trimmed.length > 0 ? trimmed : null;
+}
+
+export function pullRequestLabelColor(color: string | null): string | null {
+  const hex = color?.trim().replace(/^#/, "") ?? "";
+  return /^[0-9a-fA-F]{6}$/.test(hex) ? `#${hex}` : null;
+}
+
+export function collectPullRequestListFacets(
+  entries: ReadonlyArray<PullRequestListEntry>,
+  state: PullRequestListState,
+) {
+  const authors = new Map<string, PullRequestAuthorFacet>();
+  const labels = new Map<string, PullRequestLabelFacet>();
+  const uniqueEntries = new Map(entries.map((entry) => [pullRequestEntryKey(entry), entry]));
+  for (const entry of uniqueEntries.values()) {
+    const inState = state === "all" || entry.state === state;
+    if (entry.author !== null) {
+      const key = normalize(entry.author.login);
+      if (key !== null) {
+        const held = authors.get(key);
+        authors.set(key, {
+          actor: held?.actor ?? entry.author,
+          count: (held?.count ?? 0) + Number(inState),
+          mergedCount: (held?.mergedCount ?? 0) + Number(entry.state === "merged"),
+        });
+      }
+    }
+    if (!inState) continue;
+    for (const label of entry.labels) {
+      const key = normalize(label.name);
+      if (key === null) continue;
+      const held = labels.get(key);
+      labels.set(key, {
+        ...label,
+        name: held?.name ?? label.name,
+        color: held?.color ?? label.color,
+        count: (held?.count ?? 0) + 1,
+      });
+    }
+  }
+  return {
+    authors: [...authors.values()]
+      .filter((author) => author.count > 0)
+      .toSorted(
+        (left, right) =>
+          right.mergedCount - left.mergedCount ||
+          right.count - left.count ||
+          left.actor.login.localeCompare(right.actor.login),
+      ),
+    labels: [...labels.values()].toSorted(
+      (left, right) => right.count - left.count || left.name.localeCompare(right.name),
+    ),
+  };
 }
 
 /**
@@ -364,6 +430,155 @@ export function pullRequestEntryKey(entry: ScopedEntry): string {
   return `${scope}${entry.host}:${entry.repository}#${entry.number}`;
 }
 
+export interface PullRequestStatsTarget {
+  readonly environmentId: EnvironmentId;
+  readonly input: {
+    readonly refs: ReadonlyArray<{
+      readonly projectId: ProjectId;
+      readonly repository: string;
+      readonly number: number;
+    }>;
+  };
+}
+
+export interface PullRequestStatsBatch extends PullRequestStatsTarget {
+  readonly keys: ReadonlySet<string>;
+}
+
+export type PullRequestStatsPolicy = "visible" | "eager";
+
+export interface PullRequestStatsScope {
+  readonly key: string;
+  readonly policy: PullRequestStatsPolicy;
+}
+
+const MAX_PULL_REQUEST_STATS_REFS = 500;
+
+/** Excludes rows already covered by an active batch or the received-count cache. */
+export function pullRequestStatsKeysToRequest(
+  entriesByKey: ReadonlyMap<string, EnvironmentPullRequestEntry>,
+  enteredKeys: ReadonlySet<string>,
+  batches: ReadonlyArray<PullRequestStatsBatch>,
+  statsByRow: ReadonlyMap<string, unknown>,
+): ReadonlySet<string> {
+  const requested = new Set(batches.flatMap((batch) => [...batch.keys]));
+  return new Set(
+    [...enteredKeys].filter((key) => {
+      const entry = entriesByKey.get(key);
+      return (
+        entry !== undefined && !requested.has(key) && !statsByRow.has(pullRequestDiffStatKey(entry))
+      );
+    }),
+  );
+}
+
+/** Groups selected rows into bounded, immutable line-count reads per environment. */
+export function pullRequestStatsBatches(
+  entriesByKey: ReadonlyMap<string, EnvironmentPullRequestEntry>,
+  keys: ReadonlySet<string>,
+): ReadonlyArray<PullRequestStatsBatch> {
+  const byEnvironment = new Map<
+    EnvironmentId,
+    Array<{
+      readonly key: string;
+      readonly ref: PullRequestStatsTarget["input"]["refs"][number];
+    }>
+  >();
+  for (const key of keys) {
+    const entry = entriesByKey.get(key);
+    if (entry === undefined) continue;
+    const rows = byEnvironment.get(entry.environmentId) ?? [];
+    rows.push({
+      key,
+      ref: {
+        projectId: entry.projectId,
+        repository: entry.repository,
+        number: entry.number,
+      },
+    });
+    byEnvironment.set(entry.environmentId, rows);
+  }
+  return [...byEnvironment].flatMap(([environmentId, rows]) => {
+    const batches: PullRequestStatsBatch[] = [];
+    for (let index = 0; index < rows.length; index += MAX_PULL_REQUEST_STATS_REFS) {
+      const batch = rows.slice(index, index + MAX_PULL_REQUEST_STATS_REFS);
+      batches.push({
+        environmentId,
+        input: { refs: batch.map((row) => row.ref) },
+        keys: new Set(batch.map((row) => row.key)),
+      });
+    }
+    return batches;
+  });
+}
+
+/**
+ * Selects the next immutable stats batches. Size sorting needs every loaded row, while the other
+ * modes only need rows near the viewport. Normal reads skip active and cached rows; an explicit
+ * refresh asks for the selected rows again.
+ */
+export function pullRequestStatsRequestBatches({
+  entriesByKey,
+  candidateKeys,
+  policy,
+  activeBatches,
+  statsByRow,
+  refresh = false,
+}: {
+  readonly entriesByKey: ReadonlyMap<string, EnvironmentPullRequestEntry>;
+  readonly candidateKeys: ReadonlySet<string>;
+  readonly policy: PullRequestStatsPolicy;
+  readonly activeBatches: ReadonlyArray<PullRequestStatsBatch>;
+  readonly statsByRow: ReadonlyMap<string, unknown>;
+  readonly refresh?: boolean;
+}): ReadonlyArray<PullRequestStatsBatch> {
+  const requestedKeys = policy === "eager" ? new Set(entriesByKey.keys()) : candidateKeys;
+  const keys = refresh
+    ? requestedKeys
+    : pullRequestStatsKeysToRequest(entriesByKey, requestedKeys, activeBatches, statsByRow);
+  return pullRequestStatsBatches(entriesByKey, keys);
+}
+
+/** Ignores a refresh that finished after the list moved to another filter or stats policy. */
+export function pullRequestStatsRefreshBatches({
+  requestedScope,
+  currentScope,
+  entriesByKey,
+  candidateKeys,
+  statsByRow,
+}: {
+  readonly requestedScope: PullRequestStatsScope;
+  readonly currentScope: PullRequestStatsScope;
+  readonly entriesByKey: ReadonlyMap<string, EnvironmentPullRequestEntry>;
+  readonly candidateKeys: ReadonlySet<string>;
+  readonly statsByRow: ReadonlyMap<string, unknown>;
+}): ReadonlyArray<PullRequestStatsBatch> | null {
+  if (requestedScope.key !== currentScope.key || requestedScope.policy !== currentScope.policy) {
+    return null;
+  }
+  return pullRequestStatsRequestBatches({
+    entriesByKey,
+    candidateKeys,
+    policy: requestedScope.policy,
+    activeBatches: [],
+    statsByRow,
+    refresh: true,
+  });
+}
+
+/** Drops completed batches once every row in them has left the observer window. */
+export function retainVisiblePullRequestStatsBatches(
+  batches: ReadonlyArray<PullRequestStatsBatch>,
+  visibleKeys: ReadonlySet<string>,
+): ReadonlyArray<PullRequestStatsBatch> {
+  return batches.filter((batch) => {
+    for (const key of batch.keys) {
+      if (visibleKeys.has(key)) return true;
+    }
+    return false;
+  });
+}
+
 /**
  * The priority groups built from the hosts' own answers rather than re-partitioned from the
  * paginated feed. The feed is sliced by recency, so an older authored or review-requested row
@@ -433,13 +648,16 @@ export function mergePullRequestDiffStats(
   if (stats.length === 0) return previous;
   const next = new Map(previous);
   for (const stat of stats) {
-    next.set(diffStatKey(stat), { additions: stat.additions, deletions: stat.deletions });
+    next.set(pullRequestDiffStatKey(stat), {
+      additions: stat.additions,
+      deletions: stat.deletions,
+    });
   }
   return next;
 }
 
 /** A project id only names a project within its own environment, so the key carries both. */
-const diffStatKey = (row: {
+export const pullRequestDiffStatKey = (row: {
   readonly environmentId: string;
   readonly projectId: string;
   readonly number: number;
@@ -792,6 +1010,6 @@ export function withDiffStat<
   statsByRow: ReadonlyMap<string, { readonly additions: number; readonly deletions: number }>,
 ): Entry {
   if (entry.additions !== 0 || entry.deletions !== 0) return entry;
-  const stat = statsByRow.get(diffStatKey(entry));
+  const stat = statsByRow.get(pullRequestDiffStatKey(entry));
   return stat === undefined ? entry : { ...entry, ...stat };
 }

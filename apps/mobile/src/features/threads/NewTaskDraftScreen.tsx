@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   CommonActions,
@@ -35,6 +36,11 @@ import {
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
+import {
+  composerAttachmentUploadBlockReason,
+  composerAttachmentUploadsAtom,
+} from "../../state/composer-attachment-uploads";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
@@ -163,21 +169,42 @@ export function NewTaskDraftScreen(props: {
     connectedEnvironments.find(
       (environment) => environment.environmentId === selectedProject.environmentId,
     )?.connectionState === "connected";
+  const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
+  const attachmentBlockReason = selectedProject
+    ? composerAttachmentUploadBlockReason({
+        environmentId: selectedProject.environmentId,
+        attachments: flow.attachments,
+        connected: environmentConnected,
+        serverConfig: selectedEnvironmentServerConfig,
+        states: uploadStates,
+      })
+    : null;
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
-  const wasFocusedBeforeVideoRef = useRef(false);
+  const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
+  const wasFocusedBeforePreviewRef = useRef(false);
   const openVideoPreview = useCallback(
     (attachment: DraftComposerFileAttachment, sourceIdentifier: string) => {
-      wasFocusedBeforeVideoRef.current = isComposerFocused;
+      wasFocusedBeforePreviewRef.current = isComposerFocused;
+      setPreviewFile(null);
       setPreviewVideo((current) => current ?? { type: "local", attachment, sourceIdentifier });
     },
     [isComposerFocused],
   );
-  const closeVideoPreview = useCallback(() => {
+  const openFilePreview = useCallback(
+    (source: FilePreviewSource) => {
+      wasFocusedBeforePreviewRef.current = isComposerFocused;
+      setPreviewVideo(null);
+      setPreviewFile((current) => current ?? source);
+    },
+    [isComposerFocused],
+  );
+  const closeMediaPreview = useCallback(() => {
     setPreviewVideo(null);
-    if (wasFocusedBeforeVideoRef.current) {
+    setPreviewFile(null);
+    if (wasFocusedBeforePreviewRef.current) {
       setTimeout(() => {
         if (navigation.isFocused()) promptInputRef.current?.focus();
       }, 100);
@@ -851,6 +878,7 @@ export function NewTaskDraftScreen(props: {
     const initialMessageText = draft.text.trim();
 
     if (
+      attachmentBlockReason !== null ||
       !modelSelection ||
       initialMessageText.length === 0 ||
       flow.submitting ||
@@ -1005,6 +1033,7 @@ export function NewTaskDraftScreen(props: {
 
   const isAndroid = Platform.OS === "android";
   const canStart =
+    attachmentBlockReason === null &&
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
     flow.prompt.trim().length > 0 &&
@@ -1204,6 +1233,7 @@ export function NewTaskDraftScreen(props: {
         {flow.attachments.length > 0 ? (
           <View className="px-[14px] pb-2.5">
             <ComposerAttachmentStrip
+              environmentId={selectedProject.environmentId}
               attachments={flow.attachments}
               imageBorderRadius={16}
               imageSize={72}
@@ -1211,6 +1241,9 @@ export function NewTaskDraftScreen(props: {
                 isComposerInteractionLocked || voiceInput.isBusy
                   ? () => undefined
                   : flow.removeAttachment
+              }
+              onPressPreview={
+                isComposerInteractionLocked || voiceInput.isBusy ? undefined : openFilePreview
               }
               onPressVideo={
                 isComposerInteractionLocked || voiceInput.isBusy ? undefined : openVideoPreview
@@ -1302,11 +1335,12 @@ export function NewTaskDraftScreen(props: {
               {voicePresentation.showsSend ? (
                 <ComposerActionButton
                   accessibilityLabel={
-                    flow.submitting
+                    attachmentBlockReason ??
+                    (flow.submitting
                       ? "Starting task"
                       : environmentConnected
                         ? "Start task"
-                        : "Queue task"
+                        : "Queue task")
                   }
                   disabled={!canStart}
                   icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
@@ -1318,7 +1352,8 @@ export function NewTaskDraftScreen(props: {
           </ComposerDictationToolbar>
         </Animated.View>
       </ComposerSurface>
-      <VideoPreviewModal source={previewVideo} onRequestClose={closeVideoPreview} />
+      <VideoPreviewModal source={previewVideo} onRequestClose={closeMediaPreview} />
+      <FilePreviewModal source={previewFile} onRequestClose={closeMediaPreview} />
     </View>
   );
 

@@ -21,6 +21,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 
 const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
   {
@@ -73,7 +74,8 @@ export function SourceControlWritingSettingsSection() {
   return (
     <SettingsSection title="Text generation">
       <SettingsRow
-        title="Source control writing style"
+        serverScoped
+        {...searchableSetting("source-control-writing-style")}
         description={MODE_OPTIONS[style.mode].description}
         resetAction={
           isSourceControlWritingStyleDirty ? (
@@ -137,7 +139,8 @@ export function SourceControlWritingSettingsSection() {
       </SettingsRow>
 
       <SettingsRow
-        title="Follow change request templates"
+        serverScoped
+        {...searchableSetting("follow-change-request-templates")}
         description="Structures change request descriptions using the current repository's template when one is available."
         resetAction={
           style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
@@ -169,7 +172,8 @@ export function SourceControlWritingSettingsSection() {
       />
 
       <SettingsRow
-        title="Source control writer model"
+        serverScoped
+        {...searchableSetting("source-control-writer-model")}
         description="Optional model override for change descriptions, change request titles and descriptions, and branch or bookmark names. Off uses the global text generation model."
         control={
           <div className="flex flex-wrap items-center justify-end gap-2">

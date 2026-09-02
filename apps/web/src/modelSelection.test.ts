@@ -226,6 +226,29 @@ describe("instance-scoped model selection", () => {
     ]);
   });
 
+  it("drops server-reported custom rows that are no longer in settings", () => {
+    const baseProvider = provider({
+      instanceId: "claude_openrouter",
+      models: ["claude-sonnet-4-6"],
+    });
+    const providers = [
+      {
+        ...baseProvider,
+        models: [
+          ...baseProvider.models,
+          { slug: "removed/custom", name: "removed/custom", isCustom: true, capabilities: {} },
+        ],
+      },
+    ];
+    const openrouter = deriveProviderInstanceEntries(providers)[0]!;
+
+    expect(
+      getAppModelOptionsForInstance(settingsWithProviderInstances(), openrouter).map(
+        (option) => option.slug,
+      ),
+    ).toEqual(["claude-sonnet-4-6", "openai/gpt-5.5"]);
+  });
+
   it("applies persisted per-instance model ordering", () => {
     const providers = [
       provider({

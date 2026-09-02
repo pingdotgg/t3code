@@ -11,6 +11,10 @@ import {
   useState,
 } from "react";
 
+import {
+  PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
+  usePrimarySettingsAvailable,
+} from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
 import { Button } from "../ui/button";
@@ -84,6 +88,18 @@ function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) 
   return targetRef;
 }
 
+export function SettingsSearchTarget({
+  children,
+  ...targetProps
+}: ComponentPropsWithoutRef<"div">) {
+  const targetRef = useSettingsSearchTarget<HTMLDivElement>(targetProps.id);
+  return (
+    <div {...targetProps} ref={targetRef} tabIndex={targetProps.id ? -1 : targetProps.tabIndex}>
+      {children}
+    </div>
+  );
+}
+
 /** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
   return (
@@ -147,12 +163,19 @@ export function SettingsSection({
   );
 }
 
+/**
+ * One setting. `serverScoped` marks rows whose value lives in the primary
+ * environment's settings.json; where there is no primary (the hosted app)
+ * the control goes inert with a tooltip instead of showing an editable
+ * default that would never save.
+ */
 export function SettingsRow({
   title,
   description,
   status,
   resetAction,
   control,
+  serverScoped = false,
   children,
   className,
   ...rowProps
@@ -162,9 +185,36 @@ export function SettingsRow({
   status?: ReactNode;
   resetAction?: ReactNode;
   control?: ReactNode;
+  serverScoped?: boolean;
   children?: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
+  const primarySettingsAvailable = usePrimarySettingsAvailable();
+  const unavailable = serverScoped && !primarySettingsAvailable;
+  const renderedReset = unavailable ? null : resetAction;
+  const renderedControl =
+    unavailable && control ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            // Focusable so keyboard users can still reach the explanation.
+            <span
+              tabIndex={0}
+              className="flex w-full items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-auto"
+            />
+          }
+        >
+          <div inert className="flex w-full items-center gap-2 opacity-50 sm:w-auto">
+            {control}
+          </div>
+        </TooltipTrigger>
+        <TooltipPopup side="top" className="max-w-72">
+          {PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE}
+        </TooltipPopup>
+      </Tooltip>
+    ) : (
+      control
+    );
 
   return (
     <div
@@ -178,7 +228,7 @@ export function SettingsRow({
           <div className="flex min-h-5 items-center gap-1.5">
             <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">{title}</h3>
             <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-              {resetAction}
+              {renderedReset}
             </span>
           </div>
           {description ? (
@@ -188,13 +238,19 @@ export function SettingsRow({
           ) : null}
           {status ? <div className="pt-0.5 text-xs text-muted-foreground">{status}</div> : null}
         </div>
-        {control ? (
+        {renderedControl ? (
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            {control}
+            {renderedControl}
           </div>
         ) : null}
       </div>
-      {children}
+      {unavailable && children ? (
+        <div inert className="opacity-50">
+          {children}
+        </div>
+      ) : (
+        children
+      )}
     </div>
   );
 }

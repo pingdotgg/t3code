@@ -39,6 +39,32 @@ export interface TerminalStatusIndicator {
 
 export type ThreadPr = VcsStatusResult["pr"];
 
+export type ThreadPullRequestRefreshSource = "linked-detail" | "vcs";
+
+/** Refresh only when the panel has newer state for this thread's own pull request. */
+export function threadPullRequestRefreshSource(input: {
+  readonly panel: {
+    readonly repository: string;
+    readonly number: number;
+    readonly state: NonNullable<ThreadPr>["state"];
+  };
+  readonly thread: {
+    readonly repository: string | null;
+    readonly number: number | null;
+    readonly state: NonNullable<ThreadPr>["state"] | null;
+    readonly linked: boolean;
+  };
+}): ThreadPullRequestRefreshSource | null {
+  if (
+    input.thread.repository?.toLowerCase() !== input.panel.repository.toLowerCase() ||
+    input.thread.number !== input.panel.number ||
+    input.thread.state === input.panel.state
+  ) {
+    return null;
+  }
+  return input.thread.linked ? "linked-detail" : "vcs";
+}
+
 export interface LinkedThreadPullRequestStatus {
   readonly pr: NonNullable<ThreadPr>;
   readonly sourceControlProvider: NonNullable<VcsStatusResult["sourceControlProvider"]>;
