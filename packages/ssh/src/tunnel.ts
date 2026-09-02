@@ -1190,11 +1190,24 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     Deferred.Deferred<SshTunnelEntry, SshEnvironmentEffectError>
   >();
   const authSecrets = new Map<string, string>();
+  const targetResolutionLocks = new Map<string, Semaphore.Semaphore>();
   const tunnelMutationLocks = new Map<string, Semaphore.Semaphore>();
   const tunnelKeysByTarget = new Map<string, string>();
   const resolvedTargetsByTunnelKey = new Map<string, DesktopSshEnvironmentTarget>();
   const stoppedRemoteEntries = new WeakSet<SshTunnelEntry>();
   const remoteStopRequiredTargets = new Map<string, DesktopSshEnvironmentTarget>();
+  const withTargetResolutionLock = <A, E, R>(
+    key: string,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> => {
+    const existing = targetResolutionLocks.get(key);
+    if (existing !== undefined) {
+      return existing.withPermit(effect);
+    }
+    const lock = Semaphore.makeUnsafe(1);
+    targetResolutionLocks.set(key, lock);
+    return lock.withPermit(effect);
+  };
   const withTunnelMutationLock = <A, E, R>(
     key: string,
     effect: Effect.Effect<A, E, R>,
@@ -1716,81 +1729,89 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshTargetLogFields(target),
       issuePairingToken: requestOptions?.issuePairingToken === true,
     });
-    const baseResolved = yield* resolveSshTarget(
-      target.alias || target.hostname,
-      target.environmentVariables,
-      { username: target.username, port: target.port },
-    );
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-      ...(target.environmentVariables === undefined
-        ? {}
-        : { environmentVariables: target.environmentVariables }),
-    };
-    const { key, requestedKey, resolvedKey, conflictingKeys } = resolveTunnelKey(
-      target,
-      resolvedTarget,
-    );
-    return yield* withTunnelMutationLocks(
-      [key, ...conflictingKeys],
+    const requestedTargetKey = (target.alias || target.hostname).trim();
+    return yield* withTargetResolutionLock(
+      requestedTargetKey,
       Effect.gen(function* () {
-        yield* Effect.forEach(
-          conflictingKeys,
-          (conflictingKey) => {
-            const isStillMapped =
-              tunnelKeysByTarget.get(requestedKey) === conflictingKey ||
-              tunnelKeysByTarget.get(resolvedKey) === conflictingKey;
-            return isStillMapped ? cleanupTunnelKey(conflictingKey, resolvedTarget) : Effect.void;
-          },
-          { discard: true },
+        const baseResolved = yield* resolveSshTarget(
+          target.alias || target.hostname,
+          target.environmentVariables,
+          { username: target.username, port: target.port },
         );
-        rememberTunnelTargetKeys(key, requestedKey, resolvedKey, resolvedTarget);
-        yield* Effect.logDebug("ssh.environment.target.resolved", {
-          ...sshTargetLogFields(resolvedTarget),
-          key,
-        });
-        const packageSpec = options.resolveCliPackageSpec?.();
-        const runner =
-          options.resolveCliRunner === undefined
-            ? packageSpec === undefined
-              ? undefined
-              : { packageSpec }
-            : yield* options.resolveCliRunner;
-        yield* Effect.logDebug("ssh.environment.runner.resolved", {
-          ...sshTargetLogFields(resolvedTarget),
-          ...sshRunnerLogFields(runner),
-          key,
-        });
-        const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
-
-        const pairingResult = requestOptions?.issuePairingToken
-          ? yield* runWithSshAuth({
-              key,
-              target: entry.target,
-              operation: (authOptions) =>
-                issueRemotePairingToken(entry.target, authOptions, runner),
-            })
-          : null;
-        const pairingToken = pairingResult?.credential ?? null;
-
-        yield* Effect.logInfo("ssh.environment.ensure.succeeded", {
-          ...sshTargetLogFields(entry.target),
-          key,
-          localPort: entry.localPort,
-          remotePort: entry.remotePort,
-          remoteServerKind: entry.remoteServerKind,
-          issuedPairingToken: pairingToken !== null,
-        });
-        return {
-          target: entry.target,
-          httpBaseUrl: entry.httpBaseUrl,
-          wsBaseUrl: entry.wsBaseUrl,
-          pairingToken,
-          remotePort: entry.remotePort,
-          ...(entry.remoteServerKind ? { remoteServerKind: entry.remoteServerKind } : {}),
+        const resolvedTarget: DesktopSshEnvironmentTarget = {
+          ...baseResolved,
+          ...(target.username !== null ? { username: target.username } : {}),
+          ...(target.port !== null ? { port: target.port } : {}),
+          ...(target.environmentVariables === undefined
+            ? {}
+            : { environmentVariables: target.environmentVariables }),
         };
+        const { key, requestedKey, resolvedKey, conflictingKeys } = resolveTunnelKey(
+          target,
+          resolvedTarget,
+        );
+        return yield* withTunnelMutationLocks(
+          [key, ...conflictingKeys],
+          Effect.gen(function* () {
+            yield* Effect.forEach(
+              conflictingKeys,
+              (conflictingKey) => {
+                const isStillMapped =
+                  tunnelKeysByTarget.get(requestedKey) === conflictingKey ||
+                  tunnelKeysByTarget.get(resolvedKey) === conflictingKey;
+                return isStillMapped
+                  ? cleanupTunnelKey(conflictingKey, resolvedTarget)
+                  : Effect.void;
+              },
+              { discard: true },
+            );
+            rememberTunnelTargetKeys(key, requestedKey, resolvedKey, resolvedTarget);
+            yield* Effect.logDebug("ssh.environment.target.resolved", {
+              ...sshTargetLogFields(resolvedTarget),
+              key,
+            });
+            const packageSpec = options.resolveCliPackageSpec?.();
+            const runner =
+              options.resolveCliRunner === undefined
+                ? packageSpec === undefined
+                  ? undefined
+                  : { packageSpec }
+                : yield* options.resolveCliRunner;
+            yield* Effect.logDebug("ssh.environment.runner.resolved", {
+              ...sshTargetLogFields(resolvedTarget),
+              ...sshRunnerLogFields(runner),
+              key,
+            });
+            const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
+
+            const pairingResult = requestOptions?.issuePairingToken
+              ? yield* runWithSshAuth({
+                  key,
+                  target: entry.target,
+                  operation: (authOptions) =>
+                    issueRemotePairingToken(entry.target, authOptions, runner),
+                })
+              : null;
+            const pairingToken = pairingResult?.credential ?? null;
+
+            yield* Effect.logInfo("ssh.environment.ensure.succeeded", {
+              ...sshTargetLogFields(entry.target),
+              key,
+              localPort: entry.localPort,
+              remotePort: entry.remotePort,
+              remoteServerKind: entry.remoteServerKind,
+              issuedPairingToken: pairingToken !== null,
+            });
+            return {
+              target: entry.target,
+              httpBaseUrl: entry.httpBaseUrl,
+              wsBaseUrl: entry.wsBaseUrl,
+              pairingToken,
+              remotePort: entry.remotePort,
+              ...(entry.remoteServerKind ? { remoteServerKind: entry.remoteServerKind } : {}),
+            };
+          }),
+        );
       }),
     );
   });

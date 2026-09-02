@@ -766,11 +766,10 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
-  it.effect("waits for an in-flight ensure before replacing its environment", () =>
+  it.effect("serializes resolution and replacement for the same requested target", () =>
     Effect.gen(function* () {
       const pairingStarted = yield* Deferred.make<void>();
       const releasePairing = yield* Deferred.make<void>();
-      const secondResolveStarted = yield* Deferred.make<void>();
       const tunnelEnvironments: Array<Readonly<Record<string, string | undefined>> | undefined> =
         [];
       let tunnelKillCount = 0;
@@ -787,10 +786,8 @@ describe("ssh tunnel scripts", () => {
             } else {
               assert.isUndefined(environment?.TOKEN);
             }
-            if (resolveCount === 4) {
-              yield* Deferred.succeed(secondResolveStarted, undefined).pipe(Effect.ignore);
-            }
-            return makeSuccessfulProcess("sendenv TOKEN\n");
+            const resolvedHost = resolveCount <= 3 ? "first.example.com" : "second.example.com";
+            return makeSuccessfulProcess(`hostname ${resolvedHost}\nsendenv TOKEN\n`);
           }
           if (args.includes("-N")) {
             tunnelEnvironments.push(environment);
@@ -849,15 +846,16 @@ describe("ssh tunnel scripts", () => {
             environmentVariables: { TOKEN: "new-value" },
           }),
         );
-        yield* Deferred.await(secondResolveStarted);
         yield* Effect.yieldNow;
 
+        assert.equal(resolveCount, 3);
         assert.equal(tunnelKillCount, 0);
         yield* Deferred.succeed(releasePairing, undefined);
 
         const first = yield* Fiber.join(firstFiber);
         yield* Fiber.join(secondFiber);
         assert.equal(first.pairingToken, "PAIRING-CODE");
+        assert.equal(resolveCount, 6);
         assert.equal(tunnelKillCount, 1);
         assert.equal(tunnelEnvironments.length, 2);
       }).pipe(Effect.provide(layer), Effect.scoped);
