@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off - Signal 0 is the platform probe
-// for whether Chromium's lock-owning PID is still alive.
 /**
  * Importable browser sources.
  *
