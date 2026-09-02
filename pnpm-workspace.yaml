@@ -126,6 +126,8 @@ overrides:
   expo-router: 57.0.17
   "expo-sharing>@expo/config-plugins": 57.0.9
   "expo-sharing>@expo/config-types": 57.0.2
+  # Fork that also parses `\(…\)` and `\[…\]` as math; same tokens, so remark-math works unchanged.
+  "remark-math>micromark-extension-math": "npm:micromark-extension-llm-math@3.1.1-20250610"
   vite: "catalog:"
   yaml: "catalog:"
 

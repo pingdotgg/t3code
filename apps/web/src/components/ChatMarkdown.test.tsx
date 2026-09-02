@@ -92,6 +92,71 @@ describe("hasMarkdownFilePrimaryAction", () => {
   });
 });
 
+describe("ChatMarkdown math", () => {
+  it.each([false, true])("renders all four math notations with lineBreaks=%s", (lineBreaks) => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"Math $x^2$, $$w_0$$ and \\(y+1\\)\n\\[z-2\\]"}
+        lineBreaks={lineBreaks}
+      />,
+    );
+
+    expect(html.match(/class="katex"/g)).toHaveLength(4);
+    for (const math of ["x^2", "w_0", "y+1", "z-2"]) expect(html).toContain(math);
+  });
+
+  it("renders double-dollar and bracket math as display even mid-paragraph", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"Inline $x^2$ and \\(y+1\\), display $$w_0$$ and \\[z-2\\] here."}
+      />,
+    );
+
+    expect(html.match(/class="katex"/g)).toHaveLength(4);
+    expect(html.match(/katex-display/g)).toHaveLength(2);
+    expect(html).toContain("here.");
+  });
+
+  it("renders display math whose brackets sit on their own lines", () => {
+    const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={"\\[\na+b\n\\]"} />);
+
+    expect(html).toContain("katex-display");
+    expect(html).toContain("a+b");
+  });
+
+  it("renders an escaped citation as math", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text={"See \\[1\\] for details"} />,
+    );
+
+    expect(html.match(/class="katex"/g)).toHaveLength(1);
+  });
+
+  it.each([
+    "The total is $12.50 today.",
+    "Between $5 and $3 for each.",
+    "Pay $ 100 or $200 now.",
+    "It costs $20,000-$30,000 to build.",
+  ])("keeps prices literal: %s", (text) => {
+    const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />);
+
+    expect(html).toContain(text);
+    expect(html).not.toContain('class="katex"');
+  });
+
+  it("leaves dollars and backslashes in code alone", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text={"Run `echo $x^2$` in\n```sh\nprice=$5 and $3\n```"} />,
+    );
+
+    expect(html).toContain("echo $x^2$");
+    expect(html).toContain("price=$5 and $3");
+    expect(html).not.toContain('class="katex"');
+  });
+});
+
 describe("ChatMarkdown file option chips", () => {
   it("keeps the fallback button text selectable", () => {
     const html = renderToStaticMarkup(
