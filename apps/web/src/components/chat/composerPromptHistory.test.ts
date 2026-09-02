@@ -69,6 +69,19 @@ describe("recallableComposerPrompt", () => {
     expect(recallableComposerPrompt(sent)).toBe("Look at please");
   });
 
+  it("removes one label per chip and leaves other whitespace alone", () => {
+    const context = {
+      terminalId: "default",
+      terminalLabel: "Terminal 1",
+      lineStart: 4,
+      lineEnd: 4,
+      text: "ls",
+    };
+    const typed = "@terminal-1:4 typed twice: @terminal-1:4\n    indented  code";
+    const sent = appendTerminalContextsToPrompt(typed, [context]);
+    expect(recallableComposerPrompt(sent)).toBe("typed twice: @terminal-1:4\n    indented  code");
+  });
+
   it("strips only the review comments appended at the end", () => {
     const comment = buildFileReviewComment({
       id: "comment-1",

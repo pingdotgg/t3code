@@ -86,18 +86,26 @@ function stripTrailingReviewComments(prompt: string): string {
 /**
  * Inline terminal chips are sent as `@terminal-1:12-13` labels in the text
  * with their content in the trailing block. Once the block is stripped the
- * label points at nothing, so remove it too. Block headers look like
- * `Terminal 1 lines 12-13`.
+ * label points at nothing, so remove it too. Each block entry removes one
+ * label (the first match) and the single space beside it. Nothing else in
+ * the prompt is touched, so indented code and typed labels survive. Block
+ * headers look like `Terminal 1 lines 12-13`.
  */
 function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string>): string {
   let result = prompt;
   for (const header of headers) {
     const match = /^(.+?) lines? (\d+(?:-\d+)?)$/.exec(header);
     if (!match) continue;
-    const label = match[1]!.trim().toLowerCase().replace(/\s+/g, "-");
-    result = result.split(`@${label}:${match[2]}`).join("");
+    const label = `@${match[1]!.trim().toLowerCase().replace(/\s+/g, "-")}:${match[2]}`;
+    const index = result.indexOf(label);
+    if (index < 0) continue;
+    let end = index + label.length;
+    let start = index;
+    if (result[end] === " ") end += 1;
+    else if (result[start - 1] === " ") start -= 1;
+    result = result.slice(0, start) + result.slice(end);
   }
-  return result.replace(/[ \t]{2,}/g, " ").replace(/ +$/gm, "");
+  return result;
 }
 
 /**
