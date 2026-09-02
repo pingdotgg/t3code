@@ -8,6 +8,7 @@ import type {
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   Bot,
+  ChevronDown,
   FileDiff,
   Files,
   GitPullRequest,
@@ -283,6 +284,8 @@ function SurfaceMenuItem(props: {
  */
 function RightPanelEmptyState(props: {
   onAddBrowser: () => void;
+  onAddBrowserInProfile: (profileId: string) => void;
+  browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
@@ -473,31 +476,78 @@ function RightPanelEmptyState(props: {
         <div className="grid grid-cols-2 gap-2">
           {actions.map((action) =>
             action.available ? (
-              <button
+              // The card is itself a button, so the profile chooser sits beside
+              // it in a wrapper rather than inside it. Hover lives on the
+              // wrapper: the chooser overlays the card, and a pointer moving
+              // onto it must not read as leaving the card.
+              <div
                 key={action.label}
-                type="button"
-                onClick={action.onClick}
+                className="group relative"
                 onMouseEnter={() => setHighlight(availableActions.indexOf(action))}
                 onMouseLeave={() =>
                   setHighlight((current) =>
                     current === availableActions.indexOf(action) ? -1 : current,
                   )
                 }
-                className={cn(
-                  "relative flex w-full cursor-pointer flex-col items-start p-4 text-left transition hover:border-border hover:bg-accent/60",
-                  cardShellClass,
-                  isHighlighted(action) && highlightedCardClass,
-                )}
               >
-                <Kbd className="absolute top-3 right-3">{action.shortcut}</Kbd>
-                <span className="flex items-center gap-2 pe-8">
-                  {actionIcon(action)}
-                  <span className="font-medium text-sm">{action.label}</span>
-                </span>
-                <span className="mt-1.5 text-muted-foreground text-xs leading-relaxed">
-                  {action.description}
-                </span>
-              </button>
+                <button
+                  type="button"
+                  onClick={action.onClick}
+                  className={cn(
+                    // Full height: the wrapper is the grid item that stretches
+                    // to the row, so the button must fill it to stay level with
+                    // its neighbour and keep the chooser anchored inside.
+                    "relative flex h-full w-full cursor-pointer flex-col items-start p-4 text-left transition group-hover:border-border group-hover:bg-accent/60",
+                    cardShellClass,
+                    isHighlighted(action) && highlightedCardClass,
+                  )}
+                >
+                  <Kbd className="absolute top-3 right-3">{action.shortcut}</Kbd>
+                  <span className="flex items-center gap-2 pe-8">
+                    {actionIcon(action)}
+                    <span className="font-medium text-sm">{action.label}</span>
+                  </span>
+                  <span className="mt-1.5 text-muted-foreground text-xs leading-relaxed">
+                    {action.description}
+                  </span>
+                </button>
+                {/*
+                  Same choice the tab bar's "+" menu offers: the card opens the
+                  default profile, the chevron picks another. Only worth showing
+                  once there is something to choose between.
+                */}
+                {action.label === "Browser" && props.browserProfiles.length > 1 ? (
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <Button
+                          aria-label="Open browser in a profile"
+                          className="absolute right-3 bottom-3 [--control-icon-color:currentColor]"
+                          size="icon-xs"
+                          variant="ghost-muted"
+                        />
+                      }
+                    >
+                      <ChevronDown className="size-3.5" />
+                    </MenuTrigger>
+                    <MenuPopup
+                      align="end"
+                      side="bottom"
+                      sideOffset={6}
+                      className="min-w-40 max-w-56"
+                    >
+                      {props.browserProfiles.map((profile) => (
+                        <MenuItem
+                          key={profile.id}
+                          onClick={() => props.onAddBrowserInProfile(profile.id)}
+                        >
+                          <span className="min-w-0 truncate">{profile.name}</span>
+                        </MenuItem>
+                      ))}
+                    </MenuPopup>
+                  </Menu>
+                ) : null}
+              </div>
             ) : (
               <div
                 key={action.label}
@@ -1053,6 +1103,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
             onAddBrowser={props.onAddBrowser}
+            onAddBrowserInProfile={props.onAddBrowserInProfile}
+            browserProfiles={browserProfiles}
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
