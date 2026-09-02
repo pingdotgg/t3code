@@ -108,6 +108,12 @@ export type AcpParsedSessionEvent =
       readonly itemId?: string;
       readonly text: string;
       readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "UsageUpdated";
+      readonly used: number;
+      readonly size: number;
+      readonly rawPayload: unknown;
     };
 
 type AcpSessionSetupResponse =
@@ -838,9 +844,58 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       }
       break;
     }
+    case "usage_update": {
+      if (
+        Number.isFinite(upd.used) &&
+        upd.used >= 0 &&
+        Number.isFinite(upd.size) &&
+        upd.size >= 0
+      ) {
+        events.push({
+          _tag: "UsageUpdated",
+          used: upd.used,
+          size: upd.size,
+          rawPayload: params,
+        });
+      }
+      break;
+    }
     default:
       break;
   }
 
+  const metaTokens = readSessionMetaTotalTokens(params._meta);
+  if (metaTokens !== null && !events.some((event) => event._tag === "UsageUpdated")) {
+    events.push({
+      _tag: "UsageUpdated",
+      used: metaTokens,
+      size: readSessionMetaContextWindow(params._meta),
+      rawPayload: params,
+    });
+  }
+
   return { ...(modeId !== undefined ? { modeId } : {}), events };
+}
+
+function readSessionMetaTotalTokens(meta: unknown): number | null {
+  if (!isRecord(meta)) {
+    return null;
+  }
+  const totalTokens = meta.totalTokens;
+  return typeof totalTokens === "number" && Number.isFinite(totalTokens) && totalTokens >= 0
+    ? totalTokens
+    : null;
+}
+
+function readSessionMetaContextWindow(meta: unknown): number {
+  if (!isRecord(meta)) {
+    return 0;
+  }
+  for (const key of ["contextWindowTokens", "contextWindow", "maxTokens"] as const) {
+    const value = meta[key];
+    if (typeof value === "number" && Number.isFinite(value) && value >= 1) {
+      return value;
+    }
+  }
+  return 0;
 }

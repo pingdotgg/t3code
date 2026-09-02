@@ -5,9 +5,11 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import {
   applyGrokAcpModelSelection,
   buildGrokAcpSpawnInput,
+  contextWindowFromGrokSessionSetup,
   grokAcpSpawnArgs,
   isValidGrokReasoningEffortToken,
   resolveGrokAcpBaseModelId,
+  totalContextTokensFromModelMeta,
 } from "./GrokAcpSupport.ts";
 
 describe("resolveGrokAcpBaseModelId", () => {
@@ -73,6 +75,42 @@ describe("buildGrokAcpSpawnInput", () => {
       "approval-required",
     );
     expect(spawn.args).toEqual(["--permission-mode", "default", "agent", "stdio"]);
+  });
+});
+
+describe("contextWindowFromGrokSessionSetup", () => {
+  it("reads totalContextTokens from the current model", () => {
+    expect(totalContextTokensFromModelMeta({ totalContextTokens: 500_000 })).toBe(500_000);
+    expect(
+      contextWindowFromGrokSessionSetup({
+        sessionId: "session-1",
+        models: {
+          currentModelId: "grok-4.6",
+          availableModels: [
+            { modelId: "grok-4.6", name: "Grok 4.6", _meta: { totalContextTokens: 500_000 } },
+            { modelId: "grok-code", name: "Grok Code", _meta: { totalContextTokens: 256_000 } },
+          ],
+        },
+      }),
+    ).toBe(500_000);
+  });
+
+  it("does not pick another model's window when the current model omits it", () => {
+    expect(
+      contextWindowFromGrokSessionSetup(
+        {
+          sessionId: "session-1",
+          models: {
+            currentModelId: "grok-4.6",
+            availableModels: [
+              { modelId: "grok-4.6", name: "Grok 4.6" },
+              { modelId: "grok-code", name: "Grok Code", _meta: { totalContextTokens: 256_000 } },
+            ],
+          },
+        },
+        "grok-4.6",
+      ),
+    ).toBeUndefined();
   });
 });
 

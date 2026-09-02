@@ -46,6 +46,7 @@ const emitOverlappingXAiPromptCompleteOutOfOrder =
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
+const emitContextUsage = process.env.T3_ACP_EMIT_CONTEXT_USAGE === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const initialGrokReasoningEffort =
   process.env.T3_ACP_INITIAL_GROK_REASONING_EFFORT?.trim() || undefined;
@@ -1061,6 +1062,7 @@ const program = Effect.gen(function* () {
 
       yield* agent.client.sessionUpdate({
         sessionId: requestedSessionId,
+        ...(emitContextUsage ? { _meta: { totalTokens: 1615 } } : {}),
         update: {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: promptResponseText ?? "hello from mock" },

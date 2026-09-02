@@ -130,6 +130,46 @@ export function currentGrokModelIdFromSessionSetup(
   return sessionSetupResult.models?.currentModelId?.trim() || undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Model context window from Grok ACP `availableModels[]._meta.totalContextTokens`. */
+export function totalContextTokensFromModelMeta(meta: unknown): number | undefined {
+  if (!isRecord(meta)) {
+    return undefined;
+  }
+  const value = meta.totalContextTokens;
+  return typeof value === "number" && Number.isFinite(value) && value >= 1
+    ? Math.round(value)
+    : undefined;
+}
+
+export function contextWindowFromGrokSessionSetup(
+  sessionSetupResult:
+    | EffectAcpSchema.LoadSessionResponse
+    | EffectAcpSchema.NewSessionResponse
+    | EffectAcpSchema.ResumeSessionResponse,
+  modelId?: string,
+): number | undefined {
+  const models = sessionSetupResult.models;
+  if (!models) {
+    return undefined;
+  }
+  const currentId = (modelId ?? models.currentModelId)?.trim();
+  if (currentId) {
+    const match = models.availableModels.find((model) => model.modelId.trim() === currentId);
+    const size = totalContextTokensFromModelMeta(match?._meta);
+    if (size !== undefined) {
+      return size;
+    }
+  }
+  if (models.availableModels.length === 1) {
+    return totalContextTokensFromModelMeta(models.availableModels[0]?._meta);
+  }
+  return undefined;
+}
+
 export function currentGrokReasoningEffortFromSessionSetup(
   sessionSetupResult:
     | EffectAcpSchema.LoadSessionResponse

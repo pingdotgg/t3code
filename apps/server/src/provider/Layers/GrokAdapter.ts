@@ -55,12 +55,14 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpTokenUsageEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
   applyGrokAcpModelSelection,
+  contextWindowFromGrokSessionSetup,
   currentGrokModelIdFromSessionSetup,
   currentGrokReasoningEffortFromSessionSetup,
   makeGrokAcpRuntime,
@@ -169,6 +171,8 @@ interface GrokSessionContext {
   promptResponsesReady: number;
   currentModelId: string | undefined;
   currentReasoningEffort: string | undefined;
+  lastContextTokens: number | undefined;
+  lastKnownMaxTokens: number | undefined;
   stopped: boolean;
 }
 
@@ -313,6 +317,8 @@ function selectAutoApprovedPermissionOption(
     selectGrokPermissionOptionId(request, "accept")
   );
 }
+
+const GROK_DEFAULT_CONTEXT_WINDOW = 500_000;
 
 function completedStopReasonFromPromptResponse(
   response: EffectAcpSchema.PromptResponse | undefined,
@@ -1300,6 +1306,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               requestedStartReasoningEffort !== undefined
                 ? normalizeGrokReasoningEffort(requestedStartReasoningEffort)
                 : currentStartReasoningEffort,
+            lastContextTokens: undefined,
+            lastKnownMaxTokens: contextWindowFromGrokSessionSetup(
+              started.sessionSetupResult,
+              boundModelId,
+            ),
             stopped: false,
           };
 
@@ -1313,12 +1324,43 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 if (
                   event._tag === "PlanUpdated" ||
                   event._tag === "ToolCallUpdated" ||
-                  event._tag === "ContentDelta"
+                  event._tag === "ContentDelta" ||
+                  event._tag === "UsageUpdated"
                 ) {
                   yield* logNative(ctx.threadId, "session/update", event.rawPayload);
                 }
 
                 if (event._tag === "ModeChanged") {
+                  return;
+                }
+
+                if (event._tag === "UsageUpdated") {
+                  const usageTurnId = resolveNotificationTurnId(ctx);
+                  if (usageTurnId !== undefined && ctx.interruptedTurnIds.has(usageTurnId)) {
+                    return;
+                  }
+                  if (ctx.lastContextTokens === event.used) {
+                    return;
+                  }
+                  ctx.lastContextTokens = event.used;
+                  if (event.size > 0) {
+                    ctx.lastKnownMaxTokens = event.size;
+                  }
+                  const usageEvent = makeAcpTokenUsageEvent({
+                    stamp: yield* makeEventStamp(),
+                    provider: PROVIDER,
+                    threadId: ctx.threadId,
+                    turnId: usageTurnId,
+                    used: event.used,
+                    size:
+                      event.size > 0
+                        ? event.size
+                        : (ctx.lastKnownMaxTokens ?? GROK_DEFAULT_CONTEXT_WINDOW),
+                    rawPayload: event.rawPayload,
+                  });
+                  if (usageEvent) {
+                    yield* offerRuntimeEvent(usageEvent);
+                  }
                   return;
                 }
 
