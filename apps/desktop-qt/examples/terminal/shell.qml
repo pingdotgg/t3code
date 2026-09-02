@@ -3,9 +3,10 @@ import QtQuick.Layouts
 import T3.Shell
 import T3.Bricks
 
-// Terminal: a tmux-style status line on top (session block, prompt mark,
-// thread counts, model, the palette's sixteen colours as a chip, clock), a
-// sidebar, sharp corners and mono type everywhere. `vp run theme:qt` writes
+// Terminal: a powerline status line on top (session, model and clock as
+// solid blocks in the palette's colours, prompt mark, thread counts, the
+// sixteen ANSI slots as a chip), the sidebar on the darker chrome, sharp
+// corners and mono type everywhere. `vp run theme:qt` writes
 // a theme.json in the colours of whatever terminal you run it from; the one
 // next to this file is Tokyo Night through that generator.
 ShellWindow {
@@ -14,9 +15,10 @@ ShellWindow {
     readonly property var sidebarState: Shell.state.sidebar ?? null
     readonly property var composerState: Shell.state.composer ?? null
     readonly property color canvas: Theme.color("canvas", "#1a1b26")
+    readonly property color chrome: Theme.color("chrome", "#14151e")
     readonly property color ink: Theme.color("text", "#c0caf5")
-    readonly property color dim: Theme.color("textMuted", "#757b98")
-    readonly property color line: Theme.color("border", "#31364e")
+    readonly property color dim: Theme.color("textMuted", "#5d6587")
+    readonly property color line: Theme.color("border", "#3d4461")
     // The ANSI slots land in the theme when it came from a terminal; a hand-
     // written theme falls back to its semantic colours.
     readonly property color blue: Theme.color("ansiBlue", Theme.color("accent", "#7aa2f7"))
@@ -42,23 +44,38 @@ ShellWindow {
         color: root.dim
         font.family: Theme.fontMono
         font.pixelSize: 12
+        verticalAlignment: Text.AlignVCenter
+        Layout.fillHeight: true
     }
 
-    component Divider: Text {
-        text: "│"
-        color: root.line
-        font.family: Theme.fontMono
-        font.pixelSize: 12
+    // A solid powerline block: palette colour behind bold canvas-coloured text.
+    component Block: Rectangle {
+        property alias text: label.text
+
+        Layout.fillHeight: true
+        Layout.preferredWidth: label.implicitWidth + 24
+        color: root.blue
+
+        Segment {
+            id: label
+
+            anchors.fill: parent
+            horizontalAlignment: Text.AlignHCenter
+            color: root.chrome
+            font.bold: true
+        }
     }
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // Status line.
-        Item {
+        // Status line: chrome-dark, with the session, model and clock as
+        // solid blocks in the palette's blue, magenta and yellow.
+        Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 36
+            Layout.preferredHeight: 34
+            color: root.chrome
 
             DragHandler {
                 target: null
@@ -72,49 +89,33 @@ ShellWindow {
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 14
-                anchors.rightMargin: 8
-                spacing: 10
+                spacing: 0
 
-                // Session block, reverse video like tmux's status-left.
-                Rectangle {
-                    Layout.preferredWidth: session.implicitWidth + 16
-                    Layout.preferredHeight: 20
-                    color: root.blue
-
-                    Segment {
-                        id: session
-
-                        anchors.centerIn: parent
-                        text: "t3code"
-                        color: root.canvas
-                        font.bold: true
-                    }
+                Block {
+                    text: "t3code"
                 }
 
                 Segment {
+                    Layout.leftMargin: 14
                     text: "❯"
                     color: root.green
                     font.bold: true
                 }
 
                 Segment {
+                    Layout.leftMargin: 10
                     color: root.cyan
                     text: root.sidebarState ? qsTr("%1 active").arg(root.sidebarState.active.length + root.sidebarState.pinned.length) : qsTr("connecting")
                 }
 
                 Segment {
+                    Layout.leftMargin: 10
                     visible: root.sidebarState !== null
                     text: root.sidebarState ? qsTr("%1 settled").arg(root.sidebarState.settledTotal) : ""
                 }
 
-                Divider {
-                    visible: modelSegment.visible
-                }
-
-                Segment {
-                    id: modelSegment
-
+                Block {
+                    Layout.leftMargin: 14
                     visible: text.length > 0
                     color: root.magenta
                     text: root.composerState && root.composerState.selectedModel ? root.composerState.selectedModel : ""
@@ -127,6 +128,7 @@ ShellWindow {
                 // The sixteen slots as a chip: normal row over bright row.
                 Grid {
                     Layout.alignment: Qt.AlignVCenter
+                    Layout.rightMargin: 14
                     columns: 8
                     spacing: 2
 
@@ -136,28 +138,26 @@ ShellWindow {
                         Rectangle {
                             required property color modelData
 
-                            width: 7
-                            height: 7
+                            width: 8
+                            height: 8
                             color: modelData
                         }
                     }
                 }
 
-                Divider {
-                }
-
                 Segment {
+                    Layout.rightMargin: 14
                     text: Qt.formatDateTime(root.now, "ddd dd MMM")
                 }
 
-                Segment {
-                    text: Qt.formatDateTime(root.now, "HH:mm:ss")
+                Block {
                     color: root.yellow
+                    text: Qt.formatDateTime(root.now, "HH:mm:ss")
                 }
 
                 WindowControls {
                     Layout.alignment: Qt.AlignVCenter
-                    Layout.leftMargin: 8
+                    Layout.leftMargin: 6
                     window: root
                     buttonWidth: 32
                     buttonHeight: 26

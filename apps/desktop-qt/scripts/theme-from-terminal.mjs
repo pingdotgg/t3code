@@ -123,11 +123,13 @@ const contrast = (a, b) => {
 };
 
 // Every theme role from the terminal's background, foreground and ANSI
-// slots. The blue slot is the accent, red / yellow / green / cyan carry the
-// semantic roles, and the surfaces step from the background toward the
-// palette's bright black (what the terminal draws comments and inactive
-// borders in), so panels and hovers keep the palette's tint instead of
-// greying out. Hovers, selection and focus lean on the accent.
+// slots, with the hierarchy an editor theme has: chrome (sidebar, status
+// line) a step darker than the canvas, surfaces stepping from the canvas
+// toward the palette's bright black (what the terminal draws comments and
+// inactive borders in) so panels keep the palette's tint instead of greying
+// out, and muted text drawn as the comment colour rather than a wash of the
+// foreground. Blue is the accent; red / yellow / green / cyan carry the
+// semantic roles; hovers, selection and focus lean on the accent.
 export const buildTheme = ({ background, foreground, cursor, selection, ansi }) => {
   const bg = background;
   const fg = foreground;
@@ -149,9 +151,12 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
   const tint = (t) => mix(bg, accent, t);
   const onColor = (color) => (contrast(color, bg) >= 3 ? bg : fg);
   const dimmer = (color) => (dark ? mix(color, fg, 0.15) : mix(color, "#000000", 0.35));
-  const chrome = dark ? mix(bg, "#000000", 0.28) : mix(bg, "#000000", 0.04);
-  const muted = mix(bg, fg, 0.55);
-  const border = raise(0.6);
+  const chrome = dark ? mix(bg, "#000000", 0.22) : mix(bg, "#000000", 0.04);
+  // Comment grey: the bright black lifted a little toward the foreground,
+  // and one more step for labels that have to stay readable at 12px.
+  const muted = tone === brightBlack ? mix(tone, fg, 0.22) : mix(bg, fg, 0.5);
+  const label = tone === brightBlack ? mix(tone, fg, 0.42) : mix(bg, fg, 0.62);
+  const border = raise(0.9);
   const colors = {
     canvas: bg,
     chrome,
@@ -160,14 +165,14 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
     toolbarBorder: border,
     toolbarControl: raise(0.45),
     toolbarControlForeground: fg,
-    toolbarControlHover: tint(0.28),
-    surface: raise(0.3),
-    surfaceRaised: raise(0.5),
-    surfaceOverlay: raise(0.4),
+    toolbarControlHover: tint(0.34),
+    surface: raise(0.25),
+    surfaceRaised: raise(0.4),
+    surfaceOverlay: raise(0.32),
     text: fg,
     textMuted: muted,
     border,
-    input: raise(0.25),
+    input: raise(0.2),
     focus: accent,
     accent,
     accentForeground: onColor(accent),
@@ -176,8 +181,8 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
     muted: raise(0.5),
     mutedForeground: muted,
     placeholder: muted,
-    secondaryLabel: muted,
-    iconMuted: muted,
+    secondaryLabel: label,
+    iconMuted: label,
     info: cyan,
     success: green,
     error: red,
@@ -189,7 +194,7 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
     update: green,
     updateForeground: dimmer(slot(10, green)),
     updateSurface: mix(bg, green, 0.22),
-    accentSurface: tint(0.3),
+    accentSurface: tint(0.34),
     accentSurfaceForeground: fg,
     messageSurface: raise(0.3),
     messageForeground: fg,
@@ -200,11 +205,11 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
     codeForeground: fg,
     sidebar: chrome,
     sidebarForeground: fg,
-    sidebarMutedForeground: muted,
+    sidebarMutedForeground: label,
     sidebarControlSurface: raise(0.4),
     sidebarRowHover: raise(0.35),
-    sidebarRowActive: tint(0.26),
-    sidebarRowSelected: tint(0.22),
+    sidebarRowActive: tint(0.32),
+    sidebarRowSelected: tint(0.26),
     sidebarBorder: border,
     terminalBackground: bg,
     terminalForeground: fg,
