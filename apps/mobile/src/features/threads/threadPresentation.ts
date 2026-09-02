@@ -2,11 +2,6 @@ import type { StatusTone } from "../../components/StatusPill";
 import type { OrchestrationLatestTurn, OrchestrationSession } from "@t3tools/contracts";
 import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
-export function threadSortValue(thread: EnvironmentThreadShell): number {
-  const candidate = Date.parse(thread.updatedAt ?? thread.createdAt);
-  return Number.isNaN(candidate) ? 0 : candidate;
-}
-
 export type ThreadStatusKind =
   | "pending-approval"
   | "awaiting-input"
@@ -24,12 +19,6 @@ export interface ThreadStatusPresentation extends StatusTone {
   /** Whether the indicator represents in-flight activity. */
   readonly pulse: boolean;
 }
-
-/** Neutral icon colors for threads with no actionable status. */
-export const THREAD_STATUS_NEUTRAL_ICON = {
-  iconColor: "#8e8e93",
-  iconBackground: "rgba(142,142,147,0.22)",
-} as const;
 
 function isLatestTurnSettled(
   latestTurn: OrchestrationLatestTurn | null,

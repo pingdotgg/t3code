@@ -135,6 +135,41 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       }),
   );
 
+  it.effect("keeps only recent raw notifications after their callbacks run", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const handled = yield* Deferred.make<void>();
+      let handledCount = 0;
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onNotification: () =>
+          Effect.sync(() => ++handledCount).pipe(
+            Effect.flatMap((count) =>
+              count === 64 ? Deferred.succeed(handled, undefined).pipe(Effect.asVoid) : Effect.void,
+            ),
+          ),
+      });
+
+      const messages = Array.from({ length: 64 }, (_, index) =>
+        encodeUnknownJsonString({
+          jsonrpc: "2.0",
+          method: "x/performance",
+          params: { index },
+        }),
+      );
+      yield* Queue.offer(input, encoder.encode(`${messages.join("\n")}\n`));
+      yield* Deferred.await(handled);
+
+      const retained = yield* transport.incoming.pipe(Stream.take(32), Stream.runCollect);
+
+      assert.equal(handledCount, 64);
+      assert.equal(retained.length, 32);
+      assert.deepEqual(retained[0]?.params, { index: 32 });
+      assert.deepEqual(retained[31]?.params, { index: 63 });
+    }),
+  );
+
   it.effect("keeps invalid core notification values only in the schema cause", () =>
     Effect.gen(function* () {
       const secret = "acp-core-notification-secret-sentinel";
@@ -194,25 +229,24 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
 
       yield* transport.notify("session/cancel", { sessionId: "session-1" });
 
+      // A notification must not carry `id` or `headers`. Grok CLI drops frames that do.
       assert.deepEqual(events, [
         {
           direction: "outgoing",
           stage: "decoded",
           payload: {
-            _tag: "Request",
-            id: "",
+            _tag: "Notification",
             tag: "session/cancel",
             payload: {
               sessionId: "session-1",
             },
-            headers: [],
           },
         },
         {
           direction: "outgoing",
           stage: "raw",
           payload:
-            '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"},"id":"","headers":[]}\n',
+            '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"}}\n',
         },
       ]);
     }),
@@ -258,11 +292,13 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         serverRequestMethods: new Set(),
       });
 
+      // Notifications encode through Schema, so the cause is the schema failure rather
+      // than the raw TypeError JSON.stringify throws. The ACP error shape is what callers see.
       const bigintError = yield* transport.notify("x/test", 1n).pipe(Effect.flip);
       assert.instanceOf(bigintError, AcpError.AcpProtocolParseError);
       assert.equal(bigintError.operation, "encode-message");
       assert.equal(bigintError.method, "x/test");
-      assert.instanceOf(bigintError.cause, TypeError);
+      assert.isDefined(bigintError.cause);
       assert.equal(
         bigintError.message,
         "ACP protocol operation 'encode-message' failed for method 'x/test'.",
@@ -274,7 +310,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       assert.instanceOf(circularError, AcpError.AcpProtocolParseError);
       assert.equal(circularError.operation, "encode-message");
       assert.equal(circularError.method, "x/test");
-      assert.instanceOf(circularError.cause, TypeError);
+      assert.isDefined(circularError.cause);
 
       const requestError = yield* transport.request("x/request", 1n).pipe(
         Effect.match({

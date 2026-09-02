@@ -114,6 +114,13 @@ it.effect("parses keybinding rules", () =>
       when: "!terminalFocus",
     });
     assert.strictEqual(parsedThreadSettle.command, "thread.settle");
+
+    const parsedThreadCopyReference = yield* decode(KeybindingRule, {
+      key: "mod+shift+c",
+      command: "thread.copyReference",
+      when: "!terminalFocus",
+    });
+    assert.strictEqual(parsedThreadCopyReference.command, "thread.copyReference");
   }),
 );
 

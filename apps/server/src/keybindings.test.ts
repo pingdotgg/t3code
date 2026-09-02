@@ -195,6 +195,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       assert.equal(defaultsByCommand.get("thread.previous"), "mod+shift+[");
       assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");
+      assert.equal(defaultsByCommand.get("thread.copyReference"), "mod+shift+c");
       assert.equal(defaultsByCommand.get("thread.settle"), "mod+shift+s");
       assert.equal(defaultsByCommand.get("thread.pin"), "mod+shift+p");
       assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");

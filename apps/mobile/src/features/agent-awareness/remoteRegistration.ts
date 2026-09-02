@@ -828,18 +828,6 @@ export function unregisterAgentAwarenessConnection(environmentId: EnvironmentId)
   removeAgentAwarenessConnection(environmentId);
 }
 
-export function unregisterAllAgentAwarenessConnections(): void {
-  environmentConnections.clear();
-  pushTokenSubscription?.remove();
-  pushTokenSubscription = null;
-  appStateSubscription?.remove();
-  appStateSubscription = null;
-  if (activeLiveActivityRegistrationRetry) {
-    clearTimeout(activeLiveActivityRegistrationRetry);
-    activeLiveActivityRegistrationRetry = null;
-  }
-}
-
 export function refreshAgentAwarenessRegistration(): Effect.Effect<
   void,
   never,

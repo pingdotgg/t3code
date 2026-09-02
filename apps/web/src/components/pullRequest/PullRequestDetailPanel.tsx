@@ -16,6 +16,8 @@ import {
   BookOpenIcon,
   CircleDotIcon,
   ChevronDownIcon,
+  CopyIcon,
+  ExternalLinkIcon,
   FileDiffIcon,
   FolderGit2Icon,
   GitBranchIcon,
@@ -96,6 +98,7 @@ import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
+import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
@@ -112,6 +115,7 @@ import {
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
   pullRequestComposerTarget,
+  pullRequestCheckoutCommand,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
   readableFailure,
@@ -466,6 +470,16 @@ export function PullRequestDetailPanel({
     target: "branch name",
     timeout: 1600,
   });
+  const { copyToClipboard: copyCheckoutCommandToClipboard } = useCopyToClipboard({
+    target: "pull request checkout command",
+    onCopy: () => toastManager.add({ type: "success", title: "Checkout command copied" }),
+    onError: (error) =>
+      toastManager.add({
+        type: "error",
+        title: "Could not copy checkout command",
+        description: error.message,
+      }),
+  });
   // The chunk is fetched as soon as the panel exists rather than waiting for the Code tab to be
   // clicked, so a reader who does click it lands on a chunk already in the module cache.
   useEffect(() => {
@@ -505,6 +519,14 @@ export function PullRequestDetailPanel({
     [activity, coreDetail],
   );
   const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
+  const checkoutCommand = detail
+    ? pullRequestCheckoutCommand(
+        detail.provider,
+        detail.number,
+        detail.headBranch,
+        detail.headRepositoryNameWithOwner,
+      )
+    : null;
   const branchRefsQuery = useEnvironmentQuery(
     detail === null
       ? null
@@ -1161,12 +1183,13 @@ export function PullRequestDetailPanel({
                         onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
                         onContextMenu={(event) => openNumberContextMenu(event, detail)}
                         className={cn(
-                          "shrink-0 font-medium underline-offset-2 hover:underline",
+                          "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
                           statePresentation.toneClassName,
                         )}
                         aria-label={`Open pull request #${detail.number} on host`}
                       >
                         #{detail.number}
+                        <ExternalLinkIcon aria-hidden className="size-2.5" />
                       </button>
                     }
                   />
@@ -1196,12 +1219,13 @@ export function PullRequestDetailPanel({
                         onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
                         onContextMenu={(event) => openNumberContextMenu(event, detail)}
                         className={cn(
-                          "shrink-0 font-medium underline-offset-2 hover:underline",
+                          "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
                           statePresentation.toneClassName,
                         )}
                         aria-label={`Open pull request #${detail.number} on host`}
                       >
                         #{detail.number}
+                        <ExternalLinkIcon aria-hidden className="size-2.5" />
                       </button>
                     }
                   />
@@ -1754,6 +1778,27 @@ export function PullRequestDetailPanel({
                         {`${isBranchCopied ? "Copied" : "Copy pull request branch"}: ${detail.headBranch}`}
                       </TooltipPopup>
                     </Tooltip>
+                    {checkoutCommand ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              size="micro"
+                              variant="outline"
+                              className="ml-1 min-w-0 basis-40 shrink-[0.75] gap-1 font-normal text-muted-foreground"
+                              aria-label={`Copy checkout command: ${checkoutCommand}`}
+                              onClick={() => copyCheckoutCommandToClipboard(checkoutCommand)}
+                            />
+                          }
+                        >
+                          <code className="min-w-0 truncate">{checkoutCommand}</code>
+                          <CopyIcon aria-hidden />
+                        </TooltipTrigger>
+                        <TooltipPopup className="max-w-96 wrap-anywhere font-mono" side="bottom">
+                          {checkoutCommand}
+                        </TooltipPopup>
+                      </Tooltip>
+                    ) : null}
                   </span>
                   <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2">
                     <span className="inline-flex items-center gap-1.5 tabular-nums">
@@ -1918,7 +1963,7 @@ export function PullRequestDetailPanel({
             {...(unavailableGitHubUrl ? { gitHubUrl: unavailableGitHubUrl } : {})}
           />
         ) : detail ? (
-          <>
+          <PullRequestMarkdownContext value={detail.provider === "github" ? repositoryUrl : null}>
             {mountedTabs.has("summary") ? (
               <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
                 <PullRequestSummaryTab
@@ -1975,7 +2020,7 @@ export function PullRequestDetailPanel({
                 </Suspense>
               </div>
             ) : null}
-          </>
+          </PullRequestMarkdownContext>
         ) : null}
       </div>
 
