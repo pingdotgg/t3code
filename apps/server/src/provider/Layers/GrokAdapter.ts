@@ -1692,16 +1692,17 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               if (liveCtx.interruptedTurnIds.has(prepared.turnId)) {
                 return { _tag: "Skipped" as const, interrupted: true };
               }
+              const dispatched = yield* Deferred.make<void>();
               const fiber = yield* liveCtx.acp
-                .prompt({
-                  prompt: prepared.promptParts,
-                })
+                .prompt({ prompt: prepared.promptParts }, { dispatched })
                 .pipe(Effect.forkChild({ startImmediately: true }));
-              // Let the forked prompt register its ACP fiber before a later
-              // steer can cancel, so session/cancel targets this prompt.
-              for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
-                yield* Effect.yieldNow;
-              }
+              // Hold the lifecycle permit until the runtime has registered this
+              // prompt's RPC fiber, so a later steer's session/cancel targets
+              // this prompt. Fall through if the prompt fails before that point.
+              yield* Effect.raceFirst(
+                Deferred.await(dispatched),
+                Fiber.await(fiber).pipe(Effect.asVoid),
+              );
               return { _tag: "Started" as const, fiber };
             }),
           );
