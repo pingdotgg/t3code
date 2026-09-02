@@ -539,46 +539,72 @@ export const firefoxSymlinkLockIsHeld = Effect.fnUntraced(function* (
 });
 
 /**
+ * Interpreters that can run the fcntl probe, tried in order. `/usr/bin/python3`
+ * is named absolutely first so a Dock-launched app with launchd's bare `PATH`
+ * still finds it without depending on the login-shell PATH merge; Linux
+ * distributions carry python3 on the default path.
+ */
+const FCNTL_PROBE_INTERPRETERS = ["/usr/bin/python3", "python3"] as const;
+
+/**
+ * The probe prints exactly one of these. Anything else means the script never
+ * ran — most importantly Apple's `/usr/bin/python3` shim, which on a Mac
+ * without the Command Line Tools exits non-zero after printing an install
+ * prompt, without ever reaching our code.
+ */
+const FCNTL_PROBE_SCRIPT =
+  "import fcntl,os,sys\n" +
+  "fd=os.open(sys.argv[1],os.O_WRONLY)\n" +
+  "try:\n" +
+  "  fcntl.lockf(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)\n" +
+  "except BlockingIOError:\n" +
+  "  print('held')\n" +
+  "else:\n" +
+  "  print('free')";
+
+/**
  * Whether another process holds an fcntl write lock on `path`.
  *
  * Firefox's `.parentlock` is an empty file whose only signal is the kernel
  * lock, and Node exposes no fcntl, so a throwaway interpreter tries a
  * non-blocking `F_SETLK` and reports `EWOULDBLOCK`. The lock is never
  * acquired for real: on success the child exits and the kernel drops it.
- * Anything other than a clean "held" or "free" answer — no interpreter, a
- * crash, a missing file — is treated as *held*, so a probe failure can never
- * let an import read a live, mid-write database.
+ *
+ * The answer is trusted only when the script itself spoke. A verdict of
+ * `held` or `free` on stdout is the probe's own, and stands. Anything else —
+ * no interpreter on any candidate path, or one that refused to run the script
+ * (Apple's shim without the developer tools) — is the probe being unavailable,
+ * not evidence about the lock. That case falls back to "not held" rather than
+ * "held": reporting every profile as locked forever would block Firefox import
+ * outright on such machines, and the SQLite snapshot already copes with a
+ * live database's WAL, as it does for every other engine.
  */
-export const posixLockIsHeld = Effect.fnUntraced(function* (path: string) {
+export const posixLockIsHeld = Effect.fnUntraced(function* (
+  path: string,
+  interpreters: ReadonlyArray<string> = FCNTL_PROBE_INTERPRETERS,
+) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  return yield* Effect.scoped(
-    Effect.gen(function* () {
-      const handle = yield* spawner.spawn(
-        ChildProcess.make(
-          "python3",
-          [
-            "-c",
-            "import fcntl,os,sys\n" +
-              "fd=os.open(sys.argv[1],os.O_WRONLY)\n" +
-              "try:\n" +
-              "  fcntl.lockf(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)\n" +
-              "except BlockingIOError:\n" +
-              "  print('held')\n" +
-              "else:\n" +
-              "  print('free')",
-            path,
-          ],
-          { stdin: "ignore" },
-        ),
-      );
-      const [stdout, exitCode] = yield* Effect.all(
-        [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
-        { concurrency: "unbounded" },
-      );
-      if (Number(exitCode) !== 0) return true;
-      return stdout.trim() !== "free";
-    }),
-  ).pipe(Effect.orElseSucceed(() => true));
+  const environment = yield* HostProcessEnvironment;
+  for (const interpreter of interpreters) {
+    const verdict = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* spawner.spawn(
+          ChildProcess.make(interpreter, ["-c", FCNTL_PROBE_SCRIPT, path], {
+            stdin: "ignore",
+            env: environment,
+          }),
+        );
+        const [stdout] = yield* Effect.all(
+          [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
+          { concurrency: "unbounded" },
+        );
+        return stdout.trim();
+      }),
+    ).pipe(Effect.orElseSucceed(() => ""));
+    if (verdict === "held") return true;
+    if (verdict === "free") return false;
+  }
+  return false;
 });
 
 /**
@@ -600,7 +626,7 @@ const firefoxProfileIsHeld = Effect.fnUntraced(function* (
   context: BrowserImportPathContext,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const localAddresses = yield* HostProcessAddresses;
+  const localAddresses = yield* yield* HostProcessAddresses;
   if (context.platform === "win32") {
     return yield* windowsLockIsHeld(context.path.join(directory, "parent.lock"));
   }

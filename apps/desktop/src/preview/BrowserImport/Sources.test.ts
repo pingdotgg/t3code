@@ -25,6 +25,7 @@ import {
   resolveCookieDatabase,
   isSourceInstalled,
   isSourceRunning,
+  posixLockIsHeld,
   listSourceProfiles,
   sourcePathContext,
 } from "./Sources.ts";
@@ -517,6 +518,26 @@ describe("isSourceRunning for Firefox", () => {
         // its target means the profile is held.
         yield* fileSystem.symlink(`127.0.0.1:+${process.pid}`, `${profile}/lock`);
         assert.isTrue(yield* isSourceRunning(firefox, context));
+      }),
+    ),
+  );
+
+  it.effect("reports not-held when no interpreter can run the fcntl probe", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-lock-" });
+        const lock = `${directory}/.parentlock`;
+        yield* fileSystem.writeFileString(lock, "");
+        // A Mac without the developer tools has only Apple's shim, which
+        // refuses to run the script; a machine with no python at all has
+        // nothing. Either way the probe is unavailable, not the lock held —
+        // treating it as held would block Firefox import on that machine for
+        // good.
+        assert.isFalse(yield* posixLockIsHeld(lock, ["/nonexistent/python3"]));
+        // And a fake "interpreter" that exits non-zero without a verdict, as
+        // the shim does, is the same case.
+        assert.isFalse(yield* posixLockIsHeld(lock, ["/usr/bin/false"]));
       }),
     ),
   );
