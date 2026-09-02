@@ -65,8 +65,9 @@ context, and other extras from the original message are not restored, only the t
 composer that holds an attachment or a picked element does not count as empty.
 
 When the composer has text, the arrow keys move the caret as usual. Recall takes over only while
-the text is an unedited recalled prompt, with the caret on the first line for `ArrowUp` or the
-last line for `ArrowDown`. Editing a recalled prompt turns it into a normal draft.
+the text is an unedited recalled prompt, with the caret on the first visual line for `ArrowUp` or
+the last visual line for `ArrowDown`, counting wrapped lines. Editing a recalled prompt turns it
+into a normal draft.
 
 ## Prompt stash
 
