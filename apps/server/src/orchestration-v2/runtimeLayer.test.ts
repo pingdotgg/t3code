@@ -638,6 +638,46 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         modelSelection: { ...modelSelection, model: "gpt-5.5" },
       });
 
+      // Automatic settlement (#8600): a stale snapshot loses to any change
+      // made after it, and a fresh one settles like a user settle would.
+      const preAutoProjection = yield* orchestrator.getThreadProjection(threadId);
+      const staleAutoSettle = yield* orchestrator
+        .dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("runtime-layer-lifecycle-auto-settle-stale"),
+          threadId,
+          snapshotAt: DateTime.makeUnsafe(
+            DateTime.toEpochMillis(preAutoProjection.thread.updatedAt) - 1,
+          ),
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(staleAutoSettle, OrchestratorDispatchError);
+      yield* orchestrator.dispatch({
+        type: "thread.auto-settle",
+        commandId: CommandId.make("runtime-layer-lifecycle-auto-settle"),
+        threadId,
+        snapshotAt: preAutoProjection.thread.updatedAt,
+      });
+      const autoSettledProjection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(autoSettledProjection.thread.settledOverride, "settled");
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make("runtime-layer-lifecycle-auto-unsettle"),
+        threadId,
+        reason: "user",
+      });
+      // An explicit un-settle outranks the sweep even with a fresh snapshot.
+      const postUnsettleProjection = yield* orchestrator.getThreadProjection(threadId);
+      const overriddenAutoSettle = yield* orchestrator
+        .dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("runtime-layer-lifecycle-auto-settle-overridden"),
+          threadId,
+          snapshotAt: postUnsettleProjection.thread.updatedAt,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(overriddenAutoSettle, OrchestratorDispatchError);
+
       yield* orchestrator.dispatch({
         type: "thread.settle",
         commandId: CommandId.make("runtime-layer-lifecycle-settle"),
