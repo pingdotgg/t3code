@@ -1,5 +1,6 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
@@ -9,9 +10,9 @@ const scriptDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const repoRoot = NodePath.resolve(scriptDir, "../../..");
 const destinationArg = process.argv[2];
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone packaging script has no Effect runtime.
-const hostPlatform = process.platform;
+const hostPlatform = NodeOS.platform();
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone packaging script has no Effect runtime.
-const hostArchitecture = process.arch;
+const hostArchitecture = NodeOS.arch();
 
 if (destinationArg === undefined) {
   throw new Error("Usage: stage-runtime.mjs <destination>");
