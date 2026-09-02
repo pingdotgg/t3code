@@ -1262,6 +1262,9 @@ function startAnnotation(): void {
       }),
     )
       .then((captured) => {
+        // The overlay may have been cancelled or replaced while the capture
+        // ran. A late submit must not deliver into the next pick's listener.
+        if (finished) return;
         const elements = captured.filter((target) => target !== null);
         const annotation: PreviewAnnotationPayload = {
           id: nextId("annotation"),
@@ -1288,7 +1291,7 @@ function startAnnotation(): void {
       .catch(() => {
         // Last resort. Main is waiting on this message, so hand it an empty
         // pick rather than leaving the button stuck on "Capturing…" and the
-        // renderer's pick promise pending.
+        // renderer's pick promise pending. teardown is a no-op once finished.
         teardown(true);
       });
   };
