@@ -192,12 +192,18 @@ export const make = Effect.gen(function* () {
       thread: (typeof candidates)[number],
     ) {
       if (thread.linkedPullRequest != null) {
-        const detail = yield* pullRequests.detail({
-          projectId: thread.linkedPullRequest.projectId,
-          repository: thread.linkedPullRequest.repository,
-          number: thread.linkedPullRequest.number,
-        });
-        return { state: detail.state, updatedAt: detail.updatedAt } satisfies SettlementPullRequest;
+        const summary = yield* pullRequests.summary(
+          {
+            projectId: thread.linkedPullRequest.projectId,
+            repository: thread.linkedPullRequest.repository,
+            number: thread.linkedPullRequest.number,
+          },
+          { recoverTransientFailure: false },
+        );
+        return {
+          state: summary.state,
+          updatedAt: summary.updatedAt,
+        } satisfies SettlementPullRequest;
       }
       if (thread.branch === null) return null;
       const workspaceRoot = workspaceRootByProjectId.get(thread.projectId);
