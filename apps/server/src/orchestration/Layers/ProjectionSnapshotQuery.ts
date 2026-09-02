@@ -1,5 +1,6 @@
 import {
   ChatAttachment,
+  OrchestrationMessageOrigin,
   CheckpointRef,
   IsoDateTime,
   MessageId,
@@ -90,6 +91,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    origin: Schema.NullOr(OrchestrationMessageOrigin),
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
@@ -579,6 +581,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          origin,
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -1038,6 +1041,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          origin,
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -1361,6 +1365,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          origin,
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -1760,6 +1765,7 @@ pending_approval_requests AS (
                   role: row.role,
                   text: row.text,
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+                  ...(row.origin !== null ? { origin: row.origin } : {}),
                   turnId: row.turnId,
                   streaming: row.isStreaming === 1,
                   createdAt: row.createdAt,
@@ -2957,10 +2963,12 @@ pending_approval_requests AS (
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
           };
+          const withOrigin =
+            row.origin !== null ? Object.assign(message, { origin: row.origin }) : message;
           if (row.attachments !== null) {
-            return Object.assign(message, { attachments: row.attachments });
+            return Object.assign(withOrigin, { attachments: row.attachments });
           }
-          return message;
+          return withOrigin;
         }),
         proposedPlans: proposedPlanRows.map(mapProposedPlanRow),
         activities,
