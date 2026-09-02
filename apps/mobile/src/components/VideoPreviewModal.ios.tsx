@@ -4,12 +4,13 @@ import { requireNativeModule } from "expo";
 import { useEffect, useEffectEvent, useId, useState } from "react";
 import { Alert, Keyboard } from "react-native";
 
-import { loadLocalVideoPreview } from "../lib/localVideoPreview";
+import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 import { useAssetUrlState } from "../state/assets";
 import { usePreparedConnection } from "../state/session";
-import type { VideoPreviewSource } from "./VideoPreviewModal";
+import type { AttachmentVideoPreviewSource, VideoPreviewSource } from "../lib/videoPreviewSource";
+import { MediaVideoPreviewModal } from "./MediaVideoPreviewModal";
 
-export type { VideoPreviewSource } from "./VideoPreviewModal";
+export type { VideoPreviewSource } from "../lib/videoPreviewSource";
 
 const NativeControls = requireNativeModule<{
   presentVideo(
@@ -22,7 +23,7 @@ const NativeControls = requireNativeModule<{
 }>("T3NativeControls");
 
 function NativeVideoPreview(props: {
-  readonly source: VideoPreviewSource;
+  readonly source: AttachmentVideoPreviewSource;
   readonly onRequestClose: () => void;
 }) {
   const { source } = props;
@@ -67,7 +68,7 @@ function NativeVideoPreview(props: {
     void (async () => {
       const file =
         source.type === "local"
-          ? await loadLocalVideoPreview(source.attachment, controller.signal)
+          ? await loadLocalAttachmentPreview(source.attachment, controller.signal)
           : null;
       if (source.type === "local" && !file) return;
       try {
@@ -117,5 +118,8 @@ export function VideoPreviewModal(props: {
   }, [isFocused, hasSource]);
 
   if (!props.source || !isFocused) return null;
+  if (props.source.type === "media") {
+    return <MediaVideoPreviewModal source={props.source} onRequestClose={props.onRequestClose} />;
+  }
   return <NativeVideoPreview source={props.source} onRequestClose={props.onRequestClose} />;
 }

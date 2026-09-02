@@ -16,6 +16,7 @@ import type { ConnectionCatalogEntry } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
 import {
+  DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS,
   ConnectionBlockedError,
   ConnectionTransientError,
   PrimaryConnectionTarget,
@@ -163,6 +164,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
       Effect.succeed({
         client: TEST_RPC_CLIENT,
         initialConfig: Effect.die(new Error("Initial config is not used by supervisor tests.")),
+        subscribeServerConfig: (input) => TEST_RPC_CLIENT.subscribeServerConfig(input),
         ready: options?.ready?.(attempt) ?? Effect.void,
         probe: options?.probe?.(attempt) ?? Effect.void,
         closed: Deferred.await(closed),
@@ -1093,6 +1095,43 @@ describe("EnvironmentSupervisor", () => {
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
       expect(yield* Ref.get(harness.releaseCount)).toBe(1);
     }),
+  );
+
+  it.effect("renews a relay connection before its DPoP access token expires", () =>
+    Effect.gen(function* () {
+      const tokenLifetimeMs = DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS * 2;
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Effect.succeed({
+            ...PREPARED_CONNECTION,
+            target: RELAY_TARGET,
+            httpAuthorization: {
+              _tag: "Dpop",
+              accessToken: `access-token-${attempt}`,
+              expiresAtEpochMs: tokenLifetimeMs * attempt,
+            },
+          }),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* TestClock.adjust(DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS - 1);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+
+      yield* TestClock.adjust(1);
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      expect(
+        Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).httpAuthorization,
+      ).toMatchObject({ accessToken: "access-token-2" });
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("interrupts relay setup when credentials change", () =>

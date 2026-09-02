@@ -31,15 +31,29 @@ const settingsState = vi.hoisted(() => ({
   updateSettings: vi.fn(),
 }));
 
+const settingsSearchState = vi.hoisted(() => ({
+  targetId: null as string | null,
+  effects: [] as Array<() => void>,
+}));
+
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   const { reactHookHarness } = await import("../../test/reactHookHarness");
   return {
     ...actual,
     useCallback: reactHookHarness.useCallback,
+    useEffect: (effect: () => void) => settingsSearchState.effects.push(effect),
     useMemo: reactHookHarness.useMemo,
     useRef: reactHookHarness.useRef,
     useState: reactHookHarness.useState,
+  };
+});
+
+vi.mock("./settingsLayout", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./settingsLayout")>();
+  return {
+    ...actual,
+    useSettingsSearchTargetId: () => settingsSearchState.targetId,
   };
 });
 
@@ -127,8 +141,34 @@ function renderPanel(options?: {
   }) as ReactElement<Record<string, unknown>>;
 }
 
+function isRefreshButton(element: ReactElement<Record<string, unknown>>): boolean {
+  const children = element.props.children;
+  return (
+    Array.isArray(children) &&
+    children.some(
+      (child) =>
+        typeof child === "object" &&
+        child !== null &&
+        (child as ReactElement<Record<string, unknown>>).props?.className === "sr-only" &&
+        (child as ReactElement<Record<string, unknown>>).props?.children ===
+          "Refresh provider status",
+    )
+  );
+}
+
 function isAddProviderButton(element: ReactElement<Record<string, unknown>>): boolean {
   return element.props["aria-label"] === "Add provider";
+}
+
+function findAdvancedPanel(panel: ReactElement<Record<string, unknown>>) {
+  return visitElements(
+    panel,
+    (element) => element.props.className === "mt-1" && typeof element.props.open === "boolean",
+  );
+}
+
+function flushEffects(): void {
+  for (const effect of settingsSearchState.effects.splice(0)) effect();
 }
 
 async function flushPromises(): Promise<void> {
@@ -144,6 +184,8 @@ describe("EnvironmentProviderSettings routing", () => {
     settingsState.readEnvironmentIds = [];
     settingsState.updateEnvironmentIds = [];
     settingsState.updateSettings.mockReset();
+    settingsSearchState.targetId = null;
+    settingsSearchState.effects = [];
     commands.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
   });
@@ -157,10 +199,7 @@ describe("EnvironmentProviderSettings routing", () => {
   it("routes refresh and provider update commands to the selected environment", async () => {
     atoms.providers = [provider()];
     const panel = renderPanel();
-    const refreshButton = visitElements(
-      panel,
-      (element) => element.props["aria-label"] === "Refresh provider status",
-    );
+    const refreshButton = visitElements(panel, isRefreshButton);
     expect(refreshButton).not.toBeNull();
     (refreshButton?.props.onClick as (() => void) | undefined)?.();
     await flushPromises();
@@ -216,9 +255,7 @@ describe("EnvironmentProviderSettings routing", () => {
     const notice = visitElements(panel, (element) => element.props.title === "Limited permissions");
     expect(notice).not.toBeNull();
 
-    expect(
-      visitElements(panel, (element) => element.props["aria-label"] === "Refresh provider status"),
-    ).toBeNull();
+    expect(visitElements(panel, isRefreshButton)).toBeNull();
     expect(visitElements(panel, isAddProviderButton)).toBeNull();
   });
 
@@ -229,10 +266,19 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(
       visitElements(panel, (element) => element.props.title === "Limited permissions"),
     ).toBeNull();
-    expect(
-      visitElements(panel, (element) => element.props["aria-label"] === "Refresh provider status"),
-    ).not.toBeNull();
+    expect(visitElements(panel, isRefreshButton)).not.toBeNull();
     expect(visitElements(panel, isAddProviderButton)).not.toBeNull();
+  });
+
+  it("opens Advanced when search targets the provider health interval", () => {
+    settingsSearchState.targetId = "provider-health-check-interval";
+    let panel = renderPanel();
+
+    expect(findAdvancedPanel(panel)?.props.open).toBe(false);
+    flushEffects();
+
+    panel = renderPanel();
+    expect(findAdvancedPanel(panel)?.props.open).toBe(true);
   });
 
   it("deletes and resets provider configuration without erasing shared preferences", () => {

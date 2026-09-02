@@ -8,10 +8,49 @@ import {
   deriveLayout,
   deriveStableFormSheetDetent,
   deriveThreadFeedInitialContentInset,
+  deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
   SPLIT_LAYOUT_MIN_HEIGHT,
   SPLIT_LAYOUT_MIN_WIDTH,
 } from "./layout";
+
+describe("thread work-log text sizing", () => {
+  it.each([11, 16, 22])(
+    "keeps exact compact rows at base size %i without OS enlargement",
+    (baseFontSize) => {
+      expect(deriveThreadWorkLogSizing({ baseFontSize, fontScale: 1 })).toMatchObject({
+        estimatedRowHeight: 28,
+        fixedRowHeight: 28,
+      });
+    },
+  );
+
+  it.each([
+    { baseFontSize: 16, fontScale: 1.25, estimatedRowHeight: 28 },
+    { baseFontSize: 16, fontScale: 2, estimatedRowHeight: 38 },
+    { baseFontSize: 22, fontScale: 2, estimatedRowHeight: 52 },
+  ])(
+    "measures accessibility text instead of locking it to the estimate: %j",
+    ({ estimatedRowHeight, ...settings }) => {
+      expect(deriveThreadWorkLogSizing(settings)).toMatchObject({
+        estimatedRowHeight,
+        fixedRowHeight: undefined,
+      });
+    },
+  );
+
+  it("invalidates native text measurements even when the minimum row height is unchanged", () => {
+    const original = deriveThreadWorkLogSizing({ baseFontSize: 16, fontScale: 1 });
+    for (const settings of [
+      { baseFontSize: 16, fontScale: 1.1 },
+      { baseFontSize: 17, fontScale: 1 },
+    ]) {
+      const resized = deriveThreadWorkLogSizing(settings);
+      expect(resized.estimatedRowHeight).toBe(original.estimatedRowHeight);
+      expect(resized.textSizeKey).not.toBe(original.textSizeKey);
+    }
+  });
+});
 
 describe("deriveThreadFeedInitialContentInset", () => {
   it("seeds Android scroll math with the composer overlay estimate", () => {
