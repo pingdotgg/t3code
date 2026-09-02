@@ -517,8 +517,9 @@ export function IntegrationsSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="browser" title="Browser">
-        {/* Server-authoritative, so it stays editable on every client and sits
-            outside the block covering the desktop-only defaults. */}
+        {/* Server-authoritative, so it stays editable on any client anchored to
+            a server; `serverScoped` covers the hosted app, which has none. It
+            sits outside the block covering the desktop-only defaults. */}
         <AgentBrowserAccessSetting />
         {previewDefaultsDisabled ? (
           <DesktopOnlyBrowserDefaults>{previewDefaults}</DesktopOnlyBrowserDefaults>
