@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1.7
+
+FROM node:24.13.1-bookworm AS build
+
+WORKDIR /workspace
+
+RUN corepack enable && corepack prepare pnpm@11.10.0 --activate
+
+COPY . .
+
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile \
+      --filter=t3... \
+      --filter=@t3tools/web... \
+      --filter=@t3tools/scripts...
+
+# This is the only place the release bundlers run. In particular, esbuild and
+# the other build-time native tools never execute on the macOS host.
+RUN pnpm exec vp run --filter t3 build
+
+FROM scratch AS release
+
+COPY --from=build /workspace/apps/server/dist /
+

@@ -1,0 +1,14 @@
+.git
+.omx
+.repos
+.t3
+.env
+.env.*
+node_modules
+**/node_modules
+**/dist
+**/dist-electron
+**/.vite-plus
+**/*.log
+**/*.tsbuildinfo
+
