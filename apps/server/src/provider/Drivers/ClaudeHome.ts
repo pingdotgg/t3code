@@ -2,7 +2,9 @@ import * as NodeOS from "node:os";
 
 import type { ClaudeSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 
 import { expandHomePath } from "../../pathExpansion.ts";
 
@@ -12,6 +14,22 @@ export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function
   const path = yield* Path.Path;
   const homePath = config.homePath.trim();
   return path.resolve(homePath.length > 0 ? expandHomePath(homePath) : NodeOS.homedir());
+});
+
+/**
+ * The directory Claude Code actually reads its config and transcripts from:
+ * `CLAUDE_CONFIG_DIR` when the instance sets one, otherwise `~/.claude`.
+ * Distinct from `resolveClaudeHomePath`, which is the HOME-level key used
+ * for probe caches.
+ */
+export const resolveClaudeConfigDir = Effect.fn("resolveClaudeConfigDir")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+): Effect.fn.Return<string, never, Path.Path> {
+  const path = yield* Path.Path;
+  const homePath = config.homePath.trim();
+  return homePath.length > 0
+    ? path.resolve(expandHomePath(homePath))
+    : path.join(NodeOS.homedir(), ".claude");
 });
 
 export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function* (
@@ -34,10 +52,75 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   };
 });
 
-export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationGroupKey")(
-  function* (config: Pick<ClaudeSettings, "homePath">): Effect.fn.Return<string, never, Path.Path> {
-    const resolvedHomePath = yield* resolveClaudeHomePath(config);
-    return `claude:home:${resolvedHomePath}`;
+/**
+ * Every Claude instance shares one continuation group. A thread can move
+ * between Claude config directories because the adapter carries the session
+ * transcript into the target directory before resuming
+ * (see `carryOverClaudeSessionTranscript`).
+ */
+export const CLAUDE_CONTINUATION_GROUP_KEY = "claude:session-transcript";
+
+/**
+ * Claude Code keeps one transcript per session under
+ * `<config dir>/projects/<project dir>/<session id>.jsonl`, where the project
+ * dir is the session cwd with every non-alphanumeric character replaced by `-`.
+ */
+export function claudeProjectDirectoryName(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+export interface ClaudeSessionTranscriptCarryOver {
+  readonly fromHomePath: string;
+  readonly toHomePath: string;
+  readonly sessionId: string;
+  readonly cwd: string | undefined;
+}
+
+/**
+ * Copy a session transcript (and its sidecar directory holding subagent
+ * transcripts and tool results) from one Claude config directory into
+ * another so `--resume` works there. Returns `false` when the source has no
+ * transcript for the session, so the caller can fall through to the normal
+ * resume path and let Claude Code report the missing session.
+ */
+export const carryOverClaudeSessionTranscript = Effect.fn("carryOverClaudeSessionTranscript")(
+  function* (
+    input: ClaudeSessionTranscriptCarryOver,
+  ): Effect.fn.Return<boolean, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    if (input.fromHomePath === input.toHomePath) return false;
+
+    const fromProjects = path.join(input.fromHomePath, "projects");
+    const transcriptName = `${input.sessionId}.jsonl`;
+    const preferredProject = input.cwd ? claudeProjectDirectoryName(input.cwd) : undefined;
+    const candidates = preferredProject ? [preferredProject] : [];
+    if (yield* fileSystem.exists(fromProjects)) {
+      for (const entry of yield* fileSystem.readDirectory(fromProjects)) {
+        if (entry !== preferredProject) candidates.push(entry);
+      }
+    }
+
+    for (const project of candidates) {
+      const fromTranscript = path.join(fromProjects, project, transcriptName);
+      if (!(yield* fileSystem.exists(fromTranscript))) continue;
+
+      // Claude Code resumes from the project dir of the *current* cwd, so a
+      // transcript found under an older project dir lands where the resume
+      // will look, not where it came from.
+      const toProject = path.join(input.toHomePath, "projects", preferredProject ?? project);
+      yield* fileSystem.makeDirectory(toProject, { recursive: true });
+      yield* fileSystem.copyFile(fromTranscript, path.join(toProject, transcriptName));
+
+      const fromSidecar = path.join(fromProjects, project, input.sessionId);
+      if (yield* fileSystem.exists(fromSidecar)) {
+        yield* fileSystem.copy(fromSidecar, path.join(toProject, input.sessionId), {
+          overwrite: true,
+        });
+      }
+      return true;
+    }
+    return false;
   },
 );
 

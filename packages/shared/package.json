@@ -246,6 +246,10 @@
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",
       "import": "./src/claudeCompaction.ts"
+    },
+    "./providerRateLimits": {
+      "types": "./src/providerRateLimits.ts",
+      "import": "./src/providerRateLimits.ts"
     }
   },
   "scripts": {

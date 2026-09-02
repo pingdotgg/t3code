@@ -14,6 +14,22 @@ export function providerInstanceInitials(label: string): string {
     .join("");
 }
 
+/**
+ * Accounts with an accent colour paint the provider logo itself in that
+ * colour, so two Claude accounts read as a blue Claude and a green Claude
+ * instead of identical logos with a tiny corner badge. The inline style wins
+ * over the brand `fill-*` class; callers keep ownership of dimming and of
+ * whether a badge is shown at all.
+ */
+export function providerAccentIconStyle(
+  accentColor: string | undefined,
+): CSSProperties | undefined {
+  return accentColor ? { fill: accentColor, color: accentColor } : undefined;
+}
+
+/** Logos with per-path fills (OpenCode) need the accent pushed onto the paths too. */
+const ACCENT_PATH_CLASS = "[&_path]:[fill:var(--provider-accent)]";
+
 export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
   displayName: string;
@@ -43,7 +59,15 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       data-provider-accent-color={props.accentColor}
     >
       {Icon ? (
-        <Icon className={cn("size-5 shrink-0", props.iconClassName)} aria-hidden />
+        <Icon
+          className={cn(
+            "size-5 shrink-0",
+            props.accentColor && ACCENT_PATH_CLASS,
+            props.iconClassName,
+          )}
+          style={providerAccentIconStyle(props.accentColor)}
+          aria-hidden
+        />
       ) : (
         <span className={cn("text-[10px] font-semibold leading-none", props.iconClassName)}>
           {providerInstanceInitials(props.displayName)}

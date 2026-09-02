@@ -15,6 +15,7 @@ export const makeProviderRegistryMock = (
   getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
     Effect.succeed(makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null })),
   setProviderMaintenanceActionState: () => Effect.succeed(providers),
+  setProviderRateLimit: () => Effect.succeed(providers),
   streamChanges: Stream.empty,
 });
 

@@ -112,14 +112,28 @@ blurred by default; click the blurred email to reveal it.
 
 ## Can I Switch Claude Accounts In An Existing Thread?
 
-Usually, no.
+Yes.
 
-T3 Code only offers Claude providers that use the same config directory for an existing thread. A
-different config directory is treated as a different Claude environment.
+Pick any other Claude provider in the model picker and send the next message.
+T3 Code copies the thread's Claude session transcript into that provider's config directory before
+resuming, so the conversation continues with full history on the other account.
+Everything else in each config directory (login, settings, memory) stays separate.
 
-This is different from the recommended Codex setup. Claude Code keeps account and local state across
-multiple files under its config directory, so T3 Code keeps separate config directories isolated
-instead of trying to share part of the state.
+Threads started before this feature record their config directory on their next message.
+Until then the other account starts that thread fresh.
+
+## What Happens When An Account Hits Its Usage Limit?
+
+Claude Code tells T3 Code when an account is out of usage and when the limit resets.
+The model picker shows this on the account, and the composer shows a notice with the reset time.
+
+If you have another Claude provider that is not limited, the notice offers to switch the thread to it.
+Switching also puts the message that failed back into the composer so you can send it again.
+
+To skip the notice and switch automatically, turn on **Switch accounts on usage limit** in Settings.
+T3 Code then re-sends a turn that failed on a limited account using the other account and records the
+switch in the thread.
+Later messages in that thread also go to the other account until the limit resets.
 
 ## I Want To Use OpenRouter
 

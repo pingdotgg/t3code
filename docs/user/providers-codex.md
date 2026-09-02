@@ -135,6 +135,15 @@ both.
 If you add a third Codex provider with a completely different `CODEX_HOME path`, T3 Code treats it
 as a different workspace. It will not be offered for existing threads created under `~/.codex`.
 
+## What Happens When An Account Hits Its Usage Limit?
+
+Codex reports usage-limit state to T3 Code.
+When the account a thread runs on is out of usage, the composer shows a notice with the reset time
+and, if another Codex provider shares the same home, offers to switch the thread to it.
+
+Turn on **Switch accounts on usage limit** in Settings to have T3 Code re-send the failed turn on the
+other account automatically.
+
 ## If Both Accounts Look The Same
 
 If two Codex providers show the same account or the same unexpected model list:

@@ -7,12 +7,17 @@ import {
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
+  type OrchestrationThread,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
+import {
+  isProviderRateLimitActive,
+  selectRateLimitFallbackProvider,
+} from "@t3tools/shared/providerRateLimits";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -36,6 +41,10 @@ import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import {
+  formatRateLimitSwitchSummary,
+  PROVIDER_INSTANCE_SWITCHED_ACTIVITY_KIND,
+} from "../ProviderRateLimitReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
   ProviderCommandReactor,
@@ -1125,6 +1134,89 @@ const make = Effect.gen(function* () {
     processThreadTitleRegenerationSafely,
   );
 
+  /**
+   * When the account a turn would run on is out of usage and the user opted
+   * into auto-switching, route the turn to a sibling account that can resume
+   * the same provider session. The switch is recorded as a thread activity so
+   * it is visible in the transcript.
+   */
+  const resolveRateLimitedModelSelection = Effect.fnUntraced(function* (input: {
+    readonly thread: OrchestrationThread;
+    readonly requestedModelSelection: ModelSelection | undefined;
+    readonly createdAt: string;
+  }) {
+    const baseSelection =
+      input.requestedModelSelection ??
+      threadModelSelections.get(input.thread.id) ??
+      input.thread.modelSelection;
+    const currentInstanceId =
+      input.requestedModelSelection?.instanceId ??
+      input.thread.session?.providerInstanceId ??
+      baseSelection.instanceId;
+    const nowMs = Date.parse(input.createdAt);
+    const providers = yield* providerRegistry.getProviders;
+    const current = providers.find((provider) => provider.instanceId === currentInstanceId);
+    if (!current || !isProviderRateLimitActive(current.rateLimit, nowMs)) {
+      return input.requestedModelSelection;
+    }
+    const autoSwitch = yield* serverSettingsService.getSettings.pipe(
+      Effect.map((settings) => settings.autoSwitchProviderOnRateLimit),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!autoSwitch) {
+      return input.requestedModelSelection;
+    }
+    const fallback = selectRateLimitFallbackProvider({
+      providers,
+      instanceId: currentInstanceId,
+      nowMs,
+    });
+    if (!fallback) {
+      return input.requestedModelSelection;
+    }
+    yield* Effect.logInfo("provider command reactor routing turn to fallback account", {
+      threadId: input.thread.id,
+      fromInstanceId: currentInstanceId,
+      toInstanceId: fallback.instanceId,
+      resetsAt: current.rateLimit?.resetsAt,
+    });
+    yield* Effect.all({
+      commandId: serverCommandId("provider-rate-limit-switch"),
+      eventId: serverEventId(),
+    }).pipe(
+      Effect.flatMap(({ commandId, eventId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.thread.id,
+          activity: {
+            id: eventId,
+            tone: "info",
+            kind: PROVIDER_INSTANCE_SWITCHED_ACTIVITY_KIND,
+            summary: formatRateLimitSwitchSummary({ from: current, to: fallback }),
+            payload: {
+              reason: "rate-limit",
+              fromInstanceId: currentInstanceId,
+              toInstanceId: fallback.instanceId,
+              ...(current.rateLimit?.resetsAt ? { resetsAt: current.rateLimit.resetsAt } : {}),
+            },
+            turnId: null,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+      // The switch note is informational; never let it drop the user's turn.
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider command reactor could not record the account switch", {
+          threadId: input.thread.id,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+    return { ...baseSelection, instanceId: fallback.instanceId } satisfies ModelSelection;
+  });
+
   const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
@@ -1220,13 +1312,17 @@ const make = Effect.gen(function* () {
         ),
       );
 
+    const modelSelection = yield* resolveRateLimitedModelSelection({
+      thread,
+      requestedModelSelection: event.payload.modelSelection,
+      createdAt: event.payload.createdAt,
+    });
+
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-      ...(event.payload.modelSelection !== undefined
-        ? { modelSelection: event.payload.modelSelection }
-        : {}),
+      ...(modelSelection !== undefined ? { modelSelection } : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,
     }).pipe(

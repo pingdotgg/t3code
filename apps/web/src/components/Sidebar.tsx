@@ -351,11 +351,13 @@ function SidebarThreadTooltip({
                   providerEntry?.displayName ?? thread.session?.providerName ?? modelInstanceId
                 }
                 accentColor={providerEntry?.accentColor}
-                // Initials would swallow a size-3 glyph: accent dot, name in label.
-                showBadge={showInstanceBadge && providerEntry?.accentColor !== undefined}
-                badgeContent="none"
-                badgeClassName="h-2 min-w-2 px-0"
-                iconClassName="size-3 shrink-0 grayscale opacity-60"
+                // The accent tints the glyph itself; a size-3 glyph has no
+                // room for initials, so accent-less siblings show nothing.
+                showBadge={false}
+                iconClassName={cn(
+                  "size-3 shrink-0 opacity-60",
+                  providerEntry?.accentColor === undefined && "grayscale",
+                )}
               />
               <div className="min-w-0 truncate text-foreground/75">
                 {showInstanceBadge && providerEntry
@@ -1603,7 +1605,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         modelInstanceId
                       }
                       accentColor={providerEntry?.accentColor}
-                      showBadge={showInstanceBadge}
+                      showBadge={showInstanceBadge && providerEntry?.accentColor === undefined}
                       // Glyph dims, badge stays saturated; offset matches the composer trigger.
                       iconClassName="size-3.5 opacity-60"
                       badgeClassName="right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-[7px]"
