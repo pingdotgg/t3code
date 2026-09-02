@@ -12,9 +12,15 @@ WebEngineView {
     // opens come back to this view.
     property string surfaceId: "primary"
 
+    // Freeze the page (no timers, no rendering) while the surface is hidden.
+    // Its state stays in memory and it resumes where it was; a document that
+    // must keep running out of view (the primary page) leaves this off.
+    property bool sleepsWhenHidden: false
+
     backgroundColor: Theme.windowTransparent ? "transparent" : Theme.color("chrome", "#0b0b0d")
 
     profile: WebProfile
+    lifecycleState: sleepsWhenHidden && !visible && !loading ? WebEngineView.LifecycleState.Frozen : WebEngineView.LifecycleState.Active
 
     webChannel: WebChannel {
         id: channel

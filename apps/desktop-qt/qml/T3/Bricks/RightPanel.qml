@@ -30,16 +30,11 @@ Rectangle {
     // and the closed panel then takes no width.
     property bool ownToggle: true
 
+    // Not animated: the web surface between the panels would be resized (a
+    // Chromium relayout and a new GPU surface) on every frame of it.
     implicitWidth: open ? openWidth : ownToggle ? 36 : 0
     color: Theme.color("chrome", "#0b0b0d")
     clip: true
-
-    Behavior on implicitWidth {
-        NumberAnimation {
-            duration: 220
-            easing.type: Easing.OutCubic
-        }
-    }
 
     ColumnLayout {
         id: column
@@ -227,6 +222,7 @@ Rectangle {
             // the URL is only the starting point; rebinding it would reload.
             sourceComponent: WebSurface {
                 surfaceId: "rightPanel"
+                sleepsWhenHidden: true
                 Component.onCompleted: url = panel.embedUrl
             }
         }

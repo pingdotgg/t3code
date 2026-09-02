@@ -24,18 +24,12 @@ ShellWindow {
                 id: sidebar
 
                 Layout.fillHeight: true
+                // Not animated: see RightPanel.
                 Layout.preferredWidth: root.sidebarCollapsed ? 0 : 256
                 Layout.minimumWidth: 0
-                visible: !root.settingsActive && (!root.sidebarCollapsed || width > 0)
+                visible: !root.settingsActive && !root.sidebarCollapsed
                 showBrand: true
                 window: root
-
-                Behavior on Layout.preferredWidth {
-                    NumberAnimation {
-                        duration: 220
-                        easing.type: Easing.OutCubic
-                    }
-                }
             }
 
             SettingsNav {
