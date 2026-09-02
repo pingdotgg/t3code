@@ -360,13 +360,13 @@ describe("orderedListGutterStyle", () => {
     expect(orderedListGutterStyle(9, undefined)).toBeUndefined();
   });
 
-  it("leaves the default gutter alone for two-digit lists", () => {
-    expect(orderedListGutterStyle(99, undefined)).toBeUndefined();
+  it("widens the gutter for two-digit lists", () => {
+    expect(orderedListGutterStyle(99, undefined)).toEqual({ "--list-gutter": "3ch" });
   });
 
-  it("leaves the default gutter alone for a two-digit list that starts above 1", () => {
+  it("widens the gutter for a two-digit list that starts above 1", () => {
     // start=50 + 49 items => last marker is "98", still two digits.
-    expect(orderedListGutterStyle(49, 50)).toBeUndefined();
+    expect(orderedListGutterStyle(49, 50)).toEqual({ "--list-gutter": "3ch" });
   });
 
   it("widens the gutter once the last marker reaches three digits", () => {
@@ -387,7 +387,7 @@ describe("orderedListGutterStyle", () => {
   it("uses the widest marker and includes a negative start's minus sign", () => {
     expect(orderedListGutterStyle(1001, -1000)).toEqual({ "--list-gutter": "6ch" });
     expect(orderedListGutterStyle(3, -15)).toEqual({ "--list-gutter": "4ch" });
-    expect(orderedListGutterStyle(3, -5)).toBeUndefined();
+    expect(orderedListGutterStyle(3, -5)).toEqual({ "--list-gutter": "3ch" });
   });
 
   it("treats a missing/zero item count as a single item", () => {

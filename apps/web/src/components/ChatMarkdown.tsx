@@ -328,13 +328,10 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
 }
 
 /**
- * The default `1.25rem` marker gutter (`.chat-markdown ol`) fits markers up to
- * two characters wide. Once a marker reaches three characters (item 100+),
- * `list-style-position: outside` paints it wider than that gutter and clips
- * the leading character against the item's own overflow. Rather than widening
- * the gutter for every list, only lists whose widest marker is 3+ characters
- * get a wider `--list-gutter`. The width includes a negative marker's minus
- * sign.
+ * The default `1.25rem` marker gutter (`.chat-markdown ol`) fits one-character
+ * markers. Wider markers can extend past it and get clipped by a collapsed
+ * message's overflow. Widen the gutter to fit the widest marker, including a
+ * negative marker's minus sign.
  */
 export function orderedListGutterStyle(
   itemCount: number,
@@ -344,7 +341,7 @@ export function orderedListGutterStyle(
   const firstNumber = Number.isNaN(parsedStart) ? 1 : parsedStart;
   const lastNumber = firstNumber + Math.max(itemCount - 1, 0);
   const markerWidth = Math.max(String(firstNumber).length, String(lastNumber).length);
-  if (markerWidth <= 2) return undefined;
+  if (markerWidth <= 1) return undefined;
   return { "--list-gutter": `${markerWidth + 1}ch` };
 }
 
