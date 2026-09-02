@@ -16,6 +16,7 @@ import {
   resolveSelectionActionPosition,
   type SelectionActionPoint,
 } from "~/lib/selectionActions";
+import { Button } from "../ui/button";
 
 export function AssistantSelectionToolbar({
   viewport,
@@ -31,7 +32,7 @@ export function AssistantSelectionToolbar({
     position: SelectionActionPoint;
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
-  const toolbarRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLButtonElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
 
   useLayoutEffect(() => {
@@ -98,11 +99,10 @@ export function AssistantSelectionToolbar({
       ) {
         return;
       }
-      const action = toolbar.querySelector<HTMLButtonElement>("button:not(:disabled)");
-      if (!action) return;
+      if (toolbar.disabled) return;
       event.preventDefault();
       event.stopPropagation();
-      action.focus({ preventScroll: true });
+      toolbar.focus({ preventScroll: true });
     };
     document.addEventListener("keydown", focusActions, true);
     document.addEventListener("selectionchange", actions.selectionChanged);
@@ -127,12 +127,17 @@ export function AssistantSelectionToolbar({
     return true;
   };
   return createPortal(
-    <div
+    <Button
       ref={toolbarRef}
-      role="toolbar"
-      aria-label="Assistant text selection"
-      className="dropdown-glass fixed z-50 max-w-[calc(100vw-1rem)] rounded-lg p-1 text-popover-foreground"
+      type="button"
+      size="xs"
+      variant="glass"
+      disabled={tooLong}
+      aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
+      className="fixed z-50 max-w-[calc(100vw-1rem)] rounded-full px-2.5"
       style={{ left: selection.position.x, top: selection.position.y }}
+      onPointerDown={(event) => event.preventDefault()}
+      onClick={cite}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Escape" && !event.nativeEvent.isComposing) {
@@ -141,17 +146,9 @@ export function AssistantSelectionToolbar({
         }
       }}
     >
-      <button
-        type="button"
-        disabled={tooLong}
-        className="flex min-h-8 w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-base text-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground disabled:pointer-events-none disabled:text-muted-foreground disabled:opacity-64 sm:min-h-7 sm:text-sm"
-        onPointerDown={(event) => event.preventDefault()}
-        onClick={cite}
-      >
-        <QuoteIcon aria-hidden="true" className="size-3.5" />
-        {tooLong ? "Select a shorter quote" : "Cite in composer"}
-      </button>
-    </div>,
+      <QuoteIcon aria-hidden="true" className="size-3.5" />
+      {tooLong ? "Shorten selection" : "Cite"}
+    </Button>,
     document.body,
   );
 }

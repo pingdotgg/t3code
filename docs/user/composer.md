@@ -67,10 +67,11 @@ the draft. Copying, reloading, and restoring a [stashed prompt](#prompt-stash) k
 with its quote, and sending tells the agent which words were quoted and which comment you wrote.
 The quoted text and comment count toward the message limit.
 
-Click a chip in the composer or a sent message to open the source thread, scroll to the response,
-and highlight the quoted passage — including in older history. The highlight pulses, holds for a
-moment, then fades on its own; press `Escape` to stop the navigation or clear it early. If the source is unavailable or its text has changed, the
-saved quote stays readable and T3 Code shows a warning.
+Select a chip in the composer or a sent message to open the source thread, scroll to the response,
+and highlight the quoted passage — including in older history. The
+highlight pulses, holds for a moment, then fades on its own; press `Escape` to stop the navigation
+or clear it early. If the source is unavailable or its text has changed, the saved quote stays
+readable and T3 Code shows a warning.
 
 Mobile shows the full saved quote and its comment in sent messages. It does not offer
 **Cite in composer** or navigation to a quote's source.
