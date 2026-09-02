@@ -31,7 +31,6 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
-import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import {
   clearPersistedServerRuntimeState,
   readPersistedServerRuntimeState,
@@ -513,7 +512,6 @@ const projectAddCommand = Command.make("add", {
           projectId,
           title,
           workspaceRoot,
-          defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(),
         });
         return `Added project ${projectId} (${title}) at ${workspaceRoot}.`;
       }),

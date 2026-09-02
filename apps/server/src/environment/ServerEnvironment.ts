@@ -226,11 +226,12 @@ export const make = Effect.gen(function* () {
       threadVisitedTracking: true,
       threadPullRequestLinking: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
+      // Running-thread continuation across a self-update (#9167) marks v1
+      // provider session bindings; the v2 recovery path terminalizes running
+      // runs on restart instead, so the capability stays unadvertised until
+      // ProviderRuntimeRecoveryService grows an equivalent.
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
-        ? {
-            serverSelfUpdateProgress: true,
-            serverUpdateThreadContinuation: true,
-          }
+        ? { serverSelfUpdateProgress: true }
         : {}),
       ...(desktopAppUpdate ? { desktopAppUpdate: true } : {}),
     },

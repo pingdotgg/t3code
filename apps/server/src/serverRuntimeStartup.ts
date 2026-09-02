@@ -176,7 +176,7 @@ export const launchStartupHeartbeat = recordStartupHeartbeat.pipe(
   Effect.asVoid,
 );
 
-export const getAutoBootstrapDefaultModelSelection = (): ModelSelection => ({
+export const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({
   instanceId: ProviderInstanceId.make("codex"),
   model: DEFAULT_MODEL,
 });
@@ -210,13 +210,14 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   let bootstrapThreadId: ThreadId | undefined;
 
   if (serverConfig.autoBootstrapProjectFromCwd) {
-    const defaultModelSelection = getAutoBootstrapDefaultModelSelection();
+    // Project creation has no user model choice; only the bootstrap thread
+    // gets an automatic selection, and an explicit project default wins.
+    const threadModelSelection = getAutoBootstrapThreadModelSelection();
     const { project } = yield* projects.bootstrap({
       commandId: CommandId.make(yield* randomUUID),
       projectId: ProjectId.make(yield* randomUUID),
       title: path.basename(serverConfig.cwd) || "project",
       workspaceRoot: serverConfig.cwd,
-      defaultModelSelection,
     });
     const shell = yield* threads.getShellSnapshot();
     const existingThread = shell.threads.find(
@@ -228,7 +229,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
         commandId: CommandId.make(yield* randomUUID),
         projectId: project.id,
         title: "New thread",
-        modelSelection: project.defaultModelSelection ?? defaultModelSelection,
+        modelSelection: project.defaultModelSelection ?? threadModelSelection,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "full-access",
         workspaceStrategy: { type: "root" },
