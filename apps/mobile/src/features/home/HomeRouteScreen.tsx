@@ -83,17 +83,33 @@ export function HomeRouteScreen() {
   } = useHomeListOptions(availableEnvironmentIds);
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  const environmentLabelById = useMemo(
+    () =>
+      new Map(environments.map((environment) => [environment.environmentId, environment.label])),
+    [environments],
+  );
   const projectFilterOptions = useMemo(
     () =>
       buildHomeProjectScopes({
         projects,
         environmentId: selectedEnvironmentId,
         projectGroupingMode: listOptions.projectGroupingMode,
+        environmentGroupingEnabled:
+          listOptions.environmentGroupingEnabled && selectedEnvironmentId === null,
       }).map((scope) => ({
         key: scope.key,
-        label: scope.title,
+        label:
+          listOptions.environmentGroupingEnabled && selectedEnvironmentId === null
+            ? `${scope.title} · ${environmentLabelById.get(scope.representative.environmentId) ?? "Unknown environment"}`
+            : scope.title,
       })),
-    [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
+    [
+      environmentLabelById,
+      listOptions.environmentGroupingEnabled,
+      listOptions.projectGroupingMode,
+      projects,
+      selectedEnvironmentId,
+    ],
   );
   useEffect(() => {
     if (

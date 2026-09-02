@@ -215,16 +215,31 @@ function ThreadNavigationSidebarPane(
         projects,
         environmentId: options.selectedEnvironmentId,
         projectGroupingMode: options.projectGroupingMode,
+        environmentGroupingEnabled:
+          options.environmentGroupingEnabled && options.selectedEnvironmentId === null,
       }),
-    [options.projectGroupingMode, options.selectedEnvironmentId, projects],
+    [
+      options.environmentGroupingEnabled,
+      options.projectGroupingMode,
+      options.selectedEnvironmentId,
+      projects,
+    ],
   );
   const projectFilterOptions = useMemo(
     () =>
       projectScopes.map((scope) => ({
         key: scope.key,
-        label: scope.title,
+        label:
+          options.environmentGroupingEnabled && options.selectedEnvironmentId === null
+            ? `${scope.title} · ${environments.find((environment) => environment.environmentId === scope.representative.environmentId)?.label ?? "Unknown environment"}`
+            : scope.title,
       })),
-    [projectScopes],
+    [
+      environments,
+      options.environmentGroupingEnabled,
+      options.selectedEnvironmentId,
+      projectScopes,
+    ],
   );
   const projectTitleByProjectKey = useMemo(
     () =>

@@ -25,6 +25,8 @@ import {
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
+  selectPinnedReorderSection,
+  shouldApplyOptimisticPinnedOrder,
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
@@ -910,6 +912,45 @@ describe("pinOrderKeyBetween", () => {
     expect(pinOrderKeyBetween("A!", null)).toBeNull();
     expect(pinOrderKeyBetween(null, "ma")).toBeNull();
     expect(pinOrderKeyBetween("m", "m")).toBeNull();
+  });
+});
+
+describe("selectPinnedReorderSection", () => {
+  const threads = [
+    { key: "local-a", environmentId: "local" },
+    { key: "remote-a", environmentId: "remote" },
+    { key: "local-b", environmentId: "local" },
+  ];
+
+  it("keeps the reorder plan inside the active environment when grouping is enabled", () => {
+    expect(
+      selectPinnedReorderSection({
+        threads,
+        activeKey: "local-b",
+        groupByEnvironment: true,
+        getKey: (thread) => thread.key,
+      }).map((thread) => thread.key),
+    ).toEqual(["local-a", "local-b"]);
+  });
+
+  it("keeps the global reorder plan when grouping is disabled", () => {
+    expect(
+      selectPinnedReorderSection({
+        threads,
+        activeKey: "local-b",
+        groupByEnvironment: false,
+        getKey: (thread) => thread.key,
+      }),
+    ).toEqual(threads);
+  });
+});
+
+describe("shouldApplyOptimisticPinnedOrder", () => {
+  it("rejects optimistic order from the previous grouping mode", () => {
+    expect(shouldApplyOptimisticPinnedOrder("local", true)).toBe(true);
+    expect(shouldApplyOptimisticPinnedOrder(null, false)).toBe(true);
+    expect(shouldApplyOptimisticPinnedOrder("local", false)).toBe(false);
+    expect(shouldApplyOptimisticPinnedOrder(null, true)).toBe(false);
   });
 });
 

@@ -192,6 +192,7 @@ import {
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { SidebarSectionHeading } from "./sidebar/SidebarSectionHeading";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
@@ -2191,7 +2192,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         if (isMobile) setOpenMobile(false);
         void router.navigate({
           to: "/projects/$projectKey",
-          params: { projectKey: project.projectKey },
+          params: { projectKey: project.logicalProjectKey },
         });
         return;
       }
@@ -2931,11 +2932,20 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         projectsByEnvironment.set(project.environmentId, [project]);
       }
     }
-    return [...projectsByEnvironment].map(([environmentId, projects]) => ({
-      environmentId,
-      label: environmentLabelById.get(environmentId) ?? "Unknown environment",
-      projects,
-    }));
+    const environmentOrder = new Map(
+      [...environmentLabelById.keys()].map((environmentId, index) => [environmentId, index]),
+    );
+    return [...projectsByEnvironment]
+      .sort(
+        ([leftId], [rightId]) =>
+          (environmentOrder.get(leftId) ?? environmentOrder.size) -
+          (environmentOrder.get(rightId) ?? environmentOrder.size),
+      )
+      .map(([environmentId, projects]) => ({
+        environmentId,
+        label: environmentLabelById.get(environmentId) ?? "Unknown environment",
+        projects,
+      }));
   }, [environmentGroupingEnabled, environmentLabelById, sortedProjects]);
 
   return (
@@ -3075,15 +3085,11 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           <SidebarMenu ref={attachProjectListAutoAnimateRef}>
             {projectSections.flatMap((section) => [
               section.label ? (
-                <li
+                <SidebarSectionHeading
                   key={`environment:${section.environmentId}`}
-                  className="mb-1 mt-3 flex items-center gap-2 px-2 first:mt-0"
-                >
-                  <span className="min-w-0 truncate text-xs font-medium text-sidebar-muted-foreground/80">
-                    {section.label}
-                  </span>
-                  <span className="h-px flex-1 bg-sidebar-border/60" />
-                </li>
+                  label={section.label}
+                  className="mt-3 px-2 first:mt-0"
+                />
               ) : null,
               ...section.projects.map((project) => (
                 <SidebarProjectListRow

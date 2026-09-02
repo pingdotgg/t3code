@@ -137,6 +137,8 @@ import {
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
+  selectPinnedReorderSection,
+  shouldApplyOptimisticPinnedOrder,
   shouldCreateNewThreadInCurrentProject,
   resolveWorkingStartedAt,
   sortLogicalProjectsForSidebar,
@@ -192,6 +194,7 @@ import {
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { SidebarSectionHeading } from "./sidebar/SidebarSectionHeading";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import {
@@ -2718,6 +2721,7 @@ export default function Sidebar() {
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
   const [optimisticPinnedOrder, setOptimisticPinnedOrder] = useState<{
+    readonly environmentId: EnvironmentId | null;
     readonly order: readonly string[];
     /** pinOrderKey per thread as of the drop — the baseline that tells a
         concurrent client's write apart from one of our own landing. */
@@ -2727,13 +2731,24 @@ export default function Sidebar() {
     readonly assignedKeys: ReadonlyMap<string, string>;
   } | null>(null);
   const orderedPinnedThreads = useMemo(() => {
-    if (optimisticPinnedOrder === null) return pinnedThreads;
+    if (
+      optimisticPinnedOrder === null ||
+      !shouldApplyOptimisticPinnedOrder(
+        optimisticPinnedOrder.environmentId,
+        sidebarEnvironmentGroupingEnabled,
+      )
+    ) {
+      return pinnedThreads;
+    }
     return orderItemsByPreferredIds({
       items: pinnedThreads,
       preferredIds: optimisticPinnedOrder.order,
       getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
     });
-  }, [optimisticPinnedOrder, pinnedThreads]);
+  }, [optimisticPinnedOrder, pinnedThreads, sidebarEnvironmentGroupingEnabled]);
+  useEffect(() => {
+    setOptimisticPinnedOrder(null);
+  }, [sidebarEnvironmentGroupingEnabled]);
   const pinnedThreadSections = useMemo(
     () =>
       groupSidebarThreadsByEnvironment({
@@ -2745,8 +2760,11 @@ export default function Sidebar() {
   );
   useEffect(() => {
     if (optimisticPinnedOrder === null) return;
-    const canonical = pinnedThreads.filter((thread) =>
-      reorderablePinnedKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+    const canonical = pinnedThreads.filter(
+      (thread) =>
+        (optimisticPinnedOrder.environmentId === null ||
+          thread.environmentId === optimisticPinnedOrder.environmentId) &&
+        reorderablePinnedKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
     );
     const canonicalKeys = canonical.map((thread) =>
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
@@ -2827,7 +2845,12 @@ export default function Sidebar() {
       const activeKey = String(event.active.id);
       const overKey = event.over === null ? null : String(event.over.id);
       if (overKey === null || activeKey === overKey) return;
-      const reorderable = orderedPinnedThreads.filter((thread) =>
+      const reorderable = selectPinnedReorderSection({
+        threads: orderedPinnedThreads,
+        activeKey,
+        groupByEnvironment: sidebarEnvironmentGroupingEnabled,
+        getKey: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      }).filter((thread) =>
         reorderablePinnedKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
       );
       const keys = reorderable.map((thread) =>
@@ -2848,6 +2871,9 @@ export default function Sidebar() {
       });
       if (assignments.length === 0) return;
       setOptimisticPinnedOrder({
+        environmentId: sidebarEnvironmentGroupingEnabled
+          ? (reorderable[0]?.environmentId ?? null)
+          : null,
         order: newOrder,
         keysAtDrop,
         assignedKeys: new Map(
@@ -2886,7 +2912,12 @@ export default function Sidebar() {
         }
       })();
     },
-    [orderedPinnedThreads, reorderPinnedThread, reorderablePinnedKeys],
+    [
+      orderedPinnedThreads,
+      reorderPinnedThread,
+      reorderablePinnedKeys,
+      sidebarEnvironmentGroupingEnabled,
+    ],
   );
   // One snooze per thread at a time — same double-dispatch guard as settle.
   const snoozingThreadKeysRef = useRef(new Set<string>());
@@ -3972,15 +4003,11 @@ export default function Sidebar() {
                     }
                     for (const environment of sections) {
                       items.push(
-                        <li
+                        <SidebarSectionHeading
                           key={`environment:${section}:${environment.environmentId}`}
-                          className="mb-1 mt-3 flex list-none items-center gap-2 px-2.5"
-                        >
-                          <span className="min-w-0 truncate text-xs font-medium text-sidebar-muted-foreground/80">
-                            {environment.label}
-                          </span>
-                          <span className="h-px flex-1 bg-sidebar-border/60" />
-                        </li>,
+                          label={environment.label}
+                          className="mt-3 list-none px-2.5"
+                        />,
                       );
                       for (const thread of environment.threads) {
                         items.push(renderThreadRow(thread, section));
@@ -3989,6 +4016,7 @@ export default function Sidebar() {
                   };
                   const renderPinnedRows = (
                     sectionThreads: ReadonlyArray<EnvironmentThreadShell>,
+                    environmentLabel?: string,
                   ) => (
                     <DndContext
                       sensors={pinnedDndSensors}
@@ -4006,7 +4034,11 @@ export default function Sidebar() {
                       >
                         <ul
                           role="list"
-                          aria-label="Pinned threads"
+                          aria-label={
+                            environmentLabel
+                              ? `Pinned threads in ${environmentLabel}`
+                              : "Pinned threads"
+                          }
                           className="flex flex-col gap-px"
                         >
                           {sectionThreads.map((thread) => {
@@ -4048,13 +4080,12 @@ export default function Sidebar() {
                         {sidebarEnvironmentGroupingEnabled
                           ? pinnedThreadSections.map((environment) => (
                               <div key={environment.environmentId} className="mt-3 first:mt-0">
-                                <div className="mb-1 flex items-center gap-2 px-2.5">
-                                  <span className="min-w-0 truncate text-xs font-medium text-sidebar-muted-foreground/80">
-                                    {environment.label}
-                                  </span>
-                                  <span className="h-px flex-1 bg-sidebar-border/60" />
-                                </div>
-                                {renderPinnedRows(environment.threads)}
+                                <SidebarSectionHeading
+                                  as="div"
+                                  label={environment.label}
+                                  className="px-2.5"
+                                />
+                                {renderPinnedRows(environment.threads, environment.label)}
                               </div>
                             ))
                           : renderPinnedRows(orderedPinnedThreads)}

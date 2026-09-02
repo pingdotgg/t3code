@@ -603,6 +603,26 @@ export function sortThreadsForSidebar<
   );
 }
 
+export function selectPinnedReorderSection<T extends { readonly environmentId: string }>(input: {
+  readonly threads: readonly T[];
+  readonly activeKey: string;
+  readonly groupByEnvironment: boolean;
+  readonly getKey: (thread: T) => string;
+}): readonly T[] {
+  if (!input.groupByEnvironment) return input.threads;
+  const activeThread = input.threads.find((thread) => input.getKey(thread) === input.activeKey);
+  return activeThread === undefined
+    ? []
+    : input.threads.filter((thread) => thread.environmentId === activeThread.environmentId);
+}
+
+export function shouldApplyOptimisticPinnedOrder(
+  environmentId: string | null,
+  groupByEnvironment: boolean,
+): boolean {
+  return (environmentId !== null) === groupByEnvironment;
+}
+
 // Pinned-reorder key math and the keyed sort live in client-runtime
 // (state/thread-sort) so web and mobile compute identical pinned orders.
 export {

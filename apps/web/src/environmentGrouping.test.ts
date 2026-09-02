@@ -101,6 +101,10 @@ describe("environment grouping", () => {
 
     expect(result.projects).toHaveLength(2);
     expect(new Set(result.projects.map((project) => project.projectKey)).size).toBe(2);
+    expect(result.projects.map((project) => project.logicalProjectKey)).toEqual([
+      repositoryIdentity.canonicalKey,
+      repositoryIdentity.canonicalKey,
+    ]);
     expect(
       result.projects.map((project) =>
         project.memberProjects.map((member) => [member.environmentId, member.id]),

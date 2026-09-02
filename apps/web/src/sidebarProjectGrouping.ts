@@ -11,6 +11,7 @@ export interface SidebarProjectGroupMember extends Project {
 
 export interface SidebarProjectSnapshot extends Project {
   projectKey: string;
+  logicalProjectKey: string;
   displayName: string;
   groupedProjectCount: number;
   environmentPresence: EnvironmentPresence;
@@ -150,6 +151,7 @@ export function buildSidebarProjectSnapshots(input: {
     return {
       ...representative,
       projectKey: group.key,
+      logicalProjectKey: group.key,
       displayName: group.label,
       groupedProjectCount: members.length,
       environmentPresence:

@@ -308,8 +308,15 @@ export function HomeScreen(props: HomeScreenProps) {
         projects: props.projects,
         environmentId: props.selectedEnvironmentId,
         projectGroupingMode: props.projectGroupingMode,
+        environmentGroupingEnabled:
+          props.environmentGroupingEnabled && props.selectedEnvironmentId === null,
       }),
-    [props.projectGroupingMode, props.projects, props.selectedEnvironmentId],
+    [
+      props.environmentGroupingEnabled,
+      props.projectGroupingMode,
+      props.projects,
+      props.selectedEnvironmentId,
+    ],
   );
   const selectedProjectScope = useMemo(
     () =>
