@@ -346,7 +346,12 @@ export const ProviderRegistryLive = Layer.effect(
           cacheDir: config.providerStatusCacheDir,
           instanceId: key,
         }).pipe(Effect.provideService(Path.Path, path));
-        const { workspaceSnapshots: _workspaceSnapshots, ...machineProvider } = provider;
+        // Usage-limit state is volatile; never let it survive a restart.
+        const {
+          workspaceSnapshots: _workspaceSnapshots,
+          rateLimit: _rateLimit,
+          ...machineProvider
+        } = provider;
         yield* writeProviderStatusCache({ filePath, provider: machineProvider }).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
@@ -699,6 +704,15 @@ export const ProviderRegistryLive = Layer.effect(
           yield* PubSub.publish(changesPubSub, providers);
         }
         yield* Ref.update(maintenanceActionStatesRef, (previous) => {
+          const next = new Map(previous);
+          for (const instanceId of previous.keys()) {
+            if (!knownInstanceIds.has(instanceId)) {
+              next.delete(instanceId);
+            }
+          }
+          return next;
+        });
+        yield* Ref.update(rateLimitStatesRef, (previous) => {
           const next = new Map(previous);
           for (const instanceId of previous.keys()) {
             if (!knownInstanceIds.has(instanceId)) {

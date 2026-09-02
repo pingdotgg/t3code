@@ -82,7 +82,7 @@ import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import {
   carryOverClaudeSessionTranscript,
   makeClaudeEnvironment,
-  resolveClaudeHomePath,
+  resolveClaudeConfigDir,
 } from "../Drivers/ClaudeHome.ts";
 import { planClaudeSkillDispatch } from "../Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
@@ -1743,7 +1743,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
     Effect.provideService(Path.Path, path),
   );
-  const claudeHomePath = yield* resolveClaudeHomePath(claudeSettings).pipe(
+  // Where Claude Code keeps this instance's transcripts; recorded on the
+  // resume cursor so a sibling account can carry the session over.
+  const claudeHomePath = yield* resolveClaudeConfigDir(claudeSettings).pipe(
     Effect.provideService(Path.Path, path),
   );
   const claudeSdkExecutablePath = yield* resolveClaudeSdkExecutablePath(

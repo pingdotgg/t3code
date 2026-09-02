@@ -18,13 +18,17 @@ export function providerInstanceInitials(label: string): string {
  * Accounts with an accent colour paint the provider logo itself in that
  * colour, so two Claude accounts read as a blue Claude and a green Claude
  * instead of identical logos with a tiny corner badge. The inline style wins
- * over the brand `fill-*` class and any `grayscale` dimming a caller applies.
+ * over the brand `fill-*` class; callers keep ownership of dimming and of
+ * whether a badge is shown at all.
  */
 export function providerAccentIconStyle(
   accentColor: string | undefined,
 ): CSSProperties | undefined {
-  return accentColor ? { fill: accentColor, color: accentColor, filter: "none" } : undefined;
+  return accentColor ? { fill: accentColor, color: accentColor } : undefined;
 }
+
+/** Logos with per-path fills (OpenCode) need the accent pushed onto the paths too. */
+const ACCENT_PATH_CLASS = "[&_path]:[fill:var(--provider-accent)]";
 
 export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
@@ -56,7 +60,11 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
     >
       {Icon ? (
         <Icon
-          className={cn("size-5 shrink-0", props.iconClassName)}
+          className={cn(
+            "size-5 shrink-0",
+            props.accentColor && ACCENT_PATH_CLASS,
+            props.iconClassName,
+          )}
           style={providerAccentIconStyle(props.accentColor)}
           aria-hidden
         />
@@ -75,10 +83,13 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           aria-hidden
         />
       ) : null}
-      {props.showBadge && !props.accentColor ? (
+      {props.showBadge ? (
         <span
           className={cn(
-            "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border bg-card px-0.5 text-[8px] font-semibold leading-none text-muted-foreground shadow-sm",
+            "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-0.5 text-[8px] font-semibold leading-none shadow-sm",
+            props.accentColor
+              ? "bg-[var(--provider-accent)] text-white"
+              : "bg-card text-muted-foreground",
             props.badgeClassName,
           )}
           style={{ borderColor: indicatorBackground }}

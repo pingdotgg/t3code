@@ -44,7 +44,7 @@ import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   formatRateLimitSwitchSummary,
   PROVIDER_INSTANCE_SWITCHED_ACTIVITY_KIND,
-} from "./ProviderRateLimitReactor.ts";
+} from "../ProviderRateLimitReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
   ProviderCommandReactor,
@@ -1204,6 +1204,13 @@ const make = Effect.gen(function* () {
             createdAt: input.createdAt,
           },
           createdAt: input.createdAt,
+        }),
+      ),
+      // The switch note is informational; never let it drop the user's turn.
+      Effect.catchCause((cause) =>
+        Effect.logWarning("provider command reactor could not record the account switch", {
+          threadId: input.thread.id,
+          cause: Cause.pretty(cause),
         }),
       ),
     );

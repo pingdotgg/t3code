@@ -60,7 +60,7 @@ import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationRe
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
-import { ProviderRateLimitReactorLive } from "./orchestration/Layers/ProviderRateLimitReactor.ts";
+import * as ProviderRateLimitReactor from "./orchestration/ProviderRateLimitReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
@@ -264,7 +264,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
-  Layer.provideMerge(ProviderRateLimitReactorLive),
+  Layer.provideMerge(ProviderRateLimitReactor.layer),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(ThreadSettlementReactor.layer),

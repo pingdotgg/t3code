@@ -2,6 +2,7 @@ import {
   EventId,
   MessageId,
   type OrchestrationCommand,
+  type OrchestrationEvent,
   type OrchestrationThread,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -19,16 +20,17 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../../provider/providerMaintenance.ts";
-import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
-import { ProviderService } from "../../provider/Services/ProviderService.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
-import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
-import { ProviderRateLimitReactor } from "../Services/ProviderRateLimitReactor.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "../provider/providerMaintenance.ts";
+import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 import {
+  layer as providerRateLimitReactorLayer,
+  mergeCodexRateLimit,
   PROVIDER_INSTANCE_SWITCHED_ACTIVITY_KIND,
-  ProviderRateLimitReactorLive,
+  ProviderRateLimitReactor,
 } from "./ProviderRateLimitReactor.ts";
 
 const THREAD_ID = ThreadId.make("thread-rate-limit");
@@ -87,13 +89,14 @@ const thread: OrchestrationThread = {
 function makeHarness(autoSwitch: boolean) {
   return Effect.gen(function* () {
     const runtimeEvents = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+    const domainEvents = yield* PubSub.unbounded<OrchestrationEvent>();
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>([
       provider(WORK),
       provider(PERSONAL),
     ]);
     const dispatched: OrchestrationCommand[] = [];
 
-    const layer = ProviderRateLimitReactorLive.pipe(
+    const layer = providerRateLimitReactorLayer.pipe(
       Layer.provideMerge(
         Layer.mock(ProviderService)({
           get streamEvents() {
@@ -107,6 +110,9 @@ function makeHarness(autoSwitch: boolean) {
             dispatched.push(command as OrchestrationCommand);
             return Effect.succeed(undefined as never);
           },
+          subscribeDomainEvents: PubSub.subscribe(domainEvents).pipe(
+            Effect.map((subscription) => Stream.fromSubscription(subscription)),
+          ),
         }),
       ),
       Layer.provideMerge(
@@ -145,7 +151,7 @@ function makeHarness(autoSwitch: boolean) {
       ),
       Layer.provideMerge(NodeServices.layer),
     );
-    return { layer, runtimeEvents, providersRef, dispatched };
+    return { layer, runtimeEvents, domainEvents, providersRef, dispatched };
   });
 }
 
@@ -163,6 +169,24 @@ const rejectedEvent: ProviderRuntimeEvent = {
   },
 };
 
+const turnStartRequestedEvent = {
+  eventId: EventId.make("event-turn-start"),
+  sequence: 1,
+  occurredAt: AT,
+  aggregateKind: "thread",
+  aggregateId: THREAD_ID,
+  commandId: null,
+  causationEventId: null,
+  type: "thread.turn-start-requested",
+  payload: {
+    threadId: THREAD_ID,
+    messageId: MessageId.make("message-1"),
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    createdAt: AT,
+  },
+} as unknown as Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }>;
+
 const failedTurnEvent: ProviderRuntimeEvent = {
   eventId: EventId.make("event-turn-failed"),
   provider: ProviderDriverKind.make("claudeAgent"),
@@ -173,6 +197,26 @@ const failedTurnEvent: ProviderRuntimeEvent = {
   type: "turn.completed",
   payload: { state: "failed", errorMessage: "You've hit your limit · resets 3pm" },
 };
+
+describe("mergeCodexRateLimit", () => {
+  it.effect("keeps an active rejection when a sparse update omits its window", () =>
+    Effect.sync(() => {
+      const previous = {
+        status: "rejected" as const,
+        resetsAt: "2026-09-02T12:00:00.000Z",
+        observedAt: AT,
+      };
+      const sparse = { status: "allowed" as const, utilization: 40, observedAt: AT };
+      assert.deepEqual(mergeCodexRateLimit(previous, sparse, Date.parse(AT)), previous);
+      const sameWindow = { ...sparse, resetsAt: "2026-09-02T12:00:00.000Z" };
+      assert.deepEqual(mergeCodexRateLimit(previous, sameWindow, Date.parse(AT)), sameWindow);
+      assert.deepEqual(
+        mergeCodexRateLimit(previous, sparse, Date.parse("2026-09-02T12:00:01.000Z")),
+        sparse,
+      );
+    }),
+  );
+});
 
 describe("ProviderRateLimitReactor", () => {
   it.effect("projects Claude rate limit events onto the provider snapshot", () =>
@@ -203,6 +247,7 @@ describe("ProviderRateLimitReactor", () => {
         yield* reactor.start();
         // Let the forked subscriber attach before publishing.
         yield* Effect.yieldNow;
+        yield* PubSub.publish(harness.domainEvents, turnStartRequestedEvent);
         yield* PubSub.publish(harness.runtimeEvents, rejectedEvent);
         yield* PubSub.publish(harness.runtimeEvents, failedTurnEvent);
         yield* reactor.drain;
@@ -218,6 +263,8 @@ describe("ProviderRateLimitReactor", () => {
           assert.equal(retry.modelSelection?.instanceId, PERSONAL);
           assert.equal(retry.modelSelection?.model, "claude-sonnet-5");
           assert.equal(retry.message.text, "Fix the failing build");
+          // Reusing the id keeps one bubble in the transcript.
+          assert.equal(retry.message.messageId, "message-1");
         }
 
         // A second failure for the same turn is never retried again.
@@ -236,6 +283,7 @@ describe("ProviderRateLimitReactor", () => {
         yield* reactor.start();
         // Let the forked subscriber attach before publishing.
         yield* Effect.yieldNow;
+        yield* PubSub.publish(harness.domainEvents, turnStartRequestedEvent);
         yield* PubSub.publish(harness.runtimeEvents, rejectedEvent);
         yield* PubSub.publish(harness.runtimeEvents, failedTurnEvent);
         yield* reactor.drain;

@@ -57,7 +57,7 @@ import * as ThreadPlanProgress from "../src/orchestration/ThreadPlanProgress.ts"
 import { RuntimeReceiptBusTest } from "../src/orchestration/Layers/RuntimeReceiptBus.ts";
 import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
-import { ProviderRateLimitReactorLive } from "../src/orchestration/Layers/ProviderRateLimitReactor.ts";
+import * as ProviderRateLimitReactor from "../src/orchestration/ProviderRateLimitReactor.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { CheckpointReactor } from "../src/orchestration/Services/CheckpointReactor.ts";
 import { ProviderRuntimeIngestionService } from "../src/orchestration/Services/ProviderRuntimeIngestion.ts";
@@ -343,7 +343,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(textGenerationLayer),
       Layer.provideMerge(serverSettingsLayer),
     );
-    const providerRateLimitReactorLayer = ProviderRateLimitReactorLive.pipe(
+    const providerRateLimitReactorLayer = ProviderRateLimitReactor.layer.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(serverSettingsLayer),
     );

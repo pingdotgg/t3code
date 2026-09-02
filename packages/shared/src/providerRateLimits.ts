@@ -18,6 +18,7 @@ export type RateLimitFallbackCandidate = Pick<
   | "displayName"
   | "continuation"
   | "enabled"
+  | "installed"
   | "status"
   | "availability"
   | "rateLimit"
@@ -53,6 +54,9 @@ export function selectRateLimitFallbackProvider<
   const current = input.providers.find((provider) => provider.instanceId === input.instanceId);
   if (!current) return null;
   const currentGroupKey = current.continuation?.groupKey;
+  // No continuation group means the snapshot predates instance identity;
+  // there is no way to know its session store is shared.
+  if (currentGroupKey === undefined) return null;
 
   let best: Candidate | null = null;
   for (const candidate of input.providers) {
@@ -60,6 +64,7 @@ export function selectRateLimitFallbackProvider<
     if (candidate.driver !== current.driver) continue;
     if (candidate.continuation?.groupKey !== currentGroupKey) continue;
     if (!candidate.enabled) continue;
+    if (candidate.installed === false) continue;
     if (candidate.availability === "unavailable") continue;
     if (candidate.status === "error" || candidate.status === "disabled") continue;
     if (isProviderRateLimitActive(candidate.rateLimit, input.nowMs)) continue;

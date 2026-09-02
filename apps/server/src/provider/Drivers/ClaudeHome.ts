@@ -16,6 +16,22 @@ export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function
   return path.resolve(homePath.length > 0 ? expandHomePath(homePath) : NodeOS.homedir());
 });
 
+/**
+ * The directory Claude Code actually reads its config and transcripts from:
+ * `CLAUDE_CONFIG_DIR` when the instance sets one, otherwise `~/.claude`.
+ * Distinct from `resolveClaudeHomePath`, which is the HOME-level key used
+ * for probe caches.
+ */
+export const resolveClaudeConfigDir = Effect.fn("resolveClaudeConfigDir")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+): Effect.fn.Return<string, never, Path.Path> {
+  const path = yield* Path.Path;
+  const homePath = config.homePath.trim();
+  return homePath.length > 0
+    ? path.resolve(expandHomePath(homePath))
+    : path.join(NodeOS.homedir(), ".claude");
+});
+
 export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   baseEnv?: NodeJS.ProcessEnv,
@@ -89,7 +105,10 @@ export const carryOverClaudeSessionTranscript = Effect.fn("carryOverClaudeSessio
       const fromTranscript = path.join(fromProjects, project, transcriptName);
       if (!(yield* fileSystem.exists(fromTranscript))) continue;
 
-      const toProject = path.join(input.toHomePath, "projects", project);
+      // Claude Code resumes from the project dir of the *current* cwd, so a
+      // transcript found under an older project dir lands where the resume
+      // will look, not where it came from.
+      const toProject = path.join(input.toHomePath, "projects", preferredProject ?? project);
       yield* fileSystem.makeDirectory(toProject, { recursive: true });
       yield* fileSystem.copyFile(fromTranscript, path.join(toProject, transcriptName));
 
