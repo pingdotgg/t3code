@@ -331,6 +331,9 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
     }),
   );
 
+  // Single-quotes a path for /bin/sh. Temp dirs and execPath never contain quotes.
+  const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+
   // A shell stand-in for the Grok CLI: `--version` and `models` print canned text,
   // and `agent stdio` execs the mock ACP agent so `initialize` returns model metadata.
   const writeFakeGrokCli = (input: { readonly modelsOutput: string; readonly acp: boolean }) =>
@@ -348,9 +351,9 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           "#!/bin/sh",
           'case "$1" in',
           '  --version) printf "grok 1.0.13\\n"; exit 0;;',
-          `  models) cat ${JSON.stringify(modelsPath)}; exit 0;;`,
+          `  models) cat ${shellQuote(modelsPath)}; exit 0;;`,
           input.acp
-            ? `  agent) exec ${JSON.stringify(process.execPath)} ${JSON.stringify(mockAgentPath)};;`
+            ? `  agent) exec ${shellQuote(process.execPath)} ${shellQuote(mockAgentPath)};;`
             : "  agent) exit 3;;",
           "esac",
           "exit 1",
