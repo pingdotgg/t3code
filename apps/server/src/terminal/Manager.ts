@@ -888,9 +888,10 @@ const INHERITED_DEC_MODE_DEFAULTS = new Map<number, boolean>([
 // The three alternate-screen modes toggle one underlying screen.
 const ALTERNATE_SCREEN_DEC_MODES = [47, 1047, 1049];
 // Kitty keyboard flags live on a stack: `CSI > flags u` pushes, `CSI < n u`
-// pops, `CSI = flags ; mode u` rewrites the top. The main and alternate
-// screens keep separate stacks, and the encoder only reads the active top, so
-// zeroing it is enough; only RIS clears the stacks.
+// pops, `CSI = flags ; mode u` edits the top (mode 1 replaces, 2 sets bits,
+// 3 clears bits). The main and alternate screens keep separate stacks, and
+// the encoder only reads the active top, so zeroing it is enough; only RIS
+// clears the stacks.
 const KITTY_KEYBOARD_CLEAR = "\u001b[=0;1u";
 // Every sequence of interest starts with ESC (after folding the 8-bit CSI
 // byte into ESC `[`), so the history is split there and each fragment's head
@@ -900,7 +901,8 @@ const KITTY_KEYBOARD_CLEAR = "\u001b[=0;1u";
 // tracked.
 const ESCAPE = "\u001b";
 const CSI_8BIT = "\u009b";
-const INHERITED_MODE_SEQUENCE = /^(?:\[(?:\?([0-9;]+)([hl])|([<>=])([0-9]*)[0-9;]*u)|(c))/u;
+const INHERITED_MODE_SEQUENCE =
+  /^(?:\[(?:\?([0-9;]+)([hl])|([<>=])([0-9]*)(?:;([0-9]*))?[0-9;]*u)|(c))/u;
 
 function neutralizeInheritedHistory(history: string): string {
   if (history.length === 0) return history;
@@ -911,7 +913,7 @@ function neutralizeInheritedHistory(history: string): string {
   for (const fragment of fragments.slice(1)) {
     const match = INHERITED_MODE_SEQUENCE.exec(fragment);
     if (match === null) continue;
-    if (match[5] !== undefined) {
+    if (match[6] !== undefined) {
       modes.clear();
       kittyStacks.main = [0];
       kittyStacks.alternate = [0];
@@ -924,7 +926,11 @@ function neutralizeInheritedHistory(history: string): string {
       if (match[3] === ">") {
         stack.push(Number.isNaN(parameter) ? 0 : parameter);
       } else if (match[3] === "=") {
-        stack[stack.length - 1] = Number.isNaN(parameter) ? 0 : parameter;
+        const flags = Number.isNaN(parameter) ? 0 : parameter;
+        const top = stack.length - 1;
+        const current = stack[top] ?? 0;
+        const setMode = Number.parseInt(match[5] ?? "", 10);
+        stack[top] = setMode === 2 ? current | flags : setMode === 3 ? current & ~flags : flags;
       } else {
         const count = Number.isNaN(parameter) ? 1 : parameter;
         stack.length = Math.max(1, stack.length - count);

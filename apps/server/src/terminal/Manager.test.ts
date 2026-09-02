@@ -1321,6 +1321,33 @@ it.layer(
     }),
   );
 
+  it.effect("applies Kitty set modes when tracking inherited flags", () =>
+    Effect.gen(function* () {
+      // Mode 3 clears only the named bits, so clearing none leaves 7 active.
+      const clearNone = yield* createManager();
+      yield* clearNone.manager.open(openInput());
+      clearNone.ptyAdapter.processes[0]!.emitData("\u001b[>7u\u001b[=0;3u");
+      yield* clearNone.manager.close({ threadId: "thread-1" });
+      const afterClearNone = yield* clearNone.manager.open(openInput());
+      assert.equal(afterClearNone.history, "\u001b[>7u\u001b[=0;3u\u001b[=0;1u");
+
+      // Clearing every bit set by the push needs no reset; OR-ing bits in does.
+      const clearAll = yield* createManager();
+      yield* clearAll.manager.open(openInput());
+      clearAll.ptyAdapter.processes[0]!.emitData("\u001b[>7u\u001b[=7;3u\u001b[=2;2u");
+      yield* clearAll.manager.close({ threadId: "thread-1" });
+      const afterOr = yield* clearAll.manager.open(openInput());
+      assert.equal(afterOr.history, "\u001b[>7u\u001b[=7;3u\u001b[=2;2u\u001b[=0;1u");
+
+      const cleared = yield* createManager();
+      yield* cleared.manager.open(openInput());
+      cleared.ptyAdapter.processes[0]!.emitData("\u001b[>7u\u001b[=7;3u");
+      yield* cleared.manager.close({ threadId: "thread-1" });
+      const afterCleared = yield* cleared.manager.open(openInput());
+      assert.equal(afterCleared.history, "\u001b[>7u\u001b[=7;3u");
+    }),
+  );
+
   it.effect("neutralizes inherited history once across repeated restarts", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
