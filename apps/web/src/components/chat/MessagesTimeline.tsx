@@ -1604,7 +1604,6 @@ function ExpandedWorkGroupEntries({
         data-tool-group-scroll
         className={cn(
           "scrollbar-gutter-stable max-h-[min(18rem,50dvh)] scroll-py-6 overflow-x-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
-          (fades.top || fades.bottom) && "overscroll-y-contain",
           getVirtualizedScrollFadeClassName(fades),
         )}
       />

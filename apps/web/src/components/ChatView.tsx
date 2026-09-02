@@ -377,6 +377,7 @@ import {
   shouldWriteThreadErrorToCurrentServerThread,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
+  toolGroupConsumesUpwardNavigation,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import type { ThreadSyncPhase } from "../threadSync";
@@ -4187,29 +4188,14 @@ function ChatViewContent(props: ChatViewProps) {
         const viewportIsAwayFromEnd = () =>
           resolveTimelineIsAtEnd(legendListRef.current?.getState(), composerOverlayHeight) ===
           false;
-        const toolGroupConsumesUpwardNavigation = (event: Event) => {
-          const target = event.target instanceof Element ? event.target : null;
-          const group = target?.closest<HTMLElement>("[data-tool-group-scroll]");
-          if (!group) return false;
-          if (group.scrollHeight - group.clientHeight > 1) return true;
-
-          // A short group can still contain an independently scrolling tool result.
-          for (
-            let element = target;
-            element && element !== group;
-            element = element.parentElement
-          ) {
-            if (element.scrollTop > 0) {
-              const overflowY = getComputedStyle(element).overflowY;
-              if (overflowY === "auto" || overflowY === "scroll") return true;
-            }
-          }
-          return false;
-        };
         // Only an upward wheel is a navigation intent; wheeling down while
         // following either does nothing (at the end) or moves toward it.
         const handleWheel = (event: WheelEvent) => {
-          if (event.deltaY < 0 && contentScrollsUp() && !toolGroupConsumesUpwardNavigation(event)) {
+          if (
+            event.deltaY < 0 &&
+            contentScrollsUp() &&
+            !toolGroupConsumesUpwardNavigation(event.target)
+          ) {
             handleManualNavigation();
           }
         };
@@ -4246,7 +4232,7 @@ function ChatViewContent(props: ChatViewProps) {
             case "PageUp":
             case "Home":
             case "ArrowUp":
-              if (contentScrollsUp() && !toolGroupConsumesUpwardNavigation(event)) {
+              if (contentScrollsUp() && !toolGroupConsumesUpwardNavigation(event.target)) {
                 handleManualNavigation();
               }
               break;
