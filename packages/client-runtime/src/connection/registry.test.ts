@@ -798,6 +798,8 @@ describe("EnvironmentRegistry", () => {
         );
 
         yield* registry.remove(SSH_CONNECTION.environmentId);
+        let prepared = false;
+        let rolledBack = false;
         const error = yield* registry
           .registerIfCurrent(
             expectedEntry,
@@ -813,12 +815,83 @@ describe("EnvironmentRegistry", () => {
                 },
               }),
             }),
+            {
+              beforeRegister: Effect.sync(() => {
+                prepared = true;
+              }),
+              onFailure: Effect.sync(() => {
+                rolledBack = true;
+              }),
+            },
           )
           .pipe(Effect.flip);
 
         expect(error._tag).toBe("EnvironmentNotRegisteredError");
+        expect(prepared).toBe(false);
+        expect(rolledBack).toBe(false);
         expect((yield* Ref.get(harness.storedTargets)).has(SSH_CONNECTION.environmentId)).toBe(
           false,
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("rolls back a prepared update when durable registration fails", () =>
+    Effect.gen(function* () {
+      const lifecycle = new Array<string>();
+      const harness = yield* makeHarness([SSH_CONNECTION], [SSH_PROFILE], [], {
+        beforeRegistrationRegister: () =>
+          Effect.sync(() => {
+            lifecycle.push("persist");
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new Persistence.ConnectionPersistenceError({
+                  operation: "register-connection",
+                  message: "Storage is unavailable.",
+                }),
+              ),
+            ),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const expectedEntry = Option.getOrThrow(
+          Option.fromUndefinedOr(
+            (yield* SubscriptionRef.get(registry.entries)).get(SSH_CONNECTION.environmentId),
+          ),
+        );
+        const error = yield* registry
+          .registerIfCurrent(
+            expectedEntry,
+            new SshConnectionRegistration({
+              target: SSH_CONNECTION,
+              profile: new SshConnectionProfile({
+                connectionId: SSH_PROFILE.connectionId,
+                environmentId: SSH_PROFILE.environmentId,
+                label: SSH_PROFILE.label,
+                target: {
+                  ...SSH_PROFILE.target,
+                  environmentVariables: { TOKEN: "new-value" },
+                },
+              }),
+            }),
+            {
+              beforeRegister: Effect.sync(() => {
+                lifecycle.push("prepare");
+              }),
+              onFailure: Effect.sync(() => {
+                lifecycle.push("rollback");
+              }),
+            },
+          )
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("ConnectionPersistenceError");
+        expect(lifecycle).toEqual(["prepare", "persist", "rollback"]);
+        expect(yield* Ref.get(harness.storedProfiles)).toEqual(
+          new Map([[SSH_PROFILE.connectionId, SSH_PROFILE]]),
         );
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),

@@ -15,6 +15,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
+import { SshCommandError } from "./errors.ts";
 import {
   buildRemoteLaunchScript,
   buildRemotePairingScript,
@@ -573,11 +574,17 @@ describe("ssh tunnel scripts", () => {
         const args = commandArgs(command);
         if (args.includes("-G")) {
           return makeSuccessfulProcess(
-            ["hostname resolved.example.com", "user resolved-user", "port 2200", ""].join("\n"),
+            [
+              "hostname resolved.example.com",
+              "user resolved-user",
+              "port 2200",
+              "sendenv TOKEN",
+              "",
+            ].join("\n"),
           );
         }
         if (args.includes("-N")) {
-          return makeFailedProcess("tunnel failed\n");
+          return makeFailedProcess("tunnel failed for forwarded-secret\n");
         }
         if (args.includes("sh") && args.includes("--")) {
           return makeSuccessfulProcess('{"remotePort":3773}\n');
@@ -602,12 +609,17 @@ describe("ssh tunnel scripts", () => {
       hostname: "devbox",
       username: null,
       port: null,
+      environmentVariables: { TOKEN: "forwarded-secret" },
     } as const;
 
     return Effect.gen(function* () {
       const manager = yield* SshEnvironmentManager;
-      const ensureExit = yield* Effect.exit(manager.ensureEnvironment(target));
-      assert.isTrue(Exit.isFailure(ensureExit));
+      const ensureResult = yield* Effect.result(manager.ensureEnvironment(target));
+      assert.isTrue(Result.isFailure(ensureResult));
+      if (Result.isFailure(ensureResult)) {
+        assert.instanceOf(ensureResult.failure, SshCommandError);
+        assert.equal(ensureResult.failure.stderr, "tunnel failed for [redacted]\n");
+      }
       assert.equal(postLaunchCommands.length, 2);
       const failedLaunchStopArgs = postLaunchCommands[1] ?? [];
       assert.include(failedLaunchStopArgs, "2200");
@@ -683,7 +695,7 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
-  it.effect("keeps the old tunnel when its managed server cannot be stopped", () => {
+  it.effect("closes the old tunnel and retries its failed remote stop before replacement", () => {
     let launchCount = 0;
     let stopAttemptCount = 0;
     let tunnelKillCount = 0;
@@ -704,7 +716,7 @@ describe("ssh tunnel scripts", () => {
         }
         if (args.includes("sh")) {
           stopAttemptCount += 1;
-          return stopAttemptCount === 1
+          return stopAttemptCount <= 2
             ? makeFailedProcess("stop failed\n")
             : makeSuccessfulProcess('{"stopped":true}\n');
         }
@@ -741,13 +753,14 @@ describe("ssh tunnel scripts", () => {
 
       assert.isTrue(Exit.isFailure(replaceExit));
       assert.equal(launchCount, 1);
-      assert.equal(tunnelKillCount, 0);
+      assert.equal(stopAttemptCount, 2);
+      assert.equal(tunnelKillCount, 1);
 
       yield* manager.ensureEnvironment({
         ...target,
         environmentVariables: { TOKEN: "new-value" },
       });
-      assert.equal(stopAttemptCount, 2);
+      assert.equal(stopAttemptCount, 3);
       assert.equal(launchCount, 2);
       assert.equal(tunnelKillCount, 1);
     }).pipe(Effect.provide(layer), Effect.scoped);

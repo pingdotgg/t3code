@@ -196,11 +196,24 @@ export const collectProcessOutput = <E>(
     ),
   );
 
-function redactSshErrorOutput(output: string): string {
-  const redacted = output.replace(
+export function redactSshOutput(
+  output: string,
+  environmentVariables?: Readonly<Record<string, string | undefined>>,
+): string {
+  let redacted = output.replace(
     /("(?:access_token|bearerToken|credential|pairingToken|token)"\s*:\s*")[^"]+(")/giu,
     "$1[redacted]$2",
   );
+  const environmentValues = [
+    ...new Set(
+      Object.values(environmentVariables ?? {}).filter(
+        (value): value is string => value !== undefined && value.length > 0,
+      ),
+    ),
+  ].sort((left, right) => right.length - left.length);
+  for (const value of environmentValues) {
+    redacted = redacted.replaceAll(value, "[redacted]");
+  }
   return redacted.length > MAX_SSH_ERROR_OUTPUT_LENGTH
     ? `${redacted.slice(0, MAX_SSH_ERROR_OUTPUT_LENGTH)}\n[truncated]`
     : redacted;
@@ -325,22 +338,23 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
   );
 
   if (exitCode !== 0) {
-    const diagnosticStdout = redactSshErrorOutput(stdout);
+    const diagnosticStdout = redactSshOutput(stdout, target.environmentVariables);
+    const diagnosticStderr = redactSshOutput(stderr, target.environmentVariables);
     yield* Effect.logWarning("ssh.command.failed", {
       ...sshTargetLogFields(target),
       command: ["ssh", ...args],
       exitCode,
       stdout: diagnosticStdout,
-      stderr,
+      stderr: diagnosticStderr,
     });
     return yield* new SshCommandError({
       command: ["ssh", ...args],
       exitCode,
       stdout: diagnosticStdout,
-      stderr,
+      stderr: diagnosticStderr,
       message: normalizeSshErrorMessage({
         stdout: diagnosticStdout,
-        stderr,
+        stderr: diagnosticStderr,
         fallbackMessage: `SSH command failed for ${hostSpec} (exit ${exitCode}).`,
       }),
     });
@@ -392,6 +406,7 @@ export const runSshCommand = Effect.fn("ssh/command.runSshCommand")(function* (
 export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(function* (
   alias: string,
   environmentVariables?: DesktopSshEnvironmentTarget["environmentVariables"],
+  overrides?: Pick<DesktopSshEnvironmentTarget, "username" | "port">,
 ): Effect.fn.Return<
   DesktopSshEnvironmentTarget,
   SshCommandError | SshInvalidTargetError,
@@ -406,8 +421,8 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
   const unresolvedTarget: DesktopSshEnvironmentTarget = {
     alias: trimmedAlias,
     hostname: trimmedAlias,
-    username: null,
-    port: null,
+    username: overrides?.username ?? null,
+    port: overrides?.port ?? null,
   };
   const identityResult = yield* runSshCommand(unresolvedTarget, { preHostArgs: ["-G"] }).pipe(
     Effect.catch((cause) =>

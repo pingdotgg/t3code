@@ -114,9 +114,10 @@ must match `SendEnv` for that host, and the SSH server must allow it with
 editor accepts up to 128 variables with a combined encoded size of 16 KiB. Use
 **Edit SSH env** on a saved environment to update or clear them and reconnect.
 Saving restarts a remote T3 server managed by Desktop. If Desktop attached to a
-server started independently, restart that server yourself so it can inherit
-the new values. Accepted values remain in process memory; T3 Code does not write
-a remote environment file.
+server started independently, stop it and let Desktop launch a managed server,
+or restart it from a session that already has the saved variables. Its normal
+supervisor does not inherit values from Desktop. Accepted values remain in
+process memory; T3 Code does not write a remote environment file.
 
 The remote host needs a compatible [Node.js installation](./install.md#requirements)
 and [provider setup](./install.md#providers). If launch cannot find Node or reports

@@ -306,31 +306,45 @@ export const updateSshEnvironmentVariables = Effect.fn(
     input,
     entry: Option.some(entry),
   });
-  yield* gateway.prepare({
-    connectionId: registration.profile.connectionId,
-    expectedEnvironmentId: registration.profile.environmentId,
-    target: registration.profile.target,
-  });
-  yield* registry.registerIfCurrent(entry, registration).pipe(
-    Effect.tapError(() =>
-      gateway.disconnect(registration.profile.target).pipe(
-        Effect.tapError((error) =>
-          Effect.logWarning("Could not clean up a prepared SSH environment after save failed.", {
-            environmentId: input.environmentId,
-            error,
-          }),
-        ),
-        Effect.ignore,
-      ),
+  const previousProfile = Option.getOrNull(entry.profile);
+  if (previousProfile === null || !isSshProfile(previousProfile)) {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail: "Only saved SSH environments can update their local environment variables.",
+    });
+  }
+  const prepareTarget = (target: DesktopSshEnvironmentTarget) =>
+    gateway
+      .prepare({
+        connectionId: registration.profile.connectionId,
+        expectedEnvironmentId: registration.profile.environmentId,
+        target,
+      })
+      .pipe(Effect.asVoid);
+  const restorePreviousTarget = gateway.disconnect(registration.profile.target).pipe(
+    Effect.ignore,
+    Effect.andThen(prepareTarget(previousProfile.target)),
+    Effect.catch((error) =>
+      Effect.logWarning("Could not restore the previous SSH environment after save failed.", {
+        environmentId: input.environmentId,
+        error,
+      }),
     ),
-    Effect.catchTags({
-      EnvironmentNotRegisteredError: () =>
-        new ConnectionBlockedError({
-          reason: "configuration",
-          detail: "The SSH environment was removed before the update could be saved.",
-        }),
-    }),
   );
+  yield* registry
+    .registerIfCurrent(entry, registration, {
+      beforeRegister: prepareTarget(registration.profile.target),
+      onFailure: restorePreviousTarget,
+    })
+    .pipe(
+      Effect.catchTags({
+        EnvironmentNotRegisteredError: () =>
+          new ConnectionBlockedError({
+            reason: "configuration",
+            detail: "The SSH environment was removed before the update could be saved.",
+          }),
+      }),
+    );
 });
 
 export const make = Effect.gen(function* () {

@@ -73,9 +73,15 @@ export class EnvironmentRegistry extends Context.Service<
     readonly registerIfCurrent: (
       expectedEntry: ConnectionCatalogEntry,
       registration: ConnectionRegistration,
+      options?: {
+        readonly beforeRegister?: Effect.Effect<void, ConnectionAttemptError>;
+        readonly onFailure?: Effect.Effect<void>;
+      },
     ) => Effect.Effect<
       void,
-      Persistence.ConnectionPersistenceError | EnvironmentNotRegisteredError
+      | ConnectionAttemptError
+      | Persistence.ConnectionPersistenceError
+      | EnvironmentNotRegisteredError
     >;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
@@ -426,6 +432,10 @@ export const make = Effect.gen(function* () {
   const registerIfCurrent = Effect.fn("EnvironmentRegistry.registerIfCurrent")(function* (
     expectedEntry: ConnectionCatalogEntry,
     registration: ConnectionRegistration,
+    options?: {
+      readonly beforeRegister?: Effect.Effect<void, ConnectionAttemptError>;
+      readonly onFailure?: Effect.Effect<void>;
+    },
   ) {
     const environmentId = registration.target.environmentId;
     yield* withLeaseLock(
@@ -435,7 +445,10 @@ export const make = Effect.gen(function* () {
         if (currentEntry === undefined || !Equal.equals(currentEntry, expectedEntry)) {
           return yield* new EnvironmentNotRegisteredError({ environmentId });
         }
-        yield* registerLocked(registration);
+        yield* (options?.beforeRegister ?? Effect.void).pipe(
+          Effect.andThen(registerLocked(registration)),
+          Effect.tapError(() => options?.onFailure ?? Effect.void),
+        );
       }),
     );
   });

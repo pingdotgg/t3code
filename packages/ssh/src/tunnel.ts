@@ -35,6 +35,7 @@ import {
   collectProcessOutput,
   getLastNonEmptyOutputLine,
   managedRemoteLaunchCommandArgs,
+  redactSshOutput,
   remoteStateKey,
   resolveSshCommand,
   resolveSshTarget,
@@ -1085,12 +1086,13 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         }),
     ),
     Effect.flatMap(([stderr, exitCode]) => {
+      const diagnosticStderr = redactSshOutput(stderr, input.resolvedTarget.environmentVariables);
       const error = new SshCommandError({
         command: tunnelCommand,
         exitCode,
-        stderr,
+        stderr: diagnosticStderr,
         message: normalizeSshErrorMessage(
-          stderr,
+          diagnosticStderr,
           `SSH tunnel exited unexpectedly for ${input.resolvedTarget.alias} (exit ${exitCode}).`,
         ),
       });
@@ -1102,7 +1104,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         remotePort: input.remotePort,
         httpBaseUrl: input.httpBaseUrl,
         exitCode,
-        stderr,
+        stderr: diagnosticStderr,
       }).pipe(Effect.andThen(Effect.fail(error)));
     }),
   );
@@ -1138,7 +1140,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
           ? localPortAvailableExit.value
           : null;
         const remoteLogTail = Exit.isSuccess(remoteLogTailExit)
-          ? remoteLogTailExit.value || null
+          ? redactSshOutput(remoteLogTailExit.value, input.resolvedTarget.environmentVariables) ||
+            null
           : null;
         yield* Effect.logWarning("ssh.tunnel.ready.failed", {
           ...sshTargetLogFields(input.resolvedTarget),
@@ -1191,6 +1194,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const tunnelKeysByTarget = new Map<string, string>();
   const resolvedTargetsByTunnelKey = new Map<string, DesktopSshEnvironmentTarget>();
   const stoppedRemoteEntries = new WeakSet<SshTunnelEntry>();
+  const remoteStopRequiredTargets = new Map<string, DesktopSshEnvironmentTarget>();
   const withTunnelMutationLock = <A, E, R>(
     key: string,
     effect: Effect.Effect<A, E, R>,
@@ -1400,16 +1404,39 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     });
   });
 
+  const stopRemoteForKey = Effect.fn("ssh/tunnel.stopRemoteForKey")(function* (
+    key: string,
+    target: DesktopSshEnvironmentTarget,
+  ) {
+    yield* runWithSshAuth({
+      key,
+      target,
+      operation: (authOptions) => stopRemoteServer(target, authOptions),
+    }).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          remoteStopRequiredTargets.delete(key);
+        }),
+      ),
+      Effect.tapError(() =>
+        Effect.sync(() => {
+          remoteStopRequiredTargets.set(key, target);
+        }),
+      ),
+    );
+  });
+
   const stopAndCloseTunnelEntry = Effect.fn("ssh/tunnel.stopAndCloseTunnelEntry")(function* (
     entry: SshTunnelEntry,
   ) {
-    yield* runWithSshAuth({
-      key: entry.key,
-      target: entry.target,
-      operation: (authOptions) => stopRemoteServer(entry.target, authOptions),
-    });
-    stoppedRemoteEntries.add(entry);
-    yield* closeTunnelEntry(entry);
+    yield* stopRemoteForKey(entry.key, entry.target).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          stoppedRemoteEntries.add(entry);
+        }),
+      ),
+      Effect.ensuring(closeTunnelEntry(entry)),
+    );
   });
 
   yield* Scope.addFinalizer(
@@ -1435,11 +1462,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     }
     yield* cancelPendingTunnelEntry(key, cleanupTarget);
     if (entry === null && (trackedTarget !== undefined || stopFallbackTarget)) {
-      yield* runWithSshAuth({
-        key,
-        target: cleanupTarget,
-        operation: (authOptions) => stopRemoteServer(cleanupTarget, authOptions),
-      });
+      yield* stopRemoteForKey(key, cleanupTarget);
     }
     forgetTunnelTargetKeys(key);
     authSecrets.delete(key);
@@ -1497,11 +1520,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         Exit.isSuccess(exit) ? Effect.void : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),
       ),
       Effect.tapError((cause) =>
-        runWithSshAuth({
-          key: input.key,
-          target: input.resolvedTarget,
-          operation: (authOptions) => stopRemoteServer(input.resolvedTarget, authOptions),
-        }).pipe(
+        stopRemoteForKey(input.key, input.resolvedTarget).pipe(
           Effect.tapError((cleanupCause) =>
             Effect.logWarning("ssh.environment.remoteServer.cleanup.failed", {
               ...sshTargetLogFields(input.resolvedTarget),
@@ -1549,6 +1568,16 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
                   Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
                   Effect.provideService(FileSystem.FileSystem, fileSystemService),
                   Effect.provideService(Path.Path, pathService),
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      remoteStopRequiredTargets.delete(tunnelEntry.key);
+                    }),
+                  ),
+                  Effect.tapError(() =>
+                    Effect.sync(() => {
+                      remoteStopRequiredTargets.set(tunnelEntry.key, tunnelEntry.target);
+                    }),
+                  ),
                 ),
           ],
           { concurrency: "unbounded" },
@@ -1645,6 +1674,11 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       return yield* ensureTunnelEntry(key, resolvedTarget, runner);
     }
 
+    const remoteStopRequiredTarget = remoteStopRequiredTargets.get(key);
+    if (remoteStopRequiredTarget !== undefined) {
+      yield* stopRemoteForKey(key, remoteStopRequiredTarget);
+    }
+
     const deferred = yield* Deferred.make<SshTunnelEntry, SshEnvironmentEffectError>();
     pendingTunnelEntries.set(key, deferred);
 
@@ -1685,6 +1719,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     const baseResolved = yield* resolveSshTarget(
       target.alias || target.hostname,
       target.environmentVariables,
+      { username: target.username, port: target.port },
     );
     const resolvedTarget: DesktopSshEnvironmentTarget = {
       ...baseResolved,

@@ -2412,6 +2412,8 @@ export function ConnectionsSettings() {
     setSavedBackendSshHost("");
     setSavedBackendSshUsername("");
     setSavedBackendSshPort("");
+    setSavedBackendSshEnvironmentOpen(false);
+    setSavedBackendSshEnvironmentVariables([]);
     setAddBackendDialogOpen(false);
     toastManager.add({
       type: "success",

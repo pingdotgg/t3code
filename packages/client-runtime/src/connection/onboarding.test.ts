@@ -353,26 +353,41 @@ describe("connection onboarding", () => {
         new Map([[environmentId, { target, profile: Option.some(profile) }]]),
       );
       let registerCount = 0;
-      let preparedTarget: typeof profile.target | null = null;
+      const preparedTargets = new Array<typeof profile.target>();
+      const disconnectedTargets = new Array<typeof profile.target>();
+      const registerIfCurrent: EnvironmentRegistry.EnvironmentRegistry["Service"]["registerIfCurrent"] =
+        (_expectedEntry, _registration, options) =>
+          (options?.beforeRegister ?? Effect.void).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                registerCount += 1;
+              }),
+            ),
+            Effect.tapError(() => options?.onFailure ?? Effect.void),
+          );
       const registry = EnvironmentRegistry.EnvironmentRegistry.of({
         entries,
-        registerIfCurrent: () =>
-          Effect.sync(() => {
-            registerCount += 1;
-          }),
+        registerIfCurrent,
       } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
       const gateway = SshEnvironmentGateway.of({
         provision: () => Effect.die("unused"),
-        prepare: (input) => {
-          preparedTarget = input.target;
-          return Effect.fail(
-            new ConnectionBlockedError({
-              reason: "configuration",
-              detail: "TOKEN is not selected by SendEnv.",
-            }),
-          );
-        },
-        disconnect: () => Effect.die("unused"),
+        prepare: (input) =>
+          Effect.sync(() => {
+            preparedTargets.push(input.target);
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ConnectionBlockedError({
+                  reason: "configuration",
+                  detail: "TOKEN is not selected by SendEnv.",
+                }),
+              ),
+            ),
+          ),
+        disconnect: (preparedTarget) =>
+          Effect.sync(() => {
+            disconnectedTargets.push(preparedTarget);
+          }),
       });
 
       const error = yield* updateSshEnvironmentVariables({
@@ -388,7 +403,19 @@ describe("connection onboarding", () => {
         _tag: "ConnectionBlockedError",
         reason: "configuration",
       });
-      expect(preparedTarget).toMatchObject({ environmentVariables: { TOKEN: "new-value" } });
+      expect(preparedTargets).toEqual([
+        {
+          ...profile.target,
+          environmentVariables: { TOKEN: "new-value" },
+        },
+        profile.target,
+      ]);
+      expect(disconnectedTargets).toEqual([
+        {
+          ...profile.target,
+          environmentVariables: { TOKEN: "new-value" },
+        },
+      ]);
       expect(registerCount).toBe(0);
     }),
   );
@@ -416,30 +443,42 @@ describe("connection onboarding", () => {
       const entries = yield* SubscriptionRef.make(
         new Map([[environmentId, { target, profile: Option.some(profile) }]]),
       );
+      const preparedTargets = new Array<typeof profile.target>();
       const disconnectedTargets = new Array<typeof profile.target>();
+      const registerIfCurrent: EnvironmentRegistry.EnvironmentRegistry["Service"]["registerIfCurrent"] =
+        (_expectedEntry, _registration, options) =>
+          (options?.beforeRegister ?? Effect.void).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new Persistence.ConnectionPersistenceError({
+                  operation: "register-connection",
+                  message: "Storage is unavailable.",
+                }),
+              ),
+            ),
+            Effect.tapError(() => options?.onFailure ?? Effect.void),
+          );
       const registry = EnvironmentRegistry.EnvironmentRegistry.of({
         entries,
-        registerIfCurrent: () =>
-          Effect.fail(
-            new Persistence.ConnectionPersistenceError({
-              operation: "register-connection",
-              message: "Storage is unavailable.",
-            }),
-          ),
+        registerIfCurrent,
       } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
       const gateway = SshEnvironmentGateway.of({
         provision: () => Effect.die("unused"),
         prepare: (input) =>
-          Effect.succeed({
-            bootstrap: {
-              target: input.target,
-              httpBaseUrl: "http://127.0.0.1:3773/",
-              wsBaseUrl: "ws://127.0.0.1:3773/",
-              pairingToken: "pairing-token",
-              remotePort: 3773,
-            },
-            bearerToken: "bearer-token",
-          }),
+          Effect.sync(() => {
+            preparedTargets.push(input.target);
+          }).pipe(
+            Effect.as({
+              bootstrap: {
+                target: input.target,
+                httpBaseUrl: "http://127.0.0.1:3773/",
+                wsBaseUrl: "ws://127.0.0.1:3773/",
+                pairingToken: "pairing-token",
+                remotePort: 3773,
+              },
+              bearerToken: "bearer-token",
+            }),
+          ),
         disconnect: (preparedTarget) =>
           Effect.sync(() => {
             disconnectedTargets.push(preparedTarget);
@@ -456,6 +495,13 @@ describe("connection onboarding", () => {
       );
 
       expect(error._tag).toBe("ConnectionPersistenceError");
+      expect(preparedTargets).toEqual([
+        {
+          ...profile.target,
+          environmentVariables: { TOKEN: "new-value" },
+        },
+        profile.target,
+      ]);
       expect(disconnectedTargets).toEqual([
         {
           ...profile.target,
