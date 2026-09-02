@@ -155,7 +155,7 @@ patchedDependencies:
   "@react-navigation/native-stack@7.17.6": patches/@react-navigation%2Fnative-stack@7.17.6.patch
   effect@4.0.0-beta.103: patches/effect@4.0.0-beta.103.patch
   expo-audio@57.0.4: patches/expo-audio@57.0.4.patch
-  expo-sharing@57.0.16: patches/expo-sharing@57.0.16.patch
+  expo-sharing@57.0.17: patches/expo-sharing@57.0.17.patch
   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
