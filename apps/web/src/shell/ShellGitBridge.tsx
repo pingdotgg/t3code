@@ -1,7 +1,7 @@
-import { ShellAction, type ShellGitState } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
-import { useEffect, useMemo, useRef } from "react";
+import type { ShellGitState } from "@t3tools/contracts/shell";
+import { useMemo } from "react";
 
+import { useShellActions } from "./useShellActions";
 import { useShellPublish } from "./useShellPublish";
 
 import {
@@ -9,8 +9,6 @@ import {
   requestVcsStatusRefresh,
   type useGitActions,
 } from "../hooks/useGitActions";
-
-const isShellAction = Schema.is(ShellAction);
 
 export interface ShellGitBridgeProps {
   readonly git: ReturnType<typeof useGitActions>;
@@ -24,7 +22,6 @@ export interface ShellGitBridgeProps {
  * and default-branch dialogs are rendered by the shell from the state.
  */
 export function ShellGitBridge({ git, gitCwd, onOpenPublish }: ShellGitBridgeProps) {
-  const shell = window.t3Shell;
   const status = git.gitStatusForActions ?? null;
   const state = useMemo((): ShellGitState => {
     const hints: string[] = [];
@@ -80,69 +77,45 @@ export function ShellGitBridge({ git, gitCwd, onOpenPublish }: ShellGitBridgePro
 
   useShellPublish("git", state);
 
-  const latest = useRef({ git, gitCwd, onOpenPublish });
-  latest.current = { git, gitCwd, onOpenPublish };
-  useEffect(() => {
-    if (!shell) return;
-    let disposed = false;
-    let unsubscribe: (() => void) | null = null;
-    void shell
-      .onAction((type, payload) => {
-        const candidate = {
-          ...(typeof payload === "object" && payload !== null ? payload : {}),
-          type,
-        };
-        if (!isShellAction(candidate)) return;
-        const { git: current, gitCwd: cwd, onOpenPublish: openPublish } = latest.current;
-        switch (candidate.type) {
-          case "git.quick":
-            current.runQuickAction();
-            return;
-          case "git.menu": {
-            const item = current.gitActionMenuItems.find((entry) => entry.id === candidate.id);
-            if (!item) return;
-            if (current.resolveMenuItemAction(item) === "commit") {
-              // The shell opens its commit dialog from the published files.
-            }
-            return;
-          }
-          case "git.init":
-            void current.initRepository();
-            return;
-          case "git.publish":
-            openPublish();
-            return;
-          case "git.refresh":
-            requestVcsStatusRefresh(current.refreshVcsStatus, current.activeEnvironmentId, cwd);
-            return;
-          case "git.commit":
-            void current.runGitActionWithToast({
-              action: "commit",
-              ...(candidate.message.trim() ? { commitMessage: candidate.message.trim() } : {}),
-              ...(candidate.filePaths ? { filePaths: [...candidate.filePaths] } : {}),
-              ...(candidate.featureBranch
-                ? { featureBranch: true, skipDefaultBranchPrompt: true }
-                : {}),
-            });
-            return;
-          case "git.defaultBranch":
-            if (candidate.choice === "abort") current.dismissPendingDefaultBranchAction();
-            else if (candidate.choice === "continue") current.continuePendingDefaultBranchAction();
-            else current.checkoutFeatureBranchAndContinuePendingAction();
-            return;
-          default:
-            return;
-        }
-      })
-      .then((dispose) => {
-        if (disposed) dispose();
-        else unsubscribe = dispose;
-      });
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
-  }, [shell]);
+  useShellActions((action) => {
+    switch (action.type) {
+      case "git.quick":
+        git.runQuickAction();
+        return;
+      case "git.menu": {
+        const item = git.gitActionMenuItems.find((entry) => entry.id === action.id);
+        if (!item) return;
+        // "commit" needs a dialog; the shell renders its own from the
+        // published files and comes back with `git.commit`.
+        git.runMenuItemAction(item);
+        return;
+      }
+      case "git.init":
+        void git.initRepository();
+        return;
+      case "git.publish":
+        onOpenPublish();
+        return;
+      case "git.refresh":
+        requestVcsStatusRefresh(git.refreshVcsStatus, git.activeEnvironmentId, gitCwd);
+        return;
+      case "git.commit":
+        void git.runGitActionWithToast({
+          action: "commit",
+          ...(action.message.trim() ? { commitMessage: action.message.trim() } : {}),
+          ...(action.filePaths ? { filePaths: [...action.filePaths] } : {}),
+          ...(action.featureBranch ? { featureBranch: true, skipDefaultBranchPrompt: true } : {}),
+        });
+        return;
+      case "git.defaultBranch":
+        if (action.choice === "abort") git.dismissPendingDefaultBranchAction();
+        else if (action.choice === "continue") git.continuePendingDefaultBranchAction();
+        else git.checkoutFeatureBranchAndContinuePendingAction();
+        return;
+      default:
+        return;
+    }
+  });
 
   return null;
 }

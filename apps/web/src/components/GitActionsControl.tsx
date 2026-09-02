@@ -41,7 +41,7 @@ import {
   requestVcsStatusRefresh,
   useGitActions,
 } from "../hooks/useGitActions";
-import { ShellGitBridge } from "../shell/ShellGitBridge";
+import { ShellGitBridge } from "../shell/lazy";
 import { AnimatedHeight } from "./AnimatedHeight";
 import { StartTruncatedPath } from "./StartTruncatedPath";
 import { Button } from "~/components/ui/button";
@@ -855,14 +855,14 @@ export default function GitActionsControl({
     checkoutFeatureBranchAndContinuePendingAction,
     runGitActionWithToast,
     runQuickAction,
-    resolveMenuItemAction,
+    runMenuItemAction,
   } = git;
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
   const allSelected = excludedFiles.size === 0;
   const noneSelected = selectedFiles.length === 0;
 
   const openDialogForMenuItem = (item: GitActionMenuItem) => {
-    if (resolveMenuItemAction(item) !== "commit") return;
+    if (runMenuItemAction(item) !== "commit") return;
     setExcludedFiles(new Set());
     setIsEditingFiles(false);
     setIsCommitDialogOpen(true);

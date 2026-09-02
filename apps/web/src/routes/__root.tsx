@@ -40,10 +40,12 @@ import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
-import { ShellSettingsBridge } from "../shell/ShellSettingsBridge";
-import { ShellToastBridge } from "../shell/ShellToastBridge";
-import { ShellThemeBridge } from "../shell/ShellThemeBridge";
-import { T3ShellBridge } from "../shell/T3ShellBridge";
+import {
+  ShellSettingsBridge,
+  ShellThemeBridge,
+  ShellToastBridge,
+  T3ShellBridge,
+} from "../shell/lazy";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,

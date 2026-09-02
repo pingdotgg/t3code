@@ -4,14 +4,13 @@ import {
   scopeProjectRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import { ShellAction, type ShellSidebarDraft, type ShellSidebarState } from "@t3tools/contracts";
+import type { ShellSidebarDraft, ShellSidebarState } from "@t3tools/contracts/shell";
 import { useParams, useRouter } from "@tanstack/react-router";
-import * as Schema from "effect/Schema";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { partitionSidebarThreads } from "../components/Sidebar.logic";
 import { openCommandPalette } from "../commandPaletteBus";
-import { composerDraftHasUserContent, useComposerDraftStore } from "../composerDraftStore";
+import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
@@ -22,8 +21,8 @@ import { useThreadShells } from "../state/entities";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
 import { buildLogicalProjectKeyMap, buildShellSidebarState } from "./shellSidebarState";
-
-const isShellAction = Schema.is(ShellAction);
+import { useShellActions } from "./useShellActions";
+import { useShellPublish } from "./useShellPublish";
 
 /**
  * Feeds the native shell (window.t3Shell) the sidebar view model and turns
@@ -33,7 +32,6 @@ const isShellAction = Schema.is(ShellAction);
  * disagree about rows, order, or status.
  */
 export function T3ShellBridge() {
-  const shell = window.t3Shell;
   const router = useRouter();
   const threads = useThreadShells();
   const { projectGroups } = useSidebarProjectGroups(threads);
@@ -92,7 +90,7 @@ export function T3ShellBridge() {
   useEffect(() => {
     if (!menuTarget || !menuThreadRef) return;
     void Promise.resolve().then(() => {
-      openThreadMenu({ x: menuTarget.x, y: menuTarget.y, surface: "shell" } as never);
+      openThreadMenu({ x: menuTarget.x, y: menuTarget.y, surface: "shell" });
     });
     // Only re-open for a new request, not for hook identity churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -190,100 +188,70 @@ export function T3ShellBridge() {
     ],
   );
 
-  useEffect(() => {
-    if (!shell) return;
-    void shell.publish("sidebar", state);
-  }, [shell, state]);
+  useShellPublish("sidebar", state);
 
-  // The shell subscribes once; handlers read the latest values through a ref.
-  const latest = useRef({ projectGroups, router, handleNewThread });
-  latest.current = { projectGroups, router, handleNewThread };
-  useEffect(() => {
-    if (!shell) return;
-    let disposed = false;
-    let unsubscribe: (() => void) | null = null;
-    void shell
-      .onAction((type, payload) => {
-        const candidate = {
-          ...(typeof payload === "object" && payload !== null ? payload : {}),
-          type,
-        };
-        if (!isShellAction(candidate)) return;
-        const {
-          projectGroups: groups,
-          router: currentRouter,
-          handleNewThread: newThread,
-        } = latest.current;
-        switch (candidate.type) {
-          case "thread.open": {
-            const threadRef = parseScopedThreadKey(candidate.key);
-            if (threadRef === null) return;
-            void currentRouter.navigate({
-              to: "/$environmentId/$threadId",
-              params: buildThreadRouteParams(threadRef),
-            });
-            return;
-          }
-          case "draft.open":
-            void currentRouter.navigate({
-              to: "/draft/$draftId",
-              params: { draftId: candidate.draftId as never },
-            });
-            return;
-          case "thread.new": {
-            const group =
-              candidate.projectKey === undefined
-                ? groups[0]
-                : groups.find((item) => item.projectKey === candidate.projectKey);
-            if (group === undefined) {
-              // A stale key (project removed, environment gone) must not land
-              // the thread in whichever project sorts first.
-              if (candidate.projectKey === undefined) openCommandPalette({ open: "add-project" });
-              return;
-            }
-            void newThread(scopeProjectRef(group.environmentId, group.id));
-            return;
-          }
-          case "sidebar.scope":
-            setScopeProjectKey(candidate.projectKey);
-            return;
-          case "thread.menu":
-            setMenuTarget((prev) => ({
-              key: candidate.key,
-              x: candidate.x,
-              y: candidate.y,
-              seq: (prev?.seq ?? 0) + 1,
-            }));
-            return;
-          case "project.add":
-            openCommandPalette({ open: "add-project" });
-            return;
-          case "palette.open":
-            openCommandPalette({});
-            return;
-          case "settings.open":
-            void currentRouter.navigate({ to: "/settings" });
-            return;
-          case "pullRequests.open":
-            void currentRouter.navigate({
-              to: "/pull-requests",
-              search: { involvement: "all", state: "open" },
-            });
-            return;
-          case "usage.open":
-            void currentRouter.navigate({ to: "/usage" });
-            return;
+  useShellActions((action) => {
+    switch (action.type) {
+      case "thread.open": {
+        const threadRef = parseScopedThreadKey(action.key);
+        if (threadRef === null) return;
+        void router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        });
+        return;
+      }
+      case "draft.open":
+        void router.navigate({
+          to: "/draft/$draftId",
+          params: { draftId: DraftId.make(action.draftId) },
+        });
+        return;
+      case "thread.new": {
+        const group =
+          action.projectKey === undefined
+            ? projectGroups[0]
+            : projectGroups.find((item) => item.projectKey === action.projectKey);
+        if (group === undefined) {
+          // A stale key (project removed, environment gone) must not land
+          // the thread in whichever project sorts first.
+          if (action.projectKey === undefined) openCommandPalette({ open: "add-project" });
+          return;
         }
-      })
-      .then((dispose) => {
-        if (disposed) dispose();
-        else unsubscribe = dispose;
-      });
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
-  }, [shell]);
+        void handleNewThread(scopeProjectRef(group.environmentId, group.id));
+        return;
+      }
+      case "sidebar.scope":
+        setScopeProjectKey(action.projectKey);
+        return;
+      case "thread.menu":
+        setMenuTarget((prev) => ({
+          key: action.key,
+          x: action.x,
+          y: action.y,
+          seq: (prev?.seq ?? 0) + 1,
+        }));
+        return;
+      case "project.add":
+        openCommandPalette({ open: "add-project" });
+        return;
+      case "palette.open":
+        openCommandPalette({});
+        return;
+      case "settings.open":
+        void router.navigate({ to: "/settings" });
+        return;
+      case "pullRequests.open":
+        void router.navigate({
+          to: "/pull-requests",
+          search: { involvement: "all", state: "open" },
+        });
+        return;
+      case "usage.open":
+        void router.navigate({ to: "/usage" });
+        return;
+    }
+  });
 
   return null;
 }

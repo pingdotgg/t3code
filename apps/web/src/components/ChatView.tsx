@@ -168,8 +168,7 @@ import {
   type RightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
-import { ShellRightPanelBridge } from "../shell/ShellRightPanelBridge";
-import { ShellWorkspaceBridge } from "../shell/ShellWorkspaceBridge";
+import { ShellRightPanelBridge, ShellWorkspaceBridge } from "../shell/lazy";
 import {
   isPreviewSupportedInRuntime,
   setActivePreviewTab,

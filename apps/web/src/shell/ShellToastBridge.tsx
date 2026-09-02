@@ -1,7 +1,6 @@
 import { Toast } from "@base-ui/react/toast";
-import { ShellAction, type ShellNotification } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
-import { useEffect, useMemo, useRef } from "react";
+import type { ShellNotification, ShellNotificationsState } from "@t3tools/contracts/shell";
+import { useMemo, useRef } from "react";
 
 import {
   dismissToast,
@@ -10,8 +9,8 @@ import {
   useActiveThreadRefFromRoute,
 } from "../components/ui/toast";
 import { hasVisibleToastAction, shouldRenderThreadScopedToast } from "../components/ui/toast.logic";
-
-const isShellAction = Schema.is(ShellAction);
+import { useShellActions } from "./useShellActions";
+import { useShellPublish } from "./useShellPublish";
 
 type ToastHandlers = {
   readonly onClose: (() => void) | undefined;
@@ -25,7 +24,6 @@ type ToastHandlers = {
  * is a React element stay in the page's own viewport.
  */
 export function ShellToastBridge() {
-  const shell = window.t3Shell;
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
 
@@ -74,41 +72,19 @@ export function ShellToastBridge() {
     return result;
   }, [activeThreadRef, toasts]);
 
-  useEffect(() => {
-    if (!shell) return;
-    void shell.publish("notifications", { items });
-  }, [items, shell]);
+  const state = useMemo((): ShellNotificationsState => ({ items }), [items]);
+  useShellPublish("notifications", state);
 
-  useEffect(() => {
-    if (!shell) return;
-    let disposed = false;
-    let unsubscribe: (() => void) | null = null;
-    void shell
-      .onAction((type, payload) => {
-        const candidate = {
-          ...(typeof payload === "object" && payload !== null ? payload : {}),
-          type,
-        };
-        if (!isShellAction(candidate)) return;
-        if (candidate.type === "notification.action") {
-          handlersRef.current.get(candidate.id)?.actions.get(candidate.actionId)?.();
-          return;
-        }
-        if (candidate.type === "notification.dismiss") {
-          const handlers = handlersRef.current.get(candidate.id);
-          dismissToast(candidate.id, handlers?.onClose);
-        }
-      })
-      .then((dispose) => {
-        if (disposed) dispose();
-        else unsubscribe = dispose;
-      });
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-      void shell.publish("notifications", null);
-    };
-  }, [shell]);
+  useShellActions((action) => {
+    if (action.type === "notification.action") {
+      handlersRef.current.get(action.id)?.actions.get(action.actionId)?.();
+      return;
+    }
+    if (action.type === "notification.dismiss") {
+      const handlers = handlersRef.current.get(action.id);
+      dismissToast(action.id, handlers?.onClose);
+    }
+  });
 
   return null;
 }

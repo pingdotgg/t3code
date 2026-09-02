@@ -1,15 +1,13 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { type PreviewSessionSnapshot, ShellAction, type ScopedThreadRef } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
-import { useEffect, useMemo, useRef } from "react";
+import type { PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
+import { useMemo } from "react";
 
+import { useShellActions } from "./useShellActions";
 import { useShellPublish } from "./useShellPublish";
 
 import { surfaceTitle } from "../components/RightPanelTabs";
 import type { RightPanelSurface } from "../rightPanelStore";
 import { buildShellRightPanelState } from "./shellRightPanelState";
-
-const isShellAction = Schema.is(ShellAction);
 
 export interface ShellRightPanelBridgeProps {
   readonly threadRef: ScopedThreadRef;
@@ -42,7 +40,6 @@ export interface ShellRightPanelBridgeProps {
  * view, which converges on the same tab model through localStorage.
  */
 export function ShellRightPanelBridge(props: ShellRightPanelBridgeProps) {
-  const shell = window.t3Shell;
   const state = useMemo(
     () =>
       buildShellRightPanelState({
@@ -61,66 +58,44 @@ export function ShellRightPanelBridge(props: ShellRightPanelBridgeProps) {
 
   useShellPublish("rightPanel", state);
 
-  const latest = useRef(props);
-  latest.current = props;
-  useEffect(() => {
-    if (!shell) return;
-    let disposed = false;
-    let unsubscribe: (() => void) | null = null;
-    void shell
-      .onAction((type, payload) => {
-        const candidate = {
-          ...(typeof payload === "object" && payload !== null ? payload : {}),
-          type,
-        };
-        if (!isShellAction(candidate)) return;
-        const current = latest.current;
-        switch (candidate.type) {
-          case "rightPanel.toggle":
-            current.onToggle();
+  useShellActions((action) => {
+    switch (action.type) {
+      case "rightPanel.toggle":
+        props.onToggle();
+        return;
+      case "rightPanel.activate": {
+        const surface = props.surfaces.find((item) => item.id === action.id);
+        if (surface) props.onActivate(surface);
+        return;
+      }
+      case "rightPanel.close": {
+        const surface = props.surfaces.find((item) => item.id === action.id);
+        if (surface) props.onClose(surface);
+        return;
+      }
+      case "rightPanel.add":
+        switch (action.kind) {
+          case "diff":
+            props.onAddDiff();
             return;
-          case "rightPanel.activate": {
-            const surface = current.surfaces.find((item) => item.id === candidate.id);
-            if (surface) current.onActivate(surface);
+          case "files":
+            props.onAddFiles();
             return;
-          }
-          case "rightPanel.close": {
-            const surface = current.surfaces.find((item) => item.id === candidate.id);
-            if (surface) current.onClose(surface);
+          case "terminal":
+            props.onAddTerminal();
             return;
-          }
-          case "rightPanel.add":
-            switch (candidate.kind) {
-              case "diff":
-                current.onAddDiff();
-                return;
-              case "files":
-                current.onAddFiles();
-                return;
-              case "terminal":
-                current.onAddTerminal();
-                return;
-              case "pullRequest":
-                current.onAddPullRequest();
-                return;
-              case "agents":
-                current.onAddAgents();
-                return;
-            }
+          case "pull-request":
+            props.onAddPullRequest();
             return;
-          default:
+          case "agents":
+            props.onAddAgents();
             return;
         }
-      })
-      .then((dispose) => {
-        if (disposed) dispose();
-        else unsubscribe = dispose;
-      });
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
-  }, [shell]);
+        return;
+      default:
+        return;
+    }
+  });
 
   return null;
 }

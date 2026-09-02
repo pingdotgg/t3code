@@ -22,7 +22,7 @@ import {
 } from "../panelAnimations";
 import LegacyThreadSidebar from "./LegacySidebar";
 import { useSidebarToggleKeybinding } from "../hooks/useSidebarToggleKeybinding";
-import { ShellLayoutBridge } from "../shell/ShellLayoutBridge";
+import { ShellLayoutBridge } from "../shell/lazy";
 import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";

@@ -1,8 +1,7 @@
-import type { ContextMenuItem, ShellContextMenuItem } from "@t3tools/contracts";
-import { ShellAction } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
+import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ShellContextMenuItem } from "@t3tools/contracts/shell";
 
-const isShellAction = Schema.is(ShellAction);
+import { decodeShellAction } from "./useShellActions";
 
 let nextRequestId = 1;
 const pending = new Map<number, (id: string | null) => void>();
@@ -12,15 +11,12 @@ function ensureListener(): void {
   if (listening || !window.t3Shell) return;
   listening = true;
   void window.t3Shell.onAction((type, payload) => {
-    const candidate = {
-      ...(typeof payload === "object" && payload !== null ? payload : {}),
-      type,
-    };
-    if (!isShellAction(candidate) || candidate.type !== "contextMenu.select") return;
-    const resolve = pending.get(candidate.requestId);
+    const action = decodeShellAction(type, payload);
+    if (action === null || action.type !== "contextMenu.select") return;
+    const resolve = pending.get(action.requestId);
     if (!resolve) return;
-    pending.delete(candidate.requestId);
-    resolve(candidate.id);
+    pending.delete(action.requestId);
+    resolve(action.id);
   });
 }
 

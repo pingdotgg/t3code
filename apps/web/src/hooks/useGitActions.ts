@@ -821,7 +821,7 @@ export function useGitActions({
     }
   };
 
-  const resolveMenuItemAction = (item: GitActionMenuItem): "commit" | null => {
+  const runMenuItemAction = (item: GitActionMenuItem): "commit" | null => {
     if (item.disabled) return null;
     if (item.kind === "open_pr") {
       void openExistingPr();
@@ -871,7 +871,7 @@ export function useGitActions({
     runGitActionWithToast,
     openExistingPr,
     runQuickAction,
-    /** Returns "commit" when the item needs the commit dialog; otherwise it ran. */
-    resolveMenuItemAction,
+    /** Runs the item, or returns "commit" when it needs the caller's commit dialog. */
+    runMenuItemAction,
   };
 }

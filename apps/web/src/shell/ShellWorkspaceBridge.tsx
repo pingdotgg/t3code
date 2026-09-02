@@ -2,7 +2,6 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   EditorId,
-  ShellAction,
   type EnvironmentId,
   type ProjectScript,
   type ScopedThreadRef,
@@ -11,6 +10,7 @@ import {
 import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useShellActions } from "./useShellActions";
 import { useShellPublish } from "./useShellPublish";
 
 import type { EnvMode } from "../components/BranchToolbar.logic";
@@ -23,7 +23,6 @@ import { subscribeShellRenameRequests } from "./shellRenameRequest";
 import { shellEnvironment } from "../state/shell";
 import { buildShellWorkspaceState } from "./shellWorkspaceState";
 
-const isShellAction = Schema.is(ShellAction);
 const isEditorId = Schema.is(EditorId);
 
 export interface ShellWorkspaceBridgeProps {
@@ -72,7 +71,6 @@ export interface ShellWorkspaceBridgeProps {
  * same command and preference the HTML picker uses.
  */
 export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
-  const shell = window.t3Shell;
   const [preferredEditorId, setPreferredEditor] = usePreferredEditor(props.availableEditors);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor);
   const [branchQuery, setBranchQuery] = useState("");
@@ -154,120 +152,77 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
 
   useShellPublish("workspace", state);
 
-  const latest = useRef({
-    props,
-    openInEditor,
-    setPreferredEditor,
-    branchSelection,
-    branchByName,
-    renameThread,
-  });
-  latest.current = {
-    props,
-    openInEditor,
-    setPreferredEditor,
-    branchSelection,
-    branchByName,
-    renameThread,
-  };
-  useEffect(() => {
-    if (!shell) return;
-    let disposed = false;
-    let unsubscribe: (() => void) | null = null;
-    void shell
-      .onAction((type, payload) => {
-        const candidate = {
-          ...(typeof payload === "object" && payload !== null ? payload : {}),
-          type,
-        };
-        if (!isShellAction(candidate)) return;
-        const {
-          props: current,
-          openInEditor: open,
-          setPreferredEditor: remember,
-          branchSelection: branches,
-          branchByName: refByName,
-          renameThread: rename,
-        } = latest.current;
-        switch (candidate.type) {
-          case "workspace.newThread":
-            current.onNewThread();
-            return;
-          case "workspace.openInEditor": {
-            if (current.openInCwd === null) return;
-            const editor =
-              candidate.editorId !== undefined && isEditorId(candidate.editorId)
-                ? candidate.editorId
-                : resolveAndPersistPreferredEditor(current.availableEditors);
-            if (editor === null || !current.availableEditors.includes(editor)) return;
-            remember(editor);
-            void open({
-              environmentId: current.threadRef.environmentId,
-              input: { cwd: current.openInCwd, editor },
-            });
-            return;
-          }
-          case "workspace.runScript": {
-            const script = current.scripts.find((item) => item.id === candidate.scriptId);
-            if (script) current.onRunScript(script);
-            return;
-          }
-          case "workspace.envMode.set":
-            if (current.envModeChangeable) current.onEnvModeChange(candidate.mode);
-            return;
-          case "workspace.startFromOrigin.set":
-            if (current.envModeChangeable) current.onStartFromOriginChange(candidate.enabled);
-            return;
-          case "workspace.openPullRequest": {
-            const number = current.gitStatus?.pr?.number;
-            if (number !== undefined) current.onOpenPullRequest?.(number);
-            return;
-          }
-          case "workspace.titleMenu":
-            current.onTitleMenu(candidate.x, candidate.y);
-            return;
-          case "workspace.rename":
-            rename(candidate.title);
-            return;
-          case "workspace.branch.search":
-            setBranchQuery(candidate.query);
-            return;
-          case "workspace.branch.select": {
-            const ref = refByName.get(candidate.name);
-            if (ref) branches.selectBranch(ref);
-            return;
-          }
-          case "workspace.branch.create": {
-            const prReference = parsePullRequestReference(candidate.name);
-            if (prReference !== null && current.onCheckoutPullRequestRequest) {
-              current.onCheckoutPullRequestRequest(prReference);
-              return;
-            }
-            branches.createRef(candidate.name);
-            return;
-          }
-          case "workspace.environment.set": {
-            const target = current.environments.find(
-              (environment) => environment.environmentId === candidate.environmentId,
-            );
-            if (target && current.environmentChangeable) {
-              current.onEnvironmentChange(target.environmentId);
-            }
-            return;
-          }
-          default:
-            return;
+  useShellActions((action) => {
+    switch (action.type) {
+      case "workspace.newThread":
+        props.onNewThread();
+        return;
+      case "workspace.openInEditor": {
+        if (props.openInCwd === null) return;
+        const editor =
+          action.editorId !== undefined && isEditorId(action.editorId)
+            ? action.editorId
+            : resolveAndPersistPreferredEditor(props.availableEditors);
+        if (editor === null || !props.availableEditors.includes(editor)) return;
+        setPreferredEditor(editor);
+        void openInEditor({
+          environmentId: props.threadRef.environmentId,
+          input: { cwd: props.openInCwd, editor },
+        });
+        return;
+      }
+      case "workspace.runScript": {
+        const script = props.scripts.find((item) => item.id === action.scriptId);
+        if (script) props.onRunScript(script);
+        return;
+      }
+      case "workspace.envMode.set":
+        if (props.envModeChangeable) props.onEnvModeChange(action.mode);
+        return;
+      case "workspace.startFromOrigin.set":
+        if (props.envModeChangeable) props.onStartFromOriginChange(action.enabled);
+        return;
+      case "workspace.openPullRequest": {
+        const number = props.gitStatus?.pr?.number;
+        if (number !== undefined) props.onOpenPullRequest?.(number);
+        return;
+      }
+      case "workspace.titleMenu":
+        props.onTitleMenu(action.x, action.y);
+        return;
+      case "workspace.rename":
+        renameThread(action.title);
+        return;
+      case "workspace.branch.search":
+        setBranchQuery(action.query);
+        return;
+      case "workspace.branch.select": {
+        const ref = branchByName.get(action.name);
+        if (ref) branchSelection.selectBranch(ref);
+        return;
+      }
+      case "workspace.branch.create": {
+        const prReference = parsePullRequestReference(action.name);
+        if (prReference !== null && props.onCheckoutPullRequestRequest) {
+          props.onCheckoutPullRequestRequest(prReference);
+          return;
         }
-      })
-      .then((dispose) => {
-        if (disposed) dispose();
-        else unsubscribe = dispose;
-      });
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
-  }, [shell]);
+        branchSelection.createRef(action.name);
+        return;
+      }
+      case "workspace.environment.set": {
+        const target = props.environments.find(
+          (environment) => environment.environmentId === action.environmentId,
+        );
+        if (target && props.environmentChangeable) {
+          props.onEnvironmentChange(target.environmentId);
+        }
+        return;
+      }
+      default:
+        return;
+    }
+  });
 
   return null;
 }

@@ -3,7 +3,6 @@ import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/c
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { isT3Shell } from "./env";
-import { closeShellContextMenu, showShellContextMenu } from "./shell/shellContextMenu";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
 
 let cachedApi: LocalApi | undefined;
@@ -46,12 +45,13 @@ function createBrowserLocalApi(): LocalApi {
     contextMenu: {
       show: async <T extends string>(
         items: readonly ContextMenuItem<T>[],
-        position?: { x: number; y: number },
+        position?: { x: number; y: number; surface?: "shell" },
       ): Promise<T | null> => {
         if (window.desktopBridge) {
           return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
         }
         if (isT3Shell) {
+          const { showShellContextMenu } = await import("./shell/bridges");
           return showShellContextMenu(items, position);
         }
         return showContextMenuFallback(items, position);
@@ -60,7 +60,10 @@ function createBrowserLocalApi(): LocalApi {
       // interaction, so nothing to do there; the DOM fallback needs an explicit
       // dismiss when the state behind it goes away.
       close: async () => {
-        if (isT3Shell) closeShellContextMenu();
+        if (isT3Shell) {
+          const { closeShellContextMenu } = await import("./shell/bridges");
+          closeShellContextMenu();
+        }
         if (!window.desktopBridge) {
           dismissContextMenu();
         }

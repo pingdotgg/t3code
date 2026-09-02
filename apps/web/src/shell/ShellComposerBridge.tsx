@@ -1,18 +1,17 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import {
-  ShellAction,
-  type ModelSelection,
-  type ProviderDriverKind,
-  type ProviderInstanceId,
-  type ProviderInteractionMode,
-  type ProviderOptionSelection,
-  type RuntimeMode,
-  type ScopedThreadRef,
-  type ServerProviderModel,
+import type {
+  ModelSelection,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderInteractionMode,
+  ProviderOptionSelection,
+  RuntimeMode,
+  ScopedThreadRef,
+  ServerProviderModel,
 } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 
+import { useShellActions } from "./useShellActions";
 import { useShellPublish } from "./useShellPublish";
 
 import type { ComposerCommandItem } from "../components/chat/ComposerCommandMenu";
@@ -31,8 +30,6 @@ import {
   buildShellComposerState,
   resolveComposerOptionDescriptors,
 } from "./shellComposerState";
-
-const isShellAction = Schema.is(ShellAction);
 
 export interface ShellComposerBridgeProps {
   readonly target: ScopedThreadRef | DraftId;
@@ -101,7 +98,6 @@ export interface ShellComposerBridgeProps {
  * sending and interrupting keep one implementation.
  */
 export function ShellComposerBridge(props: ShellComposerBridgeProps) {
-  const shell = window.t3Shell;
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
 
   const optionDescriptors = useMemo(
@@ -176,124 +172,94 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
 
   useShellPublish("composer", state);
 
-  // One subscription for the component's lifetime; handlers read live props.
-  const latest = useRef({ props, optionDescriptors, setProviderModelOptions });
-  latest.current = { props, optionDescriptors, setProviderModelOptions };
-  useEffect(() => {
-    if (!shell) return;
-    let disposed = false;
-    let unsubscribe: (() => void) | null = null;
-    void shell
-      .onAction((type, payload) => {
-        const candidate = {
-          ...(typeof payload === "object" && payload !== null ? payload : {}),
-          type,
-        };
-        if (!isShellAction(candidate)) return;
-        const {
-          props: current,
-          optionDescriptors: descriptors,
-          setProviderModelOptions: setOptions,
-        } = latest.current;
-        switch (candidate.type) {
-          case "composer.text.set":
-            current.setPrompt(candidate.text);
-            current.promptRef.current = candidate.text;
-            if (candidate.cursor !== undefined) {
-              current.onCursorChange(candidate.cursor);
-            }
-            return;
-          case "composer.suggest.select": {
-            const item = current.suggestions.find((entry) => entry.id === candidate.id);
-            if (item) current.onSelectSuggestion(item);
-            return;
-          }
-          case "composer.suggest.dismiss":
-            current.onDismissSuggestions();
-            return;
-          case "composer.attach": {
-            const files: File[] = [];
-            for (const entry of candidate.files) {
-              let bytes: Uint8Array<ArrayBuffer>;
-              try {
-                bytes = Uint8Array.from(atob(entry.base64), (char) => char.charCodeAt(0));
-              } catch {
-                console.warn("[shell] dropped attachment with malformed base64:", entry.name);
-                continue;
-              }
-              files.push(new File([bytes], entry.name, { type: entry.mimeType }));
-            }
-            if (files.length > 0) current.onAttachFiles(files);
-            return;
-          }
-          case "composer.attachment.remove":
-            current.onRemoveAttachment(candidate.id);
-            return;
-          case "composer.terminalContext.remove":
-            current.onRemoveTerminalContext(candidate.id);
-            return;
-          case "composer.terminalContext.add": {
-            const selection = normalizeTerminalContextSelection({
-              terminalId: candidate.terminalId,
-              terminalLabel: candidate.terminalLabel,
-              lineStart: candidate.lineStart,
-              lineEnd: candidate.lineEnd,
-              text: candidate.text,
-            });
-            if (selection) current.onAddTerminalContext(selection);
-            return;
-          }
-          case "composer.submit":
-            if (candidate.text !== undefined) {
-              current.setPrompt(candidate.text);
-              current.promptRef.current = candidate.text;
-            }
-            current.onSend(undefined, candidate.intent ?? "foreground");
-            return;
-          case "composer.interrupt":
-            current.onInterrupt();
-            return;
-          case "composer.model.select":
-            current.onProviderModelSelect(
-              candidate.instanceId as ProviderInstanceId,
-              candidate.model,
-            );
-            return;
-          case "composer.option.set": {
-            if (current.noProviderAvailable) return;
-            const nextOptions: ModelSelection["options"] = applyComposerOptionChange(
-              descriptors,
-              candidate.id,
-              candidate.value,
-            );
-            setOptions(current.target, current.selectedProvider, nextOptions, {
-              instanceId: current.selectedInstanceId,
-              model: current.selectedModel,
-              persistSticky: true,
-            });
-            return;
-          }
-          case "composer.runtimeMode.set":
-            if (current.runtimeModes.some((mode) => mode.value === candidate.mode)) {
-              current.onRuntimeModeChange(candidate.mode as RuntimeMode);
-            }
-            return;
-          case "composer.interactionMode.set":
-            current.onInteractionModeChange(candidate.mode);
-            return;
-          default:
-            return;
+  useShellActions((action) => {
+    switch (action.type) {
+      case "composer.text.set":
+        props.setPrompt(action.text);
+        props.promptRef.current = action.text;
+        if (action.cursor !== undefined) {
+          props.onCursorChange(action.cursor);
         }
-      })
-      .then((dispose) => {
-        if (disposed) dispose();
-        else unsubscribe = dispose;
-      });
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
-  }, [shell]);
+        return;
+      case "composer.suggest.select": {
+        const item = props.suggestions.find((entry) => entry.id === action.id);
+        if (item) props.onSelectSuggestion(item);
+        return;
+      }
+      case "composer.suggest.dismiss":
+        props.onDismissSuggestions();
+        return;
+      case "composer.attach": {
+        const files: File[] = [];
+        for (const entry of action.files) {
+          let bytes: Uint8Array<ArrayBuffer>;
+          try {
+            bytes = Uint8Array.from(atob(entry.base64), (char) => char.charCodeAt(0));
+          } catch {
+            console.warn("[shell] dropped attachment with malformed base64:", entry.name);
+            continue;
+          }
+          files.push(new File([bytes], entry.name, { type: entry.mimeType }));
+        }
+        if (files.length > 0) props.onAttachFiles(files);
+        return;
+      }
+      case "composer.attachment.remove":
+        props.onRemoveAttachment(action.id);
+        return;
+      case "composer.terminalContext.remove":
+        props.onRemoveTerminalContext(action.id);
+        return;
+      case "composer.terminalContext.add": {
+        const selection = normalizeTerminalContextSelection({
+          terminalId: action.terminalId,
+          terminalLabel: action.terminalLabel,
+          lineStart: action.lineStart,
+          lineEnd: action.lineEnd,
+          text: action.text,
+        });
+        if (selection) props.onAddTerminalContext(selection);
+        return;
+      }
+      case "composer.submit":
+        if (action.text !== undefined) {
+          props.setPrompt(action.text);
+          props.promptRef.current = action.text;
+        }
+        props.onSend(undefined, action.intent ?? "foreground");
+        return;
+      case "composer.interrupt":
+        props.onInterrupt();
+        return;
+      case "composer.model.select":
+        props.onProviderModelSelect(action.instanceId as ProviderInstanceId, action.model);
+        return;
+      case "composer.option.set": {
+        if (props.noProviderAvailable) return;
+        const nextOptions: ModelSelection["options"] = applyComposerOptionChange(
+          optionDescriptors,
+          action.id,
+          action.value,
+        );
+        setProviderModelOptions(props.target, props.selectedProvider, nextOptions, {
+          instanceId: props.selectedInstanceId,
+          model: props.selectedModel,
+          persistSticky: true,
+        });
+        return;
+      }
+      case "composer.runtimeMode.set":
+        if (props.runtimeModes.some((mode) => mode.value === action.mode)) {
+          props.onRuntimeModeChange(action.mode as RuntimeMode);
+        }
+        return;
+      case "composer.interactionMode.set":
+        props.onInteractionModeChange(action.mode);
+        return;
+      default:
+        return;
+    }
+  });
 
   return null;
 }
