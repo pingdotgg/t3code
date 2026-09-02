@@ -16,7 +16,6 @@ import {
   BookOpenIcon,
   CircleDotIcon,
   ChevronDownIcon,
-  CopyIcon,
   ExternalLinkIcon,
   FileDiffIcon,
   FolderGit2Icon,
@@ -284,6 +283,68 @@ const openNumberContextMenu = (
   });
 };
 
+function PullRequestCopyableCode({
+  value,
+  target,
+  copyLabel,
+  copiedLabel,
+  className,
+  tooltipSide = "top",
+  onError,
+}: {
+  readonly value: string;
+  readonly target: string;
+  readonly copyLabel: string;
+  readonly copiedLabel: string;
+  readonly className?: string;
+  readonly tooltipSide?: "top" | "bottom";
+  readonly onError?: (error: Error) => void;
+}) {
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target,
+    timeout: 1600,
+    ...(onError ? { onError } : {}),
+  });
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className={cn(
+              "relative grid w-fit min-w-0 max-w-full shrink cursor-pointer rounded px-1 py-0.5 text-left outline-none transition-colors pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 hover:bg-accent/45 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+              className,
+            )}
+            aria-label={isCopied ? copiedLabel : copyLabel}
+            onClick={() => copyToClipboard(value)}
+          />
+        }
+      >
+        <code
+          className={cn(
+            "col-start-1 row-start-1 min-w-0 truncate transition-opacity duration-150 motion-reduce:transition-none",
+            isCopied ? "opacity-0" : "opacity-100",
+          )}
+        >
+          {value}
+        </code>
+        <span
+          aria-hidden="true"
+          className={cn(
+            "col-start-1 row-start-1 truncate text-center transition-opacity duration-150 motion-reduce:transition-none",
+            isCopied ? "opacity-100" : "opacity-0",
+          )}
+        >
+          Copied
+        </span>
+      </TooltipTrigger>
+      <TooltipPopup className="max-w-96 wrap-anywhere font-mono" side={tooltipSide}>
+        {`${isCopied ? "Copied" : copyLabel}: ${value}`}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
 /**
  * The stale-branch warning, said beside the branch it is about rather than as a bar of its own.
  * The banner this replaces held a row of chrome open across the top of every pull request that
@@ -466,20 +527,6 @@ export function PullRequestDetailPanel({
   // Which handoff is preparing, keyed so a per-finding button can say "Preparing..." on itself
   // alone. One at a time whatever the key: they all check the same pull request out.
   const [handoff, setHandoff] = useState<string | null>(null);
-  const { copyToClipboard: copyBranchToClipboard, isCopied: isBranchCopied } = useCopyToClipboard({
-    target: "branch name",
-    timeout: 1600,
-  });
-  const { copyToClipboard: copyCheckoutCommandToClipboard } = useCopyToClipboard({
-    target: "pull request checkout command",
-    onCopy: () => toastManager.add({ type: "success", title: "Checkout command copied" }),
-    onError: (error) =>
-      toastManager.add({
-        type: "error",
-        title: "Could not copy checkout command",
-        description: error.message,
-      }),
-  });
   // The chunk is fetched as soon as the panel exists rather than waiting for the Code tab to be
   // clicked, so a reader who does click it lands on a chunk already in the module cache.
   useEffect(() => {
@@ -1697,10 +1744,30 @@ export function PullRequestDetailPanel({
                     </div>
                   </div>
                 )}
-                <PullRequestMetaLine className="mt-2 text-xs text-muted-foreground">
-                  <PullRequestActorLabel actor={detail.author} className="font-medium" />
-                  <span>updated {formatRelativeTimeLabel(detail.updatedAt)}</span>
-                </PullRequestMetaLine>
+                <div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                  <PullRequestMetaLine className="min-w-0 whitespace-nowrap">
+                    <PullRequestActorLabel actor={detail.author} className="font-medium" />
+                    <span>updated {formatRelativeTimeLabel(detail.updatedAt)}</span>
+                  </PullRequestMetaLine>
+                  {checkoutCommand ? (
+                    <PullRequestCopyableCode
+                      key={checkoutCommand}
+                      value={checkoutCommand}
+                      target="pull request checkout command"
+                      copyLabel="Copy checkout command"
+                      copiedLabel="Checkout command copied"
+                      className="ml-auto font-mono"
+                      tooltipSide="bottom"
+                      onError={(error) =>
+                        toastManager.add({
+                          type: "error",
+                          title: "Could not copy checkout command",
+                          description: error.message,
+                        })
+                      }
+                    />
+                  ) : null}
+                </div>
 
                 <div className="mt-4 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                   <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70">
@@ -1736,62 +1803,13 @@ export function PullRequestDetailPanel({
                       aria-label="receives changes from"
                       className="size-3.5 shrink-0 opacity-60"
                     />
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            className="grid w-fit min-w-0 max-w-full shrink cursor-pointer rounded px-1 py-0.5 text-left outline-none transition-colors hover:bg-accent/45 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-                            aria-label={
-                              isBranchCopied ? "Branch name copied" : "Copy pull request branch"
-                            }
-                            onClick={() => copyBranchToClipboard(detail.headBranch)}
-                          />
-                        }
-                      >
-                        <code
-                          className={cn(
-                            "col-start-1 row-start-1 min-w-0 truncate transition-opacity duration-150 motion-reduce:transition-none",
-                            isBranchCopied ? "opacity-0" : "opacity-100",
-                          )}
-                        >
-                          {detail.headBranch}
-                        </code>
-                        <span
-                          aria-hidden="true"
-                          className={cn(
-                            "col-start-1 row-start-1 truncate text-center transition-opacity duration-150 motion-reduce:transition-none",
-                            isBranchCopied ? "opacity-100" : "opacity-0",
-                          )}
-                        >
-                          Copied
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipPopup side="top">
-                        {`${isBranchCopied ? "Copied" : "Copy pull request branch"}: ${detail.headBranch}`}
-                      </TooltipPopup>
-                    </Tooltip>
-                    {checkoutCommand ? (
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              size="micro"
-                              variant="outline"
-                              className="ml-1 min-w-0 basis-40 shrink-[0.75] gap-1 font-normal text-muted-foreground"
-                              aria-label={`Copy checkout command: ${checkoutCommand}`}
-                              onClick={() => copyCheckoutCommandToClipboard(checkoutCommand)}
-                            />
-                          }
-                        >
-                          <code className="min-w-0 truncate">{checkoutCommand}</code>
-                          <CopyIcon aria-hidden />
-                        </TooltipTrigger>
-                        <TooltipPopup className="max-w-96 wrap-anywhere font-mono" side="bottom">
-                          {checkoutCommand}
-                        </TooltipPopup>
-                      </Tooltip>
-                    ) : null}
+                    <PullRequestCopyableCode
+                      key={detail.headBranch}
+                      value={detail.headBranch}
+                      target="branch name"
+                      copyLabel="Copy pull request branch"
+                      copiedLabel="Branch name copied"
+                    />
                   </span>
                   <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2">
                     <span className="inline-flex items-center gap-1.5 tabular-nums">
