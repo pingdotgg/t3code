@@ -593,10 +593,9 @@ export function PreviewView({
             stackedThreadToast({
               type: "error",
               title: "Could not capture the picked element",
-              description:
-                submission === "send"
-                  ? "The message was sent without the screenshot."
-                  : "The annotation was added without the screenshot.",
+              // The send path reports its own outcome, so only say what this
+              // handler knows: the crop was dropped.
+              description: "The annotation was kept without the screenshot.",
             }),
           );
         }
