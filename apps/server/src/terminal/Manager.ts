@@ -888,8 +888,9 @@ const INHERITED_DEC_MODE_DEFAULTS = new Map<number, boolean>([
 // The three alternate-screen modes toggle one underlying screen.
 const ALTERNATE_SCREEN_DEC_MODES = [47, 1047, 1049];
 // Kitty keyboard flags live on a stack: `CSI > flags u` pushes, `CSI < n u`
-// pops, `CSI = flags ; mode u` rewrites the top. The encoder only reads the
-// top, so zeroing it is enough; only RIS clears the stack.
+// pops, `CSI = flags ; mode u` rewrites the top. The main and alternate
+// screens keep separate stacks, and the encoder only reads the active top, so
+// zeroing it is enough; only RIS clears the stacks.
 const KITTY_KEYBOARD_CLEAR = "\u001b[=0;1u";
 // DEC mode set/reset, Kitty keyboard push/pop/set, and RIS (`ESC c`). RIS is
 // the only reset that touches these in libghostty-vt; DECSTR (`CSI ! p`)
@@ -901,23 +902,26 @@ const INHERITED_MODE_PATTERN =
 function neutralizeInheritedHistory(history: string): string {
   if (history.length === 0) return history;
   const modes = new Map<number, boolean>();
-  const kittyStack = [0];
+  const kittyStacks = { main: [0], alternate: [0] };
+  let screen: keyof typeof kittyStacks = "main";
   for (const match of history.matchAll(INHERITED_MODE_PATTERN)) {
     if (match[5] !== undefined) {
       modes.clear();
-      kittyStack.length = 1;
-      kittyStack[0] = 0;
+      kittyStacks.main = [0];
+      kittyStacks.alternate = [0];
+      screen = "main";
       continue;
     }
     if (match[3] !== undefined) {
+      const stack = kittyStacks[screen];
       const parameter = Number.parseInt(match[4] ?? "", 10);
       if (match[3] === ">") {
-        kittyStack.push(Number.isNaN(parameter) ? 0 : parameter);
+        stack.push(Number.isNaN(parameter) ? 0 : parameter);
       } else if (match[3] === "=") {
-        kittyStack[kittyStack.length - 1] = Number.isNaN(parameter) ? 0 : parameter;
+        stack[stack.length - 1] = Number.isNaN(parameter) ? 0 : parameter;
       } else {
         const count = Number.isNaN(parameter) ? 1 : parameter;
-        kittyStack.length = Math.max(1, kittyStack.length - count);
+        stack.length = Math.max(1, stack.length - count);
       }
       continue;
     }
@@ -927,6 +931,7 @@ function neutralizeInheritedHistory(history: string): string {
       if (!INHERITED_DEC_MODE_DEFAULTS.has(mode)) continue;
       if (ALTERNATE_SCREEN_DEC_MODES.includes(mode)) {
         for (const alias of ALTERNATE_SCREEN_DEC_MODES) modes.delete(alias);
+        screen = enabled ? "alternate" : "main";
       }
       modes.set(mode, enabled);
     }
@@ -944,7 +949,9 @@ function neutralizeInheritedHistory(history: string): string {
   const decReset = deviations
     .map(([mode]) => `\u001b[?${mode}${INHERITED_DEC_MODE_DEFAULTS.get(mode) ? "h" : "l"}`)
     .join("");
-  const kittyReset = kittyStack[kittyStack.length - 1] === 0 ? "" : KITTY_KEYBOARD_CLEAR;
+  // The alternate screen has been left by now, so the main stack is active.
+  const mainStack = kittyStacks.main;
+  const kittyReset = mainStack[mainStack.length - 1] === 0 ? "" : KITTY_KEYBOARD_CLEAR;
   return `${history}${decReset}${kittyReset}`;
 }
 

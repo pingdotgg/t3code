@@ -1282,6 +1282,45 @@ it.layer(
     }),
   );
 
+  it.effect("keeps Kitty keyboard stacks per screen while neutralizing inherited history", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // A push on the main screen survives an alternate-screen round trip even
+      // when the app pops while on the alternate screen (libghostty keeps one
+      // stack per screen), so the main screen still needs its reset.
+      process.emitData("\u001b[>7u\u001b[?1049h\u001b[<u\u001b[?1049l");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(reopened.history, "\u001b[>7u\u001b[?1049h\u001b[<u\u001b[?1049l\u001b[=0;1u");
+    }),
+  );
+
+  it.effect("leaves the alternate screen without resetting Kitty flags pushed only there", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // Dying inside the alternate screen with flags pushed there: leaving the
+      // screen makes the untouched main stack active, so no Kitty reset is due.
+      process.emitData("\u001b[?1049h\u001b[>7u");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(reopened.history, "\u001b[?1049h\u001b[>7u\u001b[?1049l");
+    }),
+  );
+
   it.effect("neutralizes inherited history once across repeated restarts", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
