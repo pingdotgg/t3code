@@ -13,8 +13,6 @@ import {
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
-import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
-import { formatWorkingTimerNow } from "./ComposerActivityStatus";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   keepTimelineEndVisibleAfterOverlayGrowth,
@@ -51,8 +49,6 @@ import {
   type TimelineEntry,
   providerErrorPresentation,
   workEntryDisplayIndicatesToolFailure,
-  workEntryIndicatesToolNeutralStatus,
-  workEntryIndicatesToolSuccess,
   workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,
 } from "../../session-logic";
@@ -120,8 +116,6 @@ import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
   liveWorkEntryLabel,
-  normalizeCompactToolLabel,
-  resolveTimelineToolPresentation,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
@@ -2163,6 +2157,32 @@ const WorkGroupSection = memo(function WorkGroupSection({
   );
 });
 
+function formatWorkingTimer(startIso: string, endIso: string): string | null {
+  const startedAtMs = Date.parse(startIso);
+  const endedAtMs = Date.parse(endIso);
+  if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs)) {
+    return null;
+  }
+
+  const elapsedSeconds = Math.max(0, Math.floor((endedAtMs - startedAtMs) / 1000));
+  if (elapsedSeconds < 60) {
+    return `${elapsedSeconds}s`;
+  }
+
+  const hours = Math.floor(elapsedSeconds / 3600);
+  const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+  const seconds = elapsedSeconds % 60;
+
+  if (hours > 0) {
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+function formatWorkingTimerNow(startIso: string): string {
+  return formatWorkingTimer(startIso, new Date().toISOString()) ?? "0s";
+}
+
 function WorkingTimer({ createdAt }: { createdAt: string }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const initialText = formatWorkingTimerNow(createdAt);
@@ -3113,21 +3133,6 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
   }
 }
 
-function T3CodeToolLogo({ className }: { className?: string }) {
-  const logoUrl = `${import.meta.env.BASE_URL}apple-touch-icon.png`;
-  return (
-    <span
-      className={cn(
-        "flex size-4 shrink-0 items-center justify-center overflow-hidden rounded-[4px] bg-background ring-1 ring-border/65",
-        className,
-      )}
-      aria-label="T3 Code MCP tool"
-    >
-      <img alt="" aria-hidden="true" className="size-4 object-cover" src={logoUrl} />
-    </span>
-  );
-}
-
 function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   iconName: WorkEntryIconName;
   className: string;
@@ -3230,48 +3235,6 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   return workToneIcon(workEntry.tone).iconName;
 }
 
-function capitalizePhrase(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return value;
-  }
-  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
-}
-
-function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
-  if (!workEntry.toolTitle) {
-    return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
-  }
-  return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
-}
-
-function workEntryPreview(
-  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
-  workspaceRoot: string | undefined,
-) {
-  // Collapsed rows show the tool's INPUT (command, touched files, search
-  // pattern); outputs like stdout and diffs stay behind the expander.
-  if (workEntry.command) return workEntry.command;
-  const [firstPath] = workEntry.changedFiles ?? [];
-  if (firstPath) {
-    const displayPath = formatWorkspaceRelativePath(firstPath, workspaceRoot);
-    return workEntry.changedFiles!.length === 1
-      ? displayPath
-      : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
-  }
-  if (workEntry.detail?.trim()) {
-    const lines = workEntry.detail
-      .trim()
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-    if (lines.length > 0) {
-      return lines.slice(0, 3).join(" · ");
-    }
-  }
-  return null;
-}
-
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
@@ -3280,8 +3243,8 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   isExpandedToolGroupEntry?: boolean;
 }) {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry = false } = props;
-  const activity = use(TimelineRowActivityCtx);
   const ctx = use(TimelineRowCtx);
+  const { threadRef, onImageExpand } = ctx;
   const groupView = use(WorkGroupViewCtx);
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
@@ -3296,30 +3259,32 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     setExpanded(next);
   };
   const iconConfig = workToneIcon(workEntry.tone);
+  // v2 has no runtime.warning activity; error items carry the "error" tone.
   const showWarningIndicator = false;
-  const entryIconName = showWarningIndicator ? "circle-alert" : workEntryIconName(workEntry);
-  const toolPresentation = resolveTimelineToolPresentation(workEntry.toolTitle ?? workEntry.label);
-  // Command rows read as the command itself; stdout and the full payload
-  // stay behind the expander instead of leaking into the collapsed line.
-  const command = workEntry.command?.trim().replaceAll(/\s+/g, " ");
-  const heading = command || (toolPresentation?.displayName ?? toolWorkEntryHeading(workEntry));
-  const rawPreview = command ? null : workEntryPreview(workEntry, workspaceRoot);
-  const preview =
-    rawPreview &&
-    normalizeCompactToolLabel(rawPreview).toLowerCase() ===
-      normalizeCompactToolLabel(heading).toLowerCase()
-      ? null
-      : rawPreview;
-  const displayText = preview ? `${heading} - ${preview}` : heading;
-  const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
-  const canExpand = expandedBody !== null || workEntry.projectedItem !== undefined;
   const showFailedIndicator = workEntryDisplayIndicatesToolFailure(workEntry);
-  const showEntryIcon = !isExpandedToolGroupEntry || showWarningIndicator || showFailedIndicator;
+  const toolPresentation = resolveWorkEntryToolPresentation(workEntry);
+  const entryIconName =
+    showWarningIndicator || (showFailedIndicator && !toolPresentation)
+      ? "circle-alert"
+      : workEntryIconName(workEntry);
+  const previewText = workEntryDisplayLabel(workEntry, workspaceRoot);
+  const displayText =
+    !toolPresentation && expanded && workEntry.command?.trim() ? "Command" : previewText;
+  const canExpand =
+    (workEntry.itemType === "dynamic_tool" && workEntry.toolData !== undefined) ||
+    Boolean(
+      workEntryRawCommand(workEntry) ||
+      workEntry.command?.trim() ||
+      workEntry.detail?.trim() ||
+      workEntry.changedFiles?.length,
+    );
+  const expandedBody = expanded ? buildToolCallExpandedBody(workEntry, workspaceRoot) : null;
+  const canExpandProjectedItem = canExpand || workEntry.projectedItem !== undefined;
   const viewedImagePath = workEntryViewedImagePath(workEntry);
   const viewedImage =
-    viewedImagePath && ctx.threadRef
+    viewedImagePath && threadRef
       ? resolveViewedImageAsset(viewedImagePath, {
-          threadId: ctx.threadRef.threadId,
+          threadId: threadRef.threadId,
           workspaceRoot,
         })
       : null;
@@ -3329,13 +3294,13 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   // Ordinary tool failures stay muted; only runtime errors and warnings get
   // color. The red treatment is reserved for severe failures.
   const iconWrapperClass = cn(
-    "flex size-5 shrink-0 items-center justify-center",
+    "flex size-6 shrink-0 items-center justify-center",
     showWarningIndicator
       ? "text-warning"
       : showDestructiveRowStyle
         ? "text-destructive"
         : workEntry.tone === "tool" || showFailedIndicator
-          ? "text-muted-foreground/65"
+          ? "text-icon-muted"
           : iconConfig.className,
   );
   const headingClass = showWarningIndicator
@@ -3344,17 +3309,15 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       ? "font-medium text-destructive"
       : workLogEntryIsToolLike(workEntry)
         ? "text-secondary-label"
-        : "font-medium text-foreground/82";
-  const turnSettled = !activity.activeTurnInProgress;
-  const showNeutralIndicator = !turnSettled && workEntryIndicatesToolNeutralStatus(workEntry);
-  const showSuccessIndicator =
-    workEntryIndicatesToolSuccess(workEntry) ||
-    (turnSettled && workEntryIndicatesToolNeutralStatus(workEntry));
-  const rowToggleProps = canExpand
+        : "text-foreground/80";
+  const accessibleDisplayText = showFailedIndicator
+    ? `${previewText}, tool call failed`
+    : previewText;
+  const rowToggleProps = canExpandProjectedItem
     ? {
         role: "button" as const,
         tabIndex: 0 as const,
-        "aria-label": showFailedIndicator ? `${displayText}, tool call failed` : displayText,
+        "aria-label": accessibleDisplayText,
         "aria-expanded": expanded,
         onClick: toggleExpanded,
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
@@ -3371,123 +3334,65 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       className={cn(
         "flex flex-col rounded-md px-0.5 transition-colors",
         isExpandedToolGroupEntry ? "py-0" : "py-0.5",
-        canExpand &&
+        canExpandProjectedItem &&
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
-      data-tool-logo={toolPresentation?.logo}
       data-v2-item-type={workEntry.projectedItem?.item.type}
       data-v2-item-visibility={workEntry.projectedItem?.visibility}
       {...rowToggleProps}
     >
       <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
         <span
-          className={cn(iconWrapperClass, !showEntryIcon && "invisible")}
-          aria-hidden={!showEntryIcon}
+          className={iconWrapperClass}
+          role={showFailedIndicator ? "img" : undefined}
+          aria-label={showFailedIndicator ? "Tool call failed" : undefined}
         >
-          {toolPresentation?.logo === "t3-code" ? (
-            <T3CodeToolLogo />
-          ) : (
-            <WorkEntryIcon
-              name={entryIconName}
-              className="block size-3.5 shrink-0 stroke-[1.8] opacity-80"
-            />
-          )}
+          <WorkEntryIcon
+            name={entryIconName}
+            className="block size-4 shrink-0 stroke-[1.8] opacity-70"
+          />
         </span>
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <div className="min-w-0 flex-1 overflow-hidden">
-            <p className="flex min-w-0 w-full items-baseline gap-1.5 text-[12px] leading-5">
-              <span className={cn("min-w-0 shrink truncate", headingClass)}>{heading}</span>
-              {workEntry.projectedItem?.visibility !== undefined &&
-              workEntry.projectedItem.visibility !== "local" ? (
-                <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[9px] leading-none text-muted-foreground">
-                  {workEntry.projectedItem.visibility === "inherited" ? "Inherited" : "Synthetic"}
-                </span>
-              ) : null}
-              {preview && (
-                <span className="min-w-0 flex-1 truncate text-muted-foreground/55">{preview}</span>
-              )}
+            <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
+              <span className={cn("min-w-0 flex-1 truncate", headingClass)}>{displayText}</span>
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-px text-muted-foreground/55">
-            <span
-              className="flex size-4 shrink-0 items-center justify-center"
-              aria-hidden={!canExpand}
-            >
-              {canExpand ? (
-                <ChevronDownIcon
-                  className={cn(
-                    "size-3 shrink-0 opacity-70 transition-transform duration-200",
-                    expanded && "rotate-180",
-                  )}
-                  aria-hidden
-                />
-              ) : null}
-            </span>
-            <span className="flex size-4 shrink-0 items-center justify-center">
-              {showFailedIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span
-                        className="flex size-4 items-center justify-center"
-                        aria-label="Tool call failed"
-                      />
-                    }
-                  >
-                    <XIcon
-                      className={cn(
-                        "block size-3 shrink-0",
-                        showDestructiveRowStyle ? "text-destructive" : "text-muted-foreground/70",
-                      )}
-                      aria-hidden
-                    />
-                  </TooltipTrigger>
-                  <TooltipPopup>Failed</TooltipPopup>
-                </Tooltip>
-              ) : showSuccessIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span className="flex size-4 items-center justify-center" />}
-                  >
-                    <span className="inline-flex size-4 items-center justify-center">
-                      <CheckIcon
-                        className="block size-3 shrink-0 stroke-current"
-                        stroke="currentColor"
-                        aria-hidden
-                      />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipPopup>Completed</TooltipPopup>
-                </Tooltip>
-              ) : showNeutralIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span className="flex size-4 items-center justify-center" />}
-                  >
-                    <MinusIcon className="block size-3 shrink-0 opacity-70" aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipPopup>Empty</TooltipPopup>
-                </Tooltip>
-              ) : null}
-            </span>
-          </div>
+          {showFailedIndicator && toolPresentation ? (
+            <XIcon aria-hidden className="size-3 shrink-0 text-icon-muted" />
+          ) : null}
+          <span
+            className={cn(
+              "flex size-4 shrink-0 items-center justify-center",
+              !canExpandProjectedItem && "invisible",
+            )}
+            aria-hidden
+          >
+            <ChevronDownIcon
+              className={cn(
+                "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+                expanded && "rotate-180",
+              )}
+            />
+          </span>
         </div>
       </div>
-      {expanded && canExpand ? (
+      {expanded && canExpandProjectedItem && (expandedBody || workEntry.projectedItem) ? (
         <div
           className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
-          {viewedImage && ctx.threadRef ? (
+          {viewedImage && threadRef ? (
             <div className="mb-1.5">
               <ChatMarkdownAssetImage
-                environmentId={ctx.threadRef.environmentId}
+                environmentId={threadRef.environmentId}
                 resource={viewedImage.resource}
                 alt={viewedImage.alt}
                 srcFragment={viewedImage.srcFragment}
+                workspaceRoot={workspaceRoot}
                 style={{ maxHeight: "16rem" }}
-                onImageExpand={ctx.onImageExpand}
+                onImageExpand={onImageExpand}
               />
             </div>
           ) : null}

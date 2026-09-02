@@ -1953,7 +1953,8 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain('data-v2-item-type="error"');
     expect(markup).toContain("Retrying provider (2/5)");
-    expect(markup).toContain("The response stream disconnected.");
+    // The failure message stays behind the row's expander.
+    expect(markup).toContain('aria-expanded="false"');
     expect(markup).not.toContain('data-v2-event-disclosure="true"');
   });
 
@@ -2027,7 +2028,6 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain('data-v2-item-type="command_execution"');
     expect(markup).toContain('data-v2-item-visibility="inherited"');
-    expect(markup).toContain("Inherited");
     expect(markup).toContain("Received 1 update and ran 1 command");
   });
 
@@ -2100,8 +2100,8 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('data-tool-logo="t3-code"');
-    expect(markup).toContain('src="/apple-touch-icon.png"');
+    // The T3 wordmark replaces the generic tool icon for T3 MCP calls.
+    expect(markup).toContain('viewBox="15.5309 37 94.3941 56.96"');
     expect(markup).toContain("Read a T3 thread");
     expect(markup).not.toContain("mcp__t3-code__t3_thread_read");
   });
@@ -2335,7 +2335,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("lucide-x");
+    expect(markup).toContain("lucide-circle-alert");
     expect(markup).toContain('aria-label="Tool call failed"');
     // Ordinary tool failures render muted, not red.
     expect(markup).not.toContain("text-destructive");
@@ -2374,7 +2374,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("lucide-x");
+    expect(markup).toContain("lucide-circle-alert");
     expect(markup).toContain("text-destructive");
   });
 });

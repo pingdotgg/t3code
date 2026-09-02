@@ -34,14 +34,8 @@ import {
 } from "@t3tools/contracts";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
 import {
-  summarizeT3ToolCalls,
-  type T3ToolSummaryCall,
-} from "@t3tools/client-runtime/t3ToolSummary";
-import {
   resolveT3McpToolPresentation,
-  resolveT3McpToolSummaryAction,
   type T3McpToolPresentation,
-  type T3McpToolSummaryAction,
 } from "@t3tools/shared/t3McpToolPresentation";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 
@@ -67,7 +61,9 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   const toolPresentation = resolveWorkEntryToolPresentation(entry);
   if (toolPresentation) return toolPresentation.displayName;
   if (entry.command) return entry.command;
-  if (entry.detail) return entry.detail;
+  // v2 provider error items carry the retry progress in the label; the
+  // failure message is the detail behind the expander.
+  if (entry.detail && entry.itemType !== "error") return entry.detail;
   const [firstPath] = entry.changedFiles ?? [];
   if (firstPath) {
     const path = formatWorkspaceRelativePath(firstPath, workspaceRoot);

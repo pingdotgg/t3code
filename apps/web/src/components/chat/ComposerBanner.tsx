@@ -107,7 +107,7 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
         "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
         // Adjacent attachments share their outline, including notices outside the form.
         "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0",
-        "not-first:*:data-[composer-banner-width=content]:w-full",
+        "[&+:has([data-chat-composer-form])_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:rounded-none [&+:has([data-chat-composer-form])_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:border-t-0",
         className,
       )}
       {...props}
@@ -115,13 +115,11 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-/** Each column keeps its own outline and meets the same composer edge. */
 function Dock({ className, ...props }: ComponentProps<"div">) {
   return (
-    <div
-      data-slot="composer-banner-dock"
+    <Attachment
       className={cn(
-        "mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(var(--chat-content-max-width)-2.75rem)] items-end gap-1",
+        "flex items-end gap-1 not-has-data-[composer-banner-surface=attached]:hidden",
         className,
       )}
       {...props}
@@ -129,15 +127,13 @@ function Dock({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
+/** Attachments share a column while neighboring tabs keep their own surface. */
 function Column({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
-      data-slot="composer-banner-column"
       className={cn(
         "flex min-w-0 flex-1 flex-col empty:hidden",
-        // The column already sits inside the dock's inset, so attachments span
-        // it fully; their own standalone inset width would double-indent.
-        "[&>[data-slot=composer-banner-attachment]]:w-full",
+        "[&>[data-slot=composer-banner-attachment]]:w-full [&>[data-slot=composer-banner-attachment]:last-child]:mb-0",
         className,
       )}
       {...props}

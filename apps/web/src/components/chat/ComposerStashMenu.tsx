@@ -49,7 +49,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   const highlightedEntry = entries.find((entry) => entry.id === highlightedId) ?? entries[0];
 
   useEffect(() => {
-    const closeOnOutsideClick = (event: MouseEvent) => {
+    const closeOnOutsidePointer = (event: PointerEvent) => {
       const drawer = drawerRef.current;
       if (
         (drawer && event.composedPath().includes(drawer)) ||
@@ -60,10 +60,8 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
       }
       onClose();
     };
-    // Finish the clicked control's action before closing this in-flow attachment
-    // moves the other composer controls under the pointer.
-    document.addEventListener("click", closeOnOutsideClick);
-    return () => document.removeEventListener("click", closeOnOutsideClick);
+    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
   }, [onClose]);
 
   useEffect(() => {
