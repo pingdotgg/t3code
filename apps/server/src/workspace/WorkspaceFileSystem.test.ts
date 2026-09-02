@@ -73,6 +73,29 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("reads host files outside the workspace root by absolute path", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outsideDir = yield* makeTempDir;
+        yield* writeTextFile(outsideDir, "cleanup-report.md", "# Report\n");
+        const absolutePath = path.join(outsideDir, "cleanup-report.md");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: absolutePath,
+        });
+
+        expect(result).toEqual({
+          relativePath: absolutePath,
+          contents: "# Report\n",
+          byteLength: 9,
+          truncated: false,
+        });
+      }),
+    );
+
     it.effect("rejects reads outside the workspace root", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -209,6 +232,22 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
         expect(result).toEqual({ relativePath: "plans/effect-rpc.md" });
         expect(saved).toBe("# Plan\n");
+      }),
+    );
+
+    it.effect("rejects writes by absolute path", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outsideDir = yield* makeTempDir;
+        const absolutePath = path.join(outsideDir, "cleanup-report.md");
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: absolutePath, contents: "# Edited\n" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
       }),
     );
 

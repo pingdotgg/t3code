@@ -94,6 +94,15 @@ have a cached copy. Supported video formats and codecs depend on the browser or 
 Bare paths in ordinary prose and paths inside code blocks stay text. Raw HTML `<video>` tags
 are not supported; use the Markdown embed syntax above.
 
+## Files outside the workspace
+
+When an agent links to a file it wrote outside the workspace, such as a Markdown report in
+`/tmp`, select the link to open it in the file viewer. The viewer shows the file read-only, with
+rendered Markdown available as usual; it cannot edit files outside the workspace. HTML and PDF
+files outside the workspace open the same way as ones inside it, including the integrated browser
+where it is available. Because such a file is served on its own, an HTML page outside the workspace
+cannot load scripts, styles, or images from files beside it.
+
 ## Changing projects
 
 On web and desktop, changing the project from a new thread keeps the current environment when that

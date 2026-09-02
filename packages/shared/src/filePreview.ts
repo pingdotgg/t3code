@@ -24,12 +24,28 @@ const IMAGE_MIME_TYPE_BY_EXTENSION = new Map([
   [".webp", "image/webp"],
 ]);
 
+const BROWSER_MIME_TYPE_BY_EXTENSION = new Map([
+  [".htm", "text/html"],
+  [".html", "text/html"],
+  [".pdf", "application/pdf"],
+]);
+
 /** Classifies a literal filesystem extension, without URL decoding or suffix removal. */
 export function mediaMimeTypeFromExtension(extension: string): string | null {
   if (!/^\.[a-z0-9]+$/i.test(extension)) return null;
   return (
     IMAGE_MIME_TYPE_BY_EXTENSION.get(extension.toLowerCase()) ??
     videoMimeType({ name: `media${extension}`, mimeType: "" })
+  );
+}
+
+/** Files the server serves in place from anywhere on its host: media plus browser documents. */
+export function hostPreviewMimeTypeFromExtension(extension: string): string | null {
+  if (!/^\.[a-z0-9]+$/i.test(extension)) return null;
+  return (
+    mediaMimeTypeFromExtension(extension) ??
+    BROWSER_MIME_TYPE_BY_EXTENSION.get(extension.toLowerCase()) ??
+    null
   );
 }
 

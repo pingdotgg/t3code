@@ -28,22 +28,31 @@ managed relay connectivity:
 The desktop bootstrap credential and command-line administrative bootstrap
 credentials additionally grant `access:read access:write relay:write`.
 
+## Host file access
+
+Clients with `orchestration:read` can read files anywhere the environment's server account can
+read, following the environment-wide authorization model rather than introducing per-project
+filesystem permissions. `projects.readFile` accepts an absolute path and returns the text of that
+host file; only workspace-relative paths pass its root check, and `projects.writeFile` never
+accepts an absolute path. Clients use this to show files an agent wrote outside the workspace, such
+as a report in a temp directory, read-only.
+
 ## Media preview access
 
 Clients with `orchestration:read` can request a `media-file` URL through `assets.createUrl` for
-supported images and videos anywhere the environment's server account can read. A thread ID
-supplies the workspace for relative paths; absolute paths refer to the environment host, not the
-client. This follows the environment-wide authorization model rather than introducing per-project
-filesystem permissions.
+supported images, videos, HTML, and PDF files anywhere the environment's server account can read.
+A thread ID supplies the workspace for relative paths; absolute paths refer to the environment
+host, not the client.
 
 [`AssetAccess.ts`](../../apps/server/src/assets/AssetAccess.ts) resolves symlinks, requires a regular
 file, and validates the resolved file's literal extension. It opens the file and signs its canonical
 path and device/inode identity for one hour. The token grants access to that exact file, not adjacent
 files or its containing directory. Serving rechecks the canonical path, media type, and opened
 descriptor's identity, then streams full or partial responses from that descriptor. Replacing a
-file atomically requires a freshly signed URL; editing it in place does not. The existing workspace
-boundary still applies to HTML, PDF, and other workspace previews. Uploaded attachments keep their
-separate asset resource.
+file atomically requires a freshly signed URL; editing it in place does not. Because the token names
+one file, an HTML document served this way cannot load sibling assets; the directory-scoped
+`workspace-file` resource remains the route for HTML inside the workspace. Uploaded attachments keep
+their separate asset resource.
 
 Signed asset URLs are bearer credentials. Anyone who obtains a URL and can reach the environment
 can fetch that file until it expires. Clients should copy the authored reference, not the temporary

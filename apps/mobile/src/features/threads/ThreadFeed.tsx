@@ -166,7 +166,12 @@ import {
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { usePreparedConnection } from "../../state/session";
 import * as Option from "effect/Option";
-import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+import {
+  basename,
+  fileRoutePathSegments,
+  isAbsolutePath,
+  resolveWorkspaceRelativeFilePath,
+} from "../files/filePath";
 import { MARKDOWN_IMAGE_MAX_WIDTH, resolveMarkdownImageDisplaySize } from "./markdownImageSize";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
@@ -2068,7 +2073,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           navigation.navigate("ThreadFile", {
             environmentId: String(props.environmentId),
             threadId: String(props.threadId),
-            path: relativePath.split("/").filter((segment) => segment.length > 0),
+            path: fileRoutePathSegments(relativePath),
             ...(presentation.line ? { line: String(presentation.line) } : {}),
           });
           return;
@@ -2087,6 +2092,35 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         } else {
           setExpandedFile((current) => current ?? media.source);
         }
+        return;
+      }
+
+      // A host file outside the workspace, such as a report an agent wrote to
+      // a temp directory, opens read-only in the file screen.
+      if (presentation.kind === "file" && isAbsolutePath(presentation.path)) {
+        void Haptics.selectionAsync();
+        if (isPdfFile({ name: presentation.path })) {
+          setExpandedFile(
+            (current) =>
+              current ?? {
+                kind: "pdf",
+                name: basename(presentation.path),
+                environmentId: props.environmentId,
+                resource: {
+                  _tag: "media-file",
+                  threadId: props.threadId,
+                  path: presentation.path,
+                },
+              },
+          );
+          return;
+        }
+        navigation.navigate("ThreadFile", {
+          environmentId: String(props.environmentId),
+          threadId: String(props.threadId),
+          path: fileRoutePathSegments(presentation.path),
+          ...(presentation.line ? { line: String(presentation.line) } : {}),
+        });
         return;
       }
 

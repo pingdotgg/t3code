@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isSvgImagePreviewFile, resolveWorkspaceRelativeFilePath } from "./filePath";
+import {
+  fileRoutePathSegments,
+  isSvgImagePreviewFile,
+  resolveWorkspaceRelativeFilePath,
+} from "./filePath";
+
+describe("fileRoutePathSegments", () => {
+  it("round-trips workspace-relative and host paths through the route", () => {
+    expect(fileRoutePathSegments("src/main.ts")).toEqual(["src", "main.ts"]);
+    expect(fileRoutePathSegments("/tmp/t3-cleanup/report.md").join("/")).toBe(
+      "/tmp/t3-cleanup/report.md",
+    );
+  });
+});
 
 describe("resolveWorkspaceRelativeFilePath", () => {
   it("keeps normalized workspace-relative paths", () => {
