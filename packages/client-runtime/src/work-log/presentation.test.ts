@@ -430,6 +430,15 @@ describe("toolGroupStats", () => {
     ).toEqual({ failureCount: 2, durationMs: 1300 });
   });
 
+  it("ignores thinking notes when summing durations", () => {
+    expect(
+      toolGroupStats([
+        command({ facts: { durationMs: 1000 } }),
+        { label: "Considering the failing test", tone: "thinking" },
+      ]),
+    ).toEqual({ failureCount: 0, durationMs: 1000 });
+  });
+
   it("reports no duration when any tool call lacks one", () => {
     expect(toolGroupStats([command({ facts: { durationMs: 1000 } }), command({})])).toEqual({
       failureCount: 0,

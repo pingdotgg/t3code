@@ -495,7 +495,8 @@ export function toolGroupStats(entries: ReadonlyArray<WorkLogPresentationEntry>)
   let missingDuration = false;
   let sawTool = false;
   for (const entry of entries) {
-    if (!workLogEntryIsToolLike(entry)) continue;
+    // Thinking rows are tool-like for grouping but are notes, not calls.
+    if (!workLogEntryIsToolLike(entry) || entry.tone === "thinking") continue;
     sawTool = true;
     if (workEntryFailed(entry)) failureCount += 1;
     const duration = toolEntryDurationMs(entry);
