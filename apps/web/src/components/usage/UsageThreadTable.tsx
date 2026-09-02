@@ -295,7 +295,7 @@ export function UsageThreadDailyChart({
         <span>
           Daily cost, {formatDayShort(sinceDay)} to {formatDayShort(untilDay)}
         </span>
-        <LegendSwatch className="text-sky-500" label="cache writes" />
+        <LegendSwatch className="text-info" label="cache writes" />
         <LegendSwatch className="text-muted-foreground" label="cache reads" />
         <LegendSwatch className="text-success" label="fresh input + output" />
       </div>
@@ -313,7 +313,7 @@ export function UsageThreadDailyChart({
           const segments = [
             { value: entry.freshUsd, className: "text-success" },
             { value: entry.cacheReadUsd, className: "text-muted-foreground" },
-            { value: entry.cacheWriteUsd, className: "text-sky-500" },
+            { value: entry.cacheWriteUsd, className: "text-info" },
           ];
           let y = CHART_HEIGHT;
           const total = entry.cacheWriteUsd + entry.cacheReadUsd + entry.freshUsd;
