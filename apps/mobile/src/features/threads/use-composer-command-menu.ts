@@ -9,10 +9,15 @@ import {
   normalizeSearchQuery,
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
+import {
+  dedupeProviderSkillsByName,
+  getProviderSkillsForSlashMenu,
+  isProviderSkillUserInvocable,
+} from "@t3tools/client-runtime/providerSkills";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
-import { useComposerPathSearch } from "../../state/use-composer-path-search";
+import { useComposerPathSearch } from "../../state/queries";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
 
@@ -110,8 +115,14 @@ export function useComposerCommandMenu({
           (item.command === "model" || onUpdateInteractionMode !== undefined),
       );
 
+      // A provider expands a slash command only when it opens the whole
+      // message; elsewhere it arrives as literal text. Built-ins apply
+      // locally and skills insert a `$` mention the server dispatches from
+      // any position, so only provider commands are position-gated.
       const providerCommands: ComposerCommandItem[] = [];
-      for (const command of selectedProviderStatus?.slashCommands ?? []) {
+      const expandableCommands =
+        trigger.rangeStart === 0 ? (selectedProviderStatus?.slashCommands ?? []) : [];
+      for (const command of expandableCommands) {
         if (!command.name.toLowerCase().includes(q)) continue;
         // Codex feedback uploads an existing thread's session and logs.
         if (
@@ -130,7 +141,7 @@ export function useComposerCommandMenu({
         });
       }
 
-      const skillItems = (selectedProviderStatus?.skills ?? [])
+      const skillItems = getProviderSkillsForSlashMenu(selectedProviderStatus?.skills ?? [], true)
         .filter((skill) => matchesSlashSkillQuery(skill, q))
         .map((skill) => ({
           id: `skill:${skill.name}`,
@@ -144,7 +155,9 @@ export function useComposerCommandMenu({
     }
 
     if (trigger.kind === "skill") {
-      const enabledSkills = (selectedProviderStatus?.skills ?? []).filter((skill) => skill.enabled);
+      const enabledSkills = dedupeProviderSkillsByName(
+        (selectedProviderStatus?.skills ?? []).filter(isProviderSkillUserInvocable),
+      );
       const normalizedQuery = normalizeSearchQuery(trigger.query, {
         trimLeadingPattern: /^\$+/,
       });

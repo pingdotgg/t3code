@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
   MessageId,
@@ -21,6 +22,10 @@ import {
 } from "react";
 import { ActivityIndicator, Platform, Pressable, View, type ViewStyle } from "react-native";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import {
+  composerAttachmentUploadBlockReason,
+  composerAttachmentUploadsAtom,
+} from "../../state/composer-attachment-uploads";
 import Animated, {
   FadeIn,
   FadeInDown,
@@ -365,7 +370,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const isExpanded = isFocused || settingsSheetPresentation.isActive;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
-  const canSend = hasContent && !voiceInput.blocksSubmission;
+  const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
+  const attachmentBlockReason = composerAttachmentUploadBlockReason({
+    environmentId: props.environmentId,
+    attachments: props.draftAttachments,
+    connected: props.connectionState === "connected",
+    serverConfig: props.serverConfig,
+    states: uploadStates,
+  });
+  const canSend = hasContent && !voiceInput.blocksSubmission && attachmentBlockReason === null;
 
   // Keep the feed inset aligned with the card or compact dictation strip.
   useEffect(() => {
@@ -617,6 +630,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 exiting={FadeOut.duration(120)}
               >
                 <ComposerAttachmentStrip
+                  environmentId={props.environmentId}
                   attachments={props.draftAttachments}
                   onRemove={voiceInput.isBusy ? () => undefined : props.onRemoveDraftImage}
                   onPressPreview={voiceInput.isBusy ? undefined : onPressPreview}
@@ -668,6 +682,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               <View className="flex-row gap-1 pl-1">
                 {props.draftAttachments.slice(0, 3).map((attachment) => (
                   <ComposerAttachmentThumbnail
+                    environmentId={props.environmentId}
                     key={attachment.id}
                     attachment={attachment}
                     size={30}
@@ -703,10 +718,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   />
                 ) : (
                   <ComposerActionButton
-                    accessibilityLabel={sendLabel}
+                    accessibilityLabel={attachmentBlockReason ?? sendLabel}
                     icon="arrow.up"
                     variant="primary"
-                    disabled={!hasContent}
+                    disabled={!canSend}
                     onPress={handleSend}
                   />
                 )}
@@ -794,7 +809,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     />
                   ) : voicePresentation.showsSend ? (
                     <ComposerActionButton
-                      accessibilityLabel={sendLabel}
+                      accessibilityLabel={attachmentBlockReason ?? sendLabel}
                       icon="arrow.up"
                       variant="primary"
                       disabled={!canSend}
