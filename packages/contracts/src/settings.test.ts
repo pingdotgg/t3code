@@ -67,6 +67,15 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings proactive panels", () => {
+  it("is opt-in and accepts client-local updates", () => {
+    expect(decodeClientSettings({}).proactivePanelsEnabled).toBe(false);
+    expect(decodeClientSettingsPatch({ proactivePanelsEnabled: true }).proactivePanelsEnabled).toBe(
+      true,
+    );
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it("defaults to hold", () => {
     expect(decodeClientSettings({}).confirmQuit).toBe("hold");

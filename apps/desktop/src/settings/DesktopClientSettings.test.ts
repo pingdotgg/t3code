@@ -43,6 +43,7 @@ const clientSettings: ClientSettings = {
   glassOpacity: 80,
   panelAnimationDurationMs: 0,
   planModeEnabled: false,
+  proactivePanelsEnabled: true,
   showSkillsInSlashMenu: false,
   providerModelPreferences: {},
   sidebarProjectGroupingMode: "repository_path",

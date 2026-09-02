@@ -185,6 +185,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["diff ignore spaces edits default"],
   },
   {
+    id: "proactive-panels",
+    title: "Proactive panels",
+    to: "/settings/general",
+    searchTerms: ["automatically open diff pull request pr right panel agent completion"],
+  },
+  {
     id: "skills-in-slash-menu",
     title: "Show skills in slash menu",
     to: "/settings/general",

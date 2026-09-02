@@ -78,6 +78,28 @@ export function agentControlledBrowserCloseConfirmation(
   ].join("\n");
 }
 
+export function shouldOpenProactivePullRequest(
+  previousTargetKey: string | null | undefined,
+  targetKey: string | null,
+): boolean {
+  return previousTargetKey !== undefined && targetKey !== null && targetKey !== previousTargetKey;
+}
+
+export function shouldOpenProactiveTurnDiff(input: {
+  previousRunningTurnId: TurnId | null | undefined;
+  runningTurnId: TurnId | null;
+  settledTurnId: TurnId | null;
+  turnCompleted: boolean;
+}): boolean {
+  return (
+    input.previousRunningTurnId !== undefined &&
+    input.previousRunningTurnId !== null &&
+    input.runningTurnId === null &&
+    input.turnCompleted &&
+    input.settledTurnId === input.previousRunningTurnId
+  );
+}
+
 export function codexArtifactTemplatePromptToAppend(
   currentDraft: string,
   template: CodexArtifactTemplate,

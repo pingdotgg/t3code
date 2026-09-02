@@ -525,6 +525,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
         : []),
+      ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
+        ? ["Proactive panels"]
+        : []),
       ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
         ? ["Show skills in slash menu"]
         : []),
@@ -588,6 +591,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
+      settings.proactivePanelsEnabled,
       settings.environmentIdentificationMode,
       settings.contextWindowMeterEnabled,
       settings.fontFamilyCode,
@@ -683,6 +687,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
+      proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
@@ -2202,6 +2207,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ diffIgnoreWhitespace: Boolean(checked) })
               }
               aria-label="Hide whitespace changes by default"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("proactive-panels")}
+          description="Automatically open the linked pull request when it appears and the turn diff when agent work finishes."
+          resetAction={
+            settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled ? (
+              <SettingResetButton
+                label="proactive panels"
+                onClick={() =>
+                  updateSettings({
+                    proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.proactivePanelsEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ proactivePanelsEnabled: Boolean(checked) })
+              }
+              aria-label="Proactive panels"
             />
           }
         />
