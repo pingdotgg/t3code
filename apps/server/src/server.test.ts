@@ -17,6 +17,8 @@ import {
   KeybindingRule,
   MessageId,
   ExternalLauncherCommandNotFoundError,
+  OrchestrationShellSnapshot,
+  type OrchestrationShellStreamItem,
   OrchestrationThreadDetailSnapshot,
   type OrchestrationThreadStreamItem,
   type OrchestrationThreadActivity,
@@ -58,11 +60,11 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
-import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   FetchHttpClient,
@@ -82,26 +84,9 @@ const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 const decodeTransferThreadSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationThreadDetailSnapshot),
 );
-
-const collectQueueUntil = Effect.fn("TransferBudget.collectQueueUntil")(function* <A>(
-  queue: Queue.Queue<A>,
-  predicate: (value: A) => boolean,
-  waitDescription: string,
-) {
-  return yield* Effect.gen(function* () {
-    const values: A[] = [];
-    while (true) {
-      const value = yield* Queue.take(queue);
-      values.push(value);
-      if (predicate(value)) return values;
-    }
-  }).pipe(
-    Effect.timeoutOrElse({
-      duration: "10 seconds",
-      orElse: () => Effect.die(new Error(`Timed out waiting for ${waitDescription}`)),
-    }),
-  );
-});
+const decodeTransferShellSnapshot = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationShellSnapshot),
+);
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
@@ -171,16 +156,19 @@ import * as Data from "effect/Data";
 
 import { makeOrchestrationIntegrationHarness } from "../integration/OrchestrationEngineHarness.integration.ts";
 import {
-  countingWsRpcProtocolLayer,
-  makeCountingWsRpcClient,
-  makeWebSocketTransferRecorder,
   measureHttpGet,
+  openMeasuredWsClient,
   transferDelta,
 } from "../integration/NetworkTransferMeasurement.integration.ts";
+import { makeSqlStatementCounter } from "../integration/SqlStatementCounter.integration.ts";
 import {
+  awaitSubscriptionSynchronized,
+  collectQueueUntil,
   expectedMeasuredAssistantText,
   queueMeasuredTransferTurn,
   seedTransferBudgetHistory,
+  subscribeShellItems,
+  subscribeThreadItems,
   TRANSFER_HISTORY_TURN_COUNT,
   TRANSFER_MEASURED_TURN_CREATED_AT,
   TRANSFER_MEASURED_TURN_INDEX,
@@ -888,6 +876,11 @@ const buildAppUnderTest = (options?: {
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+          getEventReplayStats: ({ fromSequenceExclusive, toSequenceInclusive }) =>
+            Effect.succeed({
+              eventCount: Math.max(0, toSequenceInclusive - fromSequenceExclusive),
+              payloadBytes: 0,
+            }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
@@ -7366,6 +7359,70 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("subscriptions snapshot instead of decoding an oversized replay range", () =>
+    Effect.gen(function* () {
+      let readEventsCalls = 0;
+      let replayStatsCalls = 0;
+      const thread = makeDefaultOrchestrationReadModel().threads[0]!;
+      const shell = makeDefaultOrchestrationThreadShell({ id: thread.id });
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(5),
+            readEvents: () =>
+              Stream.sync(() => {
+                readEventsCalls += 1;
+                return {} as OrchestrationEvent;
+              }),
+          },
+          projectionSnapshotQuery: {
+            getEventReplayStats: () =>
+              Effect.sync(() => {
+                replayStatsCalls += 1;
+                return { eventCount: 5, payloadBytes: 8 * 1024 * 1024 + 1 };
+              }),
+            getThreadDetailSnapshot: () =>
+              Effect.succeed(Option.some({ snapshotSequence: 5, thread })),
+            getShellSnapshot: () =>
+              Effect.succeed({
+                snapshotSequence: 5,
+                projects: [],
+                threads: [shell],
+                updatedAt: "2026-01-01T00:00:00.000Z",
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const threadItems = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: thread.id,
+            afterSequence: 0,
+            requestCompletionMarker: true,
+          }).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      );
+      const shellItems = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+            afterSequence: 0,
+            requestCompletionMarker: true,
+          }).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      );
+
+      assert.equal(threadItems[0]?.kind, "snapshot");
+      assert.equal(threadItems[1]?.kind, "synchronized");
+      assert.equal(shellItems[0]?.kind, "snapshot");
+      assert.equal(shellItems[1]?.kind, "synchronized");
+      assert.equal(replayStatsCalls, 2);
+      assert.equal(readEventsCalls, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("subscribeShell replaces a cursor ahead of the authoritative head", () =>
     Effect.gen(function* () {
       let readEventsCalls = 0;
@@ -9244,9 +9301,12 @@ it.live(
 
       const runs = yield* Effect.forEach(
         providers,
-        (provider) =>
-          Effect.acquireUseRelease(
-            makeOrchestrationIntegrationHarness({ provider }),
+        (provider) => {
+          // One counter for the orchestration runtime and the HTTP/WS handlers,
+          // so reactor writes and subscription reads land in the same total.
+          const sqlCounter = makeSqlStatementCounter();
+          return Effect.acquireUseRelease(
+            makeOrchestrationIntegrationHarness({ provider, tracer: sqlCounter.tracer }),
             (harness) =>
               Effect.gen(function* () {
                 yield* seedTransferBudgetHistory(harness, provider);
@@ -9259,19 +9319,10 @@ it.live(
 
                 const baseUrl = yield* getHttpServerUrl();
                 const cookie = yield* getAuthenticatedSessionCookieHeader();
-
-                const recorder = makeWebSocketTransferRecorder();
                 const wsUrl = baseUrl.replace(/^http:/, "ws:") + "/ws";
-                const protocolLayer = countingWsRpcProtocolLayer({
-                  url: wsUrl,
-                  cookie,
-                  recorder,
-                });
 
                 return yield* Effect.scoped(
                   Effect.gen(function* () {
-                    const client = yield* makeCountingWsRpcClient;
-
                     const threadSnapshot = yield* measureHttpGet({
                       url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}`,
                       headers: { cookie },
@@ -9285,29 +9336,78 @@ it.live(
                       decodedThread.thread.messages.length,
                       TRANSFER_HISTORY_TURN_COUNT * 2,
                     );
+                    const shellSnapshot = yield* measureHttpGet({
+                      url: `${baseUrl}/api/orchestration/shell`,
+                      headers: { cookie },
+                    });
+                    assert.equal(shellSnapshot.status, 200);
+                    const decodedShell = yield* decodeTransferShellSnapshot(
+                      Buffer.from(shellSnapshot.decodedBody).toString("utf8"),
+                    );
+                    assert.equal(decodedShell.threads.length, 1);
 
-                    const threadItems = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
-                    yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
-                      threadId: TRANSFER_THREAD_ID,
-                      afterSequence: decodedThread.snapshotSequence,
-                      requestCompletionMarker: true,
-                    }).pipe(
-                      Stream.runForEach((item) =>
-                        Queue.offer(threadItems, item).pipe(Effect.asVoid),
+                    // Three sockets, the way real installs look: the capped
+                    // thread-only client, a shell-only socket that isolates the
+                    // sidebar cost, and a second device holding both.
+                    const threadClient = yield* openMeasuredWsClient({ url: wsUrl, cookie });
+                    const shellClient = yield* openMeasuredWsClient({ url: wsUrl, cookie });
+                    const secondClient = yield* openMeasuredWsClient({ url: wsUrl, cookie });
+                    assert.include(
+                      threadClient.recorder.negotiatedExtensions(),
+                      "permessage-deflate",
+                    );
+
+                    const threadItems = yield* subscribeThreadItems(
+                      threadClient,
+                      decodedThread.snapshotSequence,
+                    );
+                    const shellItems = yield* subscribeShellItems(
+                      shellClient,
+                      decodedShell.snapshotSequence,
+                    );
+                    const secondThreadItems = yield* subscribeThreadItems(
+                      secondClient,
+                      decodedThread.snapshotSequence,
+                    );
+                    const secondShellItems = yield* subscribeShellItems(
+                      secondClient,
+                      decodedShell.snapshotSequence,
+                    );
+                    assert.equal(
+                      yield* awaitSubscriptionSynchronized(
+                        threadItems,
+                        `${provider} thread subscription to synchronize`,
                       ),
-                      Effect.forkScoped,
+                      "replay",
                     );
-                    const initialThreadItems = yield* collectQueueUntil(
-                      threadItems,
-                      (item) => item.kind === "synchronized",
-                      `${provider} thread subscription to synchronize`,
+                    assert.equal(
+                      yield* awaitSubscriptionSynchronized(
+                        shellItems,
+                        `${provider} shell subscription to synchronize`,
+                      ),
+                      "replay",
                     );
-                    assert.isFalse(initialThreadItems.some((item) => item.kind === "snapshot"));
-                    assert.include(recorder.negotiatedExtensions(), "permessage-deflate");
+                    assert.equal(
+                      yield* awaitSubscriptionSynchronized(
+                        secondThreadItems,
+                        `${provider} second client thread subscription to synchronize`,
+                      ),
+                      "replay",
+                    );
+                    assert.equal(
+                      yield* awaitSubscriptionSynchronized(
+                        secondShellItems,
+                        `${provider} second client shell subscription to synchronize`,
+                      ),
+                      "replay",
+                    );
 
                     yield* queueMeasuredTransferTurn(harness, provider);
-                    const turnStartTotals = recorder.totals();
-                    yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                    const turnStartTotals = threadClient.recorder.totals();
+                    const shellTurnStartTotals = shellClient.recorder.totals();
+                    const secondTurnStartTotals = secondClient.recorder.totals();
+                    const turnStartSqlStatements = sqlCounter.count();
+                    yield* threadClient.client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
                       type: "thread.turn.start",
                       commandId: CommandId.make(`transfer:${provider}:measured-turn`),
                       threadId: TRANSFER_THREAD_ID,
@@ -9323,26 +9423,95 @@ it.live(
                       createdAt: TRANSFER_MEASURED_TURN_CREATED_AT,
                     });
                     yield* waitForTurnQuiesced(harness, TRANSFER_MEASURED_TURN_INDEX + 1);
-                    const finalThreadSequence = yield* harness.engine
+                    const finalSequences = yield* harness.engine
                       .readEvents(decodedThread.snapshotSequence, 10_000)
                       .pipe(
                         Stream.runFold(
-                          () => decodedThread.snapshotSequence,
-                          (sequence, event) =>
-                            event.aggregateId === TRANSFER_THREAD_ID && isThreadDetailEvent(event)
-                              ? Math.max(sequence, event.sequence)
-                              : sequence,
+                          () => ({
+                            detail: decodedThread.snapshotSequence,
+                            aggregate: decodedShell.snapshotSequence,
+                          }),
+                          (sequences, event) =>
+                            event.aggregateId !== TRANSFER_THREAD_ID
+                              ? sequences
+                              : {
+                                  detail: isThreadDetailEvent(event)
+                                    ? Math.max(sequences.detail, event.sequence)
+                                    : sequences.detail,
+                                  aggregate: Math.max(sequences.aggregate, event.sequence),
+                                },
                         ),
                       );
+                    const finalThreadSequence = finalSequences.detail;
                     assert.isAbove(finalThreadSequence, decodedThread.snapshotSequence);
 
+                    const reachedFinalThreadEvent = (item: OrchestrationThreadStreamItem) =>
+                      item.kind === "event" && item.event.sequence === finalThreadSequence;
+                    // Shell items carry the sequence of the latest coalesced
+                    // event for the thread, so the last one lands at or past
+                    // the final thread event.
+                    const reachedFinalShellEvent = (item: OrchestrationShellStreamItem) =>
+                      item.kind === "thread-upserted" && item.sequence >= finalSequences.aggregate;
                     yield* collectQueueUntil(
                       threadItems,
-                      (item) =>
-                        item.kind === "event" && item.event.sequence === finalThreadSequence,
+                      reachedFinalThreadEvent,
                       `${provider} thread stream to reach sequence ${finalThreadSequence}`,
                     );
-                    const measuredTurnWebSocket = transferDelta(turnStartTotals, recorder.totals());
+                    yield* collectQueueUntil(
+                      secondThreadItems,
+                      reachedFinalThreadEvent,
+                      `${provider} second client thread stream to reach sequence ${finalThreadSequence}`,
+                    );
+                    yield* collectQueueUntil(
+                      shellItems,
+                      reachedFinalShellEvent,
+                      `${provider} shell stream to reach sequence ${finalSequences.aggregate}`,
+                    );
+                    yield* collectQueueUntil(
+                      secondShellItems,
+                      reachedFinalShellEvent,
+                      `${provider} second client shell stream to reach sequence ${finalSequences.aggregate}`,
+                    );
+                    const measuredTurnWebSocket = transferDelta(
+                      turnStartTotals,
+                      threadClient.recorder.totals(),
+                    );
+                    const measuredTurnShellWebSocket = transferDelta(
+                      shellTurnStartTotals,
+                      shellClient.recorder.totals(),
+                    );
+                    const measuredTurnSecondClientWebSocket = transferDelta(
+                      secondTurnStartTotals,
+                      secondClient.recorder.totals(),
+                    );
+                    const measuredTurnSqlStatements = sqlCounter.count() - turnStartSqlStatements;
+
+                    // The second device drops and comes back with the cursors it
+                    // held before the turn, one subscription at a time so the
+                    // catch-up bytes stay separable.
+                    yield* secondClient.close;
+                    const reconnectSqlStart = sqlCounter.count();
+                    const reconnected = yield* openMeasuredWsClient({ url: wsUrl, cookie });
+                    const reconnectStartTotals = reconnected.recorder.totals();
+                    const reconnectThreadItems = yield* subscribeThreadItems(
+                      reconnected,
+                      decodedThread.snapshotSequence,
+                    );
+                    const reconnectThreadMode = yield* awaitSubscriptionSynchronized(
+                      reconnectThreadItems,
+                      `${provider} reconnected thread subscription to synchronize`,
+                    );
+                    const reconnectThreadTotals = reconnected.recorder.totals();
+                    const reconnectShellItems = yield* subscribeShellItems(
+                      reconnected,
+                      decodedShell.snapshotSequence,
+                    );
+                    const reconnectShellMode = yield* awaitSubscriptionSynchronized(
+                      reconnectShellItems,
+                      `${provider} reconnected shell subscription to synchronize`,
+                    );
+                    const reconnectShellTotals = reconnected.recorder.totals();
+                    const reconnectSqlStatements = sqlCounter.count() - reconnectSqlStart;
 
                     const finalThreadSnapshot = yield* harness.snapshotQuery
                       .getThreadDetailSnapshot(TRANSFER_THREAD_ID)
@@ -9367,12 +9536,29 @@ it.live(
                       provider,
                       threadSnapshot,
                       measuredTurnWebSocket,
+                      shellSnapshot,
+                      measuredTurnShellWebSocket,
+                      measuredTurnSecondClientWebSocket,
+                      reconnectThread: {
+                        mode: reconnectThreadMode,
+                        ...transferDelta(reconnectStartTotals, reconnectThreadTotals),
+                      },
+                      reconnectShell: {
+                        mode: reconnectShellMode,
+                        ...transferDelta(reconnectThreadTotals, reconnectShellTotals),
+                      },
+                      measuredTurnSqlStatements,
+                      reconnectSqlStatements,
                     } satisfies TransferBudgetRun;
-                  }).pipe(Effect.provide(protocolLayer)),
+                  }),
                 );
               }),
             (harness) => harness.dispose,
-          ).pipe(Effect.provide(NodeHttpServerTestWithWsDeflate)),
+          ).pipe(
+            Effect.provideService(Tracer.Tracer, sqlCounter.tracer),
+            Effect.provide(NodeHttpServerTestWithWsDeflate),
+          );
+        },
         { concurrency: 1 },
       );
 

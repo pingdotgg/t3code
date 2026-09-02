@@ -94,6 +94,23 @@ have a cached copy. Supported video formats and codecs depend on the browser or 
 Bare paths in ordinary prose and paths inside code blocks stay text. Raw HTML `<video>` tags
 are not supported; use the Markdown embed syntax above.
 
+## Files outside the workspace
+
+When an agent links to a file it wrote outside the workspace, such as a Markdown report in
+`/tmp`, select the link to open it in the file viewer. The viewer shows the file read-only, with
+rendered Markdown available as usual; it cannot edit files outside the workspace. HTML and PDF
+files outside the workspace open the same way as ones inside it. Because such a file is served on
+its own, an HTML page outside the workspace cannot load scripts, styles, or images from files beside
+it.
+
+## HTML and PDF files in the file viewer
+
+On web and desktop, the file viewer shows HTML and PDF files as a rendered page. Use the
+source toggle in the viewer's header to switch an HTML file between the page and its markup; the
+choice persists like the rendered-Markdown toggle. A link to a line always opens the source. HTML
+runs in an isolated frame with no access to your T3 Code session. On desktop, the integrated
+browser remains available from the same header for a full browser view.
+
 ## Changing projects
 
 On web and desktop, changing the project from a new thread keeps the current environment when that

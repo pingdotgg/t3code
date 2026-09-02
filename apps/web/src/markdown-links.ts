@@ -189,9 +189,15 @@ function hasExternalScheme(path: string): boolean {
   return !POSITION_ONLY_PATTERN.test(rest);
 }
 
+/**
+ * `baseDir` anchors relative links; it defaults to the workspace root and is the
+ * file's own directory when rendering a markdown file. `cwd` stays the workspace
+ * root so the result still knows whether the target is inside it.
+ */
 export function resolveMarkdownFileLinkTarget(
   href: string | undefined,
   cwd?: string,
+  baseDir: string | undefined = cwd,
 ): string | null {
   if (!href) return null;
   const rawHref = normalizeMarkdownLinkDestination(href);
@@ -222,8 +228,8 @@ export function resolveMarkdownFileLinkTarget(
     return pathWithPosition;
   }
 
-  if (!cwd) return null;
-  return resolvePathLinkTarget(pathWithPosition, cwd);
+  if (!baseDir) return null;
+  return resolvePathLinkTarget(pathWithPosition, baseDir);
 }
 
 /**
@@ -235,18 +241,19 @@ export function resolveMarkdownFileLinkTarget(
 export function resolveInlineCodeFileLinkMeta(
   codeText: string,
   cwd?: string,
+  baseDir: string | undefined = cwd,
 ): MarkdownFileLinkMeta | null {
   const candidate = inlineCodeFilePathCandidate(codeText);
   if (candidate === null) return null;
 
-  const resolved = resolveMarkdownFileLinkMeta(candidate, cwd);
+  const resolved = resolveMarkdownFileLinkMeta(candidate, cwd, baseDir);
   if (resolved) return resolved;
 
   // `Makefile:12` — conventional extensionless names fail the generic
   // markdown-link candidate patterns, but here the :line suffix already
   // marked the span as a file reference.
-  if (cwd && isConventionalFilePosition(candidate)) {
-    return buildFileLinkMetaFromTarget(resolvePathLinkTarget(candidate, cwd), cwd);
+  if (baseDir && isConventionalFilePosition(candidate)) {
+    return buildFileLinkMetaFromTarget(resolvePathLinkTarget(candidate, baseDir), cwd);
   }
   return null;
 }
@@ -276,8 +283,9 @@ function workspaceRelativePath(path: string, workspaceRoot: string | undefined):
 export function resolveMarkdownFileLinkMeta(
   href: string | undefined,
   cwd?: string,
+  baseDir: string | undefined = cwd,
 ): MarkdownFileLinkMeta | null {
-  const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
+  const targetPath = resolveMarkdownFileLinkTarget(href, cwd, baseDir);
   if (!targetPath) return null;
   return buildFileLinkMetaFromTarget(targetPath, cwd);
 }

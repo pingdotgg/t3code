@@ -50,6 +50,7 @@ import * as EnvironmentRegistry from "./registry.ts";
 import * as RpcSession from "../rpc/session.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
+import { runDesktopCommitWithReconnectObserver } from "../state/server.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -426,6 +427,33 @@ function awaitConnectionState(
 }
 
 describe("EnvironmentRegistry", () => {
+  it.effect("replays connected state when arming a desktop commit observer", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TARGET]);
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        const commits = yield* Ref.make(0);
+        const result = yield* runDesktopCommitWithReconnectObserver(
+          registry.stateChanges(TARGET.environmentId),
+          Ref.update(commits, (count) => count + 1).pipe(
+            Effect.andThen(Effect.fail("commit refused")),
+          ),
+        ).pipe(Effect.flip, Effect.timeout("1 second"));
+
+        expect(result).toBe("commit refused");
+        expect(yield* Ref.get(commits)).toBe(1);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("does not acquire a session after the registry scope has already closed", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([TARGET]);
