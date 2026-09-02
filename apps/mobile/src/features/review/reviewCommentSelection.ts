@@ -84,16 +84,6 @@ export function getReviewUnifiedLineNumber(line: ReviewRenderableLineRow): numbe
   return line.newLineNumber ?? line.oldLineNumber;
 }
 
-export function formatReviewLineLabel(line: ReviewRenderableLineRow): string {
-  if (line.newLineNumber !== null) {
-    return `new line ${line.newLineNumber}`;
-  }
-  if (line.oldLineNumber !== null) {
-    return `old line ${line.oldLineNumber}`;
-  }
-  return "file";
-}
-
 export function getReviewChangeMarker(change: ReviewRenderableLineRow["change"]): string {
   if (change === "add") return "+";
   if (change === "delete") return "-";

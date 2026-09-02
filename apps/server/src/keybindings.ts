@@ -96,10 +96,6 @@ export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
   ),
 );
 
-export const ResolvedKeybindingsFromConfig = Schema.Array(ResolvedKeybindingFromConfig).check(
-  Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),
-);
-
 function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): boolean {
   return (
     left.command === right.command &&

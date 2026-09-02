@@ -242,20 +242,6 @@ export function updateReviewExpandedFileIds(
   });
 }
 
-export function updateReviewRevealedLargeFileIds(
-  threadKey: string,
-  sectionId: string,
-  update: (current: ReadonlyArray<string> | undefined) => ReadonlyArray<string> | undefined,
-): void {
-  const atom = reviewRevealedLargeFileIdsByThreadKeyAtom(threadKey);
-  const current = appAtomRegistry.get(atom);
-  const nextValue = update(current[sectionId]);
-  appAtomRegistry.set(atom, {
-    ...current,
-    [sectionId]: nextValue,
-  });
-}
-
 export function updateReviewViewedFileIds(
   threadKey: string,
   sectionId: string,

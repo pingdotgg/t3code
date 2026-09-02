@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -23,6 +22,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
+import { expandHomePathWith } from "../pathExpansion.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
@@ -103,16 +103,6 @@ export class WorkspaceEntries extends Context.Service<
   }
 >()("t3/workspace/WorkspaceEntries") {}
 
-function expandHomePath(input: string, path: Path.Path): string {
-  if (input === "~") {
-    return NodeOS.homedir();
-  }
-  if (input.startsWith("~/") || input.startsWith("~\\")) {
-    return path.join(NodeOS.homedir(), input.slice(2));
-  }
-  return input;
-}
-
 const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(function* (
   input: FilesystemBrowseInput,
   path: Path.Path,
@@ -127,7 +117,7 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   }
 
   if (!isExplicitRelativePath(input.partialPath)) {
-    return path.resolve(expandHomePath(input.partialPath, path));
+    return path.resolve(expandHomePathWith(input.partialPath, path));
   }
 
   if (!input.cwd) {
@@ -135,7 +125,7 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
       partialPath: input.partialPath,
     });
   }
-  return path.resolve(expandHomePath(input.cwd, path), input.partialPath);
+  return path.resolve(expandHomePathWith(input.cwd, path), input.partialPath);
 });
 
 export const make = Effect.gen(function* () {

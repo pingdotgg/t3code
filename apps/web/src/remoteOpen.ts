@@ -130,10 +130,6 @@ const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
 let cachedProbedEditors: ReadonlyArray<EditorId> | null = null;
 
-export function __resetRemoteEditorProbeForTests(): void {
-  cachedProbedEditors = null;
-}
-
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
   const [editors, setEditors] = useState<ReadonlyArray<EditorId>>(
     () => cachedProbedEditors ?? REMOTE_FALLBACK_EDITORS,

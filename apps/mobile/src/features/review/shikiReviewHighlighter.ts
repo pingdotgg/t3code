@@ -814,22 +814,6 @@ function storeResolvedHighlightedFile(cacheKey: string, highlighted: ReviewHighl
   }
 }
 
-export function clearReviewHighlightFileCache(): void {
-  highlightCache.clear();
-  resolvedHighlightCache.clear();
-}
-
-export function getCachedHighlightedReviewFile(
-  file: ReviewRenderableFile,
-  theme: ReviewDiffTheme,
-): ReviewHighlightedFile | null {
-  if (REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE) {
-    return null;
-  }
-
-  return resolvedHighlightCache.get(getHighlightCacheKey(file, theme)) ?? null;
-}
-
 export async function highlightReviewFile(
   file: ReviewRenderableFile,
   theme: ReviewDiffTheme,

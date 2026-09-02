@@ -382,23 +382,3 @@ export const probeTailscaleHttpsEndpoint = (input: {
       onSome: (httpResponse) => httpResponse.status >= 200 && httpResponse.status < 300,
     });
   }).pipe(Effect.orElseSucceed(() => false));
-
-export const resolveTailscaleHttpsBaseUrl = (
-  input: {
-    readonly servePort?: number;
-  } = {},
-): Effect.Effect<
-  string | null,
-  TailscaleCommandError | TailscaleStatusParseError,
-  ChildProcessSpawner.ChildProcessSpawner
-> =>
-  readTailscaleStatus.pipe(
-    Effect.map((status) =>
-      status.magicDnsName
-        ? buildTailscaleHttpsBaseUrl({
-            magicDnsName: status.magicDnsName,
-            ...(input.servePort === undefined ? {} : { servePort: input.servePort }),
-          })
-        : null,
-    ),
-  );

@@ -12,7 +12,11 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
-import { mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
+import {
+  isWorkspaceBrowserPreviewPath,
+  isWorkspaceImagePreviewPath,
+  mediaMimeTypeFromExtension,
+} from "@t3tools/shared/filePreview";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -56,8 +60,6 @@ import { WorkspaceFileVideoPreview } from "./WorkspaceFileVideoPreview";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
 import {
   basename,
-  isBrowserPreviewFile,
-  isImagePreviewFile,
   isMarkdownPreviewFile,
   isSvgImagePreviewFile,
   isVideoPreviewFile,
@@ -92,7 +94,9 @@ function normalizeRouteLine(value: string | null): number | null {
 
 function defaultViewMode(path: string | null): FileViewMode {
   return path !== null &&
-    (isBrowserPreviewFile(path) || isImagePreviewFile(path) || isVideoPreviewFile(path))
+    (isWorkspaceBrowserPreviewPath(path) ||
+      isWorkspaceImagePreviewPath(path) ||
+      isVideoPreviewFile(path))
     ? "preview"
     : "source";
 }
@@ -114,8 +118,8 @@ function FileContent(props: {
   // Reopening a mutable host file must not reuse a poster from an earlier visit.
   const thumbnailInstanceId = useId();
   const isMarkdown = isMarkdownPreviewFile(props.relativePath);
-  const isBrowserFile = isBrowserPreviewFile(props.relativePath);
-  const isImageFile = isImagePreviewFile(props.relativePath);
+  const isBrowserFile = isWorkspaceBrowserPreviewPath(props.relativePath);
+  const isImageFile = isWorkspaceImagePreviewPath(props.relativePath);
 
   if (isVideoPreviewFile(props.relativePath)) {
     return (
@@ -520,8 +524,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const previewKey = JSON.stringify([environmentId, cwd, relativePath, previewRevision]);
   const [fullScreenPreview, setFullScreenPreview] = useState<FilePreviewSource | null>(null);
   const isVideoFile = relativePath !== null && isVideoPreviewFile(relativePath);
-  const isBrowserFile = relativePath !== null && !isVideoFile && isBrowserPreviewFile(relativePath);
-  const isImageFile = relativePath !== null && !isVideoFile && isImagePreviewFile(relativePath);
+  const isBrowserFile =
+    relativePath !== null && !isVideoFile && isWorkspaceBrowserPreviewPath(relativePath);
+  const isImageFile =
+    relativePath !== null && !isVideoFile && isWorkspaceImagePreviewPath(relativePath);
   const canPreview =
     relativePath !== null &&
     (isMarkdownPreviewFile(relativePath) || isBrowserFile || isImageFile || isVideoFile);

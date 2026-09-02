@@ -153,10 +153,6 @@ export function resetRequestLatencyStateForTests(): void {
   clearAllTrackedRpcRequests();
 }
 
-export function setSlowRpcAckThresholdMsForTests(thresholdMs: number): void {
-  slowRpcAckThresholdMs = thresholdMs;
-}
-
 export function useSlowRpcAckRequests(): ReadonlyArray<SlowRpcAckRequest> {
   return useAtomValue(slowRpcAckRequestsAtom);
 }

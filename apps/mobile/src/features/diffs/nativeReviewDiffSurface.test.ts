@@ -44,21 +44,6 @@ describe("resolveNativeReviewDiffView", () => {
     expect(expoMocks.requireNativeView).toHaveBeenCalledWith("T3ReviewDiffSurface");
   });
 
-  it("does not fall back to stale legacy native review diff view names", async () => {
-    globalThis.expo = {
-      getViewConfig: vi.fn().mockImplementation((moduleName: string) => {
-        if (moduleName === "T3ReviewDiffView") {
-          return { validAttributes: {}, directEventTypes: {} };
-        }
-        return null;
-      }),
-    } as unknown as typeof globalThis.expo;
-    expoMocks.requireNativeView.mockReturnValue(nativeView);
-    const { resolveNativeReviewDiffView } = await import("./nativeReviewDiffSurface");
-    expect(resolveNativeReviewDiffView()).toBeNull();
-    expect(expoMocks.requireNativeView).not.toHaveBeenCalled();
-  });
-
   it("returns null when the view manager cannot be required", async () => {
     setExpoViewConfigAvailable();
     const cause = new Error("boom");

@@ -146,7 +146,7 @@ describe("buildBranchNamePrompt", () => {
 });
 
 describe("buildThreadTitlePrompt", () => {
-  it("includes the user message in the prompt", () => {
+  it("includes the user message and the title guidance rules", () => {
     const result = buildThreadTitlePrompt({
       message: "Investigate reconnect regressions after session restore",
     });
