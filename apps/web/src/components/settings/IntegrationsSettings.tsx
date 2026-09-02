@@ -408,6 +408,7 @@ function AgentBrowserAccessSetting() {
 
   return (
     <SettingsRow
+      serverScoped
       {...searchableSetting("agent-browser-access")}
       description="Let agents open and drive the preview browser. When off, the browser tools and the instructions describing them are withheld from agent sessions. Your own browser panel is unaffected."
       status={
