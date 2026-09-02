@@ -4,7 +4,6 @@ import type {
   MessageId,
   OrchestrationProjectShell,
   OrchestrationV2RunStatus,
-  OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
   PlanId,
@@ -237,12 +236,3 @@ export function presentThreadShell(
 }
 
 export const scopeThreadShell = presentThreadShell;
-
-export function selectEnvironmentThreadShell(
-  snapshot: OrchestrationV2ShellSnapshot | null,
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-): EnvironmentThreadShell | null {
-  const thread = snapshot?.threads.find((candidate) => candidate.id === threadId) ?? null;
-  return thread ? presentThreadShell(environmentId, thread) : null;
-}

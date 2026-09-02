@@ -13,6 +13,7 @@ import type {
   PullRequestReviewThread,
   PullRequestState,
   PullRequestUpdateMethod,
+  SourceControlProviderKind,
   VcsRef,
 } from "@t3tools/contracts";
 
