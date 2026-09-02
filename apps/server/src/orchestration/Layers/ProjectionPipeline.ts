@@ -893,10 +893,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
-        // Message events cannot change any derived summary field except
-        // latestUserMessageAt, which is a monotonic maximum that folds in
-        // directly — the full refresh would re-read every message, plan,
-        // activity, and approval on each streaming assistant delta.
         // A message cannot change any summary field except latestUserMessageAt,
         // which is a monotonic maximum that folds in directly. The full refresh
         // would re-read every message body in the thread per user message.

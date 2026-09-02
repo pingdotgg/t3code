@@ -2422,44 +2422,35 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             json_object('requestId', 'user-input-active'),
             NULL,
             '2026-02-26T12:35:07.000Z'
-          ),
-          (
-            'activity-user-input-active-failed',
-            'thread-stale-user-input',
-            NULL,
-            'error',
-            'provider.user-input.respond.failed',
-            'Provider user input response failed',
-            json_object(
-              'requestId',
-              'user-input-active',
-              'detail',
-              'Provider is temporarily unavailable'
-            ),
-            NULL,
-            '2026-02-26T12:35:08.000Z'
           )
       `;
 
+      // A user-input lifecycle activity is one of the events that still
+      // refreshes the shell summary, so it forces the read under test.
       yield* appendAndProject({
-        type: "thread.message-sent",
+        type: "thread.activity-appended",
         eventId: EventId.make("evt-stale-user-input-3"),
         aggregateKind: "thread",
         aggregateId: ThreadId.make("thread-stale-user-input"),
-        occurredAt: "2026-02-26T12:35:09.000Z",
+        occurredAt: "2026-02-26T12:35:08.000Z",
         commandId: CommandId.make("cmd-stale-user-input-3"),
         causationEventId: null,
         correlationId: CorrelationId.make("cmd-stale-user-input-3"),
         metadata: {},
         payload: {
           threadId: ThreadId.make("thread-stale-user-input"),
-          messageId: MessageId.make("message-stale-user-input"),
-          role: "user",
-          text: "Continue",
-          turnId: null,
-          streaming: false,
-          createdAt: "2026-02-26T12:35:09.000Z",
-          updatedAt: "2026-02-26T12:35:09.000Z",
+          activity: {
+            id: EventId.make("activity-user-input-active-failed"),
+            tone: "error",
+            kind: "provider.user-input.respond.failed",
+            summary: "Provider user input response failed",
+            payload: {
+              requestId: "user-input-active",
+              detail: "Provider is temporarily unavailable",
+            },
+            turnId: null,
+            createdAt: "2026-02-26T12:35:08.000Z",
+          },
         },
       });
 
