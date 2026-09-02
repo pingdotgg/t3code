@@ -20,7 +20,12 @@ import { PullRequestDiffLoader } from "./pullRequestDiffHttp.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 
-export { PullRequestDiffLoader, pullRequestDiffLoaderLayer } from "./pullRequestDiffHttp.ts";
+export {
+  type PullRequestDiffLoadError,
+  PullRequestDiffCredentialRejectedError,
+  PullRequestDiffLoader,
+  pullRequestDiffLoaderLayer,
+} from "./pullRequestDiffHttp.ts";
 
 export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
   "EnvironmentHttpConnectionNotReadyError",
