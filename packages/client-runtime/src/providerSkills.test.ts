@@ -108,6 +108,30 @@ describe("getProviderSkillsForSlashMenu", () => {
   });
 });
 
+describe("getProviderSkillsForSlashMenu", () => {
+  it("drops a skill the provider reserves for the agent", () => {
+    const skills = [
+      {
+        name: "legacy-system-context",
+        path: "/Users/matt/.claude/skills/legacy-system-context/SKILL.md",
+        enabled: true,
+        userInvocable: false,
+      },
+      {
+        name: "deploy",
+        path: "/Users/matt/.claude/skills/deploy/SKILL.md",
+        enabled: true,
+        // Reserved for the user, not the agent: still a valid pick.
+        userInvocationOnly: true,
+      },
+    ];
+
+    expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.name)).toEqual([
+      "deploy",
+    ]);
+  });
+});
+
 describe("getProviderSlashCommandsForSlashMenu", () => {
   const commands = [
     { name: "ask-matt", description: "Ask which skill fits your situation." },
