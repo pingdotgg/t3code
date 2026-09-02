@@ -53,12 +53,16 @@ export function preservePreviousResumeCursor(input: {
     input.nextProviderName,
     input.nextResumeCursor,
   );
-  if (previousSessionId === null || nextSessionId === null) {
+  if (previousSessionId === null || input.nextResumeCursor === undefined) {
     return input.runtimePayload;
   }
   const previousSessionKey = `${input.previousProviderName}:${previousSessionId}`;
-  const nextSessionKey = `${input.nextProviderName}:${nextSessionId}`;
-  if (previousSessionKey === nextSessionKey) return input.runtimePayload;
+  if (
+    nextSessionId !== null &&
+    previousSessionKey === `${input.nextProviderName}:${nextSessionId}`
+  ) {
+    return input.runtimePayload;
+  }
 
   const history = readProviderResumeCursorHistory(input.runtimePayload);
   if (

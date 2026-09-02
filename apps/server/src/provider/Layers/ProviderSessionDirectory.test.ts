@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { it, assert } from "@effect/vitest";
 import { assertSome } from "@effect/vitest/utils";
 import * as Effect from "effect/Effect";
@@ -168,6 +168,36 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
           (runtime.value.runtimePayload as Record<string, unknown>)["cwd"],
           "/tmp/project",
         );
+      }
+    }));
+
+  it("retains a supported cursor when the replacement provider has no usage session", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.make("thread-provider-replacement-history");
+
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        threadId,
+        resumeCursor: { resume: "claude-session" },
+      });
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("opencode"),
+        providerInstanceId: ProviderInstanceId.make("opencode"),
+        threadId,
+        resumeCursor: { schemaVersion: 1, sessionId: "opencode-session" },
+      });
+
+      const runtime = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        assert.deepEqual(readProviderResumeCursorHistory(runtime.value.runtimePayload), [
+          {
+            providerName: "claudeAgent",
+            resumeCursor: { resume: "claude-session" },
+          },
+        ]);
       }
     }));
 
