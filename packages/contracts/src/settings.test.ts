@@ -209,6 +209,17 @@ describe("ClientSettings sidebar", () => {
     );
   });
 
+  it("defaults project sections off and keeps them patchable", () => {
+    expect(decodeClientSettings({}).projectSectionsEnabled).toBe(false);
+    expect(decodeClientSettings({ projectSectionsEnabled: true }).projectSectionsEnabled).toBe(
+      true,
+    );
+    expect(decodeClientSettingsPatch({ projectSectionsEnabled: true }).projectSectionsEnabled).toBe(
+      true,
+    );
+    expect(() => decodeClientSettingsPatch({ projectSectionsEnabled: "yes" })).toThrow();
+  });
+
   it("keeps unpin confirmation opt-in and patchable", () => {
     expect(decodeClientSettings({}).confirmThreadUnpin).toBe(false);
     expect(decodeClientSettingsPatch({ confirmThreadUnpin: true }).confirmThreadUnpin).toBe(true);

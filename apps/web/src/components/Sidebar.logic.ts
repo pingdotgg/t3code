@@ -108,6 +108,38 @@ type LogicalSidebarProject = SidebarProject & {
   }[];
 };
 
+export function groupThreadsIntoProjectSections<
+  const TProject extends {
+    readonly projectKey: string;
+    readonly memberProjectRefs: readonly {
+      readonly environmentId: string;
+      readonly projectId: string;
+    }[];
+  },
+  const TThread extends { readonly environmentId: string; readonly projectId: string },
+>(projects: readonly TProject[], threads: readonly TThread[]) {
+  const projectKeyByMember = new Map(
+    projects.flatMap((project) =>
+      project.memberProjectRefs.map(
+        (ref) => [`${ref.environmentId}:${ref.projectId}`, project.projectKey] as const,
+      ),
+    ),
+  );
+  const threadsByProjectKey = new Map<string, TThread[]>();
+  for (const thread of threads) {
+    const projectKey = projectKeyByMember.get(`${thread.environmentId}:${thread.projectId}`);
+    if (!projectKey) continue;
+    const projectThreads = threadsByProjectKey.get(projectKey);
+    if (projectThreads) projectThreads.push(thread);
+    else threadsByProjectKey.set(projectKey, [thread]);
+  }
+
+  return projects.flatMap((project) => {
+    const projectThreads = threadsByProjectKey.get(project.projectKey);
+    return projectThreads ? [{ project, threads: projectThreads }] : [];
+  });
+}
+
 export type ThreadTraversalDirection = "previous" | "next";
 
 export async function archiveSelectedThreadEntries<

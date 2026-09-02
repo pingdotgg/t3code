@@ -523,6 +523,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
         ? ["Project Grouping"]
         : []),
+      ...(settings.projectSectionsEnabled !== DEFAULT_UNIFIED_SETTINGS.projectSectionsEnabled
+        ? ["Project sections"]
+        : []),
       ...(settings.sidebarAutoSettleAfterDays !==
       DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
         ? ["Auto-settle inactive threads"]
@@ -623,6 +626,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
+      settings.projectSectionsEnabled,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
@@ -709,6 +713,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
+      projectSectionsEnabled: DEFAULT_UNIFIED_SETTINGS.projectSectionsEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
@@ -2099,6 +2104,32 @@ export function GeneralSettingsPanel() {
                 });
               }}
               aria-label="Project grouping"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("project-sections")}
+          description="Group active threads by project when viewing All projects in the new sidebar."
+          resetAction={
+            settings.projectSectionsEnabled !== DEFAULT_UNIFIED_SETTINGS.projectSectionsEnabled ? (
+              <SettingResetButton
+                label="project sections"
+                onClick={() =>
+                  updateSettings({
+                    projectSectionsEnabled: DEFAULT_UNIFIED_SETTINGS.projectSectionsEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.projectSectionsEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ projectSectionsEnabled: Boolean(checked) })
+              }
+              aria-label="Project sections"
             />
           }
         />
