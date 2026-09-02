@@ -305,7 +305,7 @@ describe("readChromiumCookieDatabase", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("treats unversioned encrypted values as legacy plaintext only on macOS", () =>
+  it.effect("treats unversioned encrypted values as legacy plaintext on macOS and Linux", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const directory = yield* fileSystem.makeTempDirectoryScoped({
@@ -330,14 +330,16 @@ describe("readChromiumCookieDatabase", () => {
           ('legacy.example', 'legacy', '', ${Buffer.from("legacy cleartext")}, '/', 0, 0, 0, 0)`;
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
 
+      // Chromium's OSCrypt returns unprefixed data as-is on both platforms
+      // (os_crypt_mac.mm and os_crypt_linux.cc: "old data saved as clear
+      // text"), so neither counts it as undecryptable.
       const mac = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "darwin");
       const linux = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "linux");
 
       expect(mac.cookies[0]?.value).toBe("legacy cleartext");
       expect(mac.undecryptable).toBe(0);
-      expect(linux.cookies).toEqual([]);
-      expect(linux.undecryptable).toBe(1);
-      expect(linux.undecryptableHosts).toEqual(["legacy.example"]);
+      expect(linux.cookies[0]?.value).toBe("legacy cleartext");
+      expect(linux.undecryptable).toBe(0);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
