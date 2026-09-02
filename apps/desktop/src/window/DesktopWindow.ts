@@ -207,6 +207,21 @@ export function isRetryableDevelopmentRendererLoadFailure(input: {
   );
 }
 
+export function concealPendingQuitWindow(
+  window: Pick<
+    Electron.BrowserWindow,
+    "isDestroyed" | "isFullScreen" | "setFullScreen" | "setOpacity"
+  >,
+): void {
+  if (window.isDestroyed()) return;
+  if (window.isFullScreen()) {
+    window.setFullScreen(false);
+  }
+  // Electron implements window opacity on macOS and Windows. Linux keeps the
+  // release-gated quit behavior but cannot make the pending window disappear.
+  window.setOpacity(0);
+}
+
 function getWindowTitleBarOptions(
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
@@ -570,6 +585,9 @@ export const make = Effect.gen(function* () {
           window.webContents.send(QUIT_SHORTCUT_CHANNEL, hint);
         }
       },
+      // Keep the transparent window focused until the physical shortcut is
+      // released so its remaining repeats cannot reach the next app.
+      concealWindow: () => concealPendingQuitWindow(window),
       quit: () => {
         void runPromise(electronApp.quit);
       },

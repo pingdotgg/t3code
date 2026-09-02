@@ -11,9 +11,12 @@ export const QUIT_DOUBLE_PRESS_MS = 500;
 // release: macOS suppresses a letter keyUp while the command key is down, so a
 // tap release can go completely unseen and a release-based timer would quit
 // anyway. Once held, quitting waits for Q keyUp or a quiet grace period after
-// modifier keyUp so repeats cannot reach the next app. Keyboards with
+// repeats stop so they cannot reach the next app. Keyboards with
 // auto-repeat disabled fall back to the application menu Quit action.
 export const QUIT_HOLD_RELEASE_GRACE_MS = 600;
+// A slow repeat rate can exceed the fixed grace. Waiting for two observed
+// cadences keeps the timer behind the next repeat without slowing normal rates.
+const QUIT_HOLD_REPEAT_CADENCE_MULTIPLIER = 2;
 
 export interface QuitHoldKeyInput {
   readonly type: string;
@@ -29,6 +32,7 @@ export interface QuitShortcutOptions {
   readonly platform: NodeJS.Platform;
   readonly getMode: () => Promise<QuitConfirmationMode>;
   readonly notify: (event: QuitShortcutHintEvent) => void;
+  readonly concealWindow: () => void;
   readonly quit: () => void;
 }
 
@@ -45,6 +49,8 @@ export function makeQuitShortcutHandler(
   let quitOnRelease = false;
   let heldSince = 0;
   let lastPressAt = 0;
+  let lastRepeatAt = 0;
+  let repeatCadenceMs = 0;
   // Incremented when a press is superseded or explicitly cancelled. A plain
   // key release does not invalidate its pending mode read: direct mode and a
   // completed second press must still be honored after that read settles.
@@ -64,6 +70,8 @@ export function makeQuitShortcutHandler(
     holding = false;
     armed = false;
     quitOnRelease = false;
+    lastRepeatAt = 0;
+    repeatCadenceMs = 0;
     if (keepHint) return;
 
     mode = undefined;
@@ -80,6 +88,15 @@ export function makeQuitShortcutHandler(
     options.quit();
   };
 
+  const quitAfterQuietPeriod = () => {
+    clearWatchdog();
+    const quietPeriodMs = Math.max(
+      QUIT_HOLD_RELEASE_GRACE_MS,
+      repeatCadenceMs * QUIT_HOLD_REPEAT_CADENCE_MULTIPLIER,
+    );
+    watchdog = setTimeout(quitNow, quietPeriodMs);
+  };
+
   return (event, input) => {
     const key = input.key.toLowerCase();
     if (input.type === "keyUp") {
@@ -91,20 +108,31 @@ export function makeQuitShortcutHandler(
         if (!quitOnRelease) {
           release(false, true);
         } else {
-          watchdog = setTimeout(quitNow, QUIT_HOLD_RELEASE_GRACE_MS);
+          quitAfterQuietPeriod();
         }
       }
       return;
     }
     if (input.type !== "keyDown") return;
 
-    if (quitOnRelease && input.isAutoRepeat && key === "q") {
+    const modifierDown = options.platform === "darwin" ? input.meta : input.control;
+    if (input.isAutoRepeat && modifierDown && key === "q") {
+      const now = Date.now();
+      repeatCadenceMs = now - (lastRepeatAt === 0 ? heldSince : lastRepeatAt);
+      lastRepeatAt = now;
+    }
+    if (quitOnRelease) {
       event.preventDefault();
-      clearWatchdog();
+      if (key === "q") {
+        if (modifierDown) {
+          quitAfterQuietPeriod();
+        } else {
+          clearWatchdog();
+        }
+      }
       return;
     }
 
-    const modifierDown = options.platform === "darwin" ? input.meta : input.control;
     if (!modifierDown || input.alt || input.shift || key !== "q") {
       // Re-pressing the platform modifier is the first half of a second full
       // quit shortcut, so it must not cancel an active double-press window.
@@ -129,7 +157,8 @@ export function makeQuitShortcutHandler(
       if (mode === "hold" && armed && Date.now() - heldSince >= QUIT_HOLD_DURATION_MS) {
         armed = false;
         quitOnRelease = true;
-        clearWatchdog();
+        options.concealWindow();
+        quitAfterQuietPeriod();
       }
       return;
     }
