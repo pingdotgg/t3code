@@ -90,6 +90,7 @@ describe("importFailureReason", () => {
     // A settings write that fails after the cookies landed is its own case,
     // not a read failure over a database that was in fact read.
     expect(importFailureReason(failure("profileNotSaved"))).toBe("profileNotSaved");
+    expect(importFailureReason(failure("profileLimitReached"))).toBe("profileLimitReached");
   });
 
   it("falls back to readFailed for anything it cannot classify", () => {

@@ -152,6 +152,14 @@ const zoomLabel = (zoomFactor: number) => `${Math.round(zoomFactor * 100)}%`;
  * it. Anything unrecognised reads as a plain read failure rather than leaking
  * the raw message into a toast.
  */
+/** Thrown from the post-import settings updater when the cap was hit meanwhile. */
+class ProfileLimitReachedError extends Error {
+  constructor() {
+    super("Browser profile limit reached.");
+    this.name = "ProfileLimitReachedError";
+  }
+}
+
 export const importFailureReason = (cause: unknown): BrowserImportFailureReason => {
   const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
   return (
@@ -685,6 +693,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const createProfile = (baseName: string) => {
     if (!settingsHydrated || importInFlightRef.current) return undefined;
     const currentProfiles = getClientSettings().browserProfiles;
+    // Checked against the live settings, not the rendered list: two clicks
+    // before a re-render would otherwise both pass the disabled control.
+    if (currentProfiles.length >= BROWSER_PROFILE_MAX_COUNT) return undefined;
     const resolvedProfiles = resolveBrowserProfiles(currentProfiles);
     const taken = new Set(resolvedProfiles.map((profile) => profile.name));
     let name = baseName;
@@ -835,6 +846,12 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                 (profile) => profile.id === input.target.profileId,
               );
               if (existing) return current;
+              // The wizard refuses a new target at the cap, but the cap can be
+              // reached while the import runs; the updater sees the newest
+              // settings, so this is the check that holds.
+              if (current.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT) {
+                throw new ProfileLimitReachedError();
+              }
               const taken = new Set(
                 resolveBrowserProfiles(current.browserProfiles).map((profile) => profile.name),
               );
@@ -863,9 +880,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             // Not a read failure: the cookies came over and were cleared again
             // because the profile could not be kept. Name that, in the same
             // token form `importFailureReason` recovers from a bridge error.
-            throw new Error(`Importing cookies from ${source.id} failed: profileNotSaved.`, {
-              cause,
-            });
+            const reason =
+              cause instanceof ProfileLimitReachedError ? "profileLimitReached" : "profileNotSaved";
+            throw new Error(`Importing cookies from ${source.id} failed: ${reason}.`, { cause });
           }
         } else {
           targetName = source.name;

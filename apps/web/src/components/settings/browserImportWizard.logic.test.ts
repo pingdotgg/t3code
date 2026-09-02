@@ -161,6 +161,8 @@ describe("isRetryableReason", () => {
   it("does not offer a retry for a permanent failure", () => {
     expect(isRetryableReason("unsupportedPlatform")).toBe(false);
     expect(isRetryableReason("unknownSourceProfile")).toBe(false);
+    // Retrying the same new-profile import cannot lower the profile count.
+    expect(isRetryableReason("profileLimitReached")).toBe(false);
   });
 
   it("offers a retry once the user has signed in to create the missing key", () => {

@@ -58,6 +58,11 @@ export const BrowserImportFailureReason = Schema.Literals([
    * settings, so its partition was cleared again rather than left orphaned.
    */
   "profileNotSaved",
+  /**
+   * The cookies were written, but the profile count reached its cap while the
+   * import ran, so the new profile was not saved and its partition was cleared.
+   */
+  "profileLimitReached",
   /** Anything else: a corrupt database, a failed decrypt, a vanished file. */
   "readFailed",
 ]);
@@ -139,5 +144,7 @@ export const BROWSER_IMPORT_FAILURE_COPY: Readonly<Record<BrowserImportFailureRe
   unknownSourceProfile: "That browser profile no longer exists.",
   sessionUnavailable: "The target profile could not be opened.",
   profileNotSaved: "The cookies were imported, but the new profile couldn't be saved. Try again.",
+  profileLimitReached:
+    "You've reached the profile limit. Delete a profile or import into an existing one.",
   readFailed: "The browser's cookie database could not be read.",
 };
