@@ -18,19 +18,12 @@
 
 namespace {
 
-// T3 home, resolved the way the server resolves it: `--home-dir` (forwarded
-// to the desktop host untouched), then T3CODE_HOME, then ~/.t3. The rice and
-// the browser profile live inside it next to the rest of the app's state, so
-// a sandboxed home brings its own shell config and session too.
-QString resolveHomeDir(const QStringList& hostArguments) {
-  for (qsizetype i = 0; i < hostArguments.size(); ++i) {
-    const QString& argument = hostArguments.at(i);
-    if (argument == QStringLiteral("--home-dir") && i + 1 < hostArguments.size()) {
-      return QDir(hostArguments.at(i + 1)).absolutePath();
-    }
-    if (argument.startsWith(QStringLiteral("--home-dir="))) {
-      return QDir(argument.mid(QStringLiteral("--home-dir=").size())).absolutePath();
-    }
+// T3 home, resolved the way the dev runner resolves it: `--home-dir`, then
+// T3CODE_HOME, then ~/.t3. The rice and browser profile live beside the
+// server's state, so a sandboxed home carries the whole app.
+QString resolveHomeDir(const QString& override) {
+  if (!override.trimmed().isEmpty()) {
+    return QDir(override).absolutePath();
   }
   const QString fromEnv =
       QProcessEnvironment::systemEnvironment().value(QStringLiteral("T3CODE_HOME"));
@@ -94,6 +87,10 @@ int main(int argc, char* argv[]) {
       QStringLiteral("config-dir"),
       QStringLiteral("Directory holding shell.qml, theme.json and qml/ (default $T3CODE_HOME/shell, i.e. ~/.t3/shell)."),
       QStringLiteral("dir"));
+  const QCommandLineOption homeDirOption(
+      QStringLiteral("home-dir"),
+      QStringLiteral("T3 Code data directory for the shell profile, rice and server."),
+      QStringLiteral("dir"));
   const QCommandLineOption qmlDirOption(
       QStringLiteral("qml-dir"),
       QStringLiteral("Load the built-in bricks from this directory instead of the binary."),
@@ -118,11 +115,11 @@ int main(int argc, char* argv[]) {
       QStringLiteral("Press a key chord after the page loads, e.g. Ctrl+1 (portable QKeySequence "
                      "names). Repeatable; runs in command-line order together with --action."),
       QStringLiteral("chord"));
-  parser.addOptions({urlOption, configDirOption, qmlDirOption, hostEntryOption, nodeOption,
-                     screenshotOption, actionOption, keyOption});
+  parser.addOptions({urlOption, configDirOption, homeDirOption, qmlDirOption, hostEntryOption,
+                     nodeOption, screenshotOption, actionOption, keyOption});
   parser.process(app);
 
-  const QString homeDir = resolveHomeDir(parser.positionalArguments());
+  const QString homeDir = resolveHomeDir(parser.value(homeDirOption));
   const QString configDir = resolveConfigDir(parser.value(configDirOption), homeDir);
   const QString qmlSourceDir =
       resolveQmlSourceDir(parser.isSet(qmlDirOption) ? parser.value(qmlDirOption) : QString());
@@ -154,6 +151,9 @@ int main(int argc, char* argv[]) {
                                       : env.value(QStringLiteral("T3CODE_NODE"), QStringLiteral("node"));
   backendOptions.hostEntry = parser.value(hostEntryOption);
   backendOptions.hostArguments = parser.positionalArguments();
+  if (parser.isSet(homeDirOption)) {
+    backendOptions.hostArguments.prepend(QStringLiteral("--base-dir=%1").arg(homeDir));
+  }
   BackendProcess backend(backendOptions);
   QObject::connect(&backend, &BackendProcess::ready, &bridge, &ShellBridge::setPageUrl);
   QObject::connect(&backend, &BackendProcess::failed, &bridge, [&bridge](const QString& message) {

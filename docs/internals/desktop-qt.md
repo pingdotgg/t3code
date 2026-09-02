@@ -146,7 +146,7 @@ output lands in `apps/desktop-qt/build/<debug|release>` (gitignored).
 Standalone (no dev server): run the binary with no `--url`; it spawns the host,
 which starts the server against a built `apps/web` (`vp run build`).
 
-CLI: `--url`, `--config-dir`, `--qml-dir`, `--host-entry`, `--node`, `--screenshot <png>`
+CLI: `--url`, `--home-dir`, `--config-dir`, `--qml-dir`, `--host-entry`, `--node`, `--screenshot <png>`
 (grab the window after the page loads, then quit — PR evidence without a
 screen-recording permission), `--action name[=json]` (repeatable; dispatch shell
 actions after the page loads, e.g. `--action rightPanel.toggle`), `--key <chord>`
