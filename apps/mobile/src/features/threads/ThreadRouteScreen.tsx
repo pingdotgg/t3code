@@ -296,11 +296,17 @@ function ThreadRouteContent(
   // Reading a finished thread clears its Done indicator on every client.
   // Files, Review, and Terminal are native pushes that blur this route, so a
   // completion that lands behind them stays unread until the user comes
-  // back. viewedAt is read through a ref and kept out of the deps: another
-  // client marking the thread unread must not trigger an immediate re-view.
+  // back. The completion comes from the loaded detail, not the shell, so a
+  // slow or failed message load cannot mark a completion read before the
+  // user can see it. A cached detail (stream paused while the thread was
+  // not in use) still shows its messages, so it counts as loaded. viewedAt
+  // is read through a ref and kept out of the deps: another client marking
+  // the thread unread must not trigger an immediate re-view.
   const selectedThreadEnvironmentId = selectedThread?.environmentId ?? null;
   const selectedThreadId = selectedThread?.id ?? null;
-  const selectedThreadCompletedAt = selectedThread?.latestTurn?.completedAt ?? null;
+  const selectedThreadDetailLoaded =
+    selectedThreadDetailState.status === "live" || selectedThreadDetailState.status === "cached";
+  const selectedThreadCompletedAt = selectedThreadDetail?.latestTurn?.completedAt ?? null;
   const selectedThreadViewedAtRef = useRef(selectedThread?.viewedAt);
   selectedThreadViewedAtRef.current = selectedThread?.viewedAt;
   useFocusEffect(
@@ -317,6 +323,7 @@ function ThreadRouteContent(
           appState,
           connectionState: routeConnectionState,
           supported: supportsThreadViewState,
+          detailLoaded: selectedThreadDetailLoaded,
           completedAt: selectedThreadCompletedAt,
           viewedAt: selectedThreadViewedAtRef.current,
         })
@@ -331,6 +338,7 @@ function ThreadRouteContent(
       appState,
       routeConnectionState,
       selectedThreadCompletedAt,
+      selectedThreadDetailLoaded,
       selectedThreadEnvironmentId,
       selectedThreadId,
       supportsThreadViewState,

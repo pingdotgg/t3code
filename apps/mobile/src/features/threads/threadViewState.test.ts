@@ -6,6 +6,7 @@ const base = {
   appState: "active" as const,
   connectionState: "connected" as const,
   supported: true,
+  detailLoaded: true,
   completedAt: "2026-01-01T00:01:00.000Z",
   viewedAt: "2026-01-01T00:00:30.000Z",
 };
@@ -20,8 +21,9 @@ describe("shouldAcknowledgeThreadView", () => {
     expect(shouldAcknowledgeThreadView({ ...base, viewedAt: base.completedAt })).toBe(false);
   });
 
-  it("skips when backgrounded, disconnected, unsupported, or without a completion", () => {
+  it("skips when backgrounded, disconnected, unsupported, unloaded, or without a completion", () => {
     expect(shouldAcknowledgeThreadView({ ...base, appState: "background" })).toBe(false);
+    expect(shouldAcknowledgeThreadView({ ...base, detailLoaded: false })).toBe(false);
     expect(shouldAcknowledgeThreadView({ ...base, connectionState: "reconnecting" })).toBe(false);
     expect(shouldAcknowledgeThreadView({ ...base, supported: false })).toBe(false);
     expect(shouldAcknowledgeThreadView({ ...base, completedAt: null })).toBe(false);
