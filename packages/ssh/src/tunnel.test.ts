@@ -1,12 +1,15 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -28,6 +31,7 @@ import {
   SshEnvironmentManager,
   waitForHttpReady,
 } from "./tunnel.ts";
+import { collectProcessOutput, remoteStateKey } from "./command.ts";
 
 const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
 
@@ -229,7 +233,8 @@ describe("ssh tunnel scripts", () => {
       buildRemoteStopScript(target),
       'if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ]',
     );
-    assert.include(buildRemoteStopScript(target), 'kill "$REMOTE_PID" 2>/dev/null || true');
+    assert.include(buildRemoteStopScript(target), 'if ! kill "$REMOTE_PID" 2>/dev/null');
+    assert.include(buildRemoteStopScript(target), 'if kill -0 "$REMOTE_PID" 2>/dev/null; then');
     assert.include(buildRemoteStopScript(target), 'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"');
     assert.include(
       buildRemoteLaunchScript(),
@@ -258,6 +263,46 @@ describe("ssh tunnel scripts", () => {
       buildRemoteLaunchScript().indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
   });
+
+  it.effect("keeps remote state when the managed process survives stop", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") {
+        return;
+      }
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const homeDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-stop-test-" });
+      const target = {
+        alias: "devbox",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 2222,
+      } as const;
+      const stateDir = path.join(homeDir, ".t3", "ssh-launch", remoteStateKey(target));
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      yield* fs.writeFileString(path.join(stateDir, "pid"), "123\n");
+      yield* fs.writeFileString(path.join(stateDir, "port"), "3773\n");
+      yield* fs.writeFileString(path.join(stateDir, "managed"), "managed\n");
+      const script = `kill() { return 0; }\nsleep() { return 0; }\n${buildRemoteStopScript(target)}`;
+      const child = yield* spawner.spawn(
+        ChildProcess.make("sh", ["-c", script], {
+          env: { HOME: homeDir },
+          extendEnv: true,
+        }),
+      );
+      const [stderr, exitCode] = yield* Effect.all([
+        collectProcessOutput(child.stderr),
+        child.exitCode.pipe(Effect.map(Number)),
+      ]);
+
+      assert.equal(exitCode, 1);
+      assert.include(stderr, "did not stop");
+      assert.isTrue(yield* fs.exists(path.join(stateDir, "pid")));
+      assert.isTrue(yield* fs.exists(path.join(stateDir, "port")));
+      assert.isTrue(yield* fs.exists(path.join(stateDir, "managed")));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {

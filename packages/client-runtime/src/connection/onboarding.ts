@@ -321,16 +321,7 @@ export const updateSshEnvironmentVariables = Effect.fn(
         target,
       })
       .pipe(Effect.asVoid);
-  const restorePreviousTarget = gateway.disconnect(registration.profile.target).pipe(
-    Effect.ignore,
-    Effect.andThen(prepareTarget(previousProfile.target)),
-    Effect.catch((error) =>
-      Effect.logWarning("Could not restore the previous SSH environment after save failed.", {
-        environmentId: input.environmentId,
-        error,
-      }),
-    ),
-  );
+  const restorePreviousTarget = prepareTarget(previousProfile.target);
   yield* registry
     .registerIfCurrent(entry, registration, {
       beforeRegister: prepareTarget(registration.profile.target),

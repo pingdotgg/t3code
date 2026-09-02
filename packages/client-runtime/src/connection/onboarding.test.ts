@@ -354,7 +354,7 @@ describe("connection onboarding", () => {
       );
       let registerCount = 0;
       const preparedTargets = new Array<typeof profile.target>();
-      const disconnectedTargets = new Array<typeof profile.target>();
+      let prepareCount = 0;
       const registerIfCurrent: EnvironmentRegistry.EnvironmentRegistry["Service"]["registerIfCurrent"] =
         (_expectedEntry, _registration, options) =>
           (options?.beforeRegister ?? Effect.void).pipe(
@@ -374,20 +374,29 @@ describe("connection onboarding", () => {
         prepare: (input) =>
           Effect.sync(() => {
             preparedTargets.push(input.target);
+            prepareCount += 1;
           }).pipe(
-            Effect.andThen(
-              Effect.fail(
-                new ConnectionBlockedError({
-                  reason: "configuration",
-                  detail: "TOKEN is not selected by SendEnv.",
-                }),
-              ),
+            Effect.andThen(() =>
+              prepareCount === 1
+                ? Effect.fail(
+                    new ConnectionBlockedError({
+                      reason: "configuration",
+                      detail: "TOKEN is not selected by SendEnv.",
+                    }),
+                  )
+                : Effect.succeed({
+                    bootstrap: {
+                      target: input.target,
+                      httpBaseUrl: "http://127.0.0.1:3773/",
+                      wsBaseUrl: "ws://127.0.0.1:3773/",
+                      pairingToken: "pairing-token",
+                      remotePort: 3773,
+                    },
+                    bearerToken: "bearer-token",
+                  }),
             ),
           ),
-        disconnect: (preparedTarget) =>
-          Effect.sync(() => {
-            disconnectedTargets.push(preparedTarget);
-          }),
+        disconnect: () => Effect.void,
       });
 
       const error = yield* updateSshEnvironmentVariables({
@@ -409,12 +418,6 @@ describe("connection onboarding", () => {
           environmentVariables: { TOKEN: "new-value" },
         },
         profile.target,
-      ]);
-      expect(disconnectedTargets).toEqual([
-        {
-          ...profile.target,
-          environmentVariables: { TOKEN: "new-value" },
-        },
       ]);
       expect(registerCount).toBe(0);
     }),
@@ -444,7 +447,6 @@ describe("connection onboarding", () => {
         new Map([[environmentId, { target, profile: Option.some(profile) }]]),
       );
       const preparedTargets = new Array<typeof profile.target>();
-      const disconnectedTargets = new Array<typeof profile.target>();
       const registerIfCurrent: EnvironmentRegistry.EnvironmentRegistry["Service"]["registerIfCurrent"] =
         (_expectedEntry, _registration, options) =>
           (options?.beforeRegister ?? Effect.void).pipe(
@@ -479,10 +481,7 @@ describe("connection onboarding", () => {
               bearerToken: "bearer-token",
             }),
           ),
-        disconnect: (preparedTarget) =>
-          Effect.sync(() => {
-            disconnectedTargets.push(preparedTarget);
-          }),
+        disconnect: () => Effect.void,
       });
 
       const error = yield* updateSshEnvironmentVariables({
@@ -501,12 +500,6 @@ describe("connection onboarding", () => {
           environmentVariables: { TOKEN: "new-value" },
         },
         profile.target,
-      ]);
-      expect(disconnectedTargets).toEqual([
-        {
-          ...profile.target,
-          environmentVariables: { TOKEN: "new-value" },
-        },
       ]);
     }),
   );

@@ -79,6 +79,18 @@ describe("DesktopSshEnvironmentTargetSchema", () => {
     ).toThrow();
   });
 
+  it("rejects names that differ only by case", () => {
+    expect(() =>
+      decode({
+        alias: "devbox",
+        hostname: "devbox.example.test",
+        username: null,
+        port: null,
+        environmentVariables: { TOKEN: "first", token: "second" },
+      }),
+    ).toThrow();
+  });
+
   it("rejects environment maps above the encoded process environment budget", () => {
     expect(() =>
       decode({

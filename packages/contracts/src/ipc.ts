@@ -390,6 +390,17 @@ export const DesktopSshEnvironmentVariablesSchema = Schema.Record(
         : [{ path: [name], issue: "Invalid SSH environment variable name" }],
     ),
   ),
+  Schema.makeFilter((environmentVariables) => {
+    const normalizedNames = new Set<string>();
+    return Object.keys(environmentVariables).flatMap((name) => {
+      const normalizedName = name.toUpperCase();
+      if (normalizedNames.has(normalizedName)) {
+        return [{ path: [name], issue: "SSH environment variable names must be unique by case" }];
+      }
+      normalizedNames.add(normalizedName);
+      return [];
+    });
+  }),
   Schema.isMaxProperties(128),
   Schema.makeFilter((environmentVariables) =>
     desktopSshEnvironmentVariablesEncodedBytes(environmentVariables) <=

@@ -292,7 +292,6 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
     .spawn(
       ChildProcess.make(sshCommand, args, {
         env: environment,
-        extendEnv: true,
         stdin: {
           stream: stdinStream(input.stdin),
           endOnDone: true,
@@ -438,32 +437,33 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
   }
 
   const identityTarget = parseSshResolveOutput(trimmedAlias, identityResult.stdout);
-  const managedRemoteCommand = managedRemoteLaunchCommandArgs(identityTarget);
-  const resolvedResult =
-    environmentVariables === undefined
-      ? identityResult
-      : yield* Effect.gen(function* () {
-          const baselineResult = yield* runSshCommand(unresolvedTarget, {
-            preHostArgs: ["-G"],
-            remoteCommandArgs: managedRemoteCommand,
-          });
-          const unsupportedBaselineNames = unsupportedSshEnvironmentNames(
-            environmentVariables,
-            baselineResult.stdout,
-          );
-          if (unsupportedBaselineNames.length > 0) {
-            return yield* new SshInvalidTargetError({
-              message: `Add ${unsupportedBaselineNames.join(", ")} to SendEnv for ${trimmedAlias} in your SSH config before forwarding ${unsupportedBaselineNames.length === 1 ? "it" : "them"}.`,
-            });
-          }
+  if (environmentVariables === undefined) {
+    yield* Effect.logDebug("ssh.target.resolve.succeeded", sshTargetLogFields(identityTarget));
+    return identityTarget;
+  }
 
-          return yield* runSshCommand(
-            { ...unresolvedTarget, environmentVariables },
-            { preHostArgs: ["-G"], remoteCommandArgs: managedRemoteCommand },
-          );
-        });
+  let commandTarget = identityTarget;
+  let resolvedTarget: DesktopSshEnvironmentTarget | null = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const managedRemoteCommand = managedRemoteLaunchCommandArgs(commandTarget);
+    const baselineResult = yield* runSshCommand(unresolvedTarget, {
+      preHostArgs: ["-G"],
+      remoteCommandArgs: managedRemoteCommand,
+    });
+    const unsupportedBaselineNames = unsupportedSshEnvironmentNames(
+      environmentVariables,
+      baselineResult.stdout,
+    );
+    if (unsupportedBaselineNames.length > 0) {
+      return yield* new SshInvalidTargetError({
+        message: `Add ${unsupportedBaselineNames.join(", ")} to SendEnv for ${trimmedAlias} in your SSH config before forwarding ${unsupportedBaselineNames.length === 1 ? "it" : "them"}.`,
+      });
+    }
 
-  if (environmentVariables !== undefined) {
+    const resolvedResult = yield* runSshCommand(
+      { ...unresolvedTarget, environmentVariables },
+      { preHostArgs: ["-G"], remoteCommandArgs: managedRemoteCommand },
+    );
     const unsupportedNames = unsupportedSshEnvironmentNames(
       environmentVariables,
       resolvedResult.stdout,
@@ -473,11 +473,22 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
         message: `SendEnv for ${trimmedAlias} no longer selects ${unsupportedNames.join(", ")} after applying the saved local SSH environment.`,
       });
     }
+
+    resolvedTarget = {
+      ...parseSshResolveOutput(trimmedAlias, resolvedResult.stdout),
+      environmentVariables,
+    };
+    if (remoteStateKey(resolvedTarget) === remoteStateKey(commandTarget)) {
+      break;
+    }
+    commandTarget = resolvedTarget;
+    resolvedTarget = null;
   }
-  const resolvedTarget = {
-    ...parseSshResolveOutput(trimmedAlias, resolvedResult.stdout),
-    ...(environmentVariables === undefined ? {} : { environmentVariables }),
-  };
+  if (resolvedTarget === null) {
+    return yield* new SshInvalidTargetError({
+      message: `SSH Match command rules for ${trimmedAlias} did not resolve to a stable target. Check command-specific HostName, User, and Port settings.`,
+    });
+  }
   yield* Effect.logDebug("ssh.target.resolve.succeeded", sshTargetLogFields(resolvedTarget));
   return resolvedTarget;
 });

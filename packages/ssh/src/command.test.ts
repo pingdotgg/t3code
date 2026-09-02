@@ -14,6 +14,7 @@ import {
   baseSshArgs,
   getLastNonEmptyOutputLine,
   isSshEnvironmentNameConfiguredForSend,
+  managedRemoteLaunchCommandArgs,
   parseSshResolveOutput,
   parseSshSendEnvironmentPatterns,
   redactSshOutput,
@@ -233,7 +234,7 @@ describe("ssh command", () => {
         };
       };
       spawnedEnvironment = childProcess.options.env;
-      assert.equal(childProcess.options.extendEnv, true);
+      assert.isUndefined(childProcess.options.extendEnv);
       return Effect.succeed(makeFailedProcess({ stdout: "", stderr: "expected failure" }));
     });
     const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
@@ -327,6 +328,34 @@ describe("ssh command", () => {
       assert.include(spawnedArgs[1] ?? [], "sh");
       assert.include(spawnedArgs[2] ?? [], "sh");
       assert.equal(target.environmentVariables?.TOKEN, "forwarded-value");
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("revalidates with the managed command for the final resolved target", () => {
+    const spawnedArgs = new Array<ReadonlyArray<string>>();
+    let commandProbeCount = 0;
+    const spawner = ChildProcessSpawner.make((command) => {
+      const args = command._tag === "StandardCommand" ? command.args : [];
+      spawnedArgs.push(args);
+      if (!args.includes("sh")) {
+        return Effect.succeed(makeSuccessfulProcess("hostname first.example.com\nsendenv TOKEN\n"));
+      }
+      commandProbeCount += 1;
+      const hostname = commandProbeCount <= 2 ? "second.example.com" : "final.example.com";
+      return Effect.succeed(makeSuccessfulProcess(`hostname ${hostname}\nsendenv TOKEN\n`));
+    });
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      const target = yield* resolveSshTarget("devbox", { TOKEN: "forwarded-value" });
+
+      assert.equal(spawnedArgs.length, 7);
+      assert.deepEqual(spawnedArgs[5]?.slice(-5), managedRemoteLaunchCommandArgs(target));
+      assert.deepEqual(spawnedArgs[6]?.slice(-5), managedRemoteLaunchCommandArgs(target));
+      assert.equal(target.hostname, "final.example.com");
     }).pipe(Effect.provide(processLayer));
   });
 

@@ -640,12 +640,19 @@ MANAGED_FILE="$STATE_DIR/managed"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
-  kill "$REMOTE_PID" 2>/dev/null || true
+  if ! kill "$REMOTE_PID" 2>/dev/null && kill -0 "$REMOTE_PID" 2>/dev/null; then
+    printf 'Failed to stop managed remote T3 server process %s.\n' "$REMOTE_PID" >&2
+    exit 1
+  fi
   WAIT_COUNT=0
   while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
     WAIT_COUNT=$((WAIT_COUNT + 1))
     sleep 0.1
   done
+  if kill -0 "$REMOTE_PID" 2>/dev/null; then
+    printf 'Managed remote T3 server process %s did not stop.\n' "$REMOTE_PID" >&2
+    exit 1
+  fi
 fi
 rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
 printf '{"stopped":true}\\n'
@@ -1027,7 +1034,6 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     .spawn(
       ChildProcess.make(sshCommand, args, {
         env: childEnvironment,
-        extendEnv: true,
         stdin: {
           stream: Stream.empty,
           endOnDone: true,

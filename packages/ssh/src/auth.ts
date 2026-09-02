@@ -1,4 +1,4 @@
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -179,12 +179,24 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
   PlatformError.PlatformError,
   FileSystem.FileSystem | Path.Path
 > {
-  const baseEnv = { ...input.baseEnv };
+  const platform = yield* HostProcessPlatform;
+  const hostEnvironment = yield* HostProcessEnvironment;
+  const baseEnv: NodeJS.ProcessEnv = { ...hostEnvironment };
+  if (platform === "win32") {
+    const overlayNames = new Set(
+      Object.keys(input.baseEnv ?? {}).map((name) => name.toUpperCase()),
+    );
+    for (const name of Object.keys(baseEnv)) {
+      if (overlayNames.has(name.toUpperCase())) {
+        delete baseEnv[name];
+      }
+    }
+  }
+  Object.assign(baseEnv, input.baseEnv);
   if (!input.interactiveAuth) {
     return baseEnv;
   }
 
-  const platform = yield* HostProcessPlatform;
   const hostDisplay = input.baseEnv
     ? input.baseEnv.DISPLAY
     : yield* Config.string("DISPLAY").pipe(
