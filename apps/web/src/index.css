@@ -525,7 +525,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     );
   }
   ::highlight(t3-assistant-citation-comment) {
-    background-color: color-mix(in oklab, var(--primary) 28%, transparent);
+    background-color: color-mix(in oklab, var(--primary) 45%, transparent);
   }
   :root {
     /* Keep the original T3 Code artwork palettes as the defaults. Built-in

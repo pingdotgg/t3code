@@ -14,6 +14,8 @@ const CITATION_HIGHLIGHT_FADE_MS = 450;
 const CITATION_HIGHLIGHT_TOTAL_MS =
   1.5 * CITATION_PULSE_DURATION_MS + CITATION_HIGHLIGHT_HOLD_MS + CITATION_HIGHLIGHT_FADE_MS;
 const CITATION_HIGHLIGHT_OPACITY = "--assistant-citation-highlight-opacity";
+// Matches the comment-editing highlight strength in index.css.
+const CITATION_HIGHLIGHT_PEAK = 0.45;
 const COMMENT_HIGHLIGHT_NAME = "t3-assistant-citation-comment";
 
 /** Keep source text marked while its comment editor is open, without changing native selection. */
@@ -250,16 +252,22 @@ export function observeAssistantCitationSource({
       pulseAnimation = root.animate(
         pulse.reducedMotion
           ? [
-              { offset: 0, [CITATION_HIGHLIGHT_OPACITY]: 0.28 },
-              { offset: holdEnd, [CITATION_HIGHLIGHT_OPACITY]: 0.28 },
+              { offset: 0, [CITATION_HIGHLIGHT_OPACITY]: CITATION_HIGHLIGHT_PEAK },
+              { offset: holdEnd, [CITATION_HIGHLIGHT_OPACITY]: CITATION_HIGHLIGHT_PEAK },
               { offset: 1, [CITATION_HIGHLIGHT_OPACITY]: 0 },
             ]
           : [
               { offset: 0, [CITATION_HIGHLIGHT_OPACITY]: 0 },
-              { offset: at(CITATION_PULSE_DURATION_MS * 0.5), [CITATION_HIGHLIGHT_OPACITY]: 0.28 },
+              {
+                offset: at(CITATION_PULSE_DURATION_MS * 0.5),
+                [CITATION_HIGHLIGHT_OPACITY]: CITATION_HIGHLIGHT_PEAK,
+              },
               { offset: at(CITATION_PULSE_DURATION_MS), [CITATION_HIGHLIGHT_OPACITY]: 0 },
-              { offset: at(CITATION_PULSE_DURATION_MS * 1.5), [CITATION_HIGHLIGHT_OPACITY]: 0.28 },
-              { offset: holdEnd, [CITATION_HIGHLIGHT_OPACITY]: 0.28 },
+              {
+                offset: at(CITATION_PULSE_DURATION_MS * 1.5),
+                [CITATION_HIGHLIGHT_OPACITY]: CITATION_HIGHLIGHT_PEAK,
+              },
+              { offset: holdEnd, [CITATION_HIGHLIGHT_OPACITY]: CITATION_HIGHLIGHT_PEAK },
               { offset: 1, [CITATION_HIGHLIGHT_OPACITY]: 0 },
             ],
         { duration: CITATION_HIGHLIGHT_TOTAL_MS, easing: "ease-in-out" },
