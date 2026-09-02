@@ -1438,10 +1438,12 @@ function SavedBackendListRow({
                   : null
               }
             />
-            <h3 className="text-sm font-medium text-foreground">{environment.label}</h3>
+            <h3 className="min-w-0 truncate text-sm font-medium text-foreground">
+              {environment.label}
+            </h3>
           </div>
           {metadataBits.length > 0 ? (
-            <p className="text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>
+            <p className="truncate text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>
           ) : null}
           {serverUpdateState.status !== "idle" ? (
             <div className="max-w-md">
