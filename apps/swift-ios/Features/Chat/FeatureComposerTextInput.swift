@@ -272,20 +272,12 @@ struct FeatureComposerTextInput: UIViewRepresentable {
                 traits: textView.traitCollection
             )
             isSynchronizingInlineSkills = true
-            let undoManager = textView.undoManager
-            let shouldRestoreUndoRegistration = undoManager?.isUndoRegistrationEnabled == true
-            if shouldRestoreUndoRegistration {
-                undoManager?.disableUndoRegistration()
-            }
             textView.attributedText = attributedText
             textView.selectedRange = FeatureInlineSkillProjection.displayRange(
                 for: selection,
                 in: attributedText
             )
             textView.typingAttributes = baseAttributes
-            if shouldRestoreUndoRegistration {
-                undoManager?.enableUndoRegistration()
-            }
             isSynchronizingInlineSkills = false
             return true
         }
