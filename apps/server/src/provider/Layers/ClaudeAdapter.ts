@@ -1026,6 +1026,7 @@ function trimmedString(value: unknown): string | undefined {
 const CLAUDE_START_FRESH_AGENT_ANSWER = "Start fresh agent";
 const CLAUDE_RESUME_EXISTING_AGENT_ANSWER = "Resume existing agent";
 const CLAUDE_STOPPED_SUBAGENT_CAP = 128;
+const CLAUDE_INTERACTIVE_HOOK_TIMEOUT_SECONDS = 60 * 60 * 24 * 7;
 
 function recordFromUnknown(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -1923,6 +1924,29 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       resumeCursor,
       updatedAt: yield* nowIso,
     };
+  });
+
+  const emitResumeCursorUpdate = Effect.fn("emitResumeCursorUpdate")(function* (
+    context: ClaudeSessionContext,
+  ) {
+    yield* updateResumeCursor(context);
+    if (context.session.resumeCursor === undefined) {
+      return;
+    }
+
+    const configuredStamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "session.configured",
+      eventId: configuredStamp.eventId,
+      provider: PROVIDER,
+      createdAt: configuredStamp.createdAt,
+      threadId: context.session.threadId,
+      payload: {
+        config: {},
+        resumeCursor: context.session.resumeCursor,
+      },
+      providerRefs: {},
+    });
   });
 
   const ensureAssistantTextBlock = Effect.fn("ensureAssistantTextBlock")(function* (
@@ -4203,7 +4227,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
         const context = yield* Ref.get(contextRef);
         if (context?.stoppedSubagents.delete(hookInput.agent_id)) {
-          yield* updateResumeCursor(context);
+          yield* emitResumeCursorUpdate(context);
         }
         return {};
       });
@@ -4220,7 +4244,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             agentId: hookInput.agent_id,
             agentType: trimmedString(hookInput.agent_type),
           });
-          yield* updateResumeCursor(context);
+          yield* emitResumeCursorUpdate(context);
         }
         return {};
       });
@@ -4300,7 +4324,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               : undefined;
           if (selection === CLAUDE_RESUME_EXISTING_AGENT_ANSWER) {
             context.stoppedSubagents.delete(stoppedSubagent.agentId);
-            yield* updateResumeCursor(context);
+            yield* emitResumeCursorUpdate(context);
             return {
               hookSpecificOutput: {
                 hookEventName: "PreToolUse" as const,
@@ -4588,7 +4612,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         hooks: {
           SubagentStart: [{ hooks: [subagentStartHook] }],
           SubagentStop: [{ hooks: [subagentStopHook] }],
-          PreToolUse: [{ matcher: "SendMessage", hooks: [completedSubagentMessageHook] }],
+          PreToolUse: [
+            {
+              matcher: "SendMessage",
+              hooks: [completedSubagentMessageHook],
+              // The callback waits on T3's cross-client user-input flow. The
+              // turn abort signal cancels it when the session closes; this
+              // longer backstop keeps an idle UI from silently allowing the
+              // SDK's ten-minute default to cancel the guard first.
+              timeout: CLAUDE_INTERACTIVE_HOOK_TIMEOUT_SECONDS,
+            },
+          ],
         },
         onUserDialog,
         supportedDialogKinds: ["resume_return"],

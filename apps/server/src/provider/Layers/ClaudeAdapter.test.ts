@@ -5248,6 +5248,7 @@ describe("ClaudeAdapterLive", () => {
       const subagentStopHook = hooks?.SubagentStop?.[0]?.hooks[0];
       const preToolUseHook = hooks?.PreToolUse?.[0]?.hooks[0];
       assert.equal(hooks?.PreToolUse?.[0]?.matcher, "SendMessage");
+      assert.equal(hooks?.PreToolUse?.[0]?.timeout, 60 * 60 * 24 * 7);
       assert.equal(typeof subagentStartHook, "function");
       assert.equal(typeof subagentStopHook, "function");
       assert.equal(typeof preToolUseHook, "function");

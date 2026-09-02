@@ -1736,6 +1736,55 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("persists resume cursor updates emitted after sendTurn returns", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = asThreadId("thread-runtime-resume-cursor");
+      const session = yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: claudeAgentInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: "delegate this",
+        attachments: [],
+      });
+
+      const updatedResumeCursor = {
+        resume: "550e8400-e29b-41d4-a716-446655440000",
+        stoppedSubagents: [{ agentId: "agent-complete", agentType: "Explore" }],
+      };
+      const eventConsumer = yield* Stream.runHead(provider.streamEvents).pipe(Effect.forkChild);
+      yield* advanceTestClock(50);
+      routing.claude.emit({
+        type: "session.configured",
+        eventId: asEventId("event-resume-cursor-updated"),
+        provider: ProviderDriverKind.make("claudeAgent"),
+        threadId,
+        createdAt: "2026-09-01T00:00:00.000Z",
+        payload: { config: {}, resumeCursor: updatedResumeCursor },
+      });
+
+      yield* Fiber.join(eventConsumer);
+      const persisted = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(persisted), true);
+      if (Option.isSome(persisted)) {
+        assert.deepEqual(persisted.value.resumeCursor, updatedResumeCursor);
+        assert.deepEqual(persisted.value.runtimePayload, {
+          cwd: session.cwd,
+          model: null,
+          activeTurnId: `turn-${String(threadId)}`,
+          lastError: null,
+          lastRuntimeEvent: "session.resume-cursor.updated",
+          lastRuntimeEventAt: "2026-09-01T00:00:00.000Z",
+        });
+      }
+    }),
+  );
+
   it.effect("does not persist running after a concurrent send is interrupted", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
