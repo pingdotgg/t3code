@@ -40,7 +40,11 @@ import {
 } from "~/themePalette";
 import * as Struct from "effect/Struct";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
-import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
+import {
+  type EnvironmentPresentation,
+  useEnvironments,
+  usePrimaryEnvironment,
+} from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
 
@@ -312,14 +316,26 @@ export function usePrimarySettings<T = UnifiedSettings>(
   return useMergedSettings(useAtomValue(primaryServerSettingsAtom), selector);
 }
 
+/**
+ * Whether an environment can hold every shared key right now. Gated on the
+ * auto-settlement capability because it is the newest of the shared keys: a
+ * server that has it has all of them. Older servers drop unknown keys on
+ * write, so a mismatch against them could never clear, and their decoded
+ * defaults must not be treated as real values.
+ */
+function supportsSharedSettings(environment: EnvironmentPresentation): boolean {
+  return (
+    environment.connection.phase === "connected" &&
+    environment.serverConfig?.environment.capabilities.threadAutoSettlement === true
+  );
+}
+
 /** Environments that can receive a shared settings write right now. */
 function useConnectedEnvironmentIds(): ReadonlyArray<EnvironmentId> {
   const { environments } = useEnvironments();
   return useMemo(
     () =>
-      environments
-        .filter((environment) => environment.connection.phase === "connected")
-        .map((environment) => environment.environmentId),
+      environments.filter(supportsSharedSettings).map((environment) => environment.environmentId),
     [environments],
   );
 }
@@ -388,8 +404,12 @@ export function useSharedSettingsSync() {
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   // Read the loaded config, not `primaryServerSettingsAtom`: that atom falls
   // back to defaults while the primary is disconnected, and "apply to all"
-  // must never push defaults over real values.
-  const primarySettings = primaryEnvironment?.serverConfig?.settings ?? null;
+  // must never push defaults over real values. Same for a primary too old to
+  // hold the shared keys: its decoded defaults are not a source of truth.
+  const primarySettings =
+    primaryEnvironment !== null && supportsSharedSettings(primaryEnvironment)
+      ? (primaryEnvironment.serverConfig?.settings ?? null)
+      : null;
   const { environments } = useEnvironments();
   const persistServerSettings = useAtomCommand(
     serverEnvironment.updateSettings,
@@ -404,7 +424,7 @@ export function useSharedSettingsSync() {
         environments: environments.map((environment) => ({
           environmentId: environment.environmentId,
           label: environment.label,
-          connected: environment.connection.phase === "connected",
+          connected: supportsSharedSettings(environment),
           settings: environment.serverConfig?.settings ?? null,
         })),
       }),
