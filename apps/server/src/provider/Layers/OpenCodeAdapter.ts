@@ -1639,11 +1639,17 @@ export function makeOpenCodeAdapter(
           if (replied) {
             return;
           }
-          // The reply failed, so fall back to surfacing the approval. Undo
-          // the bookkeeping so the terminal event and any retry treat it as
-          // a normal pending request.
-          context.resolvedRequestIds.delete(request.id);
+          // The reply failed, so fall back to surfacing the approval.
           context.autoRepliedRequestIds.delete(request.id);
+          // A terminal `permission.replied` may have landed (and been
+          // swallowed) while our reply was in flight, e.g. the SDK call timed
+          // out locally but OpenCode still resolved it. Its terminal slot is
+          // already consumed, so opening a dialog now would leave a request
+          // that can never resolve. Keep it marked resolved and return.
+          if (context.emittedTerminalRequestIds.has(request.id)) {
+            return;
+          }
+          context.resolvedRequestIds.delete(request.id);
         }
         context.pendingPermissions.set(request.id, request);
         yield* emit({
