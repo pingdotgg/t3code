@@ -3,6 +3,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type OrchestrationThread,
 } from "@t3tools/contracts/legacy-orchestration";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
