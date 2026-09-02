@@ -23,7 +23,6 @@ export const CodexGoalStatus = Schema.Literals([
 ]);
 export type CodexGoalStatus = typeof CodexGoalStatus.Type;
 
-/** Native Codex App Server Goal state, excluding its provider-local thread id. */
 export const CodexGoal = Schema.Struct({
   objective: TrimmedNonEmptyString,
   status: CodexGoalStatus,

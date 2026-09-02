@@ -277,7 +277,6 @@ export const WS_METHODS = {
   providerInstallSubscribe: "provider.install.subscribe",
   providerInstallRemove: "provider.install.remove",
 
-  // Codex native Goal methods
   codexGoalGet: "codex.goal.get",
   codexGoalSet: "codex.goal.set",
   codexGoalClear: "codex.goal.clear",
