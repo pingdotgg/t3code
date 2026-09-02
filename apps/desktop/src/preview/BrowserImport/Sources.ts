@@ -178,21 +178,6 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
 });
 
 /**
- * Whether a directory entry exists, without following it or opening it.
- *
- * `stat` resolves symlinks and the locks below deliberately dangle, so
- * `readLink` is the probe that answers for the entry itself.
- */
-const entryExists = Effect.fnUntraced(function* (path: string) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  return yield* fileSystem.stat(path).pipe(
-    Effect.catch(() => fileSystem.readLink(path)),
-    Effect.as(true),
-    Effect.orElseSucceed(() => false),
-  );
-});
-
-/**
  * Whether a cookie database candidate is a regular file. Presence alone is
  * not enough: a directory at the path would list as an importable profile and
  * then fail the SQLite open, so anything but a file is treated as absent.
