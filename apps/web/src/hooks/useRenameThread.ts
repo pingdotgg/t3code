@@ -17,10 +17,10 @@ export function useRenameThread(input: {
   readonly currentTitle: string;
 }) {
   const { environmentId, threadId, currentTitle } = input;
-  const updateThreadMetadata = useAtomCommand(
-    threadEnvironment.updateMetadata,
-    "thread metadata update",
-  );
+  // Failures toast below with the rename wording, so the generic report is off.
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
   return useCallback(
     (title: string) => {
       const resolution = resolveRenameCommit({ title, originalTitle: currentTitle });
