@@ -536,6 +536,35 @@ describe("mergeUsage", () => {
     expect(outside.providers.map((provider) => provider.provider)).toEqual(["codex"]);
   });
 
+  it("filters environments before claiming a selected project's shared source", () => {
+    const sharedSource = [{ provider: "claude" as const, hostId: "mac", homePath: "/shared" }];
+    const environments = [
+      environment(
+        "env-a",
+        summary(
+          [bucket({ projectId: ProjectId.make("project-a"), project: "A", costUsd: 9 })],
+          sharedSource,
+        ),
+      ),
+      environment(
+        "env-b",
+        summary(
+          [bucket({ projectId: ProjectId.make("project-b"), project: "B", costUsd: 4 })],
+          sharedSource,
+        ),
+      ),
+    ];
+    const projectKey = JSON.stringify(["env-b", "id:project-b"]);
+
+    const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, {
+      projectFilter: projectKey,
+    });
+
+    expect(filtered.costUsd).toBe(4);
+    expect(filtered.contributingEnvironments).toEqual(["env-b"]);
+    expect(filtered.providerContributions.map((entry) => entry.environmentId)).toEqual(["env-b"]);
+  });
+
   it("namespaces stable project ids by environment", () => {
     const sharedId = ProjectId.make("cloned-project");
     const environments = [

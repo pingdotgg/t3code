@@ -308,7 +308,22 @@ export function mergeUsage(
     }
   }
 
-  const { ownerByFingerprint, duplicates } = claimSources(current);
+  // A namespaced project belongs to one environment. Restrict ownership
+  // candidates before de-duplication so another environment cannot claim the
+  // shared transcript source and erase the selected project's buckets.
+  const ownershipEnvironments =
+    typeof projectFilter === "string"
+      ? current.filter(
+          (environment) =>
+            projectFilterForEnvironment(projectFilter, environment.environmentId) !==
+            "environment-mismatch:",
+        )
+      : current;
+  const unfilteredClaims = claimSources(current);
+  const selectedClaims =
+    typeof projectFilter === "string" ? claimSources(ownershipEnvironments) : unfilteredClaims;
+  const { ownerByFingerprint, duplicates } = selectedClaims;
+  const unfilteredOwnerByFingerprint = unfilteredClaims.ownerByFingerprint;
 
   let costUsd = 0;
   let uncachedInputTokens = 0;
@@ -357,6 +372,45 @@ export function mergeUsage(
     }
   >();
   let unfilteredCostUsd = 0;
+
+  // Keep the picker stable while a project is selected. Its rows come from
+  // the globally de-duplicated view, while the figures below use the selected
+  // environment's ownership map.
+  for (const environment of current) {
+    const { buckets } = ownedContribution(environment, unfilteredOwnerByFingerprint);
+    for (const bucket of buckets) {
+      const tokens = bucketTokens(bucket);
+      const bucketCacheWriteComplete =
+        bucket.totals.cacheCreationTokens === 0 || bucket.cacheWriteUsd !== undefined;
+      unfilteredCostUsd += bucket.costUsd;
+      const localProjectKey = localBucketProjectKey(bucket);
+      const projectKey =
+        typeof localProjectKey === "string"
+          ? namespacedProjectKey(environment.environmentId, localProjectKey)
+          : localProjectKey;
+      if (projectKey === undefined) continue;
+      const accumulatorKey = projectKey ?? "\0";
+      const project = projectAccumulator.get(accumulatorKey) ?? {
+        projectId: bucket.projectId ?? null,
+        projectKey,
+        project: bucket.project ?? null,
+        costUsd: 0,
+        totalTokens: 0,
+        cacheWriteTokens: 0,
+        cacheWriteUsd: 0,
+        cacheWriteComplete: true,
+        records: 0,
+      };
+      project.costUsd += bucket.costUsd;
+      project.totalTokens += tokens;
+      project.cacheWriteTokens += bucket.totals.cacheCreationTokens;
+      project.cacheWriteUsd += bucket.cacheWriteUsd ?? 0;
+      project.cacheWriteComplete &&= bucketCacheWriteComplete;
+      project.records += bucket.records;
+      projectAccumulator.set(accumulatorKey, project);
+    }
+  }
+
   const dailyAccumulator = new Map<
     string,
     {
@@ -411,7 +465,6 @@ export function mergeUsage(
       const bucketCacheWriteComplete =
         bucket.totals.cacheCreationTokens === 0 || bucket.cacheWriteUsd !== undefined;
 
-      unfilteredCostUsd += bucket.costUsd;
       const localProjectKey = localBucketProjectKey(bucket);
       const projectKey =
         typeof localProjectKey === "string"
@@ -421,29 +474,7 @@ export function mergeUsage(
       // part of the explicit Outside projects slice.
       if (projectKey === undefined) {
         if (projectFilter !== undefined) continue;
-      } else {
-        const accumulatorKey = projectKey ?? "\0";
-        const project = projectAccumulator.get(accumulatorKey) ?? {
-          projectId: bucket.projectId ?? null,
-          projectKey,
-          project: bucket.project ?? null,
-          costUsd: 0,
-          totalTokens: 0,
-          cacheWriteTokens: 0,
-          cacheWriteUsd: 0,
-          cacheWriteComplete: true,
-          records: 0,
-        };
-        project.costUsd += bucket.costUsd;
-        project.totalTokens += tokens;
-        project.cacheWriteTokens += bucket.totals.cacheCreationTokens;
-        project.cacheWriteUsd += bucket.cacheWriteUsd ?? 0;
-        project.cacheWriteComplete &&= bucketCacheWriteComplete;
-        project.records += bucket.records;
-        projectAccumulator.set(accumulatorKey, project);
-
-        if (projectFilter !== undefined && projectKey !== projectFilter) continue;
-      }
+      } else if (projectFilter !== undefined && projectKey !== projectFilter) continue;
 
       costUsd += bucket.costUsd;
       cacheSavingsUsd += bucket.cacheSavingsUsd;

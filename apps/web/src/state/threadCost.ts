@@ -1,14 +1,17 @@
 // @effect-diagnostics globalDate:off -- The active thread window ends on the viewer's current calendar day.
 import { useAtomValue } from "@effect/atom-react";
 import {
+  USAGE_THREAD_BREAKDOWN_SINCE,
   UsageDay,
   type EnvironmentId,
   type ThreadId,
+  type UsageSummaryInput,
+  type UsageThreadBreakdown,
   type UsageThreadBreakdownInput,
   type UsageThreadRow,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -77,6 +80,10 @@ export function millisecondsUntilNextThreadCostDay(now = new Date()): number {
   const nextDay = new Date(now);
   nextDay.setHours(24, 0, 0, 0);
   return Math.max(1, nextDay.getTime() - now.getTime() + 1000);
+}
+
+export function supportsThreadCostBreakdown(contractVersion: number): boolean {
+  return contractVersion >= USAGE_THREAD_BREAKDOWN_SINCE;
 }
 
 export function summarizeThreadCost(
@@ -150,27 +157,69 @@ export function useThreadCost(input: {
     () => makeThreadCostInput(input.threadId, input.createdAt, new Date(), currentDay),
     [currentDay, input.createdAt, input.threadId],
   );
-  const query = useMemo(
-    () =>
-      serverEnvironment.usageThreadBreakdown({
-        environmentId: input.environmentId,
-        input: requestInput,
-      }),
-    [input.environmentId, requestInput],
-  );
-  const result = useAtomValue(query);
-  const previousRefreshKey = useRef(input.refreshKey);
+  const queries = useMemo(() => {
+    const summaryInput: UsageSummaryInput = {
+      sinceDay: requestInput.sinceDay,
+      untilDay: requestInput.untilDay,
+      timeZone: requestInput.timeZone,
+    };
+    const summaryQuery = serverEnvironment.usageSummary({
+      environmentId: input.environmentId,
+      input: summaryInput,
+    });
+    const breakdownQuery = serverEnvironment.usageThreadBreakdown({
+      environmentId: input.environmentId,
+      input: requestInput,
+    });
+    const stateAtom = Atom.make(
+      (
+        get,
+      ): {
+        readonly breakdown: UsageThreadBreakdown | null;
+        readonly isPending: boolean;
+        readonly supported: boolean | null;
+      } => {
+        const summaryResult = get(summaryQuery);
+        const summary = Option.getOrNull(AsyncResult.value(summaryResult));
+        if (summary === null) {
+          return { breakdown: null, isPending: summaryResult.waiting, supported: null };
+        }
+        if (!supportsThreadCostBreakdown(summary.contractVersion)) {
+          return { breakdown: null, isPending: false, supported: false };
+        }
+        const breakdownResult = get(breakdownQuery);
+        return {
+          breakdown: Option.getOrNull(AsyncResult.value(breakdownResult)),
+          isPending: breakdownResult.waiting,
+          supported: true,
+        };
+      },
+    );
+    return { summaryQuery, breakdownQuery, stateAtom };
+  }, [input.environmentId, requestInput]);
+  const state = useAtomValue(queries.stateAtom);
+  const supported = useRef<boolean | null>(state.supported);
+  useEffect(() => {
+    supported.current = state.supported;
+  }, [state.supported]);
 
+  const previousRefreshKey = useRef(input.refreshKey);
   useEffect(() => {
     if (input.refreshKey === null || previousRefreshKey.current === input.refreshKey) return;
     previousRefreshKey.current = input.refreshKey;
-    const timeout = window.setTimeout(() => appAtomRegistry.refresh(query), 750);
+    const timeout = window.setTimeout(() => {
+      if (supported.current === true) {
+        appAtomRegistry.refresh(queries.breakdownQuery);
+      } else if (supported.current === null) {
+        appAtomRegistry.refresh(queries.summaryQuery);
+      }
+    }, 750);
     return () => window.clearTimeout(timeout);
-  }, [input.refreshKey, query]);
+  }, [input.refreshKey, queries.breakdownQuery, queries.summaryQuery]);
 
-  const breakdown = Option.getOrNull(AsyncResult.value(result));
   return {
-    cost: breakdown === null ? null : summarizeThreadCost(breakdown.rows, input.threadId),
-    isPending: result.waiting,
+    cost:
+      state.breakdown === null ? null : summarizeThreadCost(state.breakdown.rows, input.threadId),
+    isPending: state.isPending,
   };
 }

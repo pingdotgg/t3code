@@ -1,10 +1,16 @@
-import { ThreadId, UsageDay, type UsageThreadRow } from "@t3tools/contracts";
+import {
+  ThreadId,
+  USAGE_THREAD_BREAKDOWN_SINCE,
+  UsageDay,
+  type UsageThreadRow,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   makeThreadCostInput,
   millisecondsUntilNextThreadCostDay,
   summarizeThreadCost,
+  supportsThreadCostBreakdown,
 } from "./threadCost";
 
 const threadId = ThreadId.make("thread-cost-test");
@@ -48,6 +54,11 @@ describe("thread cost state", () => {
 
     expect(delay).toBeGreaterThan(30_000);
     expect(delay).toBeLessThan(32_000);
+  });
+
+  it("only enables the thread RPC for servers that advertise its contract version", () => {
+    expect(supportsThreadCostBreakdown(USAGE_THREAD_BREAKDOWN_SINCE - 1)).toBe(false);
+    expect(supportsThreadCostBreakdown(USAGE_THREAD_BREAKDOWN_SINCE)).toBe(true);
   });
 
   it("combines provider rows and keeps provider-reported cost visible", () => {
