@@ -18,6 +18,34 @@ import { OpenCodeRuntime, OpenCodeRuntimeLive } from "./opencodeRuntime.ts";
 const testLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
+  it.effect("keeps provider inventory when agent discovery fails", () =>
+    Effect.gen(function* () {
+      const runtime = yield* OpenCodeRuntime;
+      const client = {
+        provider: {
+          list: () =>
+            Promise.resolve({
+              data: {
+                connected: ["openai"],
+                all: [],
+                default: {},
+              },
+            }),
+        },
+        app: {
+          agents: () => Promise.reject(new Error("agents endpoint unavailable")),
+          skills: () => Promise.resolve({ data: [] }),
+        },
+      } as unknown as OpencodeClient;
+
+      const inventory = yield* runtime.loadOpenCodeInventory(client);
+
+      NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
+      NodeAssert.deepEqual(inventory.agents, []);
+      NodeAssert.deepEqual(inventory.skills, []);
+    }),
+  );
+
   it.effect("keeps provider inventory when skill discovery fails", () =>
     Effect.gen(function* () {
       const runtime = yield* OpenCodeRuntime;

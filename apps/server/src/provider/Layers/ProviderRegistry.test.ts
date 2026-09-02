@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -41,6 +42,7 @@ import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistr
 import {
   haveProvidersChanged,
   mergeProviderSnapshot,
+  upsertProviderWorkspaceSnapshot,
   ProviderRegistryLive,
 } from "./ProviderRegistry.ts";
 import * as ServerConfig from "../../config.ts";
@@ -563,6 +565,41 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         assert.strictEqual(haveProvidersChanged(providers, [...providers]), false);
       });
 
+      it("stores workspace skills and commands without changing machine metadata", () => {
+        const provider = {
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-03-25T00:00:00.000Z",
+          version: "1.0.0",
+          models: [],
+          slashCommands: [{ name: "global" }],
+          skills: [{ name: "global", path: "/global/SKILL.md", enabled: true }],
+        } satisfies ServerProvider;
+        const scopedSnapshot = {
+          ...provider,
+          checkedAt: "2026-03-25T00:01:00.000Z",
+          slashCommands: [{ name: "project" }],
+          skills: [{ name: "project", path: "/project/SKILL.md", enabled: true }],
+        } satisfies ServerProvider;
+
+        const result = upsertProviderWorkspaceSnapshot(provider, "/project", scopedSnapshot);
+
+        assert.deepStrictEqual(result.slashCommands, provider.slashCommands);
+        assert.deepStrictEqual(result.skills, provider.skills);
+        assert.deepStrictEqual(result.workspaceSnapshots, [
+          {
+            cwd: "/project",
+            checkedAt: scopedSnapshot.checkedAt,
+            slashCommands: scopedSnapshot.slashCommands,
+            skills: scopedSnapshot.skills,
+          },
+        ]);
+      });
+
       it("preserves previously discovered provider models when a refresh returns none", () => {
         const previousProvider = {
           instanceId: ProviderInstanceId.make("cursor"),
@@ -589,17 +626,72 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               }),
             },
           ],
+          slashCommands: [{ name: "review", description: "Review changes" }],
+          skills: [
+            {
+              name: "typescript",
+              description: "TypeScript help",
+              path: "/skills/typescript/SKILL.md",
+              enabled: true,
+            },
+          ],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-04-14T00:01:00.000Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          ...previousProvider.models,
+        ]);
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, refreshedProvider).slashCommands,
+          [],
+        );
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, refreshedProvider).skills,
+          [],
+        );
+      });
+
+      it("drops custom models the refreshed snapshot no longer carries", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          driver: ProviderDriverKind.make("claudeAgent"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-04-14T00:00:00.000Z",
+          version: "2.1.0",
+          models: [
+            {
+              slug: "claude-sonnet-4-6",
+              name: "Sonnet 4.6",
+              isCustom: false,
+              capabilities: null,
+            },
+            {
+              slug: "removed-custom",
+              name: "removed-custom",
+              isCustom: true,
+              capabilities: null,
+            },
+          ],
           slashCommands: [],
           skills: [],
         } as const satisfies ServerProvider;
         const refreshedProvider = {
           ...previousProvider,
           checkedAt: "2026-04-14T00:01:00.000Z",
-          models: [],
+          models: [previousProvider.models[0]],
         } satisfies ServerProvider;
 
         assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
-          ...previousProvider.models,
+          ...refreshedProvider.models,
         ]);
       });
 
@@ -670,8 +762,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               capabilities: null,
             },
           ],
-          slashCommands: [],
-          skills: [],
+          slashCommands: [{ name: "review", description: "Review changes" }],
+          skills: [
+            {
+              name: "typescript",
+              description: "TypeScript help",
+              path: "/skills/typescript/SKILL.md",
+              enabled: true,
+            },
+          ],
         } as const satisfies ServerProvider;
         const refreshedProvider = {
           ...previousProvider,
@@ -685,6 +784,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
           ...previousProvider.models,
         ]);
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, refreshedProvider).slashCommands,
+          previousProvider.slashCommands,
+        );
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, refreshedProvider).skills,
+          previousProvider.skills,
+        );
       });
 
       it("classifies pending, logout, uninstall, and reconnect OpenCode inventories", () => {
@@ -713,8 +820,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               capabilities: null,
             },
           ],
-          slashCommands: [],
-          skills: [],
+          slashCommands: [{ name: "review", description: "Review changes" }],
+          skills: [
+            {
+              name: "typescript",
+              description: "TypeScript help",
+              path: "/skills/typescript/SKILL.md",
+              enabled: true,
+            },
+          ],
         } as const satisfies ServerProvider;
         const pendingProvider = {
           ...previousProvider,
@@ -732,6 +846,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           auth: { status: "unknown" },
           checkedAt: "2026-07-17T00:02:00.000Z",
           models: [],
+          slashCommands: [],
+          skills: [],
           message: "OpenCode is available, but it did not report any connected upstream providers.",
         } satisfies ServerProvider;
         const missingProvider = {
@@ -763,6 +879,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ]);
         assert.deepStrictEqual(
           mergeProviderSnapshot(previousProvider, loggedOutProvider).models,
+          [],
+        );
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, loggedOutProvider).slashCommands,
+          [],
+        );
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, loggedOutProvider).skills,
           [],
         );
         assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, missingProvider).models, []);
@@ -893,6 +1017,340 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
             assert.strictEqual(yield* Ref.get(refreshCalls), 0);
           }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      it.effect("deduplicates cwd probes and clears snapshots when an instance rebuilds", () =>
+        Effect.gen(function* () {
+          const driver = ProviderDriverKind.make("codex");
+          const instanceId = ProviderInstanceId.make("codex");
+          const machineProvider = {
+            instanceId,
+            driver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [{ name: "global" }],
+            skills: [{ name: "global", path: "/global/SKILL.md", enabled: true }],
+          } as const satisfies ServerProvider;
+          const scopedProvider = {
+            ...machineProvider,
+            checkedAt: "2026-06-10T00:01:00.000Z",
+            slashCommands: [{ name: "project" }],
+            skills: [{ name: "project", path: "/workspace/SKILL.md", enabled: true }],
+          } as const satisfies ServerProvider;
+          const pendingScopedProvider = {
+            ...scopedProvider,
+            status: "error",
+            installed: false,
+            slashCommands: [],
+          } as const satisfies ServerProvider;
+          const snapshotCalls = yield* Ref.make(0);
+          const returnPendingSnapshot = yield* Ref.make(true);
+          const probeStarted = yield* Deferred.make<void>();
+          const releaseProbe = yield* Deferred.make<void>();
+          const makeInstance = (
+            provider: ServerProvider,
+            snapshotForCwd: NonNullable<ProviderInstance["snapshotForCwd"]>,
+          ): ProviderInstance => ({
+            instanceId,
+            driverKind: driver,
+            continuationIdentity: {
+              driverKind: driver,
+              continuationKey: "codex:instance:codex",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                provider: driver,
+                packageName: null,
+              }),
+              getSnapshot: Effect.succeed(provider),
+              refresh: Effect.succeed(provider),
+              streamChanges: Stream.empty,
+            },
+            snapshotForCwd,
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          });
+          const firstInstance = makeInstance(machineProvider, () =>
+            Effect.gen(function* () {
+              yield* Ref.update(snapshotCalls, (count) => count + 1);
+              if (yield* Ref.get(returnPendingSnapshot)) return pendingScopedProvider;
+              yield* Deferred.succeed(probeStarted, undefined);
+              yield* Deferred.await(releaseProbe);
+              return scopedProvider;
+            }),
+          );
+          const rebuiltProvider = {
+            ...machineProvider,
+            checkedAt: "2026-06-10T00:02:00.000Z",
+            status: "warning",
+            installed: false,
+            auth: { status: "unknown" },
+          } satisfies ServerProvider;
+          const rebuiltInstance = makeInstance(rebuiltProvider, () =>
+            Ref.update(snapshotCalls, (count) => count + 1).pipe(Effect.as(scopedProvider)),
+          );
+          const registryChanges = yield* PubSub.unbounded<void>();
+          const instancesRef = yield* Ref.make<ReadonlyArray<ProviderInstance>>([firstInstance]);
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (requestedId) =>
+                Ref.get(instancesRef).pipe(
+                  Effect.map((instances) =>
+                    instances.find((instance) => instance.instanceId === requestedId),
+                  ),
+                ),
+              listInstances: Ref.get(instancesRef),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.fromPubSub(registryChanges),
+              subscribeChanges: PubSub.subscribe(registryChanges),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-workspace-snapshot-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+            assert.strictEqual((yield* registry.getProviders)[0]?.workspaceSnapshots, undefined);
+            yield* Ref.set(returnPendingSnapshot, false);
+            const workspaceUpdate = yield* registry.streamChanges.pipe(
+              Stream.runHead,
+              Effect.forkChild,
+            );
+            yield* Effect.yieldNow;
+            const firstRefresh = yield* registry
+              .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" })
+              .pipe(Effect.forkChild);
+            yield* Deferred.await(probeStarted);
+            const duplicateRefresh = yield* registry
+              .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" })
+              .pipe(Effect.forkChild);
+            yield* Effect.yieldNow;
+            assert.strictEqual(yield* Ref.get(snapshotCalls), 2);
+            yield* Deferred.succeed(releaseProbe, undefined);
+            yield* Fiber.join(firstRefresh);
+            yield* Fiber.join(duplicateRefresh);
+            const published = yield* Fiber.join(workspaceUpdate);
+            assert.strictEqual(published._tag, "Some");
+            const providers = yield* registry.getProviders;
+            assert.deepStrictEqual(providers[0]?.skills, machineProvider.skills);
+            assert.deepStrictEqual(
+              providers[0]?.workspaceSnapshots?.[0]?.skills,
+              scopedProvider.skills,
+            );
+            yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+            assert.strictEqual(yield* Ref.get(snapshotCalls), 2);
+
+            yield* Ref.set(instancesRef, [rebuiltInstance]);
+            yield* PubSub.publish(registryChanges, undefined);
+            let rebuilt = yield* registry.getProviders;
+            for (
+              let attempt = 0;
+              attempt < 50 && rebuilt[0]?.checkedAt !== rebuiltProvider.checkedAt;
+              attempt += 1
+            ) {
+              yield* Effect.yieldNow;
+              rebuilt = yield* registry.getProviders;
+            }
+            assert.strictEqual(rebuilt[0]?.checkedAt, rebuiltProvider.checkedAt);
+            assert.strictEqual(rebuilt[0]?.workspaceSnapshots, undefined);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      it.effect("refreshes OpenCode catalogs and preserves other providers", () =>
+        Effect.gen(function* () {
+          const codexDriver = ProviderDriverKind.make("codex");
+          const openCodeDriver = ProviderDriverKind.make("opencode");
+          const codexInstanceId = ProviderInstanceId.make("codex");
+          const openCodeInstanceId = ProviderInstanceId.make("opencode");
+          const codexRefreshCalls = yield* Ref.make(0);
+          const openCodeRefreshCalls = yield* Ref.make(0);
+          const codexProvider = {
+            instanceId: codexInstanceId,
+            driver: codexDriver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const failedOpenCodeProvider = {
+            instanceId: openCodeInstanceId,
+            driver: openCodeDriver,
+            status: "error",
+            enabled: true,
+            installed: true,
+            auth: { status: "unknown" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            message: "Failed to refresh OpenCode models.",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const recoveredOpenCodeProvider = {
+            ...failedOpenCodeProvider,
+            status: "ready",
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:01:00.000Z",
+            message: "One upstream provider connected through OpenCode.",
+            models: [
+              {
+                slug: "github/gpt-5",
+                name: "GPT-5",
+                subProvider: "GitHub",
+                isCustom: false,
+                capabilities: null,
+              },
+            ],
+          } as const satisfies ServerProvider;
+          const changedCatalogProvider = {
+            ...recoveredOpenCodeProvider,
+            checkedAt: "2026-06-10T00:02:00.000Z",
+            models: [
+              {
+                slug: "anthropic/claude-sonnet-4",
+                name: "Claude Sonnet 4",
+                subProvider: "Anthropic",
+                isCustom: false,
+                capabilities: null,
+              },
+            ],
+          } as const satisfies ServerProvider;
+          const catalogSnapshot = yield* Ref.make<ServerProvider>(recoveredOpenCodeProvider);
+          const instances = [
+            {
+              instanceId: codexInstanceId,
+              driverKind: codexDriver,
+              continuationIdentity: {
+                driverKind: codexDriver,
+                continuationKey: "codex:instance:codex",
+              },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: codexDriver,
+                  packageName: null,
+                }),
+                getSnapshot: Effect.succeed(codexProvider),
+                refresh: Ref.update(codexRefreshCalls, (count) => count + 1).pipe(
+                  Effect.as(codexProvider),
+                ),
+                streamChanges: Stream.empty,
+              },
+              adapter: {} as ProviderInstance["adapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            },
+            {
+              instanceId: openCodeInstanceId,
+              driverKind: openCodeDriver,
+              continuationIdentity: {
+                driverKind: openCodeDriver,
+                continuationKey: "opencode:instance:opencode",
+              },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: openCodeDriver,
+                  packageName: null,
+                }),
+                getSnapshot: Effect.succeed(failedOpenCodeProvider),
+                refresh: Ref.update(openCodeRefreshCalls, (count) => count + 1).pipe(
+                  Effect.andThen(Ref.get(catalogSnapshot)),
+                ),
+                streamChanges: Stream.empty,
+              },
+              adapter: {} as ProviderInstance["adapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            },
+          ] satisfies ReadonlyArray<ProviderInstance>;
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
+              listInstances: Effect.succeed(instances),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-reconnect-refresh-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const initialProviders = yield* registry.getProviders;
+            assert.strictEqual(
+              initialProviders.find((provider) => provider.instanceId === openCodeInstanceId)
+                ?.status,
+              "error",
+            );
+
+            const recoveredProviders = yield* registry.refresh();
+            assert.deepStrictEqual(
+              recoveredProviders.find((provider) => provider.instanceId === openCodeInstanceId)
+                ?.models,
+              recoveredOpenCodeProvider.models,
+            );
+            assert.deepStrictEqual(
+              recoveredProviders.find((provider) => provider.instanceId === codexInstanceId),
+              codexProvider,
+            );
+
+            yield* Ref.set(catalogSnapshot, changedCatalogProvider);
+            const changedProviders = yield* registry.refresh();
+            assert.deepStrictEqual(
+              changedProviders.find((provider) => provider.instanceId === openCodeInstanceId)
+                ?.models,
+              changedCatalogProvider.models,
+            );
+            assert.deepStrictEqual(
+              changedProviders.find((provider) => provider.instanceId === codexInstanceId),
+              codexProvider,
+            );
+          }).pipe(Effect.provide(runtimeServices));
+
+          assert.strictEqual(yield* Ref.get(codexRefreshCalls), 2);
+          assert.strictEqual(yield* Ref.get(openCodeRefreshCalls), 2);
         }),
       );
 
@@ -1820,192 +2278,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             mockSpawnerLayer((args) => {
               const joined = args.join(" ");
               if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-              throw new Error(`Unexpected args: ${joined}`);
-            }),
-          ),
-        ),
-      );
-
-      it.effect("includes Claude Opus 5 on supported Claude Code versions", () =>
-        Effect.gen(function* () {
-          const status = yield* checkClaudeProviderStatus(
-            defaultClaudeSettings,
-            claudeCapabilities(),
-          );
-          const opus5 = status.models.find((model) => model.slug === "claude-opus-5");
-          assert.strictEqual(opus5?.name, "Claude Opus 5");
-        }).pipe(
-          Effect.provide(
-            mockSpawnerLayer((args) => {
-              const joined = args.join(" ");
-              if (joined === "--version") return { stdout: "2.1.219\n", stderr: "", code: 0 };
-              if (joined === "auth status")
-                return {
-                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
-                  stderr: "",
-                  code: 0,
-                };
-              throw new Error(`Unexpected args: ${joined}`);
-            }),
-          ),
-        ),
-      );
-
-      it.effect("hides Claude Opus 5 on older Claude Code versions", () =>
-        Effect.gen(function* () {
-          const status = yield* checkClaudeProviderStatus(
-            defaultClaudeSettings,
-            claudeCapabilities(),
-          );
-          assert.strictEqual(
-            status.models.some((model) => model.slug === "claude-opus-5"),
-            false,
-          );
-          assert.strictEqual(
-            status.message,
-            "Claude Code v2.1.218 is too old for Claude Opus 5. Upgrade to v2.1.219 or newer to access it.",
-          );
-        }).pipe(
-          Effect.provide(
-            mockSpawnerLayer((args) => {
-              const joined = args.join(" ");
-              if (joined === "--version") return { stdout: "2.1.218\n", stderr: "", code: 0 };
-              if (joined === "auth status")
-                return {
-                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
-                  stderr: "",
-                  code: 0,
-                };
-              throw new Error(`Unexpected args: ${joined}`);
-            }),
-          ),
-        ),
-      );
-
-      it.effect("includes Claude Fable 5 on supported Claude Code versions", () =>
-        Effect.gen(function* () {
-          const status = yield* checkClaudeProviderStatus(
-            defaultClaudeSettings,
-            claudeCapabilities(),
-          );
-          const fable5 = status.models.find((model) => model.slug === "claude-fable-5");
-          assert.strictEqual(fable5?.name, "Claude Fable 5");
-        }).pipe(
-          Effect.provide(
-            mockSpawnerLayer((args) => {
-              const joined = args.join(" ");
-              if (joined === "--version") return { stdout: "2.1.169\n", stderr: "", code: 0 };
-              if (joined === "auth status")
-                return {
-                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
-                  stderr: "",
-                  code: 0,
-                };
-              throw new Error(`Unexpected args: ${joined}`);
-            }),
-          ),
-        ),
-      );
-
-      it.effect("hides Claude Fable 5 on older Claude Code versions", () =>
-        Effect.gen(function* () {
-          const status = yield* checkClaudeProviderStatus(
-            defaultClaudeSettings,
-            claudeCapabilities(),
-          );
-          assert.strictEqual(
-            status.models.some((model) => model.slug === "claude-fable-5"),
-            false,
-          );
-          assert.strictEqual(
-            status.message,
-            "Claude Code v2.1.168 is too old for Claude Fable 5. Upgrade to v2.1.169 or newer to access it.",
-          );
-        }).pipe(
-          Effect.provide(
-            mockSpawnerLayer((args) => {
-              const joined = args.join(" ");
-              if (joined === "--version") return { stdout: "2.1.168\n", stderr: "", code: 0 };
-              if (joined === "auth status")
-                return {
-                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
-                  stderr: "",
-                  code: 0,
-                };
-              throw new Error(`Unexpected args: ${joined}`);
-            }),
-          ),
-        ),
-      );
-
-      it.effect(
-        "includes Claude Opus 4.7 with xhigh as the default effort on supported versions",
-        () =>
-          Effect.gen(function* () {
-            const status = yield* checkClaudeProviderStatus(
-              defaultClaudeSettings,
-              claudeCapabilities(),
-            );
-            const opus47 = status.models.find((model) => model.slug === "claude-opus-4-7");
-            if (!opus47) {
-              assert.fail("Expected Claude Opus 4.7 to be present for Claude Code v2.1.111.");
-            }
-            if (!opus47.capabilities) {
-              assert.fail(
-                "Expected Claude Opus 4.7 capabilities to be present for Claude Code v2.1.111.",
-              );
-            }
-            const effortDescriptor = opus47.capabilities.optionDescriptors?.find(
-              (descriptor) => descriptor.type === "select" && descriptor.id === "effort",
-            );
-            assert.deepStrictEqual(
-              effortDescriptor?.type === "select"
-                ? effortDescriptor.options.find((option) => option.isDefault)
-                : undefined,
-              { id: "xhigh", label: "Extra High", isDefault: true },
-            );
-          }).pipe(
-            Effect.provide(
-              mockSpawnerLayer((args) => {
-                const joined = args.join(" ");
-                if (joined === "--version") return { stdout: "2.1.111\n", stderr: "", code: 0 };
-                if (joined === "auth status")
-                  return {
-                    stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
-                    stderr: "",
-                    code: 0,
-                  };
-                throw new Error(`Unexpected args: ${joined}`);
-              }),
-            ),
-          ),
-      );
-
-      it.effect("hides Claude Opus 4.7 on older Claude Code versions", () =>
-        Effect.gen(function* () {
-          const status = yield* checkClaudeProviderStatus(
-            defaultClaudeSettings,
-            claudeCapabilities(),
-          );
-          assert.strictEqual(
-            status.models.some((model) => model.slug === "claude-opus-4-7"),
-            false,
-          );
-          assert.strictEqual(
-            status.message,
-            "Claude Code v2.1.110 is too old for Claude Opus 4.7. Upgrade to v2.1.111 or newer to access it.",
-          );
-        }).pipe(
-          Effect.provide(
-            mockSpawnerLayer((args) => {
-              const joined = args.join(" ");
-              if (joined === "--version") return { stdout: "2.1.110\n", stderr: "", code: 0 };
-              if (joined === "auth status")
-                return {
-                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
-                  stderr: "",
-                  code: 0,
-                };
               throw new Error(`Unexpected args: ${joined}`);
             }),
           ),

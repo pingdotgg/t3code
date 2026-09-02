@@ -22,6 +22,7 @@ it("isolates Claude capability probes without dropping workspace setting sources
     environment: {
       HOME: "/home/user",
       ENABLE_CLAUDEAI_MCP_SERVERS: "true",
+      FORCE_CODE_TERMINAL: "1",
     },
     cwd: "/workspace/project",
   });
@@ -37,6 +38,9 @@ it("isolates Claude capability probes without dropping workspace setting sources
   assert.equal(options.abortController, abortController);
   assert.equal(options.env?.HOME, "/home/user");
   assert.equal(options.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
+  assert.equal(options.env?.FORCE_CODE_TERMINAL, undefined);
+  assert.equal(options.env?.CLAUDE_CODE_AUTO_CONNECT_IDE, "0");
+  assert.equal(options.env?.CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL, "1");
 });
 
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {

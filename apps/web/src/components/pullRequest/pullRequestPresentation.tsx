@@ -339,17 +339,19 @@ export function PullRequestActorAvatar({
 export function PullRequestActorLabel({
   actor,
   className,
+  labelClassName,
   tooltip = true,
 }: {
   actor: PullRequestActor | null;
   className?: string;
+  labelClassName?: string;
   tooltip?: boolean;
 }) {
   const login = actor?.login ?? "ghost";
   const label = (
     <>
       <PullRequestActorAvatar actor={actor} />
-      <span className="truncate">{login}</span>
+      <span className={cn("truncate", labelClassName)}>{login}</span>
     </>
   );
   if (!tooltip) {

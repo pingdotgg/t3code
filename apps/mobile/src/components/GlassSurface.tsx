@@ -1,5 +1,5 @@
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import {
   Platform,
   useColorScheme,
@@ -13,9 +13,14 @@ import { withUniwind } from "uniwind";
 
 import { cn } from "../lib/cn";
 
-const ThemedGlassView = withUniwind(GlassView);
+// Explicit mappings keep the native glassEffectStyle enum out of style-array conversion.
+const ThemedGlassView = withUniwind(GlassView, {
+  style: { fromClassName: "className" },
+  tintColor: { fromClassName: "tintColorClassName", styleProperty: "accentColor" },
+});
 
 interface GlassSurfaceProps extends ViewProps {
+  readonly ref?: Ref<View>;
   readonly children: ReactNode;
   readonly glassEffectStyle?: "clear" | "regular" | "none";
   readonly tintColor?: ColorValue;
@@ -28,6 +33,7 @@ interface GlassSurfaceProps extends ViewProps {
 }
 
 export function GlassSurface({
+  ref,
   children,
   glassEffectStyle = "regular",
   chrome = "default",
@@ -64,6 +70,7 @@ export function GlassSurface({
     return (
       <ThemedGlassView
         {...props}
+        ref={ref}
         className={cn(
           chrome === "none"
             ? "border-0 border-transparent bg-transparent"
@@ -86,6 +93,7 @@ export function GlassSurface({
   return (
     <View
       {...props}
+      ref={ref}
       className={cn(
         chrome === "none"
           ? "border-0 border-transparent bg-transparent"

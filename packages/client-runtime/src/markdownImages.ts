@@ -20,6 +20,12 @@ function normalizeSource(value: string): string {
   return trimmed.startsWith("<") && trimmed.endsWith(">") ? trimmed.slice(1, -1) : trimmed;
 }
 
+export function markdownImageSourceFragment(source: string): string {
+  const normalizedSource = normalizeSource(source);
+  const hashIndex = normalizedSource.indexOf("#");
+  return hashIndex >= 0 ? normalizedSource.slice(hashIndex) : "";
+}
+
 function normalizeWindowsDrivePath(value: string): string {
   return /^\/[A-Za-z]:[\\/]/.test(value) ? value.slice(1) : value;
 }
@@ -61,7 +67,7 @@ function joinWorkspacePath(workspaceRoot: string, relativePath: string): string 
 }
 
 /**
- * Classifies a markdown image source by where its bytes must be loaded from.
+ * Classifies a markdown image or video source by where its bytes must be loaded from.
  * Filesystem paths belong to the environment host and must never reach a
  * browser or native image component without first becoming a signed asset URL.
  */

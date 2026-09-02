@@ -131,17 +131,3 @@ async function disposeTracerRuntime(
   await settleAsyncResult(() => runtime.runPromiseExit(Scope.close(scope, Exit.void)));
   runtime.dispose();
 }
-
-export async function __resetClientTracingForTests() {
-  configurationGeneration++;
-  activeConfigKey = null;
-  activeDelegate = null;
-  pendingConfiguration = Promise.resolve();
-
-  const runtime = activeRuntime;
-  const scope = activeScope;
-  activeRuntime = null;
-  activeScope = null;
-
-  await disposeTracerRuntime(runtime, scope);
-}

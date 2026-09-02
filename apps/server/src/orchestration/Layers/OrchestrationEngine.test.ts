@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -17,10 +18,12 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import * as OrchestrationCommandReceipts from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
@@ -46,27 +49,30 @@ const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
 
-async function createOrchestrationSystem() {
+function makeOrchestrationLayer() {
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-orchestration-engine-test-",
   });
-  const orchestrationLayer = Layer.mergeAll(
+  return Layer.mergeAll(
     OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
     ),
     OrchestrationProjectionSnapshotQueryLive,
   ).pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+    Layer.provideMerge(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),
     Layer.provide(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
-  const runtime = ManagedRuntime.make(orchestrationLayer);
+}
+
+async function createOrchestrationSystem() {
+  const runtime = ManagedRuntime.make(makeOrchestrationLayer());
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
   const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
   return {
@@ -200,6 +206,7 @@ describe("OrchestrationEngine", () => {
           getSnapshotSequence: () =>
             Effect.succeed({ snapshotSequence: projectionSnapshot.snapshotSequence }),
           getCounts: () => Effect.succeed({ projectCount: 1, threadCount: 1 }),
+          getEventReplayStats: () => Effect.die("unused"),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getProjectShellById: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
@@ -215,9 +222,11 @@ describe("OrchestrationEngine", () => {
         Layer.succeed(OrchestrationProjectionPipeline, {
           bootstrap: Effect.void,
           projectEvent: () => Effect.void,
+          projectEventDeferred: () => Effect.succeed(Effect.void),
         } satisfies OrchestrationProjectionPipelineShape),
       ),
       Layer.provide(Layer.succeed(OrchestrationEventStore, eventStore)),
+      Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
       Layer.provideMerge(NodeServices.layer),
@@ -242,6 +251,205 @@ describe("OrchestrationEngine", () => {
 
     await runtime.dispose();
   });
+
+  effectIt.effect("preserves the blocked-settle error and persists its rejected receipt", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const receipts = yield* OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository;
+      const projectId = ProjectId.make("project-blocked-settle");
+      const threadId = ThreadId.make("thread-blocked-settle");
+      const commandId = CommandId.make("cmd-blocked-settle");
+      const createdAt = now();
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-blocked-settle-project-create"),
+        projectId,
+        title: "Project",
+        workspaceRoot: "/tmp/project-blocked-settle",
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-blocked-settle-thread-create"),
+        threadId,
+        projectId,
+        title: "Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-blocked-settle-session-set"),
+        threadId,
+        createdAt,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+      });
+
+      const sequence = yield* engine.latestSequence;
+      const error = yield* engine
+        .dispatch({ type: "thread.settle", commandId, threadId })
+        .pipe(Effect.flip);
+      const message =
+        "This thread still needs attention. Resolve or interrupt it first, then try again.";
+      expect(error).toMatchObject({
+        _tag: "OrchestrationThreadSettleBlockedError",
+        threadId,
+        message,
+      });
+      expect(Option.getOrNull(yield* receipts.getByCommandId({ commandId }))).toMatchObject({
+        commandId,
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        status: "rejected",
+        error: message,
+        resultSequence: sequence,
+      });
+      expect(yield* engine.latestSequence).toBe(sequence);
+    }).pipe(Effect.provide(makeOrchestrationLayer())),
+  );
+
+  effectIt.effect(
+    "rejects persisted changes and live background work without blocking unrelated threads",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(now()));
+        const engine = yield* OrchestrationEngineService;
+        const snapshots = yield* ProjectionSnapshotQuery;
+        const backgroundLiveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
+        const projectId = ProjectId.make("project-auto-settle-guard");
+        const guardedThreadId = ThreadId.make("thread-auto-settle-guarded");
+        const unrelatedThreadId = ThreadId.make("thread-auto-settle-unrelated");
+        const liveThreadId = ThreadId.make("thread-auto-settle-live");
+
+        yield* engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-auto-settle-guard-project"),
+          projectId,
+          title: "Project",
+          workspaceRoot: "/tmp/project-auto-settle-guard",
+          createdAt: now(),
+        });
+        for (const threadId of [guardedThreadId, unrelatedThreadId, liveThreadId]) {
+          yield* engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`cmd-create-${threadId}`),
+            threadId,
+            projectId,
+            title: "Thread",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now(),
+          });
+        }
+
+        const beforeUpdate = yield* snapshots.getSnapshot();
+        const snapshotSequence = beforeUpdate.snapshotSequence;
+        const originalUpdatedAt = beforeUpdate.threads.find(
+          (thread) => thread.id === guardedThreadId,
+        )?.updatedAt;
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-auto-settle-guard-meta"),
+          threadId: guardedThreadId,
+          branch: "new-branch",
+        });
+        const afterUpdate = yield* snapshots.getSnapshot();
+        expect(afterUpdate.threads.find((thread) => thread.id === guardedThreadId)?.updatedAt).toBe(
+          originalUpdatedAt,
+        );
+
+        const staleError = yield* engine
+          .dispatch({
+            type: "thread.auto-settle",
+            commandId: CommandId.make("cmd-auto-settle-stale-snapshot"),
+            threadId: guardedThreadId,
+            snapshotSequence,
+          })
+          .pipe(Effect.flip);
+        expect(staleError._tag).toBe("OrchestrationCommandInvariantError");
+
+        const livenessSnapshotSequence = yield* engine.latestSequence;
+        for (const [taskType, expectedLiveness] of [
+          ["subagent", "working"],
+          ["local_bash", "monitoring"],
+        ] as const) {
+          backgroundLiveness.recordTaskLiveness({
+            threadId: liveThreadId,
+            taskId: `task-${expectedLiveness}`,
+            taskType,
+            status: undefined,
+            kind: "started",
+          });
+          expect(backgroundLiveness.getThreadBackgroundLiveness(liveThreadId)).toBe(
+            expectedLiveness,
+          );
+          expect(yield* engine.latestSequence).toBe(livenessSnapshotSequence);
+
+          const livenessError = yield* engine
+            .dispatch({
+              type: "thread.auto-settle",
+              commandId: CommandId.make(`cmd-auto-settle-${expectedLiveness}`),
+              threadId: liveThreadId,
+              snapshotSequence: livenessSnapshotSequence,
+            })
+            .pipe(Effect.flip);
+          expect(livenessError._tag).toBe("OrchestrationCommandInvariantError");
+          expect(yield* engine.latestSequence).toBe(livenessSnapshotSequence);
+          backgroundLiveness.clearThreadLiveness(liveThreadId);
+        }
+
+        yield* engine.dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("cmd-auto-settle-after-liveness-cleared"),
+          threadId: liveThreadId,
+          snapshotSequence: livenessSnapshotSequence,
+        });
+
+        const freshSnapshotSequence = yield* engine.latestSequence;
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-auto-settle-unrelated-meta"),
+          threadId: unrelatedThreadId,
+          title: "Unrelated update",
+        });
+        yield* engine.dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("cmd-auto-settle-after-unrelated-update"),
+          threadId: guardedThreadId,
+          snapshotSequence: freshSnapshotSequence,
+        });
+
+        const settled = yield* snapshots.getSnapshot();
+        expect(
+          settled.threads.find((thread) => thread.id === guardedThreadId)?.settledOverride,
+        ).toBe("settled");
+        expect(settled.threads.find((thread) => thread.id === liveThreadId)?.settledOverride).toBe(
+          "settled",
+        );
+      }).pipe(Effect.provide(makeOrchestrationLayer())),
+  );
 
   it("persists deterministic read models for repeated snapshot reads", async () => {
     const createdAt = now();
@@ -909,7 +1117,8 @@ describe("OrchestrationEngine", () => {
     let shouldFailRequestedProjection = true;
     const flakyProjectionPipeline: OrchestrationProjectionPipelineShape = {
       bootstrap: Effect.void,
-      projectEvent: (event) => {
+      projectEvent: () => Effect.void,
+      projectEventDeferred: (event) => {
         if (
           shouldFailRequestedProjection &&
           event.commandId === CommandId.make("cmd-turn-start-atomic") &&
@@ -923,7 +1132,7 @@ describe("OrchestrationEngine", () => {
             }),
           );
         }
-        return Effect.void;
+        return Effect.succeed(Effect.void);
       },
     };
 
@@ -1056,7 +1265,8 @@ describe("OrchestrationEngine", () => {
     let shouldFailProjection = true;
     const flakyProjectionPipeline: OrchestrationProjectionPipelineShape = {
       bootstrap: Effect.void,
-      projectEvent: (event) => {
+      projectEvent: () => Effect.void,
+      projectEventDeferred: (event) => {
         if (
           shouldFailProjection &&
           event.commandId === CommandId.make("cmd-thread-archive-sync-fail")
@@ -1069,7 +1279,7 @@ describe("OrchestrationEngine", () => {
             }),
           );
         }
-        return Effect.void;
+        return Effect.succeed(Effect.void);
       },
     };
 

@@ -14,13 +14,17 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { threadEnvironment } from "../../state/threads";
-import type { DraftComposerImageAttachment } from "../../lib/composerImages";
+import type { DraftComposerAttachment } from "../../lib/composerImages";
+import { prepareTurnAttachments, validateDraftFileAttachments } from "../../lib/attachmentUpload";
 import { makeTurnCommandMetadata, type TurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { randomHex } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { scheduleUnusedComposerAttachmentCleanup } from "../../state/use-composer-drafts";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 import { validateProjectThreadCreation } from "./projectThreadCreationValidation";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { serverEnvironment } from "../../state/server";
 
 export function useCreateProjectThread() {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
@@ -36,7 +40,10 @@ export function useCreateProjectThread() {
       readonly runtimeMode: RuntimeMode;
       readonly interactionMode: ProviderInteractionMode;
       readonly initialMessageText: string;
-      readonly initialAttachments: ReadonlyArray<DraftComposerImageAttachment>;
+      readonly initialAttachments: ReadonlyArray<DraftComposerAttachment>;
+      readonly onAttachmentsUploaded: (
+        attachments: ReadonlyArray<DraftComposerAttachment>,
+      ) => Promise<void>;
       /** Reuse identifiers from a queued pending task instead of minting new ones. */
       readonly turnMetadata?: TurnCommandMetadata;
     }) => {
@@ -56,6 +63,53 @@ export function useCreateProjectThread() {
         return AsyncResult.failure(Cause.fail(validationError));
       }
 
+      const validateLiveFileAttachments = (
+        attachments: ReadonlyArray<DraftComposerAttachment>,
+      ): string | null =>
+        validateDraftFileAttachments({
+          attachments,
+          serverConfig: appAtomRegistry.get(
+            serverEnvironment.configValueAtom(input.project.environmentId),
+          ),
+        });
+      const initialAttachmentError = validateLiveFileAttachments(input.initialAttachments);
+      if (initialAttachmentError !== null) {
+        setPendingConnectionError(initialAttachmentError);
+        return AsyncResult.failure(Cause.fail(new Error(initialAttachmentError)));
+      }
+
+      let prepared: Awaited<ReturnType<typeof prepareTurnAttachments>>;
+      try {
+        // If persisting the references into the draft throws, the owner call
+        // deletes the pending uploads it minted before rethrowing.
+        prepared = await prepareTurnAttachments({
+          environmentId: input.project.environmentId,
+          attachments: input.initialAttachments,
+          supportsImageUploads:
+            appAtomRegistry.get(serverEnvironment.configValueAtom(input.project.environmentId))
+              ?.environment.capabilities.attachmentUploads === true,
+          persistUploadedReferences: async (draftAttachments) => {
+            await input.onAttachmentsUploaded(draftAttachments);
+            return "persisted";
+          },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "An attachment could not upload.";
+        setPendingConnectionError(message);
+        return AsyncResult.failure(Cause.fail(new Error(message)));
+      }
+      if (prepared.status !== "ready") {
+        const message = "The attachments are no longer available.";
+        setPendingConnectionError(message);
+        return AsyncResult.failure(Cause.fail(new Error(message)));
+      }
+
+      const preparedAttachmentError = validateLiveFileAttachments(prepared.draftAttachments);
+      if (preparedAttachmentError !== null) {
+        setPendingConnectionError(preparedAttachmentError);
+        return AsyncResult.failure(Cause.fail(new Error(preparedAttachmentError)));
+      }
+
       const result = await startTurn({
         environmentId: input.project.environmentId,
         input: buildProjectThreadStartTurnInput({
@@ -67,6 +121,7 @@ export function useCreateProjectThread() {
           createdAt: metadata.createdAt,
           text: initialMessageText,
           attachments: input.initialAttachments,
+          uploadedAttachments: prepared.attachments,
           modelSelection: input.modelSelection,
           runtimeMode: input.runtimeMode,
           interactionMode: input.interactionMode,
@@ -84,7 +139,13 @@ export function useCreateProjectThread() {
         );
         return AsyncResult.failure(result.cause);
       }
+      // The started turn holds its own copy of the bytes; a failed delete is
+      // surfaced without failing the started task.
+      await prepared.releaseUploads().catch((error) => {
+        console.warn("[project-thread] could not delete consumed pending uploads", error);
+      });
       setPendingConnectionError(null);
+      scheduleUnusedComposerAttachmentCleanup(input.initialAttachments);
 
       return mapAtomCommandResult(result, () =>
         scopeThreadRef(input.project.environmentId, threadId),
