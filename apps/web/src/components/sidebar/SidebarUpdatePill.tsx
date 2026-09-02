@@ -113,6 +113,10 @@ export function SidebarUpdatePill() {
 }
 
 function SidebarUpdateControl() {
+  "use no memo";
+  // Base UI loses focus restoration when React Compiler caches this Popover subtree
+  // across mixed hover and keyboard open cycles.
+
   const state = useDesktopUpdateState();
   const [isActionPending, setIsActionPending] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
@@ -318,7 +322,7 @@ function SidebarUpdateControl() {
           suppressReleaseNotesFocusOpen.current = false;
           return;
         }
-        releaseNotesPopoverHandle.open(releaseNotesTriggerId);
+        flushSync(() => releaseNotesPopoverHandle.open(releaseNotesTriggerId));
       }}
       onKeyDown={(event) => {
         if (!showReleaseNotesPopover) return;
@@ -358,7 +362,7 @@ function SidebarUpdateControl() {
             aria-label="Nightly update release notes"
             className="max-w-none text-balance shadow-xl shadow-black/25"
             initialFocus={false}
-            onKeyDown={(event) => {
+            onKeyDownCapture={(event) => {
               if (
                 event.key === "Escape" &&
                 releaseNotesPopupRef.current?.contains(document.activeElement)
