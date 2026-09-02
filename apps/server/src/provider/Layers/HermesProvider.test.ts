@@ -250,7 +250,7 @@ it.layer(NodeServices.layer)("checkHermesProviderStatus", (it) => {
       });
       expect(provider.message).toBeUndefined();
       // The shared ACP mock agent advertises a fixed grok-flavored catalog.
-      expect(provider.models.map((model) => model.slug)).toEqual(["grok-build", "grok-mock-alt"]);
+      expect(provider.models.map((model) => model.slug)).toEqual(["grok-4.6", "grok-mock-alt"]);
       // The mock agent logs every request before responding, so the log is
       // complete by the time the status check resolves.
       expect(yield* fileSystem.readFileString(requestLogPath)).toContain("initialize");
