@@ -3,22 +3,28 @@ import QtQuick.Layouts
 import T3.Shell
 import T3.Bricks
 
-// Terminal: a status line on top (prompt mark, thread counts, model, the
-// palette's sixteen colours, clock), a narrow sidebar, sharp corners and mono
-// type everywhere. theme-from-terminal.mjs next to this file writes a
-// theme.json in the colours of whatever terminal you run it from.
+// Terminal: a tmux-style status line on top (session block, prompt mark,
+// thread counts, model, the palette's sixteen colours as a chip, clock), a
+// sidebar, sharp corners and mono type everywhere. `vp run theme:qt` writes
+// a theme.json in the colours of whatever terminal you run it from; the one
+// next to this file is Tokyo Night through that generator.
 ShellWindow {
     id: root
 
     readonly property var sidebarState: Shell.state.sidebar ?? null
     readonly property var composerState: Shell.state.composer ?? null
-    readonly property color ink: Theme.color("text", "#c8f0d0")
-    readonly property color dim: Theme.color("textMuted", "#6f9a7a")
-    readonly property color glow: Theme.color("accent", "#3ddc84")
-    readonly property color line: Theme.color("border", "#22372a")
+    readonly property color canvas: Theme.color("canvas", "#1a1b26")
+    readonly property color ink: Theme.color("text", "#c0caf5")
+    readonly property color dim: Theme.color("textMuted", "#757b98")
+    readonly property color line: Theme.color("border", "#31364e")
     // The ANSI slots land in the theme when it came from a terminal; a hand-
-    // written theme shows its semantic colours in the same strip instead.
-    readonly property var swatches: [Theme.color("ansiBlack", Theme.color("surfaceRaised", "#182319")), Theme.color("ansiRed", Theme.color("error", "#ff6b6b")), Theme.color("ansiGreen", Theme.color("update", "#3ddc84")), Theme.color("ansiYellow", Theme.color("warning", "#ffd166")), Theme.color("ansiBlue", Theme.color("accent", "#3ddc84")), Theme.color("ansiMagenta", Theme.color("accentSurface", "#163a25")), Theme.color("ansiCyan", Theme.color("info", "#3ddc84")), Theme.color("ansiWhite", Theme.color("text", "#c8f0d0"))]
+    // written theme falls back to its semantic colours.
+    readonly property color blue: Theme.color("ansiBlue", Theme.color("accent", "#7aa2f7"))
+    readonly property color cyan: Theme.color("ansiCyan", Theme.color("info", "#7dcfff"))
+    readonly property color green: Theme.color("ansiGreen", Theme.color("update", "#9ece6a"))
+    readonly property color yellow: Theme.color("ansiYellow", Theme.color("warning", "#e0af68"))
+    readonly property color magenta: Theme.color("ansiMagenta", Theme.color("accent", "#bb9af7"))
+    readonly property var swatches: [Theme.color("ansiBlack", Theme.color("surfaceRaised", "#2e3247")), Theme.color("ansiRed", Theme.color("error", "#f7768e")), Theme.color("ansiGreen", Theme.color("update", "#9ece6a")), Theme.color("ansiYellow", Theme.color("warning", "#e0af68")), Theme.color("ansiBlue", Theme.color("accent", "#7aa2f7")), Theme.color("ansiMagenta", Theme.color("accentSurface", "#374465")), Theme.color("ansiCyan", Theme.color("info", "#7dcfff")), Theme.color("ansiWhite", Theme.color("textMuted", "#757b98")), Theme.color("ansiBrightBlack", Theme.color("border", "#31364e")), Theme.color("ansiBrightRed", Theme.color("errorForeground", "#f7768e")), Theme.color("ansiBrightGreen", Theme.color("updateForeground", "#9ece6a")), Theme.color("ansiBrightYellow", Theme.color("warningForeground", "#e0af68")), Theme.color("ansiBrightBlue", Theme.color("focus", "#7aa2f7")), Theme.color("ansiBrightMagenta", Theme.color("accent", "#bb9af7")), Theme.color("ansiBrightCyan", Theme.color("info", "#7dcfff")), Theme.color("ansiBrightWhite", Theme.color("text", "#c0caf5"))]
 
     property date now: new Date()
 
@@ -52,7 +58,7 @@ ShellWindow {
         // Status line.
         Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: 30
+            Layout.preferredHeight: 36
 
             DragHandler {
                 target: null
@@ -66,25 +72,34 @@ ShellWindow {
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 12
+                anchors.leftMargin: 14
+                anchors.rightMargin: 8
                 spacing: 10
+
+                // Session block, reverse video like tmux's status-left.
+                Rectangle {
+                    Layout.preferredWidth: session.implicitWidth + 16
+                    Layout.preferredHeight: 20
+                    color: root.blue
+
+                    Segment {
+                        id: session
+
+                        anchors.centerIn: parent
+                        text: "t3code"
+                        color: root.canvas
+                        font.bold: true
+                    }
+                }
 
                 Segment {
                     text: "❯"
-                    color: root.glow
+                    color: root.green
                     font.bold: true
                 }
 
                 Segment {
-                    text: "t3code"
-                    color: root.ink
-                    font.bold: true
-                }
-
-                Divider {
-                }
-
-                Segment {
+                    color: root.cyan
                     text: root.sidebarState ? qsTr("%1 active").arg(root.sidebarState.active.length + root.sidebarState.pinned.length) : qsTr("connecting")
                 }
 
@@ -101,6 +116,7 @@ ShellWindow {
                     id: modelSegment
 
                     visible: text.length > 0
+                    color: root.magenta
                     text: root.composerState && root.composerState.selectedModel ? root.composerState.selectedModel : ""
                 }
 
@@ -108,9 +124,11 @@ ShellWindow {
                     Layout.fillWidth: true
                 }
 
-                Row {
+                // The sixteen slots as a chip: normal row over bright row.
+                Grid {
                     Layout.alignment: Qt.AlignVCenter
-                    spacing: 3
+                    columns: 8
+                    spacing: 2
 
                     Repeater {
                         model: root.swatches
@@ -118,8 +136,8 @@ ShellWindow {
                         Rectangle {
                             required property color modelData
 
-                            width: 8
-                            height: 8
+                            width: 7
+                            height: 7
                             color: modelData
                         }
                     }
@@ -129,14 +147,19 @@ ShellWindow {
                 }
 
                 Segment {
-                    text: Qt.formatDateTime(root.now, "ddd dd MMM  HH:mm:ss")
-                    color: root.ink
+                    text: Qt.formatDateTime(root.now, "ddd dd MMM")
+                }
+
+                Segment {
+                    text: Qt.formatDateTime(root.now, "HH:mm:ss")
+                    color: root.yellow
                 }
 
                 WindowControls {
                     Layout.alignment: Qt.AlignVCenter
+                    Layout.leftMargin: 8
                     window: root
-                    buttonWidth: 34
+                    buttonWidth: 32
                     buttonHeight: 26
                 }
             }
@@ -151,14 +174,16 @@ ShellWindow {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: Theme.color("canvas", "#0b0f0c")
+            color: root.canvas
 
             RowLayout {
                 anchors.fill: parent
                 spacing: 0
 
                 Sidebar {
-                    Layout.preferredWidth: root.sidebarCollapsed ? 0 : 240
+                    id: sidebar
+
+                    Layout.preferredWidth: root.sidebarCollapsed ? 0 : implicitWidth
                     Layout.minimumWidth: 0
                     Layout.fillHeight: true
                     visible: !root.settingsActive && (!root.sidebarCollapsed || width > 0)
@@ -172,7 +197,7 @@ ShellWindow {
                 }
 
                 SettingsNav {
-                    Layout.preferredWidth: 240
+                    Layout.preferredWidth: sidebar.implicitWidth
                     Layout.fillHeight: true
                     visible: root.settingsActive
                 }
