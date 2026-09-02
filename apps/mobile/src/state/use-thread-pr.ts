@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
-  createLinkedPullRequestDetailAtomFamily,
+  createLinkedPullRequestSummaryAtomFamily,
   pullRequestDetailToVcsStatus,
 } from "@t3tools/client-runtime/state/pull-requests";
 import { Atom } from "effect/unstable/reactivity";
@@ -14,7 +14,7 @@ import { useEnvironmentQuery } from "./query";
 import { presentThreadPr, type ThreadPrPresentation } from "./thread-pr-presentation";
 import { vcsEnvironment } from "./vcs";
 
-const linkedPullRequestDetailAtom = createLinkedPullRequestDetailAtomFamily(connectionAtomRuntime);
+const linkedPullRequestDetailAtom = createLinkedPullRequestSummaryAtomFamily(connectionAtomRuntime);
 const MAX_THREAD_PR_SNAPSHOTS = 500;
 
 interface ThreadPrSnapshot {

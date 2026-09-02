@@ -591,6 +591,24 @@ export const PullRequestRef = Schema.Struct({
 export type PullRequestRef = typeof PullRequestRef.Type;
 
 /**
+ * The small live shape a linked thread needs. Keeping it separate from detail means a sidebar
+ * status check never loads permissions, repository settings, checks, or base comparison data.
+ */
+export const PullRequestSummary = Schema.Struct({
+  provider: SourceControlProviderKind,
+  projectId: ProjectId,
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  state: PullRequestState,
+  headBranch: TrimmedNonEmptyString,
+  baseBranch: TrimmedNonEmptyString,
+  updatedAt: IsoDateTime,
+});
+export type PullRequestSummary = typeof PullRequestSummary.Type;
+
+/**
  * One row's line counts, read after the listing rather than inside it. On GitHub the pair is
  * 40-60% of the wall clock of the search that answers the whole page — measured over twelve
  * repositories, 7.1s with it and 4.0s without — for two small numbers at the end of a row.

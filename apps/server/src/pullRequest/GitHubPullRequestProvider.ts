@@ -1,4 +1,7 @@
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import type {
   PullRequestActor,
   PullRequestCapabilities,
@@ -129,6 +132,22 @@ const rendersEmpty = (body: string): boolean =>
 export const make = Effect.gen(function* () {
   const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
+  const repositoryAccessCache = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd, repository, host] = JSON.parse(key) as [string, string, string];
+      return cli.getRepositoryAccess({ cwd, repository, host });
+    },
+    {
+      capacity: 128,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(10) : Duration.zero),
+    },
+  );
+  const getRepositoryAccess = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly host: string;
+  }) => Cache.get(repositoryAccessCache, JSON.stringify([input.cwd, input.repository, input.host]));
+
   const fail = (operation: string) => (error: GitHubPullRequestCli.GitHubPullRequestCliError) =>
     new PullRequestProviderError({
       provider: "github",
@@ -223,6 +242,9 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("listChangeRequestStats"))),
 
+    getChangeRequestSummary: (input) =>
+      cli.getPullRequestSummary(input).pipe(Effect.mapError(fail("getChangeRequestSummary"))),
+
     getChangeRequest: (input) =>
       Effect.all(
         [
@@ -244,7 +266,7 @@ export const make = Effect.gen(function* () {
                     ),
             ),
           ),
-          cli.getRepositoryAccess({
+          getRepositoryAccess({
             cwd: input.cwd,
             repository: input.repository,
             host: input.host,

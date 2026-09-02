@@ -1,10 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   VcsProcessExitError,
@@ -45,6 +49,63 @@ const captureProcessResult = (
   );
 
 describe("VcsProcess.run", () => {
+  it.effect("bounds a synthetic burst of GitHub API processes", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const starts = yield* Queue.unbounded<number>();
+      const active = yield* Ref.make(0);
+      const peak = yield* Ref.make(0);
+      const total = yield* Ref.make(0);
+      const service = yield* VcsProcess.make.pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: () =>
+              Effect.gen(function* () {
+                const count = yield* Ref.updateAndGet(active, (held) => held + 1);
+                yield* Ref.update(peak, (held) => Math.max(held, count));
+                yield* Ref.update(total, (held) => held + 1);
+                yield* Queue.offer(starts, count);
+                yield* Deferred.await(gate);
+                return {
+                  stdout: "",
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }).pipe(Effect.ensuring(Ref.update(active, (count) => count - 1))),
+          }),
+        ),
+      );
+
+      const burst = yield* Effect.all(
+        Array.from({ length: 32 }, (_, index) =>
+          service.run({
+            operation: `synthetic.github.${index}`,
+            command: "gh",
+            args: ["api", "user"],
+            cwd: "/workspace",
+          }),
+        ),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+
+      yield* Effect.all(Array.from({ length: 4 }, () => Queue.take(starts)));
+      yield* Effect.yieldNow;
+      expect(yield* Queue.size(starts)).toBe(0);
+      expect(yield* Ref.get(peak)).toBe(4);
+
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(burst);
+      expect(yield* Ref.get(total)).toBe(32);
+      expect(yield* Ref.get(peak)).toBe(4);
+    }),
+  );
+
   it.effect("collects stdout", () =>
     Effect.gen(function* () {
       const result = yield* run({

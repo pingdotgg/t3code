@@ -492,13 +492,6 @@ export function PullRequestDetailPanel({
   const activityQuery = useEnvironmentQuery(
     pullRequestEnvironment.activity({ environmentId, input: reference }),
   );
-  // Detail and diff are independent server reads, so the diff for the default view (no commit,
-  // no cursor) is started here too rather than waiting for the Code tab to mount. This is one
-  // extra cached read per opened pull request even for readers who never open the tab, but it
-  // turns the tab's first paint from a cold request into a cache hit.
-  const _diffWarmUpQuery = useEnvironmentQuery(
-    pullRequestEnvironment.diff({ environmentId, input: { ...reference } }),
-  );
   const coreDetail = detailQuery.data;
   const activity = activityQuery.data;
   const detail = useMemo(
