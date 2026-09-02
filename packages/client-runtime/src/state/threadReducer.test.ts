@@ -497,6 +497,139 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.latestTurn?.completedAt).toBeNull();
       }
     });
+
+    it("keeps latestTurn and checkpoints references across a streaming delta", () => {
+      const streamingThread: OrchestrationThread = {
+        ...baseThread,
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "claude",
+          runtimeMode: "full-access",
+          activeTurnId: TurnId.make("turn-1"),
+          lastError: null,
+          updatedAt: "2026-04-01T06:59:00.000Z",
+        },
+        latestTurn: {
+          turnId: TurnId.make("turn-1"),
+          state: "running",
+          requestedAt: "2026-04-01T06:59:00.000Z",
+          startedAt: "2026-04-01T06:59:00.000Z",
+          completedAt: null,
+          assistantMessageId: MessageId.make("msg-2"),
+        },
+        messages: [
+          {
+            id: MessageId.make("msg-2"),
+            role: "assistant",
+            text: "Hello",
+            turnId: TurnId.make("turn-1"),
+            streaming: true,
+            createdAt: "2026-04-01T06:00:00.000Z",
+            updatedAt: "2026-04-01T06:00:00.000Z",
+          },
+        ],
+        checkpoints: [
+          {
+            turnId: TurnId.make("turn-1"),
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("ref-1"),
+            status: "ready",
+            files: [],
+            assistantMessageId: MessageId.make("msg-2"),
+            completedAt: "2026-04-01T06:00:30.000Z",
+          },
+        ],
+      };
+
+      const result = applyThreadDetailEvent(streamingThread, {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: "2026-04-01T07:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("msg-2"),
+          role: "assistant",
+          text: ", world",
+          turnId: TurnId.make("turn-1"),
+          streaming: true,
+          createdAt: "2026-04-01T06:00:00.000Z",
+          updatedAt: "2026-04-01T07:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages).not.toBe(streamingThread.messages);
+        expect(result.thread.messages[0]?.text).toBe("Hello, world");
+        expect(result.thread.latestTurn).toBe(streamingThread.latestTurn);
+        expect(result.thread.checkpoints).toBe(streamingThread.checkpoints);
+      }
+    });
+
+    it("replaces latestTurn and checkpoints when the first assistant message binds the turn", () => {
+      const unboundThread: OrchestrationThread = {
+        ...baseThread,
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "claude",
+          runtimeMode: "full-access",
+          activeTurnId: TurnId.make("turn-1"),
+          lastError: null,
+          updatedAt: "2026-04-01T06:59:00.000Z",
+        },
+        latestTurn: {
+          turnId: TurnId.make("turn-1"),
+          state: "running",
+          requestedAt: "2026-04-01T06:59:00.000Z",
+          startedAt: "2026-04-01T06:59:00.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+        checkpoints: [
+          {
+            turnId: TurnId.make("turn-1"),
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("ref-1"),
+            status: "ready",
+            files: [],
+            assistantMessageId: null,
+            completedAt: "2026-04-01T06:59:30.000Z",
+          },
+        ],
+      };
+
+      const result = applyThreadDetailEvent(unboundThread, {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: "2026-04-01T07:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("msg-2"),
+          role: "assistant",
+          text: "Hello",
+          turnId: TurnId.make("turn-1"),
+          streaming: true,
+          createdAt: "2026-04-01T07:00:00.000Z",
+          updatedAt: "2026-04-01T07:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.latestTurn).not.toBe(unboundThread.latestTurn);
+        expect(result.thread.latestTurn?.assistantMessageId).toBe("msg-2");
+        expect(result.thread.checkpoints).not.toBe(unboundThread.checkpoints);
+        expect(result.thread.checkpoints[0]?.assistantMessageId).toBe("msg-2");
+      }
+    });
   });
 
   describe("thread.session-set", () => {

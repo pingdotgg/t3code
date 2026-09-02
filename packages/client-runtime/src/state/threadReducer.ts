@@ -340,16 +340,18 @@ export function applyThreadDetailEvent(
       // assistant message only settles the turn once the session is no longer
       // running it — providers may emit several assistant messages per turn
       // (commentary between tool calls), and the turn must stay unsettled
-      // until the provider reports turn end.
+      // until the provider reports turn end. Streaming deltas recompute the
+      // same record, so the previous reference is kept when nothing changed.
       const turnStillRunning =
         event.payload.turnId !== null &&
         thread.session?.status === "running" &&
         thread.session.activeTurnId === event.payload.turnId;
       const settlesTurn = !event.payload.streaming && !turnStillRunning;
-      const latestTurn: OrchestrationThread["latestTurn"] =
+      const latestTurn = reuseLatestTurn(
+        thread.latestTurn,
         event.payload.role === "assistant" &&
-        event.payload.turnId !== null &&
-        (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
+          event.payload.turnId !== null &&
+          (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
           ? {
               turnId: event.payload.turnId,
               state: settlesTurn
@@ -374,9 +376,11 @@ export function applyThreadDetailEvent(
                   : null,
               assistantMessageId: event.payload.messageId,
             }
-          : thread.latestTurn;
+          : thread.latestTurn,
+      );
 
-      // Rebind checkpoint assistant message IDs for assistant messages.
+      // Rebind checkpoint assistant message IDs for assistant messages. The
+      // helper hands back the same array when the entry is already bound.
       const checkpoints =
         event.payload.role === "assistant" && event.payload.turnId !== null
           ? rebindCheckpointAssistantMessage(
@@ -403,7 +407,8 @@ export function applyThreadDetailEvent(
       // Leaving the "running" session status is the turn-end signal: settle a
       // still-running latest turn so its duration reflects the whole turn.
       const settledTurnState = settledTurnStateForSessionStatus(event.payload.session.status);
-      const latestTurn: OrchestrationLatestTurn | null =
+      const latestTurn = reuseLatestTurn(
+        thread.latestTurn,
         event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
           ? {
               turnId: event.payload.session.activeTurnId,
@@ -433,7 +438,8 @@ export function applyThreadDetailEvent(
                 // "running" is the authoritative turn end.
                 completedAt: event.payload.session.updatedAt,
               }
-            : thread.latestTurn;
+            : thread.latestTurn,
+      );
 
       return {
         kind: "updated",
@@ -687,11 +693,46 @@ function checkpointStatusToTurnState(
   }
 }
 
+/**
+ * Returns `previous` when `next` matches it field for field, otherwise `next`.
+ * Streaming cases recompute the latest turn on every delta, and keeping the
+ * old reference lets selectors and memos keyed on `latestTurn` skip work.
+ */
+function reuseLatestTurn(
+  previous: OrchestrationLatestTurn | null,
+  next: OrchestrationLatestTurn | null,
+): OrchestrationLatestTurn | null {
+  if (previous === null || next === null) {
+    return next;
+  }
+  return previous.turnId === next.turnId &&
+    previous.state === next.state &&
+    previous.requestedAt === next.requestedAt &&
+    previous.startedAt === next.startedAt &&
+    previous.completedAt === next.completedAt &&
+    previous.assistantMessageId === next.assistantMessageId &&
+    previous.sourceProposedPlan?.threadId === next.sourceProposedPlan?.threadId &&
+    previous.sourceProposedPlan?.planId === next.sourceProposedPlan?.planId
+    ? previous
+    : next;
+}
+
+/**
+ * Points the checkpoint for `turnId` at `messageId`. Returns the input array
+ * untouched when no checkpoint needs rebinding, so streaming deltas for an
+ * already-bound message do not allocate a new `checkpoints` reference.
+ */
 function rebindCheckpointAssistantMessage(
   checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>,
   turnId: TurnId,
   messageId: MessageId,
-): OrchestrationCheckpointSummary[] {
+): ReadonlyArray<OrchestrationCheckpointSummary> {
+  const needsRebind = checkpoints.some(
+    (entry) => entry.turnId === turnId && entry.assistantMessageId !== messageId,
+  );
+  if (!needsRebind) {
+    return checkpoints;
+  }
   return Arr.map(checkpoints, (entry) =>
     entry.turnId === turnId ? { ...entry, assistantMessageId: messageId } : entry,
   );
