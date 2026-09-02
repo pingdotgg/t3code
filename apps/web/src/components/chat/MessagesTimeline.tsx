@@ -12,8 +12,23 @@ import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifa
 import {
   resolveWorkEntryToolPresentation,
   resolveViewedImageAsset,
+  splitLeadingCd,
+  toolEntryDiffStat,
+  toolEntryDurationMs,
+  toolEntryExitCode,
+  workEntryFailed,
   workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
+import { formatDuration as formatToolDuration } from "@t3tools/shared/orchestrationTiming";
+import {
+  CommandText,
+  CwdChip,
+  firstOutputLine,
+  TOOL_ROW_MONO_CLASS,
+  ToolFileDiffs,
+  ToolOutputBlock,
+  ToolRowMeta,
+} from "./ToolCallRow";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import type { AgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
@@ -2257,11 +2272,14 @@ function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const failureLabel =
+    row.failureCount > 0 ? `${row.failureCount} failed` : row.hasFailure ? "failed" : null;
+  const durationLabel = row.durationMs !== null ? formatToolDuration(row.durationMs) : null;
   return (
     <button
       type="button"
       className="group/tool-group flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      aria-label={row.hasFailure ? `${row.summary}, tool call failed` : undefined}
+      aria-label={failureLabel ? `${row.summary}, tool call failed` : undefined}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     >
@@ -2276,6 +2294,20 @@ function WorkGroupToggleTimelineRow({
         />
       </span>
       <span className="min-w-0 flex-1 truncate text-secondary-label">{row.summary}</span>
+      {failureLabel || durationLabel ? (
+        <span className="ms-2 flex shrink-0 items-center gap-2 text-[0.6875rem] tabular-nums text-muted-foreground">
+          {failureLabel ? <span>{failureLabel}</span> : null}
+          {durationLabel ? <span>{durationLabel}</span> : null}
+        </span>
+      ) : null}
+      <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
+        <ChevronDownIcon
+          className={cn(
+            "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+            row.expanded && "rotate-180",
+          )}
+        />
+      </span>
     </button>
   );
 }
@@ -3270,7 +3302,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 }) {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
-  const { threadRef, onImageExpand } = use(TimelineRowCtx);
+  const { threadRef, onImageExpand, resolvedTheme } = use(TimelineRowCtx);
   const groupView = use(WorkGroupViewCtx);
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
@@ -3288,7 +3320,8 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   };
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
-  const showFailedIndicator = workEntryDisplayIndicatesToolFailure(workEntry);
+  const showFailedIndicator =
+    workEntryDisplayIndicatesToolFailure(workEntry) || workEntryFailed(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&
     (workEntrySignalsSevereFailure(workEntry) || !workLogEntryIsToolLike(workEntry));
@@ -3301,6 +3334,29 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   const previewText = workEntry.questionAnswer
     ? "Question answer submitted"
     : (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot));
+  const action = toolGroupAction(workEntry);
+  const isToolLike = workLogEntryIsToolLike(workEntry);
+  const running = workEntry.toolLifecycleStatus === "inProgress";
+  const facts = workEntry.facts;
+  const durationMs = toolEntryDurationMs(workEntry);
+  const exitCode = toolEntryExitCode(workEntry);
+  const diffStat = action === "edit" ? toolEntryDiffStat(workEntry) : null;
+  const errorLine = showFailedIndicator ? firstOutputLine(facts?.output) : null;
+  const filesWithDiff = facts?.files ?? [];
+
+  // Plain progress notes ("Probe which subpaths Metro can resolve") are the
+  // agent's intent for the calls that follow. Inside an expanded group they
+  // read as a quiet section label rather than another tool row.
+  const isIntentLabel =
+    isExpandedToolGroupEntry && action === "update" && !showWarningIndicator && !isToolLike;
+
+  // The command, with any leading `cd <dir> &&` pulled into a cwd chip.
+  const commandParts = useMemo(() => {
+    const command = workEntry.command?.trim();
+    if (!command || action !== "command") return null;
+    const split = splitLeadingCd(command);
+    return { command: split.command, cwd: facts?.cwd ?? split.cwd };
+  }, [action, facts?.cwd, workEntry.command]);
   const viewedImagePath = workEntryViewedImagePath(workEntry);
   const viewedImage =
     viewedImagePath && threadRef
@@ -3311,14 +3367,16 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       : null;
   const commandMatchesVisibleLabel = workEntry.command?.trim() === previewText.trim();
   const canExpand =
+    facts?.output !== undefined ||
+    filesWithDiff.length > 0 ||
     (showFailedIndicator && previewText.trim().length > 0) ||
     (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) ||
     Boolean(
       (!commandMatchesVisibleLabel &&
         (workEntryRawCommand(workEntry) || workEntry.command?.trim())) ||
-      workEntry.detail?.trim() ||
-      workEntry.changedFiles?.length ||
-      viewedImage,
+        workEntry.detail?.trim() ||
+        workEntry.changedFiles?.length ||
+        viewedImage,
     );
   const expandedBody = expanded
     ? buildToolCallExpandedBody(
@@ -3328,7 +3386,6 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         viewedImage ? viewedImagePath : null,
       )
     : null;
-  // Reserve destructive row styling for severe failures, not routine tool errors.
   const iconWrapperClass = cn(
     "flex size-6 shrink-0 items-center justify-center",
     showWarningIndicator
@@ -3345,7 +3402,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     ? "font-medium text-warning"
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
-      : workLogEntryIsToolLike(workEntry)
+      : isToolLike
         ? "text-secondary-label"
         : "text-foreground/80";
   const accessibleDisplayText = showFailedIndicator
@@ -3367,6 +3424,18 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       }
     : {};
 
+  if (isIntentLabel) {
+    return (
+      <div className="flex items-baseline gap-2 ps-2 pt-2 pb-0.5 text-[0.8125rem] leading-relaxed text-secondary-label">
+        <span
+          className="size-1.5 shrink-0 translate-y-[-2px] rounded-full bg-icon-muted/70"
+          aria-hidden
+        />
+        <span className="min-w-0 flex-1 truncate">{previewText}</span>
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
@@ -3377,7 +3446,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       )}
       {...rowToggleProps}
     >
-      <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
+      <div className="flex select-none items-center gap-1.5">
         <span
           className={iconWrapperClass}
           role={showFailedIndicator ? "img" : undefined}
@@ -3392,22 +3461,39 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         </span>
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <div className="min-w-0 flex-1 overflow-hidden">
-            <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
-              <span
-                className={cn(
-                  "min-w-0 flex-1",
-                  expanded || (commandMatchesVisibleLabel && !canExpand)
-                    ? "whitespace-pre-wrap break-words select-text"
-                    : "truncate",
-                  headingClass,
-                )}
-                onClick={expanded ? stopRowToggle : undefined}
-                onPointerDown={expanded ? stopRowToggle : undefined}
-              >
-                {previewText}
-              </span>
-            </p>
+            {commandParts && !expanded ? (
+              <p className="flex min-w-0 w-full items-baseline text-sm leading-relaxed">
+                {commandParts.cwd ? (
+                  <CwdChip cwd={commandParts.cwd} workspaceRoot={workspaceRoot} />
+                ) : null}
+                <CommandText command={commandParts.command} className="min-w-0 flex-1 truncate" />
+              </p>
+            ) : (
+              <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
+                <span
+                  className={cn(
+                    "min-w-0 flex-1",
+                    expanded || (commandMatchesVisibleLabel && !canExpand)
+                      ? "whitespace-pre-wrap break-words select-text"
+                      : "truncate",
+                    headingClass,
+                  )}
+                  onClick={expanded ? stopRowToggle : undefined}
+                  onPointerDown={expanded ? stopRowToggle : undefined}
+                >
+                  {previewText}
+                </span>
+              </p>
+            )}
           </div>
+          {isToolLike ? (
+            <ToolRowMeta
+              durationMs={durationMs}
+              exitCode={exitCode}
+              diffStat={diffStat}
+              running={running}
+            />
+          ) : null}
           {showFailedIndicator &&
           !showDestructiveRowStyle &&
           !toolIconAcceptsTint(entryIconName, entryToolIcon) ? (
@@ -3429,33 +3515,45 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           </span>
         </div>
       </div>
-      {expanded && viewedImage && threadRef ? (
-        <div
-          className="mt-1 ms-7 cursor-default"
-          onClick={stopRowToggle}
-          onPointerDown={stopRowToggle}
-        >
-          <ChatMarkdownAssetImage
-            environmentId={threadRef.environmentId}
-            resource={viewedImage.resource}
-            alt={viewedImage.alt}
-            srcFragment={viewedImage.srcFragment}
-            workspaceRoot={workspaceRoot}
-            maxHeightRem={16}
-            onImageExpand={onImageExpand}
-          />
-        </div>
-      ) : null}
       {workEntry.questionAnswer ? (
         <QuestionAnswerHistory answer={workEntry.questionAnswer} />
       ) : null}
-      {expanded && canExpand && expandedBody ? (
+      {errorLine && !expanded ? (
+        <p className={cn(TOOL_ROW_MONO_CLASS, "ms-7 truncate text-secondary-label")}>{errorLine}</p>
+      ) : null}
+      {expanded && canExpand ? (
         <div
-          className="mt-1 ms-7 cursor-default rounded-md bg-muted/40 px-3 py-2"
+          className="mt-1 ms-7 flex cursor-default flex-col gap-2"
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
-          <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
+          {viewedImage && threadRef ? (
+            <ChatMarkdownAssetImage
+              environmentId={threadRef.environmentId}
+              resource={viewedImage.resource}
+              alt={viewedImage.alt}
+              srcFragment={viewedImage.srcFragment}
+              workspaceRoot={workspaceRoot}
+              maxHeightRem={16}
+              onImageExpand={onImageExpand}
+            />
+          ) : null}
+          {facts?.output ? (
+            <ToolOutputBlock output={facts.output} failed={showFailedIndicator} />
+          ) : null}
+          {filesWithDiff.length > 0 ? (
+            <ToolFileDiffs
+              files={filesWithDiff}
+              workspaceRoot={workspaceRoot}
+              resolvedTheme={resolvedTheme}
+              cacheKey={workEntry.id}
+            />
+          ) : null}
+          {!facts?.output && filesWithDiff.length === 0 && expandedBody ? (
+            <pre className={cn(toolCallExpandedBodyClassName, "rounded-md bg-muted/40 px-3 py-2")}>
+              {expandedBody}
+            </pre>
+          ) : null}
         </div>
       ) : null}
     </div>

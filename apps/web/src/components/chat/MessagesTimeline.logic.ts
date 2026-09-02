@@ -9,6 +9,7 @@ import {
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
   toolGroupAction,
+  toolGroupStats,
   toolGroupSummaryKind,
   type ToolGroupSummaryKind,
 } from "@t3tools/client-runtime/work-log/presentation";
@@ -339,6 +340,10 @@ export type MessagesTimelineRow =
       toolIcon?: WorkLogEntry["toolIcon"];
       summaryToolIcon?: "browser" | "t3-code";
       hasFailure: boolean;
+      /** Tool calls in the group that failed (non-zero exit or failed status). */
+      failureCount: number;
+      /** Total duration when every tool call in the group reported one. */
+      durationMs: number | null;
     }
   | {
       kind: "turn-fold";
@@ -1146,6 +1151,7 @@ export function deriveMessagesTimelineRows(input: {
           const summaryToolIcon = usesSingleToolCallLabel
             ? resolveWorkEntryToolPresentation(singleEntry, "completed")?.icon
             : undefined;
+          const groupStats = toolGroupStats(visibleGroupedEntries);
           nextRows.push({
             kind: "work-toggle",
             id: `work-toggle:${timelineEntry.id}`,
@@ -1166,6 +1172,8 @@ export function deriveMessagesTimelineRows(input: {
             hasFailure:
               latestToolEntry !== undefined &&
               workEntryDisplayIndicatesToolFailure(latestToolEntry),
+            failureCount: groupStats.failureCount,
+            durationMs: groupStats.durationMs,
           });
           if (expanded) {
             nextRows.push(
@@ -1398,7 +1406,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.summaryKind === bw.summaryKind &&
         a.toolSurface === bw.toolSurface &&
         Equal.equals(a.toolIcon, bw.toolIcon) &&
-        a.hasFailure === bw.hasFailure
+        a.hasFailure === bw.hasFailure &&
+        a.failureCount === bw.failureCount &&
+        a.durationMs === bw.durationMs
       );
     }
 

@@ -25,6 +25,10 @@ import {
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
+  ProviderDriverKind,
+  ProviderApprovalOption,
+  ProviderRequestKind,
+  type ToolCallFacts,
   type ToolLifecycleItemType,
   type ThreadId,
   type TurnId,
@@ -92,6 +96,10 @@ export interface WorkLogEntry {
     workflowId: string | null;
     agentTaskIds: ReadonlyArray<string>;
   };
+  /** Server-derived, provider-neutral facts (cwd, exit code, duration, output, files). */
+  facts?: ToolCallFacts;
+  /** Wall-clock duration from `tool.started` to completion when the server had none. */
+  durationMs?: number;
 }
 
 const workLogCollapseKey = Symbol();
@@ -451,6 +459,16 @@ export function deriveWorkLogEntries(
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries: DerivedWorkLogEntry[] = [];
+  // `tool.started` rows never render, but their timestamps give every
+  // provider a wall-clock duration when the runtime reports none.
+  const toolStartedAt = new Map<string, string>();
+  for (const activity of ordered) {
+    if (activity.kind !== "tool.started") continue;
+    const toolCallId = extractToolCallId(asRecord(activity.payload));
+    if (toolCallId && !toolStartedAt.has(toolCallId)) {
+      toolStartedAt.set(toolCallId, activity.createdAt);
+    }
+  }
   for (const activity of ordered) {
     if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
     if (activity.kind === "tool.started") continue;
@@ -467,7 +485,22 @@ export function deriveWorkLogEntries(
     if (isNoContentRuntimeWarning(activity)) continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     if (isAgentInternalActivity(activity)) continue;
-    entries.push(toDerivedWorkLogEntry(activity));
+    const entry = toDerivedWorkLogEntry(activity);
+    if (
+      activity.kind === "tool.completed" &&
+      entry.toolCallId &&
+      entry.facts?.durationMs === undefined &&
+      entry.durationMs === undefined
+    ) {
+      const startedAt = toolStartedAt.get(entry.toolCallId);
+      const elapsed =
+        startedAt !== undefined ? Date.parse(activity.createdAt) - Date.parse(startedAt) : NaN;
+      if (Number.isFinite(elapsed) && elapsed >= 0) {
+        entries.push({ ...entry, durationMs: elapsed });
+        continue;
+      }
+    }
+    entries.push(entry);
   }
   return collapseDerivedWorkLogEntries(entries);
 }
@@ -605,6 +638,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (toolCallId) {
     entry.toolCallId = toolCallId;
+  }
+  const facts = extractToolCallFacts(payload);
+  if (facts) {
+    entry.facts = facts;
   }
   let toolLifecycleStatus = extractWorkLogToolLifecycleStatus(payload);
   if (!toolLifecycleStatus && activity.kind === "tool.completed") {
@@ -1170,6 +1207,20 @@ function summarizeToolRawOutput(payload: Record<string, unknown> | null): string
   }
 
   return null;
+}
+
+function extractToolCallFacts(payload: Record<string, unknown> | null): ToolCallFacts | null {
+  const facts = asRecord(payload?.facts);
+  if (!facts) return null;
+  const detailExit =
+    typeof payload?.detail === "string"
+      ? stripTrailingExitCode(payload.detail).exitCode
+      : undefined;
+  const merged = {
+    ...(facts as ToolCallFacts),
+    ...(facts.exitCode === undefined && detailExit !== undefined ? { exitCode: detailExit } : {}),
+  };
+  return Object.keys(merged).length > 0 ? merged : null;
 }
 
 function extractToolOutput(payload: Record<string, unknown> | null): string | null {

@@ -9,6 +9,7 @@ import type {
   OrchestrationLatestTurn,
   OrchestrationThread,
   OrchestrationThreadActivity,
+  ToolCallFacts,
   ToolLifecycleItemType,
   TurnId,
   UserInputQuestion,
@@ -117,6 +118,8 @@ export interface WorkLogEntry {
     }>;
   };
   toolData?: unknown;
+  /** Server-derived, provider-neutral facts (cwd, exit code, duration, output, files). */
+  facts?: ToolCallFacts;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -505,6 +508,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     asTrimmedString(payload?.toolCallId) ?? asTrimmedString(asRecord(payload?.data)?.toolCallId);
   if (toolCallId) {
     entry.toolCallId = toolCallId;
+  }
+  const facts = asRecord(payload?.facts);
+  if (facts) {
+    entry.facts = facts as ToolCallFacts;
   }
   if (isTaskActivity && payload) {
     if (payload.agentKind !== "agent") {
