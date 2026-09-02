@@ -11,6 +11,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -49,7 +50,7 @@ const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
 const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
 
-type UpdateAction = "check" | "download" | "install" | "channel";
+type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
 
 interface DesktopPreparedUpdateInstallResult extends DesktopUpdateActionResult {
   readonly failed: boolean;
@@ -508,16 +509,30 @@ export const make = Effect.gen(function* () {
   const recoverFailedInstall = Effect.fn("desktop.updates.recoverFailedInstall")(function* (
     message: string,
   ) {
-    // Hold the install reservation and `quitting` until recovery is done.
-    // Releasing them first would let a concurrent install be admitted and
-    // stop the backends again while they are still restarting.
-    const instances = yield* pool.list;
-    yield* Effect.forEach(instances, (instance) => instance.start, {
-      concurrency: "unbounded",
-      discard: true,
-    });
-    yield* updateState((current) => reduceDesktopUpdateStateOnInstallFailure(current, message));
-    yield* resetInstallAction;
+    const ownsRecovery = yield* Ref.modify(activeUpdateActionRef, (activeAction) =>
+      Option.isSome(activeAction) && activeAction.value === "install"
+        ? ([true, Option.some<UpdateAction>("install-recovery")] as const)
+        : ([false, activeAction] as const),
+    );
+    if (!ownsRecovery) return;
+
+    yield* Ref.set(desktopState.quitting, false);
+    yield* Effect.gen(function* () {
+      const instances = yield* pool.list;
+      const restartExit = yield* Effect.forEach(instances, (instance) => instance.start, {
+        concurrency: "unbounded",
+        discard: true,
+      }).pipe(Effect.exit);
+      yield* updateState((current) => reduceDesktopUpdateStateOnInstallFailure(current, message));
+      if (Exit.isFailure(restartExit)) {
+        yield* logUpdaterError("Desktop update install recovery could not restart every backend.");
+      }
+    }).pipe(
+      Effect.catchCause(() =>
+        logUpdaterError("Desktop update install recovery failed unexpectedly."),
+      ),
+      Effect.ensuring(finishUpdateAction("install-recovery")),
+    );
   });
 
   const installDownloadedUpdate = (expectedVersion?: string) =>
@@ -740,7 +755,10 @@ export const make = Effect.gen(function* () {
   ) {
     const activeAction = yield* activeUpdateAction;
     const error = new DesktopUpdaterReportedError({
-      operation: Option.getOrElse(activeAction, () => "background" as const),
+      operation: Option.match(activeAction, {
+        onNone: () => "background" as const,
+        onSome: (action) => (action === "install-recovery" ? "install" : action),
+      }),
       cause,
     });
     if (Option.isSome(activeAction) && activeAction.value === "install") {
@@ -911,7 +929,7 @@ export const make = Effect.gen(function* () {
       const activeAction = yield* tryStartChannelChange;
       if (Option.isSome(activeAction)) {
         return yield* new DesktopUpdateActionInProgressError({
-          action: activeAction.value,
+          action: activeAction.value === "install-recovery" ? "install" : activeAction.value,
           requestedChannel: nextChannel,
         });
       }

@@ -587,9 +587,9 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("refuses a second install while a failed install is still recovering", () => {
-    const backendRestarting = Deferred.makeUnsafe<void>();
-    const releaseRestart = Deferred.makeUnsafe<void>();
+  it.effect("holds the install reservation until failed-install recovery finishes", () => {
+    const recoveryStarted = Deferred.makeUnsafe<void>();
+    const releaseRecovery = Deferred.makeUnsafe<void>();
     const harness = makeHarness({
       quitAndInstall: Effect.fail(
         new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
@@ -599,8 +599,8 @@ describe("DesktopUpdates", () => {
           cause: new Error("installer refused"),
         }),
       ),
-      startBackend: Deferred.succeed(backendRestarting, undefined).pipe(
-        Effect.andThen(Deferred.await(releaseRestart)),
+      startBackend: Deferred.succeed(recoveryStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(releaseRecovery)),
       ),
     });
 
@@ -611,17 +611,24 @@ describe("DesktopUpdates", () => {
         harness.emit("update-downloaded", { version: "1.2.4" });
         yield* flushCallbacks;
 
-        const first = yield* updates.install.pipe(Effect.forkChild);
-        yield* Deferred.await(backendRestarting);
-        // Recovery in flight: the reservation must still be held so a
-        // concurrent install cannot stop the backends a second time.
-        const second = yield* updates.install;
-        assert.isFalse(second.accepted);
-        assert.equal(harness.quitAndInstalls(), 1);
+        const failedInstall = yield* updates.install.pipe(Effect.forkChild);
+        yield* Deferred.await(recoveryStarted);
+        assert.isFalse(yield* updates.isInstallActive);
 
-        yield* Deferred.succeed(releaseRestart, undefined);
-        assert.isTrue((yield* Fiber.join(first)).accepted);
+        const overlappingInstall = yield* updates.install;
+        assert.isFalse(overlappingInstall.accepted);
+        assert.equal(harness.quitAndInstalls(), 1);
+        harness.emit("error", new Error("duplicate native installer error"));
+        yield* flushCallbacks;
         assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
+
+        yield* Deferred.succeed(releaseRecovery, undefined);
+        const failedResult = yield* Fiber.join(failedInstall);
+        assert.equal(failedResult.state.errorContext, "install");
+
+        const retry = yield* updates.install;
+        assert.isTrue(retry.accepted);
+        assert.equal(harness.quitAndInstalls(), 2);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
