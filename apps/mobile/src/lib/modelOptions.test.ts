@@ -102,7 +102,7 @@ describe("mobile model options", () => {
     ]);
   });
 
-  it("normalizes a legacy fallback selection against current capabilities", () => {
+  it("does not materialize catalog defaults for missing stored options", () => {
     const config = {
       providers: [
         {
@@ -140,11 +140,17 @@ describe("mobile model options", () => {
     const [option] = buildModelOptions(config, {
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-test",
-      options: [{ id: "fastMode", value: true }],
     });
 
     expect(option?.capabilities?.optionDescriptors?.[0]?.id).toBe("serviceTier");
-    expect(option?.selection.options).toEqual([{ id: "serviceTier", value: "default" }]);
+    expect(option?.selection.options).toBeUndefined();
+
+    const [explicitOption] = buildModelOptions(config, {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-test",
+      options: [{ id: "serviceTier", value: "priority" }],
+    });
+    expect(explicitOption?.selection.options).toEqual([{ id: "serviceTier", value: "priority" }]);
   });
 
   it("rejects stored selections whose provider is not usable", () => {

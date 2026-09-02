@@ -204,6 +204,20 @@ export function buildProviderOptionSelectionsFromDescriptors(
   return nextSelections.length > 0 ? nextSelections : undefined;
 }
 
+export function buildExplicitProviderOptionSelectionsFromDescriptors(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> | null | undefined,
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): Array<ProviderOptionSelection> | undefined {
+  if (!selections || selections.length === 0) {
+    return undefined;
+  }
+  const explicitIds = new Set(selections.map((selection) => selection.id));
+  const normalized = buildProviderOptionSelectionsFromDescriptors(descriptors)?.filter(
+    (selection) => explicitIds.has(selection.id),
+  );
+  return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {
   return typeof text === "string" && /\bultrathink\b/i.test(text);
 }

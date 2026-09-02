@@ -1,4 +1,11 @@
-import { CommandId, EventId, ProjectId, type OrchestrationEvent } from "@t3tools/contracts";
+import {
+  CommandId,
+  EventId,
+  ProjectId,
+  ProviderInstanceId,
+  type ModelSelection,
+  type OrchestrationEvent,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -31,7 +38,53 @@ const seedProjectCreated = (sequence: number): OrchestrationEvent => ({
   },
 });
 
-it.layer(NodeServices.layer)("decider project defaultThreadEnvMode", (it) => {
+it.layer(NodeServices.layer)("decider project defaults", (it) => {
+  it.effect("only treats metadata updates as explicit model defaults", () =>
+    Effect.gen(function* () {
+      const selection: ModelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-sol",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      };
+      const created = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-model-create"),
+          projectId,
+          title: "Model default",
+          workspaceRoot: "/tmp/model-default",
+          defaultModelSelection: selection,
+          createdAt: now,
+        },
+        readModel: createEmptyReadModel(now),
+      });
+      const createdEvent = Array.isArray(created) ? created[0] : created;
+      expect(createdEvent.type).toBe("project.created");
+      expect(
+        (createdEvent.payload as { defaultModelSelection?: unknown }).defaultModelSelection,
+      ).toBeNull();
+
+      const withProject = yield* projectEvent(createEmptyReadModel(now), {
+        ...createdEvent,
+        sequence: 1,
+      });
+      const updated = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.meta.update",
+          commandId: CommandId.make("cmd-project-model-update"),
+          projectId,
+          defaultModelSelection: selection,
+        },
+        readModel: withProject,
+      });
+      const updatedEvent = Array.isArray(updated) ? updated[0] : updated;
+      expect(updatedEvent.type).toBe("project.meta-updated");
+      expect(
+        (updatedEvent.payload as { defaultModelSelection?: unknown }).defaultModelSelection,
+      ).toEqual(selection);
+    }),
+  );
+
   it.effect("propagates defaultThreadEnvMode through meta.update into the read model", () =>
     Effect.gen(function* () {
       const readModel = yield* projectEvent(createEmptyReadModel(now), seedProjectCreated(1));
