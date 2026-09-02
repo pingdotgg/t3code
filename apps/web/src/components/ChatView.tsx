@@ -12,6 +12,7 @@ import {
   type ProviderApprovalDecision,
   type PreviewAnnotationPayload,
   ProviderInstanceId,
+  pullRequestRepositoryOf,
   type ServerProvider,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
@@ -3665,16 +3666,26 @@ function ChatViewContent(props: ChatViewProps) {
   );
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
+  // Repository comes from pullRequestRepositoryOf on that project, not from a stored link path:
+  // Azure used to persist displayName, which requireProject refuses.
   const linkedThreadPullRequest = activeThread?.linkedPullRequest ?? null;
-  const activeProjectRepository = activeProject?.repositoryIdentity?.displayName ?? null;
-  const threadRepository = linkedThreadPullRequest?.repository ?? activeProjectRepository;
+  const linkedProject =
+    linkedThreadPullRequest === null
+      ? undefined
+      : allProjects.find((project) => project.id === linkedThreadPullRequest.projectId);
+  const activeProjectRepository = pullRequestRepositoryOf(activeProject?.repositoryIdentity);
+  const linkedRepository =
+    pullRequestRepositoryOf(linkedProject?.repositoryIdentity) ??
+    linkedThreadPullRequest?.repository ??
+    null;
+  const threadRepository = linkedRepository ?? activeProjectRepository;
   const openThreadPullRequest = useCallback(
     (number: number) => {
       if (!supportsPullRequests || !activeThreadRef) {
         return;
       }
       const projectId = linkedThreadPullRequest?.projectId ?? activeProject?.id;
-      const repository = linkedThreadPullRequest?.repository ?? activeProjectRepository;
+      const repository = linkedRepository ?? activeProjectRepository;
       if (projectId === undefined || repository === null) return;
       useRightPanelStore.getState().openPullRequest(activeThreadRef, {
         projectId,
@@ -3686,6 +3697,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeProject,
       activeProjectRepository,
       activeThreadRef,
+      linkedRepository,
       linkedThreadPullRequest,
       supportsPullRequests,
     ],

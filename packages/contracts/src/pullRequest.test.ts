@@ -7,6 +7,7 @@ import {
   PullRequestListInput,
   PullRequestListResult,
   PullRequestReviewerRequestInput,
+  pullRequestRepositoryOf,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
 
@@ -228,5 +229,43 @@ describe("naming the reader as the author to narrow by", () => {
   it("stands as typed where the host has not said who the reader is", () => {
     expect(resolvePullRequestAuthorFilter("me", null)).toBe("me");
     expect(resolvePullRequestAuthorFilter("me", "  ")).toBe("me");
+  });
+});
+
+describe("naming a repository for pull request operations", () => {
+  it("uses an Azure DevOps repository's short name", () => {
+    expect(
+      pullRequestRepositoryOf({
+        provider: "azure-devops",
+        displayName: "contoso/payments/_git/checkout",
+        name: "checkout",
+      }),
+    ).toBe("checkout");
+  });
+
+  it("falls back to the final Azure DevOps path segment", () => {
+    expect(
+      pullRequestRepositoryOf({
+        provider: "azure-devops",
+        displayName: "contoso/payments/_git/checkout",
+      }),
+    ).toBe("checkout");
+  });
+
+  it("keeps a GitLab repository's full path", () => {
+    expect(
+      pullRequestRepositoryOf({
+        provider: "gitlab",
+        displayName: "group/subgroup/service",
+        owner: "group",
+        name: "service",
+      }),
+    ).toBe("group/subgroup/service");
+  });
+
+  it("falls back to a GitHub owner and name", () => {
+    expect(pullRequestRepositoryOf({ provider: "github", owner: "t3tools", name: "t3code" })).toBe(
+      "t3tools/t3code",
+    );
   });
 });
