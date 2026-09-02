@@ -1,7 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   ArrowLeftIcon,
-  CheckIcon,
   ChevronRightIcon,
   LoaderCircleIcon,
   RotateCwIcon,
@@ -12,7 +11,6 @@ import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
 import {
   Menu,
   MenuGroup,
-  MenuGroupLabel,
   MenuItem,
   MenuPopup,
   MenuSeparator,
@@ -110,7 +108,7 @@ function BreadcrumbMenuContent(props: {
     <MenuPopup
       align="start"
       side="bottom"
-      className="w-[min(19rem,var(--available-width))]"
+      className="w-max max-w-[min(19rem,var(--available-width))]"
       onKeyDown={(event) => {
         if (event.key !== "ArrowLeft" || !canGoBack || parentPath === null) return;
         event.preventDefault();
@@ -118,16 +116,6 @@ function BreadcrumbMenuContent(props: {
         props.onDirectoryChange(parentPath);
       }}
     >
-      <MenuGroup>
-        <MenuGroupLabel className="flex min-w-0 items-center gap-1 px-2 py-1.5">
-          <span className="truncate text-foreground">
-            {pathLabel(props.directoryPath, props.projectName)}
-          </span>
-          <span className="min-w-0 flex-1 truncate text-right font-normal opacity-70">
-            {props.directoryPath || props.projectName}
-          </span>
-        </MenuGroupLabel>
-      </MenuGroup>
       {canGoBack && parentPath !== null ? (
         <>
           <MenuItem closeOnClick={false} onClick={() => props.onDirectoryChange(parentPath)}>
@@ -159,13 +147,12 @@ function BreadcrumbMenuContent(props: {
         ) : (
           children.map((entry) => {
             const isCurrentFile = entry.kind === "file" && entry.path === props.currentFilePath;
-            const containsCurrentFile =
-              entry.kind === "directory" && props.currentFilePath.startsWith(`${entry.path}/`);
             return (
               <MenuItem
                 key={entry.path}
                 closeOnClick={entry.kind === "file"}
                 aria-current={isCurrentFile ? "page" : undefined}
+                className={cn(isCurrentFile && "bg-foreground/[0.08]")}
                 onClick={() => {
                   if (entry.kind === "directory") {
                     props.onDirectoryChange(entry.path);
@@ -184,14 +171,7 @@ function BreadcrumbMenuContent(props: {
                     {entry.path}
                   </TooltipPopup>
                 </Tooltip>
-                {isCurrentFile ? (
-                  <CheckIcon className="text-primary" aria-label="Current file" />
-                ) : entry.kind === "directory" ? (
-                  <ChevronRightIcon
-                    className={cn(containsCurrentFile && "text-primary")}
-                    aria-label={containsCurrentFile ? "Contains current file" : undefined}
-                  />
-                ) : null}
+                {entry.kind === "directory" ? <ChevronRightIcon /> : null}
               </MenuItem>
             );
           })
