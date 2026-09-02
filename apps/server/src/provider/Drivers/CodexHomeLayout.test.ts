@@ -96,12 +96,26 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         yield* writeTextFile(path.join(sharedHome, "config.toml"), 'model = "gpt-5-codex"\n');
         yield* writeTextFile(path.join(sharedHome, "models_cache.json"), '{"models":["shared"]}\n');
         yield* writeTextFile(path.join(sharedHome, "auth.json"), '{"shared":true}\n');
+        const sqliteEntryNames = ["state_5.sqlite", "state_5.sqlite-shm", "state_5.sqlite-wal"];
+        yield* Effect.forEach(
+          sqliteEntryNames,
+          (entryName) => writeTextFile(path.join(sharedHome, entryName), "sqlite"),
+          { discard: true },
+        );
         yield* fileSystem.makeDirectory(shadowHome, { recursive: true });
         yield* writeTextFile(path.join(shadowHome, "auth.json"), '{"shadow":true}\n');
         yield* fileSystem.symlink(
           path.join(sharedHome, "models_cache.json"),
           path.join(shadowHome, "models_cache.json"),
         );
+        yield* Effect.forEach(
+          sqliteEntryNames,
+          (entryName) =>
+            fileSystem.symlink(path.join(sharedHome, entryName), path.join(shadowHome, entryName)),
+          { discard: true },
+        );
+        const shadowLocalSqlite = path.join(shadowHome, "shadow-local.sqlite");
+        yield* writeTextFile(shadowLocalSqlite, "shadow-local");
 
         const layout = yield* resolveCodexHomeLayout(
           decodeCodexSettings({
@@ -124,6 +138,10 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           .readLink(path.join(shadowHome, "auth.json"))
           .pipe(Effect.result);
         const authContents = yield* fileSystem.readFileString(path.join(shadowHome, "auth.json"));
+        const sqliteLinksExist = yield* Effect.forEach(sqliteEntryNames, (entryName) =>
+          fileSystem.exists(path.join(shadowHome, entryName)),
+        );
+        const shadowLocalSqliteContents = yield* fileSystem.readFileString(shadowLocalSqlite);
 
         expect(sessionsTarget).toBe(path.join(sharedHome, "sessions"));
         expect(configTarget).toBe(path.join(sharedHome, "config.toml"));
@@ -131,6 +149,8 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         expect(modelsCacheExists).toBe(false);
         expect(authLinkResult._tag).toBe("Failure");
         expect(authContents).toContain("shadow");
+        expect(sqliteLinksExist).toEqual([false, false, false]);
+        expect(shadowLocalSqliteContents).toBe("shadow-local");
       }),
     );
 
