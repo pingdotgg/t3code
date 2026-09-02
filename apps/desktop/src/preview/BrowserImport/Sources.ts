@@ -26,6 +26,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 export type BrowserImportEngine = "chromium" | "firefox";
@@ -293,9 +295,6 @@ export const sourcePathContext = Effect.gen(function* () {
  * them reports every running browser as closed, which would let an import read
  * a live, mid-write database. `readLink` is the probe that answers for the
  * entry itself.
- *
- * Not opening the file is what lets Safari be detected: TCC permits `stat` on
- * the jar inside its container but refuses a read.
  */
 const entryExists = Effect.fnUntraced(function* (path: string) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -541,12 +540,62 @@ export const firefoxSymlinkLockIsHeld = Effect.fnUntraced(function* (
 ) {
   const separator = target.lastIndexOf(":");
   if (separator < 0) return true;
+  // The owner half is the address Firefox resolved for its own hostname, so a
+  // pid is only meaningful when it is ours: a shared (NFS) profile locked from
+  // another machine names a foreign address and its pid cannot be probed here
+  // — nor could a reused local pid vouch for it. Anything but loopback stays
+  // conservatively held.
+  const owner = target.slice(0, separator);
+  if (owner !== "127.0.0.1" && owner !== "::1") return true;
   // A `+` marks an fcntl-holding owner; the pid follows either way.
   const pidText = target.slice(separator + 1).replace(/^\+/, "");
   if (!/^\d+$/.test(pidText)) return true;
   const pid = Number(pidText);
   if (!Number.isSafeInteger(pid) || pid <= 0) return true;
   return yield* isProcessAlive(pid);
+});
+
+/**
+ * Whether another process holds an fcntl write lock on `path`.
+ *
+ * Firefox's `.parentlock` is an empty file whose only signal is the kernel
+ * lock, and Node exposes no fcntl, so a throwaway interpreter tries a
+ * non-blocking `F_SETLK` and reports `EWOULDBLOCK`. The lock is never
+ * acquired for real: on success the child exits and the kernel drops it.
+ * Anything other than a clean "held" or "free" answer — no interpreter, a
+ * crash, a missing file — is treated as *held*, so a probe failure can never
+ * let an import read a live, mid-write database.
+ */
+export const posixLockIsHeld = Effect.fnUntraced(function* (path: string) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const handle = yield* spawner.spawn(
+        ChildProcess.make(
+          "python3",
+          [
+            "-c",
+            "import fcntl,os,sys\n" +
+              "fd=os.open(sys.argv[1],os.O_WRONLY)\n" +
+              "try:\n" +
+              "  fcntl.lockf(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)\n" +
+              "except BlockingIOError:\n" +
+              "  print('held')\n" +
+              "else:\n" +
+              "  print('free')",
+            path,
+          ],
+          { stdin: "ignore" },
+        ),
+      );
+      const [stdout, exitCode] = yield* Effect.all(
+        [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
+        { concurrency: "unbounded" },
+      );
+      if (Number(exitCode) !== 0) return true;
+      return stdout.trim() !== "free";
+    }),
+  ).pipe(Effect.orElseSucceed(() => true));
 });
 
 /**
@@ -557,10 +606,11 @@ export const firefoxSymlinkLockIsHeld = Effect.fnUntraced(function* (
  * exit, so its presence is evidence — provided the pid it names is alive. But
  * `.parentlock` (macOS/Linux) and `parent.lock` (Windows) are regular files
  * held with fcntl or a Windows handle and are *deliberately left on disk*
- * after exit, as a last-used marker. Treating those as proof of a running
- * browser blocks every import after Firefox has been used once. Node exposes
- * no fcntl probe, so on POSIX those files carry no signal here; on Windows the
- * held handle denies our open, which `isLockHeld` reads as `Busy`.
+ * after exit, as a last-used marker; treating them as proof of a running
+ * browser blocks every import after Firefox has been used once. On POSIX the
+ * fcntl lock itself is the truth, and macOS in particular writes nothing else
+ * (no symlink, no pid), so `.parentlock` is probed for the kernel lock. On
+ * Windows the held handle denies our open, which `isLockHeld` reads as `Busy`.
  */
 const firefoxProfileIsHeld = Effect.fnUntraced(function* (
   directory: string,
@@ -570,19 +620,31 @@ const firefoxProfileIsHeld = Effect.fnUntraced(function* (
   if (context.platform === "win32") {
     return yield* isLockHeld(context.path.join(directory, "parent.lock"), context.platform);
   }
-  return yield* fileSystem.readLink(context.path.join(directory, "lock")).pipe(
+  // Linux additionally writes the `lock` symlink; a live pid there settles it
+  // without spawning anything.
+  const symlinkHeld = yield* fileSystem.readLink(context.path.join(directory, "lock")).pipe(
     Effect.flatMap((target) => firefoxSymlinkLockIsHeld(target, processIsAlive)),
-    // No symlink (clean exit or macOS, which uses fcntl only) means not held;
-    // a `lock` that is a plain file rather than a symlink is not Firefox's.
     Effect.orElseSucceed(() => false),
   );
+  if (symlinkHeld) return true;
+  const parentLock = context.path.join(directory, ".parentlock");
+  const present = yield* fileSystem.stat(parentLock).pipe(
+    Effect.map((info) => info.type === "File"),
+    Effect.orElseSucceed(() => false),
+  );
+  if (!present) return false;
+  return yield* posixLockIsHeld(parentLock);
 });
 
 /** Whether the browser is running, which leaves its cookie DB mid-write. */
 export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")(function* (
   definition: BrowserImportSourceDefinition,
   context: BrowserImportPathContext,
-): Effect.fn.Return<boolean, never, FileSystem.FileSystem> {
+): Effect.fn.Return<
+  boolean,
+  never,
+  FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
+> {
   const fileSystem = yield* FileSystem.FileSystem;
   const root = definition.userDataDirectory(context);
   if (root === undefined) return false;

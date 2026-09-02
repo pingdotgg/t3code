@@ -11,6 +11,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as NodeSqlite from "node:sqlite";
 
 import type { BrowserImportPathContext } from "./Sources.ts";
@@ -48,8 +50,13 @@ const userDataDirectory = (context: BrowserImportPathContext) => {
   return root;
 };
 
-const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>) =>
-  effect.pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+const run = <A, E>(
+  effect: Effect.Effect<
+    A,
+    E,
+    FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
+  >,
+) => effect.pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 /** Writes a Chromium-shaped cookie table with `count` rows. */
 const writeCookieDatabase = (file: string, count: number) =>
@@ -501,8 +508,8 @@ describe("isSourceRunning for Firefox", () => {
         assert.isFalse(yield* isSourceRunning(firefox, context));
 
         // `.parentlock` is deliberately left on disk after a clean exit as a
-        // last-used marker, so it is not evidence of a running browser —
-        // treating it as one blocked every import after first use.
+        // last-used marker, so an unlocked one is not evidence of a running
+        // browser — treating it as one blocked every import after first use.
         yield* fileSystem.writeFileString(`${profile}/.parentlock`, "");
         assert.isFalse(yield* isSourceRunning(firefox, context));
 
@@ -510,6 +517,55 @@ describe("isSourceRunning for Firefox", () => {
         // its target means the profile is held.
         yield* fileSystem.symlink(`127.0.0.1:+${process.pid}`, `${profile}/lock`);
         assert.isTrue(yield* isSourceRunning(firefox, context));
+      }),
+    ),
+  );
+
+  it.effect("detects a live fcntl lock on .parentlock, as macOS Firefox leaves it", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-firefox-" });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, { HOME: home }),
+          Effect.provideService(HostProcessPlatform, "darwin"),
+        );
+        const root = firefox.userDataDirectory(context)!;
+        const profile = `${root}/Profiles/abcd.default-release`;
+        yield* fileSystem.makeDirectory(profile, { recursive: true });
+        yield* fileSystem.writeFileString(`${profile}/cookies.sqlite`, "db");
+        const parentLock = `${profile}/.parentlock`;
+        yield* fileSystem.writeFileString(parentLock, "");
+
+        // Hold the lock from a child the way Firefox does (F_SETLK, write),
+        // and keep it until the scope closes.
+        const holder = yield* spawner.spawn(
+          ChildProcess.make(
+            "python3",
+            [
+              "-c",
+              "import fcntl,os,sys,time\n" +
+                "fd=os.open(sys.argv[1],os.O_WRONLY)\n" +
+                "fcntl.lockf(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)\n" +
+                "print('locked',flush=True)\n" +
+                "time.sleep(30)",
+              parentLock,
+            ],
+            { stdin: "ignore" },
+          ),
+        );
+        // Wait for the child to confirm it holds the lock before probing.
+        yield* holder.stdout.pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.filter((line) => line.trim() === "locked"),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+
+        assert.isTrue(yield* isSourceRunning(firefox, context));
+        yield* holder.kill();
       }),
     ),
   );
@@ -524,6 +580,9 @@ describe("isSourceRunning for Firefox", () => {
       assert.isFalse(yield* firefoxSymlinkLockIsHeld("127.0.0.1:+9999", alive));
       // Anything unparseable stays conservative.
       assert.isTrue(yield* firefoxSymlinkLockIsHeld("garbage", alive));
+      // A foreign owner (a shared profile locked from another machine) names
+      // a pid we cannot probe, so it is held regardless of local liveness.
+      assert.isTrue(yield* firefoxSymlinkLockIsHeld("10.0.0.7:+9999", alive));
     }),
   );
 });

@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { HostProcessExecutablePath, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
@@ -83,7 +84,11 @@ export class BrowserImport extends Context.Service<
 const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function* (
   definition: BrowserImportSourceDefinition,
   context: BrowserImportPathContext,
-): Effect.fn.Return<BrowserImportUnavailableReason | undefined, never, FileSystem.FileSystem> {
+): Effect.fn.Return<
+  BrowserImportUnavailableReason | undefined,
+  never,
+  FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
+> {
   if (!definition.platforms.includes(context.platform)) return "unsupportedPlatform";
   // Chromium's key lives in an OS credential store, and only the macOS one is
   // implemented; Firefox needs no key at all, so it works everywhere.
@@ -162,7 +167,9 @@ export const make = Effect.gen(function* BrowserImportMake() {
   const executablePath = yield* HostProcessExecutablePath;
   // Captured here so the service's methods stay free of a requirements
   // channel: the layer is built where NodeServices is already in scope.
-  const platformServices = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
+  const platformServices = yield* Effect.context<
+    FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+  >();
   const pathContext = yield* sourcePathContext;
 
   const listSources: Effect.Effect<ReadonlyArray<BrowserImportSource>> = Effect.forEach(
