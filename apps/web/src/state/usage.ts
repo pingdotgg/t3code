@@ -7,28 +7,21 @@
  * @module state/usage
  */
 import { useAtomValue } from "@effect/atom-react";
-import {
-  USAGE_CONTRACT_VERSION,
-  type EnvironmentId,
-  type UsageSummary,
-  type UsageSummaryInput,
-} from "@t3tools/contracts";
-import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { USAGE_CONTRACT_VERSION, type UsageSummaryInput } from "@t3tools/contracts";
+import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
+import {
+  deriveEnvironmentUsageStatus,
+  deriveUsageSettlingState,
+  type EnvironmentUsageStatus,
+} from "./usageStatus";
 
-export interface EnvironmentUsageStatus {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-  readonly isPending: boolean;
-  readonly error: string | null;
-  readonly summary: UsageSummary | null;
-}
+export type { EnvironmentUsageStatus } from "./usageStatus";
 
 /**
  * Reads every environment's summary for one window.
@@ -45,13 +38,14 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     const statuses: EnvironmentUsageStatus[] = [];
     for (const [environmentId, presentation] of presentations) {
       const result = get(serverEnvironment.usageSummary({ environmentId, input }));
-      statuses.push({
-        environmentId,
-        label: presentation.entry.target.label,
-        isPending: result.waiting,
-        error: result._tag === "Failure" ? "This environment could not report usage." : null,
-        summary: Option.getOrNull(AsyncResult.value(result)),
-      });
+      statuses.push(
+        deriveEnvironmentUsageStatus({
+          connectionPhase: presentation.connection.phase,
+          result,
+          environmentId,
+          label: presentation.entry.target.label,
+        }),
+      );
     }
     return statuses;
   }).pipe(Atom.withLabel(`web-usage:window:${windowKey}`)),
@@ -121,16 +115,13 @@ export function useUsage(input: UsageSummaryInput): UsageView {
     return mergeUsage(answered, USAGE_CONTRACT_VERSION);
   }, [environments]);
 
-  const answeredCount = environments.filter((environment) => environment.summary !== null).length;
-  const stillReporting = environments.filter(
-    (environment) => environment.summary === null && environment.error === null,
-  ).length;
+  const settling = deriveUsageSettlingState(environments);
 
   return {
     merged,
     environments,
-    isPending: answeredCount === 0 && stillReporting > 0,
-    isPartial: answeredCount > 0 && stillReporting > 0,
+    isPending: settling.isPending,
+    isPartial: settling.isPartial,
     refresh,
   };
 }
