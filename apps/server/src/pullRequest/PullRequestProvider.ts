@@ -69,6 +69,7 @@ export interface ProviderChangeRequest {
   readonly url: string;
   readonly author: PullRequestActor | null;
   readonly headBranch: string;
+  readonly headRepositoryNameWithOwner?: string | null;
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;

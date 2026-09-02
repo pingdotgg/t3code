@@ -26,6 +26,8 @@ export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
   "EnvironmentHttpConnectionNotReadyError",
 )<{ readonly message: string }> {}
 
+export const LINKED_PULL_REQUEST_DETAIL_IDLE_TTL_MS = 5_000;
+
 /** Refresh a linked PR while its thread is visible so merges update the sidebar. */
 export function createLinkedPullRequestDetailAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -35,6 +37,7 @@ export function createLinkedPullRequestDetailAtomFamily<R, E>(
     tag: WS_METHODS.pullRequestsDetail,
     staleTimeMs: 15_000,
     refreshIntervalMs: 30_000,
+    idleTtlMs: LINKED_PULL_REQUEST_DETAIL_IDLE_TTL_MS,
   });
 }
 
@@ -65,6 +68,11 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     mode: "serial",
     key: ({ environmentId }: { readonly environmentId: string }) => environmentId,
   } as const;
+  const activity = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:pull-requests:activity",
+    tag: WS_METHODS.pullRequestsActivity,
+    staleTimeMs: 15_000,
+  });
   return {
     list: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:list",
@@ -87,11 +95,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsDetail,
       staleTimeMs: 15_000,
     }),
-    activity: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:pull-requests:activity",
-      tag: WS_METHODS.pullRequestsActivity,
-      staleTimeMs: 15_000,
-    }),
+    activity,
     threadComments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:thread-comments",
       tag: WS_METHODS.pullRequestsThreadComments,
@@ -160,6 +164,10 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsUpdateComment,
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
+      onSuccess: ({ environmentId, input: { projectId, repository, number } }, registry) =>
+        Effect.sync(() =>
+          registry.refresh(activity({ environmentId, input: { projectId, repository, number } })),
+        ),
     }),
     submitReview: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:submit-review",

@@ -138,6 +138,19 @@ connection policy. `EnvironmentOwnedDataCleanup` is part of this contract: on
 removal the registry clears its cache and calls the platform implementation, so
 web clears composer drafts and mobile clears drafts plus the thread outbox.
 
+Mobile cloud sign-out first saves relay drafts and queued messages in the local
+composer store under the owning account. These saved copies retain attachment
+files during cleanup and remain outside the active composer and upload queue.
+Signing back into that account restores them before relay credentials activate.
+Directly paired environments keep their drafts and outbox when cloud sign-out runs.
+
+Mobile composer attachments upload over HTTP while their environment is connected,
+with at most three concurrent transfers. Drafts retain local image data or an owned
+file URI alongside the pending upload ID. Sending verifies and reuses that ID, or
+uploads the local bytes again if it expired. Disconnecting cancels active transfers
+without discarding drafts; reconnecting resumes preparation. Older servers without
+attachment-upload support continue to receive inline images.
+
 ## Source Boundaries
 
 Applications must import explicit package subpaths; the package intentionally

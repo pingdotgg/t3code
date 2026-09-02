@@ -1164,6 +1164,9 @@ export const make = Effect.gen(function* () {
               deletions: changeRequest.deletions,
               changedFiles: changeRequest.changedFiles,
               headBranch: changeRequest.headBranch,
+              ...(changeRequest.headRepositoryNameWithOwner === undefined
+                ? {}
+                : { headRepositoryNameWithOwner: changeRequest.headRepositoryNameWithOwner }),
               baseBranch: changeRequest.baseBranch,
               createdAt: changeRequest.createdAt,
               updatedAt: changeRequest.updatedAt,

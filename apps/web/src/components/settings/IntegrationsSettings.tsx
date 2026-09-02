@@ -7,7 +7,9 @@
  * @module IntegrationsSettings
  */
 import {
+  BROWSER_RECORDING_FRAME_RATES,
   DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW,
+  DEFAULT_BROWSER_RECORDING_FRAME_RATE,
   DEFAULT_BROWSER_VIEWPORT,
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_UNIFIED_SETTINGS,
@@ -355,12 +357,58 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
   );
 }
 
+function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boolean }) {
+  const frameRate = useClientSettings((settings) => settings.browserRecordingFrameRate);
+  const updateSettings = useUpdatePrimarySettings();
+
+  return (
+    <SettingsRow
+      {...searchableSetting("browser-recording-frame-rate")}
+      description="Maximum frame rate for browser recordings. 30 fps is the default and uses less CPU and storage; 60 fps captures smoother motion."
+      resetAction={
+        !disabled && frameRate !== DEFAULT_BROWSER_RECORDING_FRAME_RATE ? (
+          <SettingResetButton
+            label="browser recording frame rate"
+            onClick={() =>
+              updateSettings({ browserRecordingFrameRate: DEFAULT_BROWSER_RECORDING_FRAME_RATE })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Select
+          disabled={disabled}
+          value={String(frameRate)}
+          onValueChange={(value) => {
+            const next = BROWSER_RECORDING_FRAME_RATES.find((rate) => String(rate) === value);
+            if (next !== undefined) {
+              updateSettings({ browserRecordingFrameRate: next });
+            }
+          }}
+        >
+          <SelectTrigger className="w-full sm:w-40" aria-label="Browser recording frame rate">
+            <SelectValue>{frameRate} fps</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {BROWSER_RECORDING_FRAME_RATES.map((rate) => (
+              <SelectItem hideIndicator key={rate} value={String(rate)}>
+                {rate} fps
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+}
+
 function AgentBrowserAccessSetting() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
 
   return (
     <SettingsRow
+      serverScoped
       {...searchableSetting("agent-browser-access")}
       description="Let agents open and drive the preview browser. When off, the browser tools and the instructions describing them are withheld from agent sessions. Your own browser panel is unaffected."
       status={
@@ -461,6 +509,7 @@ export function IntegrationsSettingsPanel() {
       <BrowserViewportSetting disabled={previewDefaultsDisabled} />
       <BrowserZoomSetting disabled={previewDefaultsDisabled} />
       <BrowserAppearanceSetting disabled={previewDefaultsDisabled} />
+      <BrowserRecordingFrameRateSetting disabled={previewDefaultsDisabled} />
       <BrowserAutoShowFloatingPreviewSetting disabled={previewDefaultsDisabled} />
     </>
   );
@@ -468,8 +517,9 @@ export function IntegrationsSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="browser" title="Browser">
-        {/* Server-authoritative, so it stays editable on every client and sits
-            outside the block covering the desktop-only defaults. */}
+        {/* Server-authoritative, so it stays editable on any client anchored to
+            a server; `serverScoped` covers the hosted app, which has none. It
+            sits outside the block covering the desktop-only defaults. */}
         <AgentBrowserAccessSetting />
         {previewDefaultsDisabled ? (
           <DesktopOnlyBrowserDefaults>{previewDefaults}</DesktopOnlyBrowserDefaults>

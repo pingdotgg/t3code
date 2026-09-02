@@ -22,11 +22,11 @@ The update does not remove saved threads, settings, or project files.
 
 ## Choose the Action You See
 
-| Action                     | What to do                                                                                                                                                                  |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Update server**          | Available for the T3 Code Linux background service. Select the button and leave T3 Code open while it prepares, tests, restarts, and reconnects.                            |
-| **Update the desktop app** | Open the T3 Code desktop app on the machine that runs the server and install the app update there. Reopen it if needed.                                                     |
-| **Copy update command**    | Copy the command, open a terminal on the server machine, stop the current T3 Code server, and relaunch it with the copied command and any startup options you normally use. |
+| Action                     | What to do                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Update server**          | Available for the T3 Code Linux background service and for servers run by a current T3 Code desktop app. Select the button and leave T3 Code open while it downloads, installs, restarts, and reconnects. For desktop-app servers this closes and relaunches the desktop app on that machine. If installation fails, the desktop app stays open and reconnects to its server. |
+| **Update the desktop app** | Shown for desktop apps that predate remote updates. Open the T3 Code desktop app on the machine that runs the server and install the app update there. Reopen it if needed.                                                                                                                                                                                                   |
+| **Copy update command**    | Copy the command, open a terminal on the server machine, stop the current T3 Code server, and relaunch it with the copied command and any startup options you normally use.                                                                                                                                                                                                   |
 
 The available action depends on how that server was started. T3 Code does not update connected
 servers silently in the background.
@@ -56,6 +56,16 @@ the warning always works.
 
 See [Running T3 Code in the Background](./background-service.md) for install, status, and removal
 commands.
+
+## Nightly desktop release notes
+
+The desktop app shows a compact release-notes preview when a nightly update is available. Changes
+appear newest first within each release. Each release links to its exact page on GitHub, even when
+all changes fit in the preview.
+
+The preview shows up to eight changes from each of six releases. When it leaves out changes or older
+releases, it shows the exact number and links to the rest. Contributor credits do not count as
+changes.
 
 ## After the Update
 

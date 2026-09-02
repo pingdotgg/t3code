@@ -98,6 +98,49 @@ describe("ServerUpdateAction", () => {
 
     expect(testState.toast).not.toHaveBeenCalled();
   });
+
+  it("keeps the manual instruction for desktop servers without remote update support", () => {
+    const markup = renderToStaticMarkup(
+      <ServerUpdateAction
+        environmentId={"env-test" as EnvironmentId}
+        serverLabel="Test server"
+        selfUpdate="desktop-managed"
+        targetVersion="0.0.31"
+      />,
+    );
+
+    expect(markup).toContain("Update the desktop app on that machine to update this server.");
+    expect(markup).not.toContain("<button");
+  });
+
+  it("updates remote desktop apps through the shared update flow", async () => {
+    testState.updateServer.mockResolvedValue(
+      AsyncResult.success({ targetVersion: "0.0.34", method: "desktop-app" as const }),
+    );
+
+    const action = ServerUpdateAction({
+      environmentId: "env-test" as EnvironmentId,
+      serverLabel: "Test server",
+      selfUpdate: "desktop-managed",
+      desktopAppUpdate: true,
+      targetVersion: "0.0.31",
+    }) as ActionElement;
+
+    // No confirm-dialog host is mounted in this test, which the component
+    // treats as consent: the click itself was the request.
+    action.props.onClick?.();
+    await flushPromises();
+
+    expect(testState.updateServer).toHaveBeenCalledWith({
+      environmentId: "env-test",
+      input: { targetVersion: "0.0.31" },
+    });
+    expect(testState.toast).toHaveBeenCalledWith({
+      type: "success",
+      title: "Test server updated",
+      description: "Desktop app relaunched on 0.0.34.",
+    });
+  });
 });
 
 describe("ServerUpdateProgress", () => {
