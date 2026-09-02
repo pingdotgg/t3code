@@ -1,6 +1,6 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
-import { type ComponentProps, useCallback, useEffect, useId, useState } from "react";
+import { type ComponentProps, useCallback, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
@@ -118,6 +118,8 @@ function SidebarUpdateControl() {
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [isCheckAnimationLatched, setIsCheckAnimationLatched] = useState(false);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
+  const suppressReleaseNotesFocusOpen = useRef(false);
+  const releaseNotesPopupRef = useRef<HTMLDivElement>(null);
   const releaseNotesTriggerId = useId();
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
 
@@ -307,6 +309,17 @@ function SidebarUpdateControl() {
         disabled && !showUpdateIconState && "opacity-60",
       )}
       onClick={handleAction}
+      onBlur={() => {
+        suppressReleaseNotesFocusOpen.current = false;
+      }}
+      onFocus={(event) => {
+        if (!showReleaseNotesPopover || !event.currentTarget.matches(":focus-visible")) return;
+        if (suppressReleaseNotesFocusOpen.current) {
+          suppressReleaseNotesFocusOpen.current = false;
+          return;
+        }
+        releaseNotesPopoverHandle.open(releaseNotesTriggerId);
+      }}
       onKeyDown={(event) => {
         if (!showReleaseNotesPopover) return;
         openSidebarUpdateReleaseNotesPopoverOnForwardTab(
@@ -345,6 +358,15 @@ function SidebarUpdateControl() {
             aria-label="Nightly update release notes"
             className="max-w-none text-balance shadow-xl shadow-black/25"
             initialFocus={false}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Escape" &&
+                releaseNotesPopupRef.current?.contains(document.activeElement)
+              ) {
+                suppressReleaseNotesFocusOpen.current = true;
+              }
+            }}
+            ref={releaseNotesPopupRef}
             side="top"
             tooltipStyle
           >
