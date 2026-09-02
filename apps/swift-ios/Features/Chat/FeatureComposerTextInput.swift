@@ -243,11 +243,11 @@ struct FeatureComposerTextInput: UIViewRepresentable {
             )
             isSynchronizingInlineSkills = true
             textView.attributedText = attributedText
-            textView.typingAttributes = baseAttributes
             textView.selectedRange = FeatureInlineSkillProjection.displayRange(
                 for: selection,
                 in: attributedText
             )
+            textView.typingAttributes = baseAttributes
             isSynchronizingInlineSkills = false
             return true
         }

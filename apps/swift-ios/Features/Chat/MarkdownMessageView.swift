@@ -1095,13 +1095,23 @@ enum MarkdownSelectableTextAttributes {
                 attributes[.link] = link
             }
             let runText = String(rendered.attributedText[run.range].characters)
+            let hasLeadingBoundary = run.range.lowerBound == rendered.attributedText.startIndex
+                || rendered.attributedText.characters[
+                    rendered.attributedText.characters.index(before: run.range.lowerBound)
+                ].isWhitespace
+            let hasTrailingBoundary = run.range.upperBound == rendered.attributedText.endIndex
+                || rendered.attributedText.characters[run.range.upperBound].isWhitespace
+            let runLength = (runText as NSString).length
             let descriptors = intent?.contains(.code) == true || run.link != nil
                 ? []
                 : FeatureInlineSkillParser.descriptors(
                     in: runText,
                     skills: skills,
                     allowsEndBoundary: true
-                )
+                ).filter { descriptor in
+                    (descriptor.range.location > 0 || hasLeadingBoundary)
+                        && (NSMaxRange(descriptor.range) < runLength || hasTrailingBoundary)
+                }
             result.append(
                 FeatureInlineSkillPillRenderer.attributedText(
                     source: runText,

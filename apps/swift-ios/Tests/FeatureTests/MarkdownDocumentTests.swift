@@ -713,6 +713,33 @@ struct MarkdownDocumentTests {
     }
 
     @Test @MainActor
+    func selectableTextKeepsSkillBoundariesAcrossFormattedRuns() throws {
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(
+                for: MarkdownContentRevision(
+                    "prefix.**$file-pr** then **$file-pr** and **$file-pr**suffix"
+                )
+            )
+        )
+        guard case let .paragraph(inline) = document.blocks.first else {
+            Issue.record("Expected a rendered paragraph")
+            return
+        }
+
+        let attributed = MarkdownSelectableTextAttributes.make(
+            from: inline,
+            lineSpacing: 4,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")]
+        )
+
+        #expect(FeatureInlineSkillProjection.signatures(in: attributed).count == 1)
+        #expect(
+            FeatureInlineSkillProjection.plainText(from: attributed)
+                == "prefix.$file-pr then $file-pr and $file-prsuffix"
+        )
+    }
+
+    @Test @MainActor
     func codeBlocksReuseSelectableInlineRendering() throws {
         let literalCode = "x = arr[i](fn)\na **b** c\nprintf(\\\"a\\\\tb\\\");"
         let cache = MarkdownRenderCache()

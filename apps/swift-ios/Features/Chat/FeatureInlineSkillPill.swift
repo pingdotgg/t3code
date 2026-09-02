@@ -169,18 +169,28 @@ enum FeatureInlineSkillProjection {
     private static func runs(in attributedText: NSAttributedString) -> [Run] {
         var result: [Run] = []
         var plainOffset = 0
+        let source = attributedText.string as NSString
         attributedText.enumerateAttributes(
             in: NSRange(location: 0, length: attributedText.length)
         ) { attributes, displayRange, _ in
-            let rawText = attributes[.featureInlineSkillRawText] as? String
+            let isSkillAttachment = displayRange.length == 1
+                && source.character(at: displayRange.location) == 0xFFFC
+                && attributes[.attachment] is NSTextAttachment
+            let rawText = isSkillAttachment
+                ? attributes[.featureInlineSkillRawText] as? String
+                : nil
             let plainLength = rawText.map { ($0 as NSString).length } ?? displayRange.length
             result.append(
                 Run(
                     displayRange: displayRange,
                     plainRange: NSRange(location: plainOffset, length: plainLength),
                     rawText: rawText,
-                    displayName: attributes[.featureInlineSkillDisplayName] as? String,
-                    styleKey: attributes[.featureInlineSkillStyleKey] as? String
+                    displayName: rawText == nil
+                        ? nil
+                        : attributes[.featureInlineSkillDisplayName] as? String,
+                    styleKey: rawText == nil
+                        ? nil
+                        : attributes[.featureInlineSkillStyleKey] as? String
                 )
             )
             plainOffset += plainLength

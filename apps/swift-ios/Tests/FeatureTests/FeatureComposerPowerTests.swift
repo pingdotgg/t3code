@@ -752,6 +752,31 @@ struct FeatureComposerPowerTests {
         )
     }
 
+    @Test @MainActor
+    func inlineSkillProjectionIgnoresPillMetadataInheritedByTypedText() throws {
+        let source = "$file-pr"
+        let descriptors = FeatureInlineSkillParser.descriptors(
+            in: source,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")],
+            allowsEndBoundary: true
+        )
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let attributed = FeatureInlineSkillPillRenderer.attributedText(
+            source: source,
+            descriptors: descriptors,
+            baseAttributes: [.font: font],
+            font: font,
+            traits: UITraitCollection(userInterfaceStyle: .dark)
+        )
+        let typedTextAttributes = attributed.attributes(at: 0, effectiveRange: nil)
+            .filter { $0.key != .attachment }
+        let afterTyping = NSMutableAttributedString(attributedString: attributed)
+        afterTyping.append(NSAttributedString(string: "x", attributes: typedTextAttributes))
+
+        #expect(FeatureInlineSkillProjection.plainText(from: afterTyping) == "$file-prx")
+        #expect(FeatureInlineSkillProjection.signatures(in: afterTyping).count == 1)
+    }
+
     @Test
     func completedComposerPillSurvivesDeletingItsTrailingSpace() throws {
         let skill = FeatureProviderSkill(name: "file-pr", displayName: "File PR")
