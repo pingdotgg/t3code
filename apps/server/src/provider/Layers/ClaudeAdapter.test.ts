@@ -729,7 +729,12 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      yield* adapter.compactThread!(session.threadId, modelSelection);
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "/compact",
+        attachments: [],
+        modelSelection,
+      });
 
       const promptText = yield* Effect.promise(() =>
         readFirstPromptText(harness.getLastCreateQueryInput()),
@@ -2227,12 +2232,6 @@ describe("ClaudeAdapterLive", () => {
       } as unknown as SDKMessage);
 
       const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
-      const compactionEvent = runtimeEvents.find(
-        (event) => event.type === "thread.state.changed" && event.payload.state === "compacted",
-      );
-      assert.ok(compactionEvent?.type === "thread.state.changed");
-      assert.equal(compactionEvent.payload.beforeTokens, 200);
-      assert.equal(compactionEvent.payload.afterTokens, 40);
       const finalUsageEvent = runtimeEvents.findLast(
         (event) => event.type === "thread.token-usage.updated",
       );

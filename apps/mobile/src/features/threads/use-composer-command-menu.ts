@@ -127,8 +127,8 @@ export function useComposerCommandMenu({
         // Codex feedback uploads an existing thread's session and logs.
         if (
           !hasThread &&
-          (command.name === "compact" ||
-            (selectedProviderStatus?.driver === "codex" && command.name === "feedback"))
+          selectedProviderStatus?.driver === "codex" &&
+          command.name === "feedback"
         ) {
           continue;
         }

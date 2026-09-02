@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   formatContextWindowCompactionMessage,
-  hasAvailableCompactionProvider,
+  hasAvailableClaudeCompactionProvider,
   hasDismissedResumeCompaction,
   resolveContextWindowModelDisplayName,
   shouldOfferResumeCompaction,
@@ -25,12 +25,12 @@ function claudeProvider(input: {
     auth: { status: "authenticated" },
     checkedAt: "2026-08-24T12:00:00.000Z",
     models: [],
-    slashCommands: [{ name: "compact", description: "" }],
+    slashCommands: [],
     skills: [],
   };
 }
 
-describe("hasAvailableCompactionProvider", () => {
+describe("hasAvailableClaudeCompactionProvider", () => {
   const originalInstanceId = ProviderInstanceId.make("claude_original");
 
   it("rejects a fallback in a different locked continuation group", () => {
@@ -47,9 +47,8 @@ describe("hasAvailableCompactionProvider", () => {
     ]);
 
     expect(
-      hasAvailableCompactionProvider({
+      hasAvailableClaudeCompactionProvider({
         providers,
-        driverKind: ProviderDriverKind.make("claudeAgent"),
         instanceId: originalInstanceId,
         lockedInstanceId: originalInstanceId,
       }),
@@ -70,9 +69,8 @@ describe("hasAvailableCompactionProvider", () => {
     ]);
 
     expect(
-      hasAvailableCompactionProvider({
+      hasAvailableClaudeCompactionProvider({
         providers,
-        driverKind: ProviderDriverKind.make("claudeAgent"),
         instanceId: originalInstanceId,
         lockedInstanceId: originalInstanceId,
       }),

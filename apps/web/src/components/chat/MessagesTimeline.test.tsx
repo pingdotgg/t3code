@@ -919,7 +919,7 @@ describe("MessagesTimeline", () => {
             entry: {
               id: "work-1",
               createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Compacted context 899K → 19K tokens",
+              label: "Context compacted",
               tone: "info",
             },
           },
@@ -927,7 +927,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Compacted context 899K → 19K tokens");
+    expect(markup).toContain("Context compacted");
   });
 
   it("summarizes changed files in one line", () => {
