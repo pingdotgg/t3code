@@ -58,6 +58,15 @@ export type GetProviderSessionRuntimeInput = typeof GetProviderSessionRuntimeInp
 export const DeleteProviderSessionRuntimeInput = Schema.Struct({ threadId: ThreadId });
 export type DeleteProviderSessionRuntimeInput = typeof DeleteProviderSessionRuntimeInput.Type;
 
+export const UpdateProviderSessionRuntimeResumeCursorInput = Schema.Struct({
+  threadId: ThreadId,
+  providerInstanceId: ProviderInstanceId,
+  lastSeenAt: IsoDateTime,
+  resumeCursor: Schema.Unknown,
+});
+export type UpdateProviderSessionRuntimeResumeCursorInput =
+  typeof UpdateProviderSessionRuntimeResumeCursorInput.Type;
+
 /**
  * ProviderSessionRuntimeRepository - Service tag for provider runtime persistence.
  */
@@ -82,6 +91,15 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
       Option.Option<ProviderSessionRuntime>,
       ProviderSessionRuntimeRepositoryError
     >;
+
+    /**
+     * Update a cursor only while the named provider instance still owns the row.
+     *
+     * Returns false when the session was removed or rebound before the update.
+     */
+    readonly updateResumeCursorIfCurrentInstance: (
+      input: UpdateProviderSessionRuntimeResumeCursorInput,
+    ) => Effect.Effect<boolean, ProviderSessionRuntimeRepositoryError>;
 
     /**
      * List all provider runtime rows.
@@ -128,6 +146,12 @@ const GetRuntimeRequestSchema = Schema.Struct({
 });
 
 const DeleteRuntimeRequestSchema = GetRuntimeRequestSchema;
+
+const UpdateRuntimeResumeCursorDbInput = UpdateProviderSessionRuntimeResumeCursorInput.mapFields(
+  Struct.assign({
+    resumeCursor: Schema.fromJsonString(Schema.Unknown),
+  }),
+);
 
 function toPersistenceSqlOrDecodeError(
   sqlOperation: string,
@@ -206,6 +230,21 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const updateRuntimeResumeCursorIfCurrentInstance = SqlSchema.findOneOption({
+    Request: UpdateRuntimeResumeCursorDbInput,
+    Result: Schema.Struct({ threadId: ThreadId }),
+    execute: ({ threadId, providerInstanceId, lastSeenAt, resumeCursor }) =>
+      sql`
+        UPDATE provider_session_runtime
+        SET
+          last_seen_at = ${lastSeenAt},
+          resume_cursor_json = ${resumeCursor}
+        WHERE thread_id = ${threadId}
+          AND provider_instance_id = ${providerInstanceId}
+        RETURNING thread_id AS "threadId"
+      `,
+  });
+
   const listRuntimeRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProviderSessionRuntimeRawDbRowSchema,
@@ -273,6 +312,19 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const updateResumeCursorIfCurrentInstance: ProviderSessionRuntimeRepository["Service"]["updateResumeCursorIfCurrentInstance"] =
+    (input) =>
+      updateRuntimeResumeCursorIfCurrentInstance(input).pipe(
+        Effect.map(Option.isSome),
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProviderSessionRuntimeRepository.updateResumeCursorIfCurrentInstance:query",
+            "ProviderSessionRuntimeRepository.updateResumeCursorIfCurrentInstance:decodeRow",
+            { threadId: input.threadId },
+          ),
+        ),
+      );
+
   const list: ProviderSessionRuntimeRepository["Service"]["list"] = () =>
     listRuntimeRows(undefined).pipe(
       Effect.mapError(
@@ -325,6 +377,7 @@ export const make = Effect.gen(function* () {
   return {
     upsert,
     getByThreadId,
+    updateResumeCursorIfCurrentInstance,
     list,
     deleteByThreadId,
   } satisfies ProviderSessionRuntimeRepository["Service"];

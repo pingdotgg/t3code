@@ -355,17 +355,21 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           resumeCursor === undefined
             ? Effect.void
             : directory
-                .upsert({
+                .updateResumeCursorIfCurrentInstance({
                   threadId: canonicalEvent.threadId,
-                  provider: canonicalEvent.provider,
                   providerInstanceId: source.instanceId,
                   resumeCursor,
-                  runtimePayload: {
-                    lastRuntimeEvent: "session.resume-cursor.updated",
-                    lastRuntimeEventAt: canonicalEvent.createdAt,
-                  },
                 })
                 .pipe(
+                  Effect.tap((updated) =>
+                    updated
+                      ? Effect.void
+                      : Effect.logDebug("provider.session.resume-cursor-update-stale", {
+                          threadId: canonicalEvent.threadId,
+                          provider: canonicalEvent.provider,
+                          providerInstanceId: source.instanceId,
+                        }),
+                  ),
                   Effect.catchCause((cause) =>
                     Effect.logWarning("provider.session.resume-cursor-persist-failed", {
                       threadId: canonicalEvent.threadId,
