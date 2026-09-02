@@ -176,7 +176,7 @@ it.layer(HermesTextGenerationTestLayer)("HermesTextGeneration", (it) => {
             stagedPatch: "diff --git a/README.md b/README.md",
             modelSelection: {
               instanceId: ProviderInstanceId.make("hermes"),
-              model: "grok-build",
+              model: "grok-4.6",
             },
           });
 
@@ -200,7 +200,7 @@ it.layer(HermesTextGenerationTestLayer)("HermesTextGeneration", (it) => {
             message: "Fix the reconnect spinner after a resumed session.",
             modelSelection: {
               instanceId: ProviderInstanceId.make("hermes"),
-              model: "grok-build",
+              model: "grok-4.6",
             },
           });
 
@@ -233,7 +233,7 @@ it.layer(HermesTextGenerationTestLayer)("HermesTextGeneration", (it) => {
               "diff --git a/apps/server/src/textGeneration/HermesTextGeneration.ts b/apps/server/src/textGeneration/HermesTextGeneration.ts",
             modelSelection: {
               instanceId: ProviderInstanceId.make("hermes"),
-              model: "grok-build",
+              model: "grok-4.6",
             },
           });
 

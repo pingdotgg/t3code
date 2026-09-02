@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/schema";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
@@ -68,10 +69,23 @@ type HermesAcpModelSelectionRuntime = Pick<
   "setSessionModel"
 >;
 
+export function currentHermesModelIdFromSessionSetup(
+  sessionSetupResult:
+    | EffectAcpSchema.LoadSessionResponse
+    | EffectAcpSchema.NewSessionResponse
+    | EffectAcpSchema.ResumeSessionResponse,
+): string | undefined {
+  return sessionSetupResult.models?.currentModelId?.trim() || undefined;
+}
+
 /**
  * Applies a model selection to a live Hermes ACP session. Hermes model ids
  * (e.g. `anthropic:claude-fable-5`) go to `session/set_model` verbatim —
  * there is no trait suffix to strip and no reasoning metadata to attach.
+ * A selection matching the session's current model sends nothing: the
+ * session is already there, and a redundant `session/set_model` risks a
+ * rejection for ids the agent reports as current but does not advertise
+ * as switchable.
  *
  * `session/set_config_option` is not usable here: the real `hermes acp`
  * binary treats configId `"model"` as a silent no-op (it always returns
@@ -80,10 +94,15 @@ type HermesAcpModelSelectionRuntime = Pick<
  */
 export function applyHermesAcpModelSelection<E>(input: {
   readonly runtime: HermesAcpModelSelectionRuntime;
+  readonly currentModelId: string | undefined;
   readonly model: string;
   readonly mapError: (context: HermesAcpModelSelectionErrorContext) => E;
 }): Effect.Effect<void, E> {
-  return input.runtime.setSessionModel(input.model).pipe(
+  const requestedModelId = input.model.trim();
+  if (requestedModelId.length === 0 || requestedModelId === input.currentModelId) {
+    return Effect.void;
+  }
+  return input.runtime.setSessionModel(requestedModelId).pipe(
     Effect.asVoid,
     Effect.mapError((cause) => input.mapError({ cause })),
   );

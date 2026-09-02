@@ -54,11 +54,34 @@ describe("applyHermesAcpModelSelection", () => {
 
       yield* applyHermesAcpModelSelection({
         runtime,
+        currentModelId: "anthropic:claude-opus-5",
         model: "anthropic:claude-fable-5",
         mapError: ({ cause }) => `failed to set model: ${cause.message}`,
       });
 
       expect(modelCalls).toEqual(["anthropic:claude-fable-5"]);
+    }),
+  );
+
+  it.effect("skips session/set_model when the session is already on the model", () =>
+    Effect.gen(function* () {
+      const modelCalls: Array<string> = [];
+      const runtime = {
+        setSessionModel: (modelId: string) =>
+          Effect.sync(() => {
+            modelCalls.push(modelId);
+            return {};
+          }),
+      };
+
+      yield* applyHermesAcpModelSelection({
+        runtime,
+        currentModelId: "anthropic:claude-fable-5",
+        model: "anthropic:claude-fable-5",
+        mapError: ({ cause }) => `failed to set model: ${cause.message}`,
+      });
+
+      expect(modelCalls).toEqual([]);
     }),
   );
 
@@ -75,6 +98,7 @@ describe("applyHermesAcpModelSelection", () => {
       const failure = yield* Effect.flip(
         applyHermesAcpModelSelection({
           runtime,
+          currentModelId: undefined,
           model: "anthropic:claude-fable-5",
           mapError: ({ cause }) => ({ mapped: true as const, cause }),
         }),

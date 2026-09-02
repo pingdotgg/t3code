@@ -24,6 +24,7 @@ import {
 } from "./TextGenerationUtils.ts";
 import {
   applyHermesAcpModelSelection,
+  currentHermesModelIdFromSessionSetup,
   makeHermesAcpRuntime,
 } from "../provider/acp/HermesAcpSupport.ts";
 
@@ -83,10 +84,11 @@ export const makeHermesTextGeneration = Effect.fn("makeHermesTextGeneration")(fu
       });
 
       const promptResult = yield* Effect.gen(function* () {
-        yield* runtime.start();
+        const started = yield* runtime.start();
         yield* Effect.ignore(runtime.setMode("ask"));
         yield* applyHermesAcpModelSelection({
           runtime,
+          currentModelId: currentHermesModelIdFromSessionSetup(started.sessionSetupResult),
           model: modelSelection.model,
           mapError: ({ cause }) =>
             new TextGenerationError({

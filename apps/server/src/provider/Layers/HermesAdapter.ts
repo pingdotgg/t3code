@@ -64,7 +64,11 @@ import {
   parsePermissionRequest,
 } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
-import { applyHermesAcpModelSelection, makeHermesAcpRuntime } from "../acp/HermesAcpSupport.ts";
+import {
+  applyHermesAcpModelSelection,
+  currentHermesModelIdFromSessionSetup,
+  makeHermesAcpRuntime,
+} from "../acp/HermesAcpSupport.ts";
 import { type HermesAdapterShape } from "../Services/HermesAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -244,6 +248,7 @@ function applyRequestedSessionConfiguration<E>(input: {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode | undefined;
   readonly modelSelection: { readonly model: string } | undefined;
+  readonly currentModelId: string | undefined;
   readonly mapError: (context: {
     readonly cause: EffectAcpErrors.AcpError;
     readonly method: "session/set_model" | "session/set_mode";
@@ -253,6 +258,7 @@ function applyRequestedSessionConfiguration<E>(input: {
     if (input.modelSelection) {
       yield* applyHermesAcpModelSelection({
         runtime: input.runtime,
+        currentModelId: input.currentModelId,
         model: input.modelSelection.model,
         mapError: ({ cause }) =>
           input.mapError({
@@ -632,6 +638,7 @@ export function makeHermesAdapter(
             modelSelection: hermesModelSelection
               ? { model: hermesModelSelection.model }
               : undefined,
+            currentModelId: currentHermesModelIdFromSessionSetup(started.sessionSetupResult),
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
           });
@@ -800,6 +807,7 @@ export function makeHermesAdapter(
             runtimeMode: ctx.session.runtimeMode,
             interactionMode: input.interactionMode,
             modelSelection: model === undefined ? undefined : { model },
+            currentModelId: ctx.session.model,
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
           });
@@ -810,6 +818,7 @@ export function makeHermesAdapter(
           ctx.session = {
             ...ctx.session,
             activeTurnId: turnId,
+            model: model ?? ctx.session.model,
             updatedAt: yield* nowIso,
           };
 
