@@ -100,6 +100,14 @@ export function SettingsSearchTarget({
   );
 }
 
+/**
+ * Trigger classes for the composer model/traits pickers when they sit in a
+ * settings row: match the `sm` control box (the composer pins them to 28px at
+ * every breakpoint) and drop the composer's max-width.
+ */
+export const SETTINGS_PICKER_TRIGGER_CLASSNAME =
+  "h-8 min-h-8 min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground sm:h-7 sm:min-h-7";
+
 /** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
   return (
@@ -168,6 +176,12 @@ export function SettingsSection({
  * environment's settings.json; where there is no primary (the hosted app)
  * the control goes inert with a tooltip instead of showing an editable
  * default that would never save.
+ *
+ * Control sizing across settings follows three tiers so rows share a baseline:
+ * - `control` slot: `size="sm"` (Button, Select, Input, NumberField) or `icon-sm`.
+ * - Section `headerAction`s and buttons inside list items, cards, toolbars: `xs` / `icon-xs`.
+ * - Inline affordances (reset arrows, info tooltips, table-cell buttons): `icon-micro`.
+ * Dialog footers keep the app-wide default button size.
  */
 export function SettingsRow({
   title,

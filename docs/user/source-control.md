@@ -46,6 +46,8 @@ T3 Code works with the platforms your team already uses:
   time, or change size
 - While working in a thread, open linked reviews in the same compact right-panel tabs without
   leaving the conversation
+- Enable **Settings → General → Proactive panels** to open a newly linked review automatically and
+  switch to the completed turn's diff when agent work finishes
 - Open the review directly in your browser with one click
 - If T3 Code cannot load a GitHub pull request, including when GitHub rate limits requests, use
   **Open on GitHub** in the error view

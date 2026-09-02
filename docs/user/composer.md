@@ -107,7 +107,8 @@ path** and **Open in file viewer**. These actions are available in expanded prev
 On mobile, touch and hold an inline image or use a preview's **Media actions** menu to see its
 source, copy the path or URL, or choose **Save or share**. Workspace media can open in the file
 viewer from the same menu. Saving downloads a copy only when you request it; it does not change
-how the video buffers during playback.
+how the video buffers during playback. On iOS, touch and hold a file reference in a message to
+copy its full or relative path or open it in the file viewer.
 
 Use Markdown image syntax to embed either kind of media:
 

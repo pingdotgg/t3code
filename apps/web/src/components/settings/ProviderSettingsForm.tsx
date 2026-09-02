@@ -158,7 +158,13 @@ interface ProviderSettingsFormProps {
   readonly definition: ProviderClientDefinition;
   readonly value: unknown;
   readonly idPrefix: string;
-  readonly variant: "card" | "dialog";
+  /**
+   * `card` stacks label over control, `dialog` is the compact wizard layout,
+   * `grid` emits a label cell and a control cell per field for a parent
+   * two-column grid (label column left, control right), with the description
+   * beside a fixed-width control so each field stays on one line.
+   */
+  readonly variant: "card" | "dialog" | "grid";
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
 }
 
@@ -189,13 +195,75 @@ function ProviderSettingsFieldRow({
 }: ProviderSettingsFieldRowProps) {
   const inputId = `${idPrefix}-${field.key}`;
   const descriptionClassName =
-    variant === "card"
-      ? "mt-1 block text-xs text-muted-foreground"
-      : "text-[11px] text-muted-foreground";
+    variant === "dialog"
+      ? "text-[11px] text-muted-foreground"
+      : "mt-1 block text-xs text-muted-foreground";
   const label = <span className="text-xs font-medium text-foreground">{field.label}</span>;
   const description = field.description ? (
     <span className={descriptionClassName}>{field.description}</span>
   ) : null;
+
+  if (variant === "grid") {
+    // Label cell, then a control cell where the description sits beside a
+    // fixed-width control and wraps under it when the pane is narrow. The
+    // description is outside the label, so the control points at it instead.
+    const descriptionId = field.description ? `${inputId}-description` : undefined;
+    return (
+      <>
+        {field.control === "switch" ? (
+          <span className="pt-1.5 text-xs font-medium text-foreground">{field.label}</span>
+        ) : (
+          <label htmlFor={inputId} className="pt-1.5 text-xs font-medium text-foreground">
+            {field.label}
+          </label>
+        )}
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+          {field.control === "switch" ? (
+            <span className="flex h-8 items-center sm:h-7">
+              <Switch
+                checked={readProviderConfigBoolean(value, field.key, field.defaultBooleanValue)}
+                onCheckedChange={(checked) =>
+                  onChange(nextProviderConfigWithFieldValue(value, field, Boolean(checked)))
+                }
+                aria-label={field.label}
+                aria-describedby={descriptionId}
+              />
+            </span>
+          ) : field.control === "textarea" ? (
+            <Textarea
+              id={inputId}
+              aria-describedby={descriptionId}
+              className="w-full max-w-sm"
+              value={readProviderConfigString(value, field.key)}
+              onChange={(event) =>
+                onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
+              }
+              placeholder={field.placeholder}
+              spellCheck={false}
+            />
+          ) : (
+            <DraftInput
+              id={inputId}
+              aria-describedby={descriptionId}
+              size="sm"
+              className="w-56"
+              type={field.control === "password" ? "password" : undefined}
+              autoComplete={field.control === "password" ? "off" : undefined}
+              value={readProviderConfigString(value, field.key)}
+              onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
+              placeholder={field.placeholder}
+              spellCheck={false}
+            />
+          )}
+          {field.description ? (
+            <span id={descriptionId} className="text-[11px] leading-snug text-muted-foreground">
+              {field.description}
+            </span>
+          ) : null}
+        </div>
+      </>
+    );
+  }
 
   if (field.control === "switch") {
     return (
@@ -246,6 +314,7 @@ function ProviderSettingsFieldRow({
         {variant === "card" ? (
           <DraftInput
             id={inputId}
+            size="sm"
             className="mt-1.5"
             type={type}
             autoComplete={field.control === "password" ? "off" : undefined}
