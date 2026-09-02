@@ -389,6 +389,43 @@ export const OrchestrationThreadActivityTone = Schema.Literals([
 ]);
 export type OrchestrationThreadActivityTone = typeof OrchestrationThreadActivityTone.Type;
 
+export const ToolCallFactsFile = Schema.Struct({
+  path: Schema.String,
+  /** Provider's change kind when reported: `add`, `delete`, `update`, `move`. */
+  kind: Schema.optionalKey(Schema.String),
+  additions: Schema.optionalKey(NonNegativeInt),
+  deletions: Schema.optionalKey(NonNegativeInt),
+  /** Bounded unified diff for this file when the provider reports one. */
+  diff: Schema.optionalKey(Schema.String),
+});
+export type ToolCallFactsFile = typeof ToolCallFactsFile.Type;
+
+export const ToolCallFactsOutput = Schema.Struct({
+  /** Head of the tool output, bounded in lines and bytes. */
+  text: Schema.String,
+  lineCount: NonNegativeInt,
+  truncated: Schema.Boolean,
+});
+export type ToolCallFactsOutput = typeof ToolCallFactsOutput.Type;
+
+/**
+ * Provider-neutral facts about one tool call, derived on the server from
+ * each runtime's native item data so every client renders Codex, Claude,
+ * Cursor, Grok and OpenCode calls through one shape. Every field is
+ * optional: a provider that does not report exit codes simply omits them.
+ */
+export const ToolCallFacts = Schema.Struct({
+  /** Directory the command ran in, when known. */
+  cwd: Schema.optionalKey(Schema.String),
+  exitCode: Schema.optionalKey(Schema.Int),
+  durationMs: Schema.optionalKey(NonNegativeInt),
+  /** The agent's stated purpose for the call when the runtime carries one. */
+  intent: Schema.optionalKey(Schema.String),
+  output: Schema.optionalKey(ToolCallFactsOutput),
+  files: Schema.optionalKey(Schema.Array(ToolCallFactsFile)),
+});
+export type ToolCallFacts = typeof ToolCallFacts.Type;
+
 export const OrchestrationThreadActivity = Schema.Struct({
   id: EventId,
   tone: OrchestrationThreadActivityTone,

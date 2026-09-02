@@ -7,8 +7,11 @@ import {
   extractCommandOutputText,
   resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
+  splitLeadingCd,
   summarizeToolGroup,
+  toolEntryDiffStat,
   toolGroupAction,
+  toolGroupStats,
   toolGroupSummaryKind,
   type WorkLogPresentationEntry,
   workEntryViewedImagePath,
@@ -384,5 +387,70 @@ describe("resolveViewedImageAsset", () => {
       srcFragment: "#mark",
     });
     expect(resolveViewedImageAsset("https://example.com/logo.png", { threadId })).toBeNull();
+  });
+});
+
+describe("splitLeadingCd", () => {
+  it.each([
+    ["cd /repo/apps/mobile; pnpm test", "/repo/apps/mobile", "pnpm test"],
+    ["cd /repo && ls -la", "/repo", "ls -la"],
+    ['cd "/My Repo/app" && make', "/My Repo/app", "make"],
+    ["cd /My\\ Repo && make", "/My Repo", "make"],
+  ])("splits %s", (command, cwd, rest) => {
+    expect(splitLeadingCd(command)).toEqual({ cwd, command: rest });
+  });
+
+  it("leaves commands without a leading cd alone", () => {
+    expect(splitLeadingCd("ls -la && cd /tmp")).toEqual({
+      cwd: null,
+      command: "ls -la && cd /tmp",
+    });
+    expect(splitLeadingCd("cd /repo")).toEqual({ cwd: null, command: "cd /repo" });
+  });
+});
+
+describe("toolGroupStats", () => {
+  const command = (overrides: Partial<WorkLogPresentationEntry>): WorkLogPresentationEntry => ({
+    label: "Ran command",
+    tone: "tool",
+    itemType: "command_execution",
+    command: "ls",
+    toolLifecycleStatus: "completed",
+    ...overrides,
+  });
+
+  it("counts failures from status and exit code and sums durations", () => {
+    expect(
+      toolGroupStats([
+        command({ facts: { durationMs: 1000, exitCode: 0 } }),
+        command({ facts: { durationMs: 250, exitCode: 1 } }),
+        command({ toolLifecycleStatus: "failed", durationMs: 50 }),
+        { label: "Thinking about it", tone: "info" },
+      ]),
+    ).toEqual({ failureCount: 2, durationMs: 1300 });
+  });
+
+  it("reports no duration when any tool call lacks one", () => {
+    expect(toolGroupStats([command({ facts: { durationMs: 1000 } }), command({})])).toEqual({
+      failureCount: 0,
+      durationMs: null,
+    });
+  });
+
+  it("sums diff stats across changed files", () => {
+    expect(
+      toolEntryDiffStat(
+        command({
+          facts: {
+            files: [
+              { path: "a.ts", additions: 2, deletions: 1 },
+              { path: "b.ts", additions: 3, deletions: 0 },
+              { path: "c.ts" },
+            ],
+          },
+        }),
+      ),
+    ).toEqual({ additions: 5, deletions: 1 });
+    expect(toolEntryDiffStat(command({}))).toBeNull();
   });
 });

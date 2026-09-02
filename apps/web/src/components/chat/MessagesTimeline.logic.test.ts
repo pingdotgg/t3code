@@ -1625,6 +1625,54 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.at(-1)).toMatchObject({ kind: "thinking" });
   });
 
+  it("sums tool call durations and failures into the collapsed group row", () => {
+    const rows = deriveMessagesTimelineRows({
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+      timelineEntries: [
+        {
+          id: "work-entry-1",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:01Z",
+          entry: {
+            id: "work-1",
+            createdAt: "2026-01-01T00:00:01Z",
+            label: "Ran command",
+            command: "pnpm test",
+            tone: "tool" as const,
+            itemType: "command_execution" as const,
+            toolLifecycleStatus: "completed" as const,
+            facts: { durationMs: 1200, exitCode: 1 },
+          },
+        },
+        {
+          id: "work-entry-2",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:02Z",
+          entry: {
+            id: "work-2",
+            createdAt: "2026-01-01T00:00:02Z",
+            label: "Ran command",
+            command: "pnpm lint",
+            tone: "tool" as const,
+            itemType: "command_execution" as const,
+            toolLifecycleStatus: "completed" as const,
+            durationMs: 300,
+          },
+        },
+      ],
+    });
+
+    expect(rows[0]).toMatchObject({
+      kind: "work-toggle",
+      summary: "Ran 2 commands",
+      failureCount: 1,
+      durationMs: 1500,
+    });
+  });
+
   it.each([
     ["tools", "tool", "Used 3 tools"],
     ["tools and status updates", "info", "Used 2 tools and received 1 update"],

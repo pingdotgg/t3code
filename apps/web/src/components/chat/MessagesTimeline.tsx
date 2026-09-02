@@ -12,8 +12,23 @@ import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifa
 import {
   resolveWorkEntryToolPresentation,
   resolveViewedImageAsset,
+  splitLeadingCd,
+  toolEntryDiffStat,
+  toolEntryDurationMs,
+  toolEntryExitCode,
+  workEntryFailed,
   workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
+import { formatDuration as formatToolDuration } from "@t3tools/shared/orchestrationTiming";
+import {
+  CommandText,
+  CwdChip,
+  firstOutputLine,
+  TOOL_ROW_MONO_CLASS,
+  ToolFileDiffs,
+  ToolOutputBlock,
+  ToolRowMeta,
+} from "./ToolCallRow";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import type { AgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
@@ -1841,11 +1856,14 @@ function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const failureLabel =
+    row.failureCount > 0 ? `${row.failureCount} failed` : row.hasFailure ? "failed" : null;
+  const durationLabel = row.durationMs !== null ? formatToolDuration(row.durationMs) : null;
   return (
     <button
       type="button"
       className="group/tool-group flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      aria-label={row.hasFailure ? `${row.summary}, tool call failed` : undefined}
+      aria-label={failureLabel ? `${row.summary}, tool call failed` : undefined}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     >
@@ -1856,6 +1874,20 @@ function WorkGroupToggleTimelineRow({
         />
       </span>
       <span className="min-w-0 flex-1 truncate text-secondary-label">{row.summary}</span>
+      {failureLabel || durationLabel ? (
+        <span className="ms-2 flex shrink-0 items-center gap-2 text-[0.6875rem] tabular-nums text-muted-foreground">
+          {failureLabel ? <span>{failureLabel}</span> : null}
+          {durationLabel ? <span>{durationLabel}</span> : null}
+        </span>
+      ) : null}
+      <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
+        <ChevronDownIcon
+          className={cn(
+            "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+            row.expanded && "rotate-180",
+          )}
+        />
+      </span>
     </button>
   );
 }
@@ -2655,7 +2687,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   isExpandedToolGroupEntry: boolean;
 }) {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry } = props;
-  const { threadRef, onImageExpand } = use(TimelineRowCtx);
+  const { threadRef, onImageExpand, resolvedTheme } = use(TimelineRowCtx);
   const groupView = use(WorkGroupViewCtx);
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
@@ -2671,16 +2703,42 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   };
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
-  const showFailedIndicator = workEntryDisplayIndicatesToolFailure(workEntry);
+  const showFailedIndicator =
+    workEntryDisplayIndicatesToolFailure(workEntry) || workEntryFailed(workEntry);
   const toolPresentation = resolveWorkEntryToolPresentation(workEntry);
+  const action = toolGroupAction(workEntry);
+  const isToolLike = workLogEntryIsToolLike(workEntry);
+  const running = workEntry.toolLifecycleStatus === "inProgress";
+  const facts = workEntry.facts;
+
+  // Plain progress notes ("Probe which subpaths Metro can resolve") are the
+  // agent's intent for the calls that follow. Inside an expanded group they
+  // read as a quiet section label rather than another tool row.
+  const isIntentLabel =
+    isExpandedToolGroupEntry && action === "update" && !showWarningIndicator && !isToolLike;
+
+  // The command, with any leading `cd <dir> &&` pulled into a cwd chip.
+  const commandParts = useMemo(() => {
+    const command = workEntry.command?.trim();
+    if (!command || action !== "command") return null;
+    const split = splitLeadingCd(command);
+    return { command: split.command, cwd: facts?.cwd ?? split.cwd };
+  }, [action, facts?.cwd, workEntry.command]);
+
   const entryIconName =
     showWarningIndicator || (showFailedIndicator && !toolPresentation)
       ? "circle-alert"
       : workEntryIconName(workEntry);
   const previewText = workEntryDisplayLabel(workEntry, workspaceRoot);
-  const displayText =
-    !toolPresentation && expanded && workEntry.command?.trim() ? "Command" : previewText;
+  const durationMs = toolEntryDurationMs(workEntry);
+  const exitCode = toolEntryExitCode(workEntry);
+  const diffStat = action === "edit" ? toolEntryDiffStat(workEntry) : null;
+  const errorLine = showFailedIndicator ? firstOutputLine(facts?.output) : null;
+  const filesWithDiff = facts?.files ?? [];
+  const legacyBody = expanded ? buildToolCallExpandedBody(workEntry, workspaceRoot) : null;
   const canExpand =
+    facts?.output !== undefined ||
+    filesWithDiff.length > 0 ||
     (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) ||
     Boolean(
       workEntryRawCommand(workEntry) ||
@@ -2688,7 +2746,6 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       workEntry.detail?.trim() ||
       workEntry.changedFiles?.length,
     );
-  const expandedBody = expanded ? buildToolCallExpandedBody(workEntry, workspaceRoot) : null;
   const viewedImagePath = workEntryViewedImagePath(workEntry);
   const viewedImage =
     viewedImagePath && threadRef
@@ -2698,10 +2755,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         })
       : null;
   const showDestructiveRowStyle =
-    showFailedIndicator &&
-    (workEntrySignalsSevereFailure(workEntry) || !workLogEntryIsToolLike(workEntry));
-  // Ordinary tool failures stay muted; only runtime errors and warnings get
-  // color. The red treatment is reserved for severe failures.
+    showFailedIndicator && (workEntrySignalsSevereFailure(workEntry) || !isToolLike);
+  // Status lives in the glyph: check for done, cross for failed, muted for
+  // running. Colour is reserved for failures and warnings.
   const iconWrapperClass = cn(
     "flex size-6 shrink-0 items-center justify-center",
     showWarningIndicator
@@ -2716,7 +2772,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     ? "font-medium text-warning"
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
-      : workLogEntryIsToolLike(workEntry)
+      : isToolLike
         ? "text-secondary-label"
         : "text-foreground/80";
   const accessibleDisplayText = showFailedIndicator
@@ -2738,6 +2794,37 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       }
     : {};
 
+  if (isIntentLabel) {
+    return (
+      <div className="flex items-baseline gap-2 ps-2 pt-2 pb-0.5 text-[0.8125rem] leading-relaxed text-secondary-label">
+        <span
+          className="size-1.5 shrink-0 translate-y-[-2px] rounded-full bg-icon-muted/70"
+          aria-hidden
+        />
+        <span className="min-w-0 flex-1 truncate">{previewText}</span>
+      </div>
+    );
+  }
+
+  const statusIcon =
+    isToolLike && !showWarningIndicator && !toolPresentation && !showDestructiveRowStyle ? (
+      showFailedIndicator ? (
+        <XIcon className="block size-3.5 shrink-0 stroke-[2]" aria-hidden />
+      ) : running ? (
+        <span
+          className="block size-2.5 shrink-0 rounded-full border-[1.5px] border-current opacity-60"
+          aria-hidden
+        />
+      ) : (
+        <CheckIcon className="block size-3.5 shrink-0 stroke-[2] opacity-70" aria-hidden />
+      )
+    ) : (
+      <WorkEntryIcon
+        name={entryIconName}
+        className="block size-4 shrink-0 stroke-[1.8] opacity-70"
+      />
+    );
+
   return (
     <div
       className={cn(
@@ -2748,25 +2835,44 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       )}
       {...rowToggleProps}
     >
-      <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
+      <div className="flex select-none items-center gap-1.5">
         <span
           className={iconWrapperClass}
           role={showFailedIndicator ? "img" : undefined}
           aria-label={showFailedIndicator ? "Tool call failed" : undefined}
         >
-          <WorkEntryIcon
-            name={entryIconName}
-            className="block size-4 shrink-0 stroke-[1.8] opacity-70"
-          />
+          {statusIcon}
         </span>
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <div className="min-w-0 flex-1 overflow-hidden">
-            <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
-              <span className={cn("min-w-0 flex-1 truncate", headingClass)}>{displayText}</span>
-            </p>
+            {commandParts ? (
+              <p className="flex min-w-0 w-full items-baseline text-sm leading-relaxed">
+                {commandParts.cwd ? (
+                  <CwdChip cwd={commandParts.cwd} workspaceRoot={workspaceRoot} />
+                ) : null}
+                <CommandText command={commandParts.command} className="min-w-0 flex-1 truncate" />
+              </p>
+            ) : (
+              <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 truncate",
+                    headingClass,
+                    action === "edit" && TOOL_ROW_MONO_CLASS,
+                  )}
+                >
+                  {previewText}
+                </span>
+              </p>
+            )}
           </div>
-          {showFailedIndicator && toolPresentation ? (
-            <XIcon aria-hidden className="size-3 shrink-0 text-icon-muted" />
+          {isToolLike ? (
+            <ToolRowMeta
+              durationMs={durationMs}
+              exitCode={exitCode}
+              diffStat={diffStat}
+              running={running}
+            />
           ) : null}
           <span
             className={cn(
@@ -2784,9 +2890,12 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           </span>
         </div>
       </div>
-      {expanded && canExpand && expandedBody ? (
+      {errorLine && !expanded ? (
+        <p className={cn(TOOL_ROW_MONO_CLASS, "ms-7 truncate text-secondary-label")}>{errorLine}</p>
+      ) : null}
+      {expanded && canExpand ? (
         <div
-          className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
+          className="mt-1 ms-7 flex cursor-default flex-col gap-2 border-s border-border/45 ps-3 pt-0.5"
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
@@ -2803,7 +2912,20 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
               />
             </div>
           ) : null}
-          <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
+          {facts?.output ? (
+            <ToolOutputBlock output={facts.output} failed={showFailedIndicator} />
+          ) : null}
+          {filesWithDiff.length > 0 ? (
+            <ToolFileDiffs
+              files={filesWithDiff}
+              workspaceRoot={workspaceRoot}
+              resolvedTheme={resolvedTheme}
+              cacheKey={workEntry.id}
+            />
+          ) : null}
+          {!facts?.output && filesWithDiff.length === 0 && legacyBody ? (
+            <pre className={toolCallExpandedBodyClassName}>{legacyBody}</pre>
+          ) : null}
         </div>
       ) : null}
     </div>

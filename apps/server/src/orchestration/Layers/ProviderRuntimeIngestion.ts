@@ -18,6 +18,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
+  type ToolCallFacts,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -43,6 +44,7 @@ import {
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
 import { forkParked } from "../../serverActivation.ts";
+import { deriveToolCallFacts } from "../toolCallFacts.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { canReplaceThreadTitle } from "../threadTitles.ts";
 
@@ -206,6 +208,18 @@ function maxCheckpointTurnCount(
     }
   }
   return maxTurnCount;
+}
+
+/**
+ * Provider-neutral facts (cwd, exit code, duration, bounded output, file
+ * stats) derived from the item's native data. Lives beside `data` so the
+ * payload projection keeps it while slimming `data` for the wire.
+ */
+function toolCallFactsField(
+  event: Extract<ProviderRuntimeEvent, { type: "item.updated" | "item.completed" }>,
+): { facts?: ToolCallFacts } {
+  const facts = deriveToolCallFacts({ provider: event.provider, data: event.payload.data });
+  return facts ? { facts } : {};
 }
 
 function truncateDetail(value: string, limit = 180): string {
@@ -814,6 +828,7 @@ export function runtimeEventToActivities(
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...toolCallFactsField(event),
             ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
             ...(event.payload.parentToolUseId
               ? { parentToolUseId: event.payload.parentToolUseId }
@@ -842,6 +857,7 @@ export function runtimeEventToActivities(
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...toolCallFactsField(event),
             ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
             ...(event.payload.parentToolUseId
               ? { parentToolUseId: event.payload.parentToolUseId }
