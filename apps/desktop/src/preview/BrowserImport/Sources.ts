@@ -286,25 +286,6 @@ export const sourcePathContext = Effect.gen(function* () {
   } satisfies BrowserImportPathContext;
 });
 
-/**
- * Whether a directory entry exists, without following it or opening it.
- *
- * Both `stat` and `exists` resolve symlinks, and the locks below deliberately
- * dangle — Chromium points `SingletonLock` at `<host>-<pid>` and Firefox
- * points `lock` at `<ip>:+<pid>`, neither of which exists on disk. Following
- * them reports every running browser as closed, which would let an import read
- * a live, mid-write database. `readLink` is the probe that answers for the
- * entry itself.
- */
-const entryExists = Effect.fnUntraced(function* (path: string) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  return yield* fileSystem.stat(path).pipe(
-    Effect.catch(() => fileSystem.readLink(path)),
-    Effect.as(true),
-    Effect.orElseSucceed(() => false),
-  );
-});
-
 /** Shape of the slice of Chromium's `Local State` that names its profiles. */
 const LocalState = Schema.Struct({
   profile: Schema.optional(
@@ -511,13 +492,12 @@ export const isWindowsLockHeldError = (error: PlatformError.PlatformError): bool
   error.reason._tag === "Busy";
 
 /**
- * Whether a regular lock file is actually held by a running process. Windows
- * `parent.lock` is opened with no sharing, so it persists on disk after the
- * process exits and `stat` always succeeds; only trying to open it for write
- * reveals an active holder, which surfaces as `Busy`.
+ * Whether a Windows `parent.lock` is actually held by a running process. It
+ * is opened with no sharing, so it persists on disk after the process exits
+ * and `stat` always succeeds; only trying to open it for write reveals an
+ * active holder, which surfaces as `Busy`.
  */
-const isLockHeld = Effect.fnUntraced(function* (lockPath: string, platform: NodeJS.Platform) {
-  if (platform !== "win32") return yield* entryExists(lockPath);
+const windowsLockIsHeld = Effect.fnUntraced(function* (lockPath: string) {
   // Permission failures are distinct: they do not prove a browser owns the
   // lock, so they must not hide the source as running.
   const fileSystem = yield* FileSystem.FileSystem;
@@ -610,7 +590,7 @@ export const posixLockIsHeld = Effect.fnUntraced(function* (path: string) {
  * browser blocks every import after Firefox has been used once. On POSIX the
  * fcntl lock itself is the truth, and macOS in particular writes nothing else
  * (no symlink, no pid), so `.parentlock` is probed for the kernel lock. On
- * Windows the held handle denies our open, which `isLockHeld` reads as `Busy`.
+ * Windows the held handle denies our open, which `windowsLockIsHeld` reads as `Busy`.
  */
 const firefoxProfileIsHeld = Effect.fnUntraced(function* (
   directory: string,
@@ -618,7 +598,7 @@ const firefoxProfileIsHeld = Effect.fnUntraced(function* (
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   if (context.platform === "win32") {
-    return yield* isLockHeld(context.path.join(directory, "parent.lock"), context.platform);
+    return yield* windowsLockIsHeld(context.path.join(directory, "parent.lock"));
   }
   // Linux additionally writes the `lock` symlink; a live pid there settles it
   // without spawning anything.
