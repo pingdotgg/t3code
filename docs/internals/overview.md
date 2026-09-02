@@ -7,11 +7,26 @@ but its renderer follows the same boundary.
 
 ## Ownership boundaries
 
-Provider processes, terminals, Git, and project files belong to the server. Shared connection and
-domain state belongs in `packages/client-runtime`; clients supply platform services and UI.
-Keeping that logic shared prevents reconnect and multi-environment behavior from diverging between
-web and mobile. See [connection runtime](./connection-runtime.md) and
-[remote environments](./remote.md).
+```
+┌────────────────────────────────────────────────┐
+│ Clients: apps/web, apps/desktop, apps/mobile   │
+│ shared runtime: packages/client-runtime        │
+│  connection supervisor, RPC session, Atom state│
+└──────────────────┬─────────────────────────────┘
+                   │ Effect RPC over WebSocket (/ws)
+                   │ contract: packages/contracts
+┌──────────────────▼─────────────────────────────┐
+│ apps/server                                    │
+│  orchestration engine (event-sourced)          │
+│  provider driver registry (5 built-in drivers) │
+│  checkpointing, VCS, terminals, filesystem     │
+└──────────────────┬─────────────────────────────┘
+                   │ per-driver transport
+┌──────────────────▼─────────────────────────────┐
+│ Agent CLIs: Codex, Claude, Cursor, Grok,       │
+│ OpenCode                                       │
+└────────────────────────────────────────────────┘
+```
 
 The [RPC contract](../../packages/contracts/src/rpc.ts) is the boundary between independently
 versioned clients and servers. Subscriptions send the state a client needs, so a client viewing one
@@ -63,5 +78,82 @@ Runtime receipts mark specific test milestones. Their
 production behavior must use persisted state and events. These test signals are separate from the
 durable command receipts that make dispatch idempotent.
 
-See the [glossary](./glossary.md) for shared terms and the
-[development runbook](../operations/development.md) for setup and checks.
+A turn is complete when its session leaves `running` status, projected by
+`settledTurnStateForSessionStatus` in [`projector.ts`][projector]. Checkpoint work settling later
+does not define turn end.
+
+Thread settlement is server-owned. Per-environment settings control PR and inactivity settlement.
+[`ThreadSettlementService`][settlement] sweeps threads at startup, when those settings change, and
+once per minute, including when no client is connected. It dispatches the guarded internal
+`thread.auto-settle` command, which reuses the orchestrator's settle lifecycle. Automatic
+settlement excludes live and blocked work and requires a comparable PR timestamp for immediate PR
+settlement. The command also rejects a thread that changed after the sweep's snapshot or carries
+any explicit settled override. Clients render the persisted settlement state and do not derive
+settlement from PR or inactivity state. Settling detaches the thread's idle provider sessions.
+
+## Drainable workers
+
+Follow-up work runs asynchronously in queue-backed workers built on [`DrainableWorker`][worker]:
+[`ProviderRuntimeIngestion`][ingest] normalizes provider runtime streams into orchestration commands,
+[`ProviderCommandReactor`][cmd] dispatches provider calls in response to intent events,
+[`CheckpointReactor`][checkpoint] captures and reverts workspace checkpoints, and
+[`ThreadSettlementService`][settlement] evaluates server-owned automatic settlement rules.
+
+`DrainableWorker` pairs a transactional queue with a transactional count of outstanding items.
+`enqueue` atomically offers and increments; processing always decrements. `drain` retries until the
+count reaches zero, so a test can await "queue empty and current item finished" instead of sleeping.
+Each of these four services exposes `drain` for exactly this.
+
+Runtime receipts are a test-only mechanism. `RuntimeReceiptBusLive` in
+[`RuntimeReceiptBus.ts`][receipts] publishes nothing; only the test layer is PubSub-backed. Do not
+build production behavior on receipts.
+
+## Provider drivers
+
+Five drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
+Codex, Claude, Cursor, Grok, and OpenCode. A driver declares its kind and config schema and creates a
+scoped adapter; `ProviderInstanceRegistry` owns live instances and `ProviderAdapterRegistry` resolves
+an instance to its adapter, so `ProviderService` routes session and turn operations without knowing
+which agent is behind them. See [providers.md](./providers.md).
+
+## Checkpointing
+
+Each turn is bracketed by workspace checkpoints so diffs and reverts are exact. `CheckpointStore`
+captures state as hidden Git refs through the VCS driver's checkpoint operations;
+`CheckpointDiffQuery` answers turn and full-thread diff requests; `CheckpointReactor` coordinates
+baseline capture, completed-turn capture, diff projection, and reverting both the workspace and the
+provider conversation. The storage contract is `VcsCheckpointOps` in
+[`VcsDriver.ts`](../../apps/server/src/vcs/VcsDriver.ts), implemented for Git in the same directory.
+
+## Startup
+
+[`serverRuntimeStartup.ts`][startup] runs a fixed lifecycle: start keybindings, settings, and
+reactors; publish welcome; signal command readiness (logged as `Accepting commands`); wait for the
+HTTP listener via `markHttpListening`; publish ready; fork the heartbeat; then either print headless
+output or open the browser. Command readiness precedes the listener, so a socket that opens can
+already dispatch.
+
+## Related
+
+- [Workspace layout](./workspace-layout.md), [Glossary](./glossary.md)
+- [Mobile navigation headers](./mobile-navigation.md)
+- [Remote environments](./remote.md), [Server updates](./server-updates.md)
+- [Resource telemetry](./resource-telemetry.md)
+- [Product analytics](./product-analytics.md)
+- [Scripts](./scripts.md), [CI gates](./ci.md)
+
+[rpc]: ../../packages/contracts/src/rpc.ts
+[contracts]: ../../packages/contracts/src/orchestration.ts
+[ws]: ../../apps/server/src/ws.ts
+[session]: ../../packages/client-runtime/src/rpc/session.ts
+[startup]: ../../apps/server/src/serverRuntimeStartup.ts
+[engine]: ../../apps/server/src/orchestration/Layers/OrchestrationEngine.ts
+[decider]: ../../apps/server/src/orchestration/decider.ts
+[projector]: ../../apps/server/src/orchestration/projector.ts
+[worker]: ../../packages/shared/src/DrainableWorker.ts
+[ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
+[cmd]: ../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
+[checkpoint]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
+[settlement]: ../../apps/server/src/orchestration-v2/ThreadSettlementService.ts
+[receipts]: ../../apps/server/src/orchestration/Layers/RuntimeReceiptBus.ts
+[drivers]: ../../apps/server/src/provider/builtInDrivers.ts

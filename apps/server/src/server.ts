@@ -108,6 +108,7 @@ import {
   ProjectSetupScriptRunnerLayerLive,
 } from "./orchestration-v2/runtimeLayer.ts";
 import * as ResourceCleanupService from "./orchestration-v2/ResourceCleanupService.ts";
+import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
 import * as RunFinalizationService from "./orchestration-v2/RunFinalizationService.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -376,7 +377,17 @@ const OrchestrationApplicationLayerLive = CheckpointDiffQuery.layer.pipe(
   Layer.provideMerge(OrchestrationV2RuntimeLayerLive),
 );
 
-const RuntimeCoreDependenciesBaseLive = AgentAwarenessRelay.layer.pipe(
+// Automatic thread settlement (#8600): a server-owned sweep evaluates
+// inactivity and merged pull requests, then settles through the orchestrator
+// so every client sees the same shelf.
+const ThreadSettlementWorkerLive = Layer.effectDiscard(
+  ThreadSettlementService.make.pipe(Effect.flatMap((service) => service.start())),
+).pipe(Layer.provide(PullRequestServiceLive));
+
+const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
+  AgentAwarenessRelay.layer,
+  ThreadSettlementWorkerLive,
+).pipe(
   // Core Services
   Layer.provideMerge(OrchestrationApplicationLayerLive),
   Layer.provideMerge(ServerSettingsLayerLive),

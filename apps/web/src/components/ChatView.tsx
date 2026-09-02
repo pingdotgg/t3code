@@ -32,12 +32,7 @@ import {
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
-import {
-  changeRequestAutoSettles,
-  effectiveSettled,
-  effectiveSnoozed,
-  threadWokeAt,
-} from "@t3tools/client-runtime/state/thread-settled";
+import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { useThreadActions } from "../hooks/useThreadActions";
 import {
   deriveThreadActivityRun,
@@ -4846,14 +4841,6 @@ function ChatViewContent(props: ChatViewProps) {
   );
   // The server-projected settled state keeps the banner and sidebar in sync.
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
-  const autoSettleAfterDays = useEnvironmentSettings(
-    environmentId,
-    (settings) => settings.sidebarAutoSettleAfterDays,
-  );
-  const autoSettleOnMerge = useEnvironmentSettings(
-    environmentId,
-    (settings) => settings.sidebarAutoSettleOnMerge,
-  );
   const changeRequestSnapshotByKey = useAtomValue(threadChangeRequestSnapshotsAtom);
   // The thread's own change request, placed against the project it belongs to.
   const linkedThreadPullRequest = activeThread?.linkedPullRequest ?? null;
@@ -4968,17 +4955,6 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadPr, openThreadPullRequest]);
   const pullRequestSurfaceAvailable =
     supportsPullRequests && activeThreadPr !== null && threadRepository !== null;
-  // resolveDisplayedThreadPr returns a fresh object every render, so memoize
-  // on the fields the rules read instead of the object identity.
-  const activeThreadPrState = activeThreadPr?.state ?? null;
-  const activeThreadPrUpdatedAt = activeThreadPr?.updatedAt ?? null;
-  const activeThreadChangeRequest = useMemo(
-    () =>
-      activeThreadPrState === null
-        ? null
-        : { state: activeThreadPrState, updatedAt: activeThreadPrUpdatedAt },
-    [activeThreadPrState, activeThreadPrUpdatedAt],
-  );
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
   const supportsPinning = serverConfig?.environment.capabilities.threadPinning === true;
@@ -5036,25 +5012,9 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadLastVisitedAt,
     activeThreadShell,
     activeThreadWokeAt,
-    autoSettleOnMerge,
   ]);
-  const activeThreadSettled = useMemo(() => {
-    if (activeThreadShell === null || !supportsSettlement) return false;
-    return effectiveSettled(activeThreadShell, {
-      now: `${nowMinute}:00.000Z`,
-      autoSettleAfterDays,
-      autoSettleOnMerge,
-      changeRequest: activeThreadChangeRequest,
-    });
-  }, [
-    activeThreadPr?.state,
-    activeThreadShell,
-    autoSettleAfterDays,
-    autoSettleOnMerge,
-    changeRequestSnapshotByKey,
-    nowMinute,
-    supportsSettlement,
-  ]);
+  const activeThreadSettled =
+    supportsSettlement && activeThreadShell?.settledOverride === "settled";
   const unsettleThreadMutation = useAtomCommand(threadEnvironment.unsettle, {
     reportFailure: false,
   });

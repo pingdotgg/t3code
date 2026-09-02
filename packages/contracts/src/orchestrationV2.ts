@@ -2023,6 +2023,18 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
   }),
+  /**
+   * Server-internal settlement (#8600): dispatched by the settlement sweep,
+   * never by clients. Rejected when the thread changed after `snapshotAt` or
+   * carries any explicit settled override, so automatic settlement can never
+   * race a user action or clobber an explicit un-settle.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.auto-settle"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    snapshotAt: Schema.DateTimeUtc,
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.unsettle"),
     commandId: CommandId,

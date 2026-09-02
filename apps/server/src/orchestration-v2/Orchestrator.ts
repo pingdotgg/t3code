@@ -230,6 +230,7 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "thread.unarchive":
     case "thread.delete":
     case "thread.settle":
+    case "thread.auto-settle":
     case "thread.unsettle":
     case "thread.snooze":
     case "thread.unsnooze":
@@ -6780,6 +6781,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.create":
         yield* dispatchThreadCreate(command, events);
         break;
+      case "thread.auto-settle": {
+        // Automatic settlement (#8600): the sweep evaluated a shell snapshot,
+        // so re-check against the live thread before settling. Any change
+        // after the snapshot — or any explicit override, including the
+        // un-settle button's "active" — wins over the sweep.
+        const projection = yield* loadProjectionForCommand(command);
+        if (
+          projection.thread.settledOverride !== null ||
+          DateTime.toEpochMillis(projection.thread.updatedAt) >
+            DateTime.toEpochMillis(command.snapshotAt)
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} changed before automatic settlement.`,
+          });
+        }
+        yield* dispatchThreadMutation(
+          { type: "thread.settle", commandId: command.commandId, threadId: command.threadId },
+          events,
+          effects,
+        );
+        break;
+      }
       case "thread.archive":
       case "thread.unarchive":
       case "thread.delete":

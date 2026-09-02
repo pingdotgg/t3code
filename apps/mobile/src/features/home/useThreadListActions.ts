@@ -1,5 +1,6 @@
+import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { canSettle, canSnooze } from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
@@ -119,19 +120,9 @@ function useThreadActionExecutor(
           );
           return false;
         }
-        // Settle may only target what effectiveSettled could classify as
-        // settled: not starting/running sessions, not threads waiting on
-        // approvals or user input. Anything else would hide live work.
-        if (action === "settle" && !canSettle(thread, { now: new Date().toISOString() })) {
-          Alert.alert(
-            actionFailureTitle(action),
-            "This thread still needs attention. Resolve or interrupt it first, then try again.",
-          );
-          return false;
-        }
-        // The server cancels queued runs on archive. Only an actual provider
-        // turn still needs the user to interrupt it first.
-        if (action === "archive" && !threadCanArchive(thread.runtime)) {
+        // Archive keeps its original, narrower guard: never interrupt a
+        // thread mid-turn.
+        if (action === "archive" && threadRuntimeIsActive(thread.runtime)) {
           Alert.alert(
             actionFailureTitle(action),
             "This thread is working. Interrupt it first, then try again.",
