@@ -148,7 +148,7 @@ const PROJECT_ICON_EMOJIS: Record<ProjectIconName, string> = {
   music: "🎵",
   package: "📦",
   security: "🔒",
-  server: "🖧",
+  server: "⚙️",
   shopping: "🛍️",
   terminal: "⌨️",
   test: "🧪",

@@ -159,11 +159,11 @@ function ProjectFaviconFallback({
       <span
         aria-hidden="true"
         className={cn(
-          "inline-flex size-3.5 shrink-0 items-center justify-center text-[0.9em] leading-none",
+          "inline-flex size-3.5 shrink-0 items-center justify-center leading-none [container-type:size]",
           className,
         )}
       >
-        {emoji}
+        <span className="text-[length:80cqh] leading-none">{emoji}</span>
       </span>
     );
   }
