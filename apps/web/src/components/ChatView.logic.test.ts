@@ -1186,9 +1186,11 @@ describe("isProviderAuthError", () => {
     expect(isProviderAuthError("Failed to authenticate. Your API key is invalid.")).toBe(false);
     // A tool credential failure ("invalid token") is not fixed by Claude OAuth
     // re-authentication, so the bare-token wording must not trigger it — while
-    // credential-specific phrasing still does.
+    // Claude's credential-specific phrasing (access/bearer token, credentials)
+    // still does.
     expect(isProviderAuthError("GitHub API request failed: invalid token")).toBe(false);
     expect(isProviderAuthError("API Error: 401 Invalid access token")).toBe(true);
+    expect(isProviderAuthError("API Error: 401 Invalid bearer token")).toBe(true);
   });
 });
 

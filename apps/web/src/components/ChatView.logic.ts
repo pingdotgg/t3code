@@ -79,7 +79,7 @@ export function isProviderAuthError(message: string | null | undefined): boolean
   // "Authentication failed: API key is invalid" would match the positive
   // expression below on "authentication failed" and offer a login that can't help.
   if (/\bapi[- ]?key\b/i.test(message)) return false;
-  return /(?:re-?authenticate|\breauth\b|failed to authenticate|not (?:logged in|authenticated)|unauthenticated|authentication (?:failed|error|required)|invalid authentication|access token (?:has )?expired|expired[\w ]*token|invalid[\w ]*(?:credential|access token)|please (?:log ?in|sign ?in)|(?:log|sign) ?in again)/i.test(
+  return /(?:re-?authenticate|\breauth\b|failed to authenticate|not (?:logged in|authenticated)|unauthenticated|authentication (?:failed|error|required)|invalid authentication|access token (?:has )?expired|expired[\w ]*token|invalid[\w ]*(?:credential|access token|bearer token)|please (?:log ?in|sign ?in)|(?:log|sign) ?in again)/i.test(
     message,
   );
 }
