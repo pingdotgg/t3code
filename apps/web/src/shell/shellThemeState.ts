@@ -63,34 +63,51 @@ function toHex(channel: number): string {
  * Resolves any CSS colour (oklch, color-mix, var chains…) to `#rrggbb[aa]` by
  * painting it: the canvas converts to sRGB for us, which QML can parse.
  */
-export function createCssColorResolver(): (value: string) => string | null {
+type CssColorResolver = ((value: string) => string | null) & { dispose: () => void };
+
+export function createCssColorResolver(root: HTMLElement): CssColorResolver {
   const canvas = document.createElement("canvas");
   canvas.width = 1;
   canvas.height = 1;
   const context = canvas.getContext("2d", { willReadFrequently: true });
-  return (value) => {
+  const probe = document.createElement("span");
+  probe.style.position = "absolute";
+  probe.style.visibility = "hidden";
+  root.appendChild(probe);
+
+  const resolve = ((value: string) => {
     const trimmed = value.trim();
     if (!context || trimmed.length === 0) return null;
+    probe.style.color = "";
+    probe.style.color = trimmed;
+    const resolved = getComputedStyle(probe).color;
+    if (resolved.length === 0) return null;
     context.clearRect(0, 0, 1, 1);
     context.fillStyle = "#000";
-    context.fillStyle = trimmed;
+    context.fillStyle = resolved;
     context.fillRect(0, 0, 1, 1);
     const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
     if (r === undefined || g === undefined || b === undefined || a === undefined) return null;
     return a === 255
       ? `#${toHex(r)}${toHex(g)}${toHex(b)}`
       : `#${toHex(r)}${toHex(g)}${toHex(b)}${toHex(a)}`;
-  };
+  }) as CssColorResolver;
+  resolve.dispose = () => probe.remove();
+  return resolve;
 }
 
 export function readShellThemeState(root: HTMLElement): ShellThemeState {
   const computed = getComputedStyle(root);
-  const resolve = createCssColorResolver();
+  const resolve = createCssColorResolver(root);
   const colors: Record<string, string> = {};
-  for (const [role, variable] of Object.entries(SHELL_THEME_ROLE_VARIABLES)) {
-    const raw = computed.getPropertyValue(variable);
-    const hex = resolve(raw);
-    if (hex !== null) colors[role] = hex;
+  try {
+    for (const [role, variable] of Object.entries(SHELL_THEME_ROLE_VARIABLES)) {
+      const raw = computed.getPropertyValue(variable);
+      const hex = resolve(raw);
+      if (hex !== null) colors[role] = hex;
+    }
+  } finally {
+    resolve.dispose();
   }
   const probe = document.createElement("div");
   probe.style.position = "absolute";
