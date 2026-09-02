@@ -36,6 +36,38 @@ WebEngineView ◄─── WebChannel ───► QML bricks
 Attach mode (`--url <pairing url>`) skips the host entirely and loads a
 running dev server; this is what `vp run dev:qt` uses.
 
+### Web engine
+
+- **One profile.** `src/WebProfile.cpp` configures Qt WebEngine's default
+  profile and registers it as the `WebProfile` singleton: storage and a 64 MiB
+  disk HTTP cache under `<T3 home>/userdata/shell-web` (`--home-dir`, then
+  `T3CODE_HOME`, then `~/.t3`), cookies forced persistent, permissions stored.
+  Every `WebSurface` shares it, so the embed panel reuses the primary's
+  session and the bundle comes from cache on the next start. Chromium cannot
+  share a profile directory between processes: a second shell on the same
+  home finds the lock file taken and stays off-the-record for its run.
+- **One renderer per surface.** Chromium gives each top-level view its own
+  renderer process (roughly the app bundle's footprint each), which is the
+  price of the panel being a separate document. The panel surface sets
+  `sleepsWhenHidden`, so its page is frozen (no timers, no painting) while the
+  panel is closed and resumes where it was; discarding it would also drop the
+  terminals it holds. The primary surface never sleeps.
+- **The channel carries no properties.** QWebChannel re-sends a changed
+  property to every connected page, so `Shell.state` is not on it: pages talk
+  to `ShellChannel` (`publish`, `dispatch`, `snapshot`, `actionRequested`,
+  `stateEntryChanged`), and `shell-connect.js` pulls the map lazily. A page
+  that never reads it (the primary) is never sent its own publishes back.
+- **Per-key bindings.** `Shell.state` is a `QQmlPropertyMap`, so a publish
+  only re-evaluates bindings on that key. Keys are declared up front in
+  `ShellBridge.cpp`; a rice can read any of them, but a new key must be added
+  there before a binding will follow it.
+- **Permissions and downloads.** Pages get the async clipboard; every other
+  permission is denied (there is no notification presenter yet). Downloads
+  are accepted into the user's download folder.
+- **No width animation on the surfaces' neighbours.** Animating the sidebar
+  or panel width resizes the web view every frame, which is a Chromium
+  relayout and a new GPU surface each time; both snap instead.
+
 ## Source layout
 
 | Path                    | Role                                                                 |
@@ -201,16 +233,26 @@ time) and `js/shell-connect.js` at document creation, which exposes:
 ```ts
 window.t3Shell: {
   protocolVersion: number;                           // 1
+  surfaceId: string;                                 // "primary" | "rightPanel"
   ready: Promise<ShellObject>;                       // raw WebChannel proxy
   publish(key: string, value: unknown): Promise<void>;
-  onAction(listener: (action: string, payload: unknown) => void): Promise<void>;
+  dispatch(action: string, payload?: unknown): Promise<void>;
+  onAction(listener: (action: string, payload: unknown) => void): Promise<() => void>;
+  getState(): Promise<Record<string, unknown>>;      // everything published, any document
+  onState(listener: (state: Record<string, unknown>) => void): Promise<() => void>;
 }
 ```
 
 `window.t3Shell` is undefined in a browser tab; the web app must keep working
 without it. `apps/web/src/env.ts` exports `isT3Shell` (module-load-time, like
 `isElectron`). The contract — what gets published under which key and which
-actions exist — lives in `packages/contracts/src/shell.ts`.
+actions exist — lives in `packages/contracts/src/shell.ts` and is imported as
+`@t3tools/contracts/shell`, not from the package barrel, so browsers never
+bundle it. The bridges follow the same rule: `apps/web/src/shell/lazy.tsx`
+wraps each one in `React.lazy`, and only a shell-hosted document ever imports
+`shell/bridges.ts`. Every bridge decodes actions through `useShellActions`
+(one subscription per bridge, handlers read live props) and publishes through
+`useShellPublish` (skips unchanged JSON, clears the key on unmount).
 
 ### `sidebar`
 
@@ -262,9 +304,10 @@ then publishes the new `text` and `cursor` for the editor to adopt.
 The right panel is the first brick whose _content_ stays HTML but whose
 _placement_ is the shell's: `RightPanel` renders the tab strip natively and
 loads the app's embed route (`/embed/$environmentId/$threadId`) in a second
-`WebSurface`. Both surfaces use the `WebProfile` singleton, so the embed
-document has the primary's session cookie and authenticates without a
-pairing token; it opens its own WebSocket.
+`WebSurface`. Both surfaces share the shell's profile (see Web engine), so
+the embed document has the primary's session cookie and authenticates without
+a pairing token; it opens its own WebSocket, and sleeps while the panel is
+closed.
 
 The embed route renders `ChatView` with `presentation="rightPanel"`, which
 returns only the panel's content — every hook, handler and per-surface
@@ -278,12 +321,13 @@ Composer drafts are deliberately not synced (both documents write them).
 what can be added, and `embedPath`. `ChatView` hides its inline panel, sheet
 and layout toggles when hosted. Actions: `rightPanel.toggle`,
 `rightPanel.activate {id}`, `rightPanel.close {id}`, `rightPanel.add {kind}`
-(`diff | files | terminal | pullRequest | agents`).
+(`diff | files | terminal | pull-request | agents`). The embed document
+follows the primary one through `ShellEmbedRouteBridge`, which navigates in
+place when `rightPanel.threadKey` changes.
 
 Known gaps: the browser/preview surface needs the Electron preview host and
 is unavailable under the shell; "add to composer" from a terminal selection in
-the embed document has no composer to reach yet; the embed view reloads when
-the thread changes.
+the embed document has no composer to reach yet.
 
 ### `workspace`
 
