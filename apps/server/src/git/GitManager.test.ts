@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
 import * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 import type {
@@ -27,6 +28,7 @@ import {
   GitCommandError,
   ProviderDriverKind,
   ProviderInstanceId,
+  type SourceControlProviderKind,
   TextGenerationError,
 } from "@t3tools/contracts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
@@ -621,6 +623,7 @@ function makeManager(input?: {
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
   gitConfigReads?: string[];
+  sourceControlProviderKind?: SourceControlProviderKind | (() => SourceControlProviderKind);
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
@@ -657,14 +660,22 @@ function makeManager(input?: {
   const sourceControlRegistryLayer = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     GitHubSourceControlProvider.make.pipe(
-      Effect.map((provider) =>
-        SourceControlProviderRegistry.SourceControlProviderRegistry.of({
-          get: () => Effect.succeed(provider),
-          resolveHandle: () => Effect.succeed({ provider, context: null }),
-          resolve: () => Effect.succeed(provider),
+      Effect.map((provider) => {
+        const sourceControlProvider = () => ({
+          ...provider,
+          kind:
+            typeof input?.sourceControlProviderKind === "function"
+              ? input.sourceControlProviderKind()
+              : (input?.sourceControlProviderKind ?? provider.kind),
+        });
+        return SourceControlProviderRegistry.SourceControlProviderRegistry.of({
+          get: () => Effect.sync(sourceControlProvider),
+          resolveHandle: () =>
+            Effect.sync(() => ({ provider: sourceControlProvider(), context: null })),
+          resolve: () => Effect.sync(sourceControlProvider),
           discover: Effect.succeed([]),
-        }),
-      ),
+        });
+      }),
       Effect.provide(Layer.succeed(GitHubCli.GitHubCli, gitHubCli)),
     ),
   );
@@ -940,6 +951,129 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         aheadOfDefaultCount: 0,
         pr: null,
       });
+    }),
+  );
+
+  it.effect("status skips PR lookup when the source-control provider is unknown", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-unknown-provider-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/unknown-provider"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/unknown-provider"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        sourceControlProviderKind: "unknown",
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr).toBeNull();
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
+    }),
+  );
+
+  it.effect("status retries an unknown provider on the short PR lookup cadence", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-provider-refinement-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/provider-refinement"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/provider-refinement"]);
+
+      let providerKind: SourceControlProviderKind = "unknown";
+      const existingPr = {
+        number: 411,
+        title: "Provider refinement PR",
+        url: "https://github.com/pingdotgg/t3code/pull/411",
+        baseRefName: "main",
+        headRefName: "feature/provider-refinement",
+      };
+      const { manager, ghCalls } = yield* makeManager({
+        sourceControlProviderKind: () => providerKind,
+        ghScenario: {
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          prListSequence: [JSON.stringify([existingPr])],
+        },
+      });
+
+      const first = yield* manager.status({ cwd: repoDir });
+      expect(first.pr).toBeNull();
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
+
+      providerKind = "github";
+      yield* manager.invalidateRemoteStatus(repoDir);
+
+      const cached = yield* manager.status({ cwd: repoDir });
+      expect(cached.pr).toBeNull();
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
+
+      yield* TestClock.adjust(Duration.seconds(20));
+
+      const second = yield* manager.status({ cwd: repoDir });
+      expect(second.pr?.number).toBe(411);
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(1);
+    }),
+  );
+
+  it.effect("status keeps the last known PR while the provider is temporarily unknown", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-provider-hiccup-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/provider-hiccup"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/provider-hiccup"]);
+
+      let providerKind: SourceControlProviderKind = "github";
+      const existingPr = {
+        number: 412,
+        title: "Provider hiccup PR",
+        url: "https://github.com/pingdotgg/t3code/pull/412",
+        baseRefName: "main",
+        headRefName: "feature/provider-hiccup",
+      };
+      const { manager } = yield* makeManager({
+        sourceControlProviderKind: () => providerKind,
+        ghScenario: {
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          prListSequence: [JSON.stringify([existingPr])],
+        },
+      });
+
+      const first = yield* manager.status({ cwd: repoDir });
+      expect(first.pr?.number).toBe(412);
+
+      providerKind = "unknown";
+      yield* manager.invalidateStatus(repoDir);
+
+      const second = yield* manager.status({ cwd: repoDir });
+      expect(second.pr?.number).toBe(412);
+    }),
+  );
+
+  it.effect("branch PR lookup returns null when the source-control provider is unknown", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-unknown-branch-provider-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/unknown-branch-provider"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/unknown-branch-provider"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        sourceControlProviderKind: "unknown",
+      });
+
+      const pullRequest = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/unknown-branch-provider",
+      });
+
+      expect(pullRequest).toBeNull();
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
     }),
   );
 
