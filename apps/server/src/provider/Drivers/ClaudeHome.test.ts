@@ -20,13 +20,14 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         const resolved = path.resolve(NodeOS.homedir());
 
         expect(yield* resolveClaudeHomePath({ homePath: "" })).toBe(resolved);
-        expect((yield* makeClaudeEnvironment({ homePath: "" })).CLAUDE_CODE_ENABLE_TODO_TOOLS).toBe(
-          "1",
-        );
+        const environment = yield* makeClaudeEnvironment({ homePath: "" }, { PATH: "/test/bin" });
+
+        expect(environment.PATH).toBe("/test/bin");
+        expect(environment.CLAUDE_CODE_ENABLE_TODO_TOOLS).toBe("1");
       }),
     );
 
-    it.effect("merges the base environment and overrides the todo-tools flag", () =>
+    it.effect("merges the base environment and preserves an explicit todo-tools flag", () =>
       Effect.gen(function* () {
         const environment = yield* makeClaudeEnvironment(
           { homePath: "" },
@@ -34,7 +35,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         );
 
         expect(environment.PATH).toBe("/test/bin");
-        expect(environment.CLAUDE_CODE_ENABLE_TODO_TOOLS).toBe("1");
+        expect(environment.CLAUDE_CODE_ENABLE_TODO_TOOLS).toBe("0");
       }),
     );
 
@@ -45,7 +46,8 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         const resolved = path.resolve(NodeOS.homedir(), ".claude-work");
 
         expect(yield* resolveClaudeHomePath({ homePath })).toBe(resolved);
-        const environment = yield* makeClaudeEnvironment({ homePath });
+        const environment = yield* makeClaudeEnvironment({ homePath }, { PATH: "/test/bin" });
+        expect(environment.PATH).toBe("/test/bin");
         expect(environment.CLAUDE_CONFIG_DIR).toBe(resolved);
         expect(environment.CLAUDE_CODE_ENABLE_TODO_TOOLS).toBe("1");
         expect(yield* makeClaudeContinuationGroupKey({ homePath })).toBe(`claude:home:${resolved}`);
