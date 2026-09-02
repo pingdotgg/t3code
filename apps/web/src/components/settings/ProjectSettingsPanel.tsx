@@ -784,7 +784,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
 
   return (
     <>
-      <SettingsPageContainer>
+      <SettingsPageContainer width="wide" className="gap-8">
         <SettingsSection title="Project">
           <SettingsRow
             title="Name"
@@ -842,9 +842,6 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               </div>
             }
           />
-        </SettingsSection>
-
-        <SettingsSection title="New threads">
           <SettingsRow
             title="Model"
             description="New threads in this project start with this model. Applies to every checkout in this group."
@@ -1131,10 +1128,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                         icon={script.icon}
                         className="size-4 shrink-0 text-muted-foreground"
                       />
-                      <span className="max-w-40 shrink-0 truncate">{script.name}</span>
-                      <code className="min-w-0 flex-1 truncate font-mono font-normal text-muted-foreground">
-                        {script.command}
-                      </code>
+                      <span className="min-w-0 truncate">{script.name}</span>
                       {script.runOnWorktreeCreate ? (
                         <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] font-normal text-muted-foreground">
                           setup
@@ -1146,6 +1140,9 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                         </span>
                       ) : null}
                     </span>
+                  }
+                  description={
+                    <code className="block max-w-full truncate font-mono">{script.command}</code>
                   }
                   control={
                     <>
