@@ -623,9 +623,11 @@ export const posixLockIsHeld = Effect.fnUntraced(function* (
 const firefoxProfileIsHeld = Effect.fnUntraced(function* (
   directory: string,
   context: BrowserImportPathContext,
+  // Resolved once by the caller: it involves a DNS lookup of the hostname and
+  // is the same for every profile.
+  localAddresses: ReadonlySet<string>,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const localAddresses = yield* yield* HostProcessAddresses;
   if (context.platform === "win32") {
     return yield* windowsLockIsHeld(context.path.join(directory, "parent.lock"));
   }
@@ -669,11 +671,14 @@ export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")
   }
 
   const profiles = yield* listSourceProfiles(definition, context);
+  // Only the Linux `lock` symlink names an address, so Windows skips the lookup.
+  const localAddresses: ReadonlySet<string> =
+    context.platform === "win32" ? new Set() : yield* yield* HostProcessAddresses;
   const found = yield* Effect.forEach(profiles, (profile) => {
     const directory = context.path.isAbsolute(profile.directory)
       ? profile.directory
       : context.path.join(root, profile.directory);
-    return firefoxProfileIsHeld(directory, context);
+    return firefoxProfileIsHeld(directory, context, localAddresses);
   });
   return found.some(Boolean);
 });
