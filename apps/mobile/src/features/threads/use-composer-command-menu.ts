@@ -63,11 +63,13 @@ export function useComposerCommandMenu({
       return { start, end: selectionEnd };
     });
   }, [draftMessage.length]);
-  useEffect(() => {
-    if (previousOwnerKeyRef.current === ownerKey) return;
+  // Adjusted while rendering, not in an effect: one committed render with the
+  // previous draft's caret is enough to flash the popover open over a draft
+  // the user never typed a trigger into.
+  if (previousOwnerKeyRef.current !== ownerKey) {
     previousOwnerKeyRef.current = ownerKey;
     setSelection(composerSelectionAtEnd(draftMessage));
-  }, [draftMessage, ownerKey]);
+  }
 
   const trigger = useMemo(() => {
     if (!enabled || selection.start !== selection.end) {
@@ -109,10 +111,14 @@ export function useComposerCommandMenu({
           description: "Switch to default mode",
         },
       ];
+      // On an unsent draft `/model` is a dead row: `onSelect` has no `model`
+      // branch, so it inserts the literal text `/model `, and the `slash-model`
+      // trigger that follows builds no items, closing the menu. The draft screen
+      // has its own model control, so gate the row on an existing thread.
       const builtIn = allBuiltIn.filter(
         (item) =>
           item.command.includes(q) &&
-          (item.command === "model" || onUpdateInteractionMode !== undefined),
+          (item.command === "model" ? hasThread : onUpdateInteractionMode !== undefined),
       );
 
       // A provider expands a slash command only when it opens the whole
