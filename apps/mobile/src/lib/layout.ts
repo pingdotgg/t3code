@@ -1,3 +1,6 @@
+import { scaledTypographyLineHeight } from "./appearancePreferences";
+import { MOBILE_TYPOGRAPHY } from "./typography";
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
@@ -18,6 +21,29 @@ const SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH = 380;
 
 export const AUXILIARY_PANE_MIN_CONTENT_WIDTH = 960;
 export const CHAT_CONTENT_MAX_WIDTH = 960;
+// min-h-8 uses the 14px rem configured in metro.config.js.
+export const THREAD_WORK_ROW_MIN_HEIGHT = 28;
+
+export function deriveThreadWorkLogSizing(input: {
+  readonly baseFontSize: number;
+  readonly fontScale: number;
+}) {
+  const lineHeight = scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.footnote, input.baseFontSize);
+  return {
+    // Different text metrics can share the same minimum row height.
+    textSizeKey: `${input.baseFontSize}:${input.fontScale}`,
+    estimatedRowHeight: Math.max(
+      THREAD_WORK_ROW_MIN_HEIGHT,
+      Math.ceil(lineHeight * input.fontScale),
+    ),
+    // Native text can exceed its authored line height with accessibility scaling.
+    // Leave those rows measured instead of promising LegendList an exact size.
+    fixedRowHeight:
+      input.fontScale <= 1 && lineHeight <= THREAD_WORK_ROW_MIN_HEIGHT
+        ? THREAD_WORK_ROW_MIN_HEIGHT
+        : undefined,
+  };
+}
 
 export const AUXILIARY_PANE_MIN_WIDTH = 260;
 export const AUXILIARY_PANE_MAX_WIDTH = 480;

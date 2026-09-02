@@ -7,6 +7,7 @@ import {
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { resolveWorkEntryToolPresentation } from "@t3tools/client-runtime/work-log/presentation";
 
 import {
   deriveActiveWorkStartedAt,
@@ -1249,6 +1250,36 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.toolData).toEqual(item);
   });
 
+  it.each([
+    ["inProgress", "Clicking in the preview browser"],
+    ["completed", "Clicked in the preview browser"],
+    ["failed", "Failed to click in the preview browser"],
+  ] as const)(
+    "preserves Claude MCP identity behind generic titles while %s",
+    (status, displayName) => {
+      const data = {
+        toolName: "mcp__t3_code__preview_click",
+        input: { selector: "#submit" },
+        ...(status === "inProgress"
+          ? {}
+          : { result: { type: "tool_result", is_error: status === "failed", content: "Result" } }),
+      };
+      const [entry] = deriveWorkLogEntries([
+        makeActivity({
+          kind: status === "inProgress" ? "tool.updated" : "tool.completed",
+          summary: "MCP tool call",
+          payload: { itemType: "mcp_tool_call", title: "MCP tool call", status, data },
+        }),
+      ]);
+
+      expect(entry).toMatchObject({ toolTitle: "MCP tool call", toolData: data });
+      expect(resolveWorkEntryToolPresentation(entry!)).toEqual({
+        displayName,
+        icon: "browser",
+      });
+    },
+  );
+
   it("keeps MCP payloads while collapsing lifecycle updates", () => {
     const item = {
       type: "mcpToolCall",
@@ -1282,6 +1313,9 @@ describe("deriveWorkLogEntries", () => {
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry?.toolData).toEqual(item);
     expect(entry?.toolCallId).toBe("call-1");
+    expect(resolveWorkEntryToolPresentation(entry!)?.displayName).toBe(
+      "Took a snapshot of the preview page",
+    );
   });
 
   it("collapses interleaved lifecycle updates by tool call id", () => {

@@ -12,6 +12,41 @@ export type ThreadFeedLiveFollowEvent =
       readonly userScrollSessionActive: boolean;
     };
 
+export interface ThreadWorkGroupScrollPosition {
+  readonly rowId: string;
+  readonly offsetWithinRow: number;
+  readonly scrollOffset: number;
+  readonly contentHeight: number;
+}
+
+export function resolveThreadWorkGroupInitialScroll(
+  rows: ReadonlyArray<{ readonly id: string }>,
+  position: ThreadWorkGroupScrollPosition | undefined,
+) {
+  const index = position ? rows.findIndex((row) => row.id === position.rowId) : -1;
+  return index >= 0 && position ? { index, viewOffset: -position.offsetWithinRow } : undefined;
+}
+
+export function shouldFollowThreadWorkGroupAppend(input: {
+  readonly previousRows: ReadonlyArray<{ readonly id: string }>;
+  readonly rows: ReadonlyArray<{ readonly id: string }>;
+  readonly previousContentHeight: number;
+  readonly contentHeight: number;
+  readonly viewportHeight: number;
+  readonly scrollOffset: number;
+  readonly detailsChanged: boolean;
+  readonly userScrolling: boolean;
+}) {
+  return (
+    !input.detailsChanged &&
+    !input.userScrolling &&
+    input.contentHeight > input.previousContentHeight &&
+    input.rows.length > input.previousRows.length &&
+    input.previousRows.every((row, index) => row.id === input.rows[index]?.id) &&
+    input.previousContentHeight - input.viewportHeight - input.scrollOffset <= 1
+  );
+}
+
 export function resolveThreadFeedSubmissionAnchor<AnchorId>(input: {
   readonly currentAnchorMessageId: AnchorId | null;
   readonly submittedMessageId: AnchorId;

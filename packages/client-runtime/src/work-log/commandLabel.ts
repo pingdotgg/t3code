@@ -1,5 +1,21 @@
 type CommandWrapper = "env" | "sudo";
 
+const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash", "ash", "ksh", "fish"]);
+const SHELL_OPTIONS_WITH_VALUE = new Set(["-o", "-O", "--rcfile", "--init-file"]);
+
+function shellCommandArgumentIndex(tokens: ReadonlyArray<string>, start: number): number | null {
+  for (let index = start; index < tokens.length; index += 1) {
+    const option = tokens[index]!;
+    if (option === "--" || !option.startsWith("-")) return null;
+    if (SHELL_OPTIONS_WITH_VALUE.has(option)) {
+      index += 1;
+      continue;
+    }
+    if (option === "--command" || /^-[a-zA-Z]*c[a-zA-Z]*$/.test(option)) return index + 1;
+  }
+  return null;
+}
+
 const COMMAND_WRAPPER_OPTIONS_WITH_VALUE: Record<CommandWrapper, ReadonlySet<string>> = {
   env: new Set(["-C", "--chdir", "-S", "--split-string", "-u", "--unset"]),
   sudo: new Set(["-C", "--close-from", "-D", "--chdir", "-g", "--group", "-u", "--user"]),
@@ -162,7 +178,14 @@ export function commandProgramName(command: string, depth = 0): string | null {
       }
       return null;
     }
-    return token.split(/[\\/]/).at(-1) || null;
+    if (tokenProgram && SHELL_PROGRAMS.has(tokenProgram.replace(/\.exe$/i, "").toLowerCase())) {
+      const scriptIndex = shellCommandArgumentIndex(tokens, index + 1);
+      if (scriptIndex !== null) {
+        const script = tokens[scriptIndex];
+        return script ? commandProgramName(script, depth + 1) : null;
+      }
+    }
+    return tokenProgram || null;
   }
 
   return null;

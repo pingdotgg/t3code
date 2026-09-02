@@ -125,6 +125,7 @@ import { cn } from "../../lib/cn";
 import {
   deriveCenteredContentHorizontalPadding,
   deriveThreadFeedInitialContentInset,
+  deriveThreadWorkLogSizing,
   type LayoutVariant,
 } from "../../lib/layout";
 import {
@@ -148,6 +149,7 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import {
   resolveThreadFeedLiveFollow,
   type ThreadFeedLiveFollowEvent,
+  type ThreadWorkGroupScrollPosition,
 } from "./thread-feed-live-follow";
 import {
   collapsedWorkLogHeight,
@@ -191,12 +193,9 @@ function formatMessageTime(input: string): string {
   return MESSAGE_TIME_FORMATTER.format(timestamp);
 }
 
-// Pre-measurement heights for getFixedItemSize, mirroring renderFeedEntry's
-// classNames. The fold row's min-h-11 (44px) stays taller than its single
-// text-sm line at every supported base font size (26px at the 22pt maximum),
-// so its height is a constant; a drifted value costs one correction on
-// measure, not a persistent offset.
-const TURN_FOLD_HEIGHT = 48; // min-h-11 (44) + mb-1 (4)
+// Fixed heights mirror renderFeedEntry's classNames and are only used while
+// text fits at the current font settings. Larger accessibility text is measured.
+const TURN_FOLD_HEIGHT = 42; // min-h-11 (38.5) + mb-1 (3.5), with the mobile 14px rem
 const THREAD_FEED_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
 // Let neighboring rows move out of the new rows' space before showing their text.
 const THREAD_FEED_DISCLOSURE_ENTER_TRANSITION = FadeIn.delay(
@@ -1452,11 +1451,13 @@ function renderFeedEntry(
   props: Pick<ThreadFeedProps, "environmentId" | "onUseArtifactTemplate" | "skills"> & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
+    readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
+    readonly workGroupScrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
     readonly unsettledTurnId: TurnId | null;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
-    readonly onToggleWorkGroup: (groupId: string) => void;
-    readonly onToggleWorkRow: (rowId: string) => void;
+    readonly onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
+    readonly onToggleWorkRow: (rowId: string, anchorKey: string) => void;
     readonly onToggleTurnFold: (turnId: TurnId) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
@@ -1482,8 +1483,14 @@ function renderFeedEntry(
         onPress={() => props.onToggleTurnFold(entry.turnId)}
         hitSlop={4}
         className="mb-1 min-h-11 flex-row items-center gap-2 border-b border-adaptive-neutral-200-a80-white-a8 px-2"
+        style={{
+          minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.workRowSizing.estimatedRowHeight),
+        }}
       >
-        <Text className="font-t3-medium text-sm tabular-nums text-foreground-muted">
+        <Text
+          key={props.workRowSizing.textSizeKey}
+          className="font-t3-medium text-sm tabular-nums text-foreground-muted"
+        >
           {entry.label}
         </Text>
         <ThreadDisclosureChevron
@@ -1499,14 +1506,16 @@ function renderFeedEntry(
   if (entry.type === "work-toggle") {
     return (
       <ThreadWorkGroupToggle
+        rowSizing={props.workRowSizing}
         expanded={entry.expanded}
         hiddenCount={entry.hiddenCount}
         iconSubtleColor={iconSubtleColor}
         summary={entry.summary}
         summaryKind={entry.summaryKind}
+        summaryToolIcon={entry.summaryToolIcon}
         hasFailure={entry.hasFailure}
         shimmer={entry.shimmer}
-        onToggle={() => props.onToggleWorkGroup(entry.groupId)}
+        onToggle={() => props.onToggleWorkGroup(entry.groupId, entry.id)}
       />
     );
   }
@@ -1669,9 +1678,15 @@ function renderFeedEntry(
 
   return (
     <ThreadWorkLog
+      // Fixed native rows need fresh measurement after a text-size change.
+      // Anchors/details live in ThreadFeed and survive this group-only remount.
+      key={`${entry.id}:${props.workRowSizing.textSizeKey}`}
       activities={entry.activities}
+      anchorKey={entry.id}
       copiedRowId={props.copiedRowId}
       expandedRows={props.expandedWorkRows}
+      rowSizing={props.workRowSizing}
+      scrollPositions={props.workGroupScrollPositions}
       iconSubtleColor={iconSubtleColor}
       onCopyRow={props.onCopyWorkRow}
       onToggleRow={props.onToggleWorkRow}
@@ -1959,7 +1974,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const headerMaterialVisibleRef = useRef(false);
   const previousLatestTurnRef = useRef(props.latestTurn);
   const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, fontScale } = useWindowDimensions();
+  const { appearance } = useAppearancePreferences();
+  const workRowSizing = useMemo(
+    () => deriveThreadWorkLogSizing({ baseFontSize: appearance.baseFontSize, fontScale }),
+    [appearance.baseFontSize, fontScale],
+  );
+  const previousTextSize = useRef(workRowSizing.textSizeKey);
+  useLayoutEffect(() => {
+    if (previousTextSize.current === workRowSizing.textSizeKey) {
+      return;
+    }
+    previousTextSize.current = workRowSizing.textSizeKey;
+    // Text-size changes invalidate the outer list's fixed-height cache too.
+    // This never runs for scrolling, streamed output, or disclosure toggles.
+    props.listRef.current?.clearCaches({ mode: "sizes" });
+  }, [workRowSizing.textSizeKey, props.listRef]);
   const [viewportWidth, setViewportWidth] = useState(() =>
     props.layoutVariant === "split" ? 0 : windowWidth,
   );
@@ -2227,6 +2257,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     () => ({
       copiedRowId,
       expandedWorkRows,
+      workRowSizing,
       iconSubtleColor,
       markdownStyles,
       reviewCommentColors,
@@ -2236,6 +2267,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [
       copiedRowId,
       expandedWorkRows,
+      workRowSizing,
       iconSubtleColor,
       markdownStyles,
       reviewCommentColors,
@@ -2338,6 +2370,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // ThreadId, and keying resets (or the list mount) on the bare id would
   // carry stale scroll/follow state across an environment switch.
   const feedThreadKey = scopedThreadKey(props.environmentId, props.threadId);
+  // Virtualized groups can unmount without losing the reader's place. This cache
+  // belongs to this thread view only and never causes per-scroll React updates.
+  const workGroupScrollPositions = useMemo(
+    () => new Map<string, ThreadWorkGroupScrollPosition>(),
+    [feedThreadKey],
+  );
 
   useEffect(() => {
     reportHeaderMaterialVisibility(false);
@@ -2541,8 +2579,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   }, []);
 
   const onToggleWorkGroup = useCallback(
-    (groupId: string) => {
-      suspendEndScrollMaintenanceForDisclosure(`work-toggle:${groupId}`);
+    (groupId: string, anchorKey: string) => {
+      suspendEndScrollMaintenanceForDisclosure(anchorKey);
       setInteractionState((current) => ({
         ...current,
         expandedWorkGroups: {
@@ -2555,8 +2593,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   );
 
   const onToggleWorkRow = useCallback(
-    (rowId: string) => {
-      suspendEndScrollMaintenanceForDisclosure(rowId);
+    (rowId: string, anchorKey: string) => {
+      suspendEndScrollMaintenanceForDisclosure(anchorKey);
       setInteractionState((current) => ({
         ...current,
         expandedWorkRows: {
@@ -2610,6 +2648,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // average once one of their type has been measured.
   const getFixedItemSize = useCallback(
     (entry: ThreadFeedEntry) => {
+      if (workRowSizing.fixedRowHeight === undefined) {
+        return undefined;
+      }
       switch (entry.type) {
         case "turn-fold":
           return TURN_FOLD_HEIGHT;
@@ -2625,7 +2666,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           return undefined;
       }
     },
-    [expandedWorkRows],
+    [expandedWorkRows, workRowSizing.fixedRowHeight],
   );
 
   // Disclosures can mount existing offscreen rows as well as new work rows.
@@ -2641,6 +2682,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             environmentId: props.environmentId,
             copiedRowId,
             expandedWorkRows,
+            workRowSizing,
+            workGroupScrollPositions,
             terminalAssistantMessageIds,
             unsettledTurnId,
             onCopyWorkRow,
@@ -2668,6 +2711,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       copiedRowId,
       disclosureToggleSettling,
       expandedWorkRows,
+      workRowSizing,
+      workGroupScrollPositions,
       terminalAssistantMessageIds,
       unsettledTurnId,
       iconSubtleColor,

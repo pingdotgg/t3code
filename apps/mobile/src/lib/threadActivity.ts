@@ -19,6 +19,7 @@ import {
   isWorktreeSetupActivity,
   normalizeCompactToolLabel,
   omitSupersededLifecycleMarkers,
+  resolveWorkEntryToolPresentation,
   summarizeToolGroup,
   toolGroupSummaryKind,
   type ToolGroupSummaryKind,
@@ -146,6 +147,7 @@ export type ThreadFeedEntry =
       readonly expanded: boolean;
       readonly summary: string;
       readonly summaryKind: ToolGroupSummaryKind;
+      readonly summaryToolIcon?: "browser" | "t3-code";
       readonly hasFailure: boolean;
       readonly live: boolean;
       readonly shimmer: boolean;
@@ -477,8 +479,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (itemType === "mcp_tool_call") {
     const data = asRecord(payload?.data);
-    if (data?.item !== undefined) {
-      entry.toolData = data.item;
+    const toolData = typeof data?.toolName === "string" ? (data.item ?? data) : data?.item;
+    if (toolData !== undefined) {
+      entry.toolData = toolData;
     }
   }
   if (itemType) {
@@ -826,6 +829,8 @@ function capitalizePhrase(value: string): string {
 }
 
 function workEntryHeading(workEntry: WorkLogEntry): string {
+  const presentation = resolveWorkEntryToolPresentation(workEntry);
+  if (presentation) return presentation.displayName;
   if (!workEntry.toolTitle) {
     return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
   }
@@ -1501,19 +1506,26 @@ function appendToolGroupRows(
     : activities[0]!.id;
   const groupId = `work-group:${identity}`;
   const expanded = expandedWorkGroupIds.has(groupId);
-  const latestInProgressActivity = activities.findLast(
+  const latestActiveActivity = activities.findLast(
     (activity) =>
-      isWorking && activity.lifecycleStatus === "inProgress" && activity.turnId === unsettledTurnId,
+      isWorking &&
+      activity.turnId === unsettledTurnId &&
+      (activity.lifecycleStatus === "inProgress" ||
+        (activeTail &&
+          activity.lifecycleStatus === undefined &&
+          (activity.workEntry.sourceActivityKind === "task.progress" || activity.toolLike))),
   );
-  const live = activeTail || latestInProgressActivity !== undefined;
-  const latestActivity = activeTail
-    ? activities.at(-1)!
-    : (latestInProgressActivity ?? activities.at(-1)!);
+  const active = latestActiveActivity !== undefined;
+  const live = activeTail || active;
+  const latestActivity = latestActiveActivity ?? activities.at(-1)!;
   const summary = live
-    ? liveToolActivitySummary(latestActivity)
+    ? liveToolActivitySummary(latestActivity, active)
     : activities.length === 1 && !activities[0]!.toolLike
       ? activities[0]!.workEntry.label
       : summarizeToolGroup(activities.map((activity) => activity.workEntry));
+  const summaryToolIcon = live
+    ? resolveWorkEntryToolPresentation(latestActivity.workEntry)?.icon
+    : undefined;
   result.push({
     type: "work-toggle",
     id: `${live ? "work-live" : "work-toggle"}:${groupId}`,
@@ -1526,40 +1538,52 @@ function appendToolGroupRows(
     summaryKind: toolGroupSummaryKind(
       (live ? [latestActivity] : activities).map((activity) => activity.workEntry),
     ),
+    ...(summaryToolIcon ? { summaryToolIcon } : {}),
     hasFailure: activities.findLast((activity) => activity.toolLike)?.status === "failure",
     live,
-    // Match the live label until the turn or contiguous tool run settles.
-    shimmer: live,
+    shimmer: active,
   });
   if (!expanded) {
     return;
   }
-  for (const activity of activities) {
-    result.push({
-      type: "activity-group",
-      id: activity.id,
-      createdAt: activity.createdAt,
-      turnId: activity.turnId,
-      activities: [
-        {
-          ...activity,
-          groupedToolDetail: true,
-          live:
-            isWorking &&
-            activity.id === latestActivity.id &&
-            activity.lifecycleStatus === "inProgress" &&
-            activity.turnId === unsettledTurnId,
-        },
-      ],
-    });
-  }
+  result.push({
+    type: "activity-group",
+    id: `work-details:${groupId}`,
+    createdAt: activities[0]!.createdAt,
+    turnId: activities[0]!.turnId,
+    activities: activities.map((activity) => ({
+      ...activity,
+      groupedToolDetail: true,
+      live:
+        isWorking &&
+        activity.id === latestActivity.id &&
+        activity.lifecycleStatus === "inProgress" &&
+        activity.turnId === unsettledTurnId,
+    })),
+  });
 }
 
-function liveToolActivitySummary(activity: ThreadFeedActivity): string {
+function liveToolActivitySummary(activity: ThreadFeedActivity, active: boolean): string {
+  const presentation = resolveWorkEntryToolPresentation(
+    activity.workEntry,
+    active ? "inProgress" : "completed",
+  );
+  if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
   if (command) {
     const program = commandProgramName(command);
-    return program ? `Running ${program}` : "Running command";
+    const status = activity.lifecycleStatus ?? (active ? "inProgress" : "completed");
+    const verb =
+      status === "inProgress"
+        ? "Running"
+        : status === "failed"
+          ? "Failed"
+          : status === "declined"
+            ? "Declined"
+            : status === "stopped"
+              ? "Stopped"
+              : "Ran";
+    return `${verb} ${program ?? "command"}`;
   }
   return activity.detail ?? activity.summary;
 }
@@ -1773,15 +1797,20 @@ export function buildThreadFeed(
           const detail = workEntryPreview(entry);
           const getFullDetail = memoizeValue(() => buildWorkEntryExpandedBody(entry));
           const getCopyText = memoizeValue(() => {
+            const copyLabel = capitalizePhrase(
+              normalizeCompactToolLabel(entry.toolTitle || entry.label),
+            );
             const fullDetail = getFullDetail();
             if (entry.command) {
               const normalizedCommand =
-                entry.rawCommand && summary.trim() !== entry.command.trim() ? entry.command : null;
-              return [summary, normalizedCommand, fullDetail ?? entry.command]
+                entry.rawCommand && copyLabel.trim() !== entry.command.trim()
+                  ? entry.command
+                  : null;
+              return [copyLabel, normalizedCommand, fullDetail ?? entry.command]
                 .filter((value): value is string => Boolean(value))
                 .join("\n");
             }
-            return [summary, detail, fullDetail]
+            return [copyLabel, detail, fullDetail]
               .filter((value, index, values): value is string => {
                 return Boolean(value) && values.indexOf(value) === index;
               })
