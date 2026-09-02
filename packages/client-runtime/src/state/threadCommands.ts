@@ -130,7 +130,6 @@ export function parseCodexGoalCommand(value: string): CodexGoalCommand | null {
   }
   if (action === "status") return { action: "invalid", message: GOAL_USAGE };
 
-  // Match Codex's `/goal <objective>` shorthand.
   return { action: "set", objective: argument, status: "active" };
 }
 
@@ -182,6 +181,7 @@ export function createThreadEnvironmentAtoms<R, E>(
   const codexGoal = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-data:codex-goal",
     tag: WS_METHODS.subscribeCodexGoal,
+    idleTtlMs: 0,
     transform: (events) => events.pipe(Stream.map(applyCodexGoalStreamEvent)),
   });
   return {
