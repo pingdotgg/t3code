@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import { SHARED_DEV_LOOPBACK_HOST } from "@t3tools/shared/devProxy";
 import { resolveGitWorktreePath, resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import { HostProcessEnvironment, HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -333,6 +334,10 @@ export function createDevRunnerEnv({
         devUrl?.toString() ??
         `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
     };
+    // Internal runner-to-Vite setting. An explicit empty value prevents a
+    // repo env file from changing ordinary dev binding; --share replaces it
+    // only after the exact Tailscale mapping has been acquired.
+    output.T3CODE_WEB_BIND_HOST = "";
 
     if (configuredBaseDir !== undefined) {
       output.T3CODE_HOME = resolvedBaseDir;
@@ -773,6 +778,11 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         );
 
         if (shared) {
+          // Tailscale proxies to IPv4 loopback. Bind Vite to that exact same
+          // address instead of `localhost`, whose address family varies by
+          // host. This is separate from HOST so remote HMR still derives its
+          // endpoint from the browser's shared origin.
+          env.T3CODE_WEB_BIND_HOST = SHARED_DEV_LOOPBACK_HOST;
           // The app is reached from the tailnet origin. Vite already allows
           // *.ts.net hosts; the backend needs the origin for credentialed
           // requests that bypass the proxy (desktop renderer, direct calls).

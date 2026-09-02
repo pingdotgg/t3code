@@ -10,7 +10,7 @@ import "vite-plus/test/config";
 import { defineConfig, type Connect, type Plugin } from "vite-plus";
 import pkg from "./package.json" with { type: "json" };
 
-import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
+import { DEV_PROXIED_PATH_PREFIXES, resolveWebDevServerHost } from "@t3tools/shared/devProxy";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 
@@ -28,7 +28,9 @@ const isSingleOriginDev = process.env.T3CODE_SINGLE_ORIGIN_DEV === "1";
 
 const port = Number(process.env.PORT ?? 5733);
 const explicitHost = process.env.HOST?.trim();
-const host = explicitHost || "localhost";
+const sharedBindHost = process.env.T3CODE_WEB_BIND_HOST?.trim();
+const host = resolveWebDevServerHost({ explicitHost, sharedBindHost });
+const explicitHmrHost = sharedBindHost ? undefined : explicitHost;
 const configuredWsUrl = isSingleOriginDev ? undefined : process.env.VITE_WS_URL?.trim();
 const configuredHttpUrl = isSingleOriginDev ? undefined : process.env.VITE_HTTP_URL?.trim();
 const configuredRelayUrl = repoEnv.VITE_T3CODE_RELAY_URL?.trim() || "";
@@ -250,11 +252,11 @@ export default defineConfig(() => {
       // page origin, which is what makes HMR work over Tailscale/LAN instead of
       // failing an attempt against the wrong machine's localhost first.
       // (Vite 8 logs connection state via console.debug — enable "Verbose".)
-      ...(explicitHost
+      ...(explicitHmrHost
         ? {
             hmr: {
               protocol: "ws",
-              host: explicitHost,
+              host: explicitHmrHost,
               clientPort: port,
             },
           }

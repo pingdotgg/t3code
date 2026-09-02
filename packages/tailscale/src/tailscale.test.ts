@@ -21,6 +21,7 @@ import {
   TailscaleCommandExitError,
   TailscaleCommandSpawnError,
   TailscaleCommandTimeoutError,
+  TailscaleServePortOccupiedError,
   TailscaleStatusParseError,
 } from "./tailscale.ts";
 
@@ -65,6 +66,14 @@ function assertCarriesNoSecret(error: object, secret: string): void {
 }
 const tailscaleStatusJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.100.100.100","fd7a:115c:a1e0::1","192.168.1.20"]}}`;
 const tailscaleStatusWithSingleIpJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
+const emptyServeStatusJson = `{"TCP":{},"Web":{}}`;
+const serveStatusJson = (servePort: number, proxy: string) =>
+  JSON.stringify({
+    TCP: { [servePort]: { HTTPS: true } },
+    Web: {
+      [`desktop.tail.ts.net:${String(servePort)}`]: { Handlers: { "/": { Proxy: proxy } } },
+    },
+  });
 
 function mockHandle(result: { stdout?: string; stderr?: string; code?: number }) {
   return ChildProcessSpawner.makeHandle({
@@ -320,20 +329,178 @@ describe("tailscale", () => {
   });
 
   it.effect("configures tailscale serve through the process spawner service", () => {
+    const commands: ReadonlyArray<string>[] = [];
     const layer = mockSpawnerLayer((command, args) => {
       assert.equal(command, "tailscale");
-      assert.deepEqual(args, ["serve", "--bg", "--https=8443", "http://127.0.0.1:13773"]);
+      commands.push(args);
+      if (args[1] === "status") {
+        return { stdout: emptyServeStatusJson };
+      }
       return {};
     });
 
-    return ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(Effect.provide(layer));
+    return Effect.gen(function* () {
+      yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+        Effect.provide(layer),
+      );
+      assert.deepEqual(commands, [
+        ["serve", "status", "--json"],
+        ["serve", "--bg", "--https=8443", "http://127.0.0.1:13773"],
+      ]);
+    });
+  });
+
+  it.effect("treats a null first-time serve status as unconfigured", () => {
+    const commands: ReadonlyArray<string>[] = [];
+    const layer = mockSpawnerLayer((_command, args) => {
+      commands.push(args);
+      return args[1] === "status" ? { stdout: "null" } : {};
+    });
+
+    return Effect.gen(function* () {
+      yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+        Effect.provide(layer),
+      );
+      assert.deepEqual(commands, [
+        ["serve", "status", "--json"],
+        ["serve", "--bg", "--https=8443", "http://127.0.0.1:13773"],
+      ]);
+    });
+  });
+
+  it.effect("reuses only the exact existing handler", () => {
+    const commands: ReadonlyArray<string>[] = [];
+    const layer = mockSpawnerLayer((_command, args) => {
+      commands.push(args);
+      return { stdout: serveStatusJson(8443, "http://127.0.0.1:13773") };
+    });
+
+    return Effect.gen(function* () {
+      yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+        Effect.provide(layer),
+      );
+      assert.deepEqual(commands, [["serve", "status", "--json"]]);
+    });
+  });
+
+  it.effect("refuses to replace a configured port even when its backend differs", () => {
+    const layer = mockSpawnerLayer(() => ({
+      stdout: serveStatusJson(8443, "http://127.0.0.1:39831"),
+    }));
+
+    return Effect.gen(function* () {
+      const error = yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+        Effect.flip,
+        Effect.provide(layer),
+      );
+      assert.instanceOf(error, TailscaleServePortOccupiedError);
+      assert.equal(error.servePort, 8443);
+    });
+  });
+
+  it.effect("replaces a handler only when its environment was already verified", () => {
+    const commands: ReadonlyArray<string>[] = [];
+    const layer = mockSpawnerLayer((_command, args) => {
+      commands.push(args);
+      return { stdout: serveStatusJson(8443, "http://127.0.0.1:13773") };
+    });
+
+    return Effect.gen(function* () {
+      yield* ensureTailscaleServe({
+        localPort: 5733,
+        servePort: 8443,
+        replaceVerifiedHandler: true,
+      }).pipe(Effect.provide(layer));
+      assert.deepEqual(commands, [
+        ["serve", "status", "--json"],
+        ["serve", "--bg", "--https=8443", "http://127.0.0.1:5733"],
+      ]);
+    });
+  });
+
+  it.effect("does not replace a complex handler after an environment probe", () => {
+    const commands: ReadonlyArray<string>[] = [];
+    const layer = mockSpawnerLayer((_command, args) => {
+      commands.push(args);
+      const status = JSON.parse(serveStatusJson(8443, "http://127.0.0.1:13773")) as {
+        Web: Record<string, { Handlers: Record<string, unknown> }>;
+      };
+      const web = status.Web["desktop.tail.ts.net:8443"];
+      assert.isDefined(web);
+      web.Handlers["/api"] = { Proxy: "http://127.0.0.1:39831" };
+      return { stdout: JSON.stringify(status) };
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* ensureTailscaleServe({
+        localPort: 5733,
+        servePort: 8443,
+        replaceVerifiedHandler: true,
+      }).pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(error, TailscaleServePortOccupiedError);
+      assert.deepEqual(commands, [["serve", "status", "--json"]]);
+    });
+  });
+
+  it.effect("treats a non-web listener on the selected port as occupied", () => {
+    const layer = mockSpawnerLayer(() => ({
+      stdout: JSON.stringify({ TCP: { 8443: { TCPForward: "127.0.0.1:39831" } }, Web: {} }),
+    }));
+
+    return Effect.gen(function* () {
+      const error = yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+        Effect.flip,
+        Effect.provide(layer),
+      );
+      assert.instanceOf(error, TailscaleServePortOccupiedError);
+    });
+  });
+
+  it.effect("refuses to reuse or disable a Funnel-enabled handler", () => {
+    const commands: ReadonlyArray<string>[] = [];
+    const layer = mockSpawnerLayer((_command, args) => {
+      commands.push(args);
+      const status = JSON.parse(serveStatusJson(8443, "http://127.0.0.1:13773")) as Record<
+        string,
+        unknown
+      >;
+      return {
+        stdout: JSON.stringify({
+          ...status,
+          AllowFunnel: { "desktop.tail.ts.net:8443": true },
+        }),
+      };
+    });
+
+    return Effect.gen(function* () {
+      const ensureError = yield* ensureTailscaleServe({
+        localPort: 13773,
+        servePort: 8443,
+        replaceVerifiedHandler: true,
+      }).pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(ensureError, TailscaleServePortOccupiedError);
+
+      const disableError = yield* disableTailscaleServe({
+        localPort: 13773,
+        servePort: 8443,
+      }).pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(disableError, TailscaleServePortOccupiedError);
+      assert.deepEqual(commands, [
+        ["serve", "status", "--json"],
+        ["serve", "status", "--json"],
+      ]);
+    });
   });
 
   it.effect("retains tailscale serve exit diagnostics", () => {
-    const layer = mockSpawnerLayer(() => ({
-      code: 1,
-      stderr: "serve permission denied tskey-auth-secret-token-value",
-    }));
+    const layer = mockSpawnerLayer((_command, args) =>
+      args[1] === "status"
+        ? { stdout: emptyServeStatusJson }
+        : {
+            code: 1,
+            stderr: "serve permission denied tskey-auth-secret-token-value",
+          },
+    );
 
     return Effect.gen(function* () {
       const error = yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
@@ -365,15 +532,37 @@ describe("tailscale", () => {
     const layer = mockSpawnerLayer((command, args) => {
       commands.push({ command, args });
       assert.equal(command, "tailscale");
-      assert.deepEqual(args, ["serve", "--https=8443", "off"]);
+      if (args[1] === "status") {
+        return { stdout: serveStatusJson(8443, "http://127.0.0.1:13773") };
+      }
       return {};
     });
 
     return Effect.gen(function* () {
-      yield* disableTailscaleServe({ servePort: 8443 }).pipe(Effect.provide(layer));
+      yield* disableTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+        Effect.provide(layer),
+      );
       assert.deepEqual(commands, [
+        { command: "tailscale", args: ["serve", "status", "--json"] },
         { command: "tailscale", args: ["serve", "--https=8443", "off"] },
       ]);
+    });
+  });
+
+  it.effect("refuses to disable a handler owned by another service", () => {
+    const commands: ReadonlyArray<string>[] = [];
+    const layer = mockSpawnerLayer((_command, args) => {
+      commands.push(args);
+      return { stdout: serveStatusJson(8443, "http://127.0.0.1:39831") };
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* disableTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+        Effect.flip,
+        Effect.provide(layer),
+      );
+      assert.equal(error._tag, "TailscaleServePortOccupiedError");
+      assert.deepEqual(commands, [["serve", "status", "--json"]]);
     });
   });
 });

@@ -18,7 +18,7 @@ If the server is only bound to loopback, the printed URL is not reachable from a
 npx t3 pair --tailscale
 ```
 
-This publishes the server over Tailscale Serve HTTPS (configuring the mapping if needed — it persists until you run `tailscale serve --https=443 off`) and pairs through the `https://machine.tailnet.ts.net/` URL. Use `--tailscale-serve-port` for a different HTTPS port, `--ttl` to change the token lifetime, and `--base-dir` to target a specific data directory.
+This publishes the server over Tailscale Serve HTTPS (configuring the mapping if needed — it persists until you run `tailscale serve --https=443 off`) and pairs through the `https://machine.tailnet.ts.net/` URL. Use `--tailscale-serve-port` for a different HTTPS port, `--ttl` to change the token lifetime, and `--base-dir` to target a specific data directory. If that HTTPS port already has a different Serve handler, T3 leaves it unchanged and asks you to choose another port; an unavailable backend does not make an occupied port safe to reuse.
 
 If no server is running, `t3 pair` says so and points you at `npx t3 serve` or `npx t3 connect`.
 

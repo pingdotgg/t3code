@@ -157,7 +157,12 @@ Worker itself. See [t3-connect.md](./t3-connect.md).
 
 A T3-managed `tailscale serve` mapping exposes the server on the tailnet over HTTPS, and the
 resulting private-network endpoints are advertised for pairing. Connection then follows the ordinary
-bearer path.
+bearer path. Serve configuration, rather than backend health, determines port ownership: T3 reuses
+only an exact root handler for its loopback target, refuses to replace any other configured handler,
+and checks that a handler still exactly matches the target before requesting removal. This lets other
+applications keep additive handlers on separate HTTPS ports, including while their backends are
+temporarily unavailable. Applications should not concurrently change the same HTTPS port because
+the status check and removal command are separate Tailscale operations.
 
 ### Desktop-managed SSH access
 
