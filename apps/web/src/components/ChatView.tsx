@@ -1949,12 +1949,11 @@ export default function ChatView(props: ChatViewProps) {
   const serverThreadCompletedAt = serverThread?.latestTurn?.completedAt;
   const serverThreadConfigLoaded =
     serverThreadEnvironmentId !== undefined && serverConfigs.has(serverThreadEnvironmentId);
-  const serverThreadEnvironment =
-    serverThreadEnvironmentId === undefined
-      ? null
-      : (environmentById.get(serverThreadEnvironmentId) ?? null);
+  // An environment the catalog does not know yet counts as not connected;
+  // the effect re-runs once it appears with a live socket.
   const serverThreadConnected =
-    serverThreadEnvironment === null || serverThreadEnvironment.connection.phase === "connected";
+    serverThreadEnvironmentId !== undefined &&
+    environmentById.get(serverThreadEnvironmentId)?.connection.phase === "connected";
   useEffect(() => {
     if (
       !serverThreadEnvironmentId ||
