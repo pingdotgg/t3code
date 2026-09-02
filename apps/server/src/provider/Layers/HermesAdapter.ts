@@ -80,6 +80,25 @@ const HERMES_RESUME_VERSION = 1 as const;
 const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
 const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
 const ACP_APPROVAL_MODE_ALIASES = ["ask"];
+/**
+ * Normalized text fragments that mark a mode as one which acts without stopping
+ * to ask. Each entry is unambiguous on its own: bare "always" is not, because
+ * "always ask" and "always allow" mean opposite things, so only the allowing
+ * phrasings are listed.
+ */
+const ACP_PROMPT_SUPPRESSING_SIGNALS = [
+  "dont ask",
+  "don t ask",
+  "do not ask",
+  "never ask",
+  "without asking",
+  "auto",
+  "accept",
+  "always allow",
+  "allow always",
+  "skip",
+  "bypass",
+];
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -189,9 +208,29 @@ function normalizeModeSearchText(mode: AcpSessionMode): string {
     .trim();
 }
 
+/**
+ * Whether a mode's own text says it acts without prompting first. Guards
+ * approval-intent matching: the live Hermes mode set is `default`
+ * ("Ask before edits."), `accept_edits` ("Auto-allow workspace and /tmp edits;
+ * still asks for sensitive paths.") and `dont_ask` ("Don't Ask"), so every one
+ * of them contains the "ask" alias. Plain substring matching therefore picked
+ * whichever auto-allowing mode Hermes happened to list first, which silently
+ * turns "approve every edit" into "approve nothing".
+ */
+function modeSuppressesPrompts(mode: AcpSessionMode): boolean {
+  const searchText = normalizeModeSearchText(mode);
+  return ACP_PROMPT_SUPPRESSING_SIGNALS.some((signal) => searchText.includes(signal));
+}
+
+/**
+ * Set `requireProactivePrompting` when the alias expresses "the user wants to be
+ * asked". It narrows only the substring pass, and only for that intent: an
+ * "Accept Edits" mode is a perfectly good implement-mode candidate.
+ */
 function findModeByAliases(
   modes: ReadonlyArray<AcpSessionMode>,
   aliases: ReadonlyArray<string>,
+  options?: { readonly requireProactivePrompting?: boolean },
 ): AcpSessionMode | undefined {
   const normalizedAliases = aliases.map((alias) => alias.toLowerCase());
   for (const alias of normalizedAliases) {
@@ -204,8 +243,11 @@ function findModeByAliases(
       return exact;
     }
   }
+  const partialCandidates = options?.requireProactivePrompting
+    ? modes.filter((mode) => !modeSuppressesPrompts(mode))
+    : modes;
   for (const alias of normalizedAliases) {
-    const partial = modes.find((mode) => normalizeModeSearchText(mode).includes(alias));
+    const partial = partialCandidates.find((mode) => normalizeModeSearchText(mode).includes(alias));
     if (partial) {
       return partial;
     }
@@ -233,7 +275,9 @@ export function resolveRequestedModeId(input: {
 
   if (input.runtimeMode === "approval-required") {
     return (
-      findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
+      findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES, {
+        requireProactivePrompting: true,
+      })?.id ??
       findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
       modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
       modeState.currentModeId

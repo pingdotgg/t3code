@@ -192,6 +192,70 @@ it("resolves approval-required to an approval-shaped mode before implement", () 
   assert.equal(modeId, "ask");
 });
 
+// The exact session modes the live `hermes acp` CLI (v0.21) advertises. All
+// three mention "ask", so approval selection cannot lean on substring order.
+const liveHermesModes = [
+  { id: "default", name: "Default", description: "Ask before edits." },
+  {
+    id: "accept_edits",
+    name: "Accept Edits",
+    description: "Auto-allow workspace and /tmp edits; still asks for sensitive paths.",
+  },
+  {
+    id: "dont_ask",
+    name: "Don't Ask",
+    description: "Auto-allow file edits for this session except sensitive paths.",
+  },
+] as const;
+
+it("resolves approval-required to the mode that still prompts", () => {
+  const modeId = resolveRequestedModeId({
+    interactionMode: undefined,
+    runtimeMode: "approval-required",
+    modeState: { currentModeId: "default", availableModes: liveHermesModes },
+  });
+  assert.equal(modeId, "default");
+});
+
+it("resolves approval-required independently of the order Hermes lists modes in", () => {
+  const modeId = resolveRequestedModeId({
+    interactionMode: undefined,
+    runtimeMode: "approval-required",
+    modeState: {
+      currentModeId: "dont_ask",
+      availableModes: [liveHermesModes[2], liveHermesModes[1], liveHermesModes[0]],
+    },
+  });
+  assert.equal(modeId, "default");
+});
+
+it("still resolves the implement mode when approvals are not required", () => {
+  const modeId = resolveRequestedModeId({
+    interactionMode: undefined,
+    runtimeMode: "full-access",
+    modeState: {
+      currentModeId: "dont_ask",
+      availableModes: [liveHermesModes[2], liveHermesModes[1], liveHermesModes[0]],
+    },
+  });
+  assert.equal(modeId, "default");
+});
+
+it("resolves approval-required to an asking mode that shares no alias with its id", () => {
+  const modeId = resolveRequestedModeId({
+    interactionMode: undefined,
+    runtimeMode: "approval-required",
+    modeState: {
+      currentModeId: "dont_ask",
+      availableModes: [
+        { id: "dont_ask", name: "Don't Ask", description: "Auto-allow." },
+        { id: "confirm_edits", name: "Confirm Edits", description: "Ask before applying edits." },
+      ],
+    },
+  });
+  assert.equal(modeId, "confirm_edits");
+});
+
 it("resolves no mode when the agent advertises none", () => {
   const modeId = resolveRequestedModeId({
     interactionMode: undefined,
