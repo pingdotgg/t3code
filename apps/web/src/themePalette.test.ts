@@ -11,6 +11,7 @@ import {
   getThemePreferenceMode,
   isKnownThemePreference,
   getCustomThemes,
+  getStandardThemeColors,
   getStoredCustomThemeCollection,
   invalidateCustomThemes,
   installCustomTheme,
@@ -132,6 +133,19 @@ describe("theme files", () => {
       expect(warnGreen).toBeGreaterThan(warnBlue);
     }
     expect(asHex(dark.error)).not.toBe(asHex(darkDefaults.error));
+  });
+
+  it("keeps stock dark controls in the neutral-black surface hierarchy", () => {
+    expectThemeColors(getStandardThemeColors("dark"), {
+      canvas: "#0a0a0a",
+      surface: "#111111",
+      surfaceRaised: "#111111",
+      surfaceOverlay: "#111111",
+      toolbarControl: "#111111",
+      secondary: "#111111",
+      muted: "#111111",
+      accentSurface: "#141414",
+    });
   });
 
   it("derives readable, distinctive vivid palettes from exact seeds", () => {

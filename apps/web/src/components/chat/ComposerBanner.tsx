@@ -11,7 +11,7 @@ export type ComposerBannerVariant = "default" | "error" | "info" | "success" | "
 
 const surfaceColors = cn(
   "[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--card))]",
-  "dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,color-mix(in_srgb,var(--background)_96%,var(--color-white)))]",
+  "dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--surface-raised))]",
   "[html[data-theme-id]_&]:[--chat-composer-attached-surface:var(--app-theme-surface-raised)]",
 );
 
