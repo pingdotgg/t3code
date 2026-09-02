@@ -19,7 +19,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
 import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
@@ -33,8 +33,20 @@ import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/pu
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
-import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { useEnvironments } from "../../state/environments";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
+import {
+  findSharedSettingsMismatches,
+  pickSharedServerSettings,
+} from "@t3tools/client-runtime/state/shared-settings";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import {
   type AppUpdateCheckState,
@@ -46,6 +58,7 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -144,6 +157,7 @@ function ConfiguredSettingsRouteScreen() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const agentAwarenessPushAvailable = supportsAgentAwarenessPush();
+  const agentAwarenessPlatform = resolveAgentAwarenessPlatformPresentation(Platform.OS);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
@@ -473,10 +487,12 @@ function ConfiguredSettingsRouteScreen() {
             icon="bell.badge"
             label="Device Notifications"
             disabled={
+              !agentAwarenessPlatform.supported ||
               !agentAwarenessPushAvailable ||
               notificationStatus === "checking" ||
               notificationStatus === "unsupported"
             }
+            subtitle={agentAwarenessPlatform.subtitle}
             // Only reads as on when this device is actually registered with the
             // relay; otherwise notifications cannot be delivered regardless of
             // the local iOS permission.
@@ -487,6 +503,7 @@ function ConfiguredSettingsRouteScreen() {
           />
           <SettingsSwitchRow
             disabled={
+              !agentAwarenessPlatform.supported ||
               !agentAwarenessPushAvailable ||
               !isLoaded ||
               liveActivityStatus === "checking" ||
@@ -494,6 +511,7 @@ function ConfiguredSettingsRouteScreen() {
             }
             icon="bolt.circle"
             label="Live Activity Updates"
+            subtitle={agentAwarenessPlatform.subtitle}
             // Same gate: a saved preference is meaningless until the device
             // registration the relay needs to push updates has succeeded.
             value={
@@ -525,8 +543,133 @@ function GeneralSettingsSection() {
   return (
     <SettingsSection title="General">
       <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
+      <AutoSettleSettingsRows />
       <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
     </SettingsSection>
+  );
+}
+
+const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
+
+/**
+ * Auto-settlement is a user preference that every server has to hold. Mobile
+ * has no primary environment, so the first connected environment that
+ * supports it is the reference value. Edits fan out to every connected
+ * environment, and a mismatch row lets the user push the reference out.
+ */
+function AutoSettleSettingsRows() {
+  const { environments } = useEnvironments();
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "server settings update",
+    reportFailure: true,
+  });
+
+  const connected = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      environment.serverConfig?.environment.capabilities.threadAutoSettlement === true,
+  );
+  const reference = connected[0] ?? null;
+  const referenceSettings = reference?.serverConfig?.settings ?? null;
+
+  const [daysDraft, setDaysDraft] = useState<string | null>(null);
+
+  if (reference === null || referenceSettings === null) {
+    return null;
+  }
+
+  const writeToAll = (patch: ServerSettingsPatch) => {
+    for (const environment of connected) {
+      void updateSettings({ environmentId: environment.environmentId, input: { patch } });
+    }
+  };
+
+  const mismatches = findSharedSettingsMismatches({
+    primaryEnvironmentId: reference.environmentId,
+    primarySettings: referenceSettings,
+    environments: environments.map((environment) => ({
+      environmentId: environment.environmentId,
+      label: environment.label,
+      connected: environment.connection.phase === "connected",
+      settings: environment.serverConfig?.settings ?? null,
+    })),
+  });
+
+  const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
+  const commitDays = () => {
+    const draft = (daysDraft ?? "").trim();
+    setDaysDraft(null);
+    // Whole-string check so "3.5" and "3days" are rejected instead of
+    // silently becoming 3 on every connected environment.
+    const parsed = /^\d+$/.test(draft) ? Number(draft) : Number.NaN;
+    if (
+      Number.isInteger(parsed) &&
+      parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
+      parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
+      parsed !== afterDays
+    ) {
+      writeToAll({ sidebarAutoSettleAfterDays: parsed });
+    }
+  };
+
+  return (
+    <>
+      <SettingsSwitchRow
+        icon="arrow.triangle.branch"
+        label="Auto-settle merged threads"
+        value={referenceSettings.sidebarAutoSettleOnMerge}
+        onValueChange={(value) => writeToAll({ sidebarAutoSettleOnMerge: value })}
+      />
+      <SettingsSwitchRow
+        icon="clock"
+        label="Auto-settle inactive threads"
+        subtitle={afterDays === null ? undefined : `After ${afterDays} days without activity`}
+        value={afterDays !== null}
+        onValueChange={(value) =>
+          writeToAll({ sidebarAutoSettleAfterDays: value ? AUTO_SETTLE_DEFAULT_DAYS : null })
+        }
+      />
+      {afterDays !== null ? (
+        <View className="flex-row items-center gap-4 border-t border-border-subtle p-4">
+          <Text className="flex-1 text-lg text-foreground">Days before auto-settle</Text>
+          <TextInput
+            className="min-h-10 w-20 rounded-xl px-3 py-2 text-center text-base"
+            keyboardType="number-pad"
+            returnKeyType="done"
+            value={daysDraft ?? String(afterDays)}
+            onChangeText={setDaysDraft}
+            onBlur={commitDays}
+            onSubmitEditing={commitDays}
+            accessibilityLabel="Days before auto-settle"
+          />
+        </View>
+      ) : null}
+      {mismatches.length > 0 ? (
+        <View className="flex-row items-center gap-4 border-t border-border-subtle p-4">
+          <View className="min-w-0 flex-1">
+            <Text className="text-lg text-foreground">Settings differ</Text>
+            <Text className="text-sm text-foreground-muted">
+              {mismatches.map((mismatch) => mismatch.label).join(", ")}
+            </Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              const patch = pickSharedServerSettings(referenceSettings);
+              for (const mismatch of mismatches) {
+                void updateSettings({
+                  environmentId: mismatch.environmentId,
+                  input: { patch },
+                });
+              }
+            }}
+            className="rounded-full bg-subtle px-4 py-2 active:opacity-70"
+          >
+            <Text className="text-base font-t3-medium text-foreground">Apply to all</Text>
+          </Pressable>
+        </View>
+      ) : null}
+    </>
   );
 }
 
@@ -537,7 +680,10 @@ function GeneralSettingsSection() {
  */
 function LegacySettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
+  const planModeEnabled =
+    AsyncResult.isSuccess(preferences) && preferences.value.planModeEnabled === true;
 
   return (
     <View className="gap-3">
@@ -548,17 +694,22 @@ function LegacySettingsSection() {
           value={!threadListV2Enabled}
           onValueChange={(value) => savePreferences({ legacyThreadListEnabled: value })}
         />
+        <SettingsSwitchRow
+          icon="hammer"
+          label="Plan Mode"
+          value={planModeEnabled}
+          onValueChange={(value) => savePreferences({ planModeEnabled: value })}
+        />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Brings back the original grouped thread list. The default list is flat, in creation order:
-        active work renders as cards; settled threads collapse to compact rows.
+        Opt into retired interfaces kept for compatibility. Plan Mode restores the Build/Plan
+        control; otherwise every task runs in Build mode.
       </Text>
     </View>
   );
 }
 
 function AppSettingsSection() {
-  const icon = useThemeColor("--color-icon");
   const [updateState, setUpdateState] = useState<AppUpdateCheckState>("idle");
   const updateInFlight = useRef(false);
   const hiddenUpdateTapCount = useRef(0);
@@ -587,7 +738,10 @@ function AppSettingsSection() {
     if (updateInFlight.current) return;
     updateInFlight.current = true;
     try {
+      // The user asked for this restart by tapping the version row, so it may
+      // apply immediately instead of prompting.
       await runAppUpdateCheck({
+        applyMode: "immediate",
         onFailure: (message) => Alert.alert("Update failed", message),
         onStateChange: setUpdateState,
       });
@@ -610,18 +764,22 @@ function AppSettingsSection() {
       ? "Checking…"
       : updateState === "downloading"
         ? "Downloading…"
-        : updateState === "restarting"
-          ? "Restarting…"
-          : updateState === "current"
-            ? "Up to date"
-            : null;
+        : // "ready" appears only when this check joined an in-flight background-mode
+          // check; that download installs at the next backgrounding.
+          updateState === "ready"
+          ? "Update ready"
+          : updateState === "restarting"
+            ? "Restarting…"
+            : updateState === "current"
+              ? "Up to date"
+              : null;
 
   const versionRow = (
     <View className="flex-row items-center gap-4 p-4">
       <SymbolView
         name="info.circle"
         size={22}
-        tintColor={icon}
+        tintColorClassName={"accent-icon"}
         type="monochrome"
         weight="regular"
       />

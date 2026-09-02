@@ -1,5 +1,7 @@
 import type {
+  ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
+  ChatUnknownAttachment as ContractChatUnknownAttachment,
   OrchestrationCheckpointFile,
   OrchestrationCheckpointSummary,
   OrchestrationLatestTurn,
@@ -15,6 +17,9 @@ import type {
   EnvironmentThread,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { videoMimeType } from "@t3tools/shared/video";
+
+export { videoMimeType } from "@t3tools/shared/video";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
@@ -35,7 +40,31 @@ export interface ChatImageAttachment extends ContractChatImageAttachment {
   readonly previewUrl?: string;
 }
 
-export type ChatAttachment = ChatImageAttachment;
+export interface ChatFileAttachment extends ContractChatFileAttachment {
+  readonly previewUrl?: string;
+  readonly downloadable?: boolean;
+}
+
+// Attachment types this build does not know pass through with the contract
+// shape. The UI renders them as inert rows so a newer server cannot crash an
+// older client.
+export type ChatUnknownAttachment = ContractChatUnknownAttachment;
+
+export type ChatAttachment = ChatImageAttachment | ChatFileAttachment | ChatUnknownAttachment;
+
+// The union has an open member (`type: string`), so a literal comparison does
+// not narrow. Use these guards wherever type-specific fields are read.
+export function isImageAttachment(attachment: ChatAttachment): attachment is ChatImageAttachment {
+  return attachment.type === "image";
+}
+
+export function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAttachment {
+  return attachment.type === "file";
+}
+
+export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
+  return videoMimeType(attachment) !== null;
+}
 
 export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;

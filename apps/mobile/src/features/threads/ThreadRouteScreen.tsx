@@ -785,7 +785,6 @@ function ThreadRouteContent(
           connectionStateLabel={routeConnectionState}
           threadSyncStatus={selectedThreadDetailState.status}
           loadEarlier={loadEarlierTurns}
-          activeThreadBusy={composer.activeThreadBusy}
           environmentId={selectedThread.environmentId}
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
           threadCwd={selectedThreadCwd}
@@ -794,7 +793,8 @@ function ThreadRouteContent(
           usesAutomaticContentInsets={usesNativeHeaderGlass}
           onOpenConnectionEditor={handleOpenConnectionEditor}
           onChangeDraftMessage={composer.onChangeDraftMessage}
-          onPickDraftImages={composer.onPickDraftImages}
+          onPickDraftMedia={composer.onPickDraftMedia}
+          onPickDraftFiles={composer.onPickDraftFiles}
           onNativePasteImages={composer.onNativePasteImages}
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}

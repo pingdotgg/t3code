@@ -11,7 +11,12 @@ import {
   useState,
 } from "react";
 
+import {
+  PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
+  usePrimarySettingsAvailable,
+} from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -83,19 +88,28 @@ function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) 
   return targetRef;
 }
 
+export function SettingsSearchTarget({
+  children,
+  ...targetProps
+}: ComponentPropsWithoutRef<"div">) {
+  const targetRef = useSettingsSearchTarget<HTMLDivElement>(targetProps.id);
+  return (
+    <div {...targetProps} ref={targetRef} tabIndex={targetProps.id ? -1 : targetProps.tabIndex}>
+      {children}
+    </div>
+  );
+}
+
 /** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
   return (
     <Tooltip>
       <TooltipTrigger
+        delay={200}
         render={
-          <button
-            type="button"
-            className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-            aria-label="Background policy details"
-          >
+          <Button size="icon-micro" variant="ghost-muted" aria-label="Background policy details">
             <InfoIcon className="size-3.5" />
-          </button>
+          </Button>
         }
       />
       <TooltipPopup side="top" className="max-w-72">
@@ -149,12 +163,19 @@ export function SettingsSection({
   );
 }
 
+/**
+ * One setting. `serverScoped` marks rows whose value lives in the primary
+ * environment's settings.json; where there is no primary (the hosted app)
+ * the control goes inert with a tooltip instead of showing an editable
+ * default that would never save.
+ */
 export function SettingsRow({
   title,
   description,
   status,
   resetAction,
   control,
+  serverScoped = false,
   children,
   className,
   ...rowProps
@@ -164,9 +185,36 @@ export function SettingsRow({
   status?: ReactNode;
   resetAction?: ReactNode;
   control?: ReactNode;
+  serverScoped?: boolean;
   children?: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
+  const primarySettingsAvailable = usePrimarySettingsAvailable();
+  const unavailable = serverScoped && !primarySettingsAvailable;
+  const renderedReset = unavailable ? null : resetAction;
+  const renderedControl =
+    unavailable && control ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            // Focusable so keyboard users can still reach the explanation.
+            <span
+              tabIndex={0}
+              className="flex w-full items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-auto"
+            />
+          }
+        >
+          <div inert className="flex w-full items-center gap-2 opacity-50 sm:w-auto">
+            {control}
+          </div>
+        </TooltipTrigger>
+        <TooltipPopup side="top" className="max-w-72">
+          {PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE}
+        </TooltipPopup>
+      </Tooltip>
+    ) : (
+      control
+    );
 
   return (
     <div
@@ -180,7 +228,7 @@ export function SettingsRow({
           <div className="flex min-h-5 items-center gap-1.5">
             <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">{title}</h3>
             <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-              {resetAction}
+              {renderedReset}
             </span>
           </div>
           {description ? (
@@ -190,13 +238,19 @@ export function SettingsRow({
           ) : null}
           {status ? <div className="pt-0.5 text-xs text-muted-foreground">{status}</div> : null}
         </div>
-        {control ? (
+        {renderedControl ? (
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            {control}
+            {renderedControl}
           </div>
         ) : null}
       </div>
-      {children}
+      {unavailable && children ? (
+        <div inert className="opacity-50">
+          {children}
+        </div>
+      ) : (
+        children
+      )}
     </div>
   );
 }
@@ -215,11 +269,10 @@ export function SettingResetButton({
       <TooltipTrigger
         render={
           <Button
-            size="icon-xs"
-            variant="ghost"
+            size="icon-micro"
+            variant="ghost-muted"
             aria-label={`Reset ${label} to default`}
             disabled={disabled}
-            className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
             onClick={(event) => {
               event.stopPropagation();
               onClick();
@@ -237,9 +290,11 @@ export function SettingResetButton({
 export function SettingsPageContainer({
   children,
   className,
+  width = "readable",
 }: {
   children: ReactNode;
   className?: string;
+  width?: WorkspacePageWidth;
 }) {
   const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
@@ -250,10 +305,13 @@ export function SettingsPageContainer({
 
   return (
     <SettingsSearchTargetProvider targetId={targetId} onTargetHandled={clearTargetHash}>
-      <div className="settings-page-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto px-4 pt-10 pb-7 sm:px-8 sm:pt-12 sm:pb-10">
-        <div className={cn("mx-auto flex w-full max-w-4xl flex-col gap-12", className)}>
+      <div
+        className="topbar-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto"
+        data-settings-page-scroll
+      >
+        <WorkspacePageContainer width={width} className={cn("gap-12", className)}>
           {children}
-        </div>
+        </WorkspacePageContainer>
       </div>
     </SettingsSearchTargetProvider>
   );

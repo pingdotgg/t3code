@@ -43,14 +43,31 @@ Repeating either shortcut closes that search, and switching shortcuts replaces t
 `themeEditor.toggle` opens or closes the floating theme editor and defaults to
 `mod+alt+shift+t`. Select a color label to spotlight the elements that use it; select the label
 again to clear the spotlight. The swatch and hex field keep that color selected while you edit it.
+Advanced mode groups related app tokens into a smaller set of color families. Changing a family
+updates its paired text and interaction states while leaving every unrelated imported color intact.
 Use **Inspect** to pick an element in the app and reveal its color token. Inspect disarms after one
-successful pick; its hover glow and badge preview the element and token that click will select.
+successful pick; its hover glow and badge preview the element and color family that click will select.
 **Cancel** or `Escape` exits Inspect and clears its selection and spotlight.
 
-The command palette searches active thread titles, projects, branches, user messages, and final
-agent responses across connected environments. Message matches show one labeled excerpt while
-keeping the thread's project, branch, and machine context visible. Message search begins after two
-characters and uses SQLite's ASCII case-insensitive matching.
+`rightPanel.toggleMaximized` maximizes or restores the open right panel. It has no default shortcut,
+so add one in **Settings** → **Keybindings** if you want to use it.
+
+`thread.copyReference` copies the active thread's pull request link, or its thread ID when no pull
+request is available. Its default shortcut is `mod+shift+c`, and it does not replace terminal copy
+while the terminal has focus.
+
+`thread.settle` settles the active thread or restores it when it is already settled. Its default
+shortcut is `mod+shift+s`, and it does not run while the terminal has focus.
+
+`thread.pin` pins the active thread to the pinned section of the sidebar, or unpins it when it is
+already pinned. Its default shortcut is `mod+shift+p`, and it does not run while the terminal has
+focus. See [Organizing threads](./thread-sidebar.md) for how pinned threads are ordered.
+
+The command palette searches settings, active thread titles, projects, branches, user messages, and
+final agent responses across connected environments. A setting result opens its exact control or
+section. Message matches show one labeled excerpt while keeping the thread's project, branch, and
+machine context visible. Message search begins after two characters and uses SQLite's ASCII
+case-insensitive matching.
 
 The full command list and the current defaults are shown in **Settings** → **Keybindings**, which
 always matches the build you are running. Use that rather than a copied list.
@@ -61,6 +78,10 @@ environment mode always come from your configured defaults, not from the thread 
 at. To keep a worktree, use the explicit "new thread in this worktree" action in the branch
 toolbar. The only difference between the two commands: with the current sidebar and more than one
 project, `chat.new` opens a project chooser first.
+
+Background submission from a new thread is the exception. `mod+enter` starts that thread and opens
+another new thread with the same workspace mode and base branch. **New worktree** remains selected,
+but the new thread does not reuse the worktree created for the thread that just started.
 
 ## `when` Conditions
 

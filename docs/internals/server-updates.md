@@ -2,14 +2,15 @@
 
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
-Remote server updates use one stable systemd launcher. Foreground CLI processes do not self-update,
-and a running server never edits its systemd unit or durable service state.
+Remote server updates use one stable launcher selected by the platform service manager (systemd on
+Linux, launchd on macOS). Foreground CLI processes do not self-update, and a running server never
+edits its service definition or durable service state.
 
 ## Ownership
 
 The service files under `<baseDir>/runtime` are:
 
-- `service-launcher.mjs`, the stable process selected by systemd;
+- `service-launcher.mjs`, the stable process selected by the service manager;
 - `service-state.json`, the launcher's durable selection state;
 - `versions/<version>`, immutable exact-version npm installs.
 
@@ -22,7 +23,7 @@ The state contains one active version and, at most, one update record:
 - `pending A → B` selects B as a retryable trial;
 - `committed A → B` selects B for ordinary restarts;
 - `rolled-back A → B` or `failed A → B` selects A;
-- invalid state fails closed so systemd cannot guess at a runtime.
+- invalid state fails closed so the service manager cannot guess at a runtime.
 
 Every write uses same-directory replacement plus file and directory fsync.
 
@@ -50,8 +51,8 @@ operations. It only opens prepared gates and publishes prepared lifecycle state.
 The launcher serializes child exits, IPC messages, and timers. A trial must report prepared within
 120 seconds. If the trial exits or times out before prepared, the launcher stops it, restores the
 snapshot, records rollback, and starts A. A durable restore marker makes an interrupted restore
-resume before either version can boot. After commit, B is active and normal systemd restart policy
-applies.
+resume before either version can boot. After commit, B is active and the service manager's normal
+restart policy applies.
 
 ## Database Rollback
 
@@ -84,8 +85,16 @@ recorded reason. Older servers without an ID retain version-only reconnect behav
 
 The existing additive RPC and lifecycle schemas remain compatible with older clients. New servers
 advertise remote self-update only when they have valid launcher context and a live IPC channel.
-Desktop-managed servers direct the user to update the desktop app. Other process shapes provide a
-manual command; the old detached foreground respawn path no longer exists.
+Desktop-managed servers advertise `desktopAppUpdate` when the desktop telemetry control fd is
+attached. The progress RPC asks the desktop app to check and download, then returns a preparation
+token while the backend is still connected. Only after the client receives that result does it send
+`server.commitDesktopUpdate`. A successful commit closes the connection and must reconnect at the
+prepared version. The desktop app and bundled server versions stay equal because
+`scripts/update-release-package-versions.ts` bumps them together. If install fails, the desktop keeps its windows, restarts stopped backends, and
+replays the failure for the same token. This two-phase handoff prevents backend shutdown from
+dropping the only successful RPC result. Desktop servers without the capability direct the user to
+update the desktop app locally. Other process shapes provide a manual command; the old detached
+foreground respawn path no longer exists.
 
 ## Source Map
 

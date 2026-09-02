@@ -32,6 +32,7 @@ import * as ElectronTheme from "./electron/ElectronTheme.ts";
 import * as ElectronUpdater from "./electron/ElectronUpdater.ts";
 import * as ElectronWindow from "./electron/ElectronWindow.ts";
 import * as DesktopApp from "./app/DesktopApp.ts";
+import * as DesktopAppActivation from "./app/DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
 import * as DesktopClerk from "./app/DesktopClerk.ts";
@@ -62,6 +63,7 @@ import * as PreviewManager from "./preview/Manager.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
+import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -156,6 +158,10 @@ const desktopWindowLayer = DesktopWindow.layer.pipe(
   Layer.provideMerge(desktopPreviewLayer),
 );
 
+const desktopAppActivationLayer = DesktopAppActivation.layer.pipe(
+  Layer.provide(desktopWindowLayer),
+);
+
 // Pool layer instantiates the backend factory once for the Windows
 // primary instance and exposes it via pool.primary. Consumers go through
 // the pool now; the legacy DesktopBackendManager service is gone. The
@@ -165,6 +171,7 @@ const desktopBackendLayer = DesktopBackendPool.layer.pipe(
   Layer.provideMerge(DesktopAppIdentity.layer),
   Layer.provideMerge(DesktopBackendConfiguration.layer),
   Layer.provideMerge(DesktopWslEnvironment.layer),
+  Layer.provideMerge(DesktopWslServerTree.layer),
   Layer.provideMerge(DesktopTelemetryPublisher.layer),
   Layer.provideMerge(desktopWindowLayer),
 );
@@ -182,6 +189,7 @@ const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
 
 const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
+  desktopAppActivationLayer,
   DesktopApplicationMenu.layer,
   DesktopLinuxUrlHandler.layer,
   DesktopShellEnvironment.layer,

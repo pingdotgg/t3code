@@ -12,26 +12,40 @@ describe("shouldShowOpenInPicker", () => {
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
+        remoteOpenMode: "local-exec",
       }),
     ).toBe(true);
   });
 
-  it("hides the picker when hosted static mode has no primary environment", () => {
-    expect(
-      shouldShowOpenInPicker({
-        activeProjectName: "codething-mvp",
-        activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
-        primaryEnvironmentId: null,
-      }),
-    ).toBe(false);
-  });
-
-  it("hides the picker for remote environments", () => {
+  it("shows the picker for remote environments in deep-link mode", () => {
     expect(
       shouldShowOpenInPicker({
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
         primaryEnvironmentId,
+        remoteOpenMode: "remote-links",
+      }),
+    ).toBe(true);
+  });
+
+  it("shows the picker's unavailable state for remote environments without an SSH route", () => {
+    expect(
+      shouldShowOpenInPicker({
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
+        primaryEnvironmentId: null,
+        remoteOpenMode: "remote-unavailable",
+      }),
+    ).toBe(true);
+  });
+
+  it("hides the picker for non-primary local backends", () => {
+    expect(
+      shouldShowOpenInPicker({
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
+        primaryEnvironmentId,
+        remoteOpenMode: "local-exec",
       }),
     ).toBe(false);
   });
@@ -42,6 +56,7 @@ describe("shouldShowOpenInPicker", () => {
         activeProjectName: undefined,
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
+        remoteOpenMode: "remote-links",
       }),
     ).toBe(false);
   });

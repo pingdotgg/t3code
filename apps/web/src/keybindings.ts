@@ -71,9 +71,15 @@ function normalizeEventKey(key: string): string {
 }
 
 function resolveEventKeys(event: ShortcutEventLike): Set<string> {
-  const keys = new Set([normalizeEventKey(event.key)]);
+  const layoutKey = normalizeEventKey(event.key);
+  const keys = new Set([layoutKey]);
+  // The physical-position fallback exists for layouts that type non-Latin
+  // letters (Cyrillic, Greek) and for Option-modified symbols on macOS.
+  // When the layout already produces a Latin letter, match on it alone;
+  // otherwise a remapped physical key triggers shortcuts for two different
+  // letters at once and shadows system shortcuts on non-QWERTY layouts.
   const letterCode = event.code?.match(/^Key([A-Z])$/)?.[1];
-  if (letterCode) {
+  if (letterCode && !/^[a-z]$/.test(layoutKey)) {
     keys.add(letterCode.toLowerCase());
   }
   const aliases = event.code ? EVENT_CODE_KEY_ALIASES[event.code] : undefined;
@@ -295,6 +301,16 @@ export function shouldShowThreadJumpHintsForModifiers(
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
+  // The embedded terminal owns keystrokes while it has focus: the Ghostty
+  // surface encodes the keydown and can write the pressed key into the shell
+  // before our window-level shortcut handling ever runs, regardless of any
+  // configured `when` clause on the jump command. Advertising jump hints
+  // here would promise a shortcut that instead types into the terminal, so
+  // never show them while the terminal is focused.
+  if (resolveContext(options).terminalFocus) {
+    return false;
+  }
+
   const platform = resolvePlatform(options);
 
   for (const command of THREAD_JUMP_KEYBINDING_COMMANDS) {
@@ -395,28 +411,12 @@ export function isDiffToggleShortcut(
   return matchesCommandShortcut(event, keybindings, "diff.toggle", options);
 }
 
-export function isPreviewToggleShortcut(
-  event: ShortcutEventLike,
-  keybindings: ResolvedKeybindingsConfig,
-  options?: ShortcutMatchOptions,
-): boolean {
-  return matchesCommandShortcut(event, keybindings, "preview.toggle", options);
-}
-
 export function isPreviewRefreshShortcut(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "preview.refresh", options);
-}
-
-export function isPreviewFocusUrlShortcut(
-  event: ShortcutEventLike,
-  keybindings: ResolvedKeybindingsConfig,
-  options?: ShortcutMatchOptions,
-): boolean {
-  return matchesCommandShortcut(event, keybindings, "preview.focusUrl", options);
 }
 
 export function isChatNewShortcut(

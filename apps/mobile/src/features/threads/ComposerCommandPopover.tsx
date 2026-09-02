@@ -1,9 +1,13 @@
-import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
+import {
+  resolveProviderSkillSourceKind,
+  type ProviderSkillSourceKind,
+} from "@t3tools/client-runtime/providerSkills";
 import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
-import { SymbolView } from "../../components/AppSymbol";
+import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import { memo } from "react";
-import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "react-native";
+import { Pressable, ScrollView, StyleSheet, View, type ViewStyle } from "react-native";
 
+import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { GlassSurface } from "../../components/GlassSurface";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
@@ -45,11 +49,7 @@ interface ComposerCommandPopoverProps {
   readonly onSelect: (item: ComposerCommandItem) => void;
 }
 
-function PopoverSurface(props: {
-  readonly children: React.ReactNode;
-  readonly isDarkMode: boolean;
-  readonly style?: ViewStyle;
-}) {
+function PopoverSurface(props: { readonly children: React.ReactNode; readonly style?: ViewStyle }) {
   const baseStyle: ViewStyle = {
     borderRadius: 16,
     overflow: "hidden",
@@ -59,7 +59,7 @@ function PopoverSurface(props: {
   return (
     <GlassSurface
       glassEffectStyle="clear"
-      tintColor={props.isDarkMode ? "rgba(30,30,32,0.95)" : "rgba(255,255,255,0.92)"}
+      tintColorClassName="accent-glass-surface"
       style={baseStyle}
     >
       {props.children}
@@ -67,13 +67,22 @@ function PopoverSurface(props: {
   );
 }
 
-function itemIcon(item: ComposerCommandItem) {
+const SKILL_SOURCE_SYMBOL_BY_KIND: Record<ProviderSkillSourceKind, AppSymbolName> = {
+  app: "square.grid.2x2",
+  repo: "folder",
+  project: "folder",
+  personal: "person.crop.circle",
+  system: "gearshape",
+  other: "cube",
+};
+
+function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
   switch (item.type) {
     case "slash-command":
     case "provider-slash-command":
-      return "terminal" as const;
+      return "terminal";
     case "skill":
-      return "cube" as const;
+      return SKILL_SOURCE_SYMBOL_BY_KIND[resolveProviderSkillSourceKind(item.skill)];
     case "path":
       return null;
   }
@@ -112,34 +121,39 @@ const CommandRow = memo(function CommandRow(props: {
   readonly item: ComposerCommandItem;
   readonly onPress: () => void;
   readonly isLast: boolean;
+  readonly isSlashSkill: boolean;
 }) {
   const iconName = itemIcon(props.item);
-  const iconColor = "#a1a1aa";
 
   return (
     <Pressable
+      accessibilityRole="button"
       onPress={props.onPress}
-      style={({ pressed }) => ({
-        flexDirection: "row",
-        alignItems: "center",
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        gap: 10,
-        opacity: pressed ? 0.6 : 1,
-        borderBottomWidth: props.isLast ? 0 : 0.5,
-        borderBottomColor: "rgba(255,255,255,0.1)",
-      })}
+      className="flex-row items-center gap-2.5 border-border px-3.5 py-2.5 active:opacity-60"
+      style={{ borderBottomWidth: props.isLast ? 0 : StyleSheet.hairlineWidth }}
     >
       {props.item.type === "path" ? (
         <PierreEntryIcon path={props.item.path} kind={props.item.kind} size={16} />
       ) : iconName ? (
-        <SymbolView name={iconName} size={14} tintColor={iconColor} type="monochrome" />
+        <SymbolView
+          name={iconName}
+          size={14}
+          tintColorClassName={"accent-icon-subtle"}
+          type="monochrome"
+        />
       ) : null}
       <Text className="shrink-0 text-base font-t3-medium text-foreground" numberOfLines={1}>
-        {props.item.label}
+        {props.isSlashSkill && props.item.type === "skill" ? (
+          <>
+            <Text className="text-foreground-muted">skill:</Text>
+            {props.item.skill.name}
+          </>
+        ) : (
+          props.item.label
+        )}
       </Text>
       {props.item.description ? (
-        <Text className="min-w-0 flex-1 text-xs text-zinc-400" numberOfLines={1}>
+        <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
           {props.item.description}
         </Text>
       ) : null}
@@ -150,11 +164,10 @@ const CommandRow = memo(function CommandRow(props: {
 export const ComposerCommandPopover = memo(function ComposerCommandPopover(
   props: ComposerCommandPopoverProps,
 ) {
-  const isDarkMode = useColorScheme() === "dark";
   const label = groupLabel(props.triggerKind);
 
   return (
-    <PopoverSurface isDarkMode={isDarkMode}>
+    <PopoverSurface>
       {label ? (
         <View className="px-3.5 pt-2.5 pb-1">
           <Text className="text-3xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
@@ -174,6 +187,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
               item={item}
               onPress={() => props.onSelect(item)}
               isLast={index === props.items.length - 1}
+              isSlashSkill={props.triggerKind === "slash-command" && item.type === "skill"}
             />
           ))}
         </ScrollView>

@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
   deriveProjectGroupingOverrideKey,
@@ -39,6 +39,7 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { isElectron } from "../../env";
 import {
   useClientSettings,
+  useEnvironmentSettings,
   useUpdateClientSettings,
   usePrimarySettings,
 } from "../../hooks/useSettings";
@@ -46,6 +47,7 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { keybindingValueForCommand } from "../../lib/projectScriptKeybindings";
+import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
 import { readLocalApi } from "../../localApi";
 import {
   buildProjectScript,
@@ -68,7 +70,7 @@ import {
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
-import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
+import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
@@ -81,8 +83,6 @@ import {
   type NewProjectScriptInput,
   type ProjectScriptEditorRequest,
 } from "../projectScriptEditor";
-import { cn } from "../../lib/utils";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {
@@ -97,18 +97,24 @@ import {
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
+import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import {
   SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { ProjectFaviconPickerDialog } from "./ProjectFaviconPickerDialog";
+import {
+  canPickExternalProjectFavicon,
+  ProjectFaviconPickerDialog,
+} from "./ProjectFaviconPickerDialog";
+import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -174,26 +180,9 @@ export function ProjectSettingsPage({ projectKey }: { projectKey: string }) {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-        {!isElectron && (
-          <header
-            className={cn(
-              "workspace-topbar px-3 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:px-5",
-              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-            )}
-          >
-            <ProjectSettingsBreadcrumb projectKey={projectKey} />
-          </header>
-        )}
-        {isElectron && (
-          <div
-            className={cn(
-              "drag-region flex h-[52px] shrink-0 items-center px-5 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
-              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-            )}
-          >
-            <ProjectSettingsBreadcrumb projectKey={projectKey} />
-          </div>
-        )}
+        <WorkspacePageHeader electron={isElectron}>
+          <ProjectSettingsBreadcrumb projectKey={projectKey} />
+        </WorkspacePageHeader>
         <ProjectSettingsPanel projectKey={projectKey} />
       </div>
     </SidebarInset>
@@ -303,10 +292,21 @@ export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
 
 function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const navigate = useNavigate();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const representative =
+    group.memberProjects.find(
+      (member) => member.environmentId === group.environmentId && member.id === group.id,
+    ) ?? group.memberProjects[0]!;
   const settings = usePrimarySettings();
+  // Provider instances and model options belong to the environment that runs
+  // the project's threads. The hosted app has no primary environment, so
+  // reading them from there would show "No providers available" everywhere.
+  const projectSettings = useEnvironmentSettings(representative.environmentId);
+  const serverProviders =
+    useAtomValue(serverEnvironment.providersValueAtom(representative.environmentId)) ??
+    EMPTY_SERVER_PROVIDERS;
   const updateClientSettings = useUpdateClientSettings();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const threads = useThreadShells();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
@@ -316,6 +316,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const removeKeybinding = useAtomCommand(serverEnvironment.removeKeybinding, {
     reportFailure: false,
   });
+  const projectNameEditedRef = useRef(false);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({ type: "success", title: "Path copied", description: path });
@@ -331,11 +332,16 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     },
   });
 
-  const representative =
-    group.memberProjects.find(
-      (member) => member.environmentId === group.environmentId && member.id === group.id,
-    ) ?? group.memberProjects[0]!;
   const faviconPath = representative.faviconPath ?? null;
+  const pickProjectFavicon =
+    typeof window !== "undefined" &&
+    group.memberProjects.every(
+      (member) =>
+        member.environmentId === primaryEnvironmentId &&
+        canPickExternalProjectFavicon(member.workspaceRoot, navigator.platform),
+    )
+      ? window.desktopBridge?.pickProjectFavicon
+      : undefined;
 
   const threadCountByMember = useMemo(() => {
     const counts = new Map<string, number>();
@@ -395,36 +401,52 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   );
 
   const renameGroup = useCallback(
-    async (nextTitle: string) => {
+    async (nextTitle: string, wasEdited: boolean) => {
       const title = nextTitle.trim();
       if (!title) {
         toastManager.add({ type: "warning", title: "Project title cannot be empty" });
         return;
       }
-      if (title === group.displayName) return;
-      if (group.memberProjects.every((member) => member.title === title)) return;
+      if (
+        !projectGroupTitleNeedsUpdate(
+          group.memberProjects.map((member) => member.title),
+          title,
+          wasEdited,
+        )
+      ) {
+        return;
+      }
       await updateAllMembers({ title }, "Failed to rename project");
     },
-    [group.displayName, group.memberProjects, updateAllMembers],
+    [group.memberProjects, updateAllMembers],
   );
 
   // ----- default model -----
   const storedSelection = representative.defaultModelSelection;
   const resolvedSelection = resolveDefaultProviderModelSelection(serverProviders, storedSelection);
+  const resolvedInstanceId = resolvedSelection?.instanceId ?? null;
+  const resolvedModel = resolvedSelection?.model ?? null;
   const instanceEntries = useMemo(
     () =>
       sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+        applyProviderInstanceSettings(
+          deriveProviderInstanceEntries(serverProviders),
+          projectSettings,
+        ),
       ),
-    [serverProviders, settings],
+    [serverProviders, projectSettings],
   );
   const modelOptionsByInstance = useMemo(
-    () => getCustomModelOptionsByInstance(settings, serverProviders),
-    [serverProviders, settings],
+    () =>
+      getCustomModelOptionsByInstance(
+        projectSettings,
+        serverProviders,
+        resolvedInstanceId,
+        resolvedModel,
+      ),
+    [resolvedInstanceId, resolvedModel, serverProviders, projectSettings],
   );
-  const activeEntry = instanceEntries.find(
-    (entry) => entry.instanceId === resolvedSelection?.instanceId,
-  );
+  const activeEntry = instanceEntries.find((entry) => entry.instanceId === resolvedInstanceId);
   const setDefaultModel = useCallback(
     (selection: ModelSelection | null) =>
       void updateAllMembers({ defaultModelSelection: selection }, "Failed to update default model"),
@@ -693,8 +715,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                 ]
               : [`This removes ${members.length} grouped project entries.`]),
             ...(projectThreads.length > 0
-              ? ["This permanently clears conversation history for those threads."]
-              : []),
+              ? [
+                  "This permanently clears conversation history for those threads and any archived threads.",
+                ]
+              : ["This permanently clears any archived conversation history."]),
             isWholeGroup
               ? "This removes only the project entries, not the files on disk."
               : "Other entries in this grouped project are unaffected.",
@@ -716,7 +740,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             environmentId: member.environmentId,
             input: {
               projectId: member.id,
-              ...(memberThreads.length > 0 ? { force: true } : {}),
+              force: true,
             },
           }),
           () => undefined,
@@ -726,6 +750,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           return;
         }
         const projectRef = scopeProjectRef(member.environmentId, member.id);
+        releaseProjectDraftUploads(
+          projectRef,
+          memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
+        );
         const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
         if (projectDraftThread) {
           draftStore.clearDraftThread(projectDraftThread.draftId);
@@ -758,7 +786,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
 
   return (
     <>
-      <SettingsPageContainer>
+      <SettingsPageContainer width="wide" className="gap-8">
         <SettingsSection title="Project">
           <SettingsRow
             title="Name"
@@ -769,8 +797,13 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                 className="w-full sm:w-64"
                 aria-label="Project name"
                 defaultValue={group.displayName}
+                onChange={() => {
+                  projectNameEditedRef.current = true;
+                }}
                 onBlur={(event) => {
-                  void renameGroup(event.currentTarget.value);
+                  const wasEdited = projectNameEditedRef.current;
+                  projectNameEditedRef.current = false;
+                  void renameGroup(event.currentTarget.value, wasEdited);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") event.currentTarget.blur();
@@ -811,9 +844,6 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               </div>
             }
           />
-        </SettingsSection>
-
-        <SettingsSection title="New threads">
           <SettingsRow
             title="Model"
             description="New threads in this project start with this model. Applies to every checkout in this group."
@@ -848,6 +878,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                     onPromptChange={() => {}}
                     modelOptions={resolvedSelection.options ?? []}
                     allowPromptInjectedEffort={false}
+                    planModeEnabled={projectSettings.planModeEnabled}
                     triggerVariant="outline"
                     triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                     onModelOptionsChange={(nextOptions) => {
@@ -937,22 +968,28 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         >
           <div className="px-3 py-2 sm:px-4">
             <div className="flex min-w-0 items-center rounded-lg bg-muted/30 p-1 text-base text-muted-foreground sm:text-sm">
-              <button
-                aria-label="Copy checkout path"
-                className="group flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                title="Copy path"
-                type="button"
-                onClick={() =>
-                  copyPathToClipboard(selectedCheckout.workspaceRoot, {
-                    path: selectedCheckout.workspaceRoot,
-                  })
-                }
-              >
-                <code className="min-w-0 flex-1 truncate font-mono">
-                  {selectedCheckout.workspaceRoot}
-                </code>
-                <CopyIcon className="size-4 shrink-0 opacity-60 group-hover:opacity-100" />
-              </button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      aria-label="Copy checkout path"
+                      className="group flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      type="button"
+                      onClick={() =>
+                        copyPathToClipboard(selectedCheckout.workspaceRoot, {
+                          path: selectedCheckout.workspaceRoot,
+                        })
+                      }
+                    >
+                      <code className="min-w-0 flex-1 truncate font-mono">
+                        {selectedCheckout.workspaceRoot}
+                      </code>
+                      <CopyIcon className="size-4 shrink-0 opacity-60 group-hover:opacity-100" />
+                    </button>
+                  }
+                />
+                <TooltipPopup side="top">Copy path</TooltipPopup>
+              </Tooltip>
               <div className="shrink-0 border-l border-border/60 px-2 tabular-nums">
                 {selectedCheckoutThreadCount === 1
                   ? "1 thread"
@@ -1093,10 +1130,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                         icon={script.icon}
                         className="size-4 shrink-0 text-muted-foreground"
                       />
-                      <span className="max-w-40 shrink-0 truncate">{script.name}</span>
-                      <code className="min-w-0 flex-1 truncate font-mono font-normal text-muted-foreground">
-                        {script.command}
-                      </code>
+                      <span className="min-w-0 truncate">{script.name}</span>
                       {script.runOnWorktreeCreate ? (
                         <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] font-normal text-muted-foreground">
                           setup
@@ -1108,6 +1142,9 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                         </span>
                       ) : null}
                     </span>
+                  }
+                  description={
+                    <code className="block max-w-full truncate font-mono">{script.command}</code>
                   }
                   control={
                     <>
@@ -1176,6 +1213,9 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         cwd={representative.workspaceRoot}
         environmentId={representative.environmentId}
         onOpenChange={setFaviconPickerOpen}
+        {...(pickProjectFavicon
+          ? { onPickExternal: () => pickProjectFavicon(representative.workspaceRoot) }
+          : {})}
         onSelect={(path) => void setFaviconPath(path)}
         open={faviconPickerOpen}
         projectName={group.displayName}

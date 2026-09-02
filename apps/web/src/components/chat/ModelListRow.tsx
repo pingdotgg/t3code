@@ -9,6 +9,7 @@ import {
 } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
+import { Badge } from "../ui/badge";
 import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -34,6 +35,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   preferShortName?: boolean;
   useTriggerLabel?: boolean;
   showNewBadge?: boolean;
+  unavailable?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
   onToggleFavorite: () => void;
@@ -52,7 +54,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
       contentClassName="flex w-full items-center gap-3"
       className={cn(
         "group relative w-full !min-w-0 max-w-full cursor-pointer rounded-md px-2 py-2 transition-[background-color,box-shadow,color]",
-        "hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] data-highlighted:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] data-selected:bg-foreground/[0.08] data-selected:text-foreground data-selected:ring-0 [&[data-highlighted][data-selected]]:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))]",
+        "hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] data-highlighted:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] data-selected:bg-foreground/[0.08] data-selected:text-foreground data-selected:ring-0 [&[data-highlighted][data-selected]]:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))]",
         props.disabledReason &&
           "data-disabled:pointer-events-auto data-disabled:cursor-not-allowed data-disabled:hover:bg-transparent",
       )}
@@ -74,6 +76,11 @@ export const ModelListRow = memo(function ModelListRow(props: {
             >
               New
             </span>
+          ) : null}
+          {props.unavailable ? (
+            <Badge variant="outline" size="sm">
+              Unavailable
+            </Badge>
           ) : null}
         </div>
         {props.showProvider && (

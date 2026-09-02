@@ -392,26 +392,26 @@ const mobileEndorsementRows = [
 <script>
   import { fetchLatestRelease, RELEASES_URL, type ReleaseAsset } from "../lib/releases";
 
-  type Platform = { os: "mac" | "win" | "linux"; label: string; arch?: string };
+  type Platform = { os: "mac" | "win" | "linux"; label: string };
 
   function detectPlatform(): Platform | null {
     const ua = navigator.userAgent;
     if (/Win/i.test(ua)) return { os: "win", label: "Download for Windows" };
-    if (/Mac/i.test(ua)) {
-      return { os: "mac", label: "Download for macOS", arch: "arm64" };
-    }
+    if (/Mac/i.test(ua)) return { os: "mac", label: "Download for macOS" };
     if (/Linux/i.test(ua)) return { os: "linux", label: "Download for Linux" };
     return null;
   }
 
+  // Macs always get the arm64 build. Browsers cannot reliably tell Apple Silicon
+  // from Intel (the UA lies, GPU strings lie), and a wrong guess hands an Apple
+  // Silicon user a broken app. Intel users pick their build on /download.
+  // Do NOT add arch detection back here.
   function pickAsset(assets: ReleaseAsset[], platform: Platform): string | null {
     if (platform.os === "win") {
       return assets.find((a) => a.name.endsWith("-x64.exe"))?.browser_download_url ?? null;
     }
     if (platform.os === "mac") {
-      const preferred = assets.find((a) => a.name.endsWith(`-${platform.arch}.dmg`));
-      const fallback = assets.find((a) => a.name.endsWith(".dmg"));
-      return (preferred ?? fallback)?.browser_download_url ?? null;
+      return assets.find((a) => a.name.endsWith("-arm64.dmg"))?.browser_download_url ?? null;
     }
     if (platform.os === "linux") {
       return assets.find((a) => a.name.endsWith(".AppImage"))?.browser_download_url ?? null;
@@ -704,7 +704,7 @@ const mobileEndorsementRows = [
       height: 44px;
     }
 
-    /* Three stacked on the left, two on the right — keeps the center CTA clear. */
+    /* Three above the headline, two beside the CTA — keeps the copy clear. */
     .hero-float-mark.hf-claude {
       top: 44px;
       left: 10px;
@@ -712,8 +712,8 @@ const mobileEndorsementRows = [
     }
 
     .hero-float-mark.hf-grok {
-      top: 240px;
-      left: 4px;
+      top: 44px;
+      left: calc(50% - 39px);
       right: auto;
       transform: rotate(-4deg);
     }
@@ -741,8 +741,8 @@ const mobileEndorsementRows = [
 
   @media (max-width: 340px) {
     .hero-float-mark.hf-grok {
-      top: 220px;
-      left: 0;
+      top: 57px;
+      left: calc(50% - 26px);
       width: 52px;
       height: 52px;
       border-radius: 14px;

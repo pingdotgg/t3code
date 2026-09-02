@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import type {
   OrchestrationProjectShell,
   ProjectId,
@@ -11,6 +12,7 @@ import type {
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import {
   PullRequestProviderError,
   type ProviderChangeRequest,
@@ -169,6 +171,7 @@ function makeService(input: {
               updatedAt: "2026-07-01T00:00:00Z",
             }),
         }),
+        SourceControlRateLimit.layer,
       ),
     ),
   );
@@ -1339,6 +1342,97 @@ it.effect("reports repositories on a host that could not be read", () =>
   }),
 );
 
+it.effect("stops new reads after a rate limit while leaving manual actions available", () =>
+  Effect.gen(function* () {
+    let listCalls = 0;
+    let actionCalls = 0;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "cloud", workspaceRoot: "/cloud", repository: "acme/web" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          listChangeRequests: () =>
+            Effect.sync(() => {
+              listCalls += 1;
+            }).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new PullRequestProviderError({
+                    provider: "github",
+                    operation: "listChangeRequests",
+                    reason: "rate-limited",
+                    detail: "GitHub API rate limit exceeded.",
+                  }),
+                ),
+              ),
+            ),
+          runAction: () =>
+            Effect.sync(() => {
+              actionCalls += 1;
+            }),
+        }),
+      ],
+    });
+
+    const first = yield* service.list({ state: "open", involvement: "all" });
+    const paused = yield* service.list({ state: "open", involvement: "authored" });
+    yield* service.runAction({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+      action: "close",
+    });
+
+    assert.strictEqual(listCalls, 1);
+    assert.strictEqual(actionCalls, 1);
+    assert.lengthOf(first.errors, 1);
+    assert.lengthOf(paused.errors, 1);
+  }),
+);
+
+it.effect("uses a manual rate limit to pause later reads", () =>
+  Effect.gen(function* () {
+    let listCalls = 0;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "cloud", workspaceRoot: "/cloud", repository: "acme/web" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          listChangeRequests: () =>
+            Effect.sync(() => {
+              listCalls += 1;
+              return { items: [], truncated: false, continues: true };
+            }),
+          runAction: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: "github",
+                operation: "runAction",
+                reason: "rate-limited",
+                detail: "GitHub API rate limit exceeded.",
+              }),
+            ),
+        }),
+      ],
+    });
+
+    yield* Effect.flip(
+      service.runAction({
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        action: "close",
+      }),
+    );
+    const error = yield* Effect.flip(service.list({ state: "open", involvement: "all" }));
+
+    assert.strictEqual(listCalls, 0);
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+  }),
+);
+
 it.effect("flags a review request for the viewer but not on their own change request", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
@@ -1534,7 +1628,7 @@ it.effect("refuses line comments on a host that takes only a summary", () =>
         number: 1,
         verdict: "comment",
         body: "",
-        comments: [{ path: "src/a.ts", line: 1, side: "right", body: "nit" }],
+        comments: [{ path: "src/a.ts", position: { kind: "added", newLine: 1 }, body: "nit" }],
       }),
     );
 
@@ -2199,6 +2293,141 @@ it.effect("answers a repeated listing from cache, and concurrent readers share o
   }),
 );
 
+it.effect("shares one cold viewer lookup across distinct concurrent lists", () =>
+  Effect.gen(function* () {
+    let viewerCalls = 0;
+    let listCalls = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getViewer: () =>
+            Effect.sync(() => {
+              viewerCalls += 1;
+            }).pipe(Effect.andThen(Effect.yieldNow), Effect.as("bilal")),
+          listChangeRequests: () =>
+            Effect.sync(() => {
+              listCalls += 1;
+              return { items: [], truncated: false, continues: true };
+            }),
+        }),
+      ],
+    });
+
+    yield* Effect.all(
+      ["all", "authored", "reviewing"].map((involvement) =>
+        service.list({
+          state: "open",
+          involvement: involvement as "all" | "authored" | "reviewing",
+        }),
+      ),
+      { concurrency: "unbounded" },
+    );
+
+    assert.strictEqual(viewerCalls, 1);
+    assert.strictEqual(listCalls, 3);
+  }),
+);
+
+it.effect("uses five host reads for the normal indexed-repository page workflow", () =>
+  Effect.gen(function* () {
+    let viewerCalls = 0;
+    let searchCalls = 0;
+    let fallbackCalls = 0;
+    let statsCalls = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getViewer: () =>
+            Effect.sync(() => {
+              viewerCalls += 1;
+              return "bilal";
+            }),
+          listChangeRequestsAcross: (input) =>
+            Effect.sync(() => {
+              searchCalls += 1;
+              return {
+                items:
+                  input.involvement === "all"
+                    ? [batchedChangeRequest(1, "acme/web", "2026-07-02T00:00:00Z")]
+                    : [],
+                truncated: false,
+              };
+            }),
+          listChangeRequests: () =>
+            Effect.sync(() => {
+              fallbackCalls += 1;
+              return { items: [], truncated: false, continues: true };
+            }),
+          listChangeRequestStats: () =>
+            Effect.sync(() => {
+              statsCalls += 1;
+              return [{ repository: "acme/web", number: 1, additions: 3, deletions: 1 }];
+            }),
+        }),
+      ],
+    });
+
+    const baseline = yield* service.list({ state: "open", involvement: "all" });
+    yield* Effect.all(
+      [
+        service.list({ state: "open", involvement: "authored" }),
+        service.list({ state: "open", involvement: "reviewing" }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    yield* service.listStats({
+      refs: baseline.entries.map(({ projectId, repository, number }) => ({
+        projectId,
+        repository,
+        number,
+      })),
+    });
+
+    assert.deepStrictEqual(
+      { viewerCalls, searchCalls, fallbackCalls, statsCalls },
+      { viewerCalls: 1, searchCalls: 3, fallbackCalls: 0, statsCalls: 1 },
+    );
+  }),
+);
+
+it.effect("returns the refreshed listing on the first read after its cache expires", () =>
+  Effect.gen(function* () {
+    let hostCalls = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          listChangeRequests: () => {
+            hostCalls += 1;
+            return Effect.succeed({
+              items: [changeRequest(hostCalls, "2026-07-02T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            });
+          },
+        }),
+      ],
+    });
+
+    const first = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(
+      first.entries.map((entry) => entry.number),
+      [1],
+    );
+
+    yield* TestClock.adjust("31 seconds");
+    const refreshed = yield* service.list({ state: "open" });
+
+    assert.strictEqual(hostCalls, 2);
+    assert.deepStrictEqual(
+      refreshed.entries.map((entry) => entry.number),
+      [2],
+    );
+  }),
+);
+
 it.effect("a listing narrowed to some projects is its own cache entry", () =>
   Effect.gen(function* () {
     const asked: ReadonlyArray<string>[] = [];
@@ -2241,10 +2470,15 @@ it.effect("a listing narrowed to some projects is its own cache entry", () =>
 it.effect("an explicit invalidation makes the next listing ask the host again", () =>
   Effect.gen(function* () {
     let hostCalls = 0;
+    let viewerCalls = 0;
     const service = yield* makeService({
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
         fakeProvider("github", {
+          getViewer: () => {
+            viewerCalls += 1;
+            return Effect.succeed("bilal");
+          },
           listChangeRequests: () => {
             hostCalls += 1;
             return Effect.succeed({ items: [], truncated: false, continues: false });
@@ -2257,6 +2491,7 @@ it.effect("an explicit invalidation makes the next listing ask the host again", 
     yield* service.invalidate({});
     yield* service.list({ state: "open" });
     assert.strictEqual(hostCalls, 2);
+    assert.strictEqual(viewerCalls, 2);
 
     // Forgetting one change request leaves the listings shared.
     yield* service.invalidate({
@@ -2697,6 +2932,115 @@ it.effect(
       yield* service.activity(reference);
       assert.strictEqual(activityCalls, 2);
     }),
+);
+
+it.effect("shares linked summaries and only recovers transient failures for display reads", () =>
+  Effect.gen(function* () {
+    let calls = 0;
+    let failing = false;
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequestSummary: () =>
+            Effect.sync(() => {
+              calls += 1;
+              return failing;
+            }).pipe(
+              Effect.tap(() => Effect.yieldNow),
+              Effect.flatMap((shouldFail) =>
+                shouldFail
+                  ? Effect.fail(
+                      new PullRequestProviderError({
+                        provider: "github",
+                        operation: "getChangeRequestSummary",
+                        reason: "failed",
+                        detail: "HTTP 504",
+                      }),
+                    )
+                  : Effect.succeed(changeRequest(1, "2026-07-02T00:00:00Z")),
+              ),
+            ),
+        }),
+      ],
+    });
+
+    yield* Effect.all(
+      [
+        service.summary(reference, { recoverTransientFailure: false }),
+        service.summary(reference, { recoverTransientFailure: false }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    assert.strictEqual(calls, 1);
+
+    yield* TestClock.adjust("61 seconds");
+    failing = true;
+    const strict = yield* Effect.flip(
+      service.summary(reference, { recoverTransientFailure: false }),
+    );
+    assert.strictEqual(strict._tag, "PullRequestOperationError");
+
+    const stale = yield* service.summary(reference);
+    assert.strictEqual(stale.updatedAt, "2026-07-02T00:00:00Z");
+    assert.strictEqual(calls, 3);
+
+    yield* service.invalidate({ reference });
+    const invalidated = yield* Effect.flip(service.summary(reference));
+    assert.strictEqual(invalidated._tag, "PullRequestOperationError");
+  }),
+);
+
+it.effect("keeps recent detail on a transient refresh failure but not after invalidation", () =>
+  Effect.gen(function* () {
+    let failing = false;
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () =>
+            failing
+              ? Effect.fail(
+                  new PullRequestProviderError({
+                    provider: "github",
+                    operation: "getChangeRequest",
+                    reason: "failed",
+                    detail: "spawn gh EAGAIN",
+                  }),
+                )
+              : Effect.succeed({
+                  ...changeRequest(1, "2026-07-02T00:00:00Z"),
+                  body: "last good body",
+                  changedFiles: 2,
+                  mergedAt: null,
+                  closedAt: null,
+                  reviewers: [],
+                  checks: [],
+                  mergeCapabilities: { merge: true, squash: true, rebase: true },
+                  viewerPermissions: {
+                    actions: ["merge"],
+                    comment: true,
+                    resolve: true,
+                    verdicts: ["comment", "approve", "request-changes"],
+                    requestReviewers: true,
+                  },
+                }),
+        }),
+      ],
+    });
+
+    yield* service.detail(reference);
+    yield* TestClock.adjust("16 seconds");
+    failing = true;
+    const stale = yield* service.detail(reference);
+    assert.strictEqual(stale.body, "last good body");
+
+    yield* service.invalidate({ reference });
+    const invalidated = yield* Effect.flip(service.detail(reference));
+    assert.strictEqual(invalidated._tag, "PullRequestOperationError");
+  }),
 );
 
 it.effect("carries an armed auto-merge through to the detail, and silence as silence", () =>

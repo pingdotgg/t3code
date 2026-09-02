@@ -27,6 +27,7 @@ import {
   SERVICE_STATE_FILE,
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
+import { isEntrypoint } from "./entrypoint.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
 const PREPARED_TIMEOUT_MS = 120_000;
@@ -317,7 +318,9 @@ export class Launcher {
     // This must happen synchronously at signal receipt. A queued update
     // transition may already be terminating the active child, and that child
     // needs to see the marker in its shutdown finalizer. KillMode=mixed also
-    // ensures systemd signals the launcher before the rest of the cgroup.
+    // ensures systemd signals the launcher before the rest of the cgroup, and
+    // launchd signals only the job's main process (this launcher), so the
+    // marker lands before the child sees any signal on both platforms.
     try {
       NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
     } catch {
@@ -609,7 +612,13 @@ async function main(): Promise<void> {
   await new Launcher(baseDir, state).run();
 }
 
-if (import.meta.main) {
+if (
+  isEntrypoint({
+    moduleUrl: import.meta.url,
+    entryPath: process.argv[1],
+    runtimeMain: import.meta.main,
+  })
+) {
   main().catch((cause: unknown) => {
     const error = cause instanceof Error ? cause : new Error(String(cause));
     process.stderr.write(`[service-launcher] ${error.message}\n`);

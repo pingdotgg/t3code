@@ -874,7 +874,13 @@ export function makeCursorAdapter(
             Effect.catch((cause) =>
               Effect.logError("Failed to process Cursor runtime notification.", { cause }),
             ),
-            Effect.forkChild,
+            // Fork into the session scope, not the calling fiber. `forkChild`
+            // makes this a child of `startSession`, and Effect interrupts a
+            // fiber's children when it completes, so the consumer died as soon
+            // as `startSession` returned and every later notification was
+            // dropped. The scope is created, stored on the context and closed
+            // on teardown already; only the fork target was wrong.
+            Effect.forkIn(ctx.scope),
           );
 
           ctx.notificationFiber = nf;
@@ -966,6 +972,11 @@ export function makeCursorAdapter(
           }
           if (input.attachments && input.attachments.length > 0) {
             for (const attachment of input.attachments) {
+              // Cursor ingests images only. Generic files reach the agent
+              // through the path line ProviderService puts in the prompt.
+              if (attachment.type !== "image") {
+                continue;
+              }
               const attachmentPath = resolveAttachmentPath({
                 attachmentsDir: serverConfig.attachmentsDir,
                 attachment,

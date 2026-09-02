@@ -91,7 +91,8 @@ import { EnvironmentId } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
-import type { ClientSettings } from "./settings.ts";
+import type { ClientSettings, QuitConfirmationMode } from "./settings.ts";
+import type { EditorId } from "./editor.ts";
 import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -100,6 +101,10 @@ import type {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import type {
+  DesktopAppActivationRequest,
+  DesktopAppActivationResponse,
+} from "./desktopAppActivation.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -110,8 +115,14 @@ export interface ContextMenuItem<T extends string = string> {
   header?: boolean;
   /** Icon keyword resolved by the web fallback. Stripped on desktop native menus. */
   icon?: string;
+  /** Inserts a visual section divider immediately before this item. */
+  separatorBefore?: boolean;
   children?: readonly ContextMenuItem<T>[];
 }
+
+export type QuitShortcutHintEvent =
+  | { readonly state: "down"; readonly mode: Exclude<QuitConfirmationMode, "direct"> }
+  | { readonly state: "up" };
 
 export interface ContextMenuItemSchemaType {
   readonly id: string;
@@ -120,6 +131,7 @@ export interface ContextMenuItemSchemaType {
   readonly disabled?: boolean;
   readonly header?: boolean;
   readonly icon?: string;
+  readonly separatorBefore?: boolean;
   readonly children?: readonly ContextMenuItemSchemaType[];
 }
 
@@ -130,6 +142,7 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   disabled: Schema.optionalKey(Schema.Boolean),
   header: Schema.optionalKey(Schema.Boolean),
   icon: Schema.optionalKey(Schema.String),
+  separatorBefore: Schema.optionalKey(Schema.Boolean),
   children: Schema.optionalKey(
     Schema.Array(
       Schema.suspend((): Schema.Codec<ContextMenuItemSchemaType> => ContextMenuItemSchema),
@@ -185,12 +198,6 @@ export interface DesktopRuntimeInfo {
   runningUnderArm64Translation: boolean;
 }
 
-export const DesktopRuntimeInfoSchema = Schema.Struct({
-  hostArch: DesktopRuntimeArchSchema,
-  appArch: DesktopRuntimeArchSchema,
-  runningUnderArm64Translation: Schema.Boolean,
-});
-
 export interface DesktopUpdateState {
   enabled: boolean;
   status: DesktopUpdateStatus;
@@ -202,6 +209,7 @@ export interface DesktopUpdateState {
   availableVersion: string | null;
   downloadedVersion: string | null;
   releaseNotes: ReadonlyArray<DesktopUpdateReleaseNote>;
+  omittedReleaseCount: number;
   downloadPercent: number | null;
   checkedAt: string | null;
   message: string | null;
@@ -212,11 +220,13 @@ export interface DesktopUpdateState {
 export interface DesktopUpdateReleaseNote {
   version: string;
   items: ReadonlyArray<string>;
+  totalItems: number;
 }
 
 export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
   version: Schema.String,
   items: Schema.Array(Schema.String),
+  totalItems: Schema.Number,
 });
 
 export const DesktopUpdateStateSchema = Schema.Struct({
@@ -230,6 +240,7 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   availableVersion: Schema.NullOr(Schema.String),
   downloadedVersion: Schema.NullOr(Schema.String),
   releaseNotes: Schema.Array(DesktopUpdateReleaseNoteSchema),
+  omittedReleaseCount: Schema.Number,
   downloadPercent: Schema.NullOr(Schema.Number),
   checkedAt: Schema.NullOr(Schema.String),
   message: Schema.NullOr(Schema.String),
@@ -337,14 +348,6 @@ export interface DesktopSshPasswordPromptRequest {
   prompt: string;
   expiresAt: string;
 }
-
-export const DesktopSshPasswordPromptRequestSchema = Schema.Struct({
-  requestId: Schema.String,
-  destination: Schema.String,
-  username: Schema.NullOr(Schema.String),
-  prompt: Schema.String,
-  expiresAt: Schema.String,
-});
 
 export const DesktopSshPasswordPromptCancelledType = "ssh-password-prompt-cancelled" as const;
 
@@ -524,6 +527,28 @@ export type DesktopPreviewColorScheme = "system" | "light" | "dark";
 export const DesktopPreviewColorSchemeSchema: Schema.Codec<DesktopPreviewColorScheme> =
   Schema.Literals(["system", "light", "dark"]);
 
+export const FAVICON_DATA_URL_MAX_LENGTH = 8192;
+export const FAVICON_CAPTURED_AT_MAX = 8_640_000_000_000_000;
+
+export interface DesktopPreviewFavicon {
+  dataUrl: string;
+  pageUrl: string;
+  capturedAt: number;
+}
+
+export const DesktopPreviewFaviconSchema: Schema.Codec<DesktopPreviewFavicon> = Schema.Struct({
+  dataUrl: Schema.String.check(
+    Schema.isMaxLength(FAVICON_DATA_URL_MAX_LENGTH),
+    Schema.isPattern(/^data:image\/png;base64,[a-z0-9+/]+={0,2}$/i),
+  ),
+  pageUrl: Schema.String.check(Schema.isMaxLength(2_048)),
+  capturedAt: Schema.Number.check(
+    Schema.isFinite(),
+    Schema.isGreaterThanOrEqualTo(0),
+    Schema.isLessThanOrEqualTo(FAVICON_CAPTURED_AT_MAX),
+  ),
+});
+
 export interface DesktopPreviewTabState {
   tabId: string;
   webContentsId: number | null;
@@ -535,13 +560,33 @@ export interface DesktopPreviewTabState {
   /** Whether this tab is currently mirrored into a desktop picture-in-picture window. */
   pictureInPicture: boolean;
   colorScheme: DesktopPreviewColorScheme;
+  /**
+   * Whether the user has silenced this tab. Per tab rather than per origin, so
+   * two tabs on the same site mute independently. Survives navigation and
+   * webview swaps, but is dropped when the tab closes.
+   */
+  audioMuted: boolean;
+  /**
+   * Whether the guest is currently emitting audio. Observed from Chromium, and
+   * independent of {@link audioMuted}: a muted tab that is playing still reports
+   * `true`, which is what lets the tab strip distinguish "muted and making
+   * sound" from "muted and silent".
+   */
+  audible: boolean;
   controller: "human" | "agent" | "none";
+  favicon?: DesktopPreviewFavicon;
   updatedAt: string;
 }
 
 export const DesktopPreviewTabIdSchema = Schema.String.check(Schema.isTrimmed()).check(
   Schema.isNonEmpty(),
 );
+
+export const DesktopPreviewAutomationStatusSchema = Schema.Struct({
+  ...PreviewAutomationStatus.fields,
+  tabId: Schema.NullOr(DesktopPreviewTabIdSchema),
+});
+export type DesktopPreviewAutomationStatus = typeof DesktopPreviewAutomationStatusSchema.Type;
 
 export const DesktopPreviewNavStatusSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("Idle") }),
@@ -564,19 +609,6 @@ export const DesktopPreviewNavStatusSchema = Schema.Union([
   }),
 ]);
 
-export const DesktopPreviewTabStateSchema: Schema.Codec<DesktopPreviewTabState> = Schema.Struct({
-  tabId: DesktopPreviewTabIdSchema,
-  webContentsId: Schema.NullOr(Schema.Int),
-  navStatus: DesktopPreviewNavStatusSchema,
-  canGoBack: Schema.Boolean,
-  canGoForward: Schema.Boolean,
-  zoomFactor: Schema.Number,
-  pictureInPicture: Schema.Boolean,
-  colorScheme: DesktopPreviewColorSchemeSchema,
-  controller: Schema.Literals(["human", "agent", "none"]),
-  updatedAt: Schema.String,
-});
-
 export interface DesktopPreviewPointerEvent {
   tabId: string;
   phase: "move" | "click";
@@ -585,16 +617,6 @@ export interface DesktopPreviewPointerEvent {
   sequence: number;
   createdAt: string;
 }
-
-export const DesktopPreviewPointerEventSchema: Schema.Codec<DesktopPreviewPointerEvent> =
-  Schema.Struct({
-    tabId: DesktopPreviewTabIdSchema,
-    phase: Schema.Literals(["move", "click"]),
-    x: Schema.Number,
-    y: Schema.Number,
-    sequence: Schema.Int,
-    createdAt: Schema.String,
-  });
 
 /**
  * Static config a renderer needs to mount a preview `<webview>`. Returned
@@ -674,15 +696,6 @@ export interface DesktopPreviewRecordingFrame {
   height: number;
   receivedAt: string;
 }
-
-export const DesktopPreviewRecordingFrameSchema: Schema.Codec<DesktopPreviewRecordingFrame> =
-  Schema.Struct({
-    tabId: DesktopPreviewTabIdSchema,
-    data: Schema.String,
-    width: Schema.Number,
-    height: Schema.Number,
-    receivedAt: Schema.String,
-  });
 
 export interface DesktopPreviewRecordingArtifact {
   id: string;
@@ -931,6 +944,24 @@ export const DesktopPreviewTabInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
 });
 
+/**
+ * Tab creation carries the client's configured browser defaults so the guest
+ * is born already zoomed and color-scheme-emulated. Applying them after
+ * creation instead would paint one frame at 100%/system first, which reads as
+ * a flash on every tab open. Both fields are optional so an older renderer
+ * still gets the historical defaults.
+ */
+export const DesktopPreviewCreateTabInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  zoomFactor: Schema.optional(Schema.Number.check(Schema.isGreaterThan(0))),
+  colorScheme: Schema.optional(DesktopPreviewColorSchemeSchema),
+});
+
+export interface DesktopPreviewTabDefaults {
+  readonly zoomFactor?: number | undefined;
+  readonly colorScheme?: DesktopPreviewColorScheme | undefined;
+}
+
 export const DesktopPreviewRegisterWebviewInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   webContentsId: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -948,6 +979,11 @@ export const DesktopPreviewConfigInputSchema = Schema.Struct({
 export const DesktopPreviewSetColorSchemeInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   colorScheme: DesktopPreviewColorSchemeSchema,
+});
+
+export const DesktopPreviewSetAudioMutedInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  audioMuted: Schema.Boolean,
 });
 
 export const DesktopPreviewAnnotationThemeInputSchema = Schema.Struct({
@@ -996,6 +1032,15 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
+  /** The desktop client's OS platform, read from Electron's preload process. */
+  getClientPlatform?: () => string;
+  /**
+   * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
+   * the packaged app ships only the `en-US` Chromium locale pak, so
+   * `navigator.language` and the default `Intl` locale are pinned to `en-US`
+   * regardless of OS settings.
+   */
+  getSystemLocale?: () => string | null;
   // One bootstrap per pool instance currently registered with bootstrap
   // info (omits instances whose backend hasn't produced a config yet).
   // The primary backend is identified by id === PRIMARY_LOCAL_ENVIRONMENT_ID.
@@ -1036,6 +1081,8 @@ export interface DesktopBridge {
   setWslDistro: (distro: string | null) => Promise<DesktopWslState>;
   setWslOnly: (enabled: boolean) => Promise<DesktopWslState>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
+  /** Optional while older desktop shells can host a newer web client. */
+  pickProjectFavicon?: (initialPath?: string) => Promise<string | null>;
   /**
    * Multi-select JSON file picker that opens in the VS Code extensions
    * directory when one exists. Optional: older desktop builds lack it, and
@@ -1048,7 +1095,18 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  /**
+   * Probe this desktop machine for installed remote-capable editor CLIs
+   * (used for remote open-in-editor deep links). Optional: older desktop
+   * builds lack it; callers fall back to VS Code only.
+   */
+  probeRemoteEditors?: () => Promise<readonly EditorId[]>;
   onMenuAction: (listener: (action: string) => void) => () => void;
+  /**
+   * Quit-confirmation hint pushes. Optional: older desktop builds never emit
+   * them.
+   */
+  onQuitShortcut?: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
@@ -1057,6 +1115,12 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  /** Present when the desktop shell accepts `t3 app` activation requests. */
+  appActivation?: {
+    setReady: (ready: boolean) => Promise<void>;
+    complete: (response: DesktopAppActivationResponse) => Promise<void>;
+    onRequest: (listener: (request: DesktopAppActivationRequest) => void) => () => void;
+  };
   /**
    * Desktop-only preview surface. Present iff the renderer is hosted by the
    * Electron desktop build; web builds have `preview === undefined`.
@@ -1064,8 +1128,11 @@ export interface DesktopBridge {
   preview?: DesktopPreviewBridge;
 }
 
+/** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */
+export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__t3DesktopPreviewRecordingCapture";
+
 export interface DesktopPreviewBridge {
-  createTab: (tabId: string) => Promise<void>;
+  createTab: (tabId: string, defaults?: DesktopPreviewTabDefaults) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
   registerWebview: (tabId: string, webContentsId: number) => Promise<void>;
   navigate: (tabId: string, url: string) => Promise<void>;
@@ -1082,6 +1149,12 @@ export interface DesktopPreviewBridge {
    * override). Persists per tab and is re-applied across webview swaps.
    */
   setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
+  /**
+   * Silence the tab's audio output. Persists per tab and is re-applied across
+   * webview swaps, but is dropped when the tab closes. Muting a silent tab is
+   * allowed; it simply takes effect once the page plays something.
+   */
+  setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>;
   /** Open the guest webview's DevTools (detached). */
   openDevTools: (tabId: string) => Promise<void>;
   /** Drop cookies + storage data for the preview partition (all tabs). */
@@ -1123,7 +1196,7 @@ export interface DesktopPreviewBridge {
     onFrame: (listener: (frame: DesktopPreviewRecordingFrame) => void) => () => void;
   };
   automation: {
-    status: (tabId: string) => Promise<PreviewAutomationStatus>;
+    status: (tabId: string) => Promise<DesktopPreviewAutomationStatus>;
     snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;
     click: (tabId: string, input: PreviewAutomationClickInput) => Promise<void>;
     type: (tabId: string, input: PreviewAutomationTypeInput) => Promise<void>;
@@ -1165,6 +1238,7 @@ export interface LocalApi {
       items: readonly ContextMenuItem<T>[],
       position?: { x: number; y: number },
     ) => Promise<T | null>;
+    close: () => Promise<void>;
   };
   persistence: {
     getClientSettings: () => Promise<ClientSettings | null>;

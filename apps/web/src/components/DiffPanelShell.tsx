@@ -14,7 +14,7 @@ function getDiffPanelHeaderRowClassName(mode: DiffPanelMode) {
     mode === "embedded" ? "px-2" : "px-4",
     shouldUseDragRegion
       ? "drag-region h-[52px] border-b border-border wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
-      : "surface-subheader",
+      : "flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent",
   );
 }
 
@@ -43,20 +43,6 @@ export function DiffPanelShell(props: {
       )}
       {props.children}
     </div>
-  );
-}
-
-export function DiffPanelHeaderSkeleton() {
-  return (
-    <>
-      <div className="min-w-0 flex-1">
-        <Skeleton className="h-8 w-32 rounded-lg" />
-      </div>
-      <div className="flex shrink-0 gap-1">
-        <Skeleton className="size-7 rounded-md" />
-        <Skeleton className="size-7 rounded-md" />
-      </div>
-    </>
   );
 }
 

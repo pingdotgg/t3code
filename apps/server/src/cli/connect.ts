@@ -5,6 +5,7 @@ import {
   type RelayClientInstallProgressStage,
 } from "@t3tools/contracts";
 import { RelayOkResponse } from "@t3tools/contracts/relay";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
@@ -36,6 +37,7 @@ import * as CliState from "../cloud/CliState.ts";
 import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import {
   CLOUD_LINKED_USER_ID,
+  isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
@@ -142,7 +144,7 @@ function stringToBytes(value: string): Uint8Array {
 }
 
 export function isPublishAgentActivityEnabledValue(value: string | null): boolean {
-  return value === "true";
+  return isAgentActivityPublishingEnabledValue(value);
 }
 
 interface CloudCliStatus {
@@ -335,7 +337,7 @@ const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(f
     return { status: "not-authenticated" } satisfies RelayUnlinkResult;
   }
 
-  const environment = yield* ServerEnvironment.ServerEnvironment;
+  const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const environmentId = yield* environment.getEnvironmentId;
   const relayUrl = yield* relayUrlConfig;
   const httpClient = yield* HttpClient.HttpClient;
@@ -430,7 +432,7 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
     | HttpClient.HttpClient
     | Prompt.Environment
     | ServerConfig.ServerConfig
-    | ServerEnvironment.ServerEnvironment
+    | ServerEnvironment.ServerEnvironmentIdentity
   >,
   options?: {
     readonly quietLogs?: boolean;
@@ -447,7 +449,6 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
     ),
     RelayClient.layerCloudflared({ baseDir: config.baseDir }),
     EnvironmentAuth.runtimeLayer,
-    ServerEnvironment.layer,
     bootServiceLayer(config),
     headlessRelayClientTracingLayer,
   ).pipe(
@@ -694,8 +695,11 @@ export const connectCommand = Command.make("connect", {
         // fail the command, just tell the user what happened and move on.
         const background = yield* recoverServiceOnboardingOffer(offerServiceDuringOnboarding);
         if (background) {
+          const platform = yield* HostProcessPlatform;
           yield* Console.log(
-            "\n✓ Background service ready\n\nT3 Code will stay reachable after you log out.",
+            platform === "darwin"
+              ? "\n✓ Background service ready\n\nT3 Code will stay reachable while you are logged in to this Mac."
+              : "\n✓ Background service ready\n\nT3 Code will stay reachable after you log out.",
           );
           return;
         }

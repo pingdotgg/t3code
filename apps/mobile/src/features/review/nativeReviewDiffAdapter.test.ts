@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
+import {
+  DEFAULT_MOBILE_THEME_ID,
+  getMobileThemeVariables,
+  MOBILE_THEME_IDS,
+  type MobileThemeAppearance,
+  type MobileThemeId,
+} from "../../lib/mobileTheme";
+import { readDefaultMobileThemeVariables } from "../../lib/mobileTheme.test-support";
 
 import {
+  createNativeReviewDiffTheme,
   getCachedNativeReviewDiffData,
   type BuildNativeReviewDiffDataInput,
 } from "./nativeReviewDiffAdapter";
@@ -37,6 +46,12 @@ function buildInput(comments: BuildNativeReviewDiffDataInput["comments"]) {
   return { parsedDiff, comments } satisfies BuildNativeReviewDiffDataInput;
 }
 
+function appTheme(themeId: MobileThemeId, appearance: MobileThemeAppearance) {
+  return themeId === DEFAULT_MOBILE_THEME_ID
+    ? readDefaultMobileThemeVariables(appearance)
+    : getMobileThemeVariables(themeId, appearance);
+}
+
 describe("getCachedNativeReviewDiffData", () => {
   it("reuses the row model for equivalent empty comment arrays", () => {
     const first = getCachedNativeReviewDiffData(buildInput([]));
@@ -52,5 +67,32 @@ describe("getCachedNativeReviewDiffData", () => {
 
     expect(equivalent).toBe(first);
     expect(changed).not.toBe(first);
+  });
+});
+
+describe("createNativeReviewDiffTheme", () => {
+  it("serializes every native color as cross-platform opaque hex", () => {
+    for (const themeId of MOBILE_THEME_IDS) {
+      for (const appearance of ["light", "dark"] as const) {
+        const theme = createNativeReviewDiffTheme(
+          appearance,
+          themeId,
+          appTheme(themeId, appearance),
+        );
+        for (const color of Object.values(theme)) {
+          expect(color, `${themeId}/${appearance}`).toMatch(/^#[\da-f]{6}$/i);
+        }
+      }
+    }
+  });
+
+  it("uses the selected app palette for native code surfaces", () => {
+    const standard = createNativeReviewDiffTheme("dark", "t3-code", appTheme("t3-code", "dark"));
+    const iris = createNativeReviewDiffTheme("dark", "iris", appTheme("iris", "dark"));
+
+    expect(iris.background).not.toBe(standard.background);
+    expect(iris.hunkText).not.toBe(standard.hunkText);
+    expect(iris.addBar).toBe(standard.addBar);
+    expect(iris.deleteBar).toBe(standard.deleteBar);
   });
 });

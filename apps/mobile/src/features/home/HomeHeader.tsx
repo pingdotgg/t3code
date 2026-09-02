@@ -12,7 +12,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { T3Wordmark } from "../../components/T3Wordmark";
 import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
 import { resolveMobileStageLabel } from "../../lib/mobileBranding";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
@@ -67,8 +67,6 @@ function checkedMenuState(checked: boolean) {
 
 function AndroidHomeHeader(props: HomeHeaderProps) {
   const insets = useSafeAreaInsets();
-  const iconColor = useThemeColor("--color-icon");
-  const mutedColor = useThemeColor("--color-foreground-muted");
   const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
   // Thread List v2 lays the list out in fixed creation order, so the
   // sort/group filter controls would be silently ignored — hide them and
@@ -218,7 +216,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
               brand={
                 <View className="flex-row items-center gap-2">
                   {/* Mirrors the desktop SidebarBrand: T3 mark + muted "Code". */}
-                  <T3Wordmark color={iconColor} height={15} />
+                  <T3Wordmark colorClassName="accent-icon" height={15} />
                   <RNText className="-ml-0.5 text-[21px] font-t3-medium tracking-[-0.5px] text-foreground-muted">
                     Code
                   </RNText>
@@ -248,7 +246,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
                       : "line.3.horizontal.decrease.circle"
                   }
                   size={16}
-                  tintColor={iconColor}
+                  tintColorClassName={"accent-icon"}
                   type="monochrome"
                 />
               </Pressable>
@@ -262,12 +260,22 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
               onPress={props.onOpenSettings}
               className="size-11 items-center justify-center rounded-full bg-subtle"
             >
-              <SymbolView name="gearshape" size={18} tintColor={iconColor} type="monochrome" />
+              <SymbolView
+                name="gearshape"
+                size={18}
+                tintColorClassName={"accent-icon"}
+                type="monochrome"
+              />
             </Pressable>
           </View>
 
           <View className="min-h-12 flex-row items-center gap-2.5 rounded-2xl border border-input-border bg-input px-3.5">
-            <SymbolView name="magnifyingglass" size={17} tintColor={mutedColor} type="monochrome" />
+            <SymbolView
+              name="magnifyingglass"
+              size={17}
+              tintColorClassName={"accent-foreground-muted"}
+              type="monochrome"
+            />
             <TextInput
               accessibilityLabel="Search threads"
               autoCapitalize="none"
@@ -286,7 +294,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
                 <SymbolView
                   name="xmark.circle.fill"
                   size={17}
-                  tintColor={mutedColor}
+                  tintColorClassName={"accent-foreground-muted"}
                   type="monochrome"
                 />
               </Pressable>
@@ -300,7 +308,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
 
 function IosHomeHeader(props: HomeHeaderProps) {
   const searchBarRef = useRef<SearchBarCommands>(null);
-  const iconColor = useThemeColor("--color-icon");
+  const iconColor = useUniwindTheme()["--color-icon"];
   // Thread List v2 lays the list out in fixed creation order, so the
   // sort/group filter controls would be silently ignored — hide them and
   // key the "customized" icon state off the environment filter alone.
@@ -356,6 +364,7 @@ function IosHomeHeader(props: HomeHeaderProps) {
                     onSearchTextChange: props.onSearchQueryChange,
                     placeholder: "Search",
                     searchTextChangeId: "home-search-text",
+                    showsSearchDismissButton: true,
                   }),
                 ],
               }

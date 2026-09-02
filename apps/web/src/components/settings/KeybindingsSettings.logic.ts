@@ -1,4 +1,5 @@
 import {
+  STATIC_KEYBINDING_COMMANDS,
   type KeybindingCommand,
   type KeybindingShortcut,
   type KeybindingWhenNode,
@@ -65,6 +66,14 @@ export function whenAstToExpression(node: KeybindingWhenNode | undefined): strin
     case "or":
       return `${wrapWhenExpression(node.left)} || ${wrapWhenExpression(node.right)}`;
   }
+}
+
+export function whenNodeRemoveLabel(node: KeybindingWhenNode, depth: number): string {
+  if (depth === 0) return "Clear all conditions";
+  if (node.type === "identifier" || (node.type === "not" && node.node.type === "identifier")) {
+    return "Remove condition";
+  }
+  return "Remove group and its conditions";
 }
 
 function wrapWhenExpression(node: KeybindingWhenNode): string {
@@ -255,10 +264,7 @@ export function buildWhenVariableOptions(): ReadonlyArray<WhenVariableOption> {
 export function buildKeybindingCommandOptions(
   keybindings: ResolvedKeybindingsConfig,
 ): ReadonlyArray<KeybindingCommandOption> {
-  const commands = new Set<KeybindingCommand>();
-  for (const binding of DEFAULT_RESOLVED_KEYBINDINGS) {
-    commands.add(binding.command);
-  }
+  const commands = new Set<KeybindingCommand>(STATIC_KEYBINDING_COMMANDS);
   for (const binding of keybindings) {
     commands.add(binding.command);
   }

@@ -11,6 +11,7 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   PullRequestCheckStatusIcon,
   pullRequestCheckStatusLabel,
@@ -57,9 +58,12 @@ function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
       {checks.map((check, index) => (
         <li key={`${index}:${check.name}`} className="flex items-center gap-2 text-xs">
           <PullRequestCheckStatusIcon status={check.status} />
-          <span className="min-w-0 flex-1 truncate" title={check.description ?? check.name}>
-            {check.name}
-          </span>
+          <Tooltip>
+            <TooltipTrigger
+              render={<span className="min-w-0 flex-1 truncate">{check.name}</span>}
+            />
+            <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
+          </Tooltip>
           <span className="shrink-0 text-muted-foreground">
             {pullRequestCheckStatusLabel(check.status)}
           </span>

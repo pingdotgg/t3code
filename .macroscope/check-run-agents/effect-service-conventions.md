@@ -68,6 +68,7 @@ Review changed TypeScript and directly affected call sites for the conventions b
 - Export direct schema predicates such as `export const isFoo = Schema.is(Foo)`. Flag a private `Schema.is` constant wrapped by a redundant function with the same signature.
 - Do not introduce a large `switch` or lookup table in an error's `message` getter to model failures that deserve separate error classes.
 - Catch statically known tagged failures with `Effect.catchTags({ ... })`, including when handling only one tag. Do not use `catchIf` with a schema predicate merely to recover one or more known `_tag` variants, and do not use `catchTag`. `Effect.catch` is appropriate when the entire error channel is intentionally handled; `catchIf` remains appropriate for genuinely structural predicates such as inspecting an underlying platform error code.
+- For startup reconciliation that repairs multiple independent entities, preserve interruption rather than reducing it to a warning. Retry a transient per-entity repair before readiness, then isolate a persistent failure so one bad entity cannot abort global startup or prevent later entities from being repaired. Require tests for both the retry-success path and persistent-failure continuation.
 - Do not add a helper whose only behavior is `(...args) => new SomeError({ ...args })`, including curried aliases used once with `mapError`. Construct the error at the failure boundary so its attributes and cause remain visible. Keep a mapper only when it performs real normalization, passes through existing domain errors, or adds reusable context/control flow.
 - When a reusable error-to-error translation clearly belongs to the target error type, prefer a descriptive static factory on that error class over a detached production-side switch. Do not force a static method for one-off inline mappings.
 
@@ -81,6 +82,7 @@ Review changed TypeScript and directly affected call sites for the conventions b
 ## Change discipline
 
 - Preserve useful comments, invariants, and specification documentation while moving code.
+- Require every new or broadened directive that disables or suppresses a lint, type-checker, LSP, or other static-analysis diagnostic to have an adjacent comment explaining why that diagnostic must be disabled there. The directive itself is not an explanation. Report a missing explanation as a concrete violation.
 - Do not add large tests solely to prove a mechanical refactor. Update existing tests and imports as needed.
 - If backend behavior changes, require focused tests. Use test implementations/layers for external services only; do not mock out core business logic.
 - Do not require `Layer.effect`, universal namespace imports, generic `make`/`layer` names for abstract-port implementations, separate error classes for diagnostic-only fields, or new tests for import-only changes.

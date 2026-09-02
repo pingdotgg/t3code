@@ -7,6 +7,43 @@ import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullRequestProvider.ts";
 import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
 
+it.effect("uses one narrow read for a linked pull request summary", () =>
+  Effect.gen(function* () {
+    let summaryReads = 0;
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+          getPullRequestSummary: () =>
+            Effect.sync(() => {
+              summaryReads += 1;
+              return {
+                number: 7,
+                title: "Summary",
+                url: "https://github.com/acme/web/pull/7",
+                headBranch: "feat/summary",
+                baseBranch: "main",
+                state: "open" as const,
+                updatedAt: "2026-08-24T12:34:56.000Z",
+              };
+            }),
+        }),
+      ),
+    );
+
+    const readSummary = provider.getChangeRequestSummary;
+    if (readSummary === undefined) return yield* Effect.die("summary read was not implemented");
+    const summary = yield* readSummary({
+      cwd: "/w",
+      repository: "acme/web",
+      host: "github.com",
+      number: 7,
+    });
+
+    expect(summary.state).toBe("open");
+    expect(summaryReads).toBe(1);
+  }),
+);
+
 describe("gitHubViewerPermissions", () => {
   it("offers everything to a viewer who can write to the repository", () => {
     expect(gitHubViewerPermissions({ canWrite: true, canUpdate: true, didAuthor: false })).toEqual({
@@ -176,6 +213,39 @@ describe("getViewerPermissions", () => {
       Effect.provide(layerWithComparison(Effect.succeed({ behindBy: 3, viewerCanUpdate: true }))),
     ),
   );
+
+  it.effect("uses the GraphQL reserve for manual permission checks", () => {
+    let viewerAllowReserve: boolean | undefined;
+    let comparisonAllowReserve: boolean | undefined;
+    return Effect.gen(function* () {
+      const provider = yield* make;
+      yield* provider.getViewerPermissions({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      expect(viewerAllowReserve).toBe(true);
+      expect(comparisonAllowReserve).toBe(true);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+          getPullRequestDetail: () => Effect.succeed(openDetail),
+          getPullRequestBaseComparison: (input) =>
+            Effect.sync(() => {
+              comparisonAllowReserve = input.allowReserve;
+              return { behindBy: 3, viewerCanUpdate: true };
+            }),
+          getViewerAccess: (input) =>
+            Effect.sync(() => {
+              viewerAllowReserve = input.allowReserve;
+              return { canWrite: true, canUpdate: true, didAuthor: false };
+            }),
+        }),
+      ),
+    );
+  });
 
   it.effect("withholds update-branch when the comparison cannot be read", () =>
     Effect.gen(function* () {

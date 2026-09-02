@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX,
   COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX,
-  COMPOSER_PRIMARY_ACTIONS_COMPACT_BREAKPOINT_PX,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
 } from "./composerFooterLayout";
@@ -38,16 +37,14 @@ describe("shouldUseCompactComposerFooter", () => {
 
 describe("shouldUseCompactComposerPrimaryActions", () => {
   it("matches the wide footer breakpoint", () => {
-    expect(COMPOSER_PRIMARY_ACTIONS_COMPACT_BREAKPOINT_PX).toBe(
-      COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX,
-    );
     expect(
-      shouldUseCompactComposerPrimaryActions(COMPOSER_PRIMARY_ACTIONS_COMPACT_BREAKPOINT_PX - 1, {
-        hasWideActions: true,
-      }),
+      shouldUseCompactComposerPrimaryActions(
+        COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX - 1,
+        { hasWideActions: true },
+      ),
     ).toBe(true);
     expect(
-      shouldUseCompactComposerPrimaryActions(COMPOSER_PRIMARY_ACTIONS_COMPACT_BREAKPOINT_PX, {
+      shouldUseCompactComposerPrimaryActions(COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX, {
         hasWideActions: true,
       }),
     ).toBe(false);

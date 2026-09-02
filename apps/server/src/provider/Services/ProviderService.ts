@@ -21,6 +21,8 @@ import type {
   ProviderSession,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  ProviderUploadFeedbackInput,
+  ProviderUploadFeedbackResult,
   ThreadId,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
@@ -104,6 +106,13 @@ export interface ProviderServiceShape {
     readonly threadId: ThreadId;
     readonly numTurns: number;
   }) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Upload a thread and return the provider's shareable feedback identifier.
+   */
+  readonly uploadFeedback: (
+    input: ProviderUploadFeedbackInput,
+  ) => Effect.Effect<ProviderUploadFeedbackResult, ProviderServiceError>;
 
   /**
    * Canonical provider runtime event stream.

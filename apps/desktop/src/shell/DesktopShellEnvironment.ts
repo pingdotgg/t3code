@@ -71,6 +71,9 @@ const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
   "DBUS_SESSION_BUS_ADDRESS",
   "DISPLAY",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
   "SSH_AUTH_SOCK",
   "HOMEBREW_PREFIX",
   "HOMEBREW_CELLAR",
@@ -84,6 +87,8 @@ const LOGIN_SHELL_ENV_NAMES = [
   "WAYLAND_DISPLAY",
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
+const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
+const FALLBACK_LC_CTYPE = "en_US.UTF-8";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
 const LAUNCHCTL_TIMEOUT = Duration.seconds(2);
@@ -146,6 +151,9 @@ const pathComparisonKey = (entry: string, platform: NodeJS.Platform) => {
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 };
 
+const sanitizePathEntry = (entry: string, platform: NodeJS.Platform) =>
+  platform === "win32" ? entry.replaceAll('"', "") : entry;
+
 const mergePaths = (
   platform: NodeJS.Platform,
   values: ReadonlyArray<Option.Option<string>>,
@@ -158,14 +166,14 @@ const mergePaths = (
     if (Option.isNone(value)) continue;
 
     for (const entry of value.value.split(delimiter)) {
-      const trimmed = entry.trim();
-      if (trimmed.length === 0) continue;
+      const sanitized = sanitizePathEntry(entry.trim(), platform);
+      if (sanitized.length === 0) continue;
 
-      const key = pathComparisonKey(trimmed, platform);
+      const key = pathComparisonKey(sanitized, platform);
       if (key.length === 0 || seen.has(key)) continue;
 
       seen.add(key);
-      entries.push(trimmed);
+      entries.push(sanitized);
     }
   }
 
@@ -469,6 +477,29 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];
+      }
+    }
+
+    // Locale variables form one precedence group: LC_ALL can override an inherited
+    // LANG or LC_CTYPE, so only hydrate the group when the process has none of them.
+    if (
+      config.platform === "darwin" &&
+      LOCALE_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))
+    ) {
+      for (const name of LOCALE_ENV_NAMES) {
+        const value = trimNonEmpty(shellEnvironment[name]);
+        if (Option.isSome(value)) {
+          config.env[name] = value.value;
+        }
+      }
+
+      // GUI launches inherit no locale from launchd, so spawned agents land in the C
+      // locale and pbcopy decodes their UTF-8 output as MacRoman. Older supported
+      // macOS releases do not provide C.UTF-8, so set only LC_CTYPE to a UTF-8 locale
+      // available on those releases. Leaving LANG unset keeps C-stable collation and
+      // formatting, so output parsing is unaffected.
+      if (LOCALE_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))) {
+        config.env.LC_CTYPE = FALLBACK_LC_CTYPE;
       }
     }
 

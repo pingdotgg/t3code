@@ -383,11 +383,47 @@ describe("deriveAgentPanelModel", () => {
   it("counts idle deliberately and waiting as active", () => {
     const model = deriveAgentPanelModel({ agents: roster });
     expect(model.idleCount).toBe(1);
-    // wf-1 coordinator + member 1 running.
-    expect(model.runningCount).toBeGreaterThanOrEqual(1);
+    // Member 1 is running; the wf-1 coordinator is a container, not a worker.
+    expect(model.runningCount).toBe(1);
+    // Every agent lands in exactly one bucket, except coordinators that stand
+    // in for their members.
     expect(model.idleCount + model.runningCount + model.waitingCount + model.settledCount).toBe(
-      roster.length,
+      roster.length - 1,
     );
+  });
+
+  it("omits a workflow coordinator from the working-agent count", () => {
+    const model = deriveAgentPanelModel({ agents: roster });
+    // One member still running plus one idle direct spawn. The coordinator
+    // reports running for the whole workflow and must not inflate the banner.
+    expect(model.liveCount).toBe(1);
+  });
+
+  it("omits a finished workflow coordinator from the settled count", () => {
+    const finished = fold([
+      activity("task.started", { taskId: "wf-2", taskType: "local_workflow", title: "sweep" }),
+      activity("task.progress", {
+        taskId: "wf-2:wf:0",
+        title: "sweep:a",
+        status: "completed",
+        parentAgentId: "wf-2",
+        agentIndex: 0,
+        phaseIndex: 0,
+      }),
+      activity("task.completed", {
+        taskId: "wf-2:wf:0",
+        status: "completed",
+        parentAgentId: "wf-2",
+      }),
+      activity("task.completed", { taskId: "wf-2", status: "completed" }),
+    ]);
+
+    const model = deriveAgentPanelModel({ agents: finished });
+
+    // Only the member settled. The coordinator stands in for it, so counting
+    // both would report two finished agents where one ran.
+    expect(model.settledCount).toBe(1);
+    expect(model.liveCount).toBe(0);
   });
 
   it("keeps direct spawns in first-seen order as their activity changes", () => {
@@ -565,6 +601,43 @@ describe("model and effort attribution", () => {
     expect(agents).toHaveLength(1);
     expect(agents[0]!.model).toBe("claude-sonnet-5[1m]");
     expect(agents[0]!.effort).toBe("high");
+  });
+
+  it("applies metadata-only updates without changing the current status", () => {
+    const waitingRows = [
+      activity("task.updated", {
+        taskId: "task-metadata",
+        title: "Check metadata",
+        status: "waiting",
+      }),
+      activity("task.updated", {
+        taskId: "task-metadata",
+        model: "gpt-5.6-sol",
+        effort: "high",
+      }),
+    ];
+    const waitingAgent = fold(waitingRows)[0]!;
+    expect(waitingAgent.status).toBe("waiting");
+    expect(formatSubagentModelLabel(waitingAgent.model, waitingAgent.effort)).toBe(
+      "gpt-5.6-sol · high",
+    );
+
+    const idleRows = [
+      ...waitingRows,
+      activity("task.updated", { taskId: "task-metadata", status: "idle" }),
+      activity("task.updated", { taskId: "task-metadata", model: "gpt-5.6-sol" }),
+    ];
+    expect(fold(idleRows)[0]!.status).toBe("idle");
+
+    const completedAgent = fold([
+      ...idleRows,
+      activity("task.progress", { taskId: "task-metadata", typedUsage: { totalTokens: 42 } }),
+      activity("task.completed", { taskId: "task-metadata", status: "completed" }),
+      activity("task.updated", { taskId: "task-metadata", effort: "high" }),
+    ])[0]!;
+    expect(completedAgent.status).toBe("completed");
+    expect(completedAgent.model).toBe("gpt-5.6-sol");
+    expect(completedAgent.effort).toBe("high");
   });
 
   it("formatSubagentModelLabel compacts ids and appends effort", () => {

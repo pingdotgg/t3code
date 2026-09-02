@@ -33,7 +33,10 @@ import {
   BLUR_COMMAND,
   FOCUS_COMMAND,
   $getRoot,
+  $getNodeByKey,
   HISTORY_MERGE_TAG,
+  HISTORY_PUSH_TAG,
+  SKIP_DOM_SELECTION_TAG,
   DecoratorNode,
   type ElementNode,
   type LexicalNode,
@@ -52,6 +55,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 
 import {
@@ -71,16 +75,25 @@ import {
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import {
+  COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME,
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
+  COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
   COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME,
-  COMPOSER_INLINE_SKILL_CHIP_LABEL_CLASS_NAME,
   SKILL_CHIP_ICON_SVG,
 } from "./composerInlineChip";
 import { FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
-import { formatProviderSkillDisplayName } from "~/providerSkillPresentation";
+import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkills";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
+import {
+  $consumeComposerCitationCommentRequest,
+  $createComposerCitationNode,
+  ComposerCitationCommentContext,
+  ComposerCitationNode,
+  type ComposerCitationCommentRequest,
+  type ComposerCitationCommentTarget,
+} from "./ComposerCitationNode";
 
 const COMPOSER_EDITOR_HMR_KEY = `composer-editor-${Math.random().toString(36).slice(2)}`;
 const SURROUND_SYMBOLS: [string, string][] = [
@@ -188,7 +201,7 @@ class ComposerMentionNode extends DecoratorNode<React.ReactElement> {
 
   override createDOM(): HTMLElement {
     const dom = document.createElement("span");
-    dom.className = "composer-inline-chip relative inline-flex align-[-0.125em] leading-none";
+    dom.className = COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME;
     return dom;
   }
 
@@ -256,7 +269,7 @@ function ComposerSkillDecorator(props: { skillLabel: string; skillDescription: s
         className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
         dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
       />
-      <span className={COMPOSER_INLINE_SKILL_CHIP_LABEL_CLASS_NAME}>{props.skillLabel}</span>
+      <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{props.skillLabel}</span>
     </span>
   );
 
@@ -326,7 +339,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
 
   override createDOM(): HTMLElement {
     const dom = document.createElement("span");
-    dom.className = "composer-inline-chip relative inline-flex align-[-0.125em] leading-none";
+    dom.className = COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME;
     return dom;
   }
 
@@ -397,7 +410,7 @@ class ComposerTerminalContextNode extends DecoratorNode<React.ReactElement> {
 
   override createDOM(): HTMLElement {
     const dom = document.createElement("span");
-    dom.className = "composer-inline-chip relative inline-flex align-[-0.125em] leading-none";
+    dom.className = COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME;
     return dom;
   }
 
@@ -427,12 +440,14 @@ function $createComposerTerminalContextNode(
 type ComposerInlineTokenNode =
   | ComposerMentionNode
   | ComposerSkillNode
+  | ComposerCitationNode
   | ComposerTerminalContextNode;
 
 function isComposerInlineTokenNode(candidate: unknown): candidate is ComposerInlineTokenNode {
   return (
     candidate instanceof ComposerMentionNode ||
     candidate instanceof ComposerSkillNode ||
+    candidate instanceof ComposerCitationNode ||
     candidate instanceof ComposerTerminalContextNode
   );
 }
@@ -829,6 +844,10 @@ function $setComposerEditorPrompt(
 
   const segments = splitPromptIntoComposerSegments(prompt, terminalContexts);
   for (const segment of segments) {
+    if (segment.type === "citation") {
+      paragraph.append($createComposerCitationNode(segment.citation, segment.source));
+      continue;
+    }
     if (segment.type === "mention") {
       paragraph.append($createComposerMentionNode(segment.path));
       continue;
@@ -868,6 +887,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
+  requestCitationComment: (request: ComposerCitationCommentRequest) => void;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -1251,6 +1271,7 @@ function ComposerInlineTokenPastePlugin() {
     () =>
       registerComposerInlineTokenPaste(editor, {
         createMentionNode: $createComposerMentionNode,
+        createCitationNode: $createComposerCitationNode,
         getExpandedAbsoluteOffsetForPoint,
       }),
     [editor],
@@ -1554,6 +1575,20 @@ function ComposerPromptEditorInner({
     terminalContextIds: terminalContexts.map((context) => context.id),
   });
   const isApplyingControlledUpdateRef = useRef(false);
+  const citationCommentRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
+  const [openCitationComment, setOpenCitationComment] =
+    useState<ComposerCitationCommentTarget | null>(null);
+  const citationCommentActions = useMemo(
+    () => ({
+      openComment: openCitationComment,
+      onOpenChange: (nodeKey: NodeKey, open: boolean) => {
+        setOpenCitationComment((current) =>
+          open ? { nodeKey } : current?.nodeKey === nodeKey ? null : current,
+        );
+      },
+    }),
+    [openCitationComment],
+  );
   const terminalContextActions = useMemo(
     () => ({ onRemoveTerminalContext }),
     [onRemoveTerminalContext],
@@ -1570,6 +1605,22 @@ function ComposerPromptEditorInner({
   useEffect(() => {
     editor.setEditable(!disabled);
   }, [disabled, editor]);
+
+  useEffect(() => {
+    const openCitationNodeKey = openCitationComment?.nodeKey;
+    if (!openCitationNodeKey) return;
+    return editor.registerUpdateListener(({ editorState }) => {
+      const isAttached = editorState.read(() => {
+        const node = $getNodeByKey(openCitationNodeKey);
+        return node instanceof ComposerCitationNode && node.isAttached();
+      });
+      if (!isAttached) {
+        setOpenCitationComment((current) =>
+          current?.nodeKey === openCitationNodeKey ? null : current,
+        );
+      }
+    });
+  }, [editor, openCitationComment?.nodeKey]);
 
   useLayoutEffect(() => {
     const normalizedCursor = clampCollapsedComposerCursor(value, cursor);
@@ -1601,16 +1652,27 @@ function ComposerPromptEditorInner({
     }
 
     isApplyingControlledUpdateRef.current = true;
-    editor.update(() => {
-      const shouldRewriteEditorState =
-        previousSnapshot.value !== value || contextsChanged || skillsChanged;
-      if (shouldRewriteEditorState) {
-        $setComposerEditorPrompt(value, terminalContexts, skillMetadataRef.current);
-      }
-      if (shouldRewriteEditorState || isFocused) {
-        $setSelectionAtComposerOffset(normalizedCursor);
-      }
-    });
+    const isCiteInsertion = citationCommentRequestRef.current?.value === value;
+    let citationToOpen: ComposerCitationCommentTarget | null = null;
+    editor.update(
+      () => {
+        const shouldRewriteEditorState =
+          previousSnapshot.value !== value || contextsChanged || skillsChanged;
+        if (shouldRewriteEditorState) {
+          $setComposerEditorPrompt(value, terminalContexts, skillMetadataRef.current);
+        }
+        if (shouldRewriteEditorState || isFocused) {
+          $setSelectionAtComposerOffset(normalizedCursor);
+        }
+        citationToOpen = $consumeComposerCitationCommentRequest(citationCommentRequestRef);
+      },
+      {
+        ...(isCiteInsertion ? { tag: [HISTORY_PUSH_TAG, SKIP_DOM_SELECTION_TAG] } : {}),
+        onUpdate: () => {
+          if (citationToOpen) setOpenCitationComment(citationToOpen);
+        },
+      },
+    );
     queueMicrotask(() => {
       isApplyingControlledUpdateRef.current = false;
     });
@@ -1691,9 +1753,16 @@ function ComposerPromptEditorInner({
           ),
         );
       },
+      requestCitationComment: (request) => {
+        citationCommentRequestRef.current = request;
+        const target = editor
+          .getEditorState()
+          .read(() => $consumeComposerCitationCommentRequest(citationCommentRequestRef));
+        if (target) setOpenCitationComment(target);
+      },
       readSnapshot,
     }),
-    [focusAt, readSnapshot],
+    [editor, focusAt, readSnapshot],
   );
 
   const handleEditorChange = useCallback((editorState: EditorState) => {
@@ -1747,42 +1816,43 @@ function ComposerPromptEditorInner({
 
   return (
     <ComposerTerminalContextActionsContext value={terminalContextActions}>
-      <div className="composer-editor-surface relative">
-        <PlainTextPlugin
-          contentEditable={
-            <ContentEditable
-              className={cn(
-                // The size comes from .composer-editor-surface so Settings -> Appearance
-                // can drive it; keep everything else here.
-                "block max-h-50 min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
-                className,
-              )}
-              data-testid="composer-editor"
-              aria-placeholder={placeholder}
-              placeholder={<span />}
-              onPaste={onPaste}
-            />
-          }
-          placeholder={
-            terminalContexts.length > 0 ? null : (
-              <div className="pointer-events-none absolute inset-0 leading-relaxed text-placeholder">
-                {placeholder}
-              </div>
-            )
-          }
-          ErrorBoundary={LexicalErrorBoundary}
-        />
-        <OnChangePlugin onChange={handleEditorChange} />
-        <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
-        <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
-        <ComposerHomeEndKeyPlugin />
-        <ComposerInlineTokenArrowPlugin />
-        <ComposerInlineTokenSelectionNormalizePlugin />
-        <ComposerInlineTokenBackspacePlugin />
-        <ComposerInlineTokenPastePlugin />
-        <ComposerChipSelectionPlugin />
-        <HistoryPlugin />
-      </div>
+      <ComposerCitationCommentContext value={citationCommentActions}>
+        <div className="relative [font-family:var(--font-composer,var(--font-sans))] [font-size:var(--font-size-prompt,0.875rem)] [@media(max-width:39.999rem)_and_(pointer:coarse)]:[font-size:max(var(--font-size-prompt,1rem),16px)]">
+          <PlainTextPlugin
+            contentEditable={
+              <ContentEditable
+                className={cn(
+                  // The wrapper owns the appearance preference; keep everything else here.
+                  "block max-h-50 min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
+                  className,
+                )}
+                data-testid="composer-editor"
+                aria-placeholder={placeholder}
+                placeholder={<span />}
+                onPaste={onPaste}
+              />
+            }
+            placeholder={
+              terminalContexts.length > 0 ? null : (
+                <div className="pointer-events-none absolute inset-0 leading-relaxed text-placeholder">
+                  {placeholder}
+                </div>
+              )
+            }
+            ErrorBoundary={LexicalErrorBoundary}
+          />
+          <OnChangePlugin onChange={handleEditorChange} />
+          <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
+          <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
+          <ComposerHomeEndKeyPlugin />
+          <ComposerInlineTokenArrowPlugin />
+          <ComposerInlineTokenSelectionNormalizePlugin />
+          <ComposerInlineTokenBackspacePlugin />
+          <ComposerInlineTokenPastePlugin />
+          <ComposerChipSelectionPlugin />
+          <HistoryPlugin />
+        </div>
+      </ComposerCitationCommentContext>
     </ComposerTerminalContextActionsContext>
   );
 }
@@ -1808,7 +1878,12 @@ export function ComposerPromptEditor({
     () => ({
       namespace: "t3tools-composer-editor",
       editable: true,
-      nodes: [ComposerMentionNode, ComposerSkillNode, ComposerTerminalContextNode],
+      nodes: [
+        ComposerMentionNode,
+        ComposerSkillNode,
+        ComposerCitationNode,
+        ComposerTerminalContextNode,
+      ],
       editorState: () => {
         $setComposerEditorPrompt(
           initialValueRef.current,

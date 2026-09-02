@@ -7,7 +7,6 @@ import {
   getProjectFaviconCacheKey,
   isProjectFaviconFallbackUrl,
 } from "@t3tools/shared/projectFavicon";
-import { useThemeColor } from "../lib/useThemeColor";
 import { useAssetUrl } from "../state/assets";
 import {
   beginProjectFaviconRequest,
@@ -62,7 +61,6 @@ function ProjectFaviconImage(props: {
   readonly projectTitle: string;
   readonly size: number;
 }) {
-  const iconMuted = useThemeColor("--color-icon-subtle");
   const faviconRequest = useMemo(
     () => createProjectFaviconRequest(props.cacheKey, props.faviconUrl),
     [props.cacheKey, props.faviconUrl],
@@ -97,7 +95,7 @@ function ProjectFaviconImage(props: {
         <SymbolView
           name={{ ios: "folder.fill", android: props.open ? "folder_open" : "folder" }}
           size={props.size * 0.78}
-          tintColor={iconMuted}
+          tintColorClassName={"accent-icon-subtle"}
           type="monochrome"
         />
       ) : null}

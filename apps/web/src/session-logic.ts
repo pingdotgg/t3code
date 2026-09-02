@@ -1,6 +1,12 @@
 import * as Option from "effect/Option";
 import * as Arr from "effect/Array";
+import * as Schema from "effect/Schema";
 import { isBackgroundTaskActivity } from "@t3tools/client-runtime/state/subagentRuntime";
+import {
+  commandDetailRepeatsCommand,
+  extractCommandOutputText,
+  isWorktreeSetupActivity,
+} from "@t3tools/client-runtime/work-log/presentation";
 import {
   ApprovalRequestId,
   isToolLifecycleItemType,
@@ -8,6 +14,8 @@ import {
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   ProviderDriverKind,
+  ProviderApprovalOption,
+  ProviderRequestKind,
   type ToolLifecycleItemType,
   type UserInputQuestion,
   type ThreadId,
@@ -65,8 +73,11 @@ export interface WorkLogEntry {
   id: string;
   createdAt: string;
   turnId?: TurnId | null;
+  /** Stable provider identity across in-progress and completed lifecycle updates. */
+  toolCallId?: string;
   label: string;
   detail?: string;
+  viewedImagePath?: string;
   command?: string;
   rawCommand?: string;
   changedFiles?: ReadonlyArray<string>;
@@ -96,21 +107,33 @@ export interface WorkLogEntry {
   };
 }
 
+const workLogCollapseKey = Symbol();
+
 interface DerivedWorkLogEntry extends WorkLogEntry {
-  activityKind: OrchestrationThreadActivity["kind"];
-  collapseKey?: string;
+  sourceActivityKind: OrchestrationThreadActivity["kind"];
+  [workLogCollapseKey]?: string;
   toolCallId?: string;
   isWorkflowCoordinator?: boolean;
   /** Shell/monitor/plan tasks: ordinary work-log rows, never spawn CTAs. */
   isBackgroundTask?: boolean;
 }
 
+const derivedWorkLogEntryByActivity = new WeakMap<
+  OrchestrationThreadActivity,
+  DerivedWorkLogEntry
+>();
+
 export interface PendingApproval {
   requestId: ApprovalRequestId;
-  requestKind: "command" | "file-read" | "file-change";
+  requestKind: ProviderRequestKind;
   createdAt: string;
   detail?: string;
+  appName?: string;
+  options?: ReadonlyArray<ProviderApprovalOption>;
 }
+
+const isProviderRequestKind = Schema.is(ProviderRequestKind);
+const isProviderApprovalOption = Schema.is(ProviderApprovalOption);
 
 export interface PendingUserInput {
   requestId: ApprovalRequestId;
@@ -123,6 +146,7 @@ export interface ActivePlanState {
   turnId: TurnId | null;
   explanation?: string | null;
   steps: Array<{
+    durationMs?: number;
     step: string;
     status: "pending" | "inProgress" | "completed";
   }>;
@@ -150,12 +174,6 @@ export type TimelineEntry =
       kind: "proposed-plan";
       createdAt: string;
       proposedPlan: ProposedPlan;
-    }
-  | {
-      id: string;
-      kind: "turn-plan";
-      createdAt: string;
-      turnPlan: TurnPlanEntry;
     }
   | {
       id: string;
@@ -223,8 +241,10 @@ function toolDetailTextLooksLikeFailure(text: string): boolean {
   return false;
 }
 
-/** True when the row should show a failure affordance (explicit status/tone or error-shaped tool output). */
-export function workEntryIndicatesToolFailure(entry: WorkLogEntry): boolean {
+function workEntryIndicatesToolFailureFromOutput(
+  entry: WorkLogEntry,
+  includeCommand: boolean,
+): boolean {
   if (entry.tone === "error") {
     return true;
   }
@@ -239,7 +259,7 @@ export function workEntryIndicatesToolFailure(entry: WorkLogEntry): boolean {
   if (entry.detail) {
     parts.push(entry.detail);
   }
-  if (entry.command) {
+  if (includeCommand && entry.command) {
     parts.push(entry.command);
   }
   const blob = parts.join("\n");
@@ -247,6 +267,27 @@ export function workEntryIndicatesToolFailure(entry: WorkLogEntry): boolean {
     return false;
   }
   return toolDetailTextLooksLikeFailure(blob);
+}
+
+/** True when a tool failed, including providers that put error output in `command`. */
+export function workEntryIndicatesToolFailure(entry: WorkLogEntry): boolean {
+  return workEntryIndicatesToolFailureFromOutput(entry, true);
+}
+
+/** True when the rendered result indicates failure. The command itself is user intent, not output. */
+export function workEntryDisplayIndicatesToolFailure(entry: WorkLogEntry): boolean {
+  return workEntryIndicatesToolFailureFromOutput(entry, false);
+}
+
+/** Severe failures keep the red treatment ordinary tool failures lost: runtime
+ *  errors and orchestration `*.failed` activities (provider.turn.start.failed,
+ *  checkpoint.capture.failed, ...) mean the turn or a core side effect broke,
+ *  not that a command exited nonzero. */
+export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
+  return (
+    entry.sourceActivityKind === "runtime.error" ||
+    entry.sourceActivityKind?.endsWith(".failed") === true
+  );
 }
 
 /** Tool/command row completed without failure (blue check affordance). */
@@ -337,13 +378,14 @@ export function deriveActiveWorkStartedAt(
   latestTurn: LatestTurnTiming | null,
   session: SessionActivityState | null,
   sendStartedAt: string | null,
+  latestUserMessageAt: string | null = null,
 ): string | null {
   const runningTurnId = session?.status === "running" ? session.activeTurnId : null;
   if (runningTurnId !== null) {
     if (latestTurn?.turnId === runningTurnId) {
-      return latestTurn.startedAt ?? sendStartedAt;
+      return latestTurn.startedAt ?? sendStartedAt ?? latestUserMessageAt;
     }
-    return sendStartedAt;
+    return sendStartedAt ?? latestUserMessageAt;
   }
   if (!isLatestTurnSettled(latestTurn, session)) {
     return latestTurn?.startedAt ?? sendStartedAt;
@@ -362,6 +404,8 @@ function requestKindFromRequestType(requestType: unknown): PendingApproval["requ
     case "file_change_approval":
     case "apply_patch_approval":
       return "file-change";
+    case "mcp_elicitation_approval":
+      return "mcp-elicitation";
     default:
       return null;
   }
@@ -399,15 +443,16 @@ export function derivePendingApprovals(
         ? ApprovalRequestId.make(payload.requestId)
         : null;
     const requestKind =
-      payload &&
-      (payload.requestKind === "command" ||
-        payload.requestKind === "file-read" ||
-        payload.requestKind === "file-change")
+      payload && isProviderRequestKind(payload.requestKind)
         ? payload.requestKind
         : payload
           ? requestKindFromRequestType(payload.requestType)
           : null;
     const detail = payload && typeof payload.detail === "string" ? payload.detail : undefined;
+    const appName = payload && typeof payload.appName === "string" ? payload.appName : undefined;
+    const options = Array.isArray(payload?.options)
+      ? payload.options.filter(isProviderApprovalOption)
+      : undefined;
 
     if (activity.kind === "approval.requested" && requestId && requestKind) {
       openByRequestId.set(requestId, {
@@ -415,6 +460,8 @@ export function derivePendingApprovals(
         requestKind,
         createdAt: activity.createdAt,
         ...(detail ? { detail } : {}),
+        ...(appName ? { appName } : {}),
+        ...(options && options.length > 0 ? { options } : {}),
       });
       continue;
     }
@@ -579,6 +626,64 @@ function planStateFromActivity(activity: OrchestrationThreadActivity): ActivePla
   };
 }
 
+function addPlanStepDurations(
+  plan: ActivePlanState,
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ActivePlanState {
+  const timings = new Map<string, { completedAt?: number; startedAt?: number }>();
+  let planStartedAt: number | undefined;
+
+  const keyedSteps = (steps: ActivePlanState["steps"]) => {
+    const occurrences = new Map<string, number>();
+    return steps.map((step) => {
+      const occurrence = occurrences.get(step.step) ?? 0;
+      occurrences.set(step.step, occurrence + 1);
+      return { key: `${step.step}:${occurrence}`, step };
+    });
+  };
+
+  for (const activity of activities) {
+    const snapshot = planStateFromActivity(activity);
+    const activityAt = Date.parse(activity.createdAt);
+    if (!snapshot || Number.isNaN(activityAt)) continue;
+    planStartedAt ??= activityAt;
+
+    for (const { key, step } of keyedSteps(snapshot.steps)) {
+      const timing = timings.get(key) ?? {};
+      if (step.status === "inProgress" && timing.startedAt === undefined) {
+        timing.startedAt = activityAt;
+      }
+      if (step.status === "completed" && timing.completedAt === undefined) {
+        timing.completedAt = activityAt;
+      }
+      timings.set(key, timing);
+    }
+  }
+
+  const durationByKey = new Map<string, number>();
+  let previousCompletedAt = planStartedAt;
+  for (const [key, timing] of [...timings.entries()].toSorted(
+    (left, right) => (left[1].completedAt ?? Infinity) - (right[1].completedAt ?? Infinity),
+  )) {
+    const completedAt = timing.completedAt;
+    const startedAt = timing.startedAt ?? previousCompletedAt;
+    if (completedAt === undefined) continue;
+    if (startedAt !== undefined && completedAt > startedAt) {
+      durationByKey.set(key, completedAt - startedAt);
+    }
+    previousCompletedAt = completedAt;
+  }
+
+  return {
+    ...plan,
+    steps: keyedSteps(plan.steps).map(({ key, step }) => {
+      if (step.status !== "completed") return step;
+      const durationMs = durationByKey.get(key);
+      return durationMs === undefined ? step : { ...step, durationMs };
+    }),
+  };
+}
+
 export function deriveActivePlanState(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,
@@ -596,53 +701,15 @@ export function deriveActivePlanState(
   if (!latest) {
     return null;
   }
-  return planStateFromActivity(latest);
-}
-
-export interface TurnPlanEntry {
-  /** Stable per-turn row id (plans rewrite constantly; the row must not churn). */
-  id: string;
-  /** Anchor timestamp: the turn's FIRST plan activity, so the chip renders where planning began. */
-  createdAt: string;
-  turnId: TurnId | null;
-  plan: ActivePlanState;
-}
-
-/**
- * One inline plan chip per turn that produced plan/todo steps: the latest
- * snapshot for the turn, anchored at the first snapshot's timestamp. Turn-less
- * plan activities collapse into a single chip keyed by thread order.
- */
-export function deriveTurnPlans(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-): TurnPlanEntry[] {
-  const ordered = [...activities].toSorted(compareActivitiesByOrder);
-  const byTurn = new Map<string, TurnPlanEntry>();
-  for (const activity of ordered) {
-    if (activity.kind !== "turn.plan.updated") {
-      continue;
-    }
-    const plan = planStateFromActivity(activity);
-    const key = activity.turnId ?? "no-turn";
-    if (!plan) {
-      // A later snapshot with no steps clears the turn's plan; keeping the
-      // stale entry would freeze the chip on a withdrawn plan.
-      byTurn.delete(key);
-      continue;
-    }
-    const existing = byTurn.get(key);
-    if (existing) {
-      existing.plan = plan;
-    } else {
-      byTurn.set(key, {
-        id: `turn-plan:${key}`,
-        createdAt: activity.createdAt,
-        turnId: activity.turnId,
-        plan,
-      });
-    }
-  }
-  return [...byTurn.values()];
+  const plan = planStateFromActivity(latest);
+  if (!plan) return null;
+  const matchingActivities = allPlanActivities.filter(
+    (activity) => activity.turnId === latest.turnId,
+  );
+  const latestClearIndex = matchingActivities.findLastIndex(
+    (activity) => planStateFromActivity(activity) === null,
+  );
+  return addPlanStepDurations(plan, matchingActivities.slice(latestClearIndex + 1));
 }
 
 export function findLatestProposedPlan(
@@ -748,6 +815,7 @@ export function deriveWorkLogEntries(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
+    if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
     if (activity.kind === "tool.started") continue;
     // Agent task.started rows are CTA seeds: they carry the true spawn turn,
     // which is the batch key (completions of background subagents arrive
@@ -757,15 +825,25 @@ export function deriveWorkLogEntries(
     if (activity.kind === "task.updated") continue;
     if (activity.kind === "tool.progress") continue;
     if (activity.kind === "context-window.updated") continue;
+    if (activity.kind === "turn.plan.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
+    if (isNoContentRuntimeWarning(activity)) continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     if (isAgentInternalActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
-  return collapseDerivedWorkLogEntries(entries).map((entry) => {
-    const { activityKind, collapseKey: _collapseKey, ...rest } = entry;
-    return Object.assign(rest, { sourceActivityKind: activityKind });
-  });
+  return collapseDerivedWorkLogEntries(entries);
+}
+
+/** Adapters forward unknown wire-only SDK messages (background_tasks_changed,
+ *  commands_changed, ...) as runtime warnings. The suffix comes from
+ *  describeUnknownSdkMessage in the Claude adapter; a row with no displayable
+ *  text carries nothing a user can act on, so it does not render. */
+function isNoContentRuntimeWarning(activity: OrchestrationThreadActivity): boolean {
+  return (
+    activity.kind === "runtime.warning" &&
+    activity.summary.endsWith("(no displayable text content)")
+  );
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -800,6 +878,10 @@ function extractWorkLogToolLifecycleStatus(
 }
 
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
+  const cachedEntry = derivedWorkLogEntryByActivity.get(activity);
+  if (cachedEntry) {
+    return cachedEntry;
+  }
   const payload =
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
@@ -843,12 +925,16 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
         : activity.tone === "approval"
           ? "info"
           : activity.tone,
-    activityKind: activity.kind,
+    sourceActivityKind: activity.kind,
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
+  const viewedImagePath = asTrimmedString(asRecord(payload?.data)?.imagePath);
   if (detail) {
     entry.detail = detail;
+  }
+  if (viewedImagePath) {
+    entry.viewedImagePath = viewedImagePath;
   }
   if (commandPreview.command) {
     entry.command = commandPreview.command;
@@ -864,8 +950,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (itemType === "mcp_tool_call") {
     const data = asRecord(payload?.data);
-    if (data?.item !== undefined) {
-      entry.toolData = data.item;
+    const toolData = typeof data?.toolName === "string" ? (data.item ?? data) : data?.item;
+    if (toolData !== undefined) {
+      entry.toolData = toolData;
     }
   }
   if (itemType) {
@@ -902,8 +989,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   const collapseKey = deriveToolLifecycleCollapseKey(entry);
   if (collapseKey) {
-    entry.collapseKey = collapseKey;
+    entry[workLogCollapseKey] = collapseKey;
   }
+  derivedWorkLogEntryByActivity.set(activity, entry);
   return entry;
 }
 
@@ -933,6 +1021,16 @@ function agentSpawnGroupKey(entry: DerivedWorkLogEntry): string {
   return entry.turnId ? `direct:${entry.turnId}` : `direct:task:${taskId}`;
 }
 
+function toolLifecycleCollapseMapKey(entry: DerivedWorkLogEntry): string | undefined {
+  if (
+    entry.sourceActivityKind !== "tool.updated" &&
+    entry.sourceActivityKind !== "tool.completed"
+  ) {
+    return undefined;
+  }
+  return entry.toolCallId ? `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}` : undefined;
+}
+
 function collapseDerivedWorkLogEntries(
   entries: ReadonlyArray<DerivedWorkLogEntry>,
 ): DerivedWorkLogEntry[] {
@@ -949,13 +1047,14 @@ function collapseDerivedWorkLogEntries(
   // own turn splintered one batch into a stream of "Kicked off N subagents"
   // rows (live-test finding, thread 7ac7ef05).
   const groupKeyByTaskId = new Map<string, string>();
+  const toolLifecycleRowIndex = new Map<string, number>();
   for (const entry of entries) {
     const isTaskRow =
       entry.taskId !== undefined &&
       !entry.isBackgroundTask &&
-      (entry.activityKind === "task.started" ||
-        entry.activityKind === "task.progress" ||
-        entry.activityKind === "task.completed");
+      (entry.sourceActivityKind === "task.started" ||
+        entry.sourceActivityKind === "task.progress" ||
+        entry.sourceActivityKind === "task.completed");
     if (isTaskRow && entry.taskId !== undefined) {
       const rememberedKey = groupKeyByTaskId.get(entry.taskId);
       const groupKey = rememberedKey ?? agentSpawnGroupKey(entry);
@@ -993,12 +1092,36 @@ function collapseDerivedWorkLogEntries(
       });
       continue;
     }
+    const lifecycleKey = toolLifecycleCollapseMapKey(entry);
+    if (lifecycleKey !== undefined) {
+      const matchingLifecycleIndex = toolLifecycleRowIndex.get(lifecycleKey);
+      const matchingEntry =
+        matchingLifecycleIndex === undefined ? undefined : collapsed[matchingLifecycleIndex];
+      if (
+        matchingLifecycleIndex !== undefined &&
+        matchingEntry &&
+        shouldCollapseToolLifecycleEntries(matchingEntry, entry)
+      ) {
+        collapsed[matchingLifecycleIndex] = mergeDerivedWorkLogEntries(matchingEntry, entry);
+        continue;
+      }
+      toolLifecycleRowIndex.delete(lifecycleKey);
+    }
     const previous = collapsed.at(-1);
     if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
-      collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
+      const previousIndex = collapsed.length - 1;
+      const previousKey = toolLifecycleCollapseMapKey(previous);
+      if (previousKey !== undefined) toolLifecycleRowIndex.delete(previousKey);
+      const merged = mergeDerivedWorkLogEntries(previous, entry);
+      collapsed[previousIndex] = merged;
+      const mergedKey = toolLifecycleCollapseMapKey(merged);
+      if (mergedKey !== undefined) toolLifecycleRowIndex.set(mergedKey, previousIndex);
       continue;
     }
     collapsed.push(entry);
+    if (lifecycleKey !== undefined) {
+      toolLifecycleRowIndex.set(lifecycleKey, collapsed.length - 1);
+    }
   }
   return collapsed;
 }
@@ -1007,16 +1130,25 @@ function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
-  if (previous.activityKind !== "tool.updated" && previous.activityKind !== "tool.completed") {
+  if (
+    previous.sourceActivityKind !== "tool.updated" &&
+    previous.sourceActivityKind !== "tool.completed"
+  ) {
     return false;
   }
-  if (next.activityKind !== "tool.updated" && next.activityKind !== "tool.completed") {
+  if (next.sourceActivityKind !== "tool.updated" && next.sourceActivityKind !== "tool.completed") {
     return false;
   }
-  if (previous.activityKind === "tool.completed") {
+  if (previous.turnId !== next.turnId) {
     return false;
   }
-  if (previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey) {
+  if (previous.sourceActivityKind === "tool.completed") {
+    return false;
+  }
+  if (
+    previous[workLogCollapseKey] !== undefined &&
+    previous[workLogCollapseKey] === next[workLogCollapseKey]
+  ) {
     return true;
   }
   return (
@@ -1034,12 +1166,13 @@ function mergeDerivedWorkLogEntries(
 ): DerivedWorkLogEntry {
   const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
   const detail = next.detail ?? previous.detail;
+  const viewedImagePath = next.viewedImagePath ?? previous.viewedImagePath;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
-  const collapseKey = next.collapseKey ?? previous.collapseKey;
+  const collapseKey = next[workLogCollapseKey] ?? previous[workLogCollapseKey];
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
@@ -1047,13 +1180,14 @@ function mergeDerivedWorkLogEntries(
     ...previous,
     ...next,
     ...(detail ? { detail } : {}),
+    ...(viewedImagePath ? { viewedImagePath } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),
     ...(requestKind ? { requestKind } : {}),
-    ...(collapseKey ? { collapseKey } : {}),
+    ...(collapseKey ? { [workLogCollapseKey]: collapseKey } : {}),
     ...(toolCallId ? { toolCallId } : {}),
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
@@ -1076,15 +1210,18 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
   // progress ticks fold into it, the terminal row wins the label.
   if (
     entry.taskId &&
-    (entry.activityKind === "task.progress" || entry.activityKind === "task.completed")
+    (entry.sourceActivityKind === "task.progress" || entry.sourceActivityKind === "task.completed")
   ) {
     return `task${entry.taskId}`;
   }
-  if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
+  if (
+    entry.sourceActivityKind !== "tool.updated" &&
+    entry.sourceActivityKind !== "tool.completed"
+  ) {
     return undefined;
   }
   if (entry.toolCallId) {
-    return `tool:${entry.toolCallId}`;
+    return `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";
@@ -1316,7 +1453,7 @@ function extractToolTitle(payload: Record<string, unknown> | null): string | nul
 
 function extractToolCallId(payload: Record<string, unknown> | null): string | null {
   const data = asRecord(payload?.data);
-  return asTrimmedString(data?.toolCallId);
+  return asTrimmedString(payload?.toolCallId) ?? asTrimmedString(data?.toolCallId);
 }
 
 function normalizeInlinePreview(value: string): string {
@@ -1382,6 +1519,11 @@ function summarizeToolRawOutput(payload: Record<string, unknown> | null): string
   return null;
 }
 
+function extractToolOutput(payload: Record<string, unknown> | null): string | null {
+  const output = extractCommandOutputText(payload?.data);
+  return output ? stripTrailingExitCode(output).output : null;
+}
+
 function isCommandToolDetail(payload: Record<string, unknown> | null, heading: string): boolean {
   const data = asRecord(payload?.data);
   const kind = asTrimmedString(data?.kind)?.toLowerCase();
@@ -1402,12 +1544,33 @@ function extractToolDetail(
   const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
   const normalizedHeading = normalizePreviewForComparison(heading);
   const normalizedDetail = normalizePreviewForComparison(detail);
+  const commandTool = isCommandToolDetail(payload, heading);
+  const commandPreview = commandTool
+    ? extractToolCommand(payload)
+    : { command: null, rawCommand: null };
+  const command = commandPreview.command;
 
-  if (detail && normalizedHeading !== normalizedDetail) {
+  if (commandTool && command) {
+    const output = extractToolOutput(payload);
+    if (output) return output;
+  }
+
+  const data = asRecord(payload?.data);
+  const repeatsCommand =
+    detail !== null &&
+    commandDetailRepeatsCommand({
+      detail,
+      command,
+      rawCommand: commandPreview.rawCommand,
+      toolName: data?.toolName,
+      data,
+    });
+
+  if (detail && normalizedHeading !== normalizedDetail && (!commandTool || !repeatsCommand)) {
     return detail;
   }
 
-  if (isCommandToolDetail(payload, heading)) {
+  if (commandTool) {
     return null;
   }
 
@@ -1574,7 +1737,6 @@ export function deriveTimelineEntries(
   messages: ReadonlyArray<ChatMessage>,
   proposedPlans: ReadonlyArray<ProposedPlan>,
   workEntries: ReadonlyArray<WorkLogEntry>,
-  turnPlans: ReadonlyArray<TurnPlanEntry> = [],
 ): TimelineEntry[] {
   const messageRows: TimelineEntry[] = messages.map((message) => ({
     id: message.id,
@@ -1588,19 +1750,13 @@ export function deriveTimelineEntries(
     createdAt: proposedPlan.createdAt,
     proposedPlan,
   }));
-  const turnPlanRows: TimelineEntry[] = turnPlans.map((turnPlan) => ({
-    id: turnPlan.id,
-    kind: "turn-plan",
-    createdAt: turnPlan.createdAt,
-    turnPlan,
-  }));
   const workRows: TimelineEntry[] = workEntries.map((entry) => ({
     id: entry.id,
     kind: "work",
     createdAt: entry.createdAt,
     entry,
   }));
-  return [...messageRows, ...proposedPlanRows, ...turnPlanRows, ...workRows].toSorted((a, b) =>
+  return [...messageRows, ...proposedPlanRows, ...workRows].toSorted((a, b) =>
     a.createdAt.localeCompare(b.createdAt),
   );
 }

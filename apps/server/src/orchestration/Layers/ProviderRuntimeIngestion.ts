@@ -41,11 +41,14 @@ import {
   ProviderRuntimeIngestionService,
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
+import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { canReplaceThreadTitle } from "../threadTitles.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
+const TASK_TITLE_ACTIVITY_KINDS = ["task.started", "task.progress"] as const;
 
 // Fallback when the in-memory description cache no longer has the task name
 // (server restart, session-exit sweep, TTL/capacity eviction): earlier
@@ -296,7 +299,7 @@ function sessionStatusAllowsActiveTurn(
 
 function requestKindFromCanonicalRequestType(
   requestType: string | undefined,
-): "command" | "file-read" | "file-change" | undefined {
+): "command" | "file-read" | "file-change" | "mcp-elicitation" | undefined {
   switch (requestType) {
     case "command_execution_approval":
     case "exec_command_approval":
@@ -306,6 +309,8 @@ function requestKindFromCanonicalRequestType(
     case "file_change_approval":
     case "apply_patch_approval":
       return "file-change";
+    case "mcp_elicitation_approval":
+      return "mcp-elicitation";
     default:
       return undefined;
   }
@@ -386,12 +391,16 @@ export function runtimeEventToActivities(
                 ? "File-read approval requested"
                 : requestKind === "file-change"
                   ? "File-change approval requested"
-                  : "Approval requested",
+                  : requestKind === "mcp-elicitation"
+                    ? "App access approval requested"
+                    : "Approval requested",
           payload: {
             requestId: toApprovalRequestId(event.requestId),
             ...(requestKind ? { requestKind } : {}),
             requestType: event.payload.requestType,
             ...(event.payload.detail ? { detail: event.payload.detail } : {}),
+            ...(event.payload.appName ? { appName: event.payload.appName } : {}),
+            ...(event.payload.options ? { options: event.payload.options } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -785,8 +794,15 @@ export function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      // A streaming update's `data` carries the full tool output accumulated
+      // so far (adapters merge state forward), and a new activity is emitted
+      // per chunk, so persisting `data` verbatim writes O(N²) bytes per tool
+      // call into both the event store and the projection table. No reader
+      // needs it: ws.ts and http.ts apply `projectActivityPayload` before any
+      // payload reaches a client. Persist the projected form for non-terminal
+      // updates; `item.completed` below still persists the full payload.
       return [
-        {
+        projectActivityPayload({
           id: event.eventId,
           createdAt: event.createdAt,
           tone: "tool",
@@ -794,6 +810,7 @@ export function runtimeEventToActivities(
           summary: event.payload.title ?? "Tool updated",
           payload: {
             itemType: event.payload.itemType,
+            ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
@@ -804,7 +821,7 @@ export function runtimeEventToActivities(
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
-        },
+        }),
       ];
     }
 
@@ -821,6 +838,8 @@ export function runtimeEventToActivities(
           summary: event.payload.title ?? "Tool",
           payload: {
             itemType: event.payload.itemType,
+            ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
+            ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
             ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
@@ -847,7 +866,10 @@ export function runtimeEventToActivities(
           summary: `${event.payload.title ?? "Tool"} started`,
           payload: {
             itemType: event.payload.itemType,
+            ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
+            ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
             ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
             ...(event.payload.parentToolUseId
               ? { parentToolUseId: event.payload.parentToolUseId }
@@ -928,9 +950,12 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const resolveThreadDetail = Effect.fn("resolveThreadDetail")(function* (threadId: ThreadId) {
+  const resolveThreadDetail = Effect.fn("resolveThreadDetail")(function* (
+    threadId: ThreadId,
+    activityKinds: ReadonlyArray<string> = [],
+  ) {
     return yield* projectionSnapshotQuery
-      .getThreadDetailById(threadId)
+      .getThreadDetailById(threadId, { activityKinds })
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
@@ -1474,6 +1499,10 @@ const make = Effect.gen(function* () {
 
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
+      if (event.type === "content.delta" && event.payload.streamKind !== "assistant_text") {
+        return;
+      }
+
       const thread = yield* resolveThreadShell(event.threadId);
       if (!thread) return;
 
@@ -1490,9 +1519,17 @@ const make = Effect.gen(function* () {
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
-      const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
-        threadId: thread.id,
-      });
+      const pendingTurnStart =
+        event.type === "session.started" ||
+        event.type === "session.state.changed" ||
+        event.type === "session.exited" ||
+        event.type === "thread.started" ||
+        event.type === "turn.started" ||
+        event.type === "turn.completed"
+          ? yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+              threadId: thread.id,
+            })
+          : Option.none();
       const hasPendingTurnStart =
         Option.isSome(pendingTurnStart) && thread.session?.status === "starting";
 
@@ -1892,12 +1929,14 @@ const make = Effect.gen(function* () {
       }
 
       if (event.type === "thread.metadata.updated" && event.payload.name) {
-        yield* orchestrationEngine.dispatch({
-          type: "thread.meta.update",
-          commandId: yield* providerCommandId(event, "thread-meta-update"),
-          threadId: thread.id,
-          title: event.payload.name,
-        });
+        if (canReplaceThreadTitle(thread.title)) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.meta.update",
+            commandId: yield* providerCommandId(event, "thread-meta-update"),
+            threadId: thread.id,
+            title: event.payload.name,
+          });
+        }
       }
 
       if (event.type === "turn.diff.updated") {
@@ -1999,7 +2038,7 @@ const make = Effect.gen(function* () {
       if (event.type === "task.completed") {
         taskTitle = yield* lookupTaskDescription(thread.id, event.payload.taskId);
         if (!taskTitle) {
-          const threadDetail = yield* getLoadedThreadDetail();
+          const threadDetail = yield* resolveThreadDetail(thread.id, TASK_TITLE_ACTIVITY_KINDS);
           taskTitle = findTaskTitleInActivities(threadDetail?.activities, event.payload.taskId);
         }
       }

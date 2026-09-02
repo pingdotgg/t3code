@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, type ProviderOptionDescriptor } from "@t3tools/contracts";
-import { buildTraitsTriggerDisplay } from "./TraitsPicker";
+import { buildTraitsTriggerDisplay, buildUnavailableModelOptionDescriptors } from "./TraitsPicker";
 
 function selectDescriptor(
   id: string,
@@ -14,6 +14,22 @@ function fastModeDescriptor(
   currentValue: boolean,
 ): Extract<ProviderOptionDescriptor, { type: "boolean" }> {
   return { id: "fastMode", label: "Fast Mode", type: "boolean", currentValue };
+}
+
+function serviceTierDescriptor(
+  currentValue: "default" | "priority" | "flex",
+): Extract<ProviderOptionDescriptor, { type: "select" }> {
+  return {
+    id: "serviceTier",
+    label: "Service Tier",
+    type: "select",
+    options: [
+      { id: "default", label: "Standard", isDefault: true },
+      { id: "priority", label: "Fast" },
+      { id: "flex", label: "Flex" },
+    ],
+    currentValue,
+  };
 }
 
 const EFFORT = selectDescriptor(
@@ -59,23 +75,32 @@ describe("buildTraitsTriggerDisplay", () => {
     });
   });
 
-  it("renders Codex's Standard and Fast service tiers as fast mode", () => {
-    const serviceTier = selectDescriptor(
-      "serviceTier",
-      [
-        { id: "default", label: "Standard", isDefault: true },
-        { id: "priority", label: "Fast" },
-      ],
-      "default",
-    );
-
-    expect(display([EFFORT, serviceTier])).toEqual({
+  it("treats Codex standard and fast service tiers as fast mode states", () => {
+    expect(display([EFFORT, serviceTierDescriptor("default")])).toEqual({
       label: "High",
       showFastModeIcon: false,
     });
-    expect(display([EFFORT, { ...serviceTier, currentValue: "priority" }])).toEqual({
+    expect(display([EFFORT, serviceTierDescriptor("priority")])).toEqual({
       label: "High",
       showFastModeIcon: true,
+    });
+  });
+
+  it("keeps other Codex service tiers in the label", () => {
+    expect(display([EFFORT, serviceTierDescriptor("flex")])).toEqual({
+      label: "High · Flex",
+      showFastModeIcon: false,
+    });
+  });
+
+  it("keeps the Codex service tier readable when it is the only trait", () => {
+    expect(display([serviceTierDescriptor("default")])).toEqual({
+      label: "Standard",
+      showFastModeIcon: false,
+    });
+    expect(display([serviceTierDescriptor("priority")])).toEqual({
+      label: "Fast",
+      showFastModeIcon: false,
     });
   });
 
@@ -128,5 +153,38 @@ describe("buildTraitsTriggerDisplay", () => {
         ultrathinkPromptControlled: true,
       }),
     ).toEqual({ label: "Ultrathink", showFastModeIcon: true });
+  });
+});
+
+describe("buildUnavailableModelOptionDescriptors", () => {
+  it("shows only saved values without inventing alternatives", () => {
+    expect(
+      buildUnavailableModelOptionDescriptors([
+        { id: "variant", value: "max" },
+        { id: "agent", value: "build" },
+        { id: "fastMode", value: true },
+      ]),
+    ).toEqual([
+      {
+        id: "variant",
+        label: "Variant",
+        type: "select",
+        options: [{ id: "max", label: "max" }],
+        currentValue: "max",
+      },
+      {
+        id: "agent",
+        label: "Agent",
+        type: "select",
+        options: [{ id: "build", label: "build" }],
+        currentValue: "build",
+      },
+      {
+        id: "fastMode",
+        label: "Fast Mode",
+        type: "boolean",
+        currentValue: true,
+      },
+    ]);
   });
 });

@@ -241,6 +241,10 @@ export const PullRequestReviewThread = Schema.Struct({
    */
   isOutdated: Schema.Boolean,
   comments: Schema.Array(PullRequestThreadComment),
+  /** Host-reported total, when this thread was read in pages. */
+  commentCount: Schema.optional(NonNegativeInt),
+  /** Opaque cursor for the next comment page. Absent once this thread is whole. */
+  nextCommentsCursor: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestReviewThread = typeof PullRequestReviewThread.Type;
 
@@ -587,6 +591,24 @@ export const PullRequestRef = Schema.Struct({
 export type PullRequestRef = typeof PullRequestRef.Type;
 
 /**
+ * The small live shape a linked thread needs. Keeping it separate from detail means a sidebar
+ * status check never loads permissions, repository settings, checks, or base comparison data.
+ */
+export const PullRequestSummary = Schema.Struct({
+  provider: SourceControlProviderKind,
+  projectId: ProjectId,
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  state: PullRequestState,
+  headBranch: TrimmedNonEmptyString,
+  baseBranch: TrimmedNonEmptyString,
+  updatedAt: IsoDateTime,
+});
+export type PullRequestSummary = typeof PullRequestSummary.Type;
+
+/**
  * One row's line counts, read after the listing rather than inside it. On GitHub the pair is
  * 40-60% of the wall clock of the search that answers the whole page — measured over twelve
  * repositories, 7.1s with it and 4.0s without — for two small numbers at the end of a row.
@@ -656,6 +678,7 @@ export const PullRequestDetail = Schema.Struct({
   deletions: NonNegativeInt,
   changedFiles: NonNegativeInt,
   headBranch: TrimmedNonEmptyString,
+  headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   baseBranch: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -856,6 +879,26 @@ export const PullRequestCommentUpdateInput = Schema.Struct({
 });
 export type PullRequestCommentUpdateInput = typeof PullRequestCommentUpdateInput.Type;
 
+/** The coordinates of one line in a pull request diff. */
+export const PullRequestReviewPosition = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("added"),
+    newLine: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("deleted"),
+    oldLine: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("context"),
+    oldLine: PositiveInt,
+    newLine: PositiveInt,
+    /** Which copy of an unchanged line the reviewer selected in a split diff. */
+    side: PullRequestDiffSide,
+  }),
+]);
+export type PullRequestReviewPosition = typeof PullRequestReviewPosition.Type;
+
 /** One remark in a review that has not been sent yet, anchored to a line of the diff. */
 export const PullRequestReviewCommentDraft = Schema.Struct({
   path: TrimmedNonEmptyString,
@@ -865,8 +908,7 @@ export const PullRequestReviewCommentDraft = Schema.Struct({
    * the hosts that address a comment by one path ignore this.
    */
   oldPath: Schema.optional(TrimmedNonEmptyString),
-  line: PositiveInt,
-  side: PullRequestDiffSide,
+  position: PullRequestReviewPosition,
   body: CommentBody,
 });
 export type PullRequestReviewCommentDraft = typeof PullRequestReviewCommentDraft.Type;
@@ -884,6 +926,19 @@ export const PullRequestSubmitReviewInput = Schema.Struct({
   comments: Schema.Array(PullRequestReviewCommentDraft),
 });
 export type PullRequestSubmitReviewInput = typeof PullRequestSubmitReviewInput.Type;
+
+export const PullRequestThreadCommentsInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  threadId: TrimmedNonEmptyString,
+  cursor: TrimmedNonEmptyString,
+});
+export type PullRequestThreadCommentsInput = typeof PullRequestThreadCommentsInput.Type;
+
+export const PullRequestThreadCommentsResult = Schema.Struct({
+  comments: Schema.Array(PullRequestThreadComment),
+  nextCursor: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type PullRequestThreadCommentsResult = typeof PullRequestThreadCommentsResult.Type;
 
 export const PullRequestThreadReplyInput = Schema.Struct({
   ...PullRequestRef.fields,

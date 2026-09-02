@@ -8,6 +8,7 @@ import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import {
   ApprovalRequestId,
   CheckpointRef,
+  ClientSurface,
   CommandId,
   EventId,
   IsoDateTime,
@@ -127,23 +128,49 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
-export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
+export const ProviderRequestKind = Schema.Literals([
+  "command",
+  "file-read",
+  "file-change",
+  "mcp-elicitation",
+]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
 export type AssistantDeliveryMode = typeof AssistantDeliveryMode.Type;
 export const ProviderApprovalDecision = Schema.Literals([
   "accept",
   "acceptForSession",
+  "acceptAlways",
   "decline",
   "cancel",
 ]);
 export type ProviderApprovalDecision = typeof ProviderApprovalDecision.Type;
+export const ProviderApprovalOption = Schema.Struct({
+  decision: ProviderApprovalDecision,
+  label: TrimmedNonEmptyString,
+});
+export type ProviderApprovalOption = typeof ProviderApprovalOption.Type;
 export const ProviderUserInputAnswers = Schema.Record(Schema.String, Schema.Unknown);
 export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
 export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+export const PROVIDER_SEND_TURN_MAX_FILE_BYTES = 50 * 1024 * 1024;
+export const PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES = [
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const;
+const PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPE_SET = new Set<string>(
+  PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
+);
+
+/** Whether a pasted or picked image mime type can be sent on a provider turn. */
+export function isProviderSendTurnSupportedImageMimeType(mimeType: string): boolean {
+  return PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPE_SET.has(mimeType.toLowerCase());
+}
 const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
 const CHAT_ATTACHMENT_ID_MAX_CHARS = 128;
 // Correlation id is command id by design in this model.
@@ -165,6 +192,40 @@ export const ChatImageAttachment = Schema.Struct({
 });
 export type ChatImageAttachment = typeof ChatImageAttachment.Type;
 
+export const ChatFileAttachment = Schema.Struct({
+  type: Schema.Literal("file"),
+  id: ChatAttachmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  sizeBytes: NonNegativeInt.check(
+    Schema.isGreaterThanOrEqualTo(1),
+    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_FILE_BYTES),
+  ),
+});
+export type ChatFileAttachment = typeof ChatFileAttachment.Type;
+
+/**
+ * Catch-all for attachment types this build does not know. Attachments ride on
+ * persisted events and thread streams, so a newer server or client must be able
+ * to introduce a type without making older readers fail to decode the whole
+ * message. Decoders keep the shared base fields; consumers skip these or render
+ * them as unsupported. Mirrors how `OrchestrationThreadActivity` keeps `kind`
+ * open. The known discriminators are excluded so a malformed image or file
+ * attachment fails its own schema instead of sliding through here with its
+ * size and mime constraints unchecked.
+ */
+export const ChatUnknownAttachment = Schema.Struct({
+  type: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(50),
+    Schema.isPattern(/^(?!(?:image|file)$)/),
+  ),
+  id: ChatAttachmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  sizeBytes: NonNegativeInt,
+});
+export type ChatUnknownAttachment = typeof ChatUnknownAttachment.Type;
+
 const UploadChatImageAttachment = Schema.Struct({
   type: Schema.Literal("image"),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
@@ -176,7 +237,11 @@ const UploadChatImageAttachment = Schema.Struct({
 });
 export type UploadChatImageAttachment = typeof UploadChatImageAttachment.Type;
 
-export const ChatAttachment = Schema.Union([ChatImageAttachment]);
+export const ChatAttachment = Schema.Union([
+  ChatImageAttachment,
+  ChatFileAttachment,
+  ChatUnknownAttachment,
+]);
 export type ChatAttachment = typeof ChatAttachment.Type;
 const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
 export type UploadChatAttachment = typeof UploadChatAttachment.Type;
@@ -361,6 +426,14 @@ export const ThreadTitleRegeneration = Schema.Struct({
 });
 export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
 
+export const ThreadLinkedPullRequest = Schema.Struct({
+  projectId: ProjectId,
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+  url: TrimmedNonEmptyString,
+});
+export type ThreadLinkedPullRequest = typeof ThreadLinkedPullRequest.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -372,6 +445,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -380,14 +454,19 @@ export const OrchestrationThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  // When the thread last re-entered the active list (any thread.unsettled).
+  // Anchors the active-list sort so an unsettled thread surfaces at the top
+  // instead of sinking back to its creation-order slot. Cleared on settle.
+  // Optional so payloads from pre-stamp servers still decode.
+  unsettledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // Snooze is an overlay on the active lifecycle, not a fourth destination:
   // a snoozed thread stays "active" in the model and is only suppressed from
   // the inbox until snoozedUntil passes (or the thread raises its hand).
   // Optional so payloads from pre-snooze servers still decode.
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
-  // A pin overrides the settled/snoozed lifecycle: while pinnedAt is set the
-  // thread renders in the pinned block and never classifies into a shelf.
+  // Active pinned threads render in the pinned block. Settled and snoozed
+  // threads remain in their respective shelves even when pinned.
   // Optional so payloads from pre-pinning servers still decode.
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // Fractional index for user-arranged pinned order. Keyed threads sort by
@@ -442,6 +521,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -450,6 +530,8 @@ export const OrchestrationThreadShell = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  // See OrchestrationThread.unsettledAt: last re-entry into the active list.
+  unsettledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
@@ -626,6 +708,8 @@ export const ProjectCreateCommand = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
+  // Retained for older clients that sent an automatic create-time seed. The
+  // server ignores it; explicit project defaults use project.meta.update.
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   createdAt: IsoDateTime,
 });
@@ -688,6 +772,13 @@ const ThreadSettleCommand = Schema.Struct({
   type: Schema.Literal("thread.settle"),
   commandId: CommandId,
   threadId: ThreadId,
+});
+
+const ThreadAutoSettleCommand = Schema.Struct({
+  type: Schema.Literal("thread.auto-settle"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  snapshotSequence: NonNegativeInt,
 });
 
 const ThreadUnsettleCommand = Schema.Struct({
@@ -758,6 +849,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
 }).check(
   Schema.makeFilter(
     (input) =>
@@ -837,7 +929,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
     messageId: MessageId,
     role: Schema.Literal("user"),
     text: Schema.String,
-    attachments: Schema.Array(UploadChatAttachment),
+    attachments: Schema.Array(Schema.Union([UploadChatAttachment, ChatAttachment])),
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -1024,6 +1116,7 @@ const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
 });
 
 const InternalOrchestrationCommand = Schema.Union([
+  ThreadAutoSettleCommand,
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
@@ -1201,6 +1294,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   updatedAt: IsoDateTime,
 });
 
@@ -1305,12 +1399,25 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
   activity: OrchestrationThreadActivity,
 });
 
+/**
+ * Which client connection dispatched the command that produced an event.
+ * Stamped by the orchestration engine on client-dispatched commands; absent on
+ * provider/server-originated events and on commands from clients too old to
+ * report it.
+ */
+export const OrchestrationClientOrigin = Schema.Struct({
+  surface: Schema.optional(ClientSurface),
+  appVersion: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationClientOrigin = typeof OrchestrationClientOrigin.Type;
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
   adapterKey: Schema.optional(TrimmedNonEmptyString),
   requestId: Schema.optional(ApprovalRequestId),
   ingestedAt: Schema.optional(IsoDateTime),
+  origin: Schema.optional(OrchestrationClientOrigin),
 });
 export type OrchestrationEventMetadata = typeof OrchestrationEventMetadata.Type;
 
@@ -1697,6 +1804,7 @@ export class OrchestrationDispatchCommandError extends Schema.TaggedErrorClass<O
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
+    bootstrapThreadDisposition: Schema.optional(Schema.Literal("deleted")),
   },
 ) {}
 

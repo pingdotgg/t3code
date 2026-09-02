@@ -9,26 +9,10 @@ import * as Schema from "effect/Schema";
 import {
   buildClaudeCapabilitiesProbeQueryOptions,
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
-  isLegacyClaudeModel,
   probeClaudeCapabilities,
 } from "./ClaudeProvider.ts";
 
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
-
-it("keeps only the Claude 5 family out of legacy models", () => {
-  assert.deepStrictEqual(
-    ["claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-opus-4-8"].map((model) => [
-      model,
-      isLegacyClaudeModel(model),
-    ]),
-    [
-      ["claude-fable-5", false],
-      ["claude-opus-5", false],
-      ["claude-sonnet-5", false],
-      ["claude-opus-4-8", true],
-    ],
-  );
-});
 
 it("isolates Claude capability probes without dropping workspace setting sources", () => {
   const abortController = new AbortController();
@@ -38,6 +22,7 @@ it("isolates Claude capability probes without dropping workspace setting sources
     environment: {
       HOME: "/home/user",
       ENABLE_CLAUDEAI_MCP_SERVERS: "true",
+      FORCE_CODE_TERMINAL: "1",
     },
     cwd: "/workspace/project",
   });
@@ -46,12 +31,16 @@ it("isolates Claude capability probes without dropping workspace setting sources
   assert.equal(options.strictMcpConfig, true);
   assert.equal(options.cwd, "/workspace/project");
   assert.deepEqual(options.settingSources, [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES]);
+  assert.deepEqual(options.settings, { disableAllHooks: true });
   assert.deepEqual(options.allowedTools, []);
   assert.equal(options.persistSession, false);
   assert.equal(options.pathToClaudeCodeExecutable, "/usr/bin/claude");
   assert.equal(options.abortController, abortController);
   assert.equal(options.env?.HOME, "/home/user");
   assert.equal(options.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
+  assert.equal(options.env?.FORCE_CODE_TERMINAL, undefined);
+  assert.equal(options.env?.CLAUDE_CODE_AUTO_CONNECT_IDE, "0");
+  assert.equal(options.env?.CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL, "1");
 });
 
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
@@ -149,6 +138,14 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       assert.equal(invocation.mcpConfig, undefined);
 
       assert.equal(invocation.args.includes("--setting-sources=user,project,local"), true);
+
+      const settingsFlagIndex = invocation.args.indexOf("--settings");
+      assert.notEqual(settingsFlagIndex, -1);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const flagSettings = JSON.parse(invocation.args[settingsFlagIndex + 1] ?? "{}") as {
+        readonly disableAllHooks?: boolean;
+      };
+      assert.equal(flagSettings.disableAllHooks, true);
     }).pipe(Effect.scoped),
   );
 });
