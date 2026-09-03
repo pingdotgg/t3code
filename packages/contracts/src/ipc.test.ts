@@ -67,6 +67,37 @@ describe("DesktopSshEnvironmentTargetSchema", () => {
     ).toThrow();
   });
 
+  it("rejects oversized SSH target fields", () => {
+    expect(() =>
+      decode({
+        alias: "a".repeat(1_025),
+        hostname: "devbox.example.test",
+        username: null,
+        port: null,
+      }),
+    ).toThrow();
+    expect(() =>
+      decode({
+        alias: "devbox",
+        hostname: "devbox.example.test",
+        username: "u".repeat(257),
+        port: null,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects option-like hosts, unsafe usernames, and invalid ports", () => {
+    for (const input of [
+      { alias: "-oProxyCommand=bad", hostname: "devbox.example.test", username: null, port: null },
+      { alias: "devbox", hostname: "devbox.example.test", username: "bad@user", port: null },
+      { alias: "devbox", hostname: "devbox.example.test", username: null, port: 0 },
+      { alias: "devbox", hostname: "devbox.example.test", username: null, port: 65_536 },
+      { alias: "devbox", hostname: "devbox.example.test", username: null, port: 22.5 },
+    ]) {
+      expect(() => decode(input)).toThrow();
+    }
+  });
+
   it("rejects NUL bytes before values reach process spawning", () => {
     expect(() =>
       decode({

@@ -56,6 +56,7 @@ export class SshPasswordPrompt extends Context.Service<SshPasswordPrompt, SshPas
 export interface SshChildEnvironmentOptions {
   readonly interactiveAuth?: boolean;
   readonly baseEnv?: NodeJS.ProcessEnv;
+  readonly unsetEnv?: ReadonlyArray<string>;
   readonly askpassDirectory?: string;
   readonly authSecret?: string | null;
 }
@@ -182,14 +183,16 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
   const platform = yield* HostProcessPlatform;
   const hostEnvironment = yield* HostProcessEnvironment;
   const baseEnv: NodeJS.ProcessEnv = { ...hostEnvironment };
-  if (platform === "win32") {
-    const overlayNames = new Set(
-      Object.keys(input.baseEnv ?? {}).map((name) => name.toUpperCase()),
-    );
-    for (const name of Object.keys(baseEnv)) {
-      if (overlayNames.has(name.toUpperCase())) {
-        delete baseEnv[name];
-      }
+  const normalizeName = (name: string) => (platform === "win32" ? name.toUpperCase() : name);
+  const namesToRemove = new Set(
+    [
+      ...(input.unsetEnv ?? []),
+      ...(platform === "win32" ? Object.keys(input.baseEnv ?? {}) : []),
+    ].map(normalizeName),
+  );
+  for (const name of Object.keys(baseEnv)) {
+    if (namesToRemove.has(normalizeName(name))) {
+      delete baseEnv[name];
     }
   }
   Object.assign(baseEnv, input.baseEnv);

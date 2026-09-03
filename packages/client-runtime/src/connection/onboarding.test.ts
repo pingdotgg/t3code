@@ -384,16 +384,12 @@ describe("connection onboarding", () => {
                       detail: "TOKEN is not selected by SendEnv.",
                     }),
                   )
-                : Effect.succeed({
-                    bootstrap: {
-                      target: input.target,
-                      httpBaseUrl: "http://127.0.0.1:3773/",
-                      wsBaseUrl: "ws://127.0.0.1:3773/",
-                      pairingToken: "pairing-token",
-                      remotePort: 3773,
-                    },
-                    bearerToken: "bearer-token",
-                  }),
+                : Effect.fail(
+                    new ConnectionBlockedError({
+                      reason: "configuration",
+                      detail: "The previous SSH environment could not be restored.",
+                    }),
+                  ),
             ),
           ),
         disconnect: () => Effect.void,
@@ -411,6 +407,9 @@ describe("connection onboarding", () => {
       expect(error).toMatchObject({
         _tag: "ConnectionBlockedError",
         reason: "configuration",
+        detail: expect.stringContaining(
+          "TOKEN is not selected by SendEnv. The saved settings are unchanged, but the previous SSH runtime could not be restored.",
+        ),
       });
       expect(preparedTargets).toEqual([
         {

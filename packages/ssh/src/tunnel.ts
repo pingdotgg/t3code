@@ -248,8 +248,10 @@ const defaultPort = Number.parseInt(process.argv[3] ?? "", 10);
 const scanWindow = Number.parseInt(process.argv[4] ?? "", 10);
 const raw = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8").trim() : "";
 const preferred = Number.parseInt(raw, 10);
-const start = Number.isInteger(preferred) ? preferred : defaultPort;
-const end = start + scanWindow;
+const validPort = (port) => Number.isInteger(port) && port >= 1 && port <= 65535;
+if (!validPort(defaultPort) || !Number.isInteger(scanWindow) || scanWindow < 1) process.exit(1);
+const start = validPort(preferred) ? preferred : defaultPort;
+const end = Math.min(start + scanWindow, 65536);
 
 function tryPort(port) {
   return new Promise((resolve) => {
@@ -293,7 +295,7 @@ function probe() {
       {
         hostname: "127.0.0.1",
         port,
-        path: "/",
+        path: "/.well-known/t3/environment",
         timeout: probeTimeoutMs,
       },
       (response) => {
@@ -468,6 +470,7 @@ DEFAULT_SERVER_HOME="$HOME/.t3"
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
+PID_START_FILE="$STATE_DIR/pid-start"
 MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
@@ -508,19 +511,111 @@ wait_for_pid_exit() {
     sleep 0.1
   done
 }
+process_identity() {
+  PID_TO_IDENTIFY="$1"
+  case "$PID_TO_IDENTIFY" in
+    ''|*[!0-9]*|0) return 1 ;;
+  esac
+  kill -0 "$PID_TO_IDENTIFY" 2>/dev/null || return 1
+  if [ -r "/proc/$PID_TO_IDENTIFY/stat" ] && command -v node >/dev/null 2>&1; then
+    PROC_IDENTITY="$(node - "/proc/$PID_TO_IDENTIFY/stat" <<'NODE' 2>/dev/null || true
+const fs = require("node:fs");
+const raw = fs.readFileSync(process.argv[2], "utf8");
+const commandEnd = raw.lastIndexOf(")");
+const fields = commandEnd < 0 ? [] : raw.slice(commandEnd + 2).trim().split(/\\s+/);
+const startTicks = fields[19] ?? "";
+if (/^\\d+$/.test(startTicks)) process.stdout.write("proc:" + startTicks);
+NODE
+)"
+    if [ -n "$PROC_IDENTITY" ]; then
+      printf '%s' "$PROC_IDENTITY"
+      return 0
+    fi
+  fi
+  PS_IDENTITY="$(LC_ALL=C ps -o lstart= -p "$PID_TO_IDENTIFY" 2>/dev/null || true)"
+  [ -n "$PS_IDENTITY" ] || return 2
+  printf 'ps:%s' "$PS_IDENTITY"
+}
+managed_pid_is_owned() {
+  [ "$REMOTE_MANAGED" = "managed" ] || return 1
+  [ -n "$REMOTE_PID" ] || return 1
+  EXPECTED_PID_START="$(cat "$PID_START_FILE" 2>/dev/null || true)"
+  if [ -z "$EXPECTED_PID_START" ]; then
+    if process_identity "$REMOTE_PID" >/dev/null; then
+      return 2
+    fi
+    IDENTITY_STATUS=$?
+    [ "$IDENTITY_STATUS" -eq 1 ] && return 1
+    return 2
+  fi
+  CURRENT_PID_START="$(process_identity "$REMOTE_PID")" || return $?
+  [ -n "$CURRENT_PID_START" ] && [ "$CURRENT_PID_START" = "$EXPECTED_PID_START" ]
+}
+stop_managed_pid() {
+  if managed_pid_is_owned; then
+    :
+  else
+    OWNERSHIP_STATUS=$?
+    [ "$OWNERSHIP_STATUS" -eq 1 ] && return 0
+    return 2
+  fi
+  if ! kill "$REMOTE_PID" 2>/dev/null; then
+    if managed_pid_is_owned; then
+      return 1
+    fi
+    OWNERSHIP_STATUS=$?
+    [ "$OWNERSHIP_STATUS" -eq 1 ] && return 0
+    return 2
+  fi
+  WAIT_COUNT=0
+  while managed_pid_is_owned && [ "$WAIT_COUNT" -lt 20 ]; do
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+    sleep 0.1
+  done
+  if managed_pid_is_owned; then
+    return 1
+  fi
+  OWNERSHIP_STATUS=$?
+  [ "$OWNERSHIP_STATUS" -eq 1 ] && return 0
+  return 2
+}
 resolve_default_runtime_port() {
   node - "$DEFAULT_RUNTIME_FILE" <<'NODE'
 const fs = require("node:fs");
+const childProcess = require("node:child_process");
 const runtimePath = process.argv[2] ?? "";
 try {
 	  const runtime = JSON.parse(fs.readFileSync(runtimePath, "utf8"));
 	  const pid = Number(runtime.pid);
 	  const port = Number(runtime.port);
-	  if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port)) {
+	  if (
+	    runtime.version !== 1 ||
+	    !Number.isInteger(pid) ||
+	    pid <= 0 ||
+	    !Number.isInteger(port) ||
+	    port < 1 ||
+	    port > 65535
+	  ) {
 	    process.exit(1);
 	  }
   const origin = new URL(String(runtime.origin ?? ""));
-  if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) {
+  const runtimeStartedAt = Date.parse(String(runtime.startedAt ?? ""));
+  const processStartedAt = Date.parse(
+    childProcess.execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C" },
+      timeout: 2000,
+    }).trim(),
+  );
+  if (
+    origin.protocol !== "http:" ||
+    !["127.0.0.1", "localhost"].includes(origin.hostname) ||
+    Number(origin.port || "80") !== port ||
+    !Number.isFinite(runtimeStartedAt) ||
+    !Number.isFinite(processStartedAt) ||
+    runtimeStartedAt < processStartedAt ||
+    runtimeStartedAt - processStartedAt > 300000
+  ) {
     process.exit(1);
   }
   process.kill(pid, 0);
@@ -530,9 +625,18 @@ try {
 }
 NODE
 }
+valid_port() {
+  case "$1" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+if ! valid_port "$REMOTE_PORT"; then
+  REMOTE_PORT=""
+fi
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
@@ -540,19 +644,24 @@ if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
 fi
-if [ -n "$DEFAULT_REMOTE_PORT" ]; then
+if [ -n "$DEFAULT_REMOTE_PORT" ] && [ "$DEFAULT_RUNTIME_PID" = "$REMOTE_PID" ]; then
+  REMOTE_PORT="$DEFAULT_REMOTE_PORT"
+elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
     if [ "$REMOTE_MANAGED" = "managed" ]; then
-      PID_TO_STOP="\${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"
-      if [ -n "$PID_TO_STOP" ] && kill -0 "$PID_TO_STOP" 2>/dev/null; then
-        kill "$PID_TO_STOP" 2>/dev/null || true
-        wait_for_pid_exit "$PID_TO_STOP"
+      if ! stop_managed_pid; then
+        printf 'Managed remote T3 server process %s did not stop.\\n' "$REMOTE_PID" >&2
+        exit 1
+      fi
+      if ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+        printf 'The discovered external T3 server stopped responding during managed cleanup.\\n' >&2
+        exit 1
       fi
       REMOTE_PID=""
       REMOTE_PORT="$DEFAULT_REMOTE_PORT"
       REMOTE_MANAGED="external"
-      rm -f "$PID_FILE"
+      rm -f "$PID_FILE" "$PID_START_FILE"
       printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
       printf 'external\\n' >"$MANAGED_FILE"
     else
@@ -573,21 +682,34 @@ if [ "$REMOTE_MANAGED" = "external" ]; then
     REMOTE_PORT=""
     REMOTE_MANAGED=""
   fi
-elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
-  if [ "$RUNNER_CHANGED" -eq 1 ]; then
-    kill "$REMOTE_PID" 2>/dev/null || true
-    wait_for_pid_exit "$REMOTE_PID"
-    REMOTE_PID=""
-    REMOTE_PORT=""
-    REMOTE_MANAGED=""
-  elif ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
-    kill "$REMOTE_PID" 2>/dev/null || true
-    wait_for_pid_exit "$REMOTE_PID"
+elif [ -n "$REMOTE_PORT" ]; then
+  if managed_pid_is_owned; then
+    if [ "$RUNNER_CHANGED" -eq 1 ] || ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+      if ! stop_managed_pid; then
+        printf 'Managed remote T3 server process %s could not be safely stopped.\\n' "$REMOTE_PID" >&2
+        exit 1
+      fi
+      REMOTE_PID=""
+      REMOTE_PORT=""
+      REMOTE_MANAGED=""
+    fi
+  else
+    OWNERSHIP_STATUS=$?
+    if [ "$OWNERSHIP_STATUS" -eq 2 ]; then
+      printf 'Could not verify managed remote T3 server process %s. State was retained.\\n' "$REMOTE_PID" >&2
+      exit 1
+    fi
+    rm -f "$PID_FILE" "$PID_START_FILE" "$PORT_FILE" "$MANAGED_FILE"
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
   fi
 else
+  if [ "$REMOTE_MANAGED" = "managed" ] && ! stop_managed_pid; then
+    printf 'Managed remote T3 server process %s could not be safely stopped. State was retained.\\n' "$REMOTE_PID" >&2
+    exit 1
+  fi
+  rm -f "$PID_FILE" "$PID_START_FILE" "$PORT_FILE" "$MANAGED_FILE"
   REMOTE_PID=""
   REMOTE_PORT=""
   REMOTE_MANAGED=""
@@ -600,8 +722,19 @@ if [ -z "$REMOTE_PORT" ]; then
   fi
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
+  REMOTE_MANAGED="managed"
+  if REMOTE_PID_START="$(process_identity "$REMOTE_PID")"; then
+    :
+  else
+    printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+    printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+    printf 'managed\\n' >"$MANAGED_FILE"
+    printf 'Could not verify the managed remote T3 server process identity.\\n' >&2
+    exit 1
+  fi
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+  printf '%s\\n' "$REMOTE_PID_START" >"$PID_START_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
   if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
     printf 'Remote T3 server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
@@ -610,9 +743,9 @@ if [ -z "$REMOTE_PORT" ]; then
     else
       printf 'It wrote nothing to %s, so it exited before producing any output.\\n' "$LOG_FILE" >&2
     fi
-    kill "$REMOTE_PID" 2>/dev/null || true
-    wait_for_pid_exit "$REMOTE_PID"
-    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+    if stop_managed_pid; then
+      rm -f "$PID_FILE" "$PID_START_FILE" "$PORT_FILE" "$MANAGED_FILE"
+    fi
     exit 1
   fi
 fi
@@ -635,26 +768,86 @@ PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
 export const REMOTE_STOP_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
+PID_START_FILE="$STATE_DIR/pid-start"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
+process_identity() {
+  PID_TO_IDENTIFY="$1"
+  case "$PID_TO_IDENTIFY" in
+    ''|*[!0-9]*|0) return 1 ;;
+  esac
+  kill -0 "$PID_TO_IDENTIFY" 2>/dev/null || return 1
+  if [ -r "/proc/$PID_TO_IDENTIFY/stat" ] && command -v node >/dev/null 2>&1; then
+    PROC_IDENTITY="$(node - "/proc/$PID_TO_IDENTIFY/stat" <<'NODE' 2>/dev/null || true
+const fs = require("node:fs");
+const raw = fs.readFileSync(process.argv[2], "utf8");
+const commandEnd = raw.lastIndexOf(")");
+const fields = commandEnd < 0 ? [] : raw.slice(commandEnd + 2).trim().split(/\\s+/);
+const startTicks = fields[19] ?? "";
+if (/^\\d+$/.test(startTicks)) process.stdout.write("proc:" + startTicks);
+NODE
+)"
+    if [ -n "$PROC_IDENTITY" ]; then
+      printf '%s' "$PROC_IDENTITY"
+      return 0
+    fi
+  fi
+  PS_IDENTITY="$(LC_ALL=C ps -o lstart= -p "$PID_TO_IDENTIFY" 2>/dev/null || true)"
+  [ -n "$PS_IDENTITY" ] || return 2
+  printf 'ps:%s' "$PS_IDENTITY"
+}
+pid_matches_expected() {
+  CURRENT_PID_START="$(process_identity "$REMOTE_PID")" || return $?
+  [ "$CURRENT_PID_START" = "$EXPECTED_PID_START" ]
+}
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
-  if ! kill "$REMOTE_PID" 2>/dev/null && kill -0 "$REMOTE_PID" 2>/dev/null; then
-    printf 'Failed to stop managed remote T3 server process %s.\n' "$REMOTE_PID" >&2
+EXPECTED_PID_START="$(cat "$PID_START_FILE" 2>/dev/null || true)"
+if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && [ -z "$EXPECTED_PID_START" ]; then
+  if process_identity "$REMOTE_PID" >/dev/null; then
+    printf 'Managed remote T3 server process %s has no ownership identity. State was retained.\\n' "$REMOTE_PID" >&2
     exit 1
   fi
-  WAIT_COUNT=0
-  while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
-    WAIT_COUNT=$((WAIT_COUNT + 1))
-    sleep 0.1
-  done
-  if kill -0 "$REMOTE_PID" 2>/dev/null; then
-    printf 'Managed remote T3 server process %s did not stop.\n' "$REMOTE_PID" >&2
+  IDENTITY_STATUS=$?
+  if [ "$IDENTITY_STATUS" -eq 2 ]; then
+    printf 'Could not verify managed remote T3 server process %s. State was retained.\\n' "$REMOTE_PID" >&2
     exit 1
   fi
 fi
-rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$EXPECTED_PID_START" ]; then
+  if pid_matches_expected; then
+    :
+  else
+    OWNERSHIP_STATUS=$?
+    if [ "$OWNERSHIP_STATUS" -eq 2 ]; then
+      printf 'Could not verify managed remote T3 server process %s. State was retained.\\n' "$REMOTE_PID" >&2
+      exit 1
+    fi
+    rm -f "$PID_FILE" "$PID_START_FILE" "$PORT_FILE" "$MANAGED_FILE"
+    printf '{"stopped":true}\\n'
+    exit 0
+  fi
+  if ! kill "$REMOTE_PID" 2>/dev/null && kill -0 "$REMOTE_PID" 2>/dev/null; then
+    printf 'Failed to stop managed remote T3 server process %s.\\n' "$REMOTE_PID" >&2
+    exit 1
+  fi
+  WAIT_COUNT=0
+  while pid_matches_expected && [ "$WAIT_COUNT" -lt 20 ]; do
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+    sleep 0.1
+  done
+  if pid_matches_expected; then
+    printf 'Managed remote T3 server process %s did not stop.\\n' "$REMOTE_PID" >&2
+    exit 1
+  else
+    OWNERSHIP_STATUS=$?
+    if [ "$OWNERSHIP_STATUS" -eq 2 ]; then
+      printf 'Could not verify whether managed remote T3 server process %s stopped. State was retained.\\n' "$REMOTE_PID" >&2
+      exit 1
+    fi
+  fi
+fi
+rm -f "$PID_FILE" "$PID_START_FILE" "$PORT_FILE" "$MANAGED_FILE"
 printf '{"stopped":true}\\n'
 `;
 
@@ -746,10 +939,11 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
       ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
     });
+    const diagnosticStdout = redactSshOutput(result.stdout, target.environmentVariables);
     if (!getLastNonEmptyOutputLine(result.stdout)) {
       return yield* new SshLaunchError({
         message: "SSH launch did not return a remote port.",
-        stdout: result.stdout,
+        stdout: diagnosticStdout,
       });
     }
     const parsed = yield* decodeRemoteLaunchOutput(result.stdout).pipe(
@@ -757,15 +951,19 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
         (cause) =>
           new SshLaunchError({
             message: "SSH launch returned unparseable output.",
-            stdout: result.stdout,
+            stdout: diagnosticStdout,
             cause,
           }),
       ),
     );
-    if (!Number.isInteger(parsed.remotePort)) {
+    if (
+      !Number.isInteger(parsed.remotePort) ||
+      parsed.remotePort < 1 ||
+      parsed.remotePort > 65_535
+    ) {
       return yield* new SshLaunchError({
         message: `SSH launch returned an invalid remote port: ${String(parsed.remotePort)}.`,
-        stdout: result.stdout,
+        stdout: diagnosticStdout,
       });
     }
     yield* Effect.logInfo("ssh.remoteServer.launch.ready", {
@@ -806,7 +1004,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   if (!getLastNonEmptyOutputLine(result.stdout)) {
     return yield* new SshPairingError({
       message: "SSH pairing did not return a credential.",
-      stdout: result.stdout,
+      stdout: "",
     });
   }
   const parsed = yield* decodeRemotePairingOutput(result.stdout).pipe(
@@ -814,7 +1012,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
       (cause) =>
         new SshPairingError({
           message: "SSH pairing returned unparseable output.",
-          stdout: result.stdout,
+          stdout: "",
           cause,
         }),
     ),
@@ -822,7 +1020,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   if (parsed.credential.trim().length === 0) {
     return yield* new SshPairingError({
       message: "SSH pairing command returned an invalid credential.",
-      stdout: result.stdout,
+      stdout: "",
     });
   }
   yield* Effect.logDebug("ssh.remoteServer.pairingToken.created", {
@@ -1016,6 +1214,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "-N",
     "-L",
     `${input.localPort}:127.0.0.1:${input.remotePort}`,
+    "--",
     hostSpec,
   ];
   const sshCommand = yield* resolveSshCommand;
@@ -1196,36 +1395,64 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     Deferred.Deferred<SshTunnelEntry, SshEnvironmentEffectError>
   >();
   const authSecrets = new Map<string, string>();
-  const targetResolutionLocks = new Map<string, Semaphore.Semaphore>();
-  const tunnelMutationLocks = new Map<string, Semaphore.Semaphore>();
+  const sshEnsureSemaphore = Semaphore.makeUnsafe(4);
+  const targetResolutionLocks = new Map<
+    string,
+    { readonly semaphore: Semaphore.Semaphore; users: number }
+  >();
+  const tunnelMutationLocks = new Map<
+    string,
+    { readonly semaphore: Semaphore.Semaphore; users: number }
+  >();
   const tunnelKeysByTarget = new Map<string, string>();
   const resolvedTargetsByTunnelKey = new Map<string, DesktopSshEnvironmentTarget>();
   const stoppedRemoteEntries = new WeakSet<SshTunnelEntry>();
-  const remoteStopRequiredTargets = new Map<string, DesktopSshEnvironmentTarget>();
+  const remoteStopRequiredTargets = new Map<string, Map<string, DesktopSshEnvironmentTarget>>();
+
+  const rememberRequiredRemoteStop = (key: string, target: DesktopSshEnvironmentTarget): void => {
+    const targets = remoteStopRequiredTargets.get(key) ?? new Map();
+    targets.set(remoteStateKey(target), target);
+    remoteStopRequiredTargets.set(key, targets);
+  };
+
+  const forgetRequiredRemoteStop = (key: string, target: DesktopSshEnvironmentTarget): void => {
+    const targets = remoteStopRequiredTargets.get(key);
+    if (targets === undefined) {
+      return;
+    }
+    targets.delete(remoteStateKey(target));
+    if (targets.size === 0) {
+      remoteStopRequiredTargets.delete(key);
+    }
+  };
+  const withKeyedLock = <A, E, R>(
+    locks: Map<string, { readonly semaphore: Semaphore.Semaphore; users: number }>,
+    key: string,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    Effect.suspend(() => {
+      const lock = locks.get(key) ?? { semaphore: Semaphore.makeUnsafe(1), users: 0 };
+      lock.users += 1;
+      locks.set(key, lock);
+      return lock.semaphore.withPermit(effect).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            lock.users -= 1;
+            if (lock.users === 0 && locks.get(key) === lock) {
+              locks.delete(key);
+            }
+          }),
+        ),
+      );
+    });
   const withTargetResolutionLock = <A, E, R>(
     key: string,
     effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E, R> => {
-    const existing = targetResolutionLocks.get(key);
-    if (existing !== undefined) {
-      return existing.withPermit(effect);
-    }
-    const lock = Semaphore.makeUnsafe(1);
-    targetResolutionLocks.set(key, lock);
-    return lock.withPermit(effect);
-  };
+  ): Effect.Effect<A, E, R> => withKeyedLock(targetResolutionLocks, key, effect);
   const withTunnelMutationLock = <A, E, R>(
     key: string,
     effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E, R> => {
-    const existing = tunnelMutationLocks.get(key);
-    if (existing !== undefined) {
-      return existing.withPermit(effect);
-    }
-    const lock = Semaphore.makeUnsafe(1);
-    tunnelMutationLocks.set(key, lock);
-    return lock.withPermit(effect);
-  };
+  ): Effect.Effect<A, E, R> => withKeyedLock(tunnelMutationLocks, key, effect);
   const withTunnelMutationLocks = <A, E, R>(
     keys: ReadonlyArray<string>,
     effect: Effect.Effect<A, E, R>,
@@ -1434,12 +1661,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     }).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
-          remoteStopRequiredTargets.delete(key);
+          forgetRequiredRemoteStop(key, target);
         }),
       ),
       Effect.tapError(() =>
         Effect.sync(() => {
-          remoteStopRequiredTargets.set(key, target);
+          rememberRequiredRemoteStop(key, target);
         }),
       ),
     );
@@ -1476,11 +1703,22 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     const entry = tunnels.get(key) ?? null;
     const trackedTarget = entry?.target ?? resolvedTargetsByTunnelKey.get(key);
     const cleanupTarget = trackedTarget ?? fallbackTarget;
+    const stoppedRequiredStateKeys = new Set<string>();
     if (entry !== null) {
       yield* stopAndCloseTunnelEntry(entry);
     }
     yield* cancelPendingTunnelEntry(key, cleanupTarget);
-    if (entry === null && (trackedTarget !== undefined || stopFallbackTarget)) {
+    if (entry === null) {
+      for (const requiredTarget of remoteStopRequiredTargets.get(key)?.values() ?? []) {
+        yield* stopRemoteForKey(key, requiredTarget);
+        stoppedRequiredStateKeys.add(remoteStateKey(requiredTarget));
+      }
+    }
+    if (
+      entry === null &&
+      (trackedTarget !== undefined || stopFallbackTarget) &&
+      !stoppedRequiredStateKeys.has(remoteStateKey(cleanupTarget))
+    ) {
       yield* stopRemoteForKey(key, cleanupTarget);
     }
     forgetTunnelTargetKeys(key);
@@ -1589,12 +1827,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
                   Effect.provideService(Path.Path, pathService),
                   Effect.tap(() =>
                     Effect.sync(() => {
-                      remoteStopRequiredTargets.delete(tunnelEntry.key);
+                      forgetRequiredRemoteStop(tunnelEntry.key, tunnelEntry.target);
                     }),
                   ),
                   Effect.tapError(() =>
                     Effect.sync(() => {
-                      remoteStopRequiredTargets.set(tunnelEntry.key, tunnelEntry.target);
+                      rememberRequiredRemoteStop(tunnelEntry.key, tunnelEntry.target);
                     }),
                   ),
                 ),
@@ -1693,8 +1931,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       return yield* ensureTunnelEntry(key, resolvedTarget, runner);
     }
 
-    const remoteStopRequiredTarget = remoteStopRequiredTargets.get(key);
-    if (remoteStopRequiredTarget !== undefined) {
+    for (const remoteStopRequiredTarget of remoteStopRequiredTargets.get(key)?.values() ?? []) {
       yield* stopRemoteForKey(key, remoteStopRequiredTarget);
     }
 
@@ -1738,87 +1975,89 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     const requestedTargetKey = (target.alias || target.hostname).trim();
     return yield* withTargetResolutionLock(
       requestedTargetKey,
-      Effect.gen(function* () {
-        const baseResolved = yield* resolveSshTarget(
-          target.alias || target.hostname,
-          target.environmentVariables,
-          { username: target.username, port: target.port },
-        );
-        const resolvedTarget: DesktopSshEnvironmentTarget = {
-          ...baseResolved,
-          ...(target.username !== null ? { username: target.username } : {}),
-          ...(target.port !== null ? { port: target.port } : {}),
-          ...(target.environmentVariables === undefined
-            ? {}
-            : { environmentVariables: target.environmentVariables }),
-        };
-        const { key, requestedKey, resolvedKey, conflictingKeys } = resolveTunnelKey(
-          target,
-          resolvedTarget,
-        );
-        return yield* withTunnelMutationLocks(
-          [key, ...conflictingKeys],
-          Effect.gen(function* () {
-            yield* Effect.forEach(
-              conflictingKeys,
-              (conflictingKey) => {
-                const isStillMapped =
-                  tunnelKeysByTarget.get(requestedKey) === conflictingKey ||
-                  tunnelKeysByTarget.get(resolvedKey) === conflictingKey;
-                return isStillMapped
-                  ? cleanupTunnelKey(conflictingKey, resolvedTarget)
-                  : Effect.void;
-              },
-              { discard: true },
-            );
-            rememberTunnelTargetKeys(key, requestedKey, resolvedKey, resolvedTarget);
-            yield* Effect.logDebug("ssh.environment.target.resolved", {
-              ...sshTargetLogFields(resolvedTarget),
-              key,
-            });
-            const packageSpec = options.resolveCliPackageSpec?.();
-            const runner =
-              options.resolveCliRunner === undefined
-                ? packageSpec === undefined
-                  ? undefined
-                  : { packageSpec }
-                : yield* options.resolveCliRunner;
-            yield* Effect.logDebug("ssh.environment.runner.resolved", {
-              ...sshTargetLogFields(resolvedTarget),
-              ...sshRunnerLogFields(runner),
-              key,
-            });
-            const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
+      sshEnsureSemaphore.withPermit(
+        Effect.gen(function* () {
+          const baseResolved = yield* resolveSshTarget(
+            target.alias || target.hostname,
+            target.environmentVariables,
+            { username: target.username, port: target.port },
+          );
+          const resolvedTarget: DesktopSshEnvironmentTarget = {
+            ...baseResolved,
+            ...(target.username !== null ? { username: target.username } : {}),
+            ...(target.port !== null ? { port: target.port } : {}),
+            ...(target.environmentVariables === undefined
+              ? {}
+              : { environmentVariables: target.environmentVariables }),
+          };
+          const { key, requestedKey, resolvedKey, conflictingKeys } = resolveTunnelKey(
+            target,
+            resolvedTarget,
+          );
+          return yield* withTunnelMutationLocks(
+            [key, ...conflictingKeys],
+            Effect.gen(function* () {
+              yield* Effect.forEach(
+                conflictingKeys,
+                (conflictingKey) => {
+                  const isStillMapped =
+                    tunnelKeysByTarget.get(requestedKey) === conflictingKey ||
+                    tunnelKeysByTarget.get(resolvedKey) === conflictingKey;
+                  return isStillMapped
+                    ? cleanupTunnelKey(conflictingKey, resolvedTarget)
+                    : Effect.void;
+                },
+                { discard: true },
+              );
+              rememberTunnelTargetKeys(key, requestedKey, resolvedKey, resolvedTarget);
+              yield* Effect.logDebug("ssh.environment.target.resolved", {
+                ...sshTargetLogFields(resolvedTarget),
+                key,
+              });
+              const packageSpec = options.resolveCliPackageSpec?.();
+              const runner =
+                options.resolveCliRunner === undefined
+                  ? packageSpec === undefined
+                    ? undefined
+                    : { packageSpec }
+                  : yield* options.resolveCliRunner;
+              yield* Effect.logDebug("ssh.environment.runner.resolved", {
+                ...sshTargetLogFields(resolvedTarget),
+                ...sshRunnerLogFields(runner),
+                key,
+              });
+              const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
 
-            const pairingResult = requestOptions?.issuePairingToken
-              ? yield* runWithSshAuth({
-                  key,
-                  target: entry.target,
-                  operation: (authOptions) =>
-                    issueRemotePairingToken(entry.target, authOptions, runner),
-                })
-              : null;
-            const pairingToken = pairingResult?.credential ?? null;
+              const pairingResult = requestOptions?.issuePairingToken
+                ? yield* runWithSshAuth({
+                    key,
+                    target: entry.target,
+                    operation: (authOptions) =>
+                      issueRemotePairingToken(entry.target, authOptions, runner),
+                  })
+                : null;
+              const pairingToken = pairingResult?.credential ?? null;
 
-            yield* Effect.logInfo("ssh.environment.ensure.succeeded", {
-              ...sshTargetLogFields(entry.target),
-              key,
-              localPort: entry.localPort,
-              remotePort: entry.remotePort,
-              remoteServerKind: entry.remoteServerKind,
-              issuedPairingToken: pairingToken !== null,
-            });
-            return {
-              target: entry.target,
-              httpBaseUrl: entry.httpBaseUrl,
-              wsBaseUrl: entry.wsBaseUrl,
-              pairingToken,
-              remotePort: entry.remotePort,
-              ...(entry.remoteServerKind ? { remoteServerKind: entry.remoteServerKind } : {}),
-            };
-          }),
-        );
-      }),
+              yield* Effect.logInfo("ssh.environment.ensure.succeeded", {
+                ...sshTargetLogFields(entry.target),
+                key,
+                localPort: entry.localPort,
+                remotePort: entry.remotePort,
+                remoteServerKind: entry.remoteServerKind,
+                issuedPairingToken: pairingToken !== null,
+              });
+              return {
+                target: entry.target,
+                httpBaseUrl: entry.httpBaseUrl,
+                wsBaseUrl: entry.wsBaseUrl,
+                pairingToken,
+                remotePort: entry.remotePort,
+                ...(entry.remoteServerKind ? { remoteServerKind: entry.remoteServerKind } : {}),
+              };
+            }),
+          );
+        }),
+      ),
     );
   });
 

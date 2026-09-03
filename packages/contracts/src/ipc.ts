@@ -87,7 +87,7 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
-import { EnvironmentId } from "./baseSchemas.ts";
+import { EnvironmentId, PortSchema } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
   BrowserImportResult,
@@ -411,11 +411,26 @@ export const DesktopSshEnvironmentVariablesSchema = Schema.Record(
 );
 export type DesktopSshEnvironmentVariables = typeof DesktopSshEnvironmentVariablesSchema.Type;
 
+const DesktopSshHostTextSchema = Schema.String.check(
+  Schema.isMaxLength(1_024),
+  Schema.makeFilter((value) =>
+    value.trim().length > 0 && !value.trimStart().startsWith("-")
+      ? undefined
+      : "SSH hosts must be non-empty and cannot begin with a hyphen",
+  ),
+);
+const DesktopSshUsernameSchema = Schema.String.check(
+  Schema.isMaxLength(256),
+  Schema.makeFilter((value) =>
+    /^[A-Za-z0-9._\\-]+$/u.test(value) ? undefined : "Invalid SSH username",
+  ),
+);
+
 export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
-  alias: Schema.String,
-  hostname: Schema.String,
-  username: Schema.NullOr(Schema.String),
-  port: Schema.NullOr(Schema.Number),
+  alias: DesktopSshHostTextSchema,
+  hostname: DesktopSshHostTextSchema,
+  username: Schema.NullOr(DesktopSshUsernameSchema),
+  port: Schema.NullOr(PortSchema),
   environmentVariables: Schema.optionalKey(DesktopSshEnvironmentVariablesSchema),
 });
 export type DesktopSshEnvironmentTarget = typeof DesktopSshEnvironmentTargetSchema.Type;

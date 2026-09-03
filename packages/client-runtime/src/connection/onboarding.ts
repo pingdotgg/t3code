@@ -26,6 +26,7 @@ import { mapRemoteEnvironmentError } from "./errors.ts";
 import {
   BearerConnectionTarget,
   ConnectionBlockedError,
+  ConnectionTransientError,
   SshConnectionTarget,
   type ConnectionAttemptError,
 } from "./model.ts";
@@ -321,13 +322,55 @@ export const updateSshEnvironmentVariables = Effect.fn(
         target,
       })
       .pipe(Effect.asVoid);
-  const restorePreviousTarget = prepareTarget(previousProfile.target);
+  let restoreError: ConnectionAttemptError | null = null;
+  const restorePreviousTarget = prepareTarget(previousProfile.target).pipe(
+    Effect.catch((error) =>
+      Effect.sync(() => {
+        restoreError = error;
+      }).pipe(
+        Effect.andThen(
+          Effect.logWarning("Could not restore the previous SSH environment after save failed.", {
+            environmentId: input.environmentId,
+            error,
+          }),
+        ),
+      ),
+    ),
+  );
   yield* registry
     .registerIfCurrent(entry, registration, {
       beforeRegister: prepareTarget(registration.profile.target),
       onFailure: restorePreviousTarget,
     })
     .pipe(
+      Effect.mapError((error) => {
+        if (restoreError === null) {
+          return error;
+        }
+        const recovery =
+          "The saved settings are unchanged, but the previous SSH runtime could not be restored. Disconnect and reconnect this environment before continuing.";
+        switch (error._tag) {
+          case "ConnectionPersistenceError":
+            return new Persistence.ConnectionPersistenceError({
+              operation: error.operation,
+              message: `${error.message} ${recovery}`,
+            });
+          case "ConnectionBlockedError":
+            return new ConnectionBlockedError({
+              reason: error.reason,
+              detail: `${error.detail} ${recovery}`,
+              ...(error.traceId === undefined ? {} : { traceId: error.traceId }),
+            });
+          case "ConnectionTransientError":
+            return new ConnectionTransientError({
+              reason: error.reason,
+              detail: `${error.detail} ${recovery}`,
+              ...(error.traceId === undefined ? {} : { traceId: error.traceId }),
+            });
+          case "EnvironmentNotRegisteredError":
+            return error;
+        }
+      }),
       Effect.catchTags({
         EnvironmentNotRegisteredError: () =>
           new ConnectionBlockedError({

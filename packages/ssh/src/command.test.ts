@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -262,6 +263,34 @@ describe("ssh command", () => {
     }).pipe(Effect.provide(processLayer));
   });
 
+  it.effect("terminates SSH options before the host argument", () => {
+    let spawnedArgs: ReadonlyArray<string> = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      spawnedArgs = command._tag === "StandardCommand" ? command.args : [];
+      return Effect.succeed(makeSuccessfulProcess(""));
+    });
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      yield* runSshCommand(
+        {
+          alias: "-oProxyCommand=bad",
+          hostname: "ignored.example.com",
+          username: null,
+          port: null,
+        },
+        { remoteCommandArgs: ["true"] },
+      );
+
+      const separatorIndex = spawnedArgs.indexOf("--");
+      assert.isAtLeast(separatorIndex, 0);
+      assert.equal(spawnedArgs[separatorIndex + 1], "-oProxyCommand=bad");
+    }).pipe(Effect.provide(processLayer));
+  });
+
   it.effect("validates SendEnv before resolving SSH config with the forwarded variables", () => {
     const spawnedEnvironments: Array<Readonly<Record<string, string | undefined>> | undefined> = [];
     const spawner = ChildProcessSpawner.make((command) => {
@@ -294,6 +323,38 @@ describe("ssh command", () => {
         port: 2222,
         environmentVariables: { TOKEN: "forwarded-value" },
       });
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("removes ambient managed values from baseline SSH config probes", () => {
+    const probeValues = new Array<string | undefined>();
+    const spawner = ChildProcessSpawner.make((command) => {
+      const environment = command._tag === "StandardCommand" ? command.options.env : undefined;
+      probeValues.push(environment?.TOKEN);
+      const sendEnvironment = environment?.TOKEN !== "ambient-blocked";
+      return Effect.succeed(
+        makeSuccessfulProcess(
+          [
+            "hostname devbox.example.com",
+            "user julius",
+            "port 2222",
+            ...(sendEnvironment ? ["sendenv TOKEN"] : []),
+            "",
+          ].join("\n"),
+        ),
+      );
+    });
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HostProcessEnvironment, { TOKEN: "ambient-blocked" }),
+    );
+
+    return Effect.gen(function* () {
+      const target = yield* resolveSshTarget("devbox", { TOKEN: "saved-allowed" });
+
+      assert.deepEqual(probeValues, [undefined, undefined, "saved-allowed"]);
+      assert.equal(target.environmentVariables?.TOKEN, "saved-allowed");
     }).pipe(Effect.provide(processLayer));
   });
 

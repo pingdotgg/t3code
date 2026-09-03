@@ -75,7 +75,7 @@ export class EnvironmentRegistry extends Context.Service<
       registration: ConnectionRegistration,
       options?: {
         readonly beforeRegister?: Effect.Effect<void, ConnectionAttemptError>;
-        readonly onFailure?: Effect.Effect<void, ConnectionAttemptError>;
+        readonly onFailure?: Effect.Effect<void>;
       },
     ) => Effect.Effect<
       void,
@@ -446,7 +446,7 @@ export const make = Effect.gen(function* () {
     registration: ConnectionRegistration,
     options?: {
       readonly beforeRegister?: Effect.Effect<void, ConnectionAttemptError>;
-      readonly onFailure?: Effect.Effect<void, ConnectionAttemptError>;
+      readonly onFailure?: Effect.Effect<void>;
     },
   ) {
     const environmentId = registration.target.environmentId;

@@ -38,6 +38,7 @@ export interface SshCommandResult {
 export interface RunSshCommandOptions extends SshAuthOptions {
   readonly preHostArgs?: ReadonlyArray<string>;
   readonly remoteCommandArgs?: ReadonlyArray<string>;
+  readonly unsetEnvironmentVariables?: ReadonlyArray<string>;
   readonly stdin?: string;
   readonly timeoutMs?: number;
 }
@@ -258,6 +259,9 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
   const hostSpec = yield* buildSshHostSpecEffect(target);
   const environment = yield* buildSshChildEnvironment({
     ...(target.environmentVariables === undefined ? {} : { baseEnv: target.environmentVariables }),
+    ...(input.unsetEnvironmentVariables === undefined
+      ? {}
+      : { unsetEnv: input.unsetEnvironmentVariables }),
     ...(input.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
     ...(input.authSecret === undefined ? {} : { authSecret: input.authSecret }),
   }).pipe(
@@ -277,6 +281,7 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
       batchMode: input.batchMode ?? (input.interactiveAuth ? "no" : "yes"),
     }),
     ...(input.preHostArgs ?? []),
+    "--",
     hostSpec,
     ...(input.remoteCommandArgs ?? []),
   ];
@@ -423,7 +428,11 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
     username: overrides?.username ?? null,
     port: overrides?.port ?? null,
   };
-  const identityResult = yield* runSshCommand(unresolvedTarget, { preHostArgs: ["-G"] }).pipe(
+  const managedEnvironmentNames = Object.keys(environmentVariables ?? {});
+  const identityResult = yield* runSshCommand(unresolvedTarget, {
+    preHostArgs: ["-G"],
+    unsetEnvironmentVariables: managedEnvironmentNames,
+  }).pipe(
     Effect.catch((cause) =>
       environmentVariables === undefined
         ? Effect.logDebug("ssh.target.resolve.fallback", { alias: trimmedAlias, cause }).pipe(
@@ -449,6 +458,7 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
     const baselineResult = yield* runSshCommand(unresolvedTarget, {
       preHostArgs: ["-G"],
       remoteCommandArgs: managedRemoteCommand,
+      unsetEnvironmentVariables: managedEnvironmentNames,
     });
     const unsupportedBaselineNames = unsupportedSshEnvironmentNames(
       environmentVariables,
