@@ -17,6 +17,10 @@ const SAFE_AREA_BOTTOM_IDENTIFIERS = new Set(["SafeAreaView", "bottomInset"]);
 const INSET_HOLDER_NAMES = new Set(["insets", "safeAreaInsets"]);
 const SCROLL_CONTENT_ATTRIBUTES = new Set(["contentContainerStyle", "contentInset"]);
 const SCROLL_BOTTOM_PROPERTIES = new Set(["bottom", "paddingBottom"]);
+// A scroll view sized inline (`style={{ maxHeight: 88 }}`) is a widget inside
+// the layout, not the screen's primary scroller, so its bottom padding is
+// internal spacing and never meets the screen edge.
+const INLINE_SCROLL_SIZE_PROPERTIES = new Set(["height", "maxHeight"]);
 
 const getLiteralValue = (node: unknown): Option.Option<string | number> => {
   if (typeof node !== "object" || node === null) return Option.none();
@@ -185,16 +189,35 @@ export default defineRule({
           candidates.push({ node: bottom.value, componentId: currentComponentId });
         }
       },
-      JSXAttribute(node) {
-        const name = getJsxAttributeName(node);
-        if (Option.isNone(name) || !SCROLL_CONTENT_ATTRIBUTES.has(name.value)) return;
+      JSXOpeningElement(node) {
+        const attributes = Array.isArray(node.attributes) ? node.attributes : [];
+        const attributeProperties = new Map<string, ReadonlyArray<unknown>>();
+        for (const attribute of attributes) {
+          const name = getJsxAttributeName(attribute);
+          if (Option.isNone(name)) continue;
+          attributeProperties.set(
+            name.value,
+            getObjectProperties(getJsxAttributeExpression(attribute)),
+          );
+        }
 
-        const properties = getObjectProperties(getJsxAttributeExpression(node));
-        for (const propertyName of SCROLL_BOTTOM_PROPERTIES) {
-          const property = findProperty(properties, propertyName);
-          if (Option.isNone(property)) continue;
-          if (Option.isSome(getLiteralValue(property.value.value))) {
-            candidates.push({ node: property.value, componentId: currentComponentId });
+        const style = attributeProperties.get("style") ?? [];
+        for (const propertyName of INLINE_SCROLL_SIZE_PROPERTIES) {
+          const property = findProperty(style, propertyName);
+          if (Option.isSome(property) && Option.isSome(getLiteralValue(property.value.value))) {
+            return;
+          }
+        }
+
+        for (const attributeName of SCROLL_CONTENT_ATTRIBUTES) {
+          const properties = attributeProperties.get(attributeName);
+          if (properties === undefined) continue;
+          for (const propertyName of SCROLL_BOTTOM_PROPERTIES) {
+            const property = findProperty(properties, propertyName);
+            if (Option.isNone(property)) continue;
+            if (Option.isSome(getLiteralValue(property.value.value))) {
+              candidates.push({ node: property.value, componentId: currentComponentId });
+            }
           }
         }
       },

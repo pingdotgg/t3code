@@ -85,6 +85,24 @@ describe("t3code/require-bottom-safe-area-inset", () => {
     `,
   );
 
+  rule.valid(
+    "allows an inline scroll view bounded by an explicit height",
+    `
+      import { ScrollView, Text } from "react-native";
+
+      export function Caption(props: { readonly source: string }) {
+        return (
+          <ScrollView
+            style={{ maxHeight: 88, flexGrow: 0 }}
+            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 8 }}
+          >
+            <Text>{props.source}</Text>
+          </ScrollView>
+        );
+      }
+    `,
+  );
+
   rule.invalid(
     "reports a component that ignores the inset even when a sibling component reads it",
     `
