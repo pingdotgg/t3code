@@ -391,6 +391,46 @@ describe("Antigravity stdout compatibility", () => {
 });
 
 describe("Antigravity stderr compatibility", () => {
+  it.effect("forwards fragmented native sign-in URLs from runtime 1.1.1", () =>
+    Effect.gen(function* () {
+      const urls: string[] = [];
+      const line = `${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\r\n`;
+      const handleStderr = makeAntigravityStderrHandler({
+        onAuthorizationUrl: (url) => Effect.sync(() => void urls.push(url)),
+      });
+      yield* handleStderr(`native log\n${line.slice(0, 40)}`);
+      yield* handleStderr(line.slice(40, 90));
+      yield* handleStderr(`${line.slice(90)}another native log\n`);
+      expect(urls).toEqual([authorizationUrl]);
+    }),
+  );
+
+  it.effect("rejects interactive sign-in during normal work", () =>
+    Effect.gen(function* () {
+      const handleStderr = makeAntigravityStderrHandler();
+      const error = yield* handleStderr(
+        `${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\n`,
+      ).pipe(Effect.flip);
+      expect(isAntigravitySignInRequiredError(error)).toBe(true);
+    }),
+  );
+
+  it.effect("preserves failures from the sign-in flow owner", () =>
+    Effect.gen(function* () {
+      const failure = new AcpErrors.AcpTransportError({
+        detail: "The sign-in flow stopped.",
+        cause: undefined,
+      });
+      const handleStderr = makeAntigravityStderrHandler({
+        onAuthorizationUrl: () => Effect.fail(failure),
+      });
+      const error = yield* handleStderr(
+        `${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\n`,
+      ).pipe(Effect.flip);
+      expect(error).toBe(failure);
+    }),
+  );
+
   it.effect("forwards an accepted browser-helper URL larger than 8 KiB", () =>
     Effect.gen(function* () {
       const urls: string[] = [];
@@ -438,6 +478,8 @@ describe("Antigravity stderr compatibility", () => {
       yield* handleStderr(
         `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson("https://example.com")}\n`,
       );
+      yield* handleStderr(`${ANTIGRAVITY_AUTH_STDOUT_PREFIX}https://example.com\n`);
+      yield* handleStderr(` ${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\n`);
 
       expect(urls).toEqual([]);
     }),

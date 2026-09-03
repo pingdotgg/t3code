@@ -102,8 +102,8 @@ export interface AcpSessionRuntimeOptions {
   readonly transformSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
-  /** Receives bounded stderr chunks. The provider must redact any secrets before logging. */
-  readonly onStderr?: (text: string) => Effect.Effect<void, never>;
+  /** Receives bounded stderr chunks. Redact secrets before logging. A failure closes the runtime. */
+  readonly onStderr?: (text: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -353,6 +353,7 @@ export const make = (
       Option.none(),
     );
     const stoppingRef = yield* Ref.make(false);
+    const stderrFailure = yield* Deferred.make<never, EffectAcpErrors.AcpError>();
     const runtimeClosed = yield* Deferred.make<void>();
     const promptSerializationSemaphore = yield* Semaphore.make(1);
     const promptDispatchSemaphore = yield* Semaphore.make(1);
@@ -400,7 +401,10 @@ export const make = (
     ): Effect.Effect<A, EffectAcpErrors.AcpError> =>
       logRequest({ method, payload, status: "started" }).pipe(
         Effect.flatMap(() =>
-          effect.pipe(
+          (options.onStderr
+            ? Effect.raceFirst(effect, Deferred.await(stderrFailure))
+            : effect
+          ).pipe(
             Effect.tap((result) =>
               logRequest({
                 method,
@@ -448,7 +452,18 @@ export const make = (
     yield* child.stderr.pipe(
       Stream.decodeText(),
       Stream.runForEach((chunk) =>
-        options.onStderr ? options.onStderr(chunk.slice(-maxStderrChunkLength)) : Effect.void,
+        (options.onStderr
+          ? options.onStderr(chunk.slice(-maxStderrChunkLength))
+          : Effect.void
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.gen(function* () {
+              yield* Deferred.fail(stderrFailure, error);
+              yield* recordTermination(error);
+              yield* child.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore);
+            }),
+          ),
+        ),
       ),
       Effect.ignore,
       Effect.forkIn(runtimeScope),
