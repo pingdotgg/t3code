@@ -39,8 +39,24 @@ jobs:
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-          cache: true
-          run-install: true
+          cache: false
+          run-install: false
+
+      # Filtered installs use other keys so they cannot populate this full-workspace cache.
+      - name: Resolve pnpm store path
+        id: pnpm_store
+        run: echo "path=$(vp pm cache dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache full pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.pnpm_store.outputs.path }}
+          key: pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
+          restore-keys: |
+            pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install dependencies
+        run: vp install
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
@@ -79,8 +95,24 @@ jobs:
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-          cache: true
-          run-install: true
+          cache: false
+          run-install: false
+
+      # Filtered installs use other keys so they cannot populate this full-workspace cache.
+      - name: Resolve pnpm store path
+        id: pnpm_store
+        run: echo "path=$(vp pm cache dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache full pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.pnpm_store.outputs.path }}
+          key: pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
+          restore-keys: |
+            pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install dependencies
+        run: vp install
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
@@ -114,7 +146,11 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: true
+          run-install: |
+            args:
+              - --filter=t3...
+              # ActivityPayloadProjection.test.ts imports mobile code and needs Expo's tsconfig.
+              - --filter=@t3tools/mobile...
 
       # No Electron setup here: `t3` (apps/server) has no Electron dependency
       # and none of its tests touch the runtime. Only the non-server `test`

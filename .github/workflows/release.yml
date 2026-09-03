@@ -110,7 +110,9 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
 
       - id: release_meta
         name: Resolve release version
@@ -194,8 +196,25 @@ jobs:
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-          cache: true
-          run-install: true
+          cache: false
+          run-install: false
+
+      - name: Resolve pnpm store path
+        id: pnpm_store
+        run: echo "path=$(vp pm cache dir)" >> "$GITHUB_OUTPUT"
+
+      # setup-vp's cache key does not include install filters. Keep full installs
+      # separate so a filtered exact hit cannot leave this job downloading the rest.
+      - name: Cache full pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.pnpm_store.outputs.path }}
+          key: pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
+          restore-keys: |
+            pnpm-full-v1-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install dependencies
+        run: vp install
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
@@ -663,6 +682,13 @@ jobs:
 
           vp run dist:desktop:artifact "${args[@]}"
 
+      # The Linux build already produces the same server/web bundle that npm
+      # publishes. Preserve file modes inside a tarball and reuse it after the
+      # full build matrix and release checks pass.
+      - name: Archive CLI build
+        if: matrix.platform == 'linux'
+        run: tar -czf "$RUNNER_TEMP/t3-cli-dist.tar.gz" -C apps/server dist
+
       - name: Collect release assets
         shell: bash
         run: |
@@ -720,6 +746,17 @@ jobs:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: release-publish/*
           if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload CLI build
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-dist-linux-x64
+          path: ${{ runner.temp }}/t3-cli-dist.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
 
       - name: Upload resource monitor
         uses: actions/upload-artifact@v7
@@ -780,10 +817,14 @@ jobs:
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
 
-      # The t3 build task depends on @t3tools/web#build, so the web client is
-      # built (once) as part of this step.
-      - name: Build CLI package
-        run: vp run --filter t3 build
+      - name: Download CLI build
+        uses: actions/download-artifact@v8
+        with:
+          name: cli-dist-linux-x64
+          path: ${{ runner.temp }}/cli-dist
+
+      - name: Restore CLI build
+        run: tar -xzf "$RUNNER_TEMP/cli-dist/t3-cli-dist.tar.gz" -C apps/server
 
       - name: Download resource monitors
         uses: actions/download-artifact@v8
