@@ -48,6 +48,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeProjectResolver, UsageAggregator } from "./usageAggregation.ts";
+import { dedicatedUsageWorktreePath } from "./usagePaths.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -311,7 +312,7 @@ export const make = Effect.gen(function* () {
       }),
       { concurrency: 8 },
     );
-    return makeProjectResolver(projectRoots.flat(), path.sep);
+    return makeProjectResolver(projectRoots.flat());
   });
 
   /**
@@ -657,10 +658,10 @@ export const make = Effect.gen(function* () {
       for (const thread of threads) {
         const title = thread.title.trim();
         if (title.length > 0) titles.set(thread.threadId, title);
-        const worktree = thread.worktreePath?.trim() ?? "";
+        const worktree = dedicatedUsageWorktreePath(project.workspaceRoot, thread.worktreePath);
         // The project root is not a dedicated worktree: interactive sessions
         // run there too, and several threads usually share it.
-        if (worktree.length === 0 || worktree === project.workspaceRoot) continue;
+        if (worktree === null) continue;
         const ref: ThreadRef = { threadId: thread.threadId, title: title || thread.threadId };
         const claim = worktreeClaims.get(worktree);
         if (claim === undefined) worktreeClaims.set(worktree, { ref, shared: false });

@@ -327,36 +327,33 @@ describe("makeProjectResolver", () => {
   const legacyDeletedId = ProjectId.make("project-legacy-deleted");
   const legacyId = ProjectId.make("project-legacy");
   const untitledId = ProjectId.make("project-untitled");
-  const resolver = makeProjectResolver(
-    [
-      { projectId: appId, workspaceRoot: "/work/app", title: "App", deleted: false },
-      {
-        projectId: vendoredId,
-        workspaceRoot: "/work/app/vendored",
-        title: "Vendored",
-        deleted: false,
-      },
-      {
-        projectId: legacyDeletedId,
-        workspaceRoot: "/work/legacy",
-        title: "Legacy Was Deleted",
-        deleted: true,
-      },
-      {
-        projectId: legacyId,
-        workspaceRoot: "/work/legacy",
-        title: "Legacy",
-        deleted: false,
-      },
-      {
-        projectId: untitledId,
-        workspaceRoot: "/work/untitled",
-        title: "   ",
-        deleted: false,
-      },
-    ],
-    "/",
-  );
+  const resolver = makeProjectResolver([
+    { projectId: appId, workspaceRoot: "/work/app", title: "App", deleted: false },
+    {
+      projectId: vendoredId,
+      workspaceRoot: "/work/app/vendored",
+      title: "Vendored",
+      deleted: false,
+    },
+    {
+      projectId: legacyDeletedId,
+      workspaceRoot: "/work/legacy",
+      title: "Legacy Was Deleted",
+      deleted: true,
+    },
+    {
+      projectId: legacyId,
+      workspaceRoot: "/work/legacy",
+      title: "Legacy",
+      deleted: false,
+    },
+    {
+      projectId: untitledId,
+      workspaceRoot: "/work/untitled",
+      title: "   ",
+      deleted: false,
+    },
+  ]);
 
   it("matches the root itself and any path under it", () => {
     expect(resolver("/work/app")).toEqual({ projectId: appId, title: "App" });
@@ -385,11 +382,15 @@ describe("makeProjectResolver", () => {
 
   it("matches descendants when the project root is the filesystem root", () => {
     const rootId = ProjectId.make("project-root");
-    const rootResolver = makeProjectResolver(
-      [{ projectId: rootId, workspaceRoot: "/", title: "Root", deleted: false }],
-      "/",
-    );
+    const rootResolver = makeProjectResolver([
+      { projectId: rootId, workspaceRoot: "/", title: "Root", deleted: false },
+    ]);
 
     expect(rootResolver("/work/app")).toEqual({ projectId: rootId, title: "Root" });
+  });
+
+  it("matches mixed slash styles and normalized segments", () => {
+    expect(resolver("\\work\\app\\src")).toEqual({ projectId: appId, title: "App" });
+    expect(resolver("/work/app/other/../src")).toEqual({ projectId: appId, title: "App" });
   });
 });

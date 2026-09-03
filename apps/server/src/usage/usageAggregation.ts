@@ -20,6 +20,7 @@ import type {
   UsageTokenTotals,
 } from "@t3tools/contracts";
 
+import { normalizeUsagePath } from "./usagePaths.ts";
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
 import { cacheSavingsUsd, cacheWriteUsd, priceUsage, type RateTable } from "./usagePricing.ts";
 
@@ -75,15 +76,11 @@ export interface ProjectAttribution {
  */
 export function makeProjectResolver(
   projects: readonly ProjectRoot[],
-  separator: string,
 ): (cwd: string) => ProjectAttribution | null {
   const roots = projects
     .map((project) => ({
       projectId: project.projectId,
-      root:
-        project.workspaceRoot.length > 1 && project.workspaceRoot.endsWith(separator)
-          ? project.workspaceRoot.slice(0, -1)
-          : project.workspaceRoot,
+      root: project.workspaceRoot.length === 0 ? "" : normalizeUsagePath(project.workspaceRoot),
       title: project.title.trim(),
       deleted: project.deleted,
     }))
@@ -93,18 +90,19 @@ export function makeProjectResolver(
   const byCwd = new Map<string, ProjectAttribution | null>();
   return (cwd) => {
     if (cwd.length === 0) return null;
-    if (byCwd.has(cwd)) return byCwd.get(cwd) ?? null;
+    const normalizedCwd = normalizeUsagePath(cwd);
+    if (byCwd.has(normalizedCwd)) return byCwd.get(normalizedCwd) ?? null;
     let resolved: ProjectAttribution | null = null;
     for (const { projectId, root, title } of roots) {
       if (
-        cwd === root ||
-        (root === separator ? cwd.startsWith(separator) : cwd.startsWith(`${root}${separator}`))
+        normalizedCwd === root ||
+        (root === "/" ? normalizedCwd.startsWith("/") : normalizedCwd.startsWith(`${root}/`))
       ) {
         resolved = { projectId, title };
         break;
       }
     }
-    byCwd.set(cwd, resolved);
+    byCwd.set(normalizedCwd, resolved);
     return resolved;
   };
 }
