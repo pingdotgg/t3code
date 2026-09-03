@@ -197,6 +197,16 @@ export function resolveDraftPromotionNavigationTarget(input: {
   return turnStarted || startupStopped ? input.serverThreadRef : null;
 }
 
+export function resolveBranchAfterEnvModeChange(input: {
+  currentMode: DraftThreadEnvMode;
+  nextMode: DraftThreadEnvMode;
+  currentBranch: string | null;
+}): string | null {
+  return input.currentMode !== "worktree" && input.nextMode === "worktree"
+    ? null
+    : input.currentBranch;
+}
+
 export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {
   const timeoutId = globalThis.setTimeout(showWarning, ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);
   return () => globalThis.clearTimeout(timeoutId);
