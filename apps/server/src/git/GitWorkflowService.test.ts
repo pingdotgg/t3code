@@ -35,8 +35,9 @@ function makeLayer(input: {
 }
 
 describe("GitWorkflowService", () => {
-  it.effect("runs teardown only when the worktree directory exists", () => {
+  it.effect("runs teardown only for an existing worktree and blocks removal on failure", () => {
     const calls: string[] = [];
+    let teardownFails = false;
     const testLayer = GitWorkflowService.layer.pipe(
       Layer.provide(
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
@@ -53,7 +54,17 @@ describe("GitWorkflowService", () => {
       Layer.provide(
         Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, {
           runForThread: () => Effect.succeed({ status: "no-script" as const }),
-          runBeforeWorktreeRemove: () => Effect.sync(() => calls.push("teardown")),
+          runBeforeWorktreeRemove: () =>
+            Effect.gen(function* () {
+              calls.push("teardown");
+              if (teardownFails) {
+                return yield* new ProjectSetupScriptRunner.ProjectSetupScriptOperationError({
+                  worktreePath: process.cwd(),
+                  operation: "runCommand",
+                  exitCode: 1,
+                });
+              }
+            }),
         }),
       ),
     );
@@ -65,7 +76,13 @@ describe("GitWorkflowService", () => {
         cwd: "/repo",
         path: "/path/that/does/not/exist",
       });
-      assert.deepStrictEqual(calls, ["teardown", "remove", "remove"]);
+      teardownFails = true;
+      const error = yield* workflow
+        .removeWorktree({ cwd: "/repo", path: process.cwd() })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({ command: "project teardown script", exitCode: 1 });
+      assert.deepStrictEqual(calls, ["teardown", "remove", "remove", "teardown"]);
     }).pipe(Effect.provide(testLayer));
   });
 
