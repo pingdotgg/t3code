@@ -42,6 +42,7 @@ import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   makeCachedProviderMaintenanceResolution,
+  makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
@@ -55,17 +56,24 @@ import { probeCursorSkills } from "./CursorSkills.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
-// cursor-agent updates itself; run whichever executable the user configured.
+// cursor-agent updates itself, so the resolved executable is its own updater.
+// No executable means nothing to update, not "whatever is on PATH".
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
   resolve: (context) =>
     Effect.succeed(
-      makeProviderMaintenanceCapabilities({
-        provider: DRIVER_KIND,
-        packageName: null,
-        updateExecutable: context?.resolvedCommandPath ?? "cursor-agent",
-        updateArgs: ["update"],
-        updateLockKey: "cursor-agent",
-      }),
+      context
+        ? makeProviderMaintenanceCapabilities({
+            provider: DRIVER_KIND,
+            packageName: null,
+            updateExecutable: context.resolvedCommandPath,
+            updateArgs: ["update"],
+            updateLockKey: "cursor-agent",
+            updateCommand: "cursor-agent update",
+          })
+        : makeManualOnlyProviderMaintenanceCapabilities({
+            provider: DRIVER_KIND,
+            packageName: null,
+          }),
     ),
 };
 

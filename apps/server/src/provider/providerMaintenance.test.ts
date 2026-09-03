@@ -327,6 +327,18 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         executable: "npm",
         args: ["install", "-g", "--prefix", tempDir, expect.any(String), expect.any(String)],
       });
+
+      // The same layout on POSIX is a project checkout, not a global install.
+      const script = NodePath.join(tempDir, "package-tool");
+      writeExecutable(script);
+      const posix = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: script,
+        env: { PATH: "" },
+      }).pipe(
+        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+      );
+      expect(posix.update).toBeNull();
     }),
   );
 

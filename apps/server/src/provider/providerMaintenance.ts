@@ -4,6 +4,7 @@ import {
   type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -431,6 +432,9 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
   if (fromRealPath) {
     return fromRealPath;
   }
+  if ((yield* HostProcessPlatform) !== "win32") {
+    return null;
+  }
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const shimDir = path.dirname(context.resolvedCommandPath);
@@ -440,11 +444,13 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
     ...packageName.split("/"),
     "package.json",
   );
-  const isShim = /\.(?:cmd|bat|ps1)$/i.test(context.resolvedCommandPath);
+  // npm writes both `<cmd>.cmd` and an extensionless sh script into the
+  // Windows prefix; either one sits directly beside `node_modules`. A POSIX
+  // project checkout has the same shape, which is why this is Windows-only.
   const hasManifest = yield* fileSystem
     .exists(manifestPath)
     .pipe(Effect.orElseSucceed(() => false));
-  return isShim && hasManifest ? shimDir : null;
+  return hasManifest ? shimDir : null;
 });
 
 export function makePackageManagedProviderMaintenanceResolver(
