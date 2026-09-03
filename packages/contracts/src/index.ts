@@ -14,6 +14,7 @@ export * from "./provider.ts";
 export * from "./providerInstance.ts";
 export * from "./providerSetup.ts";
 export * from "./providerRuntime.ts";
+export * from "./providerUsageLimits.ts";
 export * from "./model.ts";
 export * from "./keybindings.ts";
 export * from "./server.ts";
