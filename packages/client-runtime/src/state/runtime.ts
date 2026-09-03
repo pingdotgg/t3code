@@ -114,6 +114,11 @@ interface AtomCommandLatestLane {
   pending: AtomCommandLatestBatch | undefined;
 }
 
+interface QueryRetryState {
+  retryFiber: Fiber.Fiber<void, never> | undefined;
+  disposed: boolean;
+}
+
 export interface AtomCommandScheduler {
   readonly schedule: <W, A, E>(
     registry: AtomRegistry.AtomRegistry,
@@ -505,6 +510,9 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   readonly environmentId: EnvironmentIdType;
   readonly input: Input;
 }) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
+  // A family atom is shared by every AtomRegistry. Retry fibers are lifecycle
+  // state, however, so keep one state per registry and per query atom.
+  const retryStates = new WeakMap<AtomRegistry.AtomRegistry, WeakMap<object, QueryRetryState>>();
   const connectionAtom = Atom.family((environmentId: EnvironmentIdType) =>
     runtime.atom(
       followStreamInEnvironment(
@@ -569,8 +577,6 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         Atom.setIdleTTL(idleTtlMs),
       );
     const refreshOnFailureMs = options.refreshOnFailureMs;
-    let retryFiber: Fiber.Fiber<void, never> | undefined;
-    let disposed = false;
     const refreshableQueryAtom =
       refreshOnFailureMs === undefined
         ? queryAtom
@@ -578,26 +584,38 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
             Atom.transform(
               (get) => {
                 const result = get(queryAtom);
-                get.addFinalizer(() => {
-                  disposed = true;
-                  retryFiber?.interruptUnsafe();
-                  retryFiber = undefined;
-                });
-                if (result._tag === "Failure" && retryFiber === undefined) {
-                  disposed = false;
-                  retryFiber = Effect.runFork(
+                let states = retryStates.get(get.registry);
+                if (states === undefined) {
+                  states = new WeakMap();
+                  retryStates.set(get.registry, states);
+                }
+                let state = states.get(queryAtom);
+                if (state === undefined) {
+                  state = { retryFiber: undefined, disposed: false };
+                  states.set(queryAtom, state);
+                  const mountedState = state;
+                  get.addFinalizer(() => {
+                    mountedState.disposed = true;
+                    mountedState.retryFiber?.interruptUnsafe();
+                    mountedState.retryFiber = undefined;
+                    if (states?.get(queryAtom) === mountedState) states.delete(queryAtom);
+                  });
+                }
+                if (result._tag === "Failure" && state.retryFiber === undefined) {
+                  state.disposed = false;
+                  state.retryFiber = Effect.runFork(
                     Effect.sleep(refreshOnFailureMs).pipe(
                       Effect.andThen(
                         Effect.sync(() => {
-                          retryFiber = undefined;
-                          if (!disposed) get.refresh(queryAtom);
+                          state!.retryFiber = undefined;
+                          if (!state!.disposed) get.refresh(queryAtom);
                         }),
                       ),
                     ),
                   );
-                } else if (result._tag !== "Failure" && retryFiber !== undefined) {
-                  retryFiber.interruptUnsafe();
-                  retryFiber = undefined;
+                } else if (result._tag !== "Failure" && state.retryFiber !== undefined) {
+                  state.retryFiber.interruptUnsafe();
+                  state.retryFiber = undefined;
                 }
                 return result;
               },

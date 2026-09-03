@@ -74,6 +74,21 @@ export interface AggregateResult {
   readonly outOfWindow: number;
 }
 
+/** A pre-aggregated UTC quarter-hour cell read from the durable ledger. */
+export interface NormalizedUsageAggregate {
+  readonly bucketStartMs: number;
+  readonly provider: UsageRecord["provider"];
+  readonly model: string;
+  readonly totals: UsageTokenTotals;
+  /** Tokens from records priced by the model table, excluding reported costs. */
+  readonly pricedTotals: UsageTokenTotals;
+  readonly reportedCostUsd: number;
+  readonly records: number;
+  readonly unpricedRecords: number;
+  readonly providerReportedRecords: number;
+  readonly sessions: readonly string[];
+}
+
 /**
  * Accumulates records across many files.
  *
@@ -174,6 +189,68 @@ export class UsageAggregator {
     if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
+    return true;
+  }
+
+  /**
+   * Folds one normalized UTC cell into a requested view. Ledger cells have
+   * already been globally de-duplicated, so this updates the counters in one
+   * step and does not need a synthetic record per transcript event.
+   */
+  addAggregate(aggregate: NormalizedUsageAggregate): boolean {
+    if (
+      this.#hourlyWindow !== null &&
+      (aggregate.bucketStartMs < this.#hourlyWindow.sinceTimeMs ||
+        aggregate.bucketStartMs >= this.#hourlyWindow.untilTimeMs)
+    ) {
+      this.#outOfWindow += aggregate.records;
+      return false;
+    }
+
+    const day = this.#toDay(aggregate.bucketStartMs);
+    if (
+      this.#hourlyWindow === null &&
+      (day < this.#options.sinceDay || day > this.#options.untilDay)
+    ) {
+      this.#outOfWindow += aggregate.records;
+      return false;
+    }
+
+    const hourStart =
+      this.#hourlyWindow === null
+        ? ""
+        : new Date(
+            this.#hourlyWindow.sinceTimeMs +
+              Math.floor((aggregate.bucketStartMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS) *
+                HOUR_MS,
+          ).toISOString();
+    const key = `${day}\u0000${hourStart}\u0000${aggregate.provider}\u0000${aggregate.model}`;
+    let bucket = this.#buckets.get(key);
+    if (bucket === undefined) {
+      bucket = {
+        totals: EMPTY_TOTALS,
+        costUsd: 0,
+        cacheSavingsUsd: 0,
+        records: 0,
+        unpricedRecords: 0,
+        providerReportedRecords: 0,
+        sessions: new Set<string>(),
+      };
+      this.#buckets.set(key, bucket);
+    }
+
+    const priced = priceUsage(this.#options.rates, aggregate.model, aggregate.pricedTotals, null);
+    bucket.totals = addTotals(bucket.totals, aggregate.totals);
+    bucket.costUsd += aggregate.reportedCostUsd + priced.costUsd;
+    bucket.cacheSavingsUsd += cacheSavingsUsd(
+      this.#options.rates,
+      aggregate.model,
+      aggregate.pricedTotals,
+    );
+    bucket.records += aggregate.records;
+    bucket.unpricedRecords += aggregate.unpricedRecords;
+    bucket.providerReportedRecords += aggregate.providerReportedRecords;
+    for (const session of aggregate.sessions) bucket.sessions.add(session);
     return true;
   }
 

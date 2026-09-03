@@ -218,6 +218,80 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("does not enroll a canonical waiter until the refresh effect runs", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-service-lazy-waiter-test", home, settings })),
+      );
+      const canonical = currentCanonicalWindow();
+
+      // Construction alone must not make later readers wait forever.
+      service.refreshSummary(canonical);
+      const refreshed = yield* service.refreshSummary(canonical);
+      assert.strictEqual(totalOutputTokens(refreshed), 5);
+      const read = yield* service.readSummary({ ...canonical, timeZone: "Australia/Adelaide" });
+      assert.strictEqual(totalOutputTokens(read), 5);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("replaces the canonical ledger after transcripts are deleted", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const baseDir = NodePath.join(home, "replace-ledger-state");
+      const layers = serviceLayers({
+        prefix: "usage-service-replace-ledger-test",
+        baseDir,
+        home,
+        settings,
+      });
+      const service = yield* UsageService.make.pipe(Effect.provide(layers));
+      const canonical = currentCanonicalWindow();
+      yield* service.refreshSummary(canonical);
+
+      yield* Effect.promise(() =>
+        NodeFSP.rm(NodePath.join(home, "claude", "projects"), { recursive: true }),
+      );
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.join(home, "claude", "projects"), { recursive: true }),
+      );
+      yield* service.refreshSummary(canonical);
+      const read = yield* service.readSummary({ ...canonical, timeZone: "America/Los_Angeles" });
+      assert.strictEqual(totalOutputTokens(read), 0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("stores one bounded aggregate for repeated records", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          transcript,
+          Array.from({ length: 1_000 }, (_, index) => claudeLine(index, 1)).join(""),
+        ),
+      );
+      const baseDir = NodePath.join(home, "bounded-ledger-state");
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-bounded-ledger-test", baseDir, home, settings }),
+        ),
+      );
+      yield* service.refreshSummary(currentCanonicalWindow());
+      const raw = yield* Effect.promise(() =>
+        NodeFSP.readFile(NodePath.join(baseDir, "userdata", "usage-record-ledger.json"), "utf8"),
+      );
+      const document = JSON.parse(raw) as {
+        aggregates?: readonly unknown[];
+        records?: readonly unknown[];
+      };
+      assert.strictEqual(document.aggregates?.length, 1);
+      assert.isUndefined(document.records);
+      assert.isBelow(raw.length, 20_000);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("serves a remote-timezone preset from the normalized ledger", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -364,6 +438,41 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("refreshes canonical data for a common manual preset", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const baseDir = NodePath.join(home, "common-refresh-state");
+      const layers = serviceLayers({
+        prefix: "usage-service-common-refresh-test",
+        baseDir,
+        home,
+        settings,
+      });
+      const service = yield* UsageService.make.pipe(Effect.provide(layers));
+      yield* service.refreshSummary(currentCanonicalWindow());
+      yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+
+      const common: UsageSummaryInput = {
+        timeZone: "UTC",
+        sinceDay: UsageDay.make("2026-08-04"),
+        untilDay: UsageDay.make("2026-09-02"),
+        resolution: "day",
+      };
+      yield* service.refreshSummary(common);
+      const raw = yield* Effect.promise(() =>
+        NodeFSP.readFile(NodePath.join(baseDir, "userdata", "usage-record-ledger.json"), "utf8"),
+      );
+      const document = JSON.parse(raw) as {
+        aggregates: readonly { totals: { outputTokens: number } }[];
+      };
+      assert.strictEqual(
+        document.aggregates.reduce((sum, entry) => sum + entry.totals.outputTokens, 0),
+        12,
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("uses the last complete client-aligned hourly bucket from a :20 ledger cutoff", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
@@ -426,6 +535,43 @@ describe("UsageService", () => {
         ["2026-08-01T22:30:00.000Z"],
       );
       assert.strictEqual(result.buckets[0]?.costUsd, 3);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("bounds hourly coverage at scan start", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const ratesGate = yield* Deferred.make<void>();
+      const ratesStarted = yield* Deferred.make<void>();
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-scan-start-coverage-test",
+            home,
+            settings,
+            ratesGate,
+            ratesStarted,
+          }),
+        ),
+      );
+      const untilMs = Math.floor(Date.now() / (30 * 60_000)) * (30 * 60_000) + 60 * 60_000;
+      const sinceMs = untilMs - 23 * 60 * 60_000;
+      const input: UsageSummaryInput = {
+        timeZone: "UTC",
+        sinceDay: UsageDay.make(new Date(sinceMs).toISOString().slice(0, 10)),
+        untilDay: UsageDay.make(new Date(untilMs).toISOString().slice(0, 10)),
+        resolution: "hour",
+        sinceTime: new Date(sinceMs).toISOString(),
+        untilTime: new Date(untilMs).toISOString(),
+      };
+      const refresh = yield* service.refreshSummary(input).pipe(Effect.forkChild);
+      yield* Deferred.await(ratesStarted);
+      yield* Deferred.succeed(ratesGate, undefined);
+      const result = yield* Fiber.join(refresh);
+      assert.isTrue(
+        Date.parse(result.coverage!.availableThroughTime!) <=
+          Date.parse(result.coverage!.generatedAt),
+      );
     }).pipe(Effect.scoped),
   );
 

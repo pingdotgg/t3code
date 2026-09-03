@@ -148,14 +148,6 @@ export async function listTranscriptFilesDetailed(
   return { files: found, complete };
 }
 
-export async function listTranscriptFiles(
-  root: string,
-  sinceMs: number,
-  options?: { readonly fileName?: string },
-): Promise<readonly TranscriptFile[]> {
-  return (await listTranscriptFilesDetailed(root, sinceMs, options)).files;
-}
-
 /**
  * Filesystem identity of a directory, as `device:inode`.
  *
@@ -163,15 +155,6 @@ export async function listTranscriptFiles(
  * "two machines whose hostname and home path happen to match". Returns an empty
  * string when the directory cannot be stat'd.
  */
-export async function readDirectoryVolumeId(path: string): Promise<string> {
-  try {
-    const stats = await NodeFSP.stat(path);
-    return `${stats.dev}:${stats.ino}`;
-  } catch {
-    return "";
-  }
-}
-
 export async function readDirectoryVolumeIdDetailed(path: string): Promise<{
   readonly volumeId: string;
   readonly status: "ok" | "missing" | "failed";

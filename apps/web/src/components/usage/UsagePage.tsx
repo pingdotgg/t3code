@@ -559,7 +559,7 @@ function UsageCoverageNotice({
       {isRefreshing ? <span>Refreshing usage in the background.</span> : null}
       {refreshError ? <span>{refreshError}</span> : null}
       {lastUpdatedAt !== null ? (
-        <span>Last updated {formatDateTimeShort(lastUpdatedAt)}.</span>
+        <span>Last updated {formatDateTimeShort(lastUpdatedAt, timeZone)}.</span>
       ) : null}
       {failed.map((environment) => (
         <span key={environment.label}>{environment.label} could not report usage.</span>

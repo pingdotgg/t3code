@@ -88,7 +88,7 @@ export interface MergedUsage {
   readonly availableThroughDay: string | null;
   /** Exact boundary for hourly summaries, when present. */
   readonly availableThroughTime: string | null;
-  /** Latest successful snapshot generation represented in the merge. */
+  /** Oldest successful snapshot generation represented in the merge. */
   readonly lastUpdatedAt: string | null;
 }
 
@@ -264,7 +264,17 @@ export function mergeUsage(
 
   const { ownerByFingerprint, duplicates } = claimSources(current);
 
-  const coverage = current.flatMap((environment) =>
+  // A duplicate environment contributes no buckets. Its older coverage must
+  // not truncate the physical source owner that will actually be rendered.
+  const contributing = current.filter((environment) =>
+    environment.summary.sources.some((source) => {
+      if (source.status === "missing") return false;
+      return (
+        ownerByFingerprint.get(fingerprintKey(source.fingerprint)) === environment.environmentId
+      );
+    }),
+  );
+  const coverage = contributing.flatMap((environment) =>
     environment.summary.coverage === undefined ? [] : [environment.summary.coverage],
   );
   const availableThroughDay =

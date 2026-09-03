@@ -178,6 +178,7 @@ export type UsagePricing = typeof UsagePricing.Type;
 export const UsageCoverage = Schema.Struct({
   availableThroughDay: UsageDay,
   availableThroughTime: Schema.NullOr(Schema.String),
+  /** Instant at which the scan began, which bounds records represented. */
   generatedAt: Schema.String,
 });
 export type UsageCoverage = typeof UsageCoverage.Type;
