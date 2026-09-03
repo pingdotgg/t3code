@@ -231,6 +231,34 @@ describe("UsageAggregator", () => {
     expect(bucket.costUsd).toBe(1.5);
   });
 
+  it("counts v2 model-priced records as unpriced when rates are unavailable", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates: new Map(),
+    });
+    aggregator.addAggregate({
+      bucketStartMs: Date.parse("2026-08-07T04:00:00.000Z"),
+      provider: "claude",
+      model: "claude-fable-5",
+      totals: { ...record().totals, outputTokens: 12 },
+      pricedTotals: { ...record().totals, outputTokens: 12 },
+      savingsTotals: record().totals,
+      reportedCostUsd: 0,
+      records: 2,
+      unpricedRecords: 0,
+      providerReportedRecords: 0,
+      sessions: ["session-a"],
+    });
+
+    const bucket = aggregator.finish().buckets[0]!;
+    expect(bucket.costUsd).toBe(0);
+    expect(bucket.costSource).toBe("unpriced");
+    expect(bucket.records).toBe(2);
+    expect(bucket.unpricedRecords).toBe(2);
+  });
+
   it("drops records outside the window", () => {
     const result = aggregate([record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") })]);
 

@@ -38,8 +38,12 @@ export interface TranscriptFile {
 
 export interface TranscriptWalkResult {
   readonly files: readonly TranscriptFile[];
-  /** False when any directory or file stat could not be read. */
+  /** False when a directory could not be enumerated. */
   readonly complete: boolean;
+  /** Files or subdirectories removed while the walk was in progress. */
+  readonly missingFiles: number;
+  /** Entries whose metadata could not be read for a persistent reason. */
+  readonly failedFiles: number;
 }
 
 /**
@@ -78,6 +82,10 @@ export interface TranscriptParseResult {
   readonly resumed: boolean;
 }
 
+export type TranscriptReadOutcome =
+  | { readonly status: "ok"; readonly result: TranscriptParseResult }
+  | { readonly status: "missing" | "failed" };
+
 /** 64 bytes of JSONL tail is ample to distinguish a replaced file. */
 export const GUARD_LENGTH = 64;
 const NEWLINE = 0x0a;
@@ -92,12 +100,22 @@ function fnv1a(buffer: Buffer): number {
   return hash >>> 0;
 }
 
+function isNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { readonly code?: unknown }).code === "ENOENT"
+  );
+}
+
 /**
  * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`.
  *
- * Errors on individual entries are reported through `complete`: session files
- * rotate and get removed while the walk is in flight, but a partial listing
- * must never replace a last-good usage snapshot.
+ * Errors enumerating a directory are reported through `complete`, while
+ * individual entry failures are counted for a partial source diagnostic. A
+ * session file may rotate or become unreadable while the walk is in flight,
+ * but usable sibling files should still publish.
  *
  * `fileName` restricts the walk to a single basename (Grok's `updates.jsonl`).
  * Grok sessions also ship multi-megabyte `chat_history` and `events` logs that
@@ -110,14 +128,17 @@ export async function listTranscriptFilesDetailed(
 ): Promise<TranscriptWalkResult> {
   const found: TranscriptFile[] = [];
   let complete = true;
+  let missingFiles = 0;
+  let failedFiles = 0;
   const fileName = options?.fileName;
 
   const walk = async (dir: string): Promise<void> => {
     let entries;
     try {
       entries = await NodeFSP.readdir(dir, { withFileTypes: true });
-    } catch {
-      complete = false;
+    } catch (error) {
+      if (isNotFoundError(error)) missingFiles += 1;
+      else complete = false;
       return;
     }
     for (const entry of entries) {
@@ -136,16 +157,18 @@ export async function listTranscriptFilesDetailed(
         if (stats.mtimeMs >= sinceMs) {
           found.push({ path: child, size: stats.size, mtimeMs: stats.mtimeMs });
         }
-      } catch {
-        // A vanished file is a concurrently changing corpus, not an empty
-        // transcript. Do not publish a snapshot from an incomplete walk.
-        complete = false;
+      } catch (error) {
+        // A vanished file is a concurrent corpus change, not an empty
+        // transcript. It is surfaced as a partial source while the usable
+        // files still publish.
+        if (isNotFoundError(error)) missingFiles += 1;
+        else failedFiles += 1;
       }
     }
   };
 
   await walk(root);
-  return { files: found, complete };
+  return { files: found, complete, missingFiles, failedFiles };
 }
 
 /**
@@ -193,8 +216,8 @@ async function guardMatches(
 }
 
 /**
- * Streams one transcript and returns the usage records it contains, or `null`
- * when the file could not be read.
+ * Streams one transcript and classifies read failures so callers can
+ * distinguish a concurrent ENOENT from a persistent unreadable entry.
  *
  * The distinction matters to the caller's cache: a genuinely empty transcript
  * is a stable fact worth memoising, while a transient read failure memoised
@@ -209,16 +232,16 @@ async function guardMatches(
  * their own, so those still have to pass through the reducer to keep model
  * attribution correct.
  */
-export async function readTranscriptRecords(
+export async function readTranscriptRecordsDetailed(
   filePath: string,
   provider: UsageProviderKind,
   resumeFrom?: TranscriptParsePosition,
-): Promise<TranscriptParseResult | null> {
+): Promise<TranscriptReadOutcome> {
   let handle: NodeFSP.FileHandle;
   try {
     handle = await NodeFSP.open(filePath, "r");
-  } catch {
-    return null;
+  } catch (error) {
+    return { status: isNotFoundError(error) ? "missing" : "failed" };
   }
 
   try {
@@ -314,19 +337,31 @@ export async function readTranscriptRecords(
     }
 
     return {
-      records,
-      tailRecords,
-      position: {
-        resumeOffset,
-        guardLength,
-        guardHash,
-        codexState: provider === "codex" ? codexState : null,
+      status: "ok",
+      result: {
+        records,
+        tailRecords,
+        position: {
+          resumeOffset,
+          guardLength,
+          guardHash,
+          codexState: provider === "codex" ? codexState : null,
+        },
+        resumed,
       },
-      resumed,
     };
   } catch {
-    return null;
+    return { status: "failed" };
   } finally {
     await handle.close().catch(() => undefined);
   }
+}
+
+export async function readTranscriptRecords(
+  filePath: string,
+  provider: UsageProviderKind,
+  resumeFrom?: TranscriptParsePosition,
+): Promise<TranscriptParseResult | null> {
+  const outcome = await readTranscriptRecordsDetailed(filePath, provider, resumeFrom);
+  return outcome.status === "ok" ? outcome.result : null;
 }

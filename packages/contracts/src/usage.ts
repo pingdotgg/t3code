@@ -26,8 +26,9 @@ export const USAGE_CONTRACT_VERSION = 6 as const;
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v6 adds explicit coverage metadata; older summaries remain decodable for
- * mixed-version clients, but clients must not treat them as bounded snapshots.
+ * v6 adds explicit coverage metadata; v4/v5 summaries remain decodable for
+ * mixed-version clients, but summaries without coverage are not merged because
+ * the client cannot treat them as bounded snapshots.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 

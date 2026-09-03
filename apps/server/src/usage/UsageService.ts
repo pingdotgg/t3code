@@ -57,7 +57,7 @@ import { parseRateTable, priceUsage, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFilesDetailed,
   readDirectoryVolumeIdDetailed,
-  readTranscriptRecords,
+  readTranscriptRecordsDetailed,
 } from "./usageTranscriptReader.ts";
 import {
   decodeScanCache,
@@ -716,7 +716,10 @@ export const make = Effect.gen(function* () {
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
-  ): Effect.Effect<{ readonly records: readonly UsageRecord[]; readonly complete: boolean }> =>
+  ): Effect.Effect<{
+    readonly records: readonly UsageRecord[];
+    readonly issue: "missing" | "failed" | null;
+  }> =>
     Effect.gen(function* () {
       const cached = fileCache.get(filePath);
       // Provider is part of the identity: if both providers were ever pointed
@@ -732,7 +735,7 @@ export const make = Effect.gen(function* () {
             cached.tailRecords.length === 0
               ? cached.records
               : [...cached.records, ...cached.tailRecords],
-          complete: true,
+          issue: null,
         };
       }
 
@@ -744,20 +747,20 @@ export const make = Effect.gen(function* () {
           : undefined;
 
       const parsed = yield* Effect.promise(() =>
-        readTranscriptRecords(filePath, provider, resumeFrom),
+        readTranscriptRecordsDetailed(filePath, provider, resumeFrom),
       );
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null) return { records: [], complete: false };
+      if (parsed.status !== "ok") return { records: [], issue: parsed.status };
 
       // Stored already de-duplicated within the file, which is 99% of all
       // duplicates. The aggregator still runs the cross-file dedupe pass. One
       // seen set spans the cached base, the new lines, and the tail so a
       // resumed parse dedupes exactly like a full one.
-      const base = parsed.resumed && cached !== undefined ? cached.records : [];
+      const base = parsed.result.resumed && cached !== undefined ? cached.records : [];
       const seen = new Set<string>();
-      const records = dedupeWithinFile([...base, ...parsed.records], seen);
-      const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
+      const records = dedupeWithinFile([...base, ...parsed.result.records], seen);
+      const tailRecords = dedupeWithinFile(parsed.result.tailRecords, seen);
 
       fileCache.set(filePath, {
         size,
@@ -765,12 +768,12 @@ export const make = Effect.gen(function* () {
         provider,
         records,
         tailRecords,
-        position: parsed.position,
+        position: parsed.result.position,
       });
       cacheDirty = true;
       return {
         records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
-        complete: true,
+        issue: null,
       };
     });
 
@@ -783,6 +786,8 @@ export const make = Effect.gen(function* () {
     readonly files:
       | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
       | null;
+    readonly missingFiles: number;
+    readonly failedFiles: number;
     readonly complete: boolean;
   }
 
@@ -802,6 +807,8 @@ export const make = Effect.gen(function* () {
           dir,
           volumeId: volume.volumeId,
           files: null,
+          missingFiles: 0,
+          failedFiles: 0,
           // Only stat's explicit ENOENT is a confirmed missing source. An
           // exists/stat disagreement can be a permission or I/O failure.
           complete: volume.status !== "failed",
@@ -817,12 +824,29 @@ export const make = Effect.gen(function* () {
       );
       let complete = volume.status === "ok" && walk.complete;
       const parsedFiles: { path: string; records: readonly UsageRecord[] }[] = [];
+      let missingFiles = walk.missingFiles;
+      let failedFiles = walk.failedFiles;
       for (const file of walk.files) {
         const result = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
-        if (!result.complete) complete = false;
+        if (result.issue === "missing") {
+          missingFiles += 1;
+          continue;
+        }
+        if (result.issue === "failed") {
+          failedFiles += 1;
+          continue;
+        }
         parsedFiles.push({ path: file.path, records: result.records });
       }
-      scanned.push({ provider, dir, volumeId: volume.volumeId, files: parsedFiles, complete });
+      scanned.push({
+        provider,
+        dir,
+        volumeId: volume.volumeId,
+        files: parsedFiles,
+        missingFiles,
+        failedFiles,
+        complete,
+      });
     }
     return scanned;
   });
@@ -901,7 +925,15 @@ export const make = Effect.gen(function* () {
     const walkedRoots: string[] = [];
 
     let scanComplete = true;
-    for (const { provider, dir, volumeId, files, complete } of scannedDirs) {
+    for (const {
+      provider,
+      dir,
+      volumeId,
+      files,
+      missingFiles,
+      failedFiles,
+      complete,
+    } of scannedDirs) {
       if (!complete) scanComplete = false;
       if (files === null) {
         sources.push({
@@ -981,12 +1013,17 @@ export const make = Effect.gen(function* () {
 
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-        status: "ok",
+        status: missingFiles > 0 || failedFiles > 0 ? "partial" : "ok",
         scannedFiles,
-        skippedFiles,
+        skippedFiles: skippedFiles + missingFiles + failedFiles,
         malformedRecords: 0,
         distinctSessions: sessionIds.size,
-        message: null,
+        message:
+          failedFiles > 0
+            ? `${failedFiles} unreadable transcript file${failedFiles === 1 ? "" : "s"} skipped.`
+            : missingFiles > 0
+              ? `${missingFiles} transcript file${missingFiles === 1 ? "" : "s"} disappeared while scanning.`
+              : null,
       });
     }
 
@@ -1353,6 +1390,11 @@ export const make = Effect.gen(function* () {
         (input) =>
           runBackgroundRefresh(input).pipe(
             Effect.timeout(BACKGROUND_REFRESH_TIMEOUT),
+            // The per-input timeout is intentionally converted to a best
+            // effort refresh, so observe its Cause before `ignore` erases it.
+            Effect.tapCause((cause) =>
+              Effect.logWarning("Usage background refresh failed", { cause }),
+            ),
             Effect.ignore,
           ),
         {

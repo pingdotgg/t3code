@@ -288,7 +288,13 @@ describe("mergeUsage", () => {
     expect(merged.staleEnvironments).toEqual(["env-b"]);
   });
 
-  it("keeps the previous compatible contract version so additive provider expansions still merge", () => {
+  it("excludes a v5 summary because it has no bounded coverage", () => {
+    const v5 = summary(
+      [bucket({ costUsd: 4, provider: "codex", model: "gpt-5.6-sol" })],
+      [{ provider: "codex", hostId: "linux", homePath: "/b" }],
+      USAGE_CONTRACT_VERSION - 1,
+    );
+    const { coverage: _coverage, ...withoutCoverage } = v5;
     const merged = mergeUsage(
       [
         environment(
@@ -298,20 +304,13 @@ describe("mergeUsage", () => {
             [{ provider: "claude", hostId: "mac", homePath: "/a" }],
           ),
         ),
-        environment(
-          "env-b",
-          summary(
-            [bucket({ costUsd: 4, provider: "codex", model: "gpt-5.6-sol" })],
-            [{ provider: "codex", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 1,
-          ),
-        ),
+        environment("env-b", withoutCoverage),
       ],
       USAGE_CONTRACT_VERSION,
     );
 
-    expect(merged.costUsd).toBe(14);
-    expect(merged.staleEnvironments).toEqual([]);
+    expect(merged.costUsd).toBe(10);
+    expect(merged.staleEnvironments).toEqual(["env-b"]);
   });
 
   it("derives provider shares and cost quality", () => {

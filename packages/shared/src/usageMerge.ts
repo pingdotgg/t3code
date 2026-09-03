@@ -240,8 +240,10 @@ const EMPTY_MERGED: MergedUsage = {
  * `expectedContractVersion` guards against an environment running older server
  * code: rather than blocking the page, incompatible data is excluded and its
  * id is reported so the UI can say coverage is partial. Versions in
- * [{@link USAGE_MERGE_COMPATIBLE_SINCE}, expected] still merge, so an additive
- * provider expansion does not drop Claude/Codex totals from older servers.
+ * [{@link USAGE_MERGE_COMPATIBLE_SINCE}, expected] with bounded coverage still
+ * merge, so an additive provider expansion does not drop known totals from
+ * older servers. Unbounded legacy summaries are excluded instead of guessing
+ * their coverage.
  */
 export function mergeUsage(
   environments: readonly EnvironmentUsage[],

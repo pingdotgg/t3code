@@ -246,11 +246,27 @@ export class UsageAggregator {
     }
 
     const priced = priceUsage(this.#options.rates, aggregate.model, aggregate.pricedTotals, null);
+    // v1 cells did not persist pricing provenance, so their null-cost rows
+    // are recovered through `legacyPricingRecords`. v2 cells do persist it,
+    // but a missing or corrupt rate cache can still make a previously priced
+    // cell unpriced on read. Count the records not already accounted for by
+    // stored unpriced/provider-reported provenance in that case.
+    const unpricedByMissingRates =
+      priced.costSource === "unpriced"
+        ? Math.max(
+            0,
+            aggregate.records - aggregate.unpricedRecords - aggregate.providerReportedRecords,
+          )
+        : 0;
     const legacyUnpriced = aggregate.legacyPricing === true && priced.costSource === "unpriced";
-    const legacyUnpricedRecords = legacyUnpriced
-      ? (aggregate.legacyPricingRecords ??
-        Math.max(0, aggregate.records - aggregate.providerReportedRecords))
-      : 0;
+    const legacyUnpricedRecords =
+      aggregate.legacyPricing === true && priced.costSource === "unpriced"
+        ? (aggregate.legacyPricingRecords ?? unpricedByMissingRates)
+        : 0;
+    const unpricedRecords =
+      aggregate.legacyPricing === true
+        ? legacyUnpricedRecords
+        : aggregate.unpricedRecords + unpricedByMissingRates;
     bucket.totals = addTotals(bucket.totals, aggregate.totals);
     bucket.costUsd += aggregate.reportedCostUsd + (legacyUnpriced ? 0 : priced.costUsd);
     bucket.cacheSavingsUsd += cacheSavingsUsd(
@@ -259,7 +275,7 @@ export class UsageAggregator {
       aggregate.savingsTotals,
     );
     bucket.records += aggregate.records;
-    bucket.unpricedRecords += aggregate.unpricedRecords + legacyUnpricedRecords;
+    bucket.unpricedRecords += unpricedRecords;
     bucket.providerReportedRecords += aggregate.providerReportedRecords;
     for (const session of aggregate.sessions) bucket.sessions.add(session);
     return true;

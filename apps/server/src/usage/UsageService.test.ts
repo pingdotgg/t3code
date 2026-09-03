@@ -17,6 +17,7 @@ import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Scheduler from "effect/Scheduler";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
@@ -221,6 +222,34 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("publishes usable records while surfacing an unreadable transcript", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      // A symlink with a directory target is listed as a transcript entry, but
+      // opening it as a stream fails persistently. The valid sibling must still
+      // publish, with the source carrying the diagnostic.
+      yield* Effect.promise(() =>
+        NodeFSP.symlink(NodePath.dirname(transcript), `${transcript}.bad.jsonl`),
+      );
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-partial-file-test", home, settings }),
+        ),
+      );
+
+      const result = yield* service.refreshSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(result), 5);
+      const source = result.sources.find((entry) => entry.fingerprint.provider === "claude");
+      assert.isNotNull(source);
+      if (source === undefined) throw new Error("expected Claude source");
+      assert.strictEqual(source.status, "partial");
+      assert.strictEqual(source.skippedFiles, 1);
+      assert.include(source.message ?? "", "unreadable");
+      assert.isNotNull(result.coverage);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("does not enroll a canonical waiter until the refresh effect runs", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -293,6 +322,84 @@ describe("UsageService", () => {
       assert.strictEqual(document.aggregates?.length, 1);
       assert.isUndefined(document.records);
       assert.isBelow(raw.length, 20_000);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("marks persisted v2 priced cells unpriced when the rates cache is corrupt", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const baseDir = NodePath.join(home, "corrupt-rates-ledger-state");
+      const stateDir = NodePath.join(baseDir, "userdata");
+      const totals = {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 5,
+        reasoningTokens: 0,
+      };
+      yield* Effect.promise(() => NodeFSP.mkdir(stateDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(stateDir, "usage-model-rates.json"), "{corrupt"),
+      );
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(stateDir, "usage-record-ledger.json"),
+          JSON.stringify({
+            version: 2,
+            generatedAtMs: Date.now(),
+            aggregates: [
+              {
+                hostId: "mac",
+                provider: "claude",
+                resolvedHomePath: "/a/.claude",
+                volumeId: "vol-1",
+                bucketStartMs: Date.parse("2026-08-01T10:00:00.000Z"),
+                model: "claude-fable-5",
+                totals,
+                pricedTotals: totals,
+                savingsTotals: totals,
+                legacyPricing: false,
+                legacyPricingRecords: 0,
+                reportedCostUsd: 0,
+                records: 1,
+                unpricedRecords: 0,
+                providerReportedRecords: 0,
+                sessions: ["session-1"],
+              },
+            ],
+            sources: [
+              {
+                fingerprint: {
+                  hostId: "mac",
+                  provider: "claude",
+                  resolvedHomePath: "/a/.claude",
+                  volumeId: "vol-1",
+                },
+                status: "ok",
+                scannedFiles: 1,
+                skippedFiles: 0,
+                malformedRecords: 0,
+                distinctSessions: 1,
+                message: null,
+              },
+            ],
+          }),
+        ),
+      );
+
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-corrupt-rates-test", baseDir, home, settings }),
+        ),
+      );
+      const result = yield* service.readSummary(currentCanonicalWindow());
+      const bucket = result.buckets.find((entry) => entry.model === "claude-fable-5");
+      assert.isNotNull(bucket);
+      if (bucket === undefined) throw new Error("expected persisted model bucket");
+      assert.strictEqual(bucket.costUsd, 0);
+      assert.strictEqual(bucket.costSource, "unpriced");
+      assert.strictEqual(bucket.records, 1);
+      assert.strictEqual(bucket.unpricedRecords, 1);
     }).pipe(Effect.scoped),
   );
 
@@ -417,6 +524,50 @@ describe("UsageService", () => {
       assert.strictEqual(refreshes, 2);
       yield* Fiber.interrupt(background);
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.live("logs a background refresh failure before swallowing it", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const brokenHome = NodePath.join(home, "broken-claude");
+      yield* Effect.promise(() => NodeFSP.mkdir(brokenHome, { recursive: true }));
+      yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(brokenHome, "projects"), "file"));
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-background-log-test",
+            home,
+            settings: {
+              ...settings,
+              providers: {
+                ...settings.providers,
+                claudeAgent: { homePath: brokenHome },
+              },
+            },
+          }),
+        ),
+      );
+      const messages: string[] = [];
+      const logger = Logger.make(({ message }) => {
+        messages.push(String(message));
+      });
+      const background = yield* service.startBackgroundRefresh.pipe(
+        Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+        Effect.forkChild,
+      );
+      for (
+        let attempt = 0;
+        attempt < 100 &&
+        !messages.some((message) => message.startsWith("Usage background refresh failed"));
+        attempt += 1
+      ) {
+        yield* Effect.yieldNow;
+      }
+      yield* Fiber.interrupt(background);
+      assert.isTrue(
+        messages.some((message) => message.startsWith("Usage background refresh failed")),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.live("turns a failed canonical waiter into a typed not-ready result", () =>

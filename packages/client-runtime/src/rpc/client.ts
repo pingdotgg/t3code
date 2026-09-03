@@ -83,6 +83,15 @@ export class EnvironmentRpcSubscriptionObserver extends Context.Reference<{
 
 export const isRpcClientError = Schema.is(RpcClientError.RpcClientError);
 
+function isWaitingFailure(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "waiting" in error &&
+    (error as { readonly waiting?: unknown }).waiting === true
+  );
+}
+
 export type EnvironmentRpcInput<TTag extends EnvironmentRpcTag> = Parameters<RpcMethod<TTag>>[0];
 
 export type EnvironmentRpcSuccess<TTag extends EnvironmentUnaryRpcTag> =
@@ -253,7 +262,10 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
                             const handled = Stream.fromEffect(
                               options.onExpectedFailure(cause),
                             ).pipe(Stream.drain);
-                            if (options.retryExpectedFailureAfter === undefined) {
+                            const waiting = cause.reasons.some(
+                              (reason) => reason._tag === "Fail" && isWaitingFailure(reason.error),
+                            );
+                            if (options.retryExpectedFailureAfter === undefined || waiting) {
                               return handled;
                             }
                             return handled.pipe(
