@@ -19,6 +19,7 @@ import {
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -28,8 +29,9 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
+import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, type HttpClientError, HttpClientResponse } from "effect/unstable/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -49,9 +51,29 @@ export class UsageLimitSources extends Context.Service<
   }
 >()("t3/usage/UsageLimitSources") {}
 
-function errorDetail(cause: unknown): string {
-  if (cause instanceof Error) return cause.message;
-  return String(cause);
+/**
+ * A bounded, client-safe reason for a failed hub read. The exact failure
+ * (which can carry the request URL and response body) goes to the log.
+ */
+function readFailureMessage(
+  error: HttpClientError.HttpClientError | Schema.SchemaError | Cause.TimeoutError | InvalidUrl,
+): string {
+  switch (error._tag) {
+    case "InvalidUrl":
+      return "The hub URL is not valid.";
+    case "TimeoutError":
+      return "The hub did not answer in time.";
+    case "SchemaError":
+      return "The hub answered with an unexpected shape.";
+    case "HttpClientError":
+      return error.reason._tag === "StatusCodeError"
+        ? `The hub refused the request (HTTP ${error.reason.response.status}).`
+        : "The hub could not be reached.";
+  }
+}
+
+class InvalidUrl {
+  readonly _tag = "InvalidUrl";
 }
 
 function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
@@ -84,7 +106,7 @@ export const make = Effect.gen(function* () {
     }
     const accounts = yield* Effect.try({
       try: () => new URL(QUOTA_STATUS_PATH, config.url).toString(),
-      catch: () => new Error(`Invalid hub URL: ${config.url}`),
+      catch: () => new InvalidUrl(),
     }).pipe(
       Effect.flatMap((url) =>
         httpClient.get(url, { headers: { Authorization: `Bearer ${config.managementKey}` } }),
@@ -97,7 +119,8 @@ export const make = Effect.gen(function* () {
       Effect.result,
     );
     if (accounts._tag === "Failure") {
-      return { ...base, accounts: [], error: errorDetail(accounts.failure) };
+      yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
+      return { ...base, accounts: [], error: readFailureMessage(accounts.failure) };
     }
     return { ...base, accounts: accounts.success };
   });

@@ -426,7 +426,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
           })),
         ),
         Effect.catch((error) =>
-          Effect.succeed<CodexRateLimitsProbe>({ failure: codexRateLimitsFailureMessage(error) }),
+          Effect.logDebug("Codex rate-limit read failed.", { cause: error }).pipe(
+            Effect.as<CodexRateLimitsProbe>({ failure: codexRateLimitsFailureMessage(error) }),
+          ),
         ),
       ),
     ],

@@ -1,3 +1,4 @@
+import * as CodexErrors from "effect-codex-app-server/errors";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -82,16 +83,21 @@ describe("codexRateLimitsToUpdate", () => {
 });
 
 describe("codexRateLimitsFailureMessage", () => {
-  it("labels the app-server error with its code and keeps the message", () => {
-    const error = Object.assign(
-      new Error("failed to fetch codex rate limits: GET https://x failed: 401 Unauthorized"),
-      { code: -32603 },
-    );
-    expect(codexRateLimitsFailureMessage(error)).toBe(
-      "Codex App Server returned a non zero exit code (-32603): failed to fetch codex rate limits: GET https://x failed: 401 Unauthorized",
-    );
-    expect(codexRateLimitsFailureMessage("socket hang up")).toBe(
-      "Codex App Server returned a non zero exit code (unknown): socket hang up",
-    );
+  it("keeps the JSON-RPC code and nothing else from a request failure", () => {
+    expect(
+      codexRateLimitsFailureMessage(
+        new CodexErrors.CodexAppServerRequestError({
+          code: -32603,
+          errorMessage:
+            "failed to fetch codex rate limits: GET https://chatgpt.com/backend-api/wham/usage failed: 401 Unauthorized",
+        }),
+      ),
+    ).toBe("Codex could not read usage (JSON-RPC -32603).");
+  });
+
+  it("phrases a dead process differently from a bad answer", () => {
+    expect(
+      codexRateLimitsFailureMessage(new CodexErrors.CodexAppServerProcessExitedError({ code: 1 })),
+    ).toBe("Codex exited before it could report usage.");
   });
 });

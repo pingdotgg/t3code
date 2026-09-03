@@ -25,8 +25,10 @@ import {
   usePrimarySettingsAvailable,
   useUpdatePrimarySettings,
 } from "../../hooks/useSettings";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { environmentPresentations } from "../../state/presentation";
+import { primaryServerSettingsAtom } from "../../state/server";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../settings/providerDriverMeta";
@@ -404,9 +406,12 @@ export function UsageLimitsSection() {
   const [now] = useState(() => Date.now());
 
   const removeSource = (id: UsageLimitSourceId) => {
+    // Read the map at click time, not from this render: two confirmations
+    // before the first write echoes back must not resurrect the first source.
+    const current = appAtomRegistry.get(primaryServerSettingsAtom).usageLimitSources;
     const rest = Object.fromEntries(
-      Object.entries(configuredSources).filter(([key]) => key !== id),
-    ) as typeof configuredSources;
+      Object.entries(current).filter(([key]) => key !== id),
+    ) as typeof current;
     updateSettings({ usageLimitSources: rest });
   };
 
@@ -453,11 +458,7 @@ export function UsageLimitsSection() {
         </div>
       ))}
       {addHubButton ? <div>{addHubButton}</div> : null}
-      <AddUsageLimitSourceDialog
-        open={adding}
-        onOpenChange={setAdding}
-        existing={configuredSources}
-      />
+      <AddUsageLimitSourceDialog open={adding} onOpenChange={setAdding} />
     </div>
   );
 }

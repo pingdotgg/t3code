@@ -13,6 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
+import type * as CodexErrors from "effect-codex-app-server/errors";
 
 import { clampPercent, makeUsageLimits } from "../providerUsageLimits.ts";
 
@@ -99,14 +100,19 @@ export function codexRateLimitsToUpdate(
 }
 
 /**
- * Codex's rate-limit errors arrive as a generic JSON-RPC failure whose message
- * already says what went wrong (the upstream status, and for a lapsed login
- * the `token_revoked` body). Keep it, labelled with where it came from.
+ * A bounded, client-safe reason for a failed `account/rateLimits/read`. The
+ * raw error is for the log; only the category and, for a JSON-RPC failure,
+ * the code reach the Limits view.
  */
-export function codexRateLimitsFailureMessage(error: unknown): string {
-  const code =
-    typeof error === "object" && error !== null && "code" in error ? String(error.code) : "unknown";
-  const message =
-    error instanceof Error ? error.message : typeof error === "string" ? error : String(error);
-  return `Codex App Server returned a non zero exit code (${code}): ${message}`;
+export function codexRateLimitsFailureMessage(error: CodexErrors.CodexAppServerError): string {
+  switch (error._tag) {
+    case "CodexAppServerRequestError":
+      return `Codex could not read usage (JSON-RPC ${error.code}).`;
+    case "CodexAppServerSpawnError":
+      return "Codex could not be started to read usage.";
+    case "CodexAppServerProcessExitedError":
+      return "Codex exited before it could report usage.";
+    default:
+      return "Codex did not answer the usage request.";
+  }
 }

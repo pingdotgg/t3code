@@ -1,7 +1,9 @@
-import { UsageLimitSourceId, type ServerSettings } from "@t3tools/contracts";
+import { UsageLimitSourceId } from "@t3tools/contracts";
 import { useState } from "react";
 
 import { useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { primaryServerSettingsAtom } from "../../state/server";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -42,11 +44,9 @@ function sourceIdFromUrl(url: string): UsageLimitSourceId {
 export function AddUsageLimitSourceDialog({
   open,
   onOpenChange,
-  existing,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
-  readonly existing: ServerSettings["usageLimitSources"];
 }) {
   const updateSettings = useUpdatePrimarySettings();
   const [label, setLabel] = useState("");
@@ -64,9 +64,11 @@ export function AddUsageLimitSourceDialog({
   const save = () => {
     if (!canSave) return;
     const id = sourceIdFromUrl(trimmedUrl);
+    // Same reason as removal: merge into the map as it is now, not as rendered.
+    const current = appAtomRegistry.get(primaryServerSettingsAtom).usageLimitSources;
     updateSettings({
       usageLimitSources: {
-        ...existing,
+        ...current,
         [id]: {
           kind: "cliproxy",
           ...(label.trim() ? { label: label.trim() } : {}),
