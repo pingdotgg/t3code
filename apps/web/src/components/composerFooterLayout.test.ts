@@ -79,11 +79,34 @@ describe("shouldUseRestingComposerLayout", () => {
     isExistingThread: true,
     isMobileViewport: false,
     isFocused: false,
+    isScrollCollapsed: false,
     hasExpandedChrome: false,
+    collapseOnBlur: true,
   };
 
   it("uses the resting layout for an unfocused desktop composer", () => {
     expect(shouldUseRestingComposerLayout(resting)).toBe(true);
+  });
+
+  it("keeps an unfocused composer expanded when blur collapse is off", () => {
+    expect(shouldUseRestingComposerLayout({ ...resting, collapseOnBlur: false })).toBe(false);
+  });
+
+  it("rests a scroll-collapsed composer even while focused", () => {
+    expect(
+      shouldUseRestingComposerLayout({ ...resting, isFocused: true, isScrollCollapsed: true }),
+    ).toBe(true);
+  });
+
+  it("rests a scroll-collapsed composer regardless of the blur preference", () => {
+    expect(
+      shouldUseRestingComposerLayout({
+        ...resting,
+        isFocused: true,
+        isScrollCollapsed: true,
+        collapseOnBlur: false,
+      }),
+    ).toBe(true);
   });
 
   it("keeps new-thread composers expanded", () => {

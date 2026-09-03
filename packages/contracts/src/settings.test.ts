@@ -228,6 +228,22 @@ describe("ClientSettings context window meter", () => {
   });
 });
 
+describe("ClientSettings composer collapse", () => {
+  it("collapses on blur and scroll by default and accepts opting out of each", () => {
+    const defaults = decodeClientSettings({});
+    expect(defaults.composerCollapseOnBlur).toBe(true);
+    expect(defaults.composerCollapseOnScroll).toBe(true);
+
+    const blurOff = decodeClientSettings({ composerCollapseOnBlur: false });
+    expect(blurOff.composerCollapseOnBlur).toBe(false);
+    expect(blurOff.composerCollapseOnScroll).toBe(true);
+
+    expect(
+      decodeClientSettingsPatch({ composerCollapseOnScroll: false }).composerCollapseOnScroll,
+    ).toBe(false);
+  });
+});
+
 describe("ServerSettings thread settlement", () => {
   it("defaults merge settlement on and inactivity settlement to three days", () => {
     const settings = decodeServerSettings({});

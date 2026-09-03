@@ -28,6 +28,8 @@ const clientSettings: ClientSettings = {
   confirmThreadUnpin: false,
   continueThreadsAfterServerUpdate: true,
   contextWindowMeterEnabled: false,
+  composerCollapseOnBlur: false,
+  composerCollapseOnScroll: true,
   dismissedProviderUpdateNotificationKeys: [],
   diffIgnoreWhitespace: true,
   diffLayout: "stacked",
