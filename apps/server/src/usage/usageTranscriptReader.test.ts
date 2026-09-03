@@ -212,7 +212,7 @@ describe("readTranscriptRecords resume", () => {
     const notADirectory = NodePath.join(dir, "not-a-directory");
     await NodeFSP.writeFile(notADirectory, "not a directory");
 
-    const result = await listTranscriptFilesDetailed(notADirectory, Date.now() - 60_000);
+    const result = await listTranscriptFilesDetailed(notADirectory, 0);
     assert.isFalse(result.complete);
     assert.strictEqual(result.failedFiles, 1);
   });
