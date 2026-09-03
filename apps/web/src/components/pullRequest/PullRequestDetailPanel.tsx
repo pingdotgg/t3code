@@ -1,5 +1,8 @@
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   PullRequestAction,
@@ -8,6 +11,7 @@ import type {
   PullRequestRef,
   PullRequestState,
   ScopedThreadRef,
+  ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
@@ -27,6 +31,7 @@ import {
   GitPullRequestIcon,
   HammerIcon,
   LayersIcon,
+  Link2Icon,
   MessageCircleQuestionIcon,
   MessageSquareIcon,
   LinkIcon,
@@ -38,6 +43,7 @@ import {
   RotateCcwIcon,
   ServerIcon,
   TriangleAlertIcon,
+  UnlinkIcon,
 } from "lucide-react";
 import {
   lazy,
@@ -54,12 +60,17 @@ import {
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { changeRequestRepositoryUrl, gitHubPullRequestBrowserUrl } from "~/lib/openPullRequestLink";
+import { useThreadPullRequestLinkActions } from "~/hooks/useThreadPullRequestLink";
+import {
+  changeRequestRepositoryUrl,
+  gitHubPullRequestBrowserUrl,
+  matchesLinkedPullRequestUrl,
+} from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
-import { useProjects } from "~/state/entities";
+import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
@@ -113,6 +124,7 @@ import {
   handoffReviewComments,
   latestPullRequestReviewOutcomes,
   isStackedPullRequestBase,
+  isThreadLinkedToPullRequest,
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
   pullRequestComposerTarget,
@@ -828,6 +840,85 @@ export function PullRequestDetailPanel({
   const attachTarget = pullRequestComposerTarget(context, composerDraftTarget);
   const handoffLabels = pullRequestHandoffLabels(attachTarget !== null);
 
+  // Linking from the pull-request side needs a real thread to pin, and that is
+  // the open thread — not the handoff attach target. Gating on thread context
+  // would strand the reader: once they unlink, the thread stops matching this
+  // pull request by branch, the panel falls back to page context, and the way
+  // back would vanish with it.
+  const attachThreadRef =
+    composerDraftTarget !== undefined &&
+    composerDraftTarget !== null &&
+    typeof composerDraftTarget !== "string"
+      ? composerDraftTarget
+      : null;
+  const attachThread = useThreadShell(attachThreadRef);
+  const { linkPullRequest, unlinkPullRequest } = useThreadPullRequestLinkActions();
+  const threadLinkedPullRequest = attachThread?.linkedPullRequest ?? null;
+  const isLinkedToThisPullRequest = isThreadLinkedToPullRequest({
+    linkedPullRequest: threadLinkedPullRequest,
+    detail,
+    matchesUrl: (linked, targetUrl) =>
+      matchesLinkedPullRequestUrl(linked as ThreadLinkedPullRequest, targetUrl),
+  });
+  // Capabilities land after connect, so this read has to be reactive: an older
+  // server drops linkedPullRequest from thread.meta.update and still resolves,
+  // which would leave a success toast for a link that was never persisted.
+  const serverConfigs = useServerConfigs();
+  const supportsPullRequestLink =
+    attachThreadRef !== null &&
+    serverConfigs.get(attachThreadRef.environmentId)?.environment.capabilities
+      .threadPullRequestLinking === true;
+
+  // thread.meta.update is last-write-wins, so two of these in flight at once
+  // can land in the reverse order and leave the thread on the choice the
+  // reader made first. One at a time, and the item says so while it runs.
+  // Which operation is running, not just that one is: the thread shell picks
+  // up the new link before the command settles, so a label read off the live
+  // state would flip to the opposite verb mid-flight.
+  const [pullRequestLinkPending, setPullRequestLinkPending] = useState<"link" | "unlink" | null>(
+    null,
+  );
+
+  const linkPullRequestToThread = () => {
+    if (detail === null || attachThreadRef === null || pullRequestLinkPending !== null) return;
+    const link: ThreadLinkedPullRequest = {
+      projectId: detail.projectId,
+      repository: reference.repository,
+      number: detail.number,
+      url: detail.url,
+    };
+    setPullRequestLinkPending("link");
+    void linkPullRequest(attachThreadRef, link).then((result) => {
+      setPullRequestLinkPending(null);
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          toastManager.add({ type: "error", title: "Could not link the pull request" });
+        }
+        return;
+      }
+      toastManager.add({
+        type: "success",
+        title: "Linked to this thread",
+        description: `#${detail.number} now drives this thread's badge and settle-on-merge.`,
+      });
+    });
+  };
+
+  const unlinkPullRequestFromThread = () => {
+    if (attachThreadRef === null || pullRequestLinkPending !== null) return;
+    setPullRequestLinkPending("unlink");
+    void unlinkPullRequest(attachThreadRef).then((result) => {
+      setPullRequestLinkPending(null);
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          toastManager.add({ type: "error", title: "Could not unlink the pull request" });
+        }
+        return;
+      }
+      toastManager.add({ type: "success", title: "Unlinked from this thread" });
+    });
+  };
+
   const writeTaskToComposer = (target: ScopedThreadRef | DraftId, task: ThreadTask) => {
     const store = useComposerDraftStore.getState();
     const draft = store.getComposerDraft(target);
@@ -1526,6 +1617,36 @@ export function PullRequestDetailPanel({
                     <HammerIcon className="size-3.5" />
                     {handoff === "findings" ? "Preparing..." : handoffLabels.fixFindings}
                   </MenuItem>
+                  {/* Pinning from the pull-request side: where the panel sits beside a thread,
+                      that thread is one press away from following this pull request's state.
+                      Unlink takes the item's place once this is the linked one. */}
+                  {attachThreadRef !== null && detail !== null && supportsPullRequestLink ? (
+                    // The running operation outranks the live state while it
+                    // is in flight, so the item keeps the verb the reader
+                    // pressed until the command settles.
+                    (pullRequestLinkPending ?? (isLinkedToThisPullRequest ? "unlink" : "link")) ===
+                    "unlink" ? (
+                      <MenuItem
+                        disabled={pullRequestLinkPending !== null}
+                        onClick={unlinkPullRequestFromThread}
+                      >
+                        <UnlinkIcon className="size-3.5" />
+                        {pullRequestLinkPending === "unlink"
+                          ? "Unlinking..."
+                          : "Unlink PR from this thread"}
+                      </MenuItem>
+                    ) : (
+                      <MenuItem
+                        disabled={pullRequestLinkPending !== null}
+                        onClick={linkPullRequestToThread}
+                      >
+                        <Link2Icon className="size-3.5" />
+                        {pullRequestLinkPending === "link"
+                          ? "Linking..."
+                          : "Link PR to this thread"}
+                      </MenuItem>
+                    )
+                  ) : null}
                   {pickableEnvironments.length > 0 ? (
                     <ActOnEnvironmentPicker
                       environments={pickableEnvironments}
