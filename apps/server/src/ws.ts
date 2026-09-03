@@ -1677,9 +1677,11 @@ const makeWsRpcLayer = (
             WS_METHODS.serverRefreshProviders,
             Effect.gen(function* () {
               // An untargeted refresh is "re-read everything's status", which
-              // includes quota from configured usage-limit sources.
+              // includes quota from configured usage-limit sources. Awaited,
+              // not forked: the RPC scope closes on return and would
+              // interrupt a fork before the hub answered.
               if (input.instanceId === undefined) {
-                yield* usageLimitSources.refresh.pipe(Effect.forkScoped);
+                yield* usageLimitSources.refresh;
               }
               let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
                 ? providerRegistry.refreshWorkspaceSnapshot({

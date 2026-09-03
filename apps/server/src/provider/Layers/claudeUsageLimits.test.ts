@@ -67,6 +67,25 @@ describe("claudeUsageResponseToLimits", () => {
     });
   });
 
+  it("names the overage-included bucket only from a scoped entry that drew a row", () => {
+    expect(
+      claudeUsageResponseToLimits({
+        checkedAt,
+        response: {
+          rate_limits_available: true,
+          rate_limits: {
+            ...({
+              model_scoped: [
+                { display_name: "Ghost", utilization: null, resets_at: null },
+                { display_name: "Fable", utilization: 5, resets_at: null },
+              ],
+            } as object),
+          },
+        },
+      }).names,
+    ).toEqual({ overageIncluded: "Fable" });
+  });
+
   it("reports API key and Bedrock accounts as unsupported", () => {
     expect(
       claudeUsageResponseToLimits({

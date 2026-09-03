@@ -110,6 +110,9 @@ describe("accountEmailFromAuthFile", () => {
     expect(accountEmailFromAuthFile("codex-e413dce6-julius@ping.gg-pro.json")).toBe(
       "julius@ping.gg",
     );
+    expect(accountEmailFromAuthFile("claude-first-last@example.com.json")).toBe(
+      "first-last@example.com",
+    );
     expect(accountEmailFromAuthFile("mystery.json")).toBeUndefined();
   });
 });

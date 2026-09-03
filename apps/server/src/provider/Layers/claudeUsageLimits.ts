@@ -173,16 +173,19 @@ export function claudeUsageResponseToLimits(input: {
   }
   // The CLI filters `model_scoped` to the overage-included allowlist, which
   // today holds one model; the first entry is the one the event refers to.
-  const scoped = readModelScoped(response.rate_limits);
-  for (const entry of scoped) {
+  let overageIncluded: string | undefined;
+  for (const entry of readModelScoped(response.rate_limits)) {
     if (typeof entry.utilization !== "number") continue;
     windows.push(
       scopedWindow(entry.display_name, entry.utilization, isoFromString(entry.resets_at)),
     );
+    // Only a bucket that drew a row may receive events; naming one that was
+    // skipped would let a mid-turn event open a row the probe never showed.
+    overageIncluded ??= entry.display_name;
   }
   return {
     limits: makeUsageLimits({ checkedAt, windows }),
-    names: { overageIncluded: scoped[0]?.display_name },
+    names: { overageIncluded },
   };
 }
 

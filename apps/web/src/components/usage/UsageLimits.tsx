@@ -25,6 +25,7 @@ import {
   usePrimarySettingsAvailable,
   useUpdatePrimarySettings,
 } from "../../hooks/useSettings";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { environmentPresentations } from "../../state/presentation";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -396,6 +397,7 @@ export function UsageLimitsSection() {
   const sources = collectLimitSources(presentations);
   const configuredSources = usePrimarySettings((settings) => settings.usageLimitSources);
   const canEditSources = usePrimarySettingsAvailable();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const updateSettings = useUpdatePrimarySettings();
   const [adding, setAdding] = useState(false);
   // Anchored once per mount on purpose: countdowns must not tick (see below).
@@ -427,9 +429,14 @@ export function UsageLimitsSection() {
           key={source.key}
           source={source}
           now={now}
-          // Only the primary environment's own sources can be edited from here.
+          // Only the primary environment's own sources can be edited from
+          // here; a remote environment's row with the same id is read-only.
           onRemove={
-            canEditSources && source.id in configuredSources ? () => removeSource(source.id) : null
+            canEditSources &&
+            source.environmentId === primaryEnvironmentId &&
+            source.id in configuredSources
+              ? () => removeSource(source.id)
+              : null
           }
         />
       ))}

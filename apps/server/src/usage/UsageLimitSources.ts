@@ -27,6 +27,7 @@ import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -81,17 +82,20 @@ export const make = Effect.gen(function* () {
     if (config.managementKey.length === 0) {
       return { ...base, accounts: [], error: "No management key configured." };
     }
-    const url = new URL(QUOTA_STATUS_PATH, config.url).toString();
-    const accounts = yield* httpClient
-      .get(url, { headers: { Authorization: `Bearer ${config.managementKey}` } })
-      .pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.flatMap((response) => response.json),
-        Effect.flatMap(decodeCliproxyQuotaStatus),
-        Effect.map((status) => cliproxyStatusToAccounts(status, checkedAt)),
-        Effect.timeout(FETCH_TIMEOUT),
-        Effect.result,
-      );
+    const accounts = yield* Effect.try({
+      try: () => new URL(QUOTA_STATUS_PATH, config.url).toString(),
+      catch: () => new Error(`Invalid hub URL: ${config.url}`),
+    }).pipe(
+      Effect.flatMap((url) =>
+        httpClient.get(url, { headers: { Authorization: `Bearer ${config.managementKey}` } }),
+      ),
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap((response) => response.json),
+      Effect.flatMap(decodeCliproxyQuotaStatus),
+      Effect.map((status) => cliproxyStatusToAccounts(status, checkedAt)),
+      Effect.timeout(FETCH_TIMEOUT),
+      Effect.result,
+    );
     if (accounts._tag === "Failure") {
       return { ...base, accounts: [], error: errorDetail(accounts.failure) };
     }
@@ -106,6 +110,10 @@ export const make = Effect.gen(function* () {
       if (changed) yield* PubSub.publish(changes, next);
     });
 
+  // One refresh at a time: a slow hub read started before a settings change
+  // must not publish after the change's own refresh and resurrect a removed
+  // source. Callers queue behind the in-flight run and see current settings.
+  const refreshLock = yield* Semaphore.make(1);
   const refresh = Effect.gen(function* () {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.orElseSucceed((): ServerSettings | null => null),
@@ -119,7 +127,7 @@ export const make = Effect.gen(function* () {
       { concurrency: 4 },
     );
     yield* publish(snapshots);
-  }).pipe(Effect.ignoreCause({ log: true }));
+  }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
   // Settings edits re-read straight away so a new hub shows up without
   // waiting for the interval, and a removed one leaves the list.

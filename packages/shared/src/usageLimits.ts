@@ -81,7 +81,9 @@ export function collectLimitSources(
       } | null;
     }
   >,
-): ReadonlyArray<UsageLimitSourceSnapshot & { readonly key: string }> {
+): ReadonlyArray<
+  UsageLimitSourceSnapshot & { readonly key: string; readonly environmentId: EnvironmentId }
+> {
   const perEnvironment: Array<{
     readonly environmentId: EnvironmentId;
     readonly environmentLabel: string;
@@ -100,6 +102,7 @@ export function collectLimitSources(
   return perEnvironment.flatMap(({ environmentId, environmentLabel, sources }) =>
     sources.map((source) => ({
       ...source,
+      environmentId,
       key: `${environmentId}:${source.id}`,
       label: labelEnvironment ? `${environmentLabel} · ${source.label}` : source.label,
     })),

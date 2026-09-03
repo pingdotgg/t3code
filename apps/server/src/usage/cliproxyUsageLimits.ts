@@ -99,7 +99,9 @@ function isoFromHub(value: string | undefined): string | undefined {
 /** `claude-julius@ping.gg.json` → `julius@ping.gg`; `codex-<hash>-x@y-pro.json` → `x@y`. */
 export function accountEmailFromAuthFile(fileName: string): string | undefined {
   const stem = fileName.replace(/\.json$/i, "");
-  return stem.match(/[^\s/-]+@[^\s/]+?(?=(?:-[a-z0-9]+)?$)/i)?.[0];
+  // Strip the provider prefix (and Codex's hash) rather than splitting on
+  // `-`, so a hyphenated local part such as `first-last@` survives.
+  return stem.match(/^(?:claude-|codex-[a-z0-9]+-)?([^\s/]+@[^\s/]+?)(?:-[a-z0-9]+)?$/i)?.[1];
 }
 
 /**

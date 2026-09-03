@@ -15,16 +15,21 @@ import {
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 
+/**
+ * Stable per hub and readable in settings.json. Dots and dashes in the host
+ * are kept so `foo-bar.com` and `foo.bar.com` do not collide; anything else
+ * (a port's colon, a path) is folded to a dash.
+ */
 function sourceIdFromUrl(url: string): UsageLimitSourceId {
   let host = url;
   try {
     host = new URL(url).host;
   } catch {
-    // Keep the raw text; the server validates the URL when it polls.
+    // Keep the raw text; the server reports the bad URL on its row.
   }
   const slug = host
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/[^a-z0-9.-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return UsageLimitSourceId.make(`cliproxy-${slug || "hub"}`);
 }
@@ -131,7 +136,13 @@ export function AddUsageLimitSourceDialog({
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              reset();
+              onOpenChange(false);
+            }}
+          >
             Cancel
           </Button>
           <Button onClick={save} disabled={!canSave}>
