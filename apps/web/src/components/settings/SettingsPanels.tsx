@@ -128,7 +128,6 @@ import {
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
@@ -172,6 +171,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const COMPOSER_COLLAPSE_TRIGGER_LABELS = {
+  blur: "On blur",
+  scroll: "On scroll",
+} as const;
+type ComposerCollapseTrigger = keyof typeof COMPOSER_COLLAPSE_TRIGGER_LABELS;
 
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
@@ -2019,6 +2024,13 @@ export function GeneralSettingsPanel() {
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const supportsAutoSettlement =
     useAtomValue(primaryServerConfigAtom)?.environment.capabilities.threadAutoSettlement === true;
+  const composerCollapseTriggers = useMemo<ComposerCollapseTrigger[]>(
+    () => [
+      ...(settings.composerCollapseOnBlur ? (["blur"] as const) : []),
+      ...(settings.composerCollapseOnScroll ? (["scroll"] as const) : []),
+    ],
+    [settings.composerCollapseOnBlur, settings.composerCollapseOnScroll],
+  );
   const diagnosticsDescription = formatDiagnosticsDescription({
     localTracingEnabled: observability?.localTracingEnabled ?? false,
     otlpTracesEnabled: observability?.otlpTracesEnabled ?? false,
@@ -2345,7 +2357,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("composer-collapse")}
-          description="Rest the composer of an existing thread into a single line when it loses focus, when you scroll the conversation, or both. Deselect both to keep it expanded."
+          description="Rest the composer of an existing thread into a single line when it loses focus, when you scroll the conversation, or both. Pick neither to keep it expanded."
           resetAction={
             settings.composerCollapseOnBlur !== DEFAULT_UNIFIED_SETTINGS.composerCollapseOnBlur ||
             settings.composerCollapseOnScroll !==
@@ -2362,14 +2374,9 @@ export function GeneralSettingsPanel() {
             ) : null
           }
           control={
-            <ToggleGroup
+            <Select
               multiple
-              aria-label="Collapse composer"
-              variant="segmented"
-              value={[
-                ...(settings.composerCollapseOnBlur ? ["blur"] : []),
-                ...(settings.composerCollapseOnScroll ? ["scroll"] : []),
-              ]}
+              value={composerCollapseTriggers}
               onValueChange={(next) =>
                 updateSettings({
                   composerCollapseOnBlur: next.includes("blur"),
@@ -2377,9 +2384,24 @@ export function GeneralSettingsPanel() {
                 })
               }
             >
-              <Toggle value="blur">On blur</Toggle>
-              <Toggle value="scroll">On scroll</Toggle>
-            </ToggleGroup>
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Collapse composer">
+                <SelectValue>
+                  {composerCollapseTriggers.length === 0
+                    ? "Never"
+                    : composerCollapseTriggers
+                        .map((trigger) => COMPOSER_COLLAPSE_TRIGGER_LABELS[trigger])
+                        .join(", ")}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem showCheck value="blur">
+                  {COMPOSER_COLLAPSE_TRIGGER_LABELS.blur}
+                </SelectItem>
+                <SelectItem showCheck value="scroll">
+                  {COMPOSER_COLLAPSE_TRIGGER_LABELS.scroll}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 
