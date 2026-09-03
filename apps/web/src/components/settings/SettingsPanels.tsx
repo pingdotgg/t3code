@@ -565,6 +565,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
         : []),
+      ...(settings.worktreeDirectory !== DEFAULT_UNIFIED_SETTINGS.worktreeDirectory
+        ? ["Worktree directory"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -600,6 +603,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadDelete,
       settings.confirmThreadUnpin,
       settings.addProjectBaseDirectory,
+      settings.worktreeDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
@@ -720,6 +724,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+      worktreeDirectory: DEFAULT_UNIFIED_SETTINGS.worktreeDirectory,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -2555,6 +2560,35 @@ export function GeneralSettingsPanel() {
             }
           />
         ) : null}
+
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("worktree-directory")}
+          description="Leave empty to keep worktrees inside the T3 data folder. A relative path resolves from the project root."
+          resetAction={
+            settings.worktreeDirectory !== DEFAULT_UNIFIED_SETTINGS.worktreeDirectory ? (
+              <SettingResetButton
+                label="worktree directory"
+                onClick={() =>
+                  updateSettings({
+                    worktreeDirectory: DEFAULT_UNIFIED_SETTINGS.worktreeDirectory,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              size="sm"
+              className="w-full sm:w-72"
+              value={settings.worktreeDirectory}
+              onCommit={(next) => updateSettings({ worktreeDirectory: next })}
+              placeholder="~/worktrees"
+              spellCheck={false}
+              aria-label="Worktree directory"
+            />
+          }
+        />
 
         <SettingsRow
           serverScoped

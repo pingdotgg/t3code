@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { ServerConfig } from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { detectPrTemplate } from "./PrTemplateDetection.ts";
@@ -28,9 +29,12 @@ const TEMPLATE_DIRECTORIES = [
 
 const PrTemplateDetectionTestLayer = GitVcsDriver.layer.pipe(
   Layer.provide(
-    ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3-pr-template-test-",
-    }),
+    Layer.mergeAll(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-pr-template-test-",
+      }),
+      ServerSettings.layerTest(),
+    ),
   ),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(NodeServices.layer),

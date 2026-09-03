@@ -27,7 +27,7 @@ The root filesystem path for a project. In [the orchestration model][1], it is t
 
 #### Worktree
 
-A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Git operations live behind the VCS driver contract in `apps/server/src/vcs/VcsDriver.ts`, implemented by [GitVcsDriverCore.ts][3].
+A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Generated worktrees land in `<t3 home>/worktrees/<repo>/<branch>` unless the `worktreeDirectory` server setting names another root, which may be absolute, `~`-prefixed, or relative to the project root. Git operations live behind the VCS driver contract in `apps/server/src/vcs/VcsDriver.ts`, implemented by [GitVcsDriverCore.ts][3].
 
 ### Thread timeline
 

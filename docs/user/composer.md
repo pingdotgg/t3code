@@ -230,3 +230,8 @@ On desktop, press `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux from
 start it in the background. T3 Code opens another new thread and shows an **Open** action for the
 thread that started. The new thread keeps the selected workspace mode and base branch. If **New
 worktree** is selected, each background thread creates its own worktree.
+
+Worktrees live inside the T3 Code data folder by default. To keep them somewhere else, set
+**Settings → General → Worktree directory**. A leading `~` expands to your home folder, and a
+relative path resolves from the project root, so each project keeps its worktrees beside itself.
+Worktrees that already exist stay where they are.

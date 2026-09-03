@@ -9,6 +9,7 @@ import { assert, it } from "@effect/vitest";
 
 import { GitCommandError } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 import { runVcsDriverContractSuite } from "./testing/VcsDriverContractHarness.ts";
@@ -17,7 +18,7 @@ const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-git-vcs-contract-",
 });
 const GitContractLayer = Layer.mergeAll(GitVcsDriver.vcsLayer, GitVcsDriver.layer).pipe(
-  Layer.provide(ServerConfigLayer),
+  Layer.provide(Layer.mergeAll(ServerConfigLayer, Layer.orDie(ServerSettings.layerTest()))),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(NodeServices.layer),
 );
