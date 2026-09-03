@@ -161,6 +161,7 @@ type ThreadTerminalRouteScreenProps = StaticScreenProps<{
 export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps) {
   const navigation = useNavigation();
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
+  const writeTerminalInput = useAtomCommand(terminalEnvironment.input, "terminal input");
   const resizeTerminal = useAtomCommand(terminalEnvironment.resize, "terminal resize");
   const clearTerminal = useAtomCommand(terminalEnvironment.clear, "terminal clear");
   const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
@@ -699,7 +700,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         return;
       }
 
-      void writeTerminal({
+      void writeTerminalInput({
         environmentId: selectedThread.environmentId,
         input: {
           threadId: selectedThread.id,
@@ -708,7 +709,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         },
       });
     },
-    [isRunning, selectedThread, terminalId, writeTerminal],
+    [isRunning, selectedThread, terminalId, writeTerminalInput],
   );
 
   const handleInput = useCallback(
