@@ -152,7 +152,8 @@ describe("mergeUsage", () => {
     expect(merged.costUsd).toBe(12);
     expect(merged.models.map((model) => model.model)).not.toContain("future-model");
     expect(merged.daily.map((day) => day.day)).toEqual(["2026-08-28", "2026-08-29"]);
-    expect(merged.sessions).toBe(1);
+    expect(merged.sessions).toBe(0);
+    expect(merged.sessionsExact).toBe(false);
     expect(merged.lastUpdatedAt).toBe("2026-08-28T12:00:00.000Z");
   });
 

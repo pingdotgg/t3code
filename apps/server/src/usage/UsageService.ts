@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off
+// @effect-diagnostics preferSchemaOverJson:off
 /**
  * UsageService - scans provider transcripts and returns priced usage buckets.
  *
@@ -41,7 +42,6 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
-import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -106,6 +106,31 @@ const UsageSnapshotFile = Schema.Struct({
     }),
   ),
 });
+const UsageLedgerRecord = Schema.Struct({
+  hostId: Schema.String,
+  provider: Schema.Literals(["claude", "codex", "grok"]),
+  resolvedHomePath: Schema.String,
+  record: Schema.Struct({
+    provider: Schema.Literals(["claude", "codex", "grok"]),
+    timestampMs: Schema.Number,
+    model: Schema.String,
+    sessionId: Schema.String,
+    totals: Schema.Struct({
+      uncachedInputTokens: Schema.Number,
+      cachedInputTokens: Schema.Number,
+      cacheCreationTokens: Schema.Number,
+      outputTokens: Schema.Number,
+      reasoningTokens: Schema.Number,
+    }),
+    reportedCostUsd: Schema.NullOr(Schema.Number),
+    dedupeKey: Schema.NullOr(Schema.String),
+  }),
+});
+const UsageLedgerFile = Schema.Struct({
+  version: Schema.Literal(1),
+  generatedAtMs: Schema.Number,
+  records: Schema.Array(UsageLedgerRecord),
+});
 const decodeUsageSnapshotFile = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     UsageSnapshotFile as unknown as Schema.Codec<typeof UsageSnapshotFile.Type>,
@@ -116,6 +141,12 @@ const encodeUsageSnapshotFile = Schema.encodeEffect(
     UsageSnapshotFile as unknown as Schema.Codec<typeof UsageSnapshotFile.Type>,
   ),
 );
+const decodeUsageLedgerFile = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(UsageLedgerFile as unknown as Schema.Codec<typeof UsageLedgerFile.Type>),
+);
+const encodeUsageLedgerFile = Schema.encodeEffect(
+  Schema.fromJsonString(UsageLedgerFile as unknown as Schema.Codec<typeof UsageLedgerFile.Type>),
+);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HALF_HOUR_MS = 30 * 60 * 1000;
@@ -123,6 +154,7 @@ const BACKGROUND_REFRESH_INTERVAL = "30 minutes";
 const BACKGROUND_REFRESH_TIMEOUT = "5 minutes";
 const BACKGROUND_REFRESH_WINDOWS = [1, 7, 30, 90] as const;
 const MAX_USAGE_SNAPSHOTS = 16;
+const USAGE_LEDGER_RETENTION_MS = CACHE_RETENTION_DAYS * DAY_MS;
 
 function serverTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -147,6 +179,30 @@ function snapshotKey(input: UsageSummaryInput): string {
     input.sinceTime ?? null,
     input.untilTime ?? null,
   ]);
+}
+
+function isCommonPreset(input: UsageSummaryInput): boolean {
+  if (input.resolution === "hour") {
+    if (input.sinceTime === undefined || input.untilTime === undefined) return false;
+    return Date.parse(input.untilTime) - Date.parse(input.sinceTime) === DAY_MS;
+  }
+  const days =
+    (Date.parse(`${input.untilDay}T00:00:00Z`) - Date.parse(`${input.sinceDay}T00:00:00Z`)) /
+      DAY_MS +
+    1;
+  return days === 1 || days === 7 || days === 30 || days === 90;
+}
+
+interface LedgerRecord {
+  readonly hostId: string;
+  readonly provider: UsageProviderKind;
+  readonly resolvedHomePath: string;
+  readonly record: UsageRecord;
+}
+
+interface ScanResult {
+  readonly summary: UsageSummary;
+  readonly records: readonly LedgerRecord[];
 }
 
 export class UsageService extends Context.Service<
@@ -201,7 +257,6 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
-  const startup = yield* Effect.serviceOption(ServerRuntimeStartup.ServerRuntimeStartup);
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
@@ -212,6 +267,10 @@ export const make = Effect.gen(function* () {
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
   const usageSnapshotPath = path.join(config.stateDir, "usage-snapshot.json");
+  const usageLedgerPath = path.join(config.stateDir, "usage-record-ledger.json");
+  const usageLedger = new Map<string, LedgerRecord>();
+  let usageLedgerGeneratedAtMs = 0;
+  let usageLedgerDirty = false;
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
   let ratesStatus: UsageSummary["pricing"]["status"] = "unavailable";
@@ -361,6 +420,21 @@ export const make = Effect.gen(function* () {
     }),
   );
 
+  const ensureUsageLedgerLoaded = yield* Effect.cached(
+    Effect.gen(function* () {
+      const document = yield* fileSystem.readFileString(usageLedgerPath).pipe(
+        Effect.flatMap((raw) => decodeUsageLedgerFile(raw)),
+        Effect.catchCause(() => Effect.succeed(null)),
+      );
+      if (document === null) return;
+      usageLedgerGeneratedAtMs = document.generatedAtMs;
+      for (const entry of document.records) {
+        const key = `${entry.hostId}\u0000${entry.provider}\u0000${entry.resolvedHomePath}\u0000${entry.record.dedupeKey ?? JSON.stringify(entry.record)}`;
+        usageLedger.set(key, entry);
+      }
+    }),
+  );
+
   const persistUsageSnapshots = Effect.fn("UsageService.persistUsageSnapshots")(function* () {
     if (!snapshotsDirty) return;
     const entries = [...usageSnapshots.entries()]
@@ -383,6 +457,27 @@ export const make = Effect.gen(function* () {
       }),
       // A durable snapshot is an optimization. A failed write leaves the
       // previous last-good file intact and the next refresh retries it.
+      Effect.catchCause(() => Effect.void),
+    );
+  });
+
+  const persistUsageLedger = Effect.fn("UsageService.persistUsageLedger")(function* () {
+    if (!usageLedgerDirty) return;
+    const records = [...usageLedger.values()];
+    yield* encodeUsageLedgerFile({
+      version: 1,
+      generatedAtMs: usageLedgerGeneratedAtMs,
+      records,
+    }).pipe(
+      Effect.flatMap((serialized) =>
+        writeFileStringAtomically({ filePath: usageLedgerPath, contents: serialized }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      ),
+      Effect.map(() => {
+        usageLedgerDirty = false;
+      }),
       Effect.catchCause(() => Effect.void),
     );
   });
@@ -500,9 +595,9 @@ export const make = Effect.gen(function* () {
           dir,
           volumeId: volume.volumeId,
           files: null,
-          // A missing provider home is an expected source state. Once the
-          // root exists, walk/read failures are reported through `complete`.
-          complete: true,
+          // Only stat's explicit ENOENT is a confirmed missing source. An
+          // exists/stat disagreement can be a permission or I/O failure.
+          complete: volume.status !== "failed",
         });
         continue;
       }
@@ -592,6 +687,7 @@ export const make = Effect.gen(function* () {
     });
 
     const sources: UsageSource[] = [];
+    const ledgerRecords: LedgerRecord[] = [];
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
 
@@ -626,6 +722,7 @@ export const make = Effect.gen(function* () {
         }
         scannedFiles += 1;
         for (const record of file.records) {
+          ledgerRecords.push({ hostId, provider, resolvedHomePath: dir, record });
           // Only sessions that contributed in-window count: the mtime slack
           // admits boundary files whose records fall outside the range.
           if (aggregator.add(record) && record.sessionId.length > 0) {
@@ -673,29 +770,32 @@ export const make = Effect.gen(function* () {
         : DateTime.formatIso(DateTime.makeUnsafe(Math.min(hourlyWindow.untilTimeMs, finishedAtMs)));
 
     return {
-      contractVersion: USAGE_CONTRACT_VERSION,
-      readAt: DateTime.formatIso(readAt),
-      timeZone: input.timeZone,
-      sinceDay: input.sinceDay,
-      untilDay: input.untilDay,
-      buckets: aggregated.buckets,
-      sources,
-      pricing: {
-        status: ratesStatus,
-        source: LITELLM_RATES_URL,
-        fetchedAt:
-          ratesFetchedAtMs === null
-            ? null
-            : DateTime.formatIso(DateTime.makeUnsafe(ratesFetchedAtMs)),
-        knownModels: rates.size,
+      summary: {
+        contractVersion: USAGE_CONTRACT_VERSION,
+        readAt: DateTime.formatIso(readAt),
+        timeZone: input.timeZone,
+        sinceDay: input.sinceDay,
+        untilDay: input.untilDay,
+        buckets: aggregated.buckets,
+        sources,
+        pricing: {
+          status: ratesStatus,
+          source: LITELLM_RATES_URL,
+          fetchedAt:
+            ratesFetchedAtMs === null
+              ? null
+              : DateTime.formatIso(DateTime.makeUnsafe(ratesFetchedAtMs)),
+          knownModels: rates.size,
+        },
+        coverage: {
+          availableThroughDay,
+          availableThroughTime,
+          generatedAt: DateTime.formatIso(readAt),
+        },
+        scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
       },
-      coverage: {
-        availableThroughDay,
-        availableThroughTime,
-        generatedAt: DateTime.formatIso(readAt),
-      },
-      scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
-    } satisfies UsageSummary;
+      records: ledgerRecords,
+    } satisfies ScanResult;
   });
 
   /**
@@ -708,9 +808,11 @@ export const make = Effect.gen(function* () {
   const scanKey = snapshotKey;
 
   const scanAndPersist = (input: UsageSummaryInput) => {
-    const scan = scanSummary(input).pipe(
-      Effect.tap((summary) =>
+    const scan = ensureUsageLedgerLoaded.pipe(
+      Effect.andThen(scanSummary(input)),
+      Effect.tap((result) =>
         Effect.sync(() => {
+          const summary = result.summary;
           usageSnapshots.set(scanKey(input), summary);
           while (usageSnapshots.size > MAX_USAGE_SNAPSHOTS) {
             const oldest = [...usageSnapshots.entries()].toSorted(([, left], [, right]) =>
@@ -722,18 +824,128 @@ export const make = Effect.gen(function* () {
             usageSnapshots.delete(oldest[0]);
           }
           snapshotsDirty = true;
-        }).pipe(Effect.andThen(persistUsageSnapshots)),
+          usageLedgerGeneratedAtMs = Date.parse(summary.readAt);
+          for (const entry of result.records) {
+            const key = `${entry.hostId}\u0000${entry.provider}\u0000${entry.resolvedHomePath}\u0000${entry.record.dedupeKey ?? JSON.stringify(entry.record)}`;
+            usageLedger.set(key, entry);
+          }
+          const cutoff = usageLedgerGeneratedAtMs - USAGE_LEDGER_RETENTION_MS;
+          for (const [key, entry] of usageLedger) {
+            if (entry.record.timestampMs < cutoff) usageLedger.delete(key);
+          }
+          usageLedgerDirty = true;
+        }).pipe(Effect.andThen(persistUsageSnapshots), Effect.andThen(persistUsageLedger)),
       ),
     );
     // Reject malformed day ranges before entering the serialized lane. This
     // keeps invalid requests synchronous and cannot consume the scan permit.
-    return input.sinceDay > input.untilDay ? scan : scanSemaphore.withPermits(1)(scan);
+    const summary = scan.pipe(Effect.map((result) => result.summary));
+    return input.sinceDay > input.untilDay ? summary : scanSemaphore.withPermits(1)(summary);
   };
+
+  /** Derives a requested preset from the durable normalized record ledger. */
+  const readPresetFromLedger = Effect.fn("UsageService.readPresetFromLedger")(function* (
+    input: UsageSummaryInput,
+  ) {
+    yield* ensureUsageLedgerLoaded;
+    if (usageLedgerGeneratedAtMs <= 0 || usageLedger.size === 0) return null;
+    yield* ensureRates();
+
+    const generatedAtMs = usageLedgerGeneratedAtMs;
+    const completeThroughDay = previousCalendarDay(input.timeZone, generatedAtMs);
+    let hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null = null;
+    if (input.resolution === "hour") {
+      if (input.sinceTime === undefined || input.untilTime === undefined) return null;
+      const sinceTimeMs = Date.parse(input.sinceTime);
+      const untilTimeMs = Math.min(Date.parse(input.untilTime), generatedAtMs);
+      if (!Number.isFinite(sinceTimeMs) || untilTimeMs <= sinceTimeMs) return null;
+      hourlyWindow = { sinceTimeMs, untilTimeMs };
+    }
+
+    const effectiveUntil =
+      input.resolution === "hour"
+        ? input.untilDay
+        : input.untilDay < completeThroughDay
+          ? input.untilDay
+          : UsageDay.make(completeThroughDay);
+    const aggregator = new UsageAggregator({
+      timeZone: input.timeZone,
+      sinceDay: input.sinceDay,
+      untilDay: effectiveUntil,
+      resolution: input.resolution ?? "day",
+      ...(hourlyWindow ?? {}),
+      rates,
+    });
+    const sessions = new Map<string, Set<string>>();
+    for (const entry of usageLedger.values()) {
+      if (aggregator.add(entry.record) && entry.record.sessionId.length > 0) {
+        const key = `${entry.hostId}\u0000${entry.provider}\u0000${entry.resolvedHomePath}`;
+        const sourceSessions = sessions.get(key) ?? new Set<string>();
+        sourceSessions.add(entry.record.sessionId);
+        sessions.set(key, sourceSessions);
+      }
+    }
+    const aggregated = aggregator.finish();
+    const readAt = yield* DateTime.now;
+    const availableThroughTime =
+      hourlyWindow === null ? null : formatInstant(hourlyWindow.untilTimeMs);
+    const sourceEntries = new Map<string, UsageSource>();
+    for (const entry of usageLedger.values()) {
+      const key = `${entry.hostId}\u0000${entry.provider}\u0000${entry.resolvedHomePath}`;
+      if (sourceEntries.has(key)) continue;
+      sourceEntries.set(key, {
+        fingerprint: {
+          hostId: entry.hostId,
+          provider: entry.provider,
+          resolvedHomePath: entry.resolvedHomePath,
+          volumeId: "",
+        },
+        status: "ok",
+        scannedFiles: 0,
+        skippedFiles: 0,
+        malformedRecords: 0,
+        distinctSessions: sessions.get(key)?.size ?? 0,
+        message: null,
+      });
+    }
+    return {
+      contractVersion: USAGE_CONTRACT_VERSION,
+      readAt: DateTime.formatIso(readAt),
+      timeZone: input.timeZone,
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      buckets: aggregated.buckets,
+      sources: [...sourceEntries.values()],
+      pricing: {
+        status: ratesStatus,
+        source: LITELLM_RATES_URL,
+        fetchedAt: ratesFetchedAtMs === null ? null : formatInstant(ratesFetchedAtMs),
+        knownModels: rates.size,
+      },
+      coverage: {
+        availableThroughDay:
+          input.resolution === "hour"
+            ? UsageDay.make(makeDayFormatter(input.timeZone)(hourlyWindow!.untilTimeMs - 1))
+            : effectiveUntil,
+        availableThroughTime,
+        generatedAt: formatInstant(generatedAtMs),
+      },
+      scanDurationMs: 0,
+    } satisfies UsageSummary;
+  });
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
     const key = scanKey(input);
     const cached = usageSnapshots.get(key);
     if (cached !== undefined) return cached;
+    if (isCommonPreset(input)) {
+      const normalized = yield* readPresetFromLedger(input);
+      if (normalized !== null) return normalized;
+      return yield* new UsageReadError({
+        reason: "scanFailed",
+        detail: "Usage preset is waiting for the next background snapshot.",
+      });
+    }
 
     const deferred = yield* Effect.uninterruptible(
       Effect.gen(function* () {
@@ -817,18 +1029,7 @@ export const make = Effect.gen(function* () {
   });
 
   yield* Effect.uninterruptible(ensureUsageSnapshotsLoaded);
-  // Wait for command readiness before doing any transcript work. The fiber
-  // remains scoped to this server instance and is independent of page mounts.
-  yield* Effect.forkScoped(
-    Option.match(startup, {
-      // Test layers intentionally omit startup orchestration. Keeping the
-      // scheduler off there avoids background filesystem work racing fixtures;
-      // the production layer always supplies this gate.
-      onNone: () => Effect.never,
-      onSome: (runtimeStartup) =>
-        runtimeStartup.awaitCommandReady.pipe(Effect.andThen(startBackgroundRefresh)),
-    }).pipe(Effect.ignore),
-  );
+  yield* Effect.uninterruptible(ensureUsageLedgerLoaded);
   return { readSummary, refreshSummary, startBackgroundRefresh } as const;
 });
 

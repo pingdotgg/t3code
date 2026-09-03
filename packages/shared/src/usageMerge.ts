@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off
 /**
  * Merges per-environment usage summaries into the single view the page renders.
  *
@@ -72,6 +73,8 @@ export interface MergedUsage {
   readonly totalTokens: number;
   readonly records: number;
   readonly sessions: number;
+  /** False when source-level distinct session counts cannot be bounded. */
+  readonly sessionsExact: boolean;
   readonly providers: readonly ProviderTotals[];
   readonly models: readonly ModelTotals[];
   readonly daily: readonly DailyTotals[];
@@ -180,7 +183,8 @@ function ownedContribution(
       (bucket) =>
         ownedProviders.has(bucket.provider) &&
         (availableThroughTime !== null
-          ? bucket.hourStart !== undefined && bucket.hourStart < availableThroughTime
+          ? bucket.hourStart !== undefined &&
+            Date.parse(bucket.hourStart) + 60 * 60 * 1000 <= Date.parse(availableThroughTime)
           : availableThroughDay === null || bucket.day <= availableThroughDay),
     ),
     sessionsByProvider,
@@ -211,6 +215,7 @@ const EMPTY_MERGED: MergedUsage = {
   totalTokens: 0,
   records: 0,
   sessions: 0,
+  sessionsExact: true,
   providers: [],
   models: [],
   daily: [],
@@ -270,7 +275,7 @@ export function mergeUsage(
             entry.availableThroughDay < earliest ? entry.availableThroughDay : earliest,
           coverage[0]!.availableThroughDay,
         );
-  const availableThroughTime =
+  const availableThroughTimeRaw =
     coverage.length === 0 || coverage.some((entry) => entry.availableThroughTime === null)
       ? null
       : coverage.reduce(
@@ -278,6 +283,20 @@ export function mergeUsage(
             entry.availableThroughTime! < earliest ? entry.availableThroughTime! : earliest,
           coverage[0]!.availableThroughTime!,
         );
+  // Hourly buckets are whole hours. A half-hour scan cutoff is not enough to
+  // publish that bucket, so expose the last fully contained hour as the
+  // displayed boundary and keep partial data out of every derived total.
+  const availableThroughTime =
+    availableThroughTimeRaw === null
+      ? null
+      : new Date(
+          Math.floor(Date.parse(availableThroughTimeRaw) / (60 * 60 * 1000)) * (60 * 60 * 1000),
+        ).toISOString();
+  const sessionsExact = coverage.every(
+    (entry) =>
+      entry.availableThroughDay === availableThroughDay &&
+      entry.availableThroughTime === availableThroughTimeRaw,
+  );
   const lastUpdatedAt =
     coverage.length === 0
       ? null
@@ -336,6 +355,7 @@ export function mergeUsage(
     if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
 
     for (const [providerKind, providerSessions] of sessionsByProvider) {
+      if (!sessionsExact) continue;
       sessions += providerSessions;
       if (providerSessions === 0) continue;
       const provider = providerAccumulator.get(providerKind) ?? {
@@ -468,6 +488,7 @@ export function mergeUsage(
     totalTokens,
     records,
     sessions,
+    sessionsExact,
     providers,
     models,
     daily,

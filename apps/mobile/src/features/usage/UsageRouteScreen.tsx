@@ -45,7 +45,8 @@ export function UsageRouteScreen() {
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
-  const { merged, environments, isPending, isPartial, isRefreshing, refresh } = useUsage(window);
+  const { merged, environments, isPending, isPartial, isRefreshing, refreshError, refresh } =
+    useUsage(window);
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
@@ -133,6 +134,7 @@ export function UsageRouteScreen() {
           merged={merged}
           isPartial={isPartial}
           isRefreshing={isRefreshing}
+          refreshError={refreshError}
           timeZone={window.timeZone}
         />
 
@@ -231,7 +233,9 @@ function ChartCard(props: {
           <Text className="text-sm text-foreground-muted">
             {metric === "cost"
               ? "* if billed at full API rate"
-              : `Across ${formatCount(merged.sessions)} sessions`}
+              : merged.sessionsExact
+                ? `Across ${formatCount(merged.sessions)} sessions`
+                : "Session count unavailable until all environments share a cutoff"}
           </Text>
         </View>
         <MetricToggle metric={metric} onChange={props.onMetricChange} />
@@ -477,6 +481,7 @@ function UsageCoverageNotice(props: {
   readonly merged: MergedUsage;
   readonly isPartial: boolean;
   readonly isRefreshing: boolean;
+  readonly refreshError: string | null | undefined;
   readonly timeZone: string;
 }) {
   const failed = props.environments.filter((environment) => environment.error !== null);
@@ -517,9 +522,17 @@ function UsageCoverageNotice(props: {
       {props.isRefreshing ? (
         <Text className="text-sm text-foreground-muted">Refreshing usage in the background.</Text>
       ) : null}
+      {props.refreshError ? (
+        <Text className="text-sm text-foreground-muted">{props.refreshError}</Text>
+      ) : null}
       {props.merged.lastUpdatedAt !== null ? (
         <Text className="text-sm text-foreground-muted">
           Last updated {formatDateTimeShort(props.merged.lastUpdatedAt, props.timeZone)}.
+        </Text>
+      ) : null}
+      {!props.merged.sessionsExact ? (
+        <Text className="text-sm text-foreground-muted">
+          Sessions are unavailable until all environments share a cutoff.
         </Text>
       ) : null}
       {failed.map((environment) => (

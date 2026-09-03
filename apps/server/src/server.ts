@@ -702,12 +702,25 @@ export const makeServerLayer = Layer.unwrap(
       disableLogger: !config.logWebSocketEvents,
       routerConfig: HTTP_ROUTER_CONFIG,
     }).pipe(Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)));
+    const usageBackgroundRefreshLayer = Layer.effectDiscard(
+      Effect.gen(function* () {
+        const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+        const usage = yield* UsageService.UsageService;
+        // Command readiness is the existing startup boundary. The refresh is
+        // forked here so it is independent of the Usage page and runs exactly
+        // once after startup, followed by the service's 30-minute cadence.
+        yield* Effect.forkScoped(
+          startup.awaitCommandReady.pipe(Effect.andThen(usage.startBackgroundRefresh)),
+        );
+      }),
+    );
     const serverApplicationLayer = Layer.mergeAll(
       routesLayer,
       httpListeningLayer,
       runtimeStateLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
+      usageBackgroundRefreshLayer,
     );
 
     return serverApplicationLayer.pipe(

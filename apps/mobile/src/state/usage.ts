@@ -73,6 +73,7 @@ export interface UsageView {
   readonly isPartial: boolean;
   /** True while a previously loaded snapshot is being refreshed. */
   readonly isRefreshing: boolean;
+  readonly refreshError?: string | null;
   readonly refresh: () => void;
 }
 
@@ -102,17 +103,25 @@ export function useUsage(input: UsageSummaryInput): UsageView {
     reportFailure: false,
   });
   const [manualRefreshing, setManualRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   // Explicit refresh is a server command, so it really rescans and publishes
   // a new last-good snapshot. The normal query remains snapshot-only.
   const refresh = useCallback(() => {
     const input = JSON.parse(windowKey) as UsageSummaryInput;
     setManualRefreshing(true);
+    setRefreshError(null);
     void Promise.all(
       environments.map((environment) =>
         refreshUsageSummary({ environmentId: environment.environmentId, input }),
       ),
-    ).finally(() => setManualRefreshing(false));
+    )
+      .then((results) => {
+        if (results.some((result) => result._tag === "Failure")) {
+          setRefreshError("Refresh failed. Showing the last successful usage snapshot.");
+        }
+      })
+      .finally(() => setManualRefreshing(false));
   }, [environments, refreshUsageSummary, windowKey]);
 
   const merged = useMemo(() => {
@@ -144,6 +153,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
     isPending: answeredCount === 0 && stillReporting > 0,
     isPartial: answeredCount > 0 && stillReporting > 0,
     isRefreshing,
+    refreshError,
     refresh,
   };
 }

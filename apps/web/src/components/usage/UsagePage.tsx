@@ -51,7 +51,8 @@ export function UsagePage() {
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
-  const { merged, environments, isPending, isPartial, isRefreshing, refresh } = useUsage(window);
+  const { merged, environments, isPending, isPartial, isRefreshing, refreshError, refresh } =
+    useUsage(window);
 
   // A bounded last-good snapshot may stay visible while another environment
   // answers. Only the first load, with no usable coverage, needs a skeleton.
@@ -231,6 +232,7 @@ export function UsagePage() {
                   lastUpdatedAt={merged.lastUpdatedAt}
                   isPartial={isPartial}
                   isRefreshing={isRefreshing}
+                  refreshError={refreshError}
                   timeZone={window.timeZone}
                 />
 
@@ -244,8 +246,12 @@ export function UsagePage() {
                       </span>
                       <span className="text-xs text-muted-foreground">
                         {metric === "cost"
-                          ? `${formatCount(merged.sessions)} sessions · API estimate`
-                          : `${formatCount(merged.sessions)} sessions`}
+                          ? merged.sessionsExact
+                            ? `${formatCount(merged.sessions)} sessions · API estimate`
+                            : "Sessions unavailable until all environments share a cutoff"
+                          : merged.sessionsExact
+                            ? `${formatCount(merged.sessions)} sessions`
+                            : "Sessions unavailable until all environments share a cutoff"}
                       </span>
                     </div>
 
@@ -512,6 +518,7 @@ function UsageCoverageNotice({
   lastUpdatedAt,
   isPartial,
   isRefreshing,
+  refreshError,
   timeZone,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
@@ -522,6 +529,7 @@ function UsageCoverageNotice({
   readonly lastUpdatedAt: string | null;
   readonly isPartial: boolean;
   readonly isRefreshing: boolean;
+  readonly refreshError: string | null | undefined;
   readonly timeZone: string;
 }) {
   const failed = environments.filter((environment) => environment.error !== null);
@@ -534,6 +542,7 @@ function UsageCoverageNotice({
     duplicateSources.length === 0 &&
     availableThroughDay === null &&
     !isPartial &&
+    refreshError == null &&
     !isRefreshing
   ) {
     return null;
@@ -548,6 +557,7 @@ function UsageCoverageNotice({
       ) : null}
       {isPartial ? <span>Some environments are still reporting. Totals are partial.</span> : null}
       {isRefreshing ? <span>Refreshing usage in the background.</span> : null}
+      {refreshError ? <span>{refreshError}</span> : null}
       {lastUpdatedAt !== null ? (
         <span>Last updated {formatDateTimeShort(lastUpdatedAt)}.</span>
       ) : null}
