@@ -8,6 +8,7 @@ import {
   DialogDescription,
   DialogFooter,
   DialogHeader,
+  DialogPanel,
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
@@ -90,43 +91,45 @@ export function AddUsageLimitSourceDialog({
             The key stays on the server.
           </DialogDescription>
         </DialogHeader>
-        <form
-          className="grid gap-4 px-6 py-5"
-          onSubmit={(event) => {
-            event.preventDefault();
-            save();
-          }}
-        >
-          <div className="grid gap-1.5">
-            <Label htmlFor="usage-source-url">Hub URL</Label>
-            <Input
-              id="usage-source-url"
-              placeholder="https://hub.example.ts.net:8318"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              autoFocus
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="usage-source-key">Management key</Label>
-            <Input
-              id="usage-source-key"
-              type="password"
-              autoComplete="off"
-              value={managementKey}
-              onChange={(event) => setManagementKey(event.target.value)}
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="usage-source-label">Label (optional)</Label>
-            <Input
-              id="usage-source-label"
-              placeholder="Defaults to the hub's host name"
-              value={label}
-              onChange={(event) => setLabel(event.target.value)}
-            />
-          </div>
-        </form>
+        <DialogPanel>
+          <form
+            className="grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              save();
+            }}
+          >
+            <div className="grid gap-1.5">
+              <Label htmlFor="usage-source-url">Hub URL</Label>
+              <Input
+                id="usage-source-url"
+                placeholder="https://hub.example.ts.net:8318"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="usage-source-key">Management key</Label>
+              <Input
+                id="usage-source-key"
+                type="password"
+                autoComplete="off"
+                value={managementKey}
+                onChange={(event) => setManagementKey(event.target.value)}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="usage-source-label">Label (optional)</Label>
+              <Input
+                id="usage-source-label"
+                placeholder="Defaults to the hub's host name"
+                value={label}
+                onChange={(event) => setLabel(event.target.value)}
+              />
+            </div>
+          </form>
+        </DialogPanel>
         <DialogFooter variant="bare">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
