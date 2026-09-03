@@ -85,6 +85,26 @@ describe("splitPromptIntoComposerSegments", () => {
     ).toEqual([{ type: "text", text: "Read [the docs](https://example.com/docs) first" }]);
   });
 
+  it("splits completed GitHub repository links into display segments", () => {
+    expect(
+      splitPromptIntoComposerSegments("Review https://github.com/pingdotgg/t3code please"),
+    ).toEqual([
+      { type: "text", text: "Review " },
+      {
+        type: "github-repository",
+        href: "https://github.com/pingdotgg/t3code",
+        nameWithOwner: "pingdotgg/t3code",
+        source: "https://github.com/pingdotgg/t3code",
+      },
+      { type: "text", text: " please" },
+    ]);
+  });
+
+  it("leaves GitHub links to issues and files as normal text", () => {
+    const prompt = "Read https://github.com/pingdotgg/t3code/issues/1 please";
+    expect(splitPromptIntoComposerSegments(prompt)).toEqual([{ type: "text", text: prompt }]);
+  });
+
   it("keeps multiple assistant citations atomic next to punctuation and Unicode", () => {
     const source = serializeAssistantCitation(citation);
     const otherCitation = {

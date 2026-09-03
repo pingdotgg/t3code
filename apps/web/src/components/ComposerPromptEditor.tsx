@@ -78,12 +78,14 @@ import {
   COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME,
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
+  COMPOSER_INLINE_LINK_DECORATOR_CLASS_NAME,
   COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME,
   SKILL_CHIP_ICON_SVG,
 } from "./composerInlineChip";
 import { FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
+import { GitHubIcon } from "./Icons";
 import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkills";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
@@ -118,6 +120,16 @@ type SerializedComposerMentionNode = Spread<
   {
     path: string;
     type: "composer-mention";
+    version: 1;
+  },
+  SerializedLexicalNode
+>;
+
+type SerializedComposerGitHubRepositoryNode = Spread<
+  {
+    href: string;
+    nameWithOwner: string;
+    type: "composer-github-repository";
     version: 1;
   },
   SerializedLexicalNode
@@ -226,6 +238,91 @@ class ComposerMentionNode extends DecoratorNode<React.ReactElement> {
 
 function $createComposerMentionNode(path: string): ComposerMentionNode {
   return $applyNodeReplacement(new ComposerMentionNode(path));
+}
+
+function ComposerGitHubRepositoryDecorator(props: { nameWithOwner: string }) {
+  return (
+    <span
+      className="inline-flex max-w-full items-baseline gap-[0.33em] leading-[inherit] text-primary"
+      contentEditable={false}
+      spellCheck={false}
+      data-composer-github-repository-chip="true"
+    >
+      <span aria-hidden="true" className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}>
+        <GitHubIcon className="size-full" />
+      </span>
+      <span className="block self-baseline truncate leading-[inherit] select-none">
+        {props.nameWithOwner}
+      </span>
+    </span>
+  );
+}
+
+class ComposerGitHubRepositoryNode extends DecoratorNode<React.ReactElement> {
+  __href: string;
+  __nameWithOwner: string;
+
+  static override getType(): string {
+    return "composer-github-repository";
+  }
+
+  static override clone(node: ComposerGitHubRepositoryNode): ComposerGitHubRepositoryNode {
+    return new ComposerGitHubRepositoryNode(node.__href, node.__nameWithOwner, node.__key);
+  }
+
+  static override importJSON(
+    serializedNode: SerializedComposerGitHubRepositoryNode,
+  ): ComposerGitHubRepositoryNode {
+    return $createComposerGitHubRepositoryNode(
+      serializedNode.href,
+      serializedNode.nameWithOwner,
+    ).updateFromJSON(serializedNode);
+  }
+
+  constructor(href: string, nameWithOwner: string, key?: NodeKey) {
+    super(key);
+    this.__href = href;
+    this.__nameWithOwner = nameWithOwner;
+  }
+
+  override exportJSON(): SerializedComposerGitHubRepositoryNode {
+    return {
+      ...super.exportJSON(),
+      href: this.__href,
+      nameWithOwner: this.__nameWithOwner,
+      type: "composer-github-repository",
+      version: 1,
+    };
+  }
+
+  override createDOM(): HTMLElement {
+    const dom = document.createElement("span");
+    dom.className = COMPOSER_INLINE_LINK_DECORATOR_CLASS_NAME;
+    return dom;
+  }
+
+  override updateDOM(): false {
+    return false;
+  }
+
+  override getTextContent(): string {
+    return this.__href;
+  }
+
+  override isInline(): true {
+    return true;
+  }
+
+  override decorate(): React.ReactElement {
+    return <ComposerGitHubRepositoryDecorator nameWithOwner={this.__nameWithOwner} />;
+  }
+}
+
+function $createComposerGitHubRepositoryNode(
+  href: string,
+  nameWithOwner: string,
+): ComposerGitHubRepositoryNode {
+  return $applyNodeReplacement(new ComposerGitHubRepositoryNode(href, nameWithOwner));
 }
 
 function resolveSkillDescription(
@@ -441,6 +538,7 @@ function $createComposerTerminalContextNode(
 
 type ComposerInlineTokenNode =
   | ComposerMentionNode
+  | ComposerGitHubRepositoryNode
   | ComposerSkillNode
   | ComposerCitationNode
   | ComposerTerminalContextNode;
@@ -448,6 +546,7 @@ type ComposerInlineTokenNode =
 function isComposerInlineTokenNode(candidate: unknown): candidate is ComposerInlineTokenNode {
   return (
     candidate instanceof ComposerMentionNode ||
+    candidate instanceof ComposerGitHubRepositoryNode ||
     candidate instanceof ComposerSkillNode ||
     candidate instanceof ComposerCitationNode ||
     candidate instanceof ComposerTerminalContextNode
@@ -852,6 +951,10 @@ function $setComposerEditorPrompt(
     }
     if (segment.type === "mention") {
       paragraph.append($createComposerMentionNode(segment.path));
+      continue;
+    }
+    if (segment.type === "github-repository") {
+      paragraph.append($createComposerGitHubRepositoryNode(segment.href, segment.nameWithOwner));
       continue;
     }
     if (segment.type === "skill") {
@@ -1280,6 +1383,7 @@ function ComposerInlineTokenPastePlugin() {
       registerComposerInlineTokenPaste(editor, {
         createMentionNode: $createComposerMentionNode,
         createCitationNode: $createComposerCitationNode,
+        createGitHubRepositoryNode: $createComposerGitHubRepositoryNode,
         getExpandedAbsoluteOffsetForPoint,
       }),
     [editor],
@@ -1981,6 +2085,7 @@ export function ComposerPromptEditor({
       editable: true,
       nodes: [
         ComposerMentionNode,
+        ComposerGitHubRepositoryNode,
         ComposerSkillNode,
         ComposerCitationNode,
         ComposerTerminalContextNode,

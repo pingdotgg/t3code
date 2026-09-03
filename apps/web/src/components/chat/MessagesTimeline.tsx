@@ -2296,6 +2296,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
             threadRef={ctx.threadRef ?? undefined}
             skills={props.skills}
             className="text-message-foreground"
+            messageLinkStyle
             lineBreaks
             parseRawHtml={false}
           />
@@ -2319,6 +2320,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
                   threadRef={ctx.threadRef ?? undefined}
                   skills={props.skills}
                   className="text-message-foreground"
+                  messageLinkStyle
                   lineBreaks
                   parseRawHtml={false}
                 />
@@ -2408,6 +2410,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
           threadRef={ctx.threadRef ?? undefined}
           skills={props.skills}
           className="text-message-foreground"
+          messageLinkStyle
           lineBreaks
           parseRawHtml={false}
         />,
@@ -2434,6 +2437,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
       className="text-message-foreground"
+      messageLinkStyle
       lineBreaks
       parseRawHtml={false}
     />
@@ -2470,6 +2474,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
           threadRef={ctx.threadRef ?? undefined}
           skills={ctx.skills}
           className="text-message-foreground"
+          messageLinkStyle
         />
       )}
       {renderablePatch?.kind === "files" &&

@@ -6,12 +6,16 @@ const INLINE_CHIP_GEOMETRY_CLASS_NAME =
 
 const INLINE_CHIP_CLASS_NAME = `${INLINE_CHIP_GEOMETRY_CLASS_NAME} border border-border/70 bg-accent/40 text-foreground`;
 
+const COMPOSER_INLINE_CHIP_SELECTION_CLASS_NAME =
+  "data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-[6px] data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
+
 export const CHAT_INLINE_CHIP_CLASS_NAME = `${INLINE_CHIP_CLASS_NAME} text-[12px]`;
 
 export const COMPOSER_INLINE_CHIP_CLASS_NAME = `${INLINE_CHIP_CLASS_NAME} text-[0.86em] select-none`;
 
-export const COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME =
-  "relative inline-flex align-[-0.125em] leading-none data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-[6px] data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
+export const COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME = `relative inline-flex align-[-0.125em] leading-none ${COMPOSER_INLINE_CHIP_SELECTION_CLASS_NAME}`;
+
+export const COMPOSER_INLINE_LINK_DECORATOR_CLASS_NAME = `relative inline-flex align-baseline ${COMPOSER_INLINE_CHIP_SELECTION_CLASS_NAME}`;
 
 export const COMPOSER_INLINE_CHIP_ICON_CLASS_NAME =
   "block size-[1.17em] shrink-0 self-center opacity-85 [&>svg]:block";

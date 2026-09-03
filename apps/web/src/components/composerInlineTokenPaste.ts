@@ -16,6 +16,7 @@ import { collectComposerPromptInlineTokens } from "../composer-editor-mentions";
 interface ComposerInlineTokenPasteOptions {
   createMentionNode: (path: string) => LexicalNode;
   createCitationNode: (citation: AssistantCitation, source: string) => LexicalNode;
+  createGitHubRepositoryNode: (href: string, nameWithOwner: string) => LexicalNode;
   getExpandedAbsoluteOffsetForPoint: (node: LexicalNode, pointOffset: number) => number;
 }
 
@@ -36,11 +37,14 @@ export function registerComposerInlineTokenPaste(
       if (text.length === 0) {
         return false;
       }
-      // Token grammar requires trailing whitespace; a virtual newline lets a
-      // mention at the very end of the pasted text still parse.
+      // Token grammar requires trailing whitespace; a virtual newline lets an
+      // inline token at the very end of the pasted text still parse.
       const tokens = collectComposerPromptInlineTokens(`${text}\n`).filter(
         (token) =>
-          (token.type === "mention" || token.type === "citation") && token.end <= text.length,
+          (token.type === "mention" ||
+            token.type === "citation" ||
+            token.type === "github-repository") &&
+          token.end <= text.length,
       );
       if (tokens.length === 0) {
         return false;
@@ -67,7 +71,10 @@ export function registerComposerInlineTokenPaste(
         }
       };
       const firstToken = tokens[0];
-      if (firstToken?.type === "mention" && firstToken.start === 0) {
+      if (
+        (firstToken?.type === "mention" || firstToken?.type === "github-repository") &&
+        firstToken.start === 0
+      ) {
         const startPoint = selection.isBackward() ? selection.focus : selection.anchor;
         const insertionOffset = options.getExpandedAbsoluteOffsetForPoint(
           startPoint.getNode(),
@@ -91,16 +98,18 @@ export function registerComposerInlineTokenPaste(
         nodes.push(
           token.type === "citation"
             ? options.createCitationNode(token.citation, token.source)
-            : options.createMentionNode(token.value),
+            : token.type === "github-repository"
+              ? options.createGitHubRepositoryNode(token.href, token.nameWithOwner)
+              : options.createMentionNode(token.value),
         );
         cursor = token.end;
       }
       if (cursor < text.length) {
         appendText(text.slice(cursor));
-      } else if (tokens.at(-1)?.type === "mention") {
-        // Keep the serialized prompt valid: mention tokens need trailing
-        // whitespace, so a paste ending in a mention gets the same
-        // trailing space the autocomplete inserts.
+      } else if (tokens.at(-1)?.type === "mention" || tokens.at(-1)?.type === "github-repository") {
+        // Keep the serialized prompt valid: inline tokens need trailing
+        // whitespace, so a paste ending in one gets the same trailing space
+        // the autocomplete inserts.
         nodes.push($createTextNode(" "));
       }
       selection.insertNodes(nodes);
