@@ -601,7 +601,11 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
                     if (states?.get(queryAtom) === mountedState) states.delete(queryAtom);
                   });
                 }
-                if (result._tag === "Failure" && state.retryFiber === undefined) {
+                if (
+                  result._tag === "Failure" &&
+                  !result.waiting &&
+                  state.retryFiber === undefined
+                ) {
                   state.disposed = false;
                   state.retryFiber = Effect.runFork(
                     Effect.sleep(refreshOnFailureMs).pipe(
@@ -613,7 +617,10 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
                       ),
                     ),
                   );
-                } else if (result._tag !== "Failure" && state.retryFiber !== undefined) {
+                } else if (
+                  (result._tag !== "Failure" || result.waiting) &&
+                  state.retryFiber !== undefined
+                ) {
                   state.retryFiber.interruptUnsafe();
                   state.retryFiber = undefined;
                 }

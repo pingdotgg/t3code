@@ -830,10 +830,12 @@ export const make = Effect.gen(function* () {
         const result = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
         if (result.issue === "missing") {
           missingFiles += 1;
+          complete = false;
           continue;
         }
         if (result.issue === "failed") {
           failedFiles += 1;
+          complete = false;
           continue;
         }
         parsedFiles.push({ path: file.path, records: result.records });

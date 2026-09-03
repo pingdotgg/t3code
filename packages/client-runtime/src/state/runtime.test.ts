@@ -12,6 +12,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import {
@@ -312,6 +313,41 @@ describe("environment query lifecycle", () => {
 
         yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
         expect(executions).toBe(2);
+      }),
+    ),
+  );
+
+  it.effect("cancels a failure retry while a query is already waiting", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const expectedFailure = new TestQueryError({ message: "The ledger is not ready." });
+        let executions = 0;
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.suspend(() => {
+            executions += 1;
+            if (executions === 1) return Effect.fail(expectedFailure);
+            return Effect.succeed("recovered");
+          }),
+          { refreshOnFailureMs: 5_000 },
+        );
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+        const initial = yield* AtomRegistry.getResult(registry, harness.atom, {
+          suspendOnWaiting: true,
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(initial)).toBe(true);
+        expect(executions).toBe(1);
+
+        yield* SubscriptionRef.set(
+          harness.supervisorState,
+          queryConnectionState({ phase: "connecting", stage: "opening" }),
+        );
+        yield* Effect.yieldNow;
+        const waiting = registry.get(harness.atom);
+        expect(AsyncResult.isFailure(waiting)).toBe(true);
+        expect(waiting.waiting).toBe(true);
+
+        yield* TestClock.adjust("5 seconds");
+        expect(executions).toBe(1);
       }),
     ),
   );

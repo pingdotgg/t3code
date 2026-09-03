@@ -7,7 +7,7 @@ import * as NodePath from "node:path";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 
-import { readTranscriptRecords } from "./usageTranscriptReader.ts";
+import { listTranscriptFilesDetailed, readTranscriptRecords } from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -206,5 +206,14 @@ describe("readTranscriptRecords resume", () => {
 
   it("returns null for an unreadable file", async () => {
     assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
+  });
+
+  it("marks a directory enumeration failure incomplete", async () => {
+    const notADirectory = NodePath.join(dir, "not-a-directory");
+    await NodeFSP.writeFile(notADirectory, "not a directory");
+
+    const result = await listTranscriptFilesDetailed(notADirectory, Date.now() - 60_000);
+    assert.isFalse(result.complete);
+    assert.strictEqual(result.failedFiles, 1);
   });
 });

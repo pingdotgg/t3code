@@ -112,10 +112,10 @@ function isNotFoundError(error: unknown): boolean {
 /**
  * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`.
  *
- * Errors enumerating a directory are reported through `complete`, while
- * individual entry failures are counted for a partial source diagnostic. A
+ * Any enumeration or entry metadata failure makes the walk incomplete. A
  * session file may rotate or become unreadable while the walk is in flight,
- * but usable sibling files should still publish.
+ * but publishing sibling files without it would make their totals look
+ * complete when they are not.
  *
  * `fileName` restricts the walk to a single basename (Grok's `updates.jsonl`).
  * Grok sessions also ship multi-megabyte `chat_history` and `events` logs that
@@ -137,8 +137,9 @@ export async function listTranscriptFilesDetailed(
     try {
       entries = await NodeFSP.readdir(dir, { withFileTypes: true });
     } catch (error) {
+      complete = false;
       if (isNotFoundError(error)) missingFiles += 1;
-      else complete = false;
+      else failedFiles += 1;
       return;
     }
     for (const entry of entries) {
@@ -159,8 +160,9 @@ export async function listTranscriptFilesDetailed(
         }
       } catch (error) {
         // A vanished file is a concurrent corpus change, not an empty
-        // transcript. It is surfaced as a partial source while the usable
-        // files still publish.
+        // transcript. Omit it from this attempt, but retain the last-good
+        // snapshot rather than publishing incomplete sibling totals.
+        complete = false;
         if (isNotFoundError(error)) missingFiles += 1;
         else failedFiles += 1;
       }

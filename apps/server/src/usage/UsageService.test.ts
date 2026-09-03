@@ -222,31 +222,60 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("publishes usable records while surfacing an unreadable transcript", () =>
+  it.live("retains the last-good snapshot when a transcript stays unreadable", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
       yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const layers = serviceLayers({
+        prefix: "usage-service-unreadable-file-test",
+        baseDir: NodePath.join(home, "server-state"),
+        home,
+        settings,
+      });
+      const service = yield* UsageService.make.pipe(Effect.provide(layers));
+      const complete = yield* service.refreshSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(complete), 5);
+
       // A symlink with a directory target is listed as a transcript entry, but
-      // opening it as a stream fails persistently. The valid sibling must still
-      // publish, with the source carrying the diagnostic.
+      // opening it as a stream fails persistently. Publishing the valid sibling
+      // would make an incomplete corpus look complete.
+      yield* Effect.promise(() =>
+        NodeFSP.symlink(NodePath.dirname(transcript), `${transcript}.bad.jsonl`),
+      );
+
+      const failed = yield* service.refreshSummary(WINDOW).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(failed));
+      const retained = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(retained), 5);
+      assert.strictEqual(retained.coverage?.generatedAt, complete.coverage?.generatedAt);
+
+      const restartedService = yield* UsageService.make.pipe(Effect.provide(layers));
+      const restarted = yield* restartedService.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(restarted), 5);
+      assert.strictEqual(restarted.coverage?.generatedAt, complete.coverage?.generatedAt);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("reports unavailable when the first refresh cannot read a transcript", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
       yield* Effect.promise(() =>
         NodeFSP.symlink(NodePath.dirname(transcript), `${transcript}.bad.jsonl`),
       );
       const service = yield* UsageService.make.pipe(
         Effect.provide(
-          serviceLayers({ prefix: "usage-service-partial-file-test", home, settings }),
+          serviceLayers({
+            prefix: "usage-service-fresh-unreadable-file-test",
+            baseDir: NodePath.join(home, "server-state"),
+            home,
+            settings,
+          }),
         ),
       );
 
-      const result = yield* service.refreshSummary(WINDOW);
-      assert.strictEqual(totalOutputTokens(result), 5);
-      const source = result.sources.find((entry) => entry.fingerprint.provider === "claude");
-      assert.isNotNull(source);
-      if (source === undefined) throw new Error("expected Claude source");
-      assert.strictEqual(source.status, "partial");
-      assert.strictEqual(source.skippedFiles, 1);
-      assert.include(source.message ?? "", "unreadable");
-      assert.isNotNull(result.coverage);
+      const unavailable = yield* service.readSummary(WINDOW).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(unavailable));
     }).pipe(Effect.scoped),
   );
 
