@@ -2,6 +2,7 @@ import * as Equal from "effect/Equal";
 import { renderCodexDirectivesForCopy } from "@t3tools/client-runtime/codex-markdown-directives";
 import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
 import {
+  liveActivityToolStatus,
   normalizeCompactToolLabel,
   omitSupersededLifecycleMarkers,
   resolveWorkEntryToolPresentation,
@@ -65,14 +66,14 @@ export function liveWorkEntryLabel(
   workspaceRoot: string | undefined,
   active: boolean,
 ) {
-  const toolPresentation = resolveWorkEntryToolPresentation(
-    entry,
-    active ? "inProgress" : "completed",
-  );
+  const status = liveActivityToolStatus(entry.toolLifecycleStatus, active);
+  const toolPresentation = resolveWorkEntryToolPresentation({
+    ...entry,
+    toolLifecycleStatus: status,
+  });
   if (toolPresentation) return toolPresentation.displayName;
   const command = entry.command?.trim();
   if (command) {
-    const status = entry.toolLifecycleStatus ?? (active ? "inProgress" : "completed");
     const verb =
       status === "inProgress"
         ? "Running"

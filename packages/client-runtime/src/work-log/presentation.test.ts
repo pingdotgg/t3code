@@ -25,7 +25,7 @@ describe("resolveWorkEntryToolPresentation", () => {
     "preview_click",
   ])("recognizes browser tool names across providers: %s", (label) => {
     expect(resolveWorkEntryToolPresentation({ label })).toEqual({
-      displayName: "Click in the preview browser",
+      displayName: "Clicking in the preview browser",
       icon: "browser",
     });
   });
@@ -37,7 +37,7 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolTitle: "Inspect the current page",
         toolData: { server: "t3-code", tool: "preview_snapshot", result: { title: "Example" } },
       }),
-    ).toEqual({ displayName: "Take a snapshot of the preview page", icon: "browser" });
+    ).toEqual({ displayName: "Taking a snapshot of the preview page", icon: "browser" });
   });
 
   it.each([
@@ -46,7 +46,7 @@ describe("resolveWorkEntryToolPresentation", () => {
     ["failed", "Failed to click in the preview browser"],
     ["declined", "Declined to click in the preview browser"],
     ["stopped", "Stopped clicking in the preview browser"],
-    ["unknown", "Click in the preview browser"],
+    ["unknown", "Clicking in the preview browser"],
   ])("describes the tool's own %s state", (toolLifecycleStatus, displayName) => {
     expect(
       resolveWorkEntryToolPresentation({
@@ -115,7 +115,7 @@ describe("resolveWorkEntryToolPresentation", () => {
         label: "mcp__t3_code__task_status",
         toolTitle: "Check the child task",
       }),
-    ).toEqual({ displayName: "Get delegated task status", icon: "t3-code" });
+    ).toEqual({ displayName: "Getting delegated task status", icon: "t3-code" });
   });
 
   it("does not brand unknown tools or another server's matching tool name", () => {

@@ -99,13 +99,16 @@ describe("work entry labels", () => {
     );
   });
 
-  it("does not describe a finished call as still running while the turn continues", () => {
+  it("keeps the latest live activity in the present tense after the call completes", () => {
     const browserEntry = {
       ...entry,
       toolTitle: "T3-code.preview_click",
       toolLifecycleStatus: "completed" as const,
     };
     expect(liveWorkEntryLabel(browserEntry, undefined, true)).toBe(
+      "Clicking in the preview browser",
+    );
+    expect(liveWorkEntryLabel(browserEntry, undefined, false)).toBe(
       "Clicked in the preview browser",
     );
   });
@@ -134,21 +137,21 @@ describe("work entry labels", () => {
   });
 
   it.each([
-    ["inProgress", "Running vp"],
-    ["completed", "Ran vp"],
-    ["failed", "Failed vp"],
-    ["declined", "Declined vp"],
-    ["stopped", "Stopped vp"],
+    ["inProgress", "Running vp", "Running vp"],
+    ["completed", "Running vp", "Ran vp"],
+    ["failed", "Failed vp", "Failed vp"],
+    ["declined", "Declined vp", "Declined vp"],
+    ["stopped", "Stopped vp", "Stopped vp"],
   ] as const)(
-    "uses the command's %s outcome even while the turn continues",
-    (toolLifecycleStatus, label) => {
+    "uses present tense for a live %s command and the outcome once it is no longer live",
+    (toolLifecycleStatus, liveLabel, settledLabel) => {
       const commandEntry = {
         ...entry,
         command: "/bin/bash -lc 'vp test run'",
         toolLifecycleStatus,
       };
-      expect(liveWorkEntryLabel(commandEntry, undefined, true)).toBe(label);
-      expect(liveWorkEntryLabel(commandEntry, undefined, false)).toBe(label);
+      expect(liveWorkEntryLabel(commandEntry, undefined, true)).toBe(liveLabel);
+      expect(liveWorkEntryLabel(commandEntry, undefined, false)).toBe(settledLabel);
     },
   );
 

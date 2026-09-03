@@ -113,12 +113,19 @@ function resolveT3McpToolPresentation(value: string | undefined, status: string 
             ? `Declined to ${action.toLowerCase()}`
             : status === "stopped"
               ? `Stopped ${running.toLowerCase()}`
-              : action;
+              : running;
 
   return {
     displayName: `${verb} ${detail}`,
     icon: name.startsWith("preview_") ? ("browser" as const) : ("t3-code" as const),
   };
+}
+
+/** Latest live activity stays present-tense unless the call itself failed, declined, or stopped. */
+export function liveActivityToolStatus(status: string | undefined, presentTense: boolean) {
+  if (status === "failed" || status === "declined" || status === "stopped") return status;
+  if (presentTense || status === "inProgress") return "inProgress";
+  return "completed";
 }
 
 /** Resolves tool identity before choosing labels or icons in either client. */
