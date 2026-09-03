@@ -53,8 +53,8 @@ catalog:
   lightningcss: 1.33.0
   tailwindcss: 4.3.3
   typescript: ~6.0.3
-  vite: npm:@voidzero-dev/vite-plus-core@0.2.2
-  vite-plus: 0.2.2
+  vite: npm:@voidzero-dev/vite-plus-core@0.3.0
+  vite-plus: 0.3.0
   yaml: ^2.9.0
 
 minimumReleaseAgeExclude:
