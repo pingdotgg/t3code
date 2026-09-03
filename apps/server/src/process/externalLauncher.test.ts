@@ -248,6 +248,52 @@ it.effect("launches Cursor in classic IDE mode through the Windows command shim"
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("launches stable Zed when a nightly install comes first on PATH", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-zed-" });
+    const nightlyDir = path.join(root, "Zed Nightly", "bin");
+    const stableDir = path.join(root, "Zed", "bin");
+    yield* fileSystem.makeDirectory(nightlyDir, { recursive: true });
+    yield* fileSystem.makeDirectory(stableDir, { recursive: true });
+    yield* fileSystem.writeFileString(path.join(nightlyDir, "zed.EXE"), "");
+    yield* fileSystem.writeFileString(path.join(stableDir, "zed.EXE"), "");
+    const env = { PATH: `${nightlyDir};${stableDir}`, PATHEXT: ".COM;.EXE;.BAT;.CMD" };
+
+    const launchZed = Effect.gen(function* () {
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        yield* launcher.launchEditor({ editor: "zed", cwd: "C:\\workspace" });
+      }).pipe(
+        Effect.provide(
+          testLayer({
+            platform: "win32",
+            env,
+            onSpawn: (command) => {
+              spawned = command;
+            },
+          }),
+        ),
+      );
+      assert.ok(spawned);
+      return spawned;
+    });
+
+    const preferred = yield* launchZed;
+    assert.equal(preferred.command, path.join(stableDir, "zed.EXE"));
+    assert.deepEqual(preferred.args, ["C:\\workspace"]);
+    assert.equal(preferred.options.shell, false);
+
+    // With only a nightly install left, PATH order is already right and the
+    // bare command is kept.
+    yield* fileSystem.remove(path.join(stableDir, "zed.EXE"));
+    const fallback = yield* launchZed;
+    assert.equal(fallback.command, "zed");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect.skipIf(windowsHost)("reveals a file in Finder with open -R on macOS", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;

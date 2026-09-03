@@ -5,9 +5,43 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as HostProcess from "./hostProcess.ts";
-import { isCommandAvailable } from "./shell.ts";
+import { isCommandAvailable, resolveCommandPaths } from "./shell.ts";
 
 type Editor = (typeof EDITORS)[number];
+
+// A prerelease install is recognized by a single path component that names
+// both Zed and the channel (`Zed Preview`, `Zed Nightly.app`,
+// `zed-nightly.app`), so a user or folder called "preview" elsewhere in the
+// path does not count.
+export function isPrereleaseZedPath(filePath: string): boolean {
+  return filePath.split(/[\\/]/).some((component) => {
+    const normalized = component.toLowerCase();
+    return (
+      normalized.includes("zed") &&
+      (normalized.includes("nightly") || normalized.includes("preview"))
+    );
+  });
+}
+
+// Zed's stable, preview, and nightly channels each install a `zed` CLI, so
+// PATH order alone can open a prerelease build when the user picked "Zed".
+// Prefer the first install whose location does not name a prerelease channel
+// and, when that is not the first on PATH, launch it by absolute path.
+const resolveZedPathCommand = Effect.fnUntraced(function* (
+  commands: ReadonlyArray<string>,
+  env: NodeJS.ProcessEnv,
+) {
+  const installs: Array<{ readonly command: string; readonly path: string }> = [];
+  for (const command of commands) {
+    for (const resolvedPath of yield* resolveCommandPaths(command, { env })) {
+      installs.push({ command, path: resolvedPath });
+    }
+  }
+  const first = installs[0];
+  if (!first) return Option.none();
+  const preferred = installs.find((install) => !isPrereleaseZedPath(install.path)) ?? first;
+  return Option.some(preferred === first ? first.command : preferred.path);
+});
 
 const installNames: Partial<Record<Editor["id"], ReadonlyArray<string>>> = {
   vscode: ["Visual Studio Code"],
@@ -25,8 +59,13 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
 ) {
   if (editor.commands === null) return Option.none();
   const baseArgs = "baseArgs" in editor ? editor.baseArgs : [];
-  for (const command of editor.commands) {
-    if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
+  if (editor.id === "zed") {
+    const command = yield* resolveZedPathCommand(editor.commands, env);
+    if (Option.isSome(command)) return Option.some({ command: command.value, baseArgs });
+  } else {
+    for (const command of editor.commands) {
+      if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
+    }
   }
 
   const platform = yield* HostProcess.HostProcessPlatform;
