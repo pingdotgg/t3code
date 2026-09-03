@@ -3066,7 +3066,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
         "--input",
         "-",
       ]);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserting the raw gh request body.
       expect(JSON.parse(call.stdin ?? "")).toEqual({ labels: ["bug", "size:XL"] });
     }),
   );
