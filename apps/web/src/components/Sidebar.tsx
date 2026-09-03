@@ -1381,7 +1381,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   "inline-flex items-center gap-1 transition-opacity",
                   !isWokeStatus &&
                     "group-has-[:focus-visible]/sidebar-row:pointer-events-none group-has-[:focus-visible]/sidebar-row:absolute group-has-[:focus-visible]/sidebar-row:right-0 group-has-[:focus-visible]/sidebar-row:opacity-0 group-hover/sidebar-row:pointer-events-none group-hover/sidebar-row:absolute group-hover/sidebar-row:right-0 group-hover/sidebar-row:opacity-0",
-                  snoozeMenuOpen && "pointer-events-none opacity-0",
+                  snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                 )}
               >
                 {compactStatus}
