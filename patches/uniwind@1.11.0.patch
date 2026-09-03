@@ -1,5 +1,161 @@
+diff --git a/dist/common/bundler/css-processor/processor.js b/dist/common/bundler/css-processor/processor.js
+index 7dd369fa3197dbd622832c89ac3854c401e55c3e..ab3ea1a9520907321f9c21c2a3a859262fe5075b 100644
+--- a/dist/common/bundler/css-processor/processor.js
++++ b/dist/common/bundler/css-processor/processor.js
+@@ -105,6 +105,64 @@ class ProcessorBuilder {
+       style.importantProperties.push(declaration.property);
+     }
+   }
++  readSelectorVariants(tokens) {
++    const variants = {
++      rtl: null,
++      theme: null,
++      active: null,
++      focus: null,
++      disabled: null,
++      dataAttributes: null
++    };
++    tokens.forEach((token) => {
++      if (token.type === "pseudo-class" && token.kind === "where") {
++        token.selectors.forEach((compound) => {
++          compound.forEach((inner) => {
++            if (inner.type === "class" && this.bundlerConfig.themes.includes(inner.name)) {
++              variants.theme = inner.name;
++            }
++            if (inner.type === "pseudo-class" && inner.kind === "dir") {
++              variants.rtl = inner.direction === "rtl";
++            }
++          });
++        });
++      }
++      if (token.type === "pseudo-class" && token.kind === "active") {
++        variants.active = true;
++      }
++      if (token.type === "pseudo-class" && token.kind === "focus") {
++        variants.focus = true;
++      }
++      if (token.type === "pseudo-class" && token.kind === "disabled") {
++        variants.disabled = true;
++      }
++      if (token.type === "attribute" && token.operation === null && token.name.startsWith("data-")) {
++        variants.dataAttributes ??= {};
++        variants.dataAttributes[token.name] = `"true"`;
++      }
++      if (token.type === "attribute" && token.operation?.operator === "equal" && token.name.startsWith("data-")) {
++        variants.dataAttributes ??= {};
++        variants.dataAttributes[token.name] = `"${token.operation.value}"`;
++      }
++    });
++    const hasVariants = Object.values(variants).some(_utils.isDefined);
++    return { variants, hasVariants };
++  }
++  withSelectorVariants(variants, run) {
++    this.declarationConfig.rtl ??= variants.rtl;
++    this.declarationConfig.theme ??= variants.theme;
++    this.declarationConfig.active ??= variants.active;
++    this.declarationConfig.focus ??= variants.focus;
++    this.declarationConfig.disabled ??= variants.disabled;
++    this.declarationConfig.dataAttributes ??= variants.dataAttributes;
++    run();
++    this.declarationConfig.rtl = null;
++    this.declarationConfig.theme = null;
++    this.declarationConfig.active = null;
++    this.declarationConfig.focus = null;
++    this.declarationConfig.disabled = null;
++    this.declarationConfig.dataAttributes = null;
++  }
+   parseRuleRec(rule) {
+     if (this.declarationConfig.className !== null) {
+       const lastStyle = this.stylesheets[this.declarationConfig.className]?.at(-1);
+@@ -120,64 +178,30 @@ class ProcessorBuilder {
+           this.declarationConfig.className = newClassName;
+           this.stylesheets[newClassName] ??= [];
+           this.stylesheets[newClassName].push({});
+-          rule.value.declarations?.declarations?.forEach(declaration => this.addDeclaration(declaration));
+-          rule.value.declarations?.importantDeclarations?.forEach(declaration => this.addDeclaration(declaration, true));
+-          rule.value.rules?.forEach(rule2 => this.parseRuleRec(rule2));
+-          return;
+-        }
+-        let rtl = null;
+-        let theme = null;
+-        let active = null;
+-        let focus = null;
+-        let disabled = null;
+-        let dataAttributes = null;
+-        selector.forEach(selector2 => {
+-          if (selector2.type === "pseudo-class" && selector2.kind === "where") {
+-            selector2.selectors.forEach(selector3 => {
+-              selector3.forEach(selector4 => {
+-                if (selector4.type === "class" && this.bundlerConfig.themes.includes(selector4.name)) {
+-                  theme = selector4.name;
+-                }
+-                if (selector4.type === "pseudo-class" && selector4.kind === "dir") {
+-                  rtl = selector4.direction === "rtl";
+-                }
+-              });
+-            });
+-          }
+-          if (selector2.type === "pseudo-class" && selector2.kind === "active") {
+-            active = true;
++          const trailing = selector.slice(1);
++          const { variants, hasVariants } = this.readSelectorVariants(trailing);
++          if (trailing.length > 0 && !hasVariants) {
++            return;
+           }
+-          if (selector2.type === "pseudo-class" && selector2.kind === "focus") {
+-            focus = true;
+-          }
+-          if (selector2.type === "pseudo-class" && selector2.kind === "disabled") {
+-            disabled = true;
+-          }
+-          if (selector2.type === "attribute" && selector2.operation === null && selector2.name.startsWith("data-")) {
+-            dataAttributes ??= {};
+-            dataAttributes[selector2.name] = `"true"`;
+-          }
+-          if (selector2.type === "attribute" && selector2.operation?.operator === "equal" && selector2.name.startsWith("data-")) {
+-            dataAttributes ??= {};
+-            dataAttributes[selector2.name] = `"${selector2.operation.value}"`;
++          const parseClassRule = () => {
++            rule.value.declarations?.declarations?.forEach(declaration => this.addDeclaration(declaration));
++            rule.value.declarations?.importantDeclarations?.forEach(declaration => this.addDeclaration(declaration, true));
++            rule.value.rules?.forEach(rule2 => this.parseRuleRec(rule2));
++          };
++          if (hasVariants) {
++            this.withSelectorVariants(variants, parseClassRule);
++          } else {
++            parseClassRule();
+           }
+-        });
+-        if ([rtl, theme, active, focus, disabled, dataAttributes].some(_utils.isDefined)) {
+-          this.declarationConfig.rtl ??= rtl;
+-          this.declarationConfig.theme ??= theme;
+-          this.declarationConfig.active ??= active;
+-          this.declarationConfig.focus ??= focus;
+-          this.declarationConfig.disabled ??= disabled;
+-          this.declarationConfig.dataAttributes ??= dataAttributes;
+-          rule.value.declarations?.declarations?.forEach(declaration => this.addDeclaration(declaration));
+-          rule.value.declarations?.importantDeclarations?.forEach(declaration => this.addDeclaration(declaration, true));
+-          rule.value.rules?.forEach(rule2 => this.parseRuleRec(rule2));
+-          this.declarationConfig.rtl = null;
+-          this.declarationConfig.theme = null;
+-          this.declarationConfig.active = null;
+-          this.declarationConfig.focus = null;
+-          this.declarationConfig.disabled = null;
+-          this.declarationConfig.dataAttributes = null;
++          return;
++        }
++        const { variants, hasVariants } = this.readSelectorVariants(selector);
++        if (hasVariants) {
++          this.withSelectorVariants(variants, () => {
++            rule.value.declarations?.declarations?.forEach(declaration => this.addDeclaration(declaration));
++            rule.value.declarations?.importantDeclarations?.forEach(declaration => this.addDeclaration(declaration, true));
++            rule.value.rules?.forEach(rule2 => this.parseRuleRec(rule2));
++          });
+           return;
+         }
+         selector.forEach(selectorToken => {
 diff --git a/dist/metro/transformer.cjs b/dist/metro/transformer.cjs
-index d57ca81..fd8693c 100644
+index d57ca8161f411f0dc7df827132586e428cafdf1b..3650a353b0db269ad4fc51b70a7158885c992e36 100644
 --- a/dist/metro/transformer.cjs
 +++ b/dist/metro/transformer.cjs
 @@ -7,6 +7,7 @@ const culori = require('culori');
@@ -10,7 +166,159 @@ index d57ca81..fd8693c 100644
  
  function _interopDefaultCompat (e) { return e && typeof e === 'object' && 'default' in e ? e.default : e; }
  
-@@ -1753,10 +1754,11 @@ const transform = async (config$1, projectRoot, filePath, data, options) => {
+@@ -1537,6 +1538,64 @@ class ProcessorBuilder {
+       style.importantProperties.push(declaration.property);
+     }
+   }
++  readSelectorVariants(tokens) {
++    const variants = {
++      rtl: null,
++      theme: null,
++      active: null,
++      focus: null,
++      disabled: null,
++      dataAttributes: null
++    };
++    tokens.forEach((token) => {
++      if (token.type === "pseudo-class" && token.kind === "where") {
++        token.selectors.forEach((compound) => {
++          compound.forEach((inner) => {
++            if (inner.type === "class" && this.bundlerConfig.themes.includes(inner.name)) {
++              variants.theme = inner.name;
++            }
++            if (inner.type === "pseudo-class" && inner.kind === "dir") {
++              variants.rtl = inner.direction === "rtl";
++            }
++          });
++        });
++      }
++      if (token.type === "pseudo-class" && token.kind === "active") {
++        variants.active = true;
++      }
++      if (token.type === "pseudo-class" && token.kind === "focus") {
++        variants.focus = true;
++      }
++      if (token.type === "pseudo-class" && token.kind === "disabled") {
++        variants.disabled = true;
++      }
++      if (token.type === "attribute" && token.operation === null && token.name.startsWith("data-")) {
++        variants.dataAttributes ??= {};
++        variants.dataAttributes[token.name] = `"true"`;
++      }
++      if (token.type === "attribute" && token.operation?.operator === "equal" && token.name.startsWith("data-")) {
++        variants.dataAttributes ??= {};
++        variants.dataAttributes[token.name] = `"${token.operation.value}"`;
++      }
++    });
++    const hasVariants = Object.values(variants).some(config.isDefined);
++    return { variants, hasVariants };
++  }
++  withSelectorVariants(variants, run) {
++    this.declarationConfig.rtl ??= variants.rtl;
++    this.declarationConfig.theme ??= variants.theme;
++    this.declarationConfig.active ??= variants.active;
++    this.declarationConfig.focus ??= variants.focus;
++    this.declarationConfig.disabled ??= variants.disabled;
++    this.declarationConfig.dataAttributes ??= variants.dataAttributes;
++    run();
++    this.declarationConfig.rtl = null;
++    this.declarationConfig.theme = null;
++    this.declarationConfig.active = null;
++    this.declarationConfig.focus = null;
++    this.declarationConfig.disabled = null;
++    this.declarationConfig.dataAttributes = null;
++  }
+   parseRuleRec(rule) {
+     if (this.declarationConfig.className !== null) {
+       const lastStyle = this.stylesheets[this.declarationConfig.className]?.at(-1);
+@@ -1552,64 +1611,30 @@ class ProcessorBuilder {
+           this.declarationConfig.className = newClassName;
+           this.stylesheets[newClassName] ??= [];
+           this.stylesheets[newClassName].push({});
+-          rule.value.declarations?.declarations?.forEach((declaration) => this.addDeclaration(declaration));
+-          rule.value.declarations?.importantDeclarations?.forEach((declaration) => this.addDeclaration(declaration, true));
+-          rule.value.rules?.forEach((rule2) => this.parseRuleRec(rule2));
+-          return;
+-        }
+-        let rtl = null;
+-        let theme = null;
+-        let active = null;
+-        let focus = null;
+-        let disabled = null;
+-        let dataAttributes = null;
+-        selector.forEach((selector2) => {
+-          if (selector2.type === "pseudo-class" && selector2.kind === "where") {
+-            selector2.selectors.forEach((selector3) => {
+-              selector3.forEach((selector4) => {
+-                if (selector4.type === "class" && this.bundlerConfig.themes.includes(selector4.name)) {
+-                  theme = selector4.name;
+-                }
+-                if (selector4.type === "pseudo-class" && selector4.kind === "dir") {
+-                  rtl = selector4.direction === "rtl";
+-                }
+-              });
+-            });
+-          }
+-          if (selector2.type === "pseudo-class" && selector2.kind === "active") {
+-            active = true;
+-          }
+-          if (selector2.type === "pseudo-class" && selector2.kind === "focus") {
+-            focus = true;
++          const trailing = selector.slice(1);
++          const { variants, hasVariants } = this.readSelectorVariants(trailing);
++          if (trailing.length > 0 && !hasVariants) {
++            return;
+           }
+-          if (selector2.type === "pseudo-class" && selector2.kind === "disabled") {
+-            disabled = true;
+-          }
+-          if (selector2.type === "attribute" && selector2.operation === null && selector2.name.startsWith("data-")) {
+-            dataAttributes ??= {};
+-            dataAttributes[selector2.name] = `"true"`;
+-          }
+-          if (selector2.type === "attribute" && selector2.operation?.operator === "equal" && selector2.name.startsWith("data-")) {
+-            dataAttributes ??= {};
+-            dataAttributes[selector2.name] = `"${selector2.operation.value}"`;
++          const parseClassRule = () => {
++            rule.value.declarations?.declarations?.forEach((declaration) => this.addDeclaration(declaration));
++            rule.value.declarations?.importantDeclarations?.forEach((declaration) => this.addDeclaration(declaration, true));
++            rule.value.rules?.forEach((rule2) => this.parseRuleRec(rule2));
++          };
++          if (hasVariants) {
++            this.withSelectorVariants(variants, parseClassRule);
++          } else {
++            parseClassRule();
+           }
+-        });
+-        if ([rtl, theme, active, focus, disabled, dataAttributes].some(config.isDefined)) {
+-          this.declarationConfig.rtl ??= rtl;
+-          this.declarationConfig.theme ??= theme;
+-          this.declarationConfig.active ??= active;
+-          this.declarationConfig.focus ??= focus;
+-          this.declarationConfig.disabled ??= disabled;
+-          this.declarationConfig.dataAttributes ??= dataAttributes;
+-          rule.value.declarations?.declarations?.forEach((declaration) => this.addDeclaration(declaration));
+-          rule.value.declarations?.importantDeclarations?.forEach((declaration) => this.addDeclaration(declaration, true));
+-          rule.value.rules?.forEach((rule2) => this.parseRuleRec(rule2));
+-          this.declarationConfig.rtl = null;
+-          this.declarationConfig.theme = null;
+-          this.declarationConfig.active = null;
+-          this.declarationConfig.focus = null;
+-          this.declarationConfig.disabled = null;
+-          this.declarationConfig.dataAttributes = null;
++          return;
++        }
++        const { variants, hasVariants } = this.readSelectorVariants(selector);
++        if (hasVariants) {
++          this.withSelectorVariants(variants, () => {
++            rule.value.declarations?.declarations?.forEach((declaration) => this.addDeclaration(declaration));
++            rule.value.declarations?.importantDeclarations?.forEach((declaration) => this.addDeclaration(declaration, true));
++            rule.value.rules?.forEach((rule2) => this.parseRuleRec(rule2));
++          });
+           return;
+         }
+         selector.forEach((selectorToken) => {
+@@ -1753,10 +1778,11 @@ const transform = async (config$1, projectRoot, filePath, data, options) => {
    await bundlerConfig.generateArtifacts(cssArtifactPath);
    const virtualCode = await compileCSS(bundlerConfig);
    const isWeb = bundlerConfig.platform === config.Platform.Web;
@@ -24,7 +332,7 @@ index d57ca81..fd8693c 100644
      "utf-8"
    );
 diff --git a/dist/metro/transformer.mjs b/dist/metro/transformer.mjs
-index d3e7475..bf63587 100644
+index d3e7475f8f0aaba510b318657dc8374e6c6097cb..6ff8cffc4bb703521b6d86f0ac14be054ba5b9ce 100644
 --- a/dist/metro/transformer.mjs
 +++ b/dist/metro/transformer.mjs
 @@ -5,6 +5,7 @@ import { converter, parse, formatHex, formatHex8 } from 'culori';
@@ -35,7 +343,159 @@ index d3e7475..bf63587 100644
  
  const toCamelCase = (str) => str.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
  const pipe = (data) => ((...fns) => fns.reduce((acc, fn) => fn(acc), data));
-@@ -1746,10 +1747,11 @@ const transform = async (config, projectRoot, filePath, data, options) => {
+@@ -1530,6 +1531,64 @@ class ProcessorBuilder {
+       style.importantProperties.push(declaration.property);
+     }
+   }
++  readSelectorVariants(tokens) {
++    const variants = {
++      rtl: null,
++      theme: null,
++      active: null,
++      focus: null,
++      disabled: null,
++      dataAttributes: null
++    };
++    tokens.forEach((token) => {
++      if (token.type === "pseudo-class" && token.kind === "where") {
++        token.selectors.forEach((compound) => {
++          compound.forEach((inner) => {
++            if (inner.type === "class" && this.bundlerConfig.themes.includes(inner.name)) {
++              variants.theme = inner.name;
++            }
++            if (inner.type === "pseudo-class" && inner.kind === "dir") {
++              variants.rtl = inner.direction === "rtl";
++            }
++          });
++        });
++      }
++      if (token.type === "pseudo-class" && token.kind === "active") {
++        variants.active = true;
++      }
++      if (token.type === "pseudo-class" && token.kind === "focus") {
++        variants.focus = true;
++      }
++      if (token.type === "pseudo-class" && token.kind === "disabled") {
++        variants.disabled = true;
++      }
++      if (token.type === "attribute" && token.operation === null && token.name.startsWith("data-")) {
++        variants.dataAttributes ??= {};
++        variants.dataAttributes[token.name] = `"true"`;
++      }
++      if (token.type === "attribute" && token.operation?.operator === "equal" && token.name.startsWith("data-")) {
++        variants.dataAttributes ??= {};
++        variants.dataAttributes[token.name] = `"${token.operation.value}"`;
++      }
++    });
++    const hasVariants = Object.values(variants).some(isDefined);
++    return { variants, hasVariants };
++  }
++  withSelectorVariants(variants, run) {
++    this.declarationConfig.rtl ??= variants.rtl;
++    this.declarationConfig.theme ??= variants.theme;
++    this.declarationConfig.active ??= variants.active;
++    this.declarationConfig.focus ??= variants.focus;
++    this.declarationConfig.disabled ??= variants.disabled;
++    this.declarationConfig.dataAttributes ??= variants.dataAttributes;
++    run();
++    this.declarationConfig.rtl = null;
++    this.declarationConfig.theme = null;
++    this.declarationConfig.active = null;
++    this.declarationConfig.focus = null;
++    this.declarationConfig.disabled = null;
++    this.declarationConfig.dataAttributes = null;
++  }
+   parseRuleRec(rule) {
+     if (this.declarationConfig.className !== null) {
+       const lastStyle = this.stylesheets[this.declarationConfig.className]?.at(-1);
+@@ -1545,64 +1604,30 @@ class ProcessorBuilder {
+           this.declarationConfig.className = newClassName;
+           this.stylesheets[newClassName] ??= [];
+           this.stylesheets[newClassName].push({});
+-          rule.value.declarations?.declarations?.forEach((declaration) => this.addDeclaration(declaration));
+-          rule.value.declarations?.importantDeclarations?.forEach((declaration) => this.addDeclaration(declaration, true));
+-          rule.value.rules?.forEach((rule2) => this.parseRuleRec(rule2));
+-          return;
+-        }
+-        let rtl = null;
+-        let theme = null;
+-        let active = null;
+-        let focus = null;
+-        let disabled = null;
+-        let dataAttributes = null;
+-        selector.forEach((selector2) => {
+-          if (selector2.type === "pseudo-class" && selector2.kind === "where") {
+-            selector2.selectors.forEach((selector3) => {
+-              selector3.forEach((selector4) => {
+-                if (selector4.type === "class" && this.bundlerConfig.themes.includes(selector4.name)) {
+-                  theme = selector4.name;
+-                }
+-                if (selector4.type === "pseudo-class" && selector4.kind === "dir") {
+-                  rtl = selector4.direction === "rtl";
+-                }
+-              });
+-            });
+-          }
+-          if (selector2.type === "pseudo-class" && selector2.kind === "active") {
+-            active = true;
+-          }
+-          if (selector2.type === "pseudo-class" && selector2.kind === "focus") {
+-            focus = true;
++          const trailing = selector.slice(1);
++          const { variants, hasVariants } = this.readSelectorVariants(trailing);
++          if (trailing.length > 0 && !hasVariants) {
++            return;
+           }
+-          if (selector2.type === "pseudo-class" && selector2.kind === "disabled") {
+-            disabled = true;
+-          }
+-          if (selector2.type === "attribute" && selector2.operation === null && selector2.name.startsWith("data-")) {
+-            dataAttributes ??= {};
+-            dataAttributes[selector2.name] = `"true"`;
+-          }
+-          if (selector2.type === "attribute" && selector2.operation?.operator === "equal" && selector2.name.startsWith("data-")) {
+-            dataAttributes ??= {};
+-            dataAttributes[selector2.name] = `"${selector2.operation.value}"`;
++          const parseClassRule = () => {
++            rule.value.declarations?.declarations?.forEach((declaration) => this.addDeclaration(declaration));
++            rule.value.declarations?.importantDeclarations?.forEach((declaration) => this.addDeclaration(declaration, true));
++            rule.value.rules?.forEach((rule2) => this.parseRuleRec(rule2));
++          };
++          if (hasVariants) {
++            this.withSelectorVariants(variants, parseClassRule);
++          } else {
++            parseClassRule();
+           }
+-        });
+-        if ([rtl, theme, active, focus, disabled, dataAttributes].some(isDefined)) {
+-          this.declarationConfig.rtl ??= rtl;
+-          this.declarationConfig.theme ??= theme;
+-          this.declarationConfig.active ??= active;
+-          this.declarationConfig.focus ??= focus;
+-          this.declarationConfig.disabled ??= disabled;
+-          this.declarationConfig.dataAttributes ??= dataAttributes;
+-          rule.value.declarations?.declarations?.forEach((declaration) => this.addDeclaration(declaration));
+-          rule.value.declarations?.importantDeclarations?.forEach((declaration) => this.addDeclaration(declaration, true));
+-          rule.value.rules?.forEach((rule2) => this.parseRuleRec(rule2));
+-          this.declarationConfig.rtl = null;
+-          this.declarationConfig.theme = null;
+-          this.declarationConfig.active = null;
+-          this.declarationConfig.focus = null;
+-          this.declarationConfig.disabled = null;
+-          this.declarationConfig.dataAttributes = null;
++          return;
++        }
++        const { variants, hasVariants } = this.readSelectorVariants(selector);
++        if (hasVariants) {
++          this.withSelectorVariants(variants, () => {
++            rule.value.declarations?.declarations?.forEach((declaration) => this.addDeclaration(declaration));
++            rule.value.declarations?.importantDeclarations?.forEach((declaration) => this.addDeclaration(declaration, true));
++            rule.value.rules?.forEach((rule2) => this.parseRuleRec(rule2));
++          });
+           return;
+         }
+         selector.forEach((selectorToken) => {
+@@ -1746,10 +1771,11 @@ const transform = async (config, projectRoot, filePath, data, options) => {
    await bundlerConfig.generateArtifacts(cssArtifactPath);
    const virtualCode = await compileCSS(bundlerConfig);
    const isWeb = bundlerConfig.platform === Platform.Web;
@@ -48,8 +508,164 @@ index d3e7475..bf63587 100644
      ].join(""),
      "utf-8"
    );
+diff --git a/dist/module/bundler/css-processor/processor.js b/dist/module/bundler/css-processor/processor.js
+index 58c96b6ab642c2b724d1868d0d48b77bad33be6f..70b759b04913a0e9028c936827b4578d628b4728 100644
+--- a/dist/module/bundler/css-processor/processor.js
++++ b/dist/module/bundler/css-processor/processor.js
+@@ -99,6 +99,64 @@ export class ProcessorBuilder {
+       style.importantProperties.push(declaration.property);
+     }
+   }
++  readSelectorVariants(tokens) {
++    const variants = {
++      rtl: null,
++      theme: null,
++      active: null,
++      focus: null,
++      disabled: null,
++      dataAttributes: null
++    };
++    tokens.forEach((token) => {
++      if (token.type === "pseudo-class" && token.kind === "where") {
++        token.selectors.forEach((compound) => {
++          compound.forEach((inner) => {
++            if (inner.type === "class" && this.bundlerConfig.themes.includes(inner.name)) {
++              variants.theme = inner.name;
++            }
++            if (inner.type === "pseudo-class" && inner.kind === "dir") {
++              variants.rtl = inner.direction === "rtl";
++            }
++          });
++        });
++      }
++      if (token.type === "pseudo-class" && token.kind === "active") {
++        variants.active = true;
++      }
++      if (token.type === "pseudo-class" && token.kind === "focus") {
++        variants.focus = true;
++      }
++      if (token.type === "pseudo-class" && token.kind === "disabled") {
++        variants.disabled = true;
++      }
++      if (token.type === "attribute" && token.operation === null && token.name.startsWith("data-")) {
++        variants.dataAttributes ??= {};
++        variants.dataAttributes[token.name] = `"true"`;
++      }
++      if (token.type === "attribute" && token.operation?.operator === "equal" && token.name.startsWith("data-")) {
++        variants.dataAttributes ??= {};
++        variants.dataAttributes[token.name] = `"${token.operation.value}"`;
++      }
++    });
++    const hasVariants = Object.values(variants).some(isDefined);
++    return { variants, hasVariants };
++  }
++  withSelectorVariants(variants, run) {
++    this.declarationConfig.rtl ??= variants.rtl;
++    this.declarationConfig.theme ??= variants.theme;
++    this.declarationConfig.active ??= variants.active;
++    this.declarationConfig.focus ??= variants.focus;
++    this.declarationConfig.disabled ??= variants.disabled;
++    this.declarationConfig.dataAttributes ??= variants.dataAttributes;
++    run();
++    this.declarationConfig.rtl = null;
++    this.declarationConfig.theme = null;
++    this.declarationConfig.active = null;
++    this.declarationConfig.focus = null;
++    this.declarationConfig.disabled = null;
++    this.declarationConfig.dataAttributes = null;
++  }
+   parseRuleRec(rule) {
+     if (this.declarationConfig.className !== null) {
+       const lastStyle = this.stylesheets[this.declarationConfig.className]?.at(-1);
+@@ -114,64 +172,30 @@ export class ProcessorBuilder {
+           this.declarationConfig.className = newClassName;
+           this.stylesheets[newClassName] ??= [];
+           this.stylesheets[newClassName].push({});
+-          rule.value.declarations?.declarations?.forEach((declaration) => this.addDeclaration(declaration));
+-          rule.value.declarations?.importantDeclarations?.forEach((declaration) => this.addDeclaration(declaration, true));
+-          rule.value.rules?.forEach((rule2) => this.parseRuleRec(rule2));
+-          return;
+-        }
+-        let rtl = null;
+-        let theme = null;
+-        let active = null;
+-        let focus = null;
+-        let disabled = null;
+-        let dataAttributes = null;
+-        selector.forEach((selector2) => {
+-          if (selector2.type === "pseudo-class" && selector2.kind === "where") {
+-            selector2.selectors.forEach((selector3) => {
+-              selector3.forEach((selector4) => {
+-                if (selector4.type === "class" && this.bundlerConfig.themes.includes(selector4.name)) {
+-                  theme = selector4.name;
+-                }
+-                if (selector4.type === "pseudo-class" && selector4.kind === "dir") {
+-                  rtl = selector4.direction === "rtl";
+-                }
+-              });
+-            });
+-          }
+-          if (selector2.type === "pseudo-class" && selector2.kind === "active") {
+-            active = true;
++          const trailing = selector.slice(1);
++          const { variants, hasVariants } = this.readSelectorVariants(trailing);
++          if (trailing.length > 0 && !hasVariants) {
++            return;
+           }
+-          if (selector2.type === "pseudo-class" && selector2.kind === "focus") {
+-            focus = true;
+-          }
+-          if (selector2.type === "pseudo-class" && selector2.kind === "disabled") {
+-            disabled = true;
+-          }
+-          if (selector2.type === "attribute" && selector2.operation === null && selector2.name.startsWith("data-")) {
+-            dataAttributes ??= {};
+-            dataAttributes[selector2.name] = `"true"`;
+-          }
+-          if (selector2.type === "attribute" && selector2.operation?.operator === "equal" && selector2.name.startsWith("data-")) {
+-            dataAttributes ??= {};
+-            dataAttributes[selector2.name] = `"${selector2.operation.value}"`;
++          const parseClassRule = () => {
++            rule.value.declarations?.declarations?.forEach((declaration) => this.addDeclaration(declaration));
++            rule.value.declarations?.importantDeclarations?.forEach((declaration) => this.addDeclaration(declaration, true));
++            rule.value.rules?.forEach((rule2) => this.parseRuleRec(rule2));
++          };
++          if (hasVariants) {
++            this.withSelectorVariants(variants, parseClassRule);
++          } else {
++            parseClassRule();
+           }
+-        });
+-        if ([rtl, theme, active, focus, disabled, dataAttributes].some(isDefined)) {
+-          this.declarationConfig.rtl ??= rtl;
+-          this.declarationConfig.theme ??= theme;
+-          this.declarationConfig.active ??= active;
+-          this.declarationConfig.focus ??= focus;
+-          this.declarationConfig.disabled ??= disabled;
+-          this.declarationConfig.dataAttributes ??= dataAttributes;
+-          rule.value.declarations?.declarations?.forEach((declaration) => this.addDeclaration(declaration));
+-          rule.value.declarations?.importantDeclarations?.forEach((declaration) => this.addDeclaration(declaration, true));
+-          rule.value.rules?.forEach((rule2) => this.parseRuleRec(rule2));
+-          this.declarationConfig.rtl = null;
+-          this.declarationConfig.theme = null;
+-          this.declarationConfig.active = null;
+-          this.declarationConfig.focus = null;
+-          this.declarationConfig.disabled = null;
+-          this.declarationConfig.dataAttributes = null;
++          return;
++        }
++        const { variants, hasVariants } = this.readSelectorVariants(selector);
++        if (hasVariants) {
++          this.withSelectorVariants(variants, () => {
++            rule.value.declarations?.declarations?.forEach((declaration) => this.addDeclaration(declaration));
++            rule.value.declarations?.importantDeclarations?.forEach((declaration) => this.addDeclaration(declaration, true));
++            rule.value.rules?.forEach((rule2) => this.parseRuleRec(rule2));
++          });
+           return;
+         }
+         selector.forEach((selectorToken) => {
 diff --git a/src/bundler/adapters/metro/transformer.ts b/src/bundler/adapters/metro/transformer.ts
-index 08059b0..05c0515 100644
+index 08059b0fb2394effd2553086216d8933a53fad84..05c051595bfffd313f1d731fcedc1e991af720e1 100644
 --- a/src/bundler/adapters/metro/transformer.ts
 +++ b/src/bundler/adapters/metro/transformer.ts
 @@ -5,6 +5,7 @@ import { Platform } from '@/common/consts'
@@ -82,8 +698,195 @@ index 08059b0..05c0515 100644
              ].join(''),
          'utf-8',
      )
+diff --git a/src/bundler/css-processor/processor.ts b/src/bundler/css-processor/processor.ts
+index c8b3bb86e2a50c16ebc3f0404f4d9ac050aba61d..b5e185469733aca4289b7b07bc76dbfcd8fd5788 100644
+--- a/src/bundler/css-processor/processor.ts
++++ b/src/bundler/css-processor/processor.ts
+@@ -123,6 +123,77 @@ export class ProcessorBuilder {
+         }
+     }
+ 
++    private readSelectorVariants(tokens: ReadonlyArray<any>) {
++        const variants = {
++            rtl: null as boolean | null,
++            theme: null as string | null,
++            active: null as boolean | null,
++            focus: null as boolean | null,
++            disabled: null as boolean | null,
++            dataAttributes: null as Record<string, string> | null,
++        }
++
++        tokens.forEach(token => {
++            if (token.type === 'pseudo-class' && token.kind === 'where') {
++                token.selectors.forEach((compound: Array<any>) => {
++                    compound.forEach(inner => {
++                        if (inner.type === 'class' && this.bundlerConfig.themes.includes(inner.name)) {
++                            variants.theme = inner.name
++                        }
++
++                        if (inner.type === 'pseudo-class' && inner.kind === 'dir') {
++                            variants.rtl = inner.direction === 'rtl'
++                        }
++                    })
++                })
++            }
++
++            if (token.type === 'pseudo-class' && token.kind === 'active') {
++                variants.active = true
++            }
++
++            if (token.type === 'pseudo-class' && token.kind === 'focus') {
++                variants.focus = true
++            }
++
++            if (token.type === 'pseudo-class' && token.kind === 'disabled') {
++                variants.disabled = true
++            }
++
++            // data-x
++            if (token.type === 'attribute' && token.operation === null && token.name.startsWith('data-')) {
++                variants.dataAttributes ??= {}
++                variants.dataAttributes[token.name] = `"true"`
++            }
++
++            // data-x=
++            if (token.type === 'attribute' && token.operation?.operator === 'equal' && token.name.startsWith('data-')) {
++                variants.dataAttributes ??= {}
++                variants.dataAttributes[token.name] = `"${token.operation.value}"`
++            }
++        })
++
++        return { variants, hasVariants: Object.values(variants).some(isDefined) }
++    }
++
++    private withSelectorVariants(variants: ReturnType<ProcessorBuilder['readSelectorVariants']>['variants'], run: () => void) {
++        this.declarationConfig.rtl ??= variants.rtl
++        this.declarationConfig.theme ??= variants.theme
++        this.declarationConfig.active ??= variants.active
++        this.declarationConfig.focus ??= variants.focus
++        this.declarationConfig.disabled ??= variants.disabled
++        this.declarationConfig.dataAttributes ??= variants.dataAttributes
++
++        run()
++
++        this.declarationConfig.rtl = null
++        this.declarationConfig.theme = null
++        this.declarationConfig.active = null
++        this.declarationConfig.focus = null
++        this.declarationConfig.disabled = null
++        this.declarationConfig.dataAttributes = null
++    }
++
+     private parseRuleRec(rule: Rule<Declaration, MediaQuery>) {
+         if (this.declarationConfig.className !== null) {
+             const lastStyle = this.stylesheets[this.declarationConfig.className]?.at(-1)
+@@ -142,78 +213,41 @@ export class ProcessorBuilder {
+                     this.stylesheets[newClassName] ??= []
+                     this.stylesheets[newClassName].push({})
+ 
+-                    rule.value.declarations?.declarations?.forEach(declaration => this.addDeclaration(declaration))
+-                    rule.value.declarations?.importantDeclarations?.forEach(declaration => this.addDeclaration(declaration, true))
+-                    rule.value.rules?.forEach(rule => this.parseRuleRec(rule))
++                    // Tailwind >= 4.3.3 emits `.active\:x:active {}` instead of
++                    // nesting `&:active` under the class, so the variant tokens
++                    // sit right after the class token. A compound the runtime
++                    // cannot express (e.g. `[aria-disabled="true"]`) used to be
++                    // an empty nested rule and must not become unconditional.
++                    const trailing = selector.slice(1)
++                    const { variants, hasVariants } = this.readSelectorVariants(trailing)
+ 
+-                    return
+-                }
+-
+-                let rtl = null as boolean | null
+-                let theme = null as string | null
+-                let active = null as boolean | null
+-                let focus = null as boolean | null
+-                let disabled = null as boolean | null
+-                let dataAttributes = null as Record<string, string> | null
+-
+-                selector.forEach(selector => {
+-                    if (selector.type === 'pseudo-class' && selector.kind === 'where') {
+-                        selector.selectors.forEach(selector => {
+-                            selector.forEach(selector => {
+-                                if (selector.type === 'class' && this.bundlerConfig.themes.includes(selector.name)) {
+-                                    theme = selector.name
+-                                }
+-
+-                                if (selector.type === 'pseudo-class' && selector.kind === 'dir') {
+-                                    rtl = selector.direction === 'rtl'
+-                                }
+-                            })
+-                        })
++                    if (trailing.length > 0 && !hasVariants) {
++                        return
+                     }
+ 
+-                    if (selector.type === 'pseudo-class' && selector.kind === 'active') {
+-                        active = true
+-                    }
+-
+-                    if (selector.type === 'pseudo-class' && selector.kind === 'focus') {
+-                        focus = true
++                    const parseClassRule = () => {
++                        rule.value.declarations?.declarations?.forEach(declaration => this.addDeclaration(declaration))
++                        rule.value.declarations?.importantDeclarations?.forEach(declaration => this.addDeclaration(declaration, true))
++                        rule.value.rules?.forEach(rule => this.parseRuleRec(rule))
+                     }
+ 
+-                    if (selector.type === 'pseudo-class' && selector.kind === 'disabled') {
+-                        disabled = true
++                    if (hasVariants) {
++                        this.withSelectorVariants(variants, parseClassRule)
++                    } else {
++                        parseClassRule()
+                     }
+ 
+-                    // data-x
+-                    if (selector.type === 'attribute' && selector.operation === null && selector.name.startsWith('data-')) {
+-                        dataAttributes ??= {}
+-                        dataAttributes[selector.name] = `"true"`
+-                    }
++                    return
++                }
+ 
+-                    // data-x=
+-                    if (selector.type === 'attribute' && selector.operation?.operator === 'equal' && selector.name.startsWith('data-')) {
+-                        dataAttributes ??= {}
+-                        dataAttributes[selector.name] = `"${selector.operation.value}"`
+-                    }
+-                })
++                const { variants, hasVariants } = this.readSelectorVariants(selector)
+ 
+-                if ([rtl, theme, active, focus, disabled, dataAttributes].some(isDefined)) {
+-                    this.declarationConfig.rtl ??= rtl
+-                    this.declarationConfig.theme ??= theme
+-                    this.declarationConfig.active ??= active
+-                    this.declarationConfig.focus ??= focus
+-                    this.declarationConfig.disabled ??= disabled
+-                    this.declarationConfig.dataAttributes ??= dataAttributes
+-
+-                    rule.value.declarations?.declarations?.forEach(declaration => this.addDeclaration(declaration))
+-                    rule.value.declarations?.importantDeclarations?.forEach(declaration => this.addDeclaration(declaration, true))
+-                    rule.value.rules?.forEach(rule => this.parseRuleRec(rule))
+-
+-                    this.declarationConfig.rtl = null
+-                    this.declarationConfig.theme = null
+-                    this.declarationConfig.active = null
+-                    this.declarationConfig.focus = null
+-                    this.declarationConfig.disabled = null
+-                    this.declarationConfig.dataAttributes = null
++                if (hasVariants) {
++                    this.withSelectorVariants(variants, () => {
++                        rule.value.declarations?.declarations?.forEach(declaration => this.addDeclaration(declaration))
++                        rule.value.declarations?.importantDeclarations?.forEach(declaration => this.addDeclaration(declaration, true))
++                        rule.value.rules?.forEach(rule => this.parseRuleRec(rule))
++                    })
+ 
+                     return
+                 }
 diff --git a/src/core/config/config.native.ts b/src/core/config/config.native.ts
-index 5e0832b..01aed1b 100644
+index 5e0832b5913df6f02604020d7ff5caf3b6a8d912..01aed1be25ca928f3a802996f41cb6b841aaed86 100644
 --- a/src/core/config/config.native.ts
 +++ b/src/core/config/config.native.ts
 @@ -8,6 +8,8 @@ import type { CSSVariables, GenerateStyleSheetsCallback, ThemeName } from '../ty
