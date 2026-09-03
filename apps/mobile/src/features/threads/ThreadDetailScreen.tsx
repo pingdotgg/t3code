@@ -151,6 +151,7 @@ export interface ThreadDetailScreenProps {
   readonly onSubmitUserInput: () => Promise<unknown>;
   readonly showContent?: boolean;
   readonly forkCapability?: ServerProviderSessionFork;
+  readonly completedForkTurnIds: ReadonlySet<TurnId>;
   readonly onForkAssistantMessage?: (input: {
     readonly messageId: MessageId;
     readonly turnId: TurnId;
@@ -727,6 +728,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             onUseArtifactTemplate={handleUseArtifactTemplate}
             loadEarlier={props.loadEarlier ?? null}
             forkCapability={props.forkCapability}
+            completedTurnIds={props.completedForkTurnIds}
             onForkAssistantMessage={props.onForkAssistantMessage}
             forkOrigin={props.forkOrigin}
           />

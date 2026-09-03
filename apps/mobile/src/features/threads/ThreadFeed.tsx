@@ -250,6 +250,7 @@ export interface ThreadFeedProps {
     readonly onLoadEarlier: () => void;
   } | null;
   readonly forkCapability?: ServerProviderSessionFork;
+  readonly completedTurnIds: ReadonlySet<TurnId>;
   readonly onForkAssistantMessage?: (input: {
     readonly messageId: MessageId;
     readonly turnId: TurnId;
@@ -1499,6 +1500,7 @@ function renderFeedEntry(
     readonly unsettledTurnId: TurnId | null;
     readonly latestTurn: ThreadFeedLatestTurn | null;
     readonly forkCapability: ServerProviderSessionFork | undefined;
+    readonly completedTurnIds: ReadonlySet<TurnId>;
     readonly onForkAssistantMessage:
       | ((input: { messageId: MessageId; turnId: TurnId; sideChat: boolean }) => void)
       | undefined;
@@ -1598,6 +1600,7 @@ function renderFeedEntry(
     const canFork = canForkMobileAssistantMessage({
       capability: props.forkCapability,
       completed: showAssistantMeta,
+      completedTurnIds: props.completedTurnIds,
       messageTurnId: message.turnId,
       latestTurn: props.latestTurn,
     });
@@ -2383,6 +2386,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       userBubbleColor,
       viewportWidth,
       forkCapability: props.forkCapability,
+      completedTurnIds: props.completedTurnIds,
       latestTurnIdentity: props.latestTurn
         ? `${props.latestTurn.turnId}:${props.latestTurn.state}:${props.latestTurn.completedAt ?? ""}`
         : null,
@@ -2398,6 +2402,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       userBubbleColor,
       viewportWidth,
       props.forkCapability,
+      props.completedTurnIds,
       props.latestTurn?.completedAt,
       props.latestTurn?.state,
       props.latestTurn?.turnId,
@@ -2812,6 +2817,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             unsettledTurnId,
             latestTurn: props.latestTurn,
             forkCapability: props.forkCapability,
+            completedTurnIds: props.completedTurnIds,
             onForkAssistantMessage: props.onForkAssistantMessage,
             onCopyWorkRow,
             onToggleWorkGroup,
@@ -2844,6 +2850,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       terminalAssistantMessageIds,
       unsettledTurnId,
       props.forkCapability,
+      props.completedTurnIds,
       props.latestTurn,
       props.onForkAssistantMessage,
       iconSubtleColor,

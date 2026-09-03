@@ -1,5 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type {
+  OrchestrationCheckpointSummary,
   OrchestrationLatestTurn,
   ServerConfig,
   ServerProviderSessionFork,
@@ -30,9 +31,20 @@ export function resolveMobileLatestCompletedTurnId(
     : null;
 }
 
+export function completedTurnIdsFromCheckpoints(
+  checkpoints: ReadonlyArray<Pick<OrchestrationCheckpointSummary, "status" | "turnId">>,
+): ReadonlySet<TurnId> {
+  return new Set(
+    checkpoints
+      .filter((checkpoint) => checkpoint.status === "ready")
+      .map((checkpoint) => checkpoint.turnId),
+  );
+}
+
 export function canForkMobileAssistantMessage(input: {
   readonly capability: ServerProviderSessionFork | undefined;
   readonly completed: boolean;
+  readonly completedTurnIds: ReadonlySet<TurnId>;
   readonly messageTurnId: TurnId | null;
   readonly latestTurn:
     | Pick<OrchestrationLatestTurn, "turnId" | "state" | "completedAt">
@@ -46,7 +58,7 @@ export function canForkMobileAssistantMessage(input: {
   ) {
     return false;
   }
-  if (input.capability === "any-turn") return true;
+  if (input.capability === "any-turn") return input.completedTurnIds.has(input.messageTurnId);
   return (
     input.capability === "latest-turn" &&
     input.messageTurnId === resolveMobileLatestCompletedTurnId(input.latestTurn)

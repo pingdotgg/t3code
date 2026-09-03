@@ -78,12 +78,14 @@ export function buildThreadActionMenuItems(
             label: "Open side chat",
             icon: "message-square-plus",
             disabled: !state.forking.enabled,
+            disabledReason: state.forking.disabledReason,
           },
           {
             id: "fork-thread" as const,
             label: "Fork thread",
             icon: "git-fork",
             disabled: !state.forking.enabled,
+            disabledReason: state.forking.disabledReason,
           },
           ...(state.forking.sideChats.length > 0
             ? [

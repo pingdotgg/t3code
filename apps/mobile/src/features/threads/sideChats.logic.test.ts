@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildMobileSideChatMenuItems,
   canForkMobileAssistantMessage,
+  completedTurnIdsFromCheckpoints,
   visibleTopLevelThreads,
 } from "./sideChats.logic";
 
@@ -47,6 +48,7 @@ describe("mobile message fork availability", () => {
       canForkMobileAssistantMessage({
         capability: "any-turn",
         completed: true,
+        completedTurnIds: new Set([TurnId.make("turn-1")]),
         messageTurnId: TurnId.make("turn-1"),
         latestTurn,
       }),
@@ -55,6 +57,7 @@ describe("mobile message fork availability", () => {
       canForkMobileAssistantMessage({
         capability: "latest-turn",
         completed: true,
+        completedTurnIds: new Set(),
         messageTurnId: TurnId.make("turn-1"),
         latestTurn,
       }),
@@ -63,10 +66,33 @@ describe("mobile message fork availability", () => {
       canForkMobileAssistantMessage({
         capability: "latest-turn",
         completed: true,
+        completedTurnIds: new Set(),
         messageTurnId: latestTurn.turnId,
         latestTurn,
       }),
     ).toBe(true);
+  });
+
+  it("derives completed turns only from ready checkpoints", () => {
+    expect(
+      completedTurnIdsFromCheckpoints([
+        { turnId: TurnId.make("turn-ready"), status: "ready" },
+        { turnId: TurnId.make("turn-missing"), status: "missing" },
+        { turnId: TurnId.make("turn-error"), status: "error" },
+      ]),
+    ).toEqual(new Set([TurnId.make("turn-ready")]));
+  });
+
+  it("requires a ready checkpoint for any-turn providers", () => {
+    expect(
+      canForkMobileAssistantMessage({
+        capability: "any-turn",
+        completed: true,
+        completedTurnIds: new Set(),
+        messageTurnId: TurnId.make("turn-1"),
+        latestTurn,
+      }),
+    ).toBe(false);
   });
 
   it("rejects a failed or interrupted latest turn for any-turn providers", () => {
@@ -75,6 +101,7 @@ describe("mobile message fork availability", () => {
         canForkMobileAssistantMessage({
           capability: "any-turn",
           completed: true,
+          completedTurnIds: new Set([latestTurn.turnId]),
           messageTurnId: latestTurn.turnId,
           latestTurn: { ...latestTurn, state },
         }),

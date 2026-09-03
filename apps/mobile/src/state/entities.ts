@@ -11,6 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
+import { appAtomRegistry } from "./atom-registry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { environmentThreadShells } from "./threads";
@@ -44,6 +45,32 @@ export function useThreadShell(ref: ScopedThreadRef | null): EnvironmentThreadSh
   return useAtomValue(
     ref === null ? EMPTY_THREAD_SHELL_ATOM : environmentThreadShells.threadShellAtom(ref),
   );
+}
+
+/** Resolves after a newly-created thread reaches the shell projection. */
+export function waitForThreadShell(
+  ref: ScopedThreadRef,
+  timeoutMs = 10_000,
+): Promise<EnvironmentThreadShell> {
+  const atom = environmentThreadShells.threadShellAtom(ref);
+  const current = appAtomRegistry.get(atom);
+  if (current !== null) return Promise.resolve(current);
+
+  return new Promise((resolve, reject) => {
+    let unsubscribe: (() => void) | null = null;
+    const timeout = setTimeout(() => {
+      unsubscribe?.();
+      reject(new Error("The forked thread did not finish syncing."));
+    }, timeoutMs);
+    const finish = (thread: EnvironmentThreadShell | null) => {
+      if (thread === null) return;
+      clearTimeout(timeout);
+      unsubscribe?.();
+      resolve(thread);
+    };
+    unsubscribe = appAtomRegistry.subscribe(atom, finish);
+    finish(appAtomRegistry.get(atom));
+  });
 }
 
 export function useSideChatsByParent(

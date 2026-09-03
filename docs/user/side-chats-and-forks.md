@@ -37,4 +37,5 @@ Deleting a side chat uses the normal thread delete action and permanently clears
 history. Closing and deleting are separate actions.
 
 Forked threads and promoted side chats show **Forked from _parent title_** at the top of the
-conversation. Select it to return to the source thread.
+conversation. Select it to return to the source thread. If the source thread was deleted, the label
+stays but no longer opens anything.

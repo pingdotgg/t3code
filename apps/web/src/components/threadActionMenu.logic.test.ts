@@ -116,8 +116,14 @@ describe("buildThreadActionMenuItems", () => {
         sideChats: [],
       },
     });
-    expect(items.find((item) => item.id === "open-side-chat")).toMatchObject({ disabled: true });
-    expect(items.find((item) => item.id === "fork-thread")).toMatchObject({ disabled: true });
+    expect(items.find((item) => item.id === "open-side-chat")).toMatchObject({
+      disabled: true,
+      disabledReason: "Complete a turn before forking this thread.",
+    });
+    expect(items.find((item) => item.id === "fork-thread")).toMatchObject({
+      disabled: true,
+      disabledReason: "Complete a turn before forking this thread.",
+    });
   });
 
   it("lists existing side chats under the parent thread menu", () => {

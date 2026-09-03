@@ -12,6 +12,7 @@ import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
+import { presentThreadForkOrigin } from "@t3tools/client-runtime/state/presentation";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -65,7 +66,7 @@ import {
 } from "./ThreadGitControls";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useSideChatsByParent, useThreadShell } from "../../state/entities";
+import { useSideChatsByParent, useThreadShell, waitForThreadShell } from "../../state/entities";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
@@ -88,6 +89,7 @@ import { uuidv4 } from "../../lib/uuid";
 import {
   buildMobileSideChatMenuItems,
   canForkMobileAssistantMessage,
+  completedTurnIdsFromCheckpoints,
   resolveMobileThreadForkCapability,
 } from "./sideChats.logic";
 import { useThreadDeleteAction } from "../home/useThreadListActions";
@@ -332,13 +334,20 @@ function ThreadRouteContent(
       : null;
   }, [selectedThread]);
   const forkParent = useThreadShell(forkParentRef);
+  const forkOriginPresentation = presentThreadForkOrigin(selectedThread?.fork, forkParent);
   const forkCapability = selectedThread
     ? resolveMobileThreadForkCapability(selectedThread, serverConfig)
     : undefined;
+  const completedForkTurnIds = useMemo(
+    () => completedTurnIdsFromCheckpoints(selectedThreadDetail?.checkpoints ?? []),
+    [selectedThreadDetail?.checkpoints],
+  );
   const forkSourceThreadRef = useRef(selectedThread);
   forkSourceThreadRef.current = selectedThread;
   const forkCapabilityRef = useRef(forkCapability);
   forkCapabilityRef.current = forkCapability;
+  const completedForkTurnIdsRef = useRef(completedForkTurnIds);
+  completedForkTurnIdsRef.current = completedForkTurnIds;
   const latestForkTurnRef = useRef(selectedThread?.latestTurn ?? null);
   latestForkTurnRef.current = selectedThread?.latestTurn ?? null;
   const forkThreadRef = useRef(forkThread);
@@ -560,6 +569,7 @@ function ThreadRouteContent(
         !canForkMobileAssistantMessage({
           capability: forkCapabilityRef.current,
           completed: true,
+          completedTurnIds: completedForkTurnIdsRef.current,
           messageTurnId: input.turnId,
           latestTurn: latestForkTurnRef.current,
         })
@@ -589,6 +599,15 @@ function ThreadRouteContent(
               error instanceof Error ? error.message : "An error occurred.",
             );
           }
+          return;
+        }
+        try {
+          await waitForThreadShell(scopeThreadRef(sourceThread.environmentId, nextThreadId));
+        } catch (error) {
+          Alert.alert(
+            input.sideChat ? "Side chat created but not opened" : "Fork created but not opened",
+            error instanceof Error ? error.message : "The thread is still syncing.",
+          );
           return;
         }
         navigationRef.current.navigate("Thread", {
@@ -1057,11 +1076,12 @@ function ThreadRouteContent(
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
           onSubmitUserInput={requests.onSubmitUserInput}
           forkCapability={forkCapability}
+          completedForkTurnIds={completedForkTurnIds}
           onForkAssistantMessage={handleForkAssistantMessage}
-          {...(forkParentRef
+          {...(forkOriginPresentation?.kind === "available"
             ? {
                 forkOrigin: {
-                  title: forkParent?.title ?? "thread",
+                  title: forkOriginPresentation.title,
                   onPress: openForkParent,
                 },
               }

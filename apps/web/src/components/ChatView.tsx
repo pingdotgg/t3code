@@ -29,6 +29,7 @@ import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
 import { type CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import { presentThreadForkOrigin } from "@t3tools/client-runtime/state/presentation";
 import {
   codexFeedbackMessage,
   parseCodexFeedbackCommand,
@@ -1326,10 +1327,22 @@ function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | n
   return current.messageId === null ? current : { ...current, messageId: null };
 }
 
-function ForkOriginTranscriptHeader(props: {
-  readonly title: string;
-  readonly onOpen: () => void;
-}) {
+function ForkOriginTranscriptHeader(
+  props:
+    | { readonly kind: "available"; readonly title: string; readonly onOpen: () => void }
+    | { readonly kind: "deleted" },
+) {
+  if (props.kind === "deleted") {
+    return (
+      <div className="mx-auto w-full max-w-3xl pb-3">
+        <div className="inline-flex max-w-full items-center gap-1.5 rounded-md bg-muted px-2.5 py-1.5 text-xs font-medium text-muted-foreground">
+          <GitForkIcon className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="truncate">Forked from a deleted thread</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto w-full max-w-3xl pb-3">
       <button
@@ -1902,6 +1915,7 @@ function ChatViewContent(props: ChatViewProps) {
       : null;
   }, [activeThreadRef, activeThreadShell?.fork?.sourceThreadId]);
   const forkSourceShell = useThreadShell(forkSourceRef);
+  const forkOriginPresentation = presentThreadForkOrigin(activeThreadShell?.fork, forkSourceShell);
   const threadFork = useThreadForkActions(isServerThread ? activeThread : null, {
     panelHostThreadId: panelHostThreadId ?? activeThreadId,
   });
@@ -1927,12 +1941,16 @@ function ChatViewContent(props: ChatViewProps) {
       params: buildThreadRouteParams(forkSourceRef),
     });
   }, [forkSourceRef, navigate]);
-  const transcriptHeader = forkSourceRef ? (
-    <ForkOriginTranscriptHeader
-      title={forkSourceShell?.title ?? "thread"}
-      onOpen={openForkSource}
-    />
-  ) : null;
+  const transcriptHeader =
+    forkOriginPresentation?.kind === "available" ? (
+      <ForkOriginTranscriptHeader
+        kind="available"
+        title={forkOriginPresentation.title}
+        onOpen={openForkSource}
+      />
+    ) : forkOriginPresentation?.kind === "deleted" ? (
+      <ForkOriginTranscriptHeader kind="deleted" />
+    ) : null;
   const changeRequestSnapshotByKey = useAtomValue(threadChangeRequestSnapshotsAtom);
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
