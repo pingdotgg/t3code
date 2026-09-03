@@ -1073,8 +1073,12 @@ const make = Effect.gen(function* () {
 
       const baseKey = assistantSegmentBaseKeyFromEvent(input.event);
       const segmentState = yield* getAssistantSegmentStateForTurn(input.threadId, input.turnId);
-      if (Option.isSome(segmentState) && segmentState.value.baseKey === baseKey) {
-        return segmentState.value.activeMessageId!;
+      if (
+        Option.isSome(segmentState) &&
+        segmentState.value.baseKey === baseKey &&
+        segmentState.value.activeMessageId
+      ) {
+        return segmentState.value.activeMessageId;
       }
 
       return yield* startAssistantSegmentForTurn({
