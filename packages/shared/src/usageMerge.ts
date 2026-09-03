@@ -283,15 +283,11 @@ export function mergeUsage(
             entry.availableThroughTime! < earliest ? entry.availableThroughTime! : earliest,
           coverage[0]!.availableThroughTime!,
         );
-  // Hourly buckets are whole hours. A half-hour scan cutoff is not enough to
-  // publish that bucket, so expose the last fully contained hour as the
-  // displayed boundary and keep partial data out of every derived total.
-  const availableThroughTime =
-    availableThroughTimeRaw === null
-      ? null
-      : new Date(
-          Math.floor(Date.parse(availableThroughTimeRaw) / (60 * 60 * 1000)) * (60 * 60 * 1000),
-        ).toISOString();
+  // Preserve the exact scan cutoff. Hourly buckets are aligned to the
+  // requested half-hour window, so a :30 cutoff can fully contain the final
+  // bucket. Partial buckets are filtered below rather than rounding the
+  // displayed boundary and hiding valid data.
+  const availableThroughTime = availableThroughTimeRaw;
   const sessionsExact = coverage.every(
     (entry) =>
       entry.availableThroughDay === availableThroughDay &&

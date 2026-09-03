@@ -166,6 +166,40 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("serves a remote-timezone preset from the normalized ledger", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      let ratesFetches = 0;
+      const layers = serviceLayers({
+        prefix: "usage-service-ledger-timezone-test",
+        baseDir: NodePath.join(home, "server-state"),
+        home,
+        settings,
+        onRatesFetch: () => {
+          ratesFetches += 1;
+        },
+      });
+      const canonical: UsageSummaryInput = {
+        timeZone: "UTC",
+        sinceDay: UsageDay.make("2026-06-05"),
+        untilDay: UsageDay.make("2026-09-02"),
+        resolution: "day",
+      };
+      const firstService = yield* UsageService.make.pipe(Effect.provide(layers));
+      yield* firstService.refreshSummary(canonical);
+      const fetchesAfterRefresh = ratesFetches;
+
+      const remoteService = yield* UsageService.make.pipe(Effect.provide(layers));
+      const remote = yield* remoteService.readSummary({
+        ...canonical,
+        timeZone: "America/Los_Angeles",
+      });
+      assert.strictEqual(totalOutputTokens(remote), 5);
+      assert.strictEqual(ratesFetches, fetchesAfterRefresh);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("does not orphan an in-flight scan when its first caller is interrupted", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;

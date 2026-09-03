@@ -410,4 +410,31 @@ describe("mergeUsage", () => {
     expect(merged.daily).toHaveLength(1);
     expect(merged.daily[0]?.costUsd).toBe(10);
   });
+
+  it("keeps the final half-hour-aligned bucket at an exact cutoff", () => {
+    const base = summary(
+      [
+        bucket({ hourStart: "2026-08-07T23:30:00.000Z", costUsd: 3 }),
+        bucket({ hourStart: "2026-08-08T00:30:00.000Z", costUsd: 7 }),
+      ],
+      [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+    );
+    const merged = mergeUsage(
+      [
+        environment("env-a", {
+          ...base,
+          coverage: {
+            ...base.coverage!,
+            availableThroughDay: "2026-08-08" as UsageDay,
+            availableThroughTime: "2026-08-08T00:30:00.000Z",
+          },
+        }),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.availableThroughTime).toBe("2026-08-08T00:30:00.000Z");
+    expect(merged.hourly.map((hour) => hour.hourStart)).toEqual(["2026-08-07T23:30:00.000Z"]);
+    expect(merged.costUsd).toBe(3);
+  });
 });

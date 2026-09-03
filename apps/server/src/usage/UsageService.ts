@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off
+// @effect-diagnostics globalDateInEffect:off
 // @effect-diagnostics preferSchemaOverJson:off
 /**
  * UsageService - scans provider transcripts and returns priced usage buckets.
@@ -110,6 +111,7 @@ const UsageLedgerRecord = Schema.Struct({
   hostId: Schema.String,
   provider: Schema.Literals(["claude", "codex", "grok"]),
   resolvedHomePath: Schema.String,
+  volumeId: Schema.String,
   record: Schema.Struct({
     provider: Schema.Literals(["claude", "codex", "grok"]),
     timestampMs: Schema.Number,
@@ -149,12 +151,12 @@ const encodeUsageLedgerFile = Schema.encodeEffect(
 );
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const HALF_HOUR_MS = 30 * 60 * 1000;
 const BACKGROUND_REFRESH_INTERVAL = "30 minutes";
 const BACKGROUND_REFRESH_TIMEOUT = "5 minutes";
-const BACKGROUND_REFRESH_WINDOWS = [1, 7, 30, 90] as const;
 const MAX_USAGE_SNAPSHOTS = 16;
-const USAGE_LEDGER_RETENTION_MS = CACHE_RETENTION_DAYS * DAY_MS;
+// Keep two days of timezone slack so a 90-day calendar window can be rebuilt
+// after a UTC/local-midnight rollover without losing its first day.
+const USAGE_LEDGER_RETENTION_MS = 92 * DAY_MS;
 
 function serverTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -193,10 +195,20 @@ function isCommonPreset(input: UsageSummaryInput): boolean {
   return days === 1 || days === 7 || days === 30 || days === 90;
 }
 
+function isCanonicalLedgerInput(input: UsageSummaryInput): boolean {
+  if (input.resolution === "hour") return false;
+  const days =
+    (Date.parse(`${input.untilDay}T00:00:00Z`) - Date.parse(`${input.sinceDay}T00:00:00Z`)) /
+      DAY_MS +
+    1;
+  return days === 90;
+}
+
 interface LedgerRecord {
   readonly hostId: string;
   readonly provider: UsageProviderKind;
   readonly resolvedHomePath: string;
+  readonly volumeId: string;
   readonly record: UsageRecord;
 }
 
@@ -280,7 +292,7 @@ export const make = Effect.gen(function* () {
    * the on-disk snapshot. With neither, every model reports as unpriced rather
    * than the page failing.
    */
-  const ensureRates = Effect.fn("UsageService.ensureRates")(function* () {
+  const ensureRates = Effect.fn("UsageService.ensureRates")(function* (allowNetwork = true) {
     const now = yield* Clock.currentTimeMillis;
     if (ratesFetchedAtMs !== null && now - ratesFetchedAtMs < RATES_TTL_MS) return;
 
@@ -299,6 +311,8 @@ export const make = Effect.gen(function* () {
         }
       }
     }
+
+    if (!allowNetwork) return;
 
     const fetched = yield* httpClient.get(LITELLM_RATES_URL).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
@@ -429,7 +443,7 @@ export const make = Effect.gen(function* () {
       if (document === null) return;
       usageLedgerGeneratedAtMs = document.generatedAtMs;
       for (const entry of document.records) {
-        const key = `${entry.hostId}\u0000${entry.provider}\u0000${entry.resolvedHomePath}\u0000${entry.record.dedupeKey ?? JSON.stringify(entry.record)}`;
+        const key = `${entry.hostId}\u0000${entry.provider}\u0000${entry.resolvedHomePath}\u0000${entry.volumeId}\u0000${entry.record.dedupeKey ?? JSON.stringify(entry.record)}`;
         usageLedger.set(key, entry);
       }
     }),
@@ -722,7 +736,7 @@ export const make = Effect.gen(function* () {
         }
         scannedFiles += 1;
         for (const record of file.records) {
-          ledgerRecords.push({ hostId, provider, resolvedHomePath: dir, record });
+          ledgerRecords.push({ hostId, provider, resolvedHomePath: dir, volumeId, record });
           // Only sessions that contributed in-window count: the mtime slack
           // admits boundary files whose records fall outside the range.
           if (aggregator.add(record) && record.sessionId.length > 0) {
@@ -763,7 +777,11 @@ export const make = Effect.gen(function* () {
     const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
     const availableThroughDay =
-      input.untilDay < completeThroughDay ? input.untilDay : UsageDay.make(completeThroughDay);
+      hourlyWindow === null
+        ? input.untilDay < completeThroughDay
+          ? input.untilDay
+          : UsageDay.make(completeThroughDay)
+        : UsageDay.make(makeDayFormatter(input.timeZone)(hourlyWindow.untilTimeMs - 1));
     const availableThroughTime =
       hourlyWindow === null
         ? null
@@ -824,16 +842,18 @@ export const make = Effect.gen(function* () {
             usageSnapshots.delete(oldest[0]);
           }
           snapshotsDirty = true;
-          usageLedgerGeneratedAtMs = Date.parse(summary.readAt);
-          for (const entry of result.records) {
-            const key = `${entry.hostId}\u0000${entry.provider}\u0000${entry.resolvedHomePath}\u0000${entry.record.dedupeKey ?? JSON.stringify(entry.record)}`;
-            usageLedger.set(key, entry);
+          if (isCanonicalLedgerInput(input)) {
+            usageLedgerGeneratedAtMs = Date.parse(summary.readAt);
+            for (const entry of result.records) {
+              const key = `${entry.hostId}\u0000${entry.provider}\u0000${entry.resolvedHomePath}\u0000${entry.volumeId}\u0000${entry.record.dedupeKey ?? JSON.stringify(entry.record)}`;
+              usageLedger.set(key, entry);
+            }
+            const cutoff = usageLedgerGeneratedAtMs - USAGE_LEDGER_RETENTION_MS;
+            for (const [key, entry] of usageLedger) {
+              if (entry.record.timestampMs < cutoff) usageLedger.delete(key);
+            }
+            usageLedgerDirty = true;
           }
-          const cutoff = usageLedgerGeneratedAtMs - USAGE_LEDGER_RETENTION_MS;
-          for (const [key, entry] of usageLedger) {
-            if (entry.record.timestampMs < cutoff) usageLedger.delete(key);
-          }
-          usageLedgerDirty = true;
         }).pipe(Effect.andThen(persistUsageSnapshots), Effect.andThen(persistUsageLedger)),
       ),
     );
@@ -848,8 +868,13 @@ export const make = Effect.gen(function* () {
     input: UsageSummaryInput,
   ) {
     yield* ensureUsageLedgerLoaded;
-    if (usageLedgerGeneratedAtMs <= 0 || usageLedger.size === 0) return null;
-    yield* ensureRates();
+    // `generatedAtMs` is the scan marker. An empty ledger is a valid complete
+    // zero snapshot and must not be confused with a never-scanned ledger.
+    if (usageLedgerGeneratedAtMs <= 0) return null;
+    // Preset reads are foreground-fast and may use a durable cached rate
+    // table, but never perform a network fetch. Background/manual scans own
+    // rate refreshes.
+    yield* ensureRates(false);
 
     const generatedAtMs = usageLedgerGeneratedAtMs;
     const completeThroughDay = previousCalendarDay(input.timeZone, generatedAtMs);
@@ -879,7 +904,7 @@ export const make = Effect.gen(function* () {
     const sessions = new Map<string, Set<string>>();
     for (const entry of usageLedger.values()) {
       if (aggregator.add(entry.record) && entry.record.sessionId.length > 0) {
-        const key = `${entry.hostId}\u0000${entry.provider}\u0000${entry.resolvedHomePath}`;
+        const key = `${entry.hostId}\u0000${entry.provider}\u0000${entry.resolvedHomePath}\u0000${entry.volumeId}`;
         const sourceSessions = sessions.get(key) ?? new Set<string>();
         sourceSessions.add(entry.record.sessionId);
         sessions.set(key, sourceSessions);
@@ -891,14 +916,14 @@ export const make = Effect.gen(function* () {
       hourlyWindow === null ? null : formatInstant(hourlyWindow.untilTimeMs);
     const sourceEntries = new Map<string, UsageSource>();
     for (const entry of usageLedger.values()) {
-      const key = `${entry.hostId}\u0000${entry.provider}\u0000${entry.resolvedHomePath}`;
+      const key = `${entry.hostId}\u0000${entry.provider}\u0000${entry.resolvedHomePath}\u0000${entry.volumeId}`;
       if (sourceEntries.has(key)) continue;
       sourceEntries.set(key, {
         fingerprint: {
           hostId: entry.hostId,
           provider: entry.provider,
           resolvedHomePath: entry.resolvedHomePath,
-          volumeId: "",
+          volumeId: entry.volumeId,
         },
         status: "ok",
         scannedFiles: 0,
@@ -980,27 +1005,17 @@ export const make = Effect.gen(function* () {
     const nowMs = yield* Clock.currentTimeMillis;
     const timeZone = serverTimeZone();
     const untilDay = previousCalendarDay(timeZone, nowMs);
-    const daily = BACKGROUND_REFRESH_WINDOWS.map((days) => {
-      const untilMs = Date.parse(`${untilDay}T00:00:00Z`);
-      const sinceDay = new Date(untilMs - (days - 1) * DAY_MS).toISOString().slice(0, 10);
-      return {
+    const untilMs = Date.parse(`${untilDay}T00:00:00Z`);
+    const sinceDay = new Date(untilMs - 89 * DAY_MS).toISOString().slice(0, 10);
+    // One canonical retention-window scan populates the normalized ledger.
+    // Every daily and rolling hourly preset is derived from it without a
+    // second corpus walk or ledger rewrite.
+    return [
+      {
         sinceDay: UsageDay.make(sinceDay),
         untilDay: UsageDay.make(untilDay),
         timeZone,
         resolution: "day" as const,
-      } satisfies UsageSummaryInput;
-    });
-    const hourlyUntilMs = Math.floor(nowMs / HALF_HOUR_MS) * HALF_HOUR_MS;
-    const hourlySinceMs = hourlyUntilMs - DAY_MS;
-    return [
-      ...daily,
-      {
-        sinceDay: UsageDay.make(makeDayFormatter(timeZone)(hourlySinceMs)),
-        untilDay: UsageDay.make(makeDayFormatter(timeZone)(hourlyUntilMs)),
-        timeZone,
-        resolution: "hour" as const,
-        sinceTime: formatInstant(hourlySinceMs),
-        untilTime: formatInstant(hourlyUntilMs),
       } satisfies UsageSummaryInput,
     ];
   });
