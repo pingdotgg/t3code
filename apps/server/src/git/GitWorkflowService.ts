@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
 import {
@@ -148,6 +149,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const ensureGit = Effect.fn("GitWorkflowService.ensureGit")(function* (
     operation: string,
@@ -330,9 +332,10 @@ export const make = Effect.gen(function* () {
         Effect.andThen(git.resolveRemoteTrackingCommit(input)),
       ),
     removeWorktree: (input) =>
-      ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
-        Effect.andThen(
-          projectSetupScriptRunner
+      Effect.gen(function* () {
+        yield* ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd);
+        if (yield* fileSystem.exists(input.path).pipe(Effect.orElseSucceed(() => false))) {
+          yield* projectSetupScriptRunner
             .runBeforeWorktreeRemove({
               projectCwd: input.cwd,
               worktreePath: input.path,
@@ -351,10 +354,10 @@ export const make = Effect.gen(function* () {
                     cause,
                   }),
               ),
-            ),
-        ),
-        Effect.andThen(git.removeWorktree(input)),
-      ),
+            );
+        }
+        yield* git.removeWorktree(input);
+      }),
     pruneWorktrees: (input) =>
       ensureGitCommand("GitWorkflowService.pruneWorktrees", input.cwd).pipe(
         Effect.andThen(git.pruneWorktrees(input)),

@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -17,7 +18,6 @@ const ProjectSetupScriptRunnerTest = Layer.succeed(
     runBeforeWorktreeRemove: () => Effect.void,
   },
 );
-
 function makeLayer(input: {
   readonly detect: VcsDriverRegistry.VcsDriverRegistry["Service"]["detect"];
 }) {
@@ -30,11 +30,12 @@ function makeLayer(input: {
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
     Layer.provide(Layer.mock(GitManager.GitManager)({})),
     Layer.provide(ProjectSetupScriptRunnerTest),
+    Layer.provide(NodeServices.layer),
   );
 }
 
 describe("GitWorkflowService", () => {
-  it.effect("runs teardown before removing a worktree", () => {
+  it.effect("runs teardown only when the worktree directory exists", () => {
     const calls: string[] = [];
     const testLayer = GitWorkflowService.layer.pipe(
       Layer.provide(
@@ -48,6 +49,7 @@ describe("GitWorkflowService", () => {
         }),
       ),
       Layer.provide(Layer.mock(GitManager.GitManager)({})),
+      Layer.provide(NodeServices.layer),
       Layer.provide(
         Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, {
           runForThread: () => Effect.succeed({ status: "no-script" as const }),
@@ -58,8 +60,12 @@ describe("GitWorkflowService", () => {
 
     return Effect.gen(function* () {
       const workflow = yield* GitWorkflowService.GitWorkflowService;
-      yield* workflow.removeWorktree({ cwd: "/repo", path: "/repo/worktree" });
-      assert.deepStrictEqual(calls, ["teardown", "remove"]);
+      yield* workflow.removeWorktree({ cwd: "/repo", path: process.cwd() });
+      yield* workflow.removeWorktree({
+        cwd: "/repo",
+        path: "/path/that/does/not/exist",
+      });
+      assert.deepStrictEqual(calls, ["teardown", "remove", "remove"]);
     }).pipe(Effect.provide(testLayer));
   });
 
@@ -140,6 +146,7 @@ describe("GitWorkflowService", () => {
         }),
       ),
       Layer.provide(ProjectSetupScriptRunnerTest),
+      Layer.provide(NodeServices.layer),
     );
 
     return Effect.gen(function* () {

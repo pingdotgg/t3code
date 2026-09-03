@@ -196,6 +196,12 @@ export default function ProjectScriptsControl({
                   keybindings,
                   commandForProjectScript(script.id),
                 );
+                const lifecycleLabel = [
+                  script.runOnWorktreeCreate && "setup",
+                  script.runOnWorktreeRemove && "teardown",
+                ]
+                  .filter(Boolean)
+                  .join(", ");
                 return (
                   <MenuItem
                     key={script.id}
@@ -204,11 +210,7 @@ export default function ProjectScriptsControl({
                   >
                     <ScriptIcon icon={script.icon} className="size-4" />
                     <span className="truncate">
-                      {script.runOnWorktreeCreate
-                        ? `${script.name} (setup)`
-                        : script.runOnWorktreeRemove
-                          ? `${script.name} (teardown)`
-                          : script.name}
+                      {lifecycleLabel ? `${script.name} (${lifecycleLabel})` : script.name}
                     </span>
                     <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end">
                       {shortcutLabel && (
