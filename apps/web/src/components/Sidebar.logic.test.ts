@@ -13,6 +13,7 @@ import {
   reduceSidebarProjectScopeMenuState,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
+  groupThreadsIntoProjectSections,
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
@@ -55,6 +56,76 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("groupThreadsIntoProjectSections", () => {
+  const projects = [
+    {
+      projectKey: "project-b",
+      displayName: "Beta",
+      memberProjectRefs: [{ environmentId: "local", projectId: "b" }],
+    },
+    {
+      projectKey: "project-a",
+      displayName: "Alpha",
+      memberProjectRefs: [
+        { environmentId: "local", projectId: "a" },
+        { environmentId: "remote", projectId: "a-copy" },
+      ],
+    },
+    {
+      projectKey: "empty",
+      displayName: "Empty",
+      memberProjectRefs: [{ environmentId: "local", projectId: "empty" }],
+    },
+  ] as const;
+
+  it("preserves project order, thread order, and omits empty projects", () => {
+    const threads = [
+      { id: "a-new", environmentId: "local", projectId: "a" },
+      { id: "b-new", environmentId: "local", projectId: "b" },
+      { id: "a-old", environmentId: "remote", projectId: "a-copy" },
+    ] as const;
+
+    expect(groupThreadsIntoProjectSections(projects, threads)).toEqual({
+      sections: [
+        { project: projects[0], threads: [threads[1]] },
+        { project: projects[1], threads: [threads[0], threads[2]] },
+      ],
+      ungroupedThreads: [],
+    });
+  });
+
+  it("keeps threads without a matching project in an ungrouped bucket", () => {
+    const threads = [
+      { id: "orphan", environmentId: "local", projectId: "removed-project" },
+      { id: "b-new", environmentId: "local", projectId: "b" },
+    ] as const;
+
+    expect(groupThreadsIntoProjectSections(projects, threads)).toEqual({
+      sections: [{ project: projects[0], threads: [threads[1]] }],
+      ungroupedThreads: [threads[0]],
+    });
+  });
+
+  it("never conflates identifiers across the composite key boundary", () => {
+    const colonProjects = [
+      {
+        projectKey: "left",
+        memberProjectRefs: [{ environmentId: "env:a", projectId: "b" }],
+      },
+      {
+        projectKey: "right",
+        memberProjectRefs: [{ environmentId: "env", projectId: "a:b" }],
+      },
+    ] as const;
+    const threads = [{ id: "t", environmentId: "env", projectId: "a:b" }] as const;
+
+    expect(groupThreadsIntoProjectSections(colonProjects, threads)).toEqual({
+      sections: [{ project: colonProjects[1], threads: [threads[0]] }],
+      ungroupedThreads: [],
+    });
+  });
+});
 
 describe("animatePinnedLayoutChanges", () => {
   const baseArgs: Parameters<AnimateLayoutChanges>[0] = {

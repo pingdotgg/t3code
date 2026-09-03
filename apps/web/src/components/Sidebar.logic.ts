@@ -108,6 +108,56 @@ type LogicalSidebarProject = SidebarProject & {
   }[];
 };
 
+// NUL cannot appear in either identifier, so the composite key never collides.
+const projectMemberKey = (environmentId: string, projectId: string) =>
+  `${environmentId}\u0000${projectId}`;
+
+/**
+ * Threads whose project is in no group (e.g. the project was removed while its
+ * threads live on) land in `ungroupedThreads` so the sectioned sidebar can
+ * still render them; hiding them would make live work unreachable.
+ */
+export function groupThreadsIntoProjectSections<
+  const TProject extends {
+    readonly projectKey: string;
+    readonly memberProjectRefs: readonly {
+      readonly environmentId: string;
+      readonly projectId: string;
+    }[];
+  },
+  const TThread extends { readonly environmentId: string; readonly projectId: string },
+>(projects: readonly TProject[], threads: readonly TThread[]) {
+  const projectKeyByMember = new Map(
+    projects.flatMap((project) =>
+      project.memberProjectRefs.map(
+        (ref) => [projectMemberKey(ref.environmentId, ref.projectId), project.projectKey] as const,
+      ),
+    ),
+  );
+  const threadsByProjectKey = new Map<string, TThread[]>();
+  const ungroupedThreads: TThread[] = [];
+  for (const thread of threads) {
+    const projectKey = projectKeyByMember.get(
+      projectMemberKey(thread.environmentId, thread.projectId),
+    );
+    if (!projectKey) {
+      ungroupedThreads.push(thread);
+      continue;
+    }
+    const projectThreads = threadsByProjectKey.get(projectKey);
+    if (projectThreads) projectThreads.push(thread);
+    else threadsByProjectKey.set(projectKey, [thread]);
+  }
+
+  return {
+    sections: projects.flatMap((project) => {
+      const projectThreads = threadsByProjectKey.get(project.projectKey);
+      return projectThreads ? [{ project, threads: projectThreads }] : [];
+    }),
+    ungroupedThreads,
+  };
+}
+
 export type ThreadTraversalDirection = "previous" | "next";
 
 export async function archiveSelectedThreadEntries<

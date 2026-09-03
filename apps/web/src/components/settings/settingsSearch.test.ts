@@ -183,6 +183,10 @@ describe("searchSettings", () => {
   it("serves anchor props to panels from the catalog", () => {
     expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
     expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });
+    expect(searchSettings("project sections")[0]).toMatchObject({
+      id: "project-sections",
+      to: "/settings/general",
+    });
   });
 
   it("routes appearance settings to their current section", () => {

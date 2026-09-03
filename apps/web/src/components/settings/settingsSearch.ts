@@ -151,6 +151,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["combine matching repositories environments sidebar"],
   },
   {
+    id: "project-sections",
+    title: "Project sections",
+    to: "/settings/general",
+    searchTerms: ["sidebar headings group threads all projects count"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",
