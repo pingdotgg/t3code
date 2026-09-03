@@ -1639,26 +1639,29 @@ export function makeOpenCodeAdapter(
           if (replied) {
             return;
           }
-          // The reply failed, so fall back to surfacing the approval.
+          // The reply failed, so fall back to surfacing the approval. The id
+          // stays in `resolvedRequestIds`: `pendingPermissions` already gates
+          // re-asks while the dialog is open, and clearing it would let a
+          // recovered copy of this ask reopen after the user answers.
           context.autoRepliedRequestIds.delete(request.id);
-          // A terminal `permission.replied` may have landed (and been
-          // swallowed) while our reply was in flight, e.g. the SDK call timed
-          // out locally but OpenCode still resolved it. Its terminal slot is
-          // already consumed, so opening a dialog now would leave a request
-          // that can never resolve. Keep it marked resolved and return.
-          if (context.emittedTerminalRequestIds.has(request.id)) {
-            return;
-          }
-          context.resolvedRequestIds.delete(request.id);
+        }
+        const base = yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: context.activeTurnId,
+          requestId: request.id,
+          raw,
+        });
+        // Check and publish in one synchronous step. On a retry or recovery
+        // fiber the event pump can deliver the terminal `permission.replied`
+        // at any yield point (including a failed auto-reply above), and a
+        // `request.opened` published after that `request.resolved` would leave
+        // a dialog that can never close.
+        if (context.emittedTerminalRequestIds.has(request.id)) {
+          return;
         }
         context.pendingPermissions.set(request.id, request);
-        yield* emit({
-          ...(yield* buildEventBase({
-            threadId: context.session.threadId,
-            turnId: context.activeTurnId,
-            requestId: request.id,
-            raw,
-          })),
+        Queue.offerUnsafe(runtimeEvents, {
+          ...base,
           type: "request.opened",
           payload: {
             requestType: mapPermissionToRequestType(request.permission),

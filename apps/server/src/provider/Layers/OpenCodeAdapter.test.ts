@@ -2819,6 +2819,72 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("does not reopen a failed full-access auto-reply after its terminal reply", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-full-access-reply-failed-after-terminal");
+      const childId = "ses_full_access_terminal_child";
+      const request = permissionRequest("per_failed_after_terminal", childId);
+      const ancestryAttempted = promiseWithResolvers<void>();
+      const releaseReply = promiseWithResolvers<void>();
+      // The ask arrives from a child whose ancestry lookup is failing, so it
+      // is handled on a retry fiber. The terminal reply lands while that
+      // fiber's auto-reply is still in flight; the reply then fails. The
+      // request must neither reopen nor emit a stray resolution.
+      runtimeMock.state.sessionParentById.set(childId, "http://127.0.0.1:9999/session");
+      runtimeMock.state.transientErrorSessionIds.add(childId);
+      runtimeMock.state.sessionGetObserved = (sessionID) => {
+        if (sessionID === childId) {
+          ancestryAttempted.resolve(undefined);
+        }
+      };
+      runtimeMock.state.permissionReplyImplementation = async () => {
+        await releaseReply.promise;
+        throw new Error("reply failed");
+      };
+      const terminalEvent = promiseWithResolvers<unknown>();
+      runtimeMock.state.subscribedEvents = [
+        { id: "evt-ask", type: "permission.asked", properties: request },
+        terminalEvent.promise,
+      ];
+
+      const requestEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "request.opened" || event.type === "request.resolved"),
+        ),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* Effect.promise(() => ancestryAttempted.promise);
+      runtimeMock.state.transientErrorSessionIds.delete(childId);
+      yield* advanceTestClock(250);
+      NodeAssert.deepEqual(runtimeMock.state.permissionReplyCalls, [
+        { requestID: request.id, reply: "always" },
+      ]);
+
+      terminalEvent.resolve({
+        id: "evt-reply",
+        type: "permission.replied",
+        properties: { sessionID: childId, requestID: request.id, reply: "always" },
+      });
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      releaseReply.resolve(undefined);
+      yield* advanceTestClock(250);
+
+      NodeAssert.equal(requestEventsFiber.pollUnsafe(), undefined);
+      yield* Fiber.interrupt(requestEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("routes child-session questions and replies through the parent thread", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
