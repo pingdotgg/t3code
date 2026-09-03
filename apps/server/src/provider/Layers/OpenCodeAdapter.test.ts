@@ -2628,148 +2628,92 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
-  it.effect("auto-approves doom-loop asks on the parent session in full access", () =>
-    Effect.gen(function* () {
-      const adapter = yield* OpenCodeAdapter;
-      const threadId = asThreadId("thread-full-access-doom-loop");
-      runtimeMock.state.subscribedEvents = [
-        {
-          id: "evt-doom-loop",
-          type: "permission.asked",
-          properties: {
-            id: "per_doom_loop",
-            sessionID: "http://127.0.0.1:9999/session",
-            permission: "doom_loop",
-            patterns: ["bash"],
-            metadata: {},
-            always: [],
-          },
-        },
-        {
-          id: "evt-doom-loop-replied",
-          type: "permission.replied",
-          properties: {
-            sessionID: "http://127.0.0.1:9999/session",
-            requestID: "per_doom_loop",
-            reply: "always",
-          },
-        },
-        {
-          id: "evt-sentinel-question",
-          type: "question.asked",
-          properties: {
-            id: "que_sentinel",
-            sessionID: "http://127.0.0.1:9999/session",
-            questions: [],
-          },
-        },
-      ];
-
-      const eventsFiber = yield* adapter.streamEvents.pipe(
-        Stream.filter((event) => event.threadId === threadId),
-        Stream.takeUntil((event) => event.type === "user-input.requested"),
-        Stream.runCollect,
-        Effect.forkChild,
-      );
-      yield* adapter.startSession({
-        provider: ProviderDriverKind.make("opencode"),
-        threadId,
-        runtimeMode: "full-access",
-      });
-      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
-
-      NodeAssert.deepEqual(runtimeMock.state.permissionReplyCalls, [
-        { requestID: "per_doom_loop", reply: "always" },
-      ]);
-      NodeAssert.equal(
-        events.some((event) => event.type === "request.opened"),
-        false,
-      );
-      NodeAssert.equal(
-        events.some((event) => event.type === "request.resolved"),
-        false,
-      );
-
-      yield* adapter.stopSession(threadId);
-    }),
-  );
-
-  it.effect("auto-approves child-session asks in full access", () =>
-    Effect.gen(function* () {
-      const adapter = yield* OpenCodeAdapter;
-      const threadId = asThreadId("thread-full-access-child");
-      runtimeMock.state.subscribedEvents = [
-        {
-          id: "evt-child-created",
-          type: "session.created",
-          properties: {
-            sessionID: "ses_child_full",
-            info: {
-              id: "ses_child_full",
-              parentID: "http://127.0.0.1:9999/session",
-              title: "Child session",
+  it.effect.each([
+    {
+      name: "a doom-loop ask on the parent session",
+      requestId: "per_doom_loop",
+      sessionID: "http://127.0.0.1:9999/session",
+      permission: "doom_loop",
+      patterns: ["bash"],
+      always: [] as string[],
+    },
+    {
+      name: "a child-session ask",
+      requestId: "per_child_full",
+      sessionID: "ses_child_full",
+      permission: "read",
+      patterns: ["/repo/settings.env"],
+      always: ["/repo/settings.env"],
+    },
+  ])(
+    "auto-approves $name in full access",
+    ({ requestId, sessionID, permission, patterns, always }) =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId(`thread-full-access-${requestId}`);
+        runtimeMock.state.subscribedEvents = [
+          {
+            id: "evt-child-created",
+            type: "session.created",
+            properties: {
+              sessionID: "ses_child_full",
+              info: {
+                id: "ses_child_full",
+                parentID: "http://127.0.0.1:9999/session",
+                title: "Child session",
+              },
             },
           },
-        },
-        {
-          id: "evt-child-permission",
-          type: "permission.asked",
-          properties: {
-            id: "per_child_full",
-            sessionID: "ses_child_full",
-            permission: "read",
-            patterns: ["/repo/settings.env"],
-            metadata: {},
-            always: ["/repo/settings.env"],
+          {
+            id: "evt-permission",
+            type: "permission.asked",
+            properties: { id: requestId, sessionID, permission, patterns, metadata: {}, always },
           },
-        },
-        {
-          id: "evt-child-permission-replied",
-          type: "permission.replied",
-          properties: {
-            sessionID: "ses_child_full",
-            requestID: "per_child_full",
-            reply: "always",
+          {
+            id: "evt-permission-replied",
+            type: "permission.replied",
+            properties: { sessionID, requestID: requestId, reply: "once" },
           },
-        },
-        {
-          id: "evt-sentinel-question",
-          type: "question.asked",
-          properties: {
-            id: "que_sentinel",
-            sessionID: "http://127.0.0.1:9999/session",
-            questions: [],
+          // The suppressed ask emits nothing, so an empty question serves as a
+          // sentinel that closes the collected stream once the pump is past it.
+          {
+            id: "evt-sentinel-question",
+            type: "question.asked",
+            properties: {
+              id: "que_sentinel",
+              sessionID: "http://127.0.0.1:9999/session",
+              questions: [],
+            },
           },
-        },
-      ];
+        ];
 
-      const eventsFiber = yield* adapter.streamEvents.pipe(
-        Stream.filter((event) => event.threadId === threadId),
-        Stream.takeUntil((event) => event.type === "user-input.requested"),
-        Stream.runCollect,
-        Effect.forkChild,
-      );
-      yield* adapter.startSession({
-        provider: ProviderDriverKind.make("opencode"),
-        threadId,
-        runtimeMode: "full-access",
-      });
-      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+        const eventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.threadId === threadId),
+          Stream.takeUntil((event) => event.type === "user-input.requested"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
 
-      NodeAssert.deepEqual(runtimeMock.state.permissionReplyCalls, [
-        { requestID: "per_child_full", reply: "always" },
-      ]);
-      NodeAssert.equal(
-        events.some((event) => event.type === "request.opened"),
-        false,
-      );
-      NodeAssert.equal(
-        events.some((event) => event.type === "request.resolved"),
-        false,
-      );
+        NodeAssert.deepEqual(runtimeMock.state.permissionReplyCalls, [
+          { requestID: requestId, reply: "once" },
+        ]);
+        NodeAssert.equal(
+          events.some((event) => event.type === "request.opened"),
+          false,
+        );
+        NodeAssert.equal(
+          events.some((event) => event.type === "request.resolved"),
+          false,
+        );
 
-      yield* adapter.stopSession(threadId);
-    }),
+        yield* adapter.stopSession(threadId);
+      }),
   );
 
   it.effect("surfaces the approval when the full-access auto-reply fails", () =>
@@ -2812,7 +2756,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       // Exactly one auto-reply attempt: the fallback surfaces the dialog
       // instead of retrying the reply.
       NodeAssert.deepEqual(runtimeMock.state.permissionReplyCalls, [
-        { requestID: "per_doom_loop_failed", reply: "always" },
+        { requestID: "per_doom_loop_failed", reply: "once" },
       ]);
 
       yield* adapter.stopSession(threadId);
@@ -2866,16 +2810,17 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       runtimeMock.state.transientErrorSessionIds.delete(childId);
       yield* advanceTestClock(250);
       NodeAssert.deepEqual(runtimeMock.state.permissionReplyCalls, [
-        { requestID: request.id, reply: "always" },
+        { requestID: request.id, reply: "once" },
       ]);
 
+      // Drain the microtask queue so the pump has consumed the terminal reply
+      // before the in-flight auto-reply is allowed to fail.
       terminalEvent.resolve({
         id: "evt-reply",
         type: "permission.replied",
-        properties: { sessionID: childId, requestID: request.id, reply: "always" },
+        properties: { sessionID: childId, requestID: request.id, reply: "once" },
       });
-      yield* Effect.yieldNow;
-      yield* Effect.yieldNow;
+      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
       releaseReply.resolve(undefined);
       yield* advanceTestClock(250);
 

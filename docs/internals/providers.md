@@ -125,7 +125,8 @@ attachment to the provider adapter. Each adapter decides what its provider inges
 Claude receives the attachment directory as an allowed additional directory. Codex keeps its
 configured sandbox policy, so access depends on that policy and the selected runtime mode. OpenCode
 allows all paths in full-access mode and requests approval for directories outside the workspace in
-restricted modes. Cursor and Grok use their own provider permission rules.
+restricted modes. Upstream OpenCode evaluates doom-loop and subagent asks against the agent ruleset
+only, ignoring the session ruleset T3 sends, so the adapter answers those asks itself in full access. Cursor and Grok use their own provider permission rules.
 
 The server does not copy attachments into a project or bypass provider approval rules. If an agent
 cannot read an attachment, the user must approve the access or select a runtime mode that permits it.

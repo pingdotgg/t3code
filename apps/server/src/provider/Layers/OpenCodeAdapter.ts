@@ -1001,6 +1001,12 @@ export function makeOpenCodeAdapter(
 
     const emit = (event: ProviderRuntimeEvent) =>
       Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
+    // Synchronous publish for callers that must not yield between a state
+    // check and the enqueue, e.g. reopening an approval only if its terminal
+    // event has not landed yet.
+    const emitUnsafe = (event: ProviderRuntimeEvent) => {
+      Queue.offerUnsafe(runtimeEvents, event);
+    };
     const writeNativeEvent = (
       threadId: ThreadId,
       event: {
@@ -1603,6 +1609,42 @@ export function makeOpenCodeAdapter(
       return false;
     });
 
+    // Full access means the user already granted everything, but two upstream
+    // paths never consult the session ruleset we send: doom-loop detection
+    // (evaluated against the agent ruleset only) and subagent sessions (which
+    // keep only deny and external-directory rules). Answer those asks here.
+    //
+    // Reply "once", not "always": OpenCode stores "always" grants per
+    // directory, so on a shared external server an "always" from a full-access
+    // thread would silently widen what a supervised thread on the same
+    // directory is allowed to do.
+    const autoReplyFullAccess = Effect.fn("autoReplyFullAccess")(function* (
+      context: OpenCodeSessionContext,
+      request: PermissionRequest,
+    ) {
+      // Mark before awaiting: retry and recovery fibers re-enter the ask path,
+      // and the matching `permission.replied` can arrive, while the SDK call
+      // is in flight. Marked ids skip the ask and swallow the terminal event.
+      context.resolvedRequestIds.add(request.id);
+      context.autoRepliedRequestIds.add(request.id);
+      const replied = yield* runOpenCodeSdk("permission.reply", () =>
+        context.client.permission.reply({ requestID: request.id, reply: "once" }),
+      ).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (replied) {
+        return "replied" as const;
+      }
+      // Fall back to the dialog. The id stays resolved so a recovered copy of
+      // this ask cannot reopen after the user answers; `pendingPermissions`
+      // gates re-asks while the dialog is open.
+      context.autoRepliedRequestIds.delete(request.id);
+      return context.emittedTerminalRequestIds.has(request.id)
+        ? ("already-terminal" as const)
+        : ("fallback" as const);
+    });
+
     const emitPendingOpenCodeRequest = Effect.fn("emitPendingOpenCodeRequest")(function* (
       context: OpenCodeSessionContext,
       event: OpenCodeAskedRequestEvent,
@@ -1617,33 +1659,10 @@ export function makeOpenCodeAdapter(
           return;
         }
         if (context.session.runtimeMode === "full-access") {
-          // OpenCode still asks in full access when it detects a doom loop
-          // (evaluated against the agent ruleset only) and inside subagent
-          // sessions (which drop the parent's wildcard allow). Answer those
-          // here so the user never sees an approval they already granted.
-          //
-          // Record the ids before awaiting the reply: retry and recovery
-          // fibers can re-enter this function, and the matching
-          // `permission.replied` can land, while the SDK call is in flight.
-          // Marking first makes those paths skip the ask instead of racing
-          // to emit a duplicate `request.opened` or a stray
-          // `request.resolved`.
-          context.resolvedRequestIds.add(request.id);
-          context.autoRepliedRequestIds.add(request.id);
-          const replied = yield* runOpenCodeSdk("permission.reply", () =>
-            context.client.permission.reply({ requestID: request.id, reply: "always" }),
-          ).pipe(
-            Effect.as(true),
-            Effect.orElseSucceed(() => false),
-          );
-          if (replied) {
+          const outcome = yield* autoReplyFullAccess(context, request);
+          if (outcome !== "fallback") {
             return;
           }
-          // The reply failed, so fall back to surfacing the approval. The id
-          // stays in `resolvedRequestIds`: `pendingPermissions` already gates
-          // re-asks while the dialog is open, and clearing it would let a
-          // recovered copy of this ask reopen after the user answers.
-          context.autoRepliedRequestIds.delete(request.id);
         }
         const base = yield* buildEventBase({
           threadId: context.session.threadId,
@@ -1651,16 +1670,14 @@ export function makeOpenCodeAdapter(
           requestId: request.id,
           raw,
         });
-        // Check and publish in one synchronous step. On a retry or recovery
-        // fiber the event pump can deliver the terminal `permission.replied`
-        // at any yield point (including a failed auto-reply above), and a
-        // `request.opened` published after that `request.resolved` would leave
-        // a dialog that can never close.
+        // No yield between this check and the publish: a terminal
+        // `permission.replied` delivered on the pump in between would leave a
+        // dialog that can never close.
         if (context.emittedTerminalRequestIds.has(request.id)) {
           return;
         }
         context.pendingPermissions.set(request.id, request);
-        Queue.offerUnsafe(runtimeEvents, {
+        emitUnsafe({
           ...base,
           type: "request.opened",
           payload: {
