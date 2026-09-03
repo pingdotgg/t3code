@@ -9,6 +9,8 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   Bot,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   FileDiff,
   Files,
   GitPullRequest,
@@ -169,6 +171,12 @@ type TabContextMenuAction =
   | "close-others"
   | "close-to-right"
   | "close-all";
+
+const TAB_SCROLL_EDGE_TOLERANCE = 1;
+
+function tabScrollViewport(root: HTMLDivElement | null): HTMLDivElement | null {
+  return root?.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]') ?? null;
+}
 
 /**
  * Desktop preview tab backing a surface, or null for non-preview surfaces, the
@@ -720,6 +728,42 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
+  const [tabScrollState, setTabScrollState] = useState({
+    hasOverflow: false,
+    canScrollLeft: false,
+    canScrollRight: false,
+  });
+
+  const updateTabScrollState = useCallback(() => {
+    const viewport = tabScrollViewport(tabListRef.current);
+    if (!viewport) return;
+
+    const hasOverflow = viewport.scrollWidth - viewport.clientWidth > TAB_SCROLL_EDGE_TOLERANCE;
+    const canScrollLeft = hasOverflow && viewport.scrollLeft > TAB_SCROLL_EDGE_TOLERANCE;
+    const canScrollRight =
+      hasOverflow &&
+      viewport.scrollLeft + viewport.clientWidth < viewport.scrollWidth - TAB_SCROLL_EDGE_TOLERANCE;
+    setTabScrollState((current) => {
+      if (
+        current.hasOverflow === hasOverflow &&
+        current.canScrollLeft === canScrollLeft &&
+        current.canScrollRight === canScrollRight
+      ) {
+        return current;
+      }
+      return { hasOverflow, canScrollLeft, canScrollRight };
+    });
+  }, []);
+
+  const scrollTabs = useCallback((direction: -1 | 1) => {
+    const viewport = tabScrollViewport(tabListRef.current);
+    if (!viewport) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    viewport.scrollBy({
+      left: direction * Math.max(120, viewport.clientWidth * 0.75),
+      behavior: reduceMotion ? "auto" : "smooth",
+    });
+  }, []);
 
   const addSurfaceActions = [
     {
@@ -886,9 +930,49 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   );
 
   useEffect(() => {
+    if (!props.activeSurfaceId || !tabScrollState.hasOverflow) return;
     const activeTab = tabListRef.current?.querySelector<HTMLElement>("[data-active-tab='true']");
     activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [props.activeSurfaceId]);
+  }, [props.activeSurfaceId, tabScrollState.hasOverflow]);
+
+  useEffect(() => {
+    const viewport = tabScrollViewport(tabListRef.current);
+    if (!viewport) return;
+
+    const content = viewport.firstElementChild;
+    const resizeObserver = new ResizeObserver(updateTabScrollState);
+    resizeObserver.observe(viewport);
+    if (content) resizeObserver.observe(content);
+    viewport.addEventListener("scroll", updateTabScrollState, { passive: true });
+    updateTabScrollState();
+
+    return () => {
+      resizeObserver.disconnect();
+      viewport.removeEventListener("scroll", updateTabScrollState);
+    };
+  }, [updateTabScrollState]);
+
+  useEffect(() => {
+    const viewport = tabScrollViewport(tabListRef.current);
+    if (!viewport) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      if (event.ctrlKey) return;
+      let delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+      if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
+      if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= viewport.clientWidth;
+      if (delta === 0) return;
+
+      const previousScrollLeft = viewport.scrollLeft;
+      viewport.scrollLeft += delta;
+      if (viewport.scrollLeft === previousScrollLeft) return;
+      event.preventDefault();
+      updateTabScrollState();
+    };
+
+    viewport.addEventListener("wheel", handleWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", handleWheel);
+  }, [updateTabScrollState]);
 
   return (
     <PreviewPanelShell
@@ -905,6 +989,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           // the titlebar's height: a compact row re-centers the layout
           // controls a few pixels higher and the cluster jumps on open.
           props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
+          ownsDesktopTitleBar && "drag-region",
           ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
@@ -914,7 +999,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           ref={tabListRef}
           hideScrollbars
           scrollFade
-          className={cn("min-w-0 flex-1 rounded-none", ownsDesktopTitleBar && "drag-region")}
+          className={cn(
+            "min-w-0 flex-1 rounded-none",
+            ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
+          )}
           data-right-panel-tab-list
         >
           <div className="flex h-full w-max min-w-full items-center gap-1">
@@ -1099,6 +1187,50 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             ) : null}
           </div>
         </ScrollArea>
+        {tabScrollState.hasOverflow ? (
+          <div
+            className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
+            role="group"
+            aria-label="Scroll panel tabs"
+          >
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="inline-flex">
+                    <Button
+                      aria-label="Scroll tabs left"
+                      disabled={!tabScrollState.canScrollLeft}
+                      onClick={() => scrollTabs(-1)}
+                      size="icon-xs"
+                      variant="ghost"
+                    >
+                      <ChevronLeft />
+                    </Button>
+                  </span>
+                }
+              />
+              <TooltipPopup>Scroll tabs left</TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="inline-flex">
+                    <Button
+                      aria-label="Scroll tabs right"
+                      disabled={!tabScrollState.canScrollRight}
+                      onClick={() => scrollTabs(1)}
+                      size="icon-xs"
+                      variant="ghost"
+                    >
+                      <ChevronRight />
+                    </Button>
+                  </span>
+                }
+              />
+              <TooltipPopup>Scroll tabs right</TooltipPopup>
+            </Tooltip>
+          </div>
+        ) : null}
         {props.layoutControls}
       </div>
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
