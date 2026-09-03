@@ -2766,6 +2766,7 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             WS_METHODS.subscribeCodexGoal,
             Effect.gen(function* () {
+              const snapshotLoaded = yield* Ref.make(false);
               const liveGoalEvents = yield* Stream.toQueue(
                 providerService.streamEvents.pipe(
                   Stream.filterMap((event) => {
@@ -2792,6 +2793,11 @@ const makeWsRpcLayer = (
                     }
                     return Result.failVoid;
                   }),
+                  Stream.mapEffect((event) =>
+                    Ref.get(snapshotLoaded).pipe(
+                      Effect.map((loaded) => ({ ...event, buffered: !loaded })),
+                    ),
+                  ),
                 ),
                 { capacity: 1, strategy: "sliding" },
               );
@@ -2803,10 +2809,13 @@ const makeWsRpcLayer = (
                 threadId: input.threadId,
                 goal,
               };
+              yield* Ref.set(snapshotLoaded, true);
               const snapshotUpdatedAt = goal?.updatedAt ?? Number.NEGATIVE_INFINITY;
               const liveGoalStream = Stream.fromQueue(liveGoalEvents).pipe(
-                Stream.filter(({ updatedAt }) => updatedAt > snapshotUpdatedAt),
-                Stream.map(({ updatedAt: _, ...event }) => event),
+                Stream.filter(
+                  ({ buffered, updatedAt }) => !buffered || updatedAt >= snapshotUpdatedAt,
+                ),
+                Stream.map(({ buffered: _, updatedAt: __, ...event }) => event),
               ) as Stream.Stream<
                 CodexGoalStreamEvent,
                 CodexGoalOperationError | EnvironmentAuthorizationError
