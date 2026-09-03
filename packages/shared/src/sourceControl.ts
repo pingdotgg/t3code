@@ -140,6 +140,28 @@ export function isSshRemoteUrl(remoteUrl: string): boolean {
   return SCP_SSH_REMOTE_PATTERN.test(trimmed) || trimmed.toLowerCase().startsWith("ssh://");
 }
 
+/**
+ * SSH remotes often name a `~/.ssh/config` alias instead of the real host, and
+ * the common multi-account convention appends the alias to it:
+ * `git@github.com-work:org/repo.git`. No public host carries a hyphen in its
+ * last DNS label (IDN `xn--` labels aside), so one there marks where the real
+ * host ends. Only SSH transports consult the SSH config, so callers apply this
+ * to SSH hosts alone and leave HTTPS hosts untouched.
+ */
+export function stripSshHostAlias(host: string): string {
+  const labels = host.split(".");
+  const lastLabel = labels.at(-1);
+  if (labels.length < 2 || lastLabel === undefined || lastLabel.startsWith("xn--")) {
+    return host;
+  }
+  const aliasStart = lastLabel.indexOf("-");
+  if (aliasStart <= 0) {
+    return host;
+  }
+  labels[labels.length - 1] = lastLabel.slice(0, aliasStart);
+  return labels.join(".");
+}
+
 function parseRemoteHost(remoteUrl: string): string | null {
   const trimmed = remoteUrl.trim();
   if (trimmed.length === 0) {
@@ -148,11 +170,16 @@ function parseRemoteHost(remoteUrl: string): string | null {
 
   const scpMatch = SCP_SSH_REMOTE_PATTERN.exec(trimmed);
   if (scpMatch?.[1]) {
-    return scpMatch[1].toLowerCase();
+    return stripSshHostAlias(scpMatch[1].toLowerCase());
   }
 
   try {
-    return new URL(trimmed).host.toLowerCase();
+    const url = new URL(trimmed);
+    if (url.protocol !== "ssh:") {
+      return url.host.toLowerCase();
+    }
+    const hostname = stripSshHostAlias(url.hostname.toLowerCase());
+    return url.port ? `${hostname}:${url.port}` : hostname;
   } catch {
     return null;
   }

@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
+import { detectSourceControlProviderFromRemoteUrl, stripSshHostAlias } from "./sourceControl.ts";
 
 export const WORKTREE_BRANCH_PREFIX = "t3code";
 // Canonical form is `t3code/<8 hex>`. Older mobile builds generated `t3code/<uuid>`
@@ -126,7 +126,8 @@ export function normalizeGitRemoteUrl(value: string): string {
         .filter((segment) => segment.length > 0)
         .join("/");
       if (url.hostname && repositoryPath.includes("/")) {
-        return `${url.hostname}/${repositoryPath}`;
+        const hostname = url.protocol === "ssh:" ? stripSshHostAlias(url.hostname) : url.hostname;
+        return `${hostname}/${repositoryPath}`;
       }
     } catch {
       return normalized;
@@ -137,7 +138,7 @@ export function normalizeGitRemoteUrl(value: string): string {
     normalized,
   );
   if (scpStyleHostAndPath?.[1] && scpStyleHostAndPath[2]) {
-    return `${scpStyleHostAndPath[1]}/${scpStyleHostAndPath[2]}`;
+    return `${stripSshHostAlias(scpStyleHostAndPath[1])}/${scpStyleHostAndPath[2]}`;
   }
 
   return normalized;
@@ -153,7 +154,7 @@ export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | nu
   }
 
   const match =
-    /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
+    /^(?:git@github\.com(?:-[^:/\s]+)?:|ssh:\/\/git@github\.com(?:-[^/\s]+)?\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
       trimmed,
     );
   const repositoryNameWithOwner = match?.[1]?.trim() ?? "";

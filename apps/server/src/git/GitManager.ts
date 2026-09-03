@@ -242,7 +242,7 @@ function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): st
   }
 
   const match =
-    /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
+    /^(?:git@github\.com(?:-[^:/\s]+)?:|ssh:\/\/git@github\.com(?:-[^/\s]+)?\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
       trimmed,
     );
   const repositoryNameWithOwner = match?.[1]?.trim() ?? "";

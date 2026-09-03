@@ -5,6 +5,7 @@ import {
   getChangeRequestTerminologyForKind,
   isSshRemoteUrl,
   resolveChangeRequestPresentation,
+  stripSshHostAlias,
 } from "./sourceControl.ts";
 
 describe("source control presentation", () => {
@@ -136,6 +137,39 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     expect(
       detectSourceControlProviderFromRemoteUrl("git@bitbucket.org:workspace/repo.git")?.kind,
     ).toBe("bitbucket");
+  });
+
+  it("resolves SSH config host aliases to the host they extend", () => {
+    // `Host github.com-work` in ~/.ssh/config is the common multi-account setup.
+    expect(detectSourceControlProviderFromRemoteUrl("git@github.com-work:owner/repo.git")).toEqual({
+      kind: "github",
+      name: "GitHub",
+      baseUrl: "https://github.com",
+    });
+    expect(
+      detectSourceControlProviderFromRemoteUrl(
+        "ssh://git@gitlab.company.com-personal:2222/team/repo.git",
+      ),
+    ).toEqual({
+      kind: "gitlab",
+      name: "GitLab Self-Hosted",
+      baseUrl: "https://gitlab.company.com:2222",
+    });
+    // HTTPS never consults the SSH config, so its host is taken literally.
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://github.com-work/owner/repo.git")?.baseUrl,
+    ).toBe("https://github.com-work");
+  });
+});
+
+describe("stripSshHostAlias", () => {
+  it("drops the alias suffix only from the last DNS label", () => {
+    expect(stripSshHostAlias("github.com-work")).toBe("github.com");
+    expect(stripSshHostAlias("gitlab.my-corp.com")).toBe("gitlab.my-corp.com");
+    expect(stripSshHostAlias("my-server.local")).toBe("my-server.local");
+    expect(stripSshHostAlias("git-server")).toBe("git-server");
+    expect(stripSshHostAlias("example.xn--p1ai")).toBe("example.xn--p1ai");
+    expect(stripSshHostAlias("192.168.1.10")).toBe("192.168.1.10");
   });
 });
 

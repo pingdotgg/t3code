@@ -23,6 +23,18 @@ describe("normalizeGitRemoteUrl", () => {
     );
   });
 
+  it("resolves SSH config host aliases to the host they extend", () => {
+    expect(normalizeGitRemoteUrl("git@github.com-work:T3Tools/T3Code.git")).toBe(
+      "github.com/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("ssh://git@github.com-work/T3Tools/T3Code")).toBe(
+      "github.com/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("https://github.com-work/T3Tools/T3Code")).toBe(
+      "github.com-work/t3tools/t3code",
+    );
+  });
+
   it("preserves nested group paths for providers like GitLab", () => {
     expect(normalizeGitRemoteUrl("git@gitlab.com:T3Tools/platform/T3Code.git")).toBe(
       "gitlab.com/t3tools/platform/t3code",
@@ -52,6 +64,15 @@ describe("normalizeGitRemoteUrl", () => {
 });
 
 describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
+  it("accepts SSH config host aliases on the GitHub host", () => {
+    expect(
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("git@github.com-work:owner/repo.git"),
+    ).toBe("owner/repo");
+    expect(
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("ssh://git@github.com-work/owner/repo.git"),
+    ).toBe("owner/repo");
+  });
+
   it("extracts the owner and repository from common GitHub remote shapes", () => {
     expect(
       parseGitHubRepositoryNameWithOwnerFromRemoteUrl("git@github.com:T3Tools/T3Code.git"),
