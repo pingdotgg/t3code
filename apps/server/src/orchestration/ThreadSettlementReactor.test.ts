@@ -17,6 +17,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -134,6 +135,7 @@ interface HarnessOptions {
   readonly settings?: ServerSettings;
   readonly branchPullRequest?: GitManager["Service"]["branchPullRequest"];
   readonly pullRequestSummary?: PullRequestService["Service"]["summary"];
+  readonly existingWorktreePaths?: ReadonlyArray<string>;
   readonly onDispatch?: (
     command: AutoSettleCommand,
   ) => Effect.Effect<void, OrchestrationCommandInvariantError>;
@@ -235,6 +237,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     Layer.succeed(ServerSettingsService, serverSettings),
     Layer.succeed(ServerActivation, Deferred.await(activation)),
     Layer.succeed(Crypto.Crypto, testCrypto),
+    FileSystem.layerNoop({
+      exists: (path) => Effect.succeed(options.existingWorktreePaths?.includes(path) ?? false),
+    }),
   );
 
   return {
@@ -640,6 +645,43 @@ describe("ThreadSettlementReactor", () => {
               ThreadId.make("branch-two"),
               ThreadId.make("linked-one"),
               ThreadId.make("linked-two"),
+            ]),
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("looks up the branch pull request from a thread's live worktree", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(
+            [
+              makeThread("live-worktree", {
+                branch: "feature/live",
+                worktreePath: "/workspace/project-root/.worktrees/live",
+              }),
+              makeThread("deleted-worktree", {
+                branch: "feature/deleted",
+                worktreePath: "/workspace/project-root/.worktrees/deleted",
+              }),
+            ],
+            [makeProject(PROJECT_ID, "/workspace/project-root")],
+          ),
+          existingWorktreePaths: ["/workspace/project-root/.worktrees/live"],
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+
+          assert.deepStrictEqual(
+            new Set(yield* Ref.get(fixture.branchCalls)),
+            new Set([
+              { cwd: "/workspace/project-root/.worktrees/live", branch: "feature/live" },
+              { cwd: "/workspace/project-root", branch: "feature/deleted" },
             ]),
           );
         }).pipe(Effect.provide(fixture.layer));
