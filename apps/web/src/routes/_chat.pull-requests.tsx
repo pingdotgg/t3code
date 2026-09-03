@@ -58,7 +58,7 @@ import {
   pullRequestEntryKey,
   pullRequestEntryViewer,
   rankPullRequestMatches,
-  rankPullRequestsByMergeReadiness,
+  sortPullRequestGroups,
   pullRequestEnvironmentSetKey,
   readPullRequestListSnapshot,
   resolveProjectScope,
@@ -120,7 +120,6 @@ import { SidebarInset } from "../components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { useLiveRefresh } from "../hooks/useLiveRefresh";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
-import { toSortableTimestamp } from "../lib/threadSort";
 import {
   pullRequestSurfaceId,
   selectActiveRightPanelSurface,
@@ -1426,51 +1425,16 @@ function PullRequestsRouteView() {
       ...group,
       entries: group.entries.map((entry) => withDiffStat(entry, statsByRow)),
     }));
-    if (sort === "ready" && typedParsed.text.length === 0) {
-      return [
-        {
-          key: "others" as const,
-          label: "",
-          entries: rankPullRequestsByMergeReadiness(
-            enriched.flatMap((group) => group.entries),
-            (entry) =>
-              entry.additions + entry.deletions > 0 ||
-              statsByRow.has(pullRequestDiffStatKey(entry)),
-          ),
-        },
-      ];
-    }
     // Searching keeps its relevance order and priority groups unless the reader explicitly asks
     // for another sort. The readiness queue is the default browse order, not a way to bury a
     // closer text match.
-    if (sort === "ready" || sort === "updated") return enriched;
-    const entries = enriched.flatMap((group) => group.entries);
-    const hasSize = (entry: (typeof entries)[number]) =>
-      entry.additions + entry.deletions > 0 || statsByRow.has(pullRequestDiffStatKey(entry));
-    const timestamp = (entry: (typeof entries)[number]) =>
-      toSortableTimestamp(entry.updatedAt) ?? toSortableTimestamp(entry.createdAt) ?? 0;
-    return [
-      {
-        key: "others" as const,
-        label: "",
-        entries: entries.toSorted((left, right) => {
-          if (sort === "newest" || sort === "oldest") {
-            const leftCreated = toSortableTimestamp(left.createdAt);
-            const rightCreated = toSortableTimestamp(right.createdAt);
-            const measured = Number(rightCreated !== null) - Number(leftCreated !== null);
-            const dated = (leftCreated ?? 0) - (rightCreated ?? 0);
-            return (
-              measured || (sort === "newest" ? -dated : dated) || timestamp(right) - timestamp(left)
-            );
-          }
-          const measured = Number(hasSize(right)) - Number(hasSize(left));
-          const sized = left.additions + left.deletions - (right.additions + right.deletions);
-          return (
-            measured || (sort === "largest" ? -sized : sized) || timestamp(right) - timestamp(left)
-          );
-        }),
-      },
-    ];
+    return sortPullRequestGroups(
+      enriched,
+      sort,
+      typedParsed.text,
+      (entry) =>
+        entry.additions + entry.deletions > 0 || statsByRow.has(pullRequestDiffStatKey(entry)),
+    );
   }, [groups, sort, statsByRow, typedParsed.text]);
 
   const linkedSelection = useMemo(
