@@ -1,4 +1,5 @@
 import {
+  ContextMenuEditFlagsSchema,
   ContextMenuItemSchema,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
@@ -49,6 +50,7 @@ const ContextMenuPosition = Schema.Struct({
 const ContextMenuInput = Schema.Struct({
   items: Schema.Array(ContextMenuItemSchema),
   position: Schema.optionalKey(ContextMenuPosition),
+  editFlags: Schema.optionalKey(ContextMenuEditFlagsSchema),
 });
 
 function toWebSocketBaseUrl(httpBaseUrl: URL): string {
@@ -283,6 +285,7 @@ export const showContextMenu = DesktopIpc.makeIpcMethod({
       window: window.value,
       items: input.items,
       position: Option.fromNullishOr(input.position),
+      ...(input.editFlags === undefined ? {} : { editFlags: input.editFlags }),
     });
     return Option.getOrNull(selectedItemId);
   }),

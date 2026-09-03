@@ -530,12 +530,7 @@ export const make = Effect.gen(function* () {
         menuTemplate.push({ type: "separator" });
       }
 
-      menuTemplate.push(
-        { role: "cut", enabled: params.editFlags.canCut },
-        { role: "copy", enabled: params.editFlags.canCopy },
-        { role: "paste", enabled: params.editFlags.canPaste },
-        { role: "selectAll", enabled: params.editFlags.canSelectAll },
-      );
+      menuTemplate.push(...ElectronMenu.buildEditContextMenuTemplate(params.editFlags));
 
       void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
     });
