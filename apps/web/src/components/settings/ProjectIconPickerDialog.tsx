@@ -45,7 +45,7 @@ export function ProjectIconPickerDialog({
   readonly onSelect: (icon: ProjectIconOverride) => void;
 }) {
   const [mode, setMode] = useState<"lucide" | "emoji">(
-    current?.kind === "emoji" ? "emoji" : "lucide",
+    current?.kind === "lucide" ? "lucide" : "emoji",
   );
   const [iconName, setIconName] = useState<IconName>(
     current?.kind === "lucide" ? (current.name as IconName) : DEFAULT_ICON,
@@ -59,7 +59,7 @@ export function ProjectIconPickerDialog({
 
   useEffect(() => {
     if (!open) return;
-    setMode(current?.kind === "emoji" ? "emoji" : "lucide");
+    setMode(current?.kind === "lucide" ? "lucide" : "emoji");
     setIconName(current?.kind === "lucide" ? (current.name as IconName) : DEFAULT_ICON);
     setColor(current?.kind === "lucide" ? current.color : DEFAULT_COLOR);
     setEmoji(current?.kind === "emoji" ? current.emoji : "💻");
@@ -81,7 +81,7 @@ export function ProjectIconPickerDialog({
       <DialogPopup className="w-full sm:w-[32rem]">
         <DialogHeader>
           <DialogTitle>Choose project icon</DialogTitle>
-          <DialogDescription>Pick any Lucide icon and color, or use an emoji.</DialogDescription>
+          <DialogDescription>Pick an emoji, or choose any Lucide icon and color.</DialogDescription>
         </DialogHeader>
         <DialogPanel className="flex min-h-0 flex-col gap-4">
           <ToggleGroup
@@ -93,8 +93,8 @@ export function ProjectIconPickerDialog({
               if (value === "lucide" || value === "emoji") setMode(value);
             }}
           >
-            <Toggle value="lucide">Icons</Toggle>
             <Toggle value="emoji">Emoji</Toggle>
+            <Toggle value="lucide">Icons</Toggle>
           </ToggleGroup>
 
           {mode === "lucide" ? (
