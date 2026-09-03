@@ -189,6 +189,35 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("keeps the last complete snapshot after a failed refresh and restart", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const layers = serviceLayers({
+        prefix: "usage-service-last-good-test",
+        baseDir: NodePath.join(home, "server-state"),
+        home,
+        settings,
+      });
+      const firstService = yield* UsageService.make.pipe(Effect.provide(layers));
+
+      const complete = yield* firstService.refreshSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(complete), 5);
+
+      const transcriptRoot = NodePath.join(home, "claude", "projects");
+      yield* Effect.promise(() => NodeFSP.rename(transcriptRoot, `${transcriptRoot}-valid`));
+      yield* Effect.promise(() => NodeFSP.writeFile(transcriptRoot, "not a directory"));
+      const failed = yield* firstService.refreshSummary(WINDOW).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(failed));
+
+      const restartedService = yield* UsageService.make.pipe(Effect.provide(layers));
+      const retained = yield* restartedService.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(retained), 5);
+      assert.strictEqual(retained.coverage?.availableThroughDay, WINDOW.untilDay);
+      assert.strictEqual(retained.coverage?.generatedAt, complete.coverage?.generatedAt);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("serves a remote-timezone preset from the normalized ledger", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
