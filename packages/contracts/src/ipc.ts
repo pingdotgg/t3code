@@ -934,11 +934,14 @@ export const PreviewAnnotationSubmissionSchema: Schema.Codec<PreviewAnnotationSu
 export interface PreviewAnnotationSubmissionResult {
   annotation: PreviewAnnotationPayload;
   submission: PreviewAnnotationSubmission;
+  /** The crop was requested but failed or timed out, so `annotation.screenshot` is null. */
+  screenshotFailed?: boolean;
 }
 export const PreviewAnnotationSubmissionResultSchema: Schema.Codec<PreviewAnnotationSubmissionResult> =
   Schema.Struct({
     annotation: PreviewAnnotationPayloadSchema,
     submission: PreviewAnnotationSubmissionSchema,
+    screenshotFailed: Schema.optionalKey(Schema.Boolean),
   });
 
 export const DesktopPreviewTabInputSchema = Schema.Struct({

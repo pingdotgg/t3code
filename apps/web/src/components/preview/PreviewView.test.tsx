@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => ({
   openPictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
   closePictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
   pickElement: vi.fn(),
-  previewAnnotationScreenshotFile: vi.fn(),
+  capturePreviewAnnotationScreenshot: vi.fn(),
   addPreviewAnnotation: vi.fn(),
   addImage: vi.fn(),
   toggleAnnotation: null as (() => void) | null,
@@ -90,7 +90,7 @@ vi.mock("~/composerDraftStore", () => ({
 }));
 
 vi.mock("~/lib/previewAnnotation", () => ({
-  previewAnnotationScreenshotFile: mocks.previewAnnotationScreenshotFile,
+  capturePreviewAnnotationScreenshot: mocks.capturePreviewAnnotationScreenshot,
 }));
 
 vi.mock("~/localApi", () => ({
@@ -252,6 +252,7 @@ vi.mock("~/browser/BrowserSurfaceSlot", () => ({ BrowserSurfaceSlot: () => null 
 vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
 
 import { PreviewView, previewProfileName } from "./PreviewView";
+import { toastManager } from "~/components/ui/toast";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 
 const TEST_THREAD_REF = {
@@ -339,8 +340,10 @@ describe("PreviewView navigation", () => {
     mocks.openPictureInPicture.mockClear();
     mocks.closePictureInPicture.mockClear();
     mocks.pickElement.mockReset();
-    mocks.previewAnnotationScreenshotFile.mockReset();
+    mocks.capturePreviewAnnotationScreenshot.mockReset();
+    mocks.capturePreviewAnnotationScreenshot.mockResolvedValue({ status: "none" });
     mocks.addPreviewAnnotation.mockClear();
+    vi.mocked(toastManager.add).mockClear();
     mocks.addImage.mockClear();
     mocks.toggleAnnotation = null;
     mocks.pictureInPicture = false;
@@ -551,7 +554,39 @@ describe("PreviewView navigation", () => {
     expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, annotation);
   });
 
-  it("still sends when screenshot attachment conversion fails", async () => {
+  it("warns when main dropped the crop before handing over the pick", async () => {
+    const annotation = {
+      id: "annotation-3",
+      pageUrl: "https://example.com/dashboard",
+      pageTitle: "Dashboard",
+      comment: "Tighten this spacing",
+      elements: [],
+      regions: [],
+      strokes: [],
+      styleChanges: [],
+      screenshot: null,
+      createdAt: "2026-07-27T00:00:00.000Z",
+    };
+    const onSendAnnotation = vi.fn();
+    mocks.pickElement.mockResolvedValue({ annotation, submission: "send", screenshotFailed: true });
+
+    renderToStaticMarkup(
+      <PreviewView
+        threadRef={TEST_THREAD_REF}
+        tabId="tab-1"
+        visible
+        onSendAnnotation={onSendAnnotation}
+      />,
+    );
+    mocks.toggleAnnotation?.();
+
+    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(annotation, null));
+    // A null screenshot alone looks like a comment-only pick; the flag is what
+    // separates "no crop requested" from "crop lost to a timeout".
+    expect(toastManager.add).toHaveBeenCalledTimes(1);
+  });
+
+  it("still sends when the picked element's crop cannot be captured", async () => {
     const annotation = {
       id: "annotation-2",
       pageUrl: "https://example.com/dashboard",
@@ -571,7 +606,7 @@ describe("PreviewView navigation", () => {
     };
     const onSendAnnotation = vi.fn();
     mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
-    mocks.previewAnnotationScreenshotFile.mockRejectedValue(new Error("conversion failed"));
+    mocks.capturePreviewAnnotationScreenshot.mockResolvedValue({ status: "failed" });
 
     renderToStaticMarkup(
       <PreviewView
@@ -583,7 +618,11 @@ describe("PreviewView navigation", () => {
     );
     mocks.toggleAnnotation?.();
 
-    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(annotation, null));
+    // The forwarded and stored annotation both drop the screenshot, so the
+    // prompt does not claim a crop that was never attached.
+    const sent = { ...annotation, screenshot: null };
+    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(sent, null));
+    expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, sent);
     expect(mocks.addImage).not.toHaveBeenCalled();
   });
 });
