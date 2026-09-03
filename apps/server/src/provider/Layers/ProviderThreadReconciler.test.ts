@@ -276,6 +276,12 @@ it.effect("imports an unmatched Codex thread into the unassigned project", () =>
       projectId: "codex-unassigned-threads",
     });
     expect(bindings).toHaveLength(1);
+    expect(bindings[0]).toMatchObject({
+      runtimePayload: {
+        imported: true,
+        cwd: persistedThread.cwd,
+      },
+    });
   }),
 );
 

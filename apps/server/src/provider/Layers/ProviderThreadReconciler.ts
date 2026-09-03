@@ -541,6 +541,7 @@ export const reconcilePersistedThread = Effect.fn("reconcilePersistedProviderThr
       runtimePayload: {
         imported: true,
         continuationKey,
+        cwd: input.thread.cwd,
         providerUpdatedAt: input.thread.updatedAt,
         providerDiscoveryCursor: input.thread.discoveryCursor,
         sourceMetadata: input.thread.sourceMetadata,
