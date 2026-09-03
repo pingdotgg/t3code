@@ -86,6 +86,19 @@ export function agentControlledBrowserCloseConfirmation(
   ].join("\n");
 }
 
+export function shouldRenderPreviewMiniPlayer(
+  miniPlayerTabId: string | null,
+  renderedRightPanelSurface: RightPanelSurface | null,
+): boolean {
+  return (
+    miniPlayerTabId !== null &&
+    !(
+      renderedRightPanelSurface?.kind === "preview" &&
+      renderedRightPanelSurface.resourceId === miniPlayerTabId
+    )
+  );
+}
+
 export function shouldOpenProactivePullRequest(
   previousTargetKey: string | null | undefined,
   targetKey: string | null,
