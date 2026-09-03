@@ -3,14 +3,21 @@
  * scrolling body that says when the list is loading, could not be read, is empty, or is not all
  * of it. The rows and the words are the caller's; the frame is the same either way.
  *
- * Built on a popover and the command list rather than a menu: a menu's typeahead claims every
- * keypress to jump between rows, which is exactly what a search box cannot share.
+ * The same combobox as the project and branch pickers, and dressed the same, rather than a menu:
+ * a menu's typeahead claims every keypress to jump between rows, which a search box cannot share.
  */
+import { SearchIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Button } from "../ui/button";
-import { Command, CommandInput, CommandItem, CommandList } from "../ui/command";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxPopup,
+  ComboboxTrigger,
+} from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestPeopleGhost } from "./PullRequestGhosts";
 
@@ -81,64 +88,88 @@ export function PullRequestCandidatePicker<T>({
     );
   }
 
+  const keys = candidates.map(candidateKey);
+
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger
+    <Combobox
+      items={keys}
+      // The caller narrows the list, so the combobox does no filtering of its own.
+      filteredItems={keys}
+      filter={null}
+      autoHighlight
+      value={null}
+      onValueChange={(key) => {
+        const candidate = candidates.find((entry) => candidateKey(entry) === key);
+        if (candidate) onSelect(candidate);
+      }}
+      open={open}
+      onOpenChange={(nextOpen, details) => {
+        // Stays open on a pick: a change is confirmed by the row's own check turning over, and a
+        // second label or reviewer is usually wanted right after the first.
+        if (!nextOpen && details.reason === "item-press") return;
+        onOpenChange(nextOpen);
+      }}
+    >
+      <ComboboxTrigger
         render={
           <Button size="icon-xs" variant="ghost" aria-label={label}>
             {icon}
           </Button>
         }
       />
-      <PopoverPopup
-        align="start"
-        side="bottom"
-        className="w-72 before:hidden [--viewport-inline-padding:0]"
-        viewportClassName="overflow-hidden p-0"
-      >
-        {/* The caller narrows the list, so the command does no filtering of its own. */}
-        <Command mode="none" value={query} onValueChange={onQueryChange}>
-          <CommandInput
-            wrapperClassName="border-b border-border/60 px-2 py-2 [&_[data-slot=autocomplete-start-addon]]:ps-2"
-            className="*:data-[slot=autocomplete-input]:ps-8!"
-            placeholder={searchLabel}
-            aria-label={searchLabel}
-            size="sm"
-          />
-          <CommandList className="max-h-72 not-empty:p-1">
-            {isPending ? (
-              <PullRequestPeopleGhost rows={4} />
-            ) : error !== null ? (
-              <p className="p-2 text-xs text-muted-foreground">
-                {errorLabel} {error}
-              </p>
-            ) : candidates.length === 0 ? (
-              <p className="p-2 text-xs text-muted-foreground">
-                {query.length > 0 ? noMatchLabel : emptyLabel}
-              </p>
-            ) : (
-              candidates.map((candidate) => (
-                // Stays open on press: a change is confirmed by the row's own check turning over,
-                // and a second label or reviewer is usually wanted right after the first.
-                <CommandItem
-                  key={candidateKey(candidate)}
-                  value={candidateKey(candidate)}
-                  disabled={disabled}
-                  onClick={() => onSelect(candidate)}
-                  className="min-h-0 cursor-pointer gap-2 py-1.5 text-xs sm:min-h-0 sm:text-xs"
-                >
-                  {children(candidate)}
-                </CommandItem>
-              ))
-            )}
-            {truncated ? (
-              // Typing filters what arrived; it does not ask the host again, so this says what the
-              // list is rather than offering a search that would find nothing further.
-              <p className="px-2 py-1.5 text-xs text-muted-foreground">{truncatedLabel}</p>
-            ) : null}
-          </CommandList>
-        </Command>
-      </PopoverPopup>
-    </Popover>
+      <ComboboxPopup align="start" side="bottom" className="w-72">
+        <div className="shrink-0 px-3 pt-2.5">
+          <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
+            <SearchIcon
+              aria-hidden="true"
+              className="pointer-events-none absolute top-1.5 left-0 size-4 shrink-0 text-muted-foreground/55"
+            />
+            <ComboboxInput
+              aria-label={searchLabel}
+              className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
+              inputClassName="rounded-none bg-transparent text-sm"
+              placeholder={searchLabel}
+              showTrigger={false}
+              size="sm"
+              unstyled
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+            />
+          </div>
+        </div>
+        <ComboboxList className="max-h-72">
+          {isPending ? (
+            <PullRequestPeopleGhost rows={4} />
+          ) : error !== null ? (
+            <p className="p-2 text-xs text-muted-foreground">
+              {errorLabel} {error}
+            </p>
+          ) : candidates.length === 0 ? (
+            <p className="p-2 text-xs text-muted-foreground">
+              {query.length > 0 ? noMatchLabel : emptyLabel}
+            </p>
+          ) : (
+            candidates.map((candidate, index) => (
+              <ComboboxItem
+                key={keys[index]}
+                hideIndicator
+                index={index}
+                value={keys[index]}
+                disabled={disabled}
+                className="min-h-0 py-1.5 text-xs sm:min-h-0 sm:text-xs"
+                contentClassName="flex min-w-0 items-center gap-2"
+              >
+                {children(candidate)}
+              </ComboboxItem>
+            ))
+          )}
+          {truncated ? (
+            // Typing filters what arrived; it does not ask the host again, so this says what the
+            // list is rather than offering a search that would find nothing further.
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">{truncatedLabel}</p>
+          ) : null}
+        </ComboboxList>
+      </ComboboxPopup>
+    </Combobox>
   );
 }
