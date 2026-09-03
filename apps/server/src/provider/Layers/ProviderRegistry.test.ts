@@ -35,6 +35,7 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import { ACP_AGENT_DEFAULT_MODEL_SLUG } from "../acp/AcpRuntimeModel.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
@@ -895,6 +896,73 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         const afterFailure = mergeProviderSnapshot(afterRemoval, failedProvider);
 
         assert.deepStrictEqual(afterFailure.models, [authoritativeProvider.models[0]!]);
+      });
+
+      it("keeps session-discovered ACP models across a ready initialize-only probe", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("acp_copilot"),
+          driver: ProviderDriverKind.make("acp"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "unknown" },
+          checkedAt: "2026-09-01T00:00:00.000Z",
+          version: "1.0.82",
+          models: [
+            {
+              slug: ACP_AGENT_DEFAULT_MODEL_SLUG,
+              name: "Agent default",
+              isCustom: false,
+              capabilities: null,
+            },
+            { slug: "gpt-5", name: "GPT-5", isCustom: false, capabilities: null },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const readyProbe = {
+          ...previousProvider,
+          checkedAt: "2026-09-01T00:01:00.000Z",
+          models: [previousProvider.models[0]],
+          message: "ACP handshake succeeded. Models are discovered from the first active session.",
+        } satisfies ServerProvider;
+        const disabledProvider = {
+          ...readyProbe,
+          status: "warning",
+          enabled: false,
+          installed: false,
+          checkedAt: "2026-09-01T00:02:00.000Z",
+        } satisfies ServerProvider;
+        const missingProvider = {
+          ...readyProbe,
+          status: "error",
+          installed: false,
+          checkedAt: "2026-09-01T00:03:00.000Z",
+        } satisfies ServerProvider;
+        const rediscoveredInventory = {
+          ...readyProbe,
+          checkedAt: "2026-09-01T00:04:00.000Z",
+          models: [
+            previousProvider.models[0],
+            { slug: "gpt-5-mini", name: "GPT-5 mini", isCustom: false, capabilities: null },
+          ],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, readyProbe).models, [
+          ...previousProvider.models,
+        ]);
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, disabledProvider).models, [
+          previousProvider.models[0],
+        ]);
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, missingProvider).models, [
+          previousProvider.models[0],
+        ]);
+        // A session that advertises real models is authoritative: the shrunken
+        // inventory replaces "gpt-5" instead of keeping it alive forever.
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, rediscoveredInventory).models,
+          rediscoveredInventory.models,
+        );
       });
 
       it("fills missing capabilities from the previous provider snapshot", () => {

@@ -6,6 +6,7 @@ import { deriveEffectiveComposerModelState } from "./composerDraftStore";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { deriveProviderInstanceEntries } from "./providerInstances";
 import {
+  filterTextGenerationProviders,
   getCustomModelOptionsByInstance,
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
@@ -59,6 +60,36 @@ function settingsWithProviderInstances(): UnifiedSettings {
     },
   };
 }
+
+describe("text generation provider filter", () => {
+  it("never falls back to an ACP instance when the selected instance is unavailable", () => {
+    const acpProvider = provider({
+      provider: ProviderDriverKind.make("acp"),
+      instanceId: "acp_copilot",
+      models: ["__acp_agent_default__", "gpt-5"],
+    });
+    const unavailableCodex = {
+      ...provider({ instanceId: "codex", models: ["gpt-5.4"] }),
+      installed: false,
+      status: "error" as const,
+      availability: "unavailable" as const,
+    };
+    const claude = provider({ instanceId: "claudeAgent", models: ["claude-opus-4-8"] });
+    const providers = [acpProvider, unavailableCodex, claude];
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      textGenerationModelSelection: createModelSelection(
+        ProviderInstanceId.make("codex"),
+        "gpt-5.4",
+      ),
+    };
+
+    expect(resolveAppModelSelectionState(settings, providers).instanceId).toBe("acp_copilot");
+    expect(
+      resolveAppModelSelectionState(settings, filterTextGenerationProviders(providers)).instanceId,
+    ).toBe("claudeAgent");
+  });
+});
 
 describe("instance-scoped model selection", () => {
   it("preserves server-provided legacy model metadata", () => {

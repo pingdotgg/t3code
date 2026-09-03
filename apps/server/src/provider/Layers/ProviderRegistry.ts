@@ -41,6 +41,7 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import { ServerConfig } from "../../config.ts";
+import { isAcpAgentDefaultModel } from "../acp/AcpRuntimeModel.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
 import {
@@ -101,6 +102,18 @@ export function upsertProviderWorkspaceSnapshot(
 }
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
+  // A generic ACP probe only runs `initialize`; the model inventory arrives
+  // from active sessions. A probe snapshot therefore carries just the synthetic
+  // default and must not evict what earlier sessions discovered, whereas a
+  // snapshot that advertises real models is the authoritative inventory.
+  // Disabled and missing-CLI snapshots remain authoritative removals.
+  if (provider.driver === ProviderDriverKind.make("acp")) {
+    return (
+      provider.enabled &&
+      provider.installed &&
+      provider.models.every((model) => model.isCustom || isAcpAgentDefaultModel(model.slug))
+    );
+  }
   if (provider.driver !== ProviderDriverKind.make("opencode")) {
     return true;
   }

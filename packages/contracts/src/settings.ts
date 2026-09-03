@@ -523,6 +523,32 @@ export const ClaudeSettings = makeProviderSettingsSchema(
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
+export const AcpSettings = makeProviderSettingsSchema(
+  {
+    binaryPath: makeBinaryPathSetting("").pipe(
+      Schema.annotateKey({
+        title: "Command",
+        description: "Installed ACP CLI command or absolute path.",
+        providerSettingsForm: { placeholder: "agent-cli", clearWhenEmpty: "omit" },
+      }),
+    ),
+    launchArgs: Schema.String.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Arguments",
+        description: "Arguments that start the CLI in ACP stdio mode.",
+        providerSettingsForm: { placeholder: "--acp", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  { order: ["binaryPath", "launchArgs"] },
+);
+export type AcpSettings = typeof AcpSettings.Type;
+
 export const CursorSettings = makeProviderSettingsSchema(
   {
     // Off by default like Grok and OpenCode. Users opt in from Settings.

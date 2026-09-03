@@ -4,8 +4,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import type * as EffectAcpSchema from "effect-acp/schema";
+import type {
+  ModelCapabilities,
+  ProviderOptionDescriptor,
+  ToolLifecycleItemType,
+} from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
-import type { ToolLifecycleItemType } from "@t3tools/contracts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -106,6 +111,7 @@ export type AcpParsedSessionEvent =
   | {
       readonly _tag: "ContentDelta";
       readonly itemId?: string;
+      readonly streamKind: "assistant_text" | "reasoning_text";
       readonly text: string;
       readonly rawPayload: unknown;
     };
@@ -120,15 +126,96 @@ type AcpToolCallUpdate = Extract<
   { readonly sessionUpdate: "tool_call" | "tool_call_update" }
 >;
 
+/**
+ * Slug of the synthetic "Agent default" model a generic ACP provider always lists. Selecting
+ * it leaves the agent's own model choice untouched, so it must never be sent through
+ * `session/set_config_option` and must not collide with an advertised model id.
+ */
+export const ACP_AGENT_DEFAULT_MODEL_SLUG = "__acp_agent_default__";
+
+export function isAcpAgentDefaultModel(model: string): boolean {
+  return model.trim() === ACP_AGENT_DEFAULT_MODEL_SLUG;
+}
+
+export function findModelConfigOption(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): EffectAcpSchema.SessionConfigOption | undefined {
+  return configOptions?.find(
+    (option) =>
+      option.category === "model" && option.type === "select" && option.id.trim().length > 0,
+  );
+}
+
 export function extractModelConfigId(sessionResponse: AcpSessionSetupResponse): string | undefined {
-  const configOptions = sessionResponse.configOptions;
-  if (!configOptions) return undefined;
-  for (const opt of configOptions) {
-    if (opt.category === "model" && opt.id.trim().length > 0) {
-      return opt.id.trim();
+  return findModelConfigOption(sessionResponse.configOptions)?.id.trim();
+}
+
+export function extractModelOptions(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+) {
+  const modelConfig = findModelConfigOption(configOptions);
+  if (!modelConfig || modelConfig.type !== "select") return [];
+
+  const seen = new Set<string>();
+  return modelConfig.options.flatMap((entry) => {
+    const options = "value" in entry ? [entry] : entry.options;
+    return options.flatMap((option) => {
+      const id = option.value.trim();
+      const name = option.name.trim();
+      if (!id || !name || seen.has(id)) return [];
+      seen.add(id);
+      return [{ id, name, isDefault: modelConfig.currentValue?.trim() === id }];
+    });
+  });
+}
+
+/** Projects session-scoped ACP traits onto T3's existing model option contract. */
+export function buildAcpModelCapabilities(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): ModelCapabilities {
+  const optionDescriptors: Array<ProviderOptionDescriptor> = [];
+  for (const option of configOptions ?? []) {
+    if (option.category === "model" || option.category === "mode") continue;
+    const id = option.id.trim();
+    const label = option.name.trim();
+    if (!id || !label) continue;
+    const description = option.description?.trim() || undefined;
+    if (option.type === "boolean") {
+      optionDescriptors.push({
+        id,
+        label,
+        type: "boolean",
+        currentValue: option.currentValue,
+        ...(description ? { description } : {}),
+      });
+      continue;
     }
+    const choices = option.options
+      .flatMap((entry) => ("value" in entry ? [entry] : entry.options))
+      .flatMap((choice) => {
+        const choiceId = choice.value.trim();
+        const choiceLabel = choice.name.trim();
+        if (!choiceId || !choiceLabel) return [];
+        const choiceDescription = choice.description?.trim() || undefined;
+        return [
+          {
+            id: choiceId,
+            label: choiceLabel,
+            ...(choiceDescription ? { description: choiceDescription } : {}),
+          },
+        ];
+      });
+    if (choices.length === 0) continue;
+    optionDescriptors.push({
+      id,
+      label,
+      type: "select",
+      options: choices,
+      currentValue: option.currentValue.trim(),
+      ...(description ? { description } : {}),
+    });
   }
-  return undefined;
+  return createModelCapabilities({ optionDescriptors });
 }
 
 export function findSessionConfigOption(
@@ -153,6 +240,24 @@ export function collectSessionConfigOptionValues(
   }
   return configOption.options.flatMap((entry) =>
     "value" in entry ? [entry.value] : entry.options.map((option) => option.value),
+  );
+}
+
+/**
+ * Maps a value picked in T3's UI back to the advertised option value. Snapshots expose trimmed
+ * ids, so the match is by trimmed text while the returned value is what the agent advertised
+ * and therefore what `session/set_config_option` must carry.
+ */
+export function resolveSessionConfigOptionValue(
+  configOption: EffectAcpSchema.SessionConfigOption,
+  requestedValue: string,
+): string | undefined {
+  const normalizedValue = requestedValue.trim();
+  if (!normalizedValue) {
+    return undefined;
+  }
+  return collectSessionConfigOptionValues(configOption).find(
+    (value) => value.trim() === normalizedValue,
   );
 }
 
@@ -771,6 +876,7 @@ function boundToolCallRawPayload(
 
 export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotification): {
   readonly modeId?: string;
+  readonly configOptions?: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly events: ReadonlyArray<AcpParsedSessionEvent>;
 } {
   const upd = params.update;
@@ -778,6 +884,11 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
   let modeId: string | undefined;
 
   switch (upd.sessionUpdate) {
+    case "config_option_update":
+      return {
+        configOptions: upd.configOptions,
+        events,
+      };
     case "current_mode_update": {
       modeId = upd.currentModeId.trim();
       if (modeId) {
@@ -828,10 +939,13 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       }
       break;
     }
-    case "agent_message_chunk": {
+    case "agent_message_chunk":
+    case "agent_thought_chunk": {
       if (upd.content.type === "text" && upd.content.text.length > 0) {
         events.push({
           _tag: "ContentDelta",
+          streamKind:
+            upd.sessionUpdate === "agent_thought_chunk" ? "reasoning_text" : "assistant_text",
           text: upd.content.text,
           rawPayload: params,
         });

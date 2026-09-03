@@ -170,6 +170,11 @@ export class AcpAgent extends Context.Service<
         request: AcpSchema.CloseSessionRequest,
       ) => Effect.Effect<AcpSchema.CloseSessionResponse, AcpError.AcpError>,
     ) => Effect.Effect<void>;
+    readonly handleSetSessionMode: (
+      handler: (
+        request: AcpSchema.SetSessionModeRequest,
+      ) => Effect.Effect<AcpSchema.SetSessionModeResponse, AcpError.AcpError>,
+    ) => Effect.Effect<void>;
     readonly handleSetSessionModel: (
       handler: (
         request: AcpSchema.SetSessionModelRequest,
@@ -241,6 +246,9 @@ interface AcpCoreAgentRequestHandlers {
   closeSession?: (
     request: AcpSchema.CloseSessionRequest,
   ) => Effect.Effect<AcpSchema.CloseSessionResponse, AcpError.AcpError>;
+  setSessionMode?: (
+    request: AcpSchema.SetSessionModeRequest,
+  ) => Effect.Effect<AcpSchema.SetSessionModeResponse, AcpError.AcpError>;
   setSessionModel?: (
     request: AcpSchema.SetSessionModelRequest,
   ) => Effect.Effect<AcpSchema.SetSessionModelResponse, AcpError.AcpError>;
@@ -345,6 +353,8 @@ export const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
         runHandler(coreHandlers.resumeSession, payload, AGENT_METHODS.session_resume),
       [AGENT_METHODS.session_close]: (payload) =>
         runHandler(coreHandlers.closeSession, payload, AGENT_METHODS.session_close),
+      [AGENT_METHODS.session_set_mode]: (payload) =>
+        runHandler(coreHandlers.setSessionMode, payload, AGENT_METHODS.session_set_mode),
       [AGENT_METHODS.session_set_model]: (payload) =>
         runHandler(coreHandlers.setSessionModel, payload, AGENT_METHODS.session_set_model),
       [AGENT_METHODS.session_set_config_option]: (payload) =>
@@ -477,6 +487,11 @@ export const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
     handleCloseSession: (handler) =>
       Effect.suspend(() => {
         coreHandlers.closeSession = handler;
+        return Effect.void;
+      }),
+    handleSetSessionMode: (handler) =>
+      Effect.suspend(() => {
+        coreHandlers.setSessionMode = handler;
         return Effect.void;
       }),
     handleSetSessionModel: (handler) =>

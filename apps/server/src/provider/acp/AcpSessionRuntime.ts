@@ -76,8 +76,24 @@ export interface AcpSessionRuntimeOptions {
     readonly name: string;
     readonly version: string;
   };
-  readonly authMethodId: string;
+  /** Omit for agents that are authenticated outside T3 Code; `authenticate` is then skipped. */
+  readonly authMethodId?: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  /**
+   * Honor the agent's advertised `agentCapabilities` during session setup: drop
+   * MCP servers whose transport the agent did not advertise and create a new
+   * session when `loadSession` is unsupported. Off by default so vendor
+   * runtimes keep their established behavior.
+   */
+  readonly respectAgentCapabilities?: boolean;
+  /**
+   * Surface `agent_thought_chunk` updates as `reasoning_text` deltas. Off by
+   * default so vendor runtimes keep their assistant-only stream.
+   */
+  readonly reasoningStream?: boolean;
+  readonly onConfigOptionsChanged?: (
+    options: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+  ) => Effect.Effect<void, never>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -193,17 +209,24 @@ export class AcpSessionRuntime extends Context.Service<
       EffectAcpErrors.AcpError
     >;
     /**
-     * Initializes the ACP connection, authenticates, and loads, resumes, or creates the session.
-     * Concurrent calls share the same in-flight startup and a failed startup may be retried.
+     * Initializes the ACP connection, authenticates when configured, and loads, resumes, or
+     * creates the session. Concurrent calls share the same in-flight startup and a failed
+     * startup may be retried.
      */
     readonly start: () => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
+    /**
+     * Sends `session/close` for a started session when the agent advertised
+     * `sessionCapabilities.close`; a no-op otherwise.
+     * @see https://agentclientprotocol.com/protocol/schema#session/close
+     */
+    readonly close: Effect.Effect<void, EffectAcpErrors.AcpError>;
     /** Stream of parsed ACP session events emitted after startup. */
     readonly getEvents: () => Stream.Stream<AcpSessionRuntimeEvent, never>;
     /** Waits until the current event consumer has processed every queued event. */
     readonly drainEvents: Effect.Effect<void>;
     /** Latest mode state observed from session setup and `session/update` notifications. */
     readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
-    /** Latest configuration options observed from session setup and configuration writes. */
+    /** Latest configuration options observed from session setup, writes, and update notifications. */
     readonly getConfigOptions: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
     /**
      * Sends a prompt turn to the active session. `options.dispatched` settles once the
@@ -415,14 +438,21 @@ export const make = (
         ) {
           return;
         }
+        const previousConfigOptions = yield* Ref.get(configOptionsRef);
         yield* handleSessionUpdate({
           queue: eventQueue,
+          configOptionsRef,
           modeStateRef,
           toolCallsRef,
           assistantSegmentRef,
           assistantItemRuntimeId,
+          emitReasoning: options.reasoningStream === true,
           params: notification,
         });
+        const nextConfigOptions = yield* Ref.get(configOptionsRef);
+        if (nextConfigOptions !== previousConfigOptions && options.onConfigOptionsChanged) {
+          yield* options.onConfigOptionsChanged(nextConfigOptions);
+        }
       }),
     );
     const initializeClientCapabilities = {
@@ -505,7 +535,17 @@ export const make = (
         | EffectAcpSchema.LoadSessionResponse
         | EffectAcpSchema.NewSessionResponse
         | EffectAcpSchema.ResumeSessionResponse,
-    ): Effect.Effect<void> => Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(response));
+    ): Effect.Effect<void> => {
+      const configOptions = sessionConfigOptionsFromSetup(response);
+      return Ref.set(configOptionsRef, configOptions).pipe(
+        Effect.tap(() =>
+          options.onConfigOptionsChanged
+            ? options.onConfigOptionsChanged(configOptions)
+            : Effect.void,
+        ),
+        Effect.asVoid,
+      );
+    };
 
     const updateCurrentModeId = (modeId: string): Effect.Effect<void> =>
       Ref.update(modeStateRef, (current) =>
@@ -564,26 +604,41 @@ export const make = (
     const startOnce = Effect.gen(function* () {
       const initializeResult = yield* sendInitialize;
 
-      const authenticatePayload = {
-        methodId: options.authMethodId,
-      } satisfies EffectAcpSchema.AuthenticateRequest;
+      if (options.authMethodId !== undefined) {
+        const authenticatePayload = {
+          methodId: options.authMethodId,
+        } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+        yield* runLoggedRequest(
+          "authenticate",
+          authenticatePayload,
+          acp.agent.authenticate(authenticatePayload),
+        );
+      }
 
       let sessionId: string;
       let sessionSetupResult:
         | EffectAcpSchema.LoadSessionResponse
         | EffectAcpSchema.NewSessionResponse
         | EffectAcpSchema.ResumeSessionResponse;
-      if (options.resumeSessionId) {
+      const agentCapabilities = initializeResult.agentCapabilities;
+      const mcpCapabilities = agentCapabilities?.mcpCapabilities;
+      // Agents reject transports they did not advertise, so drop those servers
+      // instead of failing session setup for every configured MCP server.
+      const mcpServers = options.respectAgentCapabilities
+        ? (options.mcpServers ?? []).filter((server) => {
+            if ("type" in server && server.type === "http") return mcpCapabilities?.http === true;
+            if ("type" in server && server.type === "sse") return mcpCapabilities?.sse === true;
+            return true;
+          })
+        : (options.mcpServers ?? []);
+      const canLoadSession =
+        !options.respectAgentCapabilities || agentCapabilities?.loadSession === true;
+      if (options.resumeSessionId && canLoadSession) {
         const loadPayload = {
           sessionId: options.resumeSessionId,
           cwd: options.cwd,
-          mcpServers: options.mcpServers ?? [],
+          mcpServers,
         } satisfies EffectAcpSchema.LoadSessionRequest;
         const sessionLoadTimeout = Duration.fromInputUnsafe(
           options.sessionLoadTimeout ?? defaultSessionLoadTimeout,
@@ -656,7 +711,7 @@ export const make = (
       } else {
         const createPayload = {
           cwd: options.cwd,
-          mcpServers: options.mcpServers ?? [],
+          mcpServers,
         } satisfies EffectAcpSchema.NewSessionRequest;
         const created = yield* runLoggedRequest(
           "session/new",
@@ -668,7 +723,7 @@ export const make = (
       }
 
       yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
-      yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+      yield* updateConfigOptions(sessionSetupResult);
 
       const nextState = {
         sessionId,
@@ -729,6 +784,20 @@ export const make = (
       handleExtNotification: acp.handleExtNotification,
       initialize: () => sendInitialize,
       start: () => start,
+      close: Ref.get(startStateRef).pipe(
+        Effect.flatMap((state) => {
+          if (
+            state._tag !== "Started" ||
+            state.result.initializeResult.agentCapabilities?.sessionCapabilities?.close == null
+          ) {
+            return Effect.void;
+          }
+          const payload = { sessionId: state.result.sessionId };
+          return runLoggedRequest("session/close", payload, acp.agent.closeSession(payload)).pipe(
+            Effect.asVoid,
+          );
+        }),
+      ),
       getEvents: () => Stream.fromQueue(eventQueue),
       drainEvents: Effect.gen(function* () {
         const acknowledge = yield* Deferred.make<void>();
@@ -804,7 +873,23 @@ export const make = (
             if (modeState?.currentModeId === modeId) {
               return Effect.succeed({} satisfies EffectAcpSchema.SetSessionModeResponse);
             }
-            return setConfigOption("mode", modeId).pipe(
+            return Ref.get(configOptionsRef).pipe(
+              Effect.flatMap((configOptions) =>
+                findSessionConfigOption(configOptions, "mode")
+                  ? setConfigOption("mode", modeId)
+                  : // Agents that only expose legacy `modes` have no `mode` config
+                    // option; the dedicated `session/set_mode` request is the API.
+                    getStartedState.pipe(
+                      Effect.flatMap((started) => {
+                        const payload = { sessionId: started.sessionId, modeId };
+                        return runLoggedRequest(
+                          "session/set_mode",
+                          payload,
+                          acp.agent.setSessionMode(payload),
+                        );
+                      }),
+                    ),
+              ),
               Effect.tap(() => updateCurrentModeId(modeId)),
               Effect.as({} satisfies EffectAcpSchema.SetSessionModeResponse),
             );
@@ -871,21 +956,28 @@ function configOptionCurrentValueMatches(
 
 const handleSessionUpdate = ({
   queue,
+  configOptionsRef,
   modeStateRef,
   toolCallsRef,
   assistantSegmentRef,
   assistantItemRuntimeId,
+  emitReasoning,
   params,
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
+  readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallTrackedState>>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly assistantItemRuntimeId: string;
+  readonly emitReasoning: boolean;
   readonly params: EffectAcpSchema.SessionNotification;
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
     const parsed = parseSessionUpdateEvent(params);
+    if (parsed.configOptions !== undefined) {
+      yield* Ref.set(configOptionsRef, parsed.configOptions);
+    }
     if (parsed.modeId) {
       yield* Ref.update(modeStateRef, (current) =>
         current === undefined ? current : updateModeState(current, parsed.modeId!),
@@ -932,6 +1024,9 @@ const handleSessionUpdate = ({
         continue;
       }
       if (event._tag === "ContentDelta") {
+        if (event.streamKind === "reasoning_text" && !emitReasoning) {
+          continue;
+        }
         if (event.text.trim().length === 0) {
           const assistantSegmentState = yield* Ref.get(assistantSegmentRef);
           if (!assistantSegmentState.activeItemId) {

@@ -389,6 +389,19 @@ export function resolvePlanAgentHealPatch(input: {
   return Object.keys(patch).length > 0 ? patch : null;
 }
 
+/**
+ * Providers eligible for server-side text generation (thread titles, branch
+ * names, source-control text). Generic ACP agents only run prompt turns, so
+ * every reader and writer of `textGenerationModelSelection` and
+ * `sourceControlWriterModelSelection` must resolve against this list; mixing
+ * filtered reads with unfiltered writes persists a selection the server rejects.
+ */
+export function filterTextGenerationProviders(
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProvider> {
+  return providers.filter((provider) => provider.driver !== ProviderDriverKind.make("acp"));
+}
+
 export function resolveAppModelSelectionState(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,

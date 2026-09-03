@@ -358,8 +358,22 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     return Queue.offer(serverQueue, message).pipe(Effect.asVoid);
   };
 
-  const handleExitEncoded = (message: RpcMessage.ResponseExitEncoded) =>
-    Ref.get(extPending).pipe(
+  const handleExitEncoded = (response: RpcMessage.ResponseExitEncoded) => {
+    const message =
+      response.exit._tag === "Failure"
+        ? ({
+            ...response,
+            exit: {
+              ...response.exit,
+              cause: response.exit.cause.map((entry) =>
+                entry._tag === "Die" && isProtocolError(entry.defect)
+                  ? { _tag: "Fail" as const, error: entry.defect }
+                  : entry,
+              ),
+            },
+          } satisfies RpcMessage.ResponseExitEncoded)
+        : response;
+    return Ref.get(extPending).pipe(
       Effect.flatMap((pending) => {
         const pendingRequest = pending.get(String(message.requestId));
         if (!pendingRequest) {
@@ -389,6 +403,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         );
       }),
     );
+  };
 
   const routeDecodedMessage = (
     message: RpcMessage.FromClientEncoded | RpcMessage.FromServerEncoded,
