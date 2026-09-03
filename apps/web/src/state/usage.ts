@@ -68,6 +68,8 @@ export interface UsageView {
    * improve by waiting on them, so they must not read as "still reporting".
    */
   readonly isPartial: boolean;
+  /** True while a previously loaded snapshot is being refreshed. */
+  readonly isRefreshing: boolean;
   readonly refresh: () => void;
 }
 
@@ -125,12 +127,16 @@ export function useUsage(input: UsageSummaryInput): UsageView {
   const stillReporting = environments.filter(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
+  const isRefreshing = environments.some(
+    (environment) => environment.isPending && environment.summary !== null,
+  );
 
   return {
     merged,
     environments,
     isPending: answeredCount === 0 && stillReporting > 0,
     isPartial: answeredCount > 0 && stillReporting > 0,
+    isRefreshing,
     refresh,
   };
 }

@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off
 /**
  * UsageService - scans provider transcripts and returns priced usage buckets.
  *
@@ -16,6 +17,8 @@ import * as NodeOS from "node:os";
 
 import {
   USAGE_CONTRACT_VERSION,
+  UsageDay,
+  UsageSummary as UsageSummarySchema,
   type UsageProviderKind,
   type UsageSource,
   type UsageSummary,
@@ -33,15 +36,19 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
+import { makeDayFormatter } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -90,10 +97,64 @@ const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
 
+const UsageSnapshotFile = Schema.Struct({
+  version: Schema.Literal(1),
+  entries: Schema.Array(
+    Schema.Struct({
+      key: Schema.String,
+      summary: UsageSummarySchema,
+    }),
+  ),
+});
+const decodeUsageSnapshotFile = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    UsageSnapshotFile as unknown as Schema.Codec<typeof UsageSnapshotFile.Type>,
+  ),
+);
+const encodeUsageSnapshotFile = Schema.encodeEffect(
+  Schema.fromJsonString(
+    UsageSnapshotFile as unknown as Schema.Codec<typeof UsageSnapshotFile.Type>,
+  ),
+);
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const HALF_HOUR_MS = 30 * 60 * 1000;
+const BACKGROUND_REFRESH_INTERVAL = "30 minutes";
+const BACKGROUND_REFRESH_WINDOWS = [1, 7, 30, 90] as const;
+
+function serverTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+function previousCalendarDay(timeZone: string, nowMs: number): string {
+  const today = makeDayFormatter(timeZone)(nowMs);
+  const todayMs = Date.parse(`${today}T00:00:00Z`);
+  return new Date(todayMs - DAY_MS).toISOString().slice(0, 10);
+}
+
+function formatInstant(epochMs: number): string {
+  return DateTime.formatIso(DateTime.makeUnsafe(epochMs));
+}
+
+function snapshotKey(input: UsageSummaryInput): string {
+  return JSON.stringify([
+    input.timeZone,
+    input.sinceDay,
+    input.untilDay,
+    input.resolution ?? "day",
+    input.sinceTime ?? null,
+    input.untilTime ?? null,
+  ]);
+}
+
 export class UsageService extends Context.Service<
   UsageService,
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    readonly refreshSummary: (
+      input: UsageSummaryInput,
+    ) => Effect.Effect<UsageSummary, UsageReadError>;
+    readonly startBackgroundRefresh: Effect.Effect<void>;
   }
 >()("t3/usage/UsageService") {}
 
@@ -116,8 +177,18 @@ export const layerTest = Layer.succeed(
           fetchedAt: null,
           knownModels: 0,
         },
+        coverage: {
+          availableThroughDay: input.untilDay,
+          availableThroughTime: null,
+          generatedAt: "1970-01-01T00:00:00.000Z",
+        },
         scanDurationMs: 0,
       }),
+    startBackgroundRefresh: Effect.void,
+    refreshSummary: (input) =>
+      Effect.fail(
+        new UsageReadError({ reason: "scanFailed", detail: "Usage refresh is unavailable." }),
+      ),
   }),
 );
 
@@ -131,9 +202,13 @@ export const make = Effect.gen(function* () {
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
+  const usageSnapshots = new Map<string, UsageSummary>();
+  let snapshotsDirty = false;
+  const scanSemaphore = yield* Semaphore.make(1);
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
+  const usageSnapshotPath = path.join(config.stateDir, "usage-snapshot.json");
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
   let ratesStatus: UsageSummary["pricing"]["status"] = "unavailable";
@@ -259,6 +334,39 @@ export const make = Effect.gen(function* () {
       for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
     }),
   );
+
+  /** Loads final summaries before serving the first usage request. */
+  const ensureUsageSnapshotsLoaded = yield* Effect.cached(
+    Effect.gen(function* () {
+      const document = yield* fileSystem.readFileString(usageSnapshotPath).pipe(
+        Effect.flatMap((raw) => decodeUsageSnapshotFile(raw)),
+        Effect.catchCause(() => Effect.succeed(null)),
+      );
+      if (document === null) return;
+      for (const entry of document.entries) {
+        usageSnapshots.set(entry.key, entry.summary);
+      }
+    }),
+  );
+
+  const persistUsageSnapshots = Effect.fn("UsageService.persistUsageSnapshots")(function* () {
+    if (!snapshotsDirty) return;
+    const entries = [...usageSnapshots.entries()].map(([key, summary]) => ({ key, summary }));
+    yield* encodeUsageSnapshotFile({ version: 1, entries }).pipe(
+      Effect.flatMap((serialized) =>
+        writeFileStringAtomically({ filePath: usageSnapshotPath, contents: serialized }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      ),
+      Effect.map(() => {
+        snapshotsDirty = false;
+      }),
+      // A durable snapshot is an optimization. A failed write leaves the
+      // previous last-good file intact and the next refresh retries it.
+      Effect.catchCause(() => Effect.void),
+    );
+  });
 
   const persistScanCache = Effect.fn("UsageService.persistScanCache")(function* () {
     if (!cacheDirty) return;
@@ -409,6 +517,7 @@ export const make = Effect.gen(function* () {
     }
 
     const startedAtMs = yield* Clock.currentTimeMillis;
+    const completeThroughDay = previousCalendarDay(input.timeZone, startedAtMs);
     yield* ensureScanCacheLoaded;
 
     const hostId = NodeOS.hostname();
@@ -432,7 +541,10 @@ export const make = Effect.gen(function* () {
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
-      untilDay: input.untilDay,
+      untilDay:
+        input.resolution === "hour" || input.untilDay < completeThroughDay
+          ? input.untilDay
+          : UsageDay.make(completeThroughDay),
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
       rates,
@@ -502,6 +614,12 @@ export const make = Effect.gen(function* () {
     const aggregated = aggregator.finish();
     const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
+    const availableThroughDay =
+      input.untilDay < completeThroughDay ? input.untilDay : UsageDay.make(completeThroughDay);
+    const availableThroughTime =
+      hourlyWindow === null
+        ? null
+        : DateTime.formatIso(DateTime.makeUnsafe(Math.min(hourlyWindow.untilTimeMs, finishedAtMs)));
 
     return {
       contractVersion: USAGE_CONTRACT_VERSION,
@@ -520,6 +638,11 @@ export const make = Effect.gen(function* () {
             : DateTime.formatIso(DateTime.makeUnsafe(ratesFetchedAtMs)),
         knownModels: rates.size,
       },
+      coverage: {
+        availableThroughDay,
+        availableThroughTime,
+        generatedAt: DateTime.formatIso(readAt),
+      },
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
     } satisfies UsageSummary;
   });
@@ -531,18 +654,27 @@ export const make = Effect.gen(function* () {
    */
   const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
 
-  const scanKey = (input: UsageSummaryInput): string =>
-    JSON.stringify([
-      input.timeZone,
-      input.sinceDay,
-      input.untilDay,
-      input.resolution ?? "day",
-      input.sinceTime ?? null,
-      input.untilTime ?? null,
-    ]);
+  const scanKey = snapshotKey;
+
+  const scanAndPersist = (input: UsageSummaryInput) => {
+    const scan = scanSummary(input).pipe(
+      Effect.tap((summary) =>
+        Effect.sync(() => {
+          usageSnapshots.set(scanKey(input), summary);
+          snapshotsDirty = true;
+        }).pipe(Effect.andThen(persistUsageSnapshots)),
+      ),
+    );
+    // Reject malformed day ranges before entering the serialized lane. This
+    // keeps invalid requests synchronous and cannot consume the scan permit.
+    return input.sinceDay > input.untilDay ? scan : scanSemaphore.withPermits(1)(scan);
+  };
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
     const key = scanKey(input);
+    const cached = usageSnapshots.get(key);
+    if (cached !== undefined) return cached;
+
     const deferred = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const existing = inflightScans.get(key);
@@ -554,7 +686,7 @@ export const make = Effect.gen(function* () {
         inflightScans.set(key, created);
         // Detached so one departing client cannot tear the scan out from under
         // the fibers awaiting it; a finished scan warms the cache either way.
-        yield* scanSummary(input).pipe(
+        yield* scanAndPersist(input).pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => inflightScans.delete(key)).pipe(
               Effect.andThen(Deferred.done(created, exit)),
@@ -570,7 +702,58 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary } as const;
+  const refreshSummary = (input: UsageSummaryInput) => scanAndPersist(input);
+
+  const defaultDailyInputs = Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    const timeZone = serverTimeZone();
+    const untilDay = previousCalendarDay(timeZone, nowMs);
+    const daily = BACKGROUND_REFRESH_WINDOWS.map((days) => {
+      const untilMs = Date.parse(`${untilDay}T00:00:00Z`);
+      const sinceDay = new Date(untilMs - (days - 1) * DAY_MS).toISOString().slice(0, 10);
+      return {
+        sinceDay: UsageDay.make(sinceDay),
+        untilDay: UsageDay.make(untilDay),
+        timeZone,
+        resolution: "day" as const,
+      } satisfies UsageSummaryInput;
+    });
+    const hourlyUntilMs = Math.floor(nowMs / HALF_HOUR_MS) * HALF_HOUR_MS;
+    const hourlySinceMs = hourlyUntilMs - DAY_MS;
+    return [
+      ...daily,
+      {
+        sinceDay: UsageDay.make(makeDayFormatter(timeZone)(hourlySinceMs)),
+        untilDay: UsageDay.make(makeDayFormatter(timeZone)(hourlyUntilMs)),
+        timeZone,
+        resolution: "hour" as const,
+        sinceTime: formatInstant(hourlySinceMs),
+        untilTime: formatInstant(hourlyUntilMs),
+      } satisfies UsageSummaryInput,
+    ];
+  });
+
+  const startBackgroundRefresh = Effect.gen(function* () {
+    const refresh = Effect.gen(function* () {
+      const inputs = yield* defaultDailyInputs;
+      yield* Effect.forEach(inputs, (input) => scanAndPersist(input).pipe(Effect.ignore), {
+        concurrency: 1,
+        discard: true,
+      });
+    }).pipe(
+      Effect.tapCause((cause) => Effect.logWarning("Usage background refresh failed", { cause })),
+      Effect.ignore,
+    );
+
+    yield* refresh;
+    yield* refresh.pipe(Effect.repeat(Schedule.spaced(BACKGROUND_REFRESH_INTERVAL)));
+  });
+
+  yield* Effect.uninterruptible(ensureUsageSnapshotsLoaded);
+  // Let command readiness and the first client connection settle before doing
+  // any transcript work. The fiber remains scoped to this server instance.
+  yield* Effect.forkScoped(startBackgroundRefresh.pipe(Effect.delay("5 seconds")));
+  return { readSummary, refreshSummary, startBackgroundRefresh } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

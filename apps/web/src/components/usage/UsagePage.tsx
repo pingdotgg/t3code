@@ -11,6 +11,7 @@ import {
   enumerateDays,
   enumerateHourStarts,
   formatCount,
+  formatCoverageTime,
   formatDateTimeShort,
   formatDayShort,
   formatHourShort,
@@ -50,24 +51,31 @@ export function UsagePage() {
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
-  const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
+  const { merged, environments, isPending, isRefreshing, refresh } = useUsage(window);
 
   // Hold the content until every environment is terminal. Rendering merged
   // totals while devices are still answering makes every number on the page
   // jump as each one lands.
-  const settling = isPending || isPartial;
+  const settling = isPending && merged.availableThroughDay === null;
 
   const days = useMemo(
-    () => enumerateDays(window.sinceDay, window.untilDay),
-    [window.sinceDay, window.untilDay],
-  );
-  const hours = useMemo(
     () =>
-      window.sinceTime === undefined || window.untilTime === undefined
-        ? []
-        : enumerateHourStarts(window.sinceTime, window.untilTime),
-    [window.sinceTime, window.untilTime],
+      enumerateDays(
+        window.sinceDay,
+        merged.availableThroughDay !== null && merged.availableThroughDay < window.untilDay
+          ? merged.availableThroughDay
+          : window.untilDay,
+      ),
+    [merged.availableThroughDay, window.sinceDay, window.untilDay],
   );
+  const hours = useMemo(() => {
+    if (window.sinceTime === undefined || window.untilTime === undefined) return [];
+    const untilTime =
+      merged.availableThroughTime !== null && merged.availableThroughTime < window.untilTime
+        ? merged.availableThroughTime
+        : window.untilTime;
+    return enumerateHourStarts(window.sinceTime, untilTime);
+  }, [merged.availableThroughTime, window.sinceTime, window.untilTime]);
   // Newest first: the window can run 90 periods, so the interesting end
   // belongs at the top of the table.
   const breakdownPeriods = useMemo<readonly (DailyTotals | HourlyTotals)[]>(
@@ -152,7 +160,7 @@ export function UsagePage() {
           ))}
         </ToggleGroup>
         <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshCwIcon className={cn("size-3.5", isRefreshing && "animate-spin")} />
         </Button>
       </div>
       <div className="ms-auto flex min-w-0 items-center justify-end gap-1 lg:hidden">
@@ -195,7 +203,7 @@ export function UsagePage() {
           </SelectPopup>
         </Select>
         <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshCwIcon className={cn("size-3.5", isRefreshing && "animate-spin")} />
         </Button>
       </div>
     </div>
@@ -219,6 +227,11 @@ export function UsagePage() {
                   environments={environments}
                   duplicateSources={merged.duplicateSources}
                   staleEnvironments={merged.staleEnvironments}
+                  availableThroughDay={merged.availableThroughDay}
+                  availableThroughTime={merged.availableThroughTime}
+                  lastUpdatedAt={merged.lastUpdatedAt}
+                  isRefreshing={isRefreshing}
+                  timeZone={window.timeZone}
                 />
 
                 <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
@@ -495,21 +508,45 @@ function UsageCoverageNotice({
   environments,
   duplicateSources,
   staleEnvironments,
+  availableThroughDay,
+  availableThroughTime,
+  lastUpdatedAt,
+  isRefreshing,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly duplicateSources: readonly string[];
   readonly staleEnvironments: readonly string[];
+  readonly availableThroughDay: string | null;
+  readonly availableThroughTime: string | null;
+  readonly lastUpdatedAt: string | null;
+  readonly isRefreshing: boolean;
+  readonly timeZone: string;
 }) {
   const failed = environments.filter((environment) => environment.error !== null);
   const stale = environments.filter((environment) =>
     staleEnvironments.includes(environment.environmentId),
   );
-  if (failed.length === 0 && stale.length === 0 && duplicateSources.length === 0) {
+  if (
+    failed.length === 0 &&
+    stale.length === 0 &&
+    duplicateSources.length === 0 &&
+    availableThroughDay === null &&
+    !isRefreshing
+  ) {
     return null;
   }
 
   return (
     <div className="flex flex-col gap-1 border border-border px-3 py-2 text-xs text-muted-foreground">
+      {availableThroughTime !== null ? (
+        <span>Data available through {formatCoverageTime(availableThroughTime, timeZone)}.</span>
+      ) : availableThroughDay !== null ? (
+        <span>Data available through {formatDayShort(availableThroughDay)}.</span>
+      ) : null}
+      {isRefreshing ? <span>Refreshing usage in the background.</span> : null}
+      {lastUpdatedAt !== null ? (
+        <span>Last updated {formatDateTimeShort(lastUpdatedAt)}.</span>
+      ) : null}
       {failed.map((environment) => (
         <span key={environment.label}>{environment.label} could not report usage.</span>
       ))}

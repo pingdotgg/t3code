@@ -142,6 +142,19 @@ export function formatDateTimeShort(instant: string, timeZone?: string): string 
   }).format(date);
 }
 
+/** `2026-08-11T14:37:00Z` to `Aug 11, 2:37 PM` for coverage boundaries. */
+export function formatCoverageTime(instant: string, timeZone?: string): string {
+  const date = new Date(instant);
+  if (Number.isNaN(date.getTime())) return instant;
+  return new Intl.DateTimeFormat("en-US", {
+    ...(timeZone === undefined ? {} : { timeZone }),
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
 /** An hourly tooltip label relative to the rolling window's end date. */
 export function formatRelativeHourShort(
   hourStart: string,
@@ -198,12 +211,11 @@ export function makeWindow(
       day: "2-digit",
     });
   }
-  const untilDay = format.format(now);
+  const today = format.format(now);
   if (resolution === "hour") {
-    // Minute-aligned bounds keep labels readable while still representing an
-    // exact rolling 24-hour duration. Fixed-duration buckets remain correct
-    // across offset changes and daylight-saving transitions.
-    const untilTimeMs = Math.floor(now.getTime() / 60_000) * 60_000;
+    // Half-hour-aligned bounds keep the common rolling window stable long
+    // enough for the server's background snapshot to answer it immediately.
+    const untilTimeMs = Math.floor(now.getTime() / (30 * 60_000)) * (30 * 60_000);
     const sinceTimeMs = untilTimeMs - 24 * HOUR_MS;
     const sinceTime = new Date(sinceTimeMs);
     const untilTime = new Date(untilTimeMs);
@@ -219,10 +231,14 @@ export function makeWindow(
   // Subtracting fixed milliseconds from `now` lands on the wrong calendar day
   // around a DST transition. The window start is pure calendar arithmetic on
   // the local end day, done in UTC where days are uniform.
-  const [year = 0, month = 1, dayOfMonth = 1] = untilDay
+  // Daily views only expose complete calendar days. The current day remains
+  // open, so including it would make a partial snapshot look complete.
+  const [year = 0, month = 1, dayOfMonth = 1] = today
     .split("-")
     .map((part) => Number.parseInt(part, 10));
-  const start = new Date(Date.UTC(year, month - 1, dayOfMonth - (days - 1)));
+  const yesterday = new Date(Date.UTC(year, month - 1, dayOfMonth - 1));
+  const untilDay = yesterday.toISOString().slice(0, 10);
+  const start = new Date(Date.UTC(year, month - 1, dayOfMonth - days));
   return {
     sinceDay: UsageDay.make(start.toISOString().slice(0, 10)),
     untilDay: UsageDay.make(untilDay),

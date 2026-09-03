@@ -21,14 +21,13 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 5 as const;
+export const USAGE_CONTRACT_VERSION = 6 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v5 only adds `grok` to {@link UsageProviderKind}; v4 Claude/Codex buckets
- * remain valid, so mixed-version environments keep those totals instead of
- * treating every older server as stale.
+ * v6 adds explicit coverage metadata; older summaries remain decodable for
+ * mixed-version clients, but clients must not treat them as bounded snapshots.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
@@ -169,6 +168,20 @@ export const UsagePricing = Schema.Struct({
 });
 export type UsagePricing = typeof UsagePricing.Type;
 
+/**
+ * The portion of the transcript corpus represented by a summary.
+ *
+ * Daily summaries stop at the last complete calendar day. Hourly summaries
+ * may include the current day, but carry an exact instant so clients do not
+ * present an older snapshot as current data.
+ */
+export const UsageCoverage = Schema.Struct({
+  availableThroughDay: UsageDay,
+  availableThroughTime: Schema.NullOr(Schema.String),
+  generatedAt: Schema.String,
+});
+export type UsageCoverage = typeof UsageCoverage.Type;
+
 export const UsageSummaryInput = Schema.Struct({
   /** Inclusive first day of the window, in `timeZone`. */
   sinceDay: UsageDay,
@@ -197,6 +210,8 @@ export const UsageSummary = Schema.Struct({
   buckets: Schema.Array(UsageBucket),
   sources: Schema.Array(UsageSource),
   pricing: UsagePricing,
+  /** Explicit boundary for the data represented by this result. */
+  coverage: Schema.optional(UsageCoverage),
   /** Wall-clock cost of the scan, surfaced in diagnostics. */
   scanDurationMs: NonNegativeInt,
 });

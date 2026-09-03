@@ -62,11 +62,12 @@ const setup = Effect.gen(function* () {
 
 const serviceLayers = (input: {
   readonly prefix: string;
+  readonly baseDir?: string;
   readonly home: string;
   readonly settings: Parameters<typeof ServerSettings.layerTest>[0];
   readonly onRatesFetch?: () => void;
 }) =>
-  ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
+  ServerConfig.layerTest(process.cwd(), input.baseDir ?? { prefix: input.prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
     Layer.provideMerge(
@@ -105,7 +106,7 @@ describe("UsageService", () => {
       assert.strictEqual(totalOutputTokens(first), 5);
 
       yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
-      const second = yield* service.readSummary(WINDOW);
+      const second = yield* service.refreshSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(second), 12);
     }).pipe(Effect.scoped),
   );
@@ -137,8 +138,31 @@ describe("UsageService", () => {
       assert.strictEqual(ratesFetches, 1);
 
       // A later request is fresh work again, not a stale cached answer.
-      yield* service.readSummary(WINDOW);
+      yield* service.refreshSummary(WINDOW);
       assert.strictEqual(ratesFetches, 2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("loads a durable final snapshot without rescanning on the next server", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const layers = serviceLayers({
+        prefix: "usage-service-snapshot-test",
+        baseDir: NodePath.join(home, "server-state"),
+        home,
+        settings,
+      });
+      const firstService = yield* UsageService.make.pipe(Effect.provide(layers));
+
+      const first = yield* firstService.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(first), 5);
+
+      yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+      const secondService = yield* UsageService.make.pipe(Effect.provide(layers));
+      const cached = yield* secondService.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(cached), 5);
+      assert.strictEqual(cached.coverage?.availableThroughDay, WINDOW.untilDay);
     }).pipe(Effect.scoped),
   );
 

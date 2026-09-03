@@ -4,6 +4,7 @@ import {
   enumerateDays,
   enumerateHourStarts,
   formatCount,
+  formatCoverageTime,
   formatDayShort,
   formatHourShort,
   formatPercent,
@@ -49,13 +50,28 @@ export function UsageRouteScreen() {
     () => enumerateDays(window.sinceDay, window.untilDay),
     [window.sinceDay, window.untilDay],
   );
-  const chartDays = useMemo(
-    () =>
-      isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
-        ? enumerateHourStarts(window.sinceTime, window.untilTime)
-        : days,
-    [days, isPast24Hours, window.sinceTime, window.untilTime],
-  );
+  const chartDays = useMemo(() => {
+    if (isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined) {
+      const untilTime =
+        merged.availableThroughTime !== null && merged.availableThroughTime < window.untilTime
+          ? merged.availableThroughTime
+          : window.untilTime;
+      return enumerateHourStarts(window.sinceTime, untilTime);
+    }
+    if (merged.availableThroughDay !== null && merged.availableThroughDay < window.untilDay) {
+      return enumerateDays(window.sinceDay, merged.availableThroughDay);
+    }
+    return days;
+  }, [
+    days,
+    isPast24Hours,
+    merged.availableThroughDay,
+    merged.availableThroughTime,
+    window.sinceDay,
+    window.sinceTime,
+    window.untilDay,
+    window.untilTime,
+  ]);
   const chartTotals = useMemo(
     (): readonly DailyTotals[] =>
       isPast24Hours
@@ -115,7 +131,12 @@ export function UsageRouteScreen() {
           onSelect={selectWindow}
         />
 
-        <UsageCoverageNotice environments={environments} merged={merged} isPartial={isPartial} />
+        <UsageCoverageNotice
+          environments={environments}
+          merged={merged}
+          isPartial={isPartial}
+          timeZone={window.timeZone}
+        />
 
         {isPending ? (
           <Text className="py-16 text-center text-base text-foreground-muted">
@@ -457,23 +478,37 @@ function UsageCoverageNotice(props: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly merged: MergedUsage;
   readonly isPartial: boolean;
+  readonly timeZone: string;
 }) {
   const failed = props.environments.filter((environment) => environment.error !== null);
   const stale = props.environments.filter((environment) =>
     props.merged.staleEnvironments.includes(environment.environmentId),
   );
   const duplicateSources = props.merged.duplicateSources;
+  const hasCoverage =
+    props.merged.availableThroughDay !== null || props.merged.availableThroughTime !== null;
   if (
     failed.length === 0 &&
     stale.length === 0 &&
     duplicateSources.length === 0 &&
-    !props.isPartial
+    !props.isPartial &&
+    !hasCoverage
   ) {
     return null;
   }
 
   return (
     <View className="gap-1 rounded-[16px] border-continuous bg-card px-4 py-3">
+      {props.merged.availableThroughTime !== null ? (
+        <Text className="text-sm text-foreground-muted">
+          Data available through{" "}
+          {formatCoverageTime(props.merged.availableThroughTime, props.timeZone)}.
+        </Text>
+      ) : props.merged.availableThroughDay !== null ? (
+        <Text className="text-sm text-foreground-muted">
+          Data available through {formatDayShort(props.merged.availableThroughDay)}.
+        </Text>
+      ) : null}
       {props.isPartial ? (
         <Text className="text-sm text-foreground-muted">
           Some environments are still reporting. Totals are partial.

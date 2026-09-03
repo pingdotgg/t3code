@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   enumerateHourStarts,
+  formatCoverageTime,
   formatDateTimeShort,
   formatHourShort,
   formatRelativeHourShort,
@@ -22,6 +23,7 @@ describe("hourly usage formatting", () => {
     expect(formatHourShort("2026-08-11T00:37:00.000Z", "UTC")).toBe("12 AM");
     expect(formatHourShort("2026-08-11T12:37:00.000Z", "UTC")).toBe("12 PM");
     expect(formatDateTimeShort("2026-08-11T17:37:00.000Z", "UTC")).toBe("Aug 11, 5 PM");
+    expect(formatCoverageTime("2026-08-11T17:37:00.000Z", "UTC")).toBe("Aug 11, 5:37 PM");
   });
 
   it("disambiguates repeated hours during a fall-back transition", () => {
@@ -51,8 +53,15 @@ describe("hourly usage formatting", () => {
     const window = makeWindow(1, new Date("2026-08-11T12:37:42.123Z"), "hour");
 
     expect(window.resolution).toBe("hour");
-    expect(window.sinceTime).toBe("2026-08-10T12:37:00.000Z");
-    expect(window.untilTime).toBe("2026-08-11T12:37:00.000Z");
+    expect(window.sinceTime).toBe("2026-08-10T12:30:00.000Z");
+    expect(window.untilTime).toBe("2026-08-11T12:30:00.000Z");
+  });
+
+  it("ends daily requests at the last complete calendar day", () => {
+    const window = makeWindow(30, new Date("2026-08-11T12:37:42.123Z"));
+
+    expect(window.sinceDay).toBe("2026-07-12");
+    expect(window.untilDay).toBe("2026-08-10");
   });
 
   it("degrades an unknown resolved zone to UTC instead of crashing", () => {

@@ -81,6 +81,12 @@ export interface MergedUsage {
   readonly duplicateSources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
   readonly staleEnvironments: readonly EnvironmentId[];
+  /** Earliest complete boundary shared by all contributing environments. */
+  readonly availableThroughDay: string | null;
+  /** Exact boundary for hourly summaries, when present. */
+  readonly availableThroughTime: string | null;
+  /** Latest successful snapshot generation represented in the merge. */
+  readonly lastUpdatedAt: string | null;
 }
 
 /**
@@ -200,6 +206,9 @@ const EMPTY_MERGED: MergedUsage = {
   duplicateSources: [],
   contributingEnvironments: [],
   staleEnvironments: [],
+  availableThroughDay: null,
+  availableThroughTime: null,
+  lastUpdatedAt: null,
 };
 
 /**
@@ -220,7 +229,10 @@ export function mergeUsage(
   const current: EnvironmentUsage[] = [];
   const staleEnvironments: EnvironmentId[] = [];
   for (const environment of environments) {
-    if (isCompatibleContractVersion(environment.summary.contractVersion, expectedContractVersion)) {
+    if (
+      isCompatibleContractVersion(environment.summary.contractVersion, expectedContractVersion) &&
+      environment.summary.coverage !== undefined
+    ) {
       current.push(environment);
     } else {
       staleEnvironments.push(environment.environmentId);
@@ -228,6 +240,33 @@ export function mergeUsage(
   }
 
   const { ownerByFingerprint, duplicates } = claimSources(current);
+
+  const coverage = current.flatMap((environment) =>
+    environment.summary.coverage === undefined ? [] : [environment.summary.coverage],
+  );
+  const availableThroughDay =
+    coverage.length === 0
+      ? null
+      : coverage.reduce(
+          (earliest, entry) =>
+            entry.availableThroughDay < earliest ? entry.availableThroughDay : earliest,
+          coverage[0]!.availableThroughDay,
+        );
+  const availableThroughTime =
+    coverage.length === 0 || coverage.some((entry) => entry.availableThroughTime === null)
+      ? null
+      : coverage.reduce(
+          (earliest, entry) =>
+            entry.availableThroughTime! < earliest ? entry.availableThroughTime! : earliest,
+          coverage[0]!.availableThroughTime!,
+        );
+  const lastUpdatedAt =
+    coverage.length === 0
+      ? null
+      : coverage.reduce(
+          (latest, entry) => (entry.generatedAt > latest ? entry.generatedAt : latest),
+          coverage[0]!.generatedAt,
+        );
 
   let costUsd = 0;
   let uncachedInputTokens = 0;
@@ -420,5 +459,8 @@ export function mergeUsage(
     duplicateSources: duplicates,
     contributingEnvironments,
     staleEnvironments,
+    availableThroughDay,
+    availableThroughTime,
+    lastUpdatedAt,
   };
 }

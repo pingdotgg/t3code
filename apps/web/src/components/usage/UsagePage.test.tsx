@@ -130,6 +130,7 @@ beforeEach(() => {
     environments: [],
     isPending: false,
     isPartial: false,
+    isRefreshing: false,
     refresh: vi.fn(),
   });
 });
@@ -178,5 +179,22 @@ describe("UsagePage model breakdown", () => {
       "token-heavy-model",
       "token-heavy-cheaper-model",
     ]);
+  });
+
+  it("shows the coverage boundary from the server snapshot", () => {
+    testState.useUsage.mockReturnValueOnce({
+      merged: {
+        ...mergeUsage([], USAGE_CONTRACT_VERSION),
+        availableThroughDay: "2026-08-10",
+        lastUpdatedAt: "2026-08-11T12:00:00.000Z",
+      },
+      environments: [],
+      isPending: false,
+      isPartial: false,
+      isRefreshing: false,
+      refresh: vi.fn(),
+    });
+
+    expect(renderToStaticMarkup(<UsagePage />)).toContain("Data available through Aug 10.");
   });
 });

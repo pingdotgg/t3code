@@ -65,6 +65,11 @@ function summary(
       message: null,
     })),
     pricing: { status: "fresh", source: "litellm", fetchedAt: null, knownModels: 10 },
+    coverage: {
+      availableThroughDay: "2026-08-31" as UsageDay,
+      availableThroughTime: null,
+      generatedAt: "2026-08-31T00:00:00.000Z",
+    },
     scanDurationMs: 1,
   };
 }
@@ -92,6 +97,35 @@ describe("mergeUsage", () => {
     expect(merged.costUsd).toBe(20);
     expect(merged.records).toBe(10);
     expect(merged.duplicateSources).toHaveLength(0);
+    expect(merged.availableThroughDay).toBe("2026-08-31");
+  });
+
+  it("uses the earliest coverage boundary across environments", () => {
+    const earlier = summary([], [{ provider: "claude", hostId: "linux", homePath: "/b" }]);
+    const merged = mergeUsage(
+      [
+        environment("env-a", summary([], [{ provider: "claude", hostId: "mac", homePath: "/a" }])),
+        environment("env-b", {
+          ...earlier,
+          coverage: {
+            ...earlier.coverage!,
+            availableThroughDay: "2026-08-29" as UsageDay,
+          },
+        }),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.availableThroughDay).toBe("2026-08-29");
+  });
+
+  it("excludes an unbounded legacy summary instead of guessing its coverage", () => {
+    const legacy = summary([], [{ provider: "claude", hostId: "mac", homePath: "/a" }]);
+    const { coverage: _coverage, ...withoutCoverage } = legacy;
+    const merged = mergeUsage([environment("legacy", withoutCoverage)], USAGE_CONTRACT_VERSION);
+
+    expect(merged.costUsd).toBe(0);
+    expect(merged.staleEnvironments).toEqual(["legacy"]);
   });
 
   it("counts a shared transcript directory once", () => {
@@ -158,7 +192,7 @@ describe("mergeUsage", () => {
           summary(
             [bucket()],
             [{ provider: "claude", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 2,
+            USAGE_CONTRACT_VERSION - 3,
           ),
         ),
       ],
