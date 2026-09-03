@@ -829,7 +829,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
       timeout: MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT,
     });
     yield* setCliDesiredCloudLink(true, mode);
-    return yield* applyCloudRelayConfig(
+    yield* applyCloudRelayConfig(
       dependencies,
       {
         relayUrl,
@@ -844,6 +844,9 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
         confirmedOrigin: parsedOrigin.origin,
       },
     );
+    // Callers decide on managed tunnel recovery from the mode this link
+    // actually used, not from a value read before the relay round trip.
+    return mode;
   },
   Effect.catchIf(
     ServerSecretStore.isSecretStoreError,
@@ -876,9 +879,7 @@ export const reconcileDesiredCloudLinkIfStillDesired = Effect.fn(
       if (!(yield* readCliDesiredCloudLink)) {
         return null;
       }
-      const mode = yield* readCliDesiredLinkMode;
-      yield* reconcileDesiredCloudLinkWith(dependencies, localOrigin);
-      return mode;
+      return yield* reconcileDesiredCloudLinkWith(dependencies, localOrigin);
     }),
   );
 });

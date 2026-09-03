@@ -54,6 +54,7 @@ const ManagedEndpointProvisioningStage = Schema.Literals([
   "get-tunnel-token",
   "mark-allocation-ready",
   "load-allocation",
+  "verify-endpoint",
   "sync-origin",
 ]);
 
@@ -540,9 +541,8 @@ export const make = Effect.gen(function* () {
       ) {
         return yield* new ManagedEndpointProvisioningFailed({
           ...input,
-          stage: "sync-origin",
+          stage: "verify-endpoint",
           hostname: allocation.hostname,
-          cause: "The recorded tunnel endpoint does not match the active environment link.",
         });
       }
       if (
@@ -608,7 +608,6 @@ export const make = Effect.gen(function* () {
         return yield* new ManagedEndpointProvisioningFailed({
           ...input,
           stage: "sync-origin",
-          cause: "The tunnel allocation changed while its origin was updated.",
         });
       }
       return updated.value === "configured" ? "ready" : "recovery_required";
@@ -1062,7 +1061,6 @@ export const make = Effect.gen(function* () {
           hostname,
           tunnelName,
           tunnelId: tunnel.id,
-          cause: "The tunnel allocation changed during provisioning.",
         });
       }
 
@@ -1123,7 +1121,6 @@ export const make = Effect.gen(function* () {
           hostname,
           tunnelName,
           tunnelId: tunnel.id,
-          cause: "The tunnel allocation changed before its configuration was updated.",
         });
       }
 
@@ -1197,7 +1194,6 @@ export const make = Effect.gen(function* () {
                 tunnelName,
                 tunnelId: tunnel.id,
                 dnsRecordId,
-                cause: "The tunnel allocation changed before its DNS record was saved.",
               });
             }
             return { dnsRecordId, dnsGeneration };
@@ -1227,7 +1223,6 @@ export const make = Effect.gen(function* () {
           hostname,
           tunnelName,
           tunnelId: tunnel.id,
-          cause: "The tunnel allocation changed before its DNS record was updated.",
         });
       }
       const { dnsRecordId, dnsGeneration } = recordedDns.value;
@@ -1279,7 +1274,6 @@ export const make = Effect.gen(function* () {
           tunnelName,
           tunnelId: tunnel.id,
           dnsRecordId,
-          cause: "The tunnel allocation changed before it became ready.",
         });
       }
 

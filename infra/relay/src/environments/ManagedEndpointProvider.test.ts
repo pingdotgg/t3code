@@ -1241,7 +1241,7 @@ describe("ManagedEndpointProvider", () => {
       );
       expect(error).toMatchObject({
         _tag: "ManagedEndpointProvisioningFailed",
-        stage: "sync-origin",
+        stage: "verify-endpoint",
       });
     }).pipe(Effect.provide(layer));
   });
