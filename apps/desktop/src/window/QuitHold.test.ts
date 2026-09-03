@@ -368,14 +368,14 @@ describe("makeQuitShortcutHandler", () => {
     expect(harness.notifications).toEqual([DOUBLE_CLICK_DOWN, UP, DOUBLE_CLICK_DOWN]);
   });
 
-  it("does not treat two quick presses as a quit in hold mode", async () => {
+  it("quits on a quick second press in hold mode", async () => {
     const harness = makeHarness();
     await harness.send(makeInput({}));
     await harness.send(makeInput({ type: "keyUp" }));
     vi.advanceTimersByTime(QUIT_DOUBLE_PRESS_MS - 100);
     await harness.send(makeInput({}));
-    expect(harness.quit).not.toHaveBeenCalled();
-    expect(harness.notifications).toEqual([HOLD_DOWN, UP, HOLD_DOWN]);
+    expect(harness.quit).toHaveBeenCalledTimes(1);
+    expect(harness.notifications).toEqual([HOLD_DOWN, UP]);
   });
 
   it("cancels the hold when another key interrupts it", async () => {
