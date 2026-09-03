@@ -4,7 +4,6 @@ import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const CODEX_GOAL_OBJECTIVE_MAX_CHARS = 4_000;
-
 const CodexGoalObjective = TrimmedNonEmptyString.check(
   Schema.makeFilter(
     (objective) =>
@@ -12,7 +11,6 @@ const CodexGoalObjective = TrimmedNonEmptyString.check(
       `Goal objective must not exceed ${CODEX_GOAL_OBJECTIVE_MAX_CHARS} characters.`,
   ),
 );
-
 export const CodexGoalStatus = Schema.Literals([
   "active",
   "paused",
@@ -22,7 +20,6 @@ export const CodexGoalStatus = Schema.Literals([
   "complete",
 ]);
 export type CodexGoalStatus = typeof CodexGoalStatus.Type;
-
 export const CodexGoal = Schema.Struct({
   objective: TrimmedNonEmptyString,
   status: CodexGoalStatus,
@@ -33,7 +30,6 @@ export const CodexGoal = Schema.Struct({
   updatedAt: NonNegativeInt,
 });
 export type CodexGoal = typeof CodexGoal.Type;
-
 export const CodexGoalThreadInput = Schema.Struct({
   threadId: ThreadId,
 });

@@ -72,7 +72,6 @@ export type CodexGoalCommand =
   | { readonly action: "set"; readonly objective?: string; readonly status?: "active" | "paused" }
   | { readonly action: "clear" }
   | { readonly action: "invalid"; readonly message: string };
-
 const GOAL_USAGE =
   "Usage: /goal [status | create <objective> | steer <objective> | pause | resume | clear | reset]";
 
@@ -80,11 +79,9 @@ export function formatCodexGoalUsage(goal: CodexGoal): string {
   const budget = goal.tokenBudget == null ? "" : ` / ${goal.tokenBudget.toLocaleString()}`;
   return `${goal.tokensUsed.toLocaleString()} tokens${budget}, ${goal.timeUsedSeconds.toLocaleString()} seconds`;
 }
-
 export function formatCodexGoalDescription(goal: CodexGoal): string {
   return `${goal.objective} - ${formatCodexGoalUsage(goal)}`;
 }
-
 const CODEX_GOAL_STATUS_LABELS: Record<CodexGoalStatus, string> = {
   active: "active",
   paused: "paused",
@@ -93,7 +90,6 @@ const CODEX_GOAL_STATUS_LABELS: Record<CodexGoalStatus, string> = {
   complete: "complete",
   blocked: "blocked",
 };
-
 export function formatCodexGoalStatus(status: CodexGoalStatus): string {
   return CODEX_GOAL_STATUS_LABELS[status];
 }
