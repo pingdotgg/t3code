@@ -73,8 +73,7 @@ export function downloadContentDisposition(fileName?: string): string {
     return "attachment";
   }
   // toWellFormed: encodeURIComponent throws URIError on unpaired surrogates.
-  // eslint-disable-next-line no-control-regex -- Header filenames must strip ASCII controls.
-  const sanitized = fileName.toWellFormed().replace(/[\u0000-\u001f"\\]/g, "_");
+  const sanitized = fileName.toWellFormed().replace(/[\p{Cc}"\\]/gu, "_");
   const asciiFallback = sanitized.replace(/[^\u0020-\u007e]/g, "_");
   const needsExtended = asciiFallback !== sanitized;
   const extendedName = encodeURIComponent(sanitized).replace(

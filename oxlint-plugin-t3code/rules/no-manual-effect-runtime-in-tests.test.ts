@@ -71,3 +71,34 @@ productionRule.valid(
     export const main = () => Effect.runPromise(Effect.void);
   `,
 );
+
+const legacyRule = createOxlintRuleHarness("t3code/no-manual-effect-runtime-in-tests", {
+  filename: "legacy.test.ts",
+  ruleOptions: [{ maxOccurrences: 2 }],
+});
+
+describe("t3code/no-manual-effect-runtime-in-tests with maxOccurrences", () => {
+  legacyRule.valid(
+    "allows occurrences up to the ceiling",
+    `
+      import * as Effect from "effect/Effect";
+
+      test("first", () => Effect.runSync(Effect.void));
+      test("second", () => Effect.runSync(Effect.void));
+    `,
+  );
+
+  legacyRule.invalid(
+    "reports occurrences beyond the ceiling",
+    `
+      import * as Effect from "effect/Effect";
+
+      test("first", () => Effect.runSync(Effect.void));
+      test("second", () => Effect.runSync(Effect.void));
+      test("third", () => Effect.runSync(Effect.void));
+    `,
+    (output) => {
+      assert.equal(output.match(/no-manual-effect-runtime-in-tests/g)?.length, 1);
+    },
+  );
+});

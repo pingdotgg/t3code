@@ -61,6 +61,8 @@ interface RuleHarness {
 
 interface RuleHarnessOptions {
   readonly filename?: string;
+  /** Rule options, as they would appear after the severity in the lint config. */
+  readonly ruleOptions?: ReadonlyArray<unknown>;
 }
 
 const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
@@ -111,7 +113,7 @@ export const createOxlintRuleHarness = (
       configPath,
       yield* encodeOxlintConfig({
         jsPlugins: [{ name: "t3code", specifier: pluginPath }],
-        rules: { [ruleName]: "error" },
+        rules: { [ruleName]: ["error", ...(options.ruleOptions ?? [])] },
       }),
     );
     yield* fs.makeDirectory(path.dirname(sourcePath), { recursive: true });
