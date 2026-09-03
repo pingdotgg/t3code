@@ -488,6 +488,31 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
     }),
   );
 
+  it.effect("maps standard JSON-RPC errors to typed ACP request failures", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const acp = yield* AcpClient.make(stdio);
+      const promptFiber = yield* acp.agent
+        .prompt({ sessionId: "session-1", prompt: [{ type: "text", text: "hello" }] })
+        .pipe(Effect.forkScoped);
+      const request = yield* decodePromptRequestLine(yield* Queue.take(output));
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(Schema.Unknown, {
+          jsonrpc: "2.0",
+          id: request.id,
+          error: { code: -32000, message: "Authentication required" },
+        }),
+      );
+
+      const error = yield* Fiber.join(promptFiber).pipe(Effect.flip);
+      assert.instanceOf(error, AcpError.AcpRequestError);
+      assert.equal(error.code, -32000);
+      assert.equal(error.method, "session/prompt");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "routes a standard prompt response after Grok extension notifications in the same batch",
     () =>

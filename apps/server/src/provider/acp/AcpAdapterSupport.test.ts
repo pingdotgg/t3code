@@ -2,15 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { ProviderDriverKind } from "@t3tools/contracts";
 
-import { acpPermissionOutcome, mapAcpToAdapterError } from "./AcpAdapterSupport.ts";
+import { mapAcpToAdapterError } from "./AcpAdapterSupport.ts";
 
 describe("AcpAdapterSupport", () => {
-  it("maps ACP approval decisions to permission outcomes", () => {
-    expect(acpPermissionOutcome("accept")).toBe("allow-once");
-    expect(acpPermissionOutcome("acceptForSession")).toBe("allow-always");
-    expect(acpPermissionOutcome("decline")).toBe("reject-once");
-  });
-
   it("maps ACP request errors to provider adapter request errors", () => {
     const error = mapAcpToAdapterError(
       ProviderDriverKind.make("cursor"),
@@ -24,5 +18,15 @@ describe("AcpAdapterSupport", () => {
 
     expect(error._tag).toBe("ProviderAdapterRequestError");
     expect(error.message).toContain("Invalid params");
+  });
+
+  it("directs generic ACP authentication back to the configured CLI", () => {
+    const error = mapAcpToAdapterError(
+      ProviderDriverKind.make("acp"),
+      "thread-auth" as never,
+      "session/new",
+      EffectAcpErrors.AcpRequestError.authRequired(),
+    );
+    expect(error.message).toContain("outside T3 Code");
   });
 });

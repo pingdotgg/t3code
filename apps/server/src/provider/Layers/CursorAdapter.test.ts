@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import {
@@ -27,8 +28,9 @@ import {
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
-import { makeCursorAdapter } from "./CursorAdapter.ts";
+import { makeAcpAdapter, makeCursorAdapter } from "./CursorAdapter.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* CursorAdapter`.
@@ -40,6 +42,32 @@ const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 const mockAgentCommand = "node";
 const mockAgentArgs = [mockAgentPath] as const;
+
+const makeTestAcpAdapter = (environment: NodeJS.ProcessEnv) =>
+  makeAcpAdapter(
+    {
+      provider: ProviderDriverKind.make("acp"),
+      displayName: "Test ACP",
+      modelSelection: "standard",
+      makeRuntime: ({ childProcessSpawner, environment: runtimeEnvironment, ...input }) =>
+        AcpSessionRuntime.make({
+          ...input,
+          clientCapabilities: { _meta: { parameterizedModelPicker: true } },
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            cwd: input.cwd,
+            ...(runtimeEnvironment ? { env: runtimeEnvironment } : {}),
+          },
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+        ),
+    },
+    {
+      instanceId: ProviderInstanceId.make("acp_test"),
+      environment,
+    },
+  );
 
 async function makeMockAgentWrapper(
   extraEnv?: Record<string, string>,
@@ -168,6 +196,54 @@ const cursorAdapterTestLayer = it.layer(
 );
 
 cursorAdapterTestLayer("CursorAdapterLive", (it) => {
+  it.effect("runs a configured standard ACP agent with its selected model", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "standard-acp-model-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.jsonl");
+      const adapter = yield* makeTestAcpAdapter({
+        ...process.env,
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_ACP_EMIT_TOOL_CALLS: "1",
+        T3_ACP_ALLOW_ALWAYS_OPTION_ID: "agent-session-permission",
+      });
+      const threadId = ThreadId.make("standard-acp-thread");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("acp"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: createModelSelection(ProviderInstanceId.make("acp_test"), "gpt-5.4", [
+          { id: "reasoning", value: "high" },
+        ]),
+      });
+      yield* adapter.sendTurn({ threadId, input: "hello ACP", attachments: [] });
+      yield* adapter.stopSession(threadId);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.deepInclude(
+        requests.map((request) => request.result),
+        { outcome: { outcome: "selected", optionId: "agent-session-permission" } },
+      );
+      const configWrites = requests.flatMap((request) =>
+        request.method === "session/set_config_option"
+          ? [request.params as { configId: string; value: unknown }]
+          : [],
+      );
+      const selections = configWrites.map(({ configId, value }) => ({ configId, value }));
+      assert.includeDeepMembers(selections, [
+        { configId: "model", value: "gpt-5.4" },
+        { configId: "reasoning", value: "high" },
+      ]);
+      assert.include(
+        requests.map((request) => request.method),
+        "session/close",
+      );
+    }),
+  );
+
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

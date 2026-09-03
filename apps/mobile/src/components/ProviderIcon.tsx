@@ -1,3 +1,4 @@
+import { IconPlug } from "@tabler/icons-react-native";
 import { Path, Svg } from "react-native-svg";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 
@@ -11,6 +12,10 @@ export function ProviderIcon(props: ProviderIconProps) {
   const isDarkMode = themeAppearance === "dark";
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
+
+  if (props.provider === "acp") {
+    return <IconPlug size={size} color={mono} />;
+  }
 
   if (props.provider === "claudeAgent") {
     return (

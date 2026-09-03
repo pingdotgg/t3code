@@ -101,6 +101,9 @@ export function upsertProviderWorkspaceSnapshot(
 }
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
+  if (provider.driver === ProviderDriverKind.make("acp")) {
+    return provider.enabled && provider.installed && provider.status !== "ready";
+  }
   if (provider.driver !== ProviderDriverKind.make("opencode")) {
     return true;
   }

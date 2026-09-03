@@ -332,7 +332,12 @@ const program = Effect.gen(function* () {
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
       return {
         protocolVersion: 1,
-        agentCapabilities: { loadSession: true },
+        agentCapabilities: {
+          loadSession: true,
+          mcpCapabilities: { http: true },
+          promptCapabilities: { image: true },
+          sessionCapabilities: { close: {} },
+        },
         // Grok advertises model state before any session exists; the provider
         // health check reads it from here without authenticating.
         _meta: { modelState: modelState() },
@@ -350,6 +355,8 @@ const program = Effect.gen(function* () {
       configOptions: configOptions(),
     }),
   );
+
+  yield* agent.handleCloseSession(() => Effect.succeed({}));
 
   const emitLoadReplayNotifications = (requestedSessionId: string) => {
     writeJsonRpcNotification("session/update", {

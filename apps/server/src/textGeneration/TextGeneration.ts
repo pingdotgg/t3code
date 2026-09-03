@@ -113,6 +113,22 @@ type TextGenerationOp =
   | "generateBranchName"
   | "generateThreadTitle";
 
+export function makeUnsupportedTextGeneration(provider: string): TextGeneration["Service"] {
+  const unsupported = (operation: TextGenerationOp) =>
+    Effect.fail(
+      new TextGenerationError({
+        operation,
+        detail: `${provider} does not support this operation.`,
+      }),
+    );
+  return TextGeneration.of({
+    generateCommitMessage: () => unsupported("generateCommitMessage"),
+    generatePrContent: () => unsupported("generatePrContent"),
+    generateBranchName: () => unsupported("generateBranchName"),
+    generateThreadTitle: () => unsupported("generateThreadTitle"),
+  });
+}
+
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
   operation: TextGenerationOp,

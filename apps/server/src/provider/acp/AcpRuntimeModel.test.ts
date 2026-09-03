@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import {
+  buildAcpModelCapabilities,
   decideToolCallUpdateEmission,
   extractModelConfigId,
   mergeToolCallState,
@@ -62,6 +63,23 @@ describe("AcpRuntimeModel", () => {
     } satisfies EffectAcpSchema.NewSessionResponse);
 
     expect(modelConfigId).toBe("model");
+  });
+
+  it("projects ACP reasoning and model configuration into T3 model traits", () => {
+    const capabilities = buildAcpModelCapabilities([
+      {
+        id: "reasoning",
+        name: "Reasoning",
+        category: "thought_level",
+        type: "select",
+        currentValue: "high",
+        options: [{ value: "high", name: "High" }],
+      },
+    ]);
+
+    expect(capabilities.optionDescriptors).toMatchObject([
+      { id: "reasoning", type: "select", currentValue: "high" },
+    ]);
   });
 
   it("detects Grok session replay updates from _meta.isReplay", () => {
@@ -313,7 +331,7 @@ describe("AcpRuntimeModel", () => {
     const contentResult = parseSessionUpdateEvent({
       sessionId: "session-1",
       update: {
-        sessionUpdate: "agent_message_chunk",
+        sessionUpdate: "agent_thought_chunk",
         content: {
           type: "text",
           text: "hello from acp",
@@ -324,11 +342,12 @@ describe("AcpRuntimeModel", () => {
     expect(contentResult.events).toEqual([
       {
         _tag: "ContentDelta",
+        streamKind: "reasoning_text",
         text: "hello from acp",
         rawPayload: {
           sessionId: "session-1",
           update: {
-            sessionUpdate: "agent_message_chunk",
+            sessionUpdate: "agent_thought_chunk",
             content: {
               type: "text",
               text: "hello from acp",
