@@ -64,6 +64,8 @@ const isSafeDownloadMimeType = (mimeType: string): boolean =>
   !/(?:^text\/html$|\/xml(?:$|-)|\+xml$)/i.test(mimeType.trim().toLowerCase());
 const isSafeInlineVideoMimeType = (mimeType: string): boolean =>
   DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) && mimeType.toLowerCase().startsWith("video/");
+const isSafeInlineDocumentMimeType = (mimeType: string): boolean =>
+  mimeType.toLowerCase() === "application/pdf" || mimeType.toLowerCase() === "text/html";
 
 /** RFC 6266 disposition with an ASCII fallback name plus a UTF-8 `filename*`. */
 export function downloadContentDisposition(fileName?: string): string {
@@ -93,7 +95,7 @@ export function assetResponseHeaders(
   },
 ): Record<string, string> {
   const lowerPath = filePath.toLowerCase();
-  const inlineVideoMimeType = options?.mimeType?.split(";", 1)[0]?.trim();
+  const inlineMimeType = options?.mimeType?.split(";", 1)[0]?.trim();
   return {
     "Cache-Control": "private, max-age=3600",
     "X-Content-Type-Options": "nosniff",
@@ -106,14 +108,24 @@ export function assetResponseHeaders(
               ? options.mimeType
               : "application/octet-stream",
         }
-      : inlineVideoMimeType !== undefined && isSafeInlineVideoMimeType(inlineVideoMimeType)
-        ? { "Content-Type": inlineVideoMimeType }
-        : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
+      : inlineMimeType !== undefined && isSafeInlineVideoMimeType(inlineMimeType)
+        ? { "Content-Type": inlineMimeType }
+        : inlineMimeType !== undefined && isSafeInlineDocumentMimeType(inlineMimeType)
           ? {
-              "Content-Type": "text/html; charset=utf-8",
-              "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
+              "Content-Type":
+                inlineMimeType.toLowerCase() === "text/html"
+                  ? "text/html; charset=utf-8"
+                  : "application/pdf",
+              ...(inlineMimeType.toLowerCase() === "text/html"
+                ? { "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY }
+                : {}),
             }
-          : {}),
+          : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
+            ? {
+                "Content-Type": "text/html; charset=utf-8",
+                "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
+              }
+            : {}),
     ...(!options?.download && lowerPath.endsWith(".svg")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),

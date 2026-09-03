@@ -362,7 +362,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       }
       // Generic files carry their extension inside the attachment id (that
       // shape resolves the on-disk path); images do not. Videos and images
-      // render inline; other generic files download.
+      // render inline. Other generic files download unless a document viewer
+      // explicitly requested an inline response.
       const isGenericFile = parseAttachmentFileExtension(input.resource.attachmentId) !== null;
       const videoMimeType = input.resource.mimeType?.split(";", 1)[0]?.trim() ?? "";
       const isVideo = INLINE_VIDEO_MIME_TYPE_PATTERN.test(videoMimeType);
@@ -370,7 +371,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         version: 1,
         kind: "attachment",
         attachmentId: input.resource.attachmentId,
-        ...(isGenericFile && !isVideo ? { download: true } : {}),
+        ...(isGenericFile && !isVideo && input.resource.disposition !== "inline"
+          ? { download: true }
+          : {}),
         ...(input.resource.fileName !== undefined ? { fileName: input.resource.fileName } : {}),
         ...(input.resource.mimeType !== undefined
           ? { mimeType: isVideo ? videoMimeType : input.resource.mimeType }
