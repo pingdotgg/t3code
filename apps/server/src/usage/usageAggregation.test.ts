@@ -2,7 +2,6 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { UsageAggregator } from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
-import { EMPTY_TOTALS } from "./usageTranscripts.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
 const rates: RateTable = new Map([
@@ -214,31 +213,16 @@ describe("UsageAggregator", () => {
       bucketStartMs,
       provider: "claude",
       model: "legacy-model",
-      totals: { ...record().totals, outputTokens: 5 },
+      totals: { ...record().totals, outputTokens: 12 },
       pricedTotals: { ...record().totals, outputTokens: 5 },
-      savingsTotals: { ...record().totals, outputTokens: 5 },
-      reportedCostUsd: 0,
-      records: 1,
-      unpricedRecords: 0,
-      providerReportedRecords: 0,
-      legacyPricing: true,
-      legacyPricingRecords: 1,
-      sessions: ["legacy-session"],
-    });
-    aggregator.addAggregate({
-      bucketStartMs,
-      provider: "claude",
-      model: "legacy-model",
-      totals: { ...EMPTY_TOTALS, outputTokens: 7 },
-      pricedTotals: EMPTY_TOTALS,
-      savingsTotals: { ...EMPTY_TOTALS, outputTokens: 7 },
+      savingsTotals: { ...record().totals, outputTokens: 12 },
       reportedCostUsd: 1.5,
-      records: 1,
+      records: 2,
       unpricedRecords: 0,
       providerReportedRecords: 1,
-      legacyPricing: false,
-      legacyPricingRecords: 0,
-      sessions: ["provider-session"],
+      legacyPricing: true,
+      legacyPricingRecords: 1,
+      sessions: ["legacy-session", "provider-session"],
     });
 
     const bucket = aggregator.finish().buckets[0]!;

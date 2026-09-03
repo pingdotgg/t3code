@@ -1,8 +1,38 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { refreshStateForWindowChange, type UsageRefreshState } from "./usageRefreshState.ts";
+import {
+  completeUsageRefresh,
+  refreshStateForWindowChange,
+  startUsageRefresh,
+  type UsageRefreshState,
+} from "./usageRefreshState.ts";
 
 describe("refreshStateForWindowChange", () => {
+  it("starts a refresh with the next request id", () => {
+    expect(startUsageRefresh(4, "window-b")).toEqual({
+      windowKey: "window-b",
+      requestId: 5,
+      refreshing: true,
+      error: null,
+    });
+  });
+
+  it.each([
+    [null, null],
+    ["refresh failed", "refresh failed"],
+  ] as const)("settles an active request with %s", (error, expectedError) => {
+    expect(completeUsageRefresh("window-b", 5, "window-b", 5, error)).toEqual({
+      windowKey: "window-b",
+      requestId: 5,
+      refreshing: false,
+      error: expectedError,
+    });
+  });
+
+  it("ignores a completion for an obsolete request", () => {
+    expect(completeUsageRefresh("window-c", 6, "window-b", 5, null)).toBeNull();
+  });
+
   it("preserves a boundary refresh through commit and its success or failure", () => {
     const refreshing: UsageRefreshState = {
       windowKey: "window-b",

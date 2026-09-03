@@ -13,6 +13,26 @@ export interface UsageRefreshState {
   readonly error: string | null;
 }
 
+export function startUsageRefresh(previousRequestId: number, windowKey: string): UsageRefreshState {
+  return {
+    windowKey,
+    requestId: previousRequestId + 1,
+    refreshing: true,
+    error: null,
+  };
+}
+
+export function completeUsageRefresh(
+  currentWindowKey: string,
+  currentRequestId: number,
+  requestWindowKey: string,
+  requestId: number,
+  error: string | null,
+): UsageRefreshState | null {
+  if (currentWindowKey !== requestWindowKey || currentRequestId !== requestId) return null;
+  return { windowKey: requestWindowKey, requestId, refreshing: false, error };
+}
+
 export function refreshStateForWindowChange(
   state: UsageRefreshState,
   committedWindowKey: string,

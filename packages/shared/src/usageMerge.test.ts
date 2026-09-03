@@ -127,7 +127,6 @@ describe("mergeUsage", () => {
           ...empty,
           sources: [
             {
-              ...empty.sources[0],
               fingerprint: {
                 hostId: "mac",
                 provider: "claude",
@@ -135,6 +134,10 @@ describe("mergeUsage", () => {
                 volumeId: "vol-missing",
               },
               status: "missing",
+              scannedFiles: 0,
+              skippedFiles: 0,
+              malformedRecords: 0,
+              distinctSessions: 0,
               message: "No transcript directory.",
             },
           ],

@@ -18,7 +18,9 @@ import {
 } from "@t3tools/contracts";
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import {
+  completeUsageRefresh,
   refreshStateForWindowChange,
+  startUsageRefresh,
   type UsageRefreshState,
 } from "@t3tools/shared/usageRefreshState";
 import * as Option from "effect/Option";
@@ -149,54 +151,37 @@ export function useUsage(input: UsageSummaryInput): UsageView {
               sinceTime: input.sinceTime,
               untilTime: input.untilTime,
             });
-      const requestId = currentRefreshId.current + 1;
+      const nextRefreshState = startUsageRefresh(currentRefreshId.current, requestWindowKey);
+      const requestId = nextRefreshState.requestId;
       currentRefreshId.current = requestId;
       pendingRefreshWindowKey.current = requestWindowKey;
-      setManualRefreshState({
-        windowKey: requestWindowKey,
-        requestId,
-        refreshing: true,
-        error: null,
-      });
+      setManualRefreshState(nextRefreshState);
       void Promise.all(
         environments.map((environment) =>
           refreshUsageSummary({ environmentId: environment.environmentId, input }),
         ),
       )
         .then((results) => {
-          if (
-            currentWindowKey.current !== requestWindowKey ||
-            currentRefreshId.current !== requestId
-          )
-            return;
-          if (results.some((result) => result._tag === "Failure")) {
-            setManualRefreshState({
-              windowKey: requestWindowKey,
-              requestId,
-              refreshing: false,
-              error: "Refresh failed. Showing the last successful usage snapshot.",
-            });
-          } else {
-            setManualRefreshState({
-              windowKey: requestWindowKey,
-              requestId,
-              refreshing: false,
-              error: null,
-            });
-          }
+          const nextState = completeUsageRefresh(
+            currentWindowKey.current,
+            currentRefreshId.current,
+            requestWindowKey,
+            requestId,
+            results.some((result) => result._tag === "Failure")
+              ? "Refresh failed. Showing the last successful usage snapshot."
+              : null,
+          );
+          if (nextState !== null) setManualRefreshState(nextState);
         })
         .catch(() => {
-          if (
-            currentWindowKey.current === requestWindowKey &&
-            currentRefreshId.current === requestId
-          ) {
-            setManualRefreshState({
-              windowKey: requestWindowKey,
-              requestId,
-              refreshing: false,
-              error: "Refresh failed. Showing the last successful usage snapshot.",
-            });
-          }
+          const nextState = completeUsageRefresh(
+            currentWindowKey.current,
+            currentRefreshId.current,
+            requestWindowKey,
+            requestId,
+            "Refresh failed. Showing the last successful usage snapshot.",
+          );
+          if (nextState !== null) setManualRefreshState(nextState);
         });
     },
     [environments, refreshUsageSummary, windowKey],
