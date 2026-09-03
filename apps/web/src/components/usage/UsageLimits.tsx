@@ -25,10 +25,8 @@ import {
   usePrimarySettingsAvailable,
   useUpdatePrimarySettings,
 } from "../../hooks/useSettings";
-import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { environmentPresentations } from "../../state/presentation";
-import { primaryServerSettingsAtom } from "../../state/server";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../settings/providerDriverMeta";
@@ -405,14 +403,10 @@ export function UsageLimitsSection() {
   // Anchored once per mount on purpose: countdowns must not tick (see below).
   const [now] = useState(() => Date.now());
 
+  // The patch names only this entry, so two edits in flight cannot clobber
+  // each other's map.
   const removeSource = (id: UsageLimitSourceId) => {
-    // Read the map at click time, not from this render: two confirmations
-    // before the first write echoes back must not resurrect the first source.
-    const current = appAtomRegistry.get(primaryServerSettingsAtom).usageLimitSources;
-    const rest = Object.fromEntries(
-      Object.entries(current).filter(([key]) => key !== id),
-    ) as typeof current;
-    updateSettings({ usageLimitSources: rest });
+    updateSettings({ usageLimitSources: { [id]: null } });
   };
 
   const addHubButton = canEditSources ? (

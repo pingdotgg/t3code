@@ -21,6 +21,7 @@ import {
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -72,9 +73,10 @@ function readFailureMessage(
   }
 }
 
-class InvalidUrl {
-  readonly _tag = "InvalidUrl";
-}
+class InvalidUrl extends Data.TaggedError("InvalidUrl")<{
+  readonly url: string;
+  readonly cause: unknown;
+}> {}
 
 function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   if (config.label) return config.label;
@@ -106,7 +108,7 @@ export const make = Effect.gen(function* () {
     }
     const accounts = yield* Effect.try({
       try: () => new URL(QUOTA_STATUS_PATH, config.url).toString(),
-      catch: () => new InvalidUrl(),
+      catch: (cause) => new InvalidUrl({ url: config.url, cause }),
     }).pipe(
       Effect.flatMap((url) =>
         httpClient.get(url, { headers: { Authorization: `Bearer ${config.managementKey}` } }),
