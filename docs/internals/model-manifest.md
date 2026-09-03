@@ -3,7 +3,9 @@
 `apps/server/src/provider/model-manifest.json` is bundled for offline startup and fetched from
 `main` at runtime. A remote fetch replaces the in-memory and on-disk cache only after generic
 catalog references and provider-owned adapter data validate. A failed or invalid fetch keeps the
-last successful remote manifest. The bundle is used only when no valid remote cache exists.
+last successful remote manifest. The bundle is used when no valid remote cache exists, or when
+the bundle's `updatedAt` is later than the cached manifest's, so a release that edits the manifest
+takes effect before the next successful fetch. Bump `updatedAt` whenever you edit the file.
 
 The top-level provider catalog is generic: models contain presentation metadata, aliases, status,
 an optional badge, and a reusable capability profile. The profile and model `adapter` fields are

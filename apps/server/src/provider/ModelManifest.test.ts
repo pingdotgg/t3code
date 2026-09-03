@@ -2,7 +2,9 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderDriverKind, type ServerProviderModel } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -15,6 +17,8 @@ import {
   make,
   resolveProviderCatalog,
   type ModelManifestData,
+  manifestUpdatedAtMs,
+  encodeManifestCache,
 } from "./ModelManifest.ts";
 
 /**
@@ -186,8 +190,12 @@ describe("resolveProviderCatalog", () => {
   });
 });
 
+// Remote fixtures date after the bundle so a fetch still outranks it.
+const REMOTE_UPDATED_AT = "2099-01-01T00:00:00Z";
+
 const REMOTE_MANIFEST: ModelManifestData = {
   version: 1,
+  updatedAt: REMOTE_UPDATED_AT,
   currentModels: {
     codex: ["remote-model"],
     claudeAgent: ["remote-agent-model"],
@@ -196,6 +204,7 @@ const REMOTE_MANIFEST: ModelManifestData = {
 
 const REMOTE_CLAUDE_MANIFEST: ModelManifestData = {
   version: 1,
+  updatedAt: REMOTE_UPDATED_AT,
   currentModels: {},
   providers: {
     claudeAgent: {
@@ -367,6 +376,47 @@ describe("ModelManifest service", () => {
       ),
     );
   });
+
+  it.live("drops a disk cache of a manifest older than the bundled one", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      assert.isAbove(manifestUpdatedAtMs(BUNDLED_MODEL_MANIFEST), 0);
+      const cachePath = path.join(config.stateDir, "model-manifest.json");
+      // A cache of the manifest as it was before the release edited it. The
+      // fetch time is irrelevant: the remote may be unreachable now, so
+      // `current` must already prefer the bundle.
+      const { updatedAt: _undated, ...undatedManifest } = REMOTE_MANIFEST;
+      for (const stale of [
+        undatedManifest,
+        { ...REMOTE_MANIFEST, updatedAt: "2000-01-01T00:00:00Z" },
+      ]) {
+        yield* fs.writeFileString(
+          cachePath,
+          yield* encodeManifestCache({ fetchedAtMs: 0, manifest: stale }),
+        );
+        const service = yield* make;
+        assert.deepStrictEqual(yield* service.current, BUNDLED_MODEL_MANIFEST);
+      }
+
+      // A cache of a newer edit still outranks the bundle.
+      yield* fs.writeFileString(
+        cachePath,
+        yield* encodeManifestCache({ fetchedAtMs: 0, manifest: REMOTE_MANIFEST }),
+      );
+      const later = yield* make;
+      assert.deepStrictEqual(yield* later.current, REMOTE_MANIFEST);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "model-manifest-newer-bundle-test",
+          response: () => Response.json(REMOTE_MANIFEST),
+        }),
+      ),
+    ),
+  );
 
   it.live("does not fetch when provider update checks are disabled", () =>
     Effect.gen(function* () {
