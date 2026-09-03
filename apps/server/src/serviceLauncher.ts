@@ -1,5 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off
-// @effect-diagnostics globalDate:off
 // @effect-diagnostics globalTimers:off
 // This file is shipped as a standalone bundle and copied to a stable path by
 // `t3 service update`. Keep runtime imports limited to Node built-ins.

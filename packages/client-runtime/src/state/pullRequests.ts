@@ -2,6 +2,7 @@ import {
   WS_METHODS,
   type PullRequestDetail,
   type PullRequestDiffInput,
+  type PullRequestSummary,
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import * as Data from "effect/Data";
@@ -20,26 +21,34 @@ import { PullRequestDiffLoader } from "./pullRequestDiffHttp.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 
-export { PullRequestDiffLoader, pullRequestDiffLoaderLayer } from "./pullRequestDiffHttp.ts";
+export {
+  type PullRequestDiffLoadError,
+  PullRequestDiffCredentialRejectedError,
+  PullRequestDiffLoader,
+  pullRequestDiffLoaderLayer,
+} from "./pullRequestDiffHttp.ts";
 
 export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
   "EnvironmentHttpConnectionNotReadyError",
 )<{ readonly message: string }> {}
 
-/** Refresh a linked PR while its thread is visible so merges update the sidebar. */
-export function createLinkedPullRequestDetailAtomFamily<R, E>(
+export const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
+
+/** Refresh only the live fields a linked thread renders. */
+export function createLinkedPullRequestSummaryAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return createEnvironmentRpcQueryAtomFamily(runtime, {
-    label: "environment-data:pull-requests:linked-detail",
-    tag: WS_METHODS.pullRequestsDetail,
-    staleTimeMs: 15_000,
-    refreshIntervalMs: 30_000,
+    label: "environment-data:pull-requests:linked-summary",
+    tag: WS_METHODS.pullRequestsSummary,
+    staleTimeMs: 60_000,
+    refreshIntervalMs: 60_000,
+    idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
   });
 }
 
 export function pullRequestDetailToVcsStatus(
-  detail: PullRequestDetail,
+  detail: PullRequestDetail | PullRequestSummary,
 ): NonNullable<VcsStatusResult["pr"]> {
   return {
     number: detail.number,
@@ -192,6 +201,18 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     requestReviewers: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:request-reviewers",
       tag: WS_METHODS.pullRequestsRequestReviewers,
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+    }),
+    /** Read when the label menu opens, and kept for a minute, like the reviewer candidates. */
+    labelCandidates: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:label-candidates",
+      tag: WS_METHODS.pullRequestsLabelCandidates,
+      staleTimeMs: 60_000,
+    }),
+    setLabels: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:set-labels",
+      tag: WS_METHODS.pullRequestsSetLabels,
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),

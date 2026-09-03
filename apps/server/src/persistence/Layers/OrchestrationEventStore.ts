@@ -64,7 +64,7 @@ const OrchestrationEventPersistedRowSchema = Schema.Struct({
 const HasEventAfterRequestSchema = Schema.Struct({
   aggregateKind: Schema.String,
   aggregateId: Schema.String,
-  type: Schema.String,
+  type: Schema.optional(Schema.String),
   sequenceExclusive: NonNegativeInt,
 });
 
@@ -271,16 +271,17 @@ const makeEventStore = Effect.gen(function* () {
   const findEventAfter = SqlSchema.findOneOption({
     Request: HasEventAfterRequestSchema,
     Result: Schema.Struct({ sequence: Schema.Number }),
-    execute: (request) =>
-      sql`
-        SELECT sequence
-        FROM orchestration_events
-        WHERE aggregate_kind = ${request.aggregateKind}
-          AND stream_id = ${request.aggregateId}
-          AND event_type = ${request.type}
-          AND sequence > ${request.sequenceExclusive}
-        LIMIT 1
-      `,
+    execute: (request) => sql`
+          SELECT sequence
+          FROM orchestration_events
+          WHERE aggregate_kind = ${request.aggregateKind}
+            AND stream_id = ${request.aggregateId}
+            AND ${sql.and([
+              sql`sequence > ${request.sequenceExclusive}`,
+              ...(request.type === undefined ? [] : [sql`event_type = ${request.type}`]),
+            ])}
+          LIMIT 1
+        `,
   });
 
   const hasEventAfter: OrchestrationEventStoreShape["hasEventAfter"] = (input) =>

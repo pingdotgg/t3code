@@ -20,16 +20,20 @@ import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
+import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedErrorClass<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
   {
-    operation: Schema.Literals(["check", "read", "write"]),
+    operation: Schema.Literals(["check", "read", "write", "initialize"]),
     environmentIdPath: Schema.String,
-    cause: Schema.Defect(),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
+    if (this.operation === "initialize") {
+      return `Server environment ID file is missing or empty after initialization at '${this.environmentIdPath}'.`;
+    }
     return `Server environment ID ${this.operation} failed at '${this.environmentIdPath}'.`;
   }
 }
@@ -41,6 +45,13 @@ export class ServerEnvironment extends Context.Service<
     readonly getDescriptor: Effect.Effect<ExecutionEnvironmentDescriptor>;
   }
 >()("t3/environment/ServerEnvironment") {}
+
+export class ServerEnvironmentIdentity extends Context.Service<
+  ServerEnvironmentIdentity,
+  {
+    readonly getEnvironmentId: Effect.Effect<EnvironmentId>;
+  }
+>()("t3/environment/ServerEnvironment/ServerEnvironmentIdentity") {}
 
 function platformOs(platform: NodeJS.Platform): ExecutionEnvironmentDescriptor["platform"]["os"] {
   switch (platform) {
@@ -68,14 +79,10 @@ function platformArch(
   }
 }
 
-export const make = Effect.gen(function* () {
+const makeIdentity = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
-  const secrets = yield* ServerSecretStore.ServerSecretStore;
   const crypto = yield* Crypto.Crypto;
-  const hostPlatform = yield* HostProcessPlatform;
-  const hostArchitecture = yield* HostProcessArchitecture;
 
   const readPersistedEnvironmentId = Effect.gen(function* () {
     const exists = yield* fileSystem.exists(serverConfig.environmentIdPath).pipe(
@@ -107,17 +114,42 @@ export const make = Effect.gen(function* () {
     return raw.length > 0 ? raw : null;
   });
 
-  const persistEnvironmentId = (value: string) =>
-    fileSystem.writeFileString(serverConfig.environmentIdPath, `${value}\n`).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ServerEnvironmentIdPersistenceError({
-            operation: "write",
-            environmentIdPath: serverConfig.environmentIdPath,
-            cause,
-          }),
-      ),
-    );
+  const persistEnvironmentId = Effect.fn("ServerEnvironmentIdentity.persistEnvironmentId")(
+    function* (value: string, mode: "create" | "recover") {
+      const destinationPath =
+        mode === "recover"
+          ? `${serverConfig.environmentIdPath}.recovery`
+          : serverConfig.environmentIdPath;
+      const tempPath = yield* fileSystem.makeTempFileScoped({
+        directory: serverConfig.stateDir,
+        prefix: ".environment-id-",
+      });
+      yield* fileSystem.writeFileString(tempPath, `${value}\n`);
+      // Publish the completed file without replacing an ID created by another process.
+      yield* fileSystem
+        .link(tempPath, destinationPath)
+        .pipe(
+          Effect.catch((cause) =>
+            cause.reason._tag === "AlreadyExists" ? Effect.void : Effect.fail(cause),
+          ),
+        );
+      if (mode === "recover") {
+        // Keep the recovery ID so delayed initializers also publish the same winner.
+        yield* fileSystem.remove(tempPath);
+        yield* fileSystem.copyFile(destinationPath, tempPath);
+        yield* fileSystem.rename(tempPath, serverConfig.environmentIdPath);
+      }
+    },
+    Effect.scoped,
+    Effect.mapError(
+      (cause) =>
+        new ServerEnvironmentIdPersistenceError({
+          operation: "write",
+          environmentIdPath: serverConfig.environmentIdPath,
+          cause,
+        }),
+    ),
+  );
 
   const environmentIdRaw = yield* Effect.gen(function* () {
     const persisted = yield* readPersistedEnvironmentId;
@@ -126,18 +158,49 @@ export const make = Effect.gen(function* () {
     }
 
     const generated = yield* crypto.randomUUIDv4;
-    yield* persistEnvironmentId(generated);
-    return generated;
+    yield* persistEnvironmentId(generated, "create");
+    let winner = yield* readPersistedEnvironmentId;
+    if (winner === null) {
+      yield* persistEnvironmentId(generated, "recover");
+      winner = yield* readPersistedEnvironmentId;
+    }
+    if (winner === null) {
+      return yield* new ServerEnvironmentIdPersistenceError({
+        operation: "initialize",
+        environmentIdPath: serverConfig.environmentIdPath,
+      });
+    }
+    return winner;
   });
 
   const environmentId = EnvironmentId.make(environmentIdRaw);
+  return ServerEnvironmentIdentity.of({
+    getEnvironmentId: Effect.succeed(environmentId),
+  });
+});
+
+export const make = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const identity = yield* ServerEnvironmentIdentity;
+  const hostPlatform = yield* HostProcessPlatform;
+  const hostArchitecture = yield* HostProcessArchitecture;
+  const environmentId = yield* identity.getEnvironmentId;
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
   const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
+  const machine = yield* detectServerEnvironmentMachineKind();
   const launcher = yield* resolveServiceLauncherMode();
   const serverSelfUpdate = resolveServerSelfUpdateCapability({
     desktopManaged: serverConfig.mode === "desktop",
     launcherManaged: launcher.managed,
   });
+  // Static is correct: the control fd is known at bootstrap, and the desktop
+  // app and its bundled server ship in one artifact, so a present fd means
+  // the app speaks the requestDesktopUpdate protocol. WSL backends never get
+  // the fd and correctly do not advertise.
+  const desktopAppUpdate =
+    serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
 
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
@@ -145,6 +208,7 @@ export const make = Effect.gen(function* () {
     platform: {
       os: platformOs(hostPlatform),
       arch: platformArch(hostArchitecture),
+      ...(machine === null ? {} : { machine }),
     },
     serverVersion: packageJson.version,
     capabilities: {
@@ -154,14 +218,22 @@ export const make = Effect.gen(function* () {
       fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
       pullRequests: true,
       threadSettlement: true,
+      threadAutoSettlement: true,
       threadSnooze: true,
       environmentThemes: true,
       threadPinning: true,
       threadPinReorder: true,
       threadTitleRegeneration: true,
       threadPullRequestLinking: true,
+      environmentIcon: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
-      ...(serverSelfUpdate === "boot-service" ? { serverSelfUpdateProgress: true } : {}),
+      ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
+        ? {
+            serverSelfUpdateProgress: true,
+            serverUpdateThreadContinuation: true,
+          }
+        : {}),
+      ...(desktopAppUpdate ? { desktopAppUpdate: true } : {}),
     },
   };
 
@@ -179,10 +251,15 @@ export const make = Effect.gen(function* () {
   });
 });
 
+export const identityLayer = Layer.effect(ServerEnvironmentIdentity, makeIdentity);
+
 /**
  * ServerEnvironment is acquired from persisted filesystem and host-process
  * state. It intentionally has no fallback Layer.succeed value: callers must
  * provide the external platform services, a ServerConfig, and the
  * ServerSecretStore backing the descriptor's publishing capability.
  */
-export const layer = Layer.effect(ServerEnvironment, make).pipe(Layer.provide(ProcessRunner.layer));
+export const layer = Layer.effect(ServerEnvironment, make).pipe(
+  Layer.provideMerge(identityLayer),
+  Layer.provide(ProcessRunner.layer),
+);

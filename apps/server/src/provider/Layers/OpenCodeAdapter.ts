@@ -192,8 +192,10 @@ const decodeOpenCodeSessionStatusMap = Schema.decodeUnknownOption(OpenCodeSessio
 
 interface OpenCodeCancellation {
   readonly turnId: TurnId | undefined;
+  readonly acknowledgment: Deferred.Deferred<void>;
   readonly completion: Deferred.Deferred<void, ProviderAdapterRequestError>;
   acknowledged?: boolean;
+  turnSettled?: boolean;
   deferredIdleEvent?: OpenCodeSessionStatusEvent;
 }
 
@@ -326,6 +328,7 @@ interface OpenCodeSessionContext {
   readonly openCodeSessionId: string;
   readonly relatedSessionIds: Set<string>;
   readonly resolvedRequestIds: Set<string>;
+  readonly autoRepliedRequestIds: Set<string>;
   readonly emittedTerminalRequestIds: Set<string>;
   readonly requestRelationRetries: Map<string, OpenCodeRequestRelationRetry>;
   readonly pendingPermissions: Map<string, PermissionRequest>;
@@ -565,9 +568,13 @@ export function mergeOpenCodeAssistantText(
   readonly deltaToEmit: string;
 } {
   const latestText = resolveLatestAssistantText(previousText, nextText);
+  const previous = previousText ?? "";
+  const prefixLength = latestText.startsWith(previous)
+    ? previous.length
+    : commonPrefixLength(previous, latestText);
   return {
     latestText,
-    deltaToEmit: latestText.slice(commonPrefixLength(previousText ?? "", latestText)),
+    deltaToEmit: latestText.slice(prefixLength),
   };
 }
 
@@ -698,10 +705,88 @@ const failPendingOpenCodeCancellation = Effect.fn("failPendingOpenCodeCancellati
   ).pipe(Effect.ignore);
 });
 
-const abortOpenCodeSessionForTeardown = (context: OpenCodeSessionContext) =>
-  runOpenCodeSdk("session.abort", (signal) =>
+const abortOpenCodeDescendants = Effect.fn("abortOpenCodeDescendants")(function* (
+  context: OpenCodeSessionContext,
+) {
+  const visited = new Set([context.openCodeSessionId]);
+  const requestSemaphore = Semaphore.makeUnsafe(8);
+
+  const visit = (
+    sessionId: string,
+    abortSession: boolean,
+  ): Effect.Effect<OpenCodeRuntimeError | undefined> =>
+    Effect.gen(function* () {
+      let firstFailure: OpenCodeRuntimeError | undefined;
+      if (abortSession) {
+        const abortResult = yield* requestSemaphore
+          .withPermit(
+            runOpenCodeSdk("session.abort", (signal) =>
+              context.client.session.abort({ sessionID: sessionId }, { signal }),
+            ),
+          )
+          .pipe(
+            Effect.catchIf(
+              (cause) => isOpenCodeNotFound(cause),
+              () => Effect.void,
+            ),
+            Effect.result,
+          );
+        if (abortResult._tag === "Failure") {
+          firstFailure = abortResult.failure;
+        }
+      }
+
+      const childrenResult = yield* requestSemaphore
+        .withPermit(
+          runOpenCodeSdk("session.children", (signal) =>
+            context.client.session.children({ sessionID: sessionId }, { signal }),
+          ),
+        )
+        .pipe(
+          Effect.catchIf(
+            (cause) => isOpenCodeNotFound(cause),
+            () => Effect.void,
+          ),
+          Effect.result,
+        );
+      if (childrenResult._tag === "Failure") {
+        return firstFailure ?? childrenResult.failure;
+      }
+
+      const children = childrenResult.success?.data ?? [];
+      const newChildren = children.filter((child) => {
+        if (visited.has(child.id)) {
+          return false;
+        }
+        visited.add(child.id);
+        return true;
+      });
+      const childFailures = yield* Effect.forEach(newChildren, (child) => visit(child.id, true), {
+        concurrency: 8,
+      });
+      firstFailure ??= childFailures.find((failure) => failure !== undefined);
+      return firstFailure;
+    });
+
+  const firstFailure = yield* visit(context.openCodeSessionId, false);
+  if (firstFailure) {
+    return yield* firstFailure;
+  }
+});
+
+const abortOpenCodeSessionForTeardown = Effect.fn("abortOpenCodeSessionForTeardown")(function* (
+  context: OpenCodeSessionContext,
+) {
+  // Stop the parent before the snapshot so it cannot add another child after
+  // the adapter reads the tree.
+  yield* runOpenCodeSdk("session.abort", (signal) =>
     context.client.session.abort({ sessionID: context.openCodeSessionId }, { signal }),
   ).pipe(Effect.timeout("1 second"), Effect.ignore({ log: true }));
+  yield* abortOpenCodeDescendants(context).pipe(
+    Effect.timeout("1 second"),
+    Effect.ignore({ log: true }),
+  );
+});
 
 const cancelPendingOpenCodePrompt = Effect.fn("cancelPendingOpenCodePrompt")(function* (
   context: OpenCodeSessionContext,
@@ -916,6 +1001,12 @@ export function makeOpenCodeAdapter(
 
     const emit = (event: ProviderRuntimeEvent) =>
       Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
+    // Synchronous publish for callers that must not yield between a state
+    // check and the enqueue, e.g. reopening an approval only if its terminal
+    // event has not landed yet.
+    const emitUnsafe = (event: ProviderRuntimeEvent) => {
+      Queue.offerUnsafe(runtimeEvents, event);
+    };
     const writeNativeEvent = (
       threadId: ThreadId,
       event: {
@@ -1518,6 +1609,39 @@ export function makeOpenCodeAdapter(
       return false;
     });
 
+    // Full access means the user already granted everything, but two upstream
+    // paths never consult the session ruleset we send: doom-loop detection
+    // (evaluated against the agent ruleset only) and subagent sessions (which
+    // keep only deny and external-directory rules). Answer those asks here.
+    //
+    // Reply "once", not "always": OpenCode stores "always" grants per
+    // directory, so on a shared external server an "always" from a full-access
+    // thread would silently widen what a supervised thread on the same
+    // directory is allowed to do.
+    const autoReplyFullAccess = Effect.fn("autoReplyFullAccess")(function* (
+      context: OpenCodeSessionContext,
+      request: PermissionRequest,
+    ) {
+      // Mark before awaiting: retry and recovery fibers re-enter the ask path,
+      // and the matching `permission.replied` can arrive, while the SDK call
+      // is in flight. Marked ids skip the ask and swallow the terminal event.
+      context.resolvedRequestIds.add(request.id);
+      context.autoRepliedRequestIds.add(request.id);
+      const replied = yield* runOpenCodeSdk("permission.reply", () =>
+        context.client.permission.reply({ requestID: request.id, reply: "once" }),
+      ).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!replied) {
+        // Fall back to the dialog. The id stays resolved so a recovered copy
+        // of this ask cannot reopen after the user answers;
+        // `pendingPermissions` gates re-asks while the dialog is open.
+        context.autoRepliedRequestIds.delete(request.id);
+      }
+      return replied;
+    });
+
     const emitPendingOpenCodeRequest = Effect.fn("emitPendingOpenCodeRequest")(function* (
       context: OpenCodeSessionContext,
       event: OpenCodeAskedRequestEvent,
@@ -1531,14 +1655,27 @@ export function makeOpenCodeAdapter(
         if (context.pendingPermissions.has(request.id)) {
           return;
         }
+        if (
+          context.session.runtimeMode === "full-access" &&
+          (yield* autoReplyFullAccess(context, request))
+        ) {
+          return;
+        }
+        const base = yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: context.activeTurnId,
+          requestId: request.id,
+          raw,
+        });
+        // No yield between this check and the publish: a terminal
+        // `permission.replied` delivered on the pump in between would leave a
+        // dialog that can never close.
+        if (context.emittedTerminalRequestIds.has(request.id)) {
+          return;
+        }
         context.pendingPermissions.set(request.id, request);
-        yield* emit({
-          ...(yield* buildEventBase({
-            threadId: context.session.threadId,
-            turnId: context.activeTurnId,
-            requestId: request.id,
-            raw,
-          })),
+        emitUnsafe({
+          ...base,
           type: "request.opened",
           payload: {
             requestType: mapPermissionToRequestType(request.permission),
@@ -1587,6 +1724,9 @@ export function makeOpenCodeAdapter(
         return;
       }
       context.emittedTerminalRequestIds.add(requestId);
+      if (context.autoRepliedRequestIds.delete(requestId)) {
+        return;
+      }
       if (event.type === "permission.replied") {
         yield* emit({
           ...(yield* buildEventBase({
@@ -2154,13 +2294,12 @@ export function makeOpenCodeAdapter(
           if (isOpenCodeAbortError(event.properties.error)) {
             if (cancellation !== undefined && cancellation.turnId === undefined) {
               cancellation.acknowledged = true;
-              context.cancellation = undefined;
-              context.reconcileIdleStatus = true;
-              yield* Deferred.succeed(cancellation.completion, undefined).pipe(Effect.ignore);
+              yield* Deferred.succeed(cancellation.acknowledgment, undefined).pipe(Effect.ignore);
               break;
             }
             if (activeTurnId !== undefined && cancellation?.turnId === activeTurnId) {
-              yield* interruptOpenCodeTurn(context, activeTurnId, event);
+              cancellation.acknowledged = true;
+              yield* Deferred.succeed(cancellation.acknowledgment, undefined).pipe(Effect.ignore);
               break;
             }
             if (context.interruptedTurnId !== undefined || context.reconcileIdleStatus) {
@@ -2168,9 +2307,13 @@ export function makeOpenCodeAdapter(
             }
           }
           yield* cancelIdleReconciliation(context);
-          if (activeTurnId !== undefined && cancellation?.turnId === activeTurnId) {
-            context.cancellation = undefined;
-            yield* Deferred.succeed(cancellation.completion, undefined).pipe(Effect.ignore);
+          const terminalCancellation =
+            activeTurnId !== undefined && cancellation?.turnId === activeTurnId
+              ? cancellation
+              : undefined;
+          if (terminalCancellation) {
+            terminalCancellation.turnSettled = true;
+            terminalCancellation.acknowledged = true;
           }
           context.activeTurnId = undefined;
           context.activeAgent = undefined;
@@ -2210,6 +2353,11 @@ export function makeOpenCodeAdapter(
               detail: event.properties.error,
             },
           });
+          if (terminalCancellation) {
+            yield* Deferred.succeed(terminalCancellation.acknowledgment, undefined).pipe(
+              Effect.ignore,
+            );
+          }
           break;
         }
 
@@ -2462,6 +2610,7 @@ export function makeOpenCodeAdapter(
           openCodeSessionId: started.openCodeSession.id,
           relatedSessionIds: new Set([started.openCodeSession.id]),
           resolvedRequestIds: new Set(),
+          autoRepliedRequestIds: new Set(),
           emittedTerminalRequestIds: new Set(),
           requestRelationRetries: new Map(),
           pendingPermissions: new Map(),
@@ -2905,14 +3054,12 @@ export function makeOpenCodeAdapter(
           return;
         }
         const existingCancellation = context.cancellation;
-        if (
-          existingCancellation !== undefined &&
-          existingCancellation.turnId === interruptedTurnId
-        ) {
+        if (existingCancellation !== undefined) {
           return yield* Deferred.await(existingCancellation.completion);
         }
         const cancellation: OpenCodeCancellation = {
           turnId: interruptedTurnId,
+          acknowledgment: Deferred.makeUnsafe<void>(),
           completion: Deferred.makeUnsafe<void, ProviderAdapterRequestError>(),
         };
         context.cancellation = cancellation;
@@ -2925,10 +3072,11 @@ export function makeOpenCodeAdapter(
           yield* Deferred.await(promptAdmission.submissionSettled);
         }
 
-        const abortOutcome = yield* Effect.raceFirst(
+        const parentAbortOutcome = yield* Effect.raceFirst(
           runOpenCodeSdk("session.abort", (signal) =>
             context.client.session.abort({ sessionID: context.openCodeSessionId }, { signal }),
           ).pipe(
+            Effect.asVoid,
             Effect.timeout("10 seconds"),
             Effect.catchTags({
               OpenCodeRuntimeError: (cause) => Effect.fail(toRequestError(cause)),
@@ -2945,33 +3093,67 @@ export function makeOpenCodeAdapter(
             Effect.exit,
             Effect.map((exit) => ({ source: "request" as const, exit })),
           ),
-          Deferred.await(cancellation.completion).pipe(
-            Effect.exit,
-            Effect.map((exit) => ({ source: "event" as const, exit })),
+          Effect.raceFirst(
+            Deferred.await(cancellation.acknowledgment).pipe(
+              Effect.map(() => ({ source: "acknowledgment" as const })),
+            ),
+            Deferred.await(cancellation.completion).pipe(
+              Effect.exit,
+              Effect.map((exit) => ({ source: "completion" as const, exit })),
+            ),
           ),
         );
-        if (abortOutcome.source === "event") {
-          return Exit.isFailure(abortOutcome.exit)
-            ? yield* Effect.failCause(abortOutcome.exit.cause)
+        if (parentAbortOutcome.source === "completion") {
+          return Exit.isFailure(parentAbortOutcome.exit)
+            ? yield* Effect.failCause(parentAbortOutcome.exit.cause)
             : undefined;
         }
-        const abortExit = abortOutcome.exit;
-        if (Exit.isFailure(abortExit)) {
-          if (interruptedTurnId && context.interruptedTurnId === interruptedTurnId) {
-            yield* Deferred.succeed(cancellation.completion, undefined).pipe(Effect.ignore);
-            return;
-          }
-          if (cancellation.turnId === undefined && cancellation.acknowledged) {
-            if (context.cancellation === cancellation) {
-              context.cancellation = undefined;
-              context.reconcileIdleStatus = true;
-            }
-            yield* Deferred.succeed(cancellation.completion, undefined).pipe(Effect.ignore);
-            return;
-          }
+        const parentAbortExit =
+          parentAbortOutcome.source === "request" ? parentAbortOutcome.exit : Exit.void;
+
+        const descendantAbortOutcome = yield* Effect.raceFirst(
+          abortOpenCodeDescendants(context).pipe(
+            Effect.timeout("10 seconds"),
+            Effect.catchTags({
+              OpenCodeRuntimeError: (cause) => Effect.fail(toRequestError(cause)),
+              TimeoutError: (cause) =>
+                Effect.fail(
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "session.abort",
+                    detail: "OpenCode child session cleanup did not complete within 10 seconds.",
+                    cause,
+                  }),
+                ),
+            }),
+            Effect.exit,
+            Effect.map((exit) => ({ source: "request" as const, exit })),
+          ),
+          Deferred.await(cancellation.completion).pipe(
+            Effect.exit,
+            Effect.map((exit) => ({ source: "completion" as const, exit })),
+          ),
+        );
+        if (descendantAbortOutcome.source === "completion") {
+          return Exit.isFailure(descendantAbortOutcome.exit)
+            ? yield* Effect.failCause(descendantAbortOutcome.exit.cause)
+            : undefined;
+        }
+
+        const parentAbortFailed = Exit.isFailure(parentAbortExit) && !cancellation.acknowledged;
+        const failedExit = parentAbortFailed
+          ? parentAbortExit
+          : Exit.isFailure(descendantAbortOutcome.exit)
+            ? descendantAbortOutcome.exit
+            : undefined;
+        if (failedExit !== undefined && Exit.isFailure(failedExit)) {
           if (context.cancellation === cancellation) {
             context.cancellation = undefined;
-            if (cancellation.turnId !== undefined && cancellation.deferredIdleEvent) {
+            if (
+              parentAbortFailed &&
+              cancellation.turnId !== undefined &&
+              cancellation.deferredIdleEvent
+            ) {
               yield* scheduleIdleReconciliation(
                 context,
                 cancellation.turnId,
@@ -2979,12 +3161,14 @@ export function makeOpenCodeAdapter(
               );
             }
           }
-          yield* Deferred.done(cancellation.completion, abortExit).pipe(Effect.ignore);
-          return yield* Effect.failCause(abortExit.cause);
+          yield* Deferred.done(cancellation.completion, failedExit).pipe(Effect.ignore);
+          return yield* Effect.failCause(failedExit.cause);
         }
 
         if (context.cancellation === cancellation) {
-          if (cancellation.turnId !== undefined) {
+          if (cancellation.turnSettled) {
+            context.cancellation = undefined;
+          } else if (cancellation.turnId !== undefined) {
             yield* interruptOpenCodeTurn(context, cancellation.turnId);
           } else {
             context.cancellation = undefined;

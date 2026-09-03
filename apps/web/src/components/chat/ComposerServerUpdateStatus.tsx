@@ -1,9 +1,24 @@
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
+import { CircleAlertIcon, InfoIcon, LoaderCircleIcon } from "lucide-react";
 import { useId, useState } from "react";
 
 import { serverUpdateStageLabel } from "../ServerUpdateAction";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerBanner } from "./ComposerBanner";
+
+export function ComposerServerUpdateIcon({
+  status,
+}: {
+  readonly status: ServerUpdateState["status"];
+}) {
+  if (status === "running") {
+    return <LoaderCircleIcon aria-hidden className="motion-safe:animate-spin" />;
+  }
+  if (status === "failed") {
+    return <CircleAlertIcon aria-hidden className="text-error" />;
+  }
+  return <InfoIcon aria-hidden />;
+}
 
 /** One text line, clipped at the end so the error detail never squeezes its title. */
 export function ComposerServerUpdateStatus({
