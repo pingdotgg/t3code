@@ -592,7 +592,11 @@ export const TraitsPicker = memo(function TraitsPicker({
         size={size}
         className={cn(
           "fill-current opacity-80",
-          provider === "claudeAgent" ? "text-[#d97757]" : "text-foreground",
+          size === "xs"
+            ? "text-current"
+            : provider === "claudeAgent"
+              ? "text-[#d97757]"
+              : "text-foreground",
         )}
       />
       <span className="sr-only">Fast mode on</span>
