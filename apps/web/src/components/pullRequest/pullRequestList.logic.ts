@@ -744,6 +744,8 @@ export function mergePullRequestLists(
 
 /** One page is what the list itself starts with, and all a cold start needs to look warm. */
 const SNAPSHOT_MAX_ENTRIES = 99;
+/** A persisted list is only a short bridge across a reload, never a durable source of truth. */
+const SNAPSHOT_MAX_AGE_MS = 5 * 60 * 1_000;
 
 type SnapshotStorage = Pick<Storage, "getItem" | "setItem">;
 
@@ -754,6 +756,40 @@ type SnapshotStorage = Pick<Storage, "getItem" | "setItem">;
  */
 export const pullRequestEnvironmentSetKey = (environmentIds: ReadonlyArray<string>): string =>
   [...environmentIds].sort((left, right) => left.localeCompare(right)).join(",");
+
+export function resolvePullRequestViewerGate<Id extends string>(
+  environmentIds: ReadonlyArray<Id>,
+  viewerCapableEnvironmentIds: ReadonlySet<Id>,
+  verifiedEnvironmentIds: ReadonlyArray<Id>,
+  verificationPending: boolean,
+): {
+  readonly listEnvironmentIds: ReadonlyArray<Id>;
+  readonly canHydrateSnapshot: boolean;
+  readonly shouldClearRetainedRows: boolean;
+} {
+  const verified = new Set(verifiedEnvironmentIds);
+  const hasUnverifiedCapableEnvironment = environmentIds.some(
+    (environmentId) =>
+      viewerCapableEnvironmentIds.has(environmentId) && !verified.has(environmentId),
+  );
+  return {
+    listEnvironmentIds: environmentIds.filter(
+      (environmentId) =>
+        !viewerCapableEnvironmentIds.has(environmentId) ||
+        (!verificationPending && verified.has(environmentId)),
+    ),
+    canHydrateSnapshot:
+      environmentIds.length > 0 &&
+      !verificationPending &&
+      environmentIds.every(
+        (environmentId) =>
+          viewerCapableEnvironmentIds.has(environmentId) && verified.has(environmentId),
+      ),
+    // A refresh in flight still carries the identity this session already verified. Keep those
+    // rows visible until the read settles; only a settled failure proves they cannot be retained.
+    shouldClearRetainedRows: !verificationPending && hasUnverifiedCapableEnvironment,
+  };
+}
 
 const snapshotStorageKey = (environmentSetKey: string) =>
   `t3.pullRequests.list:${environmentSetKey}`;
@@ -769,9 +805,150 @@ export interface PullRequestPartitionsSnapshot {
 }
 
 export interface PullRequestListSnapshot {
+  readonly writtenAt: number;
   readonly scope: string;
   readonly data: MergedPullRequestList;
   readonly partitions?: PullRequestPartitionsSnapshot | undefined;
+}
+
+const viewerIdentity = (viewers: PullRequestViewers): string =>
+  JSON.stringify(Object.entries(viewers).toSorted(([left], [right]) => left.localeCompare(right)));
+
+export const pullRequestViewersMatch = (
+  left: PullRequestViewers,
+  right: PullRequestViewers,
+): boolean => viewerIdentity(left) === viewerIdentity(right);
+
+export const pullRequestViewersMatchForEnvironments = (
+  listedViewers: PullRequestViewers,
+  verifiedViewers: PullRequestViewers,
+  environmentIds: ReadonlySet<string>,
+  requiredViewerKeys?: ReadonlySet<string>,
+): boolean => {
+  const prefixes = [...environmentIds].map((environmentId) => `${environmentId} `);
+  const belongsToEnvironment = (key: string) => prefixes.some((prefix) => key.startsWith(prefix));
+  const scopedListedViewers = Object.fromEntries(
+    Object.entries(listedViewers).filter(([key]) => belongsToEnvironment(key)),
+  );
+  if (requiredViewerKeys === undefined) {
+    const scopedVerifiedViewers = Object.fromEntries(
+      Object.entries(verifiedViewers).filter(([key]) => belongsToEnvironment(key)),
+    );
+    return pullRequestViewersMatch(scopedListedViewers, scopedVerifiedViewers);
+  }
+  return [...requiredViewerKeys]
+    .filter(belongsToEnvironment)
+    .every(
+      (key) =>
+        scopedListedViewers[key] !== undefined && scopedListedViewers[key] === verifiedViewers[key],
+    );
+};
+
+export const pullRequestListViewersMatchVerification = (
+  listedViewers: PullRequestViewers,
+  verifiedViewers: PullRequestViewers | null,
+  verifiedEnvironmentIds: ReadonlySet<string>,
+): boolean => {
+  if (verifiedEnvironmentIds.size === 0) return true;
+
+  const prefixes = [...verifiedEnvironmentIds].map((environmentId) => `${environmentId} `);
+  const scopedViewers = Object.entries(listedViewers).filter(([key]) =>
+    prefixes.some((prefix) => key.startsWith(prefix)),
+  );
+  if (scopedViewers.length === 0) return true;
+  if (verifiedViewers === null) return false;
+  // The gated live list runs after the fresh viewer read. A host omitted by that read has had its
+  // server cache cleared, so the list's own viewer is a fresh retry; only a known disagreement is
+  // an account switch. Snapshot and retained-row checks remain strict about missing identities.
+  return scopedViewers.every(
+    ([key, viewer]) => verifiedViewers[key] === undefined || verifiedViewers[key] === viewer,
+  );
+};
+
+export const retainPullRequestEntriesForVerifiedViewers = (
+  entries: ReadonlyArray<EnvironmentPullRequestEntry>,
+  listedViewers: PullRequestViewers,
+  verifiedViewers: PullRequestViewers,
+  verifiedEnvironmentIds: ReadonlySet<string>,
+): ReadonlyArray<EnvironmentPullRequestEntry> => {
+  const retained = entries.filter((entry) => {
+    if (!verifiedEnvironmentIds.has(entry.environmentId)) return true;
+    const key = pullRequestViewerKey(entry);
+    return listedViewers[key] !== undefined && listedViewers[key] === verifiedViewers[key];
+  });
+  return retained.length === entries.length ? entries : retained;
+};
+
+export type PullRequestRetainedVerification =
+  | { readonly status: "verifying" }
+  | { readonly status: "verified" }
+  | {
+      readonly status: "failed" | "accountChanged";
+      readonly entries: ReadonlyArray<EnvironmentPullRequestEntry>;
+      readonly ordered: ReadonlyArray<EnvironmentPullRequestEntry>;
+      readonly partitions?: PullRequestPartitionsSnapshot | undefined;
+      readonly changed: boolean;
+      readonly empty: boolean;
+    };
+
+/**
+ * Reduces a settled viewer check to the only retained rows the route may keep. The route owns
+ * pagination and React state; this controller owns the security transition so partial failures,
+ * account changes, and partitioned rows cannot drift into separate code paths.
+ */
+export function resolvePullRequestRetainedVerification({
+  verificationPending,
+  verificationFailed,
+  viewerMismatch,
+  entries,
+  ordered,
+  partitions,
+  listedViewers,
+  verifiedViewers,
+  queriedEnvironmentIds,
+}: {
+  readonly verificationPending: boolean;
+  readonly verificationFailed: boolean;
+  readonly viewerMismatch: boolean;
+  readonly entries: ReadonlyArray<EnvironmentPullRequestEntry>;
+  readonly ordered: ReadonlyArray<EnvironmentPullRequestEntry>;
+  readonly partitions?: PullRequestPartitionsSnapshot | undefined;
+  readonly listedViewers: PullRequestViewers;
+  readonly verifiedViewers: PullRequestViewers | null;
+  readonly queriedEnvironmentIds: ReadonlySet<string>;
+}): PullRequestRetainedVerification {
+  if (verificationPending) return { status: "verifying" };
+  if (!verificationFailed && !viewerMismatch) return { status: "verified" };
+
+  const viewers = verifiedViewers ?? {};
+  const retain = (rows: ReadonlyArray<EnvironmentPullRequestEntry>) =>
+    retainPullRequestEntriesForVerifiedViewers(rows, listedViewers, viewers, queriedEnvironmentIds);
+  const retainedEntries = retain(entries);
+  const retainedOrdered = retain(ordered);
+  const retainedAuthored = partitions === undefined ? undefined : retain(partitions.authored);
+  const retainedReviewing = partitions === undefined ? undefined : retain(partitions.reviewing);
+  const retainedPartitions =
+    partitions === undefined
+      ? undefined
+      : { authored: retainedAuthored ?? [], reviewing: retainedReviewing ?? [] };
+  const changed =
+    retainedEntries !== entries ||
+    retainedOrdered !== ordered ||
+    (partitions !== undefined &&
+      (retainedAuthored !== partitions.authored || retainedReviewing !== partitions.reviewing));
+
+  return {
+    status: viewerMismatch ? "accountChanged" : "failed",
+    entries: retainedEntries,
+    ordered: retainedOrdered,
+    ...(retainedPartitions === undefined ? {} : { partitions: retainedPartitions }),
+    changed,
+    empty:
+      retainedEntries.length === 0 &&
+      retainedOrdered.length === 0 &&
+      (retainedPartitions === undefined ||
+        (retainedPartitions.authored.length === 0 && retainedPartitions.reviewing.length === 0)),
+  };
 }
 
 /**
@@ -792,6 +969,7 @@ const EnvironmentPullRequestErrorSchema = Schema.Struct({
 
 const decodeSnapshot = Schema.decodeUnknownOption(
   Schema.Struct({
+    writtenAt: Schema.Number,
     scope: Schema.String,
     data: Schema.Struct({
       ...PullRequestListResult.fields,
@@ -821,12 +999,58 @@ const decodeSnapshot = Schema.decodeUnknownOption(
 export function readPullRequestListSnapshot(
   storage: SnapshotStorage | undefined,
   environmentSetKey: string,
+  context:
+    | {
+        readonly viewers: PullRequestViewers | null;
+        readonly now?: number;
+        readonly includeEntry?: (entry: EnvironmentPullRequestEntry) => boolean;
+      }
+    | undefined = undefined,
 ): PullRequestListSnapshot | null {
   try {
+    // Older route code cannot prove snapshot ownership. It gets a cold start until the stacked
+    // route integration supplies the fresh viewer result.
+    if (context === undefined || context.viewers === null) return null;
+    const viewers = context.viewers;
     const raw = storage?.getItem(snapshotStorageKey(environmentSetKey));
     if (!raw) return null;
     const decoded = decodeSnapshot(JSON.parse(raw));
-    return decoded._tag === "Some" ? decoded.value : null;
+    if (decoded._tag === "None") return null;
+    const now = context.now ?? Date.now();
+    if (decoded.value.writtenAt > now || now - decoded.value.writtenAt > SNAPSHOT_MAX_AGE_MS) {
+      return null;
+    }
+    if (context.includeEntry === undefined) {
+      if (!pullRequestViewersMatch(decoded.value.data.viewers, viewers)) return null;
+    } else {
+      const includedEntries = decoded.value.data.entries.filter(context.includeEntry);
+      const includedAuthored = decoded.value.partitions?.authored.filter(context.includeEntry);
+      const includedReviewing = decoded.value.partitions?.reviewing.filter(context.includeEntry);
+      const requiredViewerKeys = new Set(
+        [...includedEntries, ...(includedAuthored ?? []), ...(includedReviewing ?? [])].map(
+          pullRequestViewerKey,
+        ),
+      );
+      if (
+        [...requiredViewerKeys].some(
+          (key) =>
+            decoded.value.data.viewers[key] === undefined ||
+            decoded.value.data.viewers[key] !== viewers[key],
+        )
+      ) {
+        return null;
+      }
+      return {
+        ...decoded.value,
+        data: { ...decoded.value.data, entries: includedEntries },
+        ...(decoded.value.partitions === undefined
+          ? {}
+          : {
+              partitions: { authored: includedAuthored ?? [], reviewing: includedReviewing ?? [] },
+            }),
+      };
+    }
+    return decoded.value;
   } catch {
     return null;
   }
@@ -835,12 +1059,14 @@ export function readPullRequestListSnapshot(
 export function writePullRequestListSnapshot(
   storage: SnapshotStorage | undefined,
   environmentSetKey: string,
-  snapshot: PullRequestListSnapshot,
+  snapshot: Omit<PullRequestListSnapshot, "writtenAt">,
+  now = Date.now(),
 ): void {
   try {
     storage?.setItem(
       snapshotStorageKey(environmentSetKey),
       JSON.stringify({
+        writtenAt: now,
         scope: snapshot.scope,
         data: {
           ...snapshot.data,

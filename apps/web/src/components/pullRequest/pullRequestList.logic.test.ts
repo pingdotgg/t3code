@@ -7,6 +7,10 @@ import {
   mergePullRequestLists,
   pullRequestEntryKey,
   pullRequestEnvironmentSetKey,
+  pullRequestListViewersMatchVerification,
+  retainPullRequestEntriesForVerifiedViewers,
+  pullRequestViewersMatch,
+  pullRequestViewersMatchForEnvironments,
   groupPullRequestsByInvolvement,
   matchesPullRequestFilters,
   matchesPullRequestQuery,
@@ -19,6 +23,7 @@ import {
   narrowPullRequestsToFilters,
   partitionPullRequestsWithPriority,
   readPullRequestListSnapshot,
+  resolvePullRequestRetainedVerification,
   writePullRequestListSnapshot,
   rankPullRequestMatches,
   rankPullRequestsByMergeReadiness,
@@ -27,6 +32,7 @@ import {
   retainVisiblePullRequestStatsBatches,
   withDiffStat,
   resolveProjectScope,
+  resolvePullRequestViewerGate,
   resolveQueryEnvironmentIds,
   resolveSelectedEnvironmentId,
   type EnvironmentPullRequestEntry,
@@ -915,6 +921,7 @@ describe("partitioning with the hosts' own priority reads", () => {
 });
 
 describe("the list snapshot across a reload", () => {
+  const NOW = Date.parse("2026-08-13T12:00:00Z");
   const makeStorage = () => {
     const held = new Map<string, string>();
     return {
@@ -930,27 +937,302 @@ describe("the list snapshot across a reload", () => {
     truncated: true,
     nextCursors: { "pingdotgg/t3code": "cursor-1" },
   } as never;
+  const readSnapshot = (
+    storage: ReturnType<typeof makeStorage> | undefined,
+    environmentKey: string,
+    viewers: Record<string, string> = { "github.com": "Bilal" },
+    now = NOW,
+  ) => readPullRequestListSnapshot(storage, environmentKey, { viewers, now });
+
+  it("compares viewer identities independently of host insertion order", () => {
+    expect(
+      pullRequestViewersMatch(
+        { "env-1 github.com": "Bilal", "env-2 gitlab.com": "Theo" },
+        { "env-2 gitlab.com": "Theo", "env-1 github.com": "Bilal" },
+      ),
+    ).toBe(true);
+    expect(
+      pullRequestViewersMatch({ "env-1 github.com": "Bilal" }, { "env-1 github.com": "Octocat" }),
+    ).toBe(false);
+  });
+
+  it("compares only the viewer-capable environments in a mixed-server list", () => {
+    const capable = new Set(["env-1"]);
+    expect(
+      pullRequestViewersMatchForEnvironments(
+        { "env-1 github.com": "Bilal", "env-2 github.com": "Legacy" },
+        { "env-1 github.com": "Bilal" },
+        capable,
+      ),
+    ).toBe(true);
+    expect(
+      pullRequestViewersMatchForEnvironments(
+        { "env-1 github.com": "Bilal" },
+        { "env-1 github.com": "Bilal", "env-2 github.com": "Octocat" },
+        capable,
+      ),
+    ).toBe(true);
+    expect(
+      pullRequestViewersMatchForEnvironments(
+        { "env-1 github.com": "Bilal", "env-2 github.com": "Legacy" },
+        { "env-1 github.com": "Octocat" },
+        capable,
+      ),
+    ).toBe(false);
+    expect(
+      pullRequestViewersMatchForEnvironments({ "env-1 github.com": "Bilal" }, {}, capable),
+    ).toBe(false);
+  });
+
+  it("compares only retained hosts relevant to a narrower scope", () => {
+    const capable = new Set(["env-1"]);
+    expect(
+      pullRequestViewersMatchForEnvironments(
+        { "env-1 github.com": "Bilal", "env-1 gitlab.com": "Theo" },
+        { "env-1 github.com": "Bilal" },
+        capable,
+        new Set(["env-1 github.com"]),
+      ),
+    ).toBe(true);
+    expect(
+      pullRequestViewersMatchForEnvironments(
+        { "env-1 github.com": "Bilal", "env-1 gitlab.com": "Theo" },
+        { "env-1 github.com": "Octocat" },
+        capable,
+        new Set(["env-1 github.com"]),
+      ),
+    ).toBe(false);
+    expect(
+      pullRequestViewersMatchForEnvironments(
+        { "env-1 github.com": "Bilal", "env-1 gitlab.com": "Theo" },
+        { "env-1 github.com": "Bilal" },
+        capable,
+        new Set(["env-1 gitlab.com"]),
+      ),
+    ).toBe(false);
+  });
+
+  it("accepts live rows when the current scope queries only legacy servers", () => {
+    expect(
+      pullRequestListViewersMatchVerification({ "env-2 github.com": "Legacy" }, null, new Set()),
+    ).toBe(true);
+  });
+
+  it("accepts legacy rows when a separate capable server fails viewer verification", () => {
+    expect(
+      pullRequestListViewersMatchVerification(
+        { "env-2 github.com": "Legacy" },
+        null,
+        new Set(["env-1"]),
+      ),
+    ).toBe(true);
+    expect(
+      pullRequestListViewersMatchVerification(
+        { "env-1 github.com": "Bilal" },
+        null,
+        new Set(["env-1"]),
+      ),
+    ).toBe(false);
+  });
+
+  it("accepts a verified continuation page from only the hosts with cursors", () => {
+    const capable = new Set(["env-1", "env-2"]);
+    const verified = {
+      "env-1 github.com": "Bilal",
+      "env-2 github.com": "Octocat",
+    };
+
+    expect(
+      pullRequestListViewersMatchVerification({ "env-1 github.com": "Bilal" }, verified, capable),
+    ).toBe(true);
+    expect(
+      pullRequestListViewersMatchVerification({ "env-1 github.com": "Octocat" }, verified, capable),
+    ).toBe(false);
+  });
+
+  it("accepts live rows when fresh verification could not read one host", () => {
+    expect(
+      pullRequestListViewersMatchVerification(
+        { "env-1 github.com": "Bilal", "env-1 gitlab.com": "Theo" },
+        { "env-1 github.com": "Bilal" },
+        new Set(["env-1"]),
+      ),
+    ).toBe(true);
+    expect(
+      pullRequestListViewersMatchVerification(
+        { "env-1 github.com": "Octocat", "env-1 gitlab.com": "Theo" },
+        { "env-1 github.com": "Bilal" },
+        new Set(["env-1"]),
+      ),
+    ).toBe(false);
+  });
+
+  it("retains only rows whose capable hosts still have the same verified viewer", () => {
+    const github = entry({ environmentId: ENV_1, host: "github.com", number: 1 });
+    const gitlab = entry({ environmentId: ENV_1, host: "gitlab.com", number: 2 });
+    const legacy = entry({ environmentId: ENV_2, host: "github.com", number: 3 });
+
+    expect(
+      retainPullRequestEntriesForVerifiedViewers(
+        [github, gitlab, legacy],
+        {
+          "env-1 github.com": "Bilal",
+          "env-1 gitlab.com": "Theo",
+          "env-2 github.com": "Legacy",
+        },
+        { "env-1 github.com": "Bilal" },
+        new Set(["env-1"]),
+      ).map((item) => item.number),
+    ).toEqual([1, 3]);
+    expect(
+      retainPullRequestEntriesForVerifiedViewers(
+        [github, entry({ environmentId: ENV_2, host: "github.com", number: 4 })],
+        { "env-1 github.com": "Bilal", "env-2 github.com": "Octocat" },
+        { "env-1 github.com": "Bilal" },
+        new Set(["env-1", "env-2"]),
+      ).map((item) => item.number),
+    ).toEqual([1]);
+    expect(
+      retainPullRequestEntriesForVerifiedViewers(
+        [github, legacy],
+        { "env-1 github.com": "Bilal", "env-2 github.com": "Legacy" },
+        {},
+        new Set(["env-1"]),
+      ).map((item) => item.number),
+    ).toEqual([3]);
+
+    const alreadyVerified = [github, legacy];
+    expect(
+      retainPullRequestEntriesForVerifiedViewers(
+        alreadyVerified,
+        { "env-1 github.com": "Bilal", "env-2 github.com": "Legacy" },
+        { "env-1 github.com": "Bilal" },
+        new Set(["env-1"]),
+      ),
+    ).toBe(alreadyVerified);
+  });
+
+  it("removes the old account before accepting the replacement account's rows", () => {
+    const previous = entry({ number: 1 });
+    const queriedEnvironments = new Set(["env-1"]);
+
+    const verifying = resolvePullRequestRetainedVerification({
+      verificationPending: true,
+      verificationFailed: false,
+      viewerMismatch: false,
+      entries: [previous],
+      ordered: [previous],
+      listedViewers: { "env-1 github.com": "Bilal" },
+      verifiedViewers: null,
+      queriedEnvironmentIds: queriedEnvironments,
+    });
+    expect(verifying.status).toBe("verifying");
+
+    const changed = resolvePullRequestRetainedVerification({
+      verificationPending: false,
+      verificationFailed: false,
+      viewerMismatch: true,
+      entries: [previous],
+      ordered: [previous],
+      listedViewers: { "env-1 github.com": "Bilal" },
+      verifiedViewers: { "env-1 github.com": "Octocat" },
+      queriedEnvironmentIds: queriedEnvironments,
+    });
+    expect(changed).toMatchObject({
+      status: "accountChanged",
+      entries: [],
+      ordered: [],
+      changed: true,
+      empty: true,
+    });
+
+    const replacement = entry({ number: 2 });
+    expect(
+      pullRequestListViewersMatchVerification(
+        { "env-1 github.com": "Octocat" },
+        { "env-1 github.com": "Octocat" },
+        queriedEnvironments,
+      ),
+    ).toBe(true);
+    expect(replacement.number).toBe(2);
+  });
 
   it("hydrates the retained rows so ghosts never replace them", () => {
     const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "env-1:open:all::", data });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
+    writePullRequestListSnapshot(storage, "env-1", { scope: "env-1:open:all::", data }, NOW);
+    const snapshot = readSnapshot(storage, "env-1");
     expect(snapshot?.scope).toBe("env-1:open:all::");
     expect(snapshot?.data.entries.map((item) => item.number)).toEqual([1]);
   });
 
+  it("hydrates across scopes only when every relevant row keeps its viewer", () => {
+    const storage = makeStorage();
+    const github = entry({ environmentId: ENV_1, host: "github.com", number: 1 });
+    const gitlab = entry({ environmentId: ENV_1, host: "gitlab.com", number: 2 });
+    writePullRequestListSnapshot(
+      storage,
+      "env-1",
+      {
+        scope: "broad",
+        data: {
+          entries: [github, gitlab],
+          viewers: { "env-1 github.com": "Bilal", "env-1 gitlab.com": "Theo" },
+          providers: [],
+          errors: [],
+          truncated: false,
+          nextCursors: {},
+          truncatedEnvironments: [],
+        },
+      },
+      NOW,
+    );
+    const readGithub = (viewer: string | undefined) =>
+      readPullRequestListSnapshot(storage, "env-1", {
+        viewers: viewer === undefined ? {} : { "env-1 github.com": viewer },
+        now: NOW,
+        includeEntry: (item) => item.host === "github.com",
+      });
+
+    expect(readGithub("Bilal")?.data.entries.map((item) => item.host)).toEqual(["github.com"]);
+    expect(readGithub("Octocat")).toBeNull();
+    expect(readGithub(undefined)).toBeNull();
+  });
+
   it("carries neither stale failures nor stale cursors", () => {
     const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
+    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data }, NOW);
+    const snapshot = readSnapshot(storage, "env-1");
     expect(snapshot?.data.errors).toEqual([]);
     expect(snapshot?.data.nextCursors).toEqual({});
   });
 
   it("answers nothing for another environment", () => {
     const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data });
-    expect(readPullRequestListSnapshot(storage, "env-2")).toBeNull();
+    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data }, NOW);
+    expect(readSnapshot(storage, "env-2")).toBeNull();
+  });
+
+  it("rejects snapshots from another host account", () => {
+    const storage = makeStorage();
+    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data }, NOW);
+
+    expect(readSnapshot(storage, "env-1", { "github.com": "Octocat" })).toBeNull();
+  });
+
+  it("rejects an existing snapshot when viewer verification failed", () => {
+    const storage = makeStorage();
+    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data }, NOW);
+
+    expect(readPullRequestListSnapshot(storage, "env-1", { viewers: null, now: NOW })).toBeNull();
+  });
+
+  it("rejects snapshots after their short reload window", () => {
+    const storage = makeStorage();
+    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data }, NOW);
+
+    expect(
+      readSnapshot(storage, "env-1", { "github.com": "Bilal" }, NOW + 5 * 60 * 1_000 + 1),
+    ).toBeNull();
   });
 
   it("rejects a snapshot whose rows do not decode as entries", () => {
@@ -959,19 +1241,19 @@ describe("the list snapshot across a reload", () => {
       "t3.pullRequests.list:env-1",
       JSON.stringify({ scope: "s", data: { entries: [null] } }),
     );
-    expect(readPullRequestListSnapshot(storage, "env-1")).toBeNull();
+    expect(readSnapshot(storage, "env-1")).toBeNull();
     storage.setItem(
       "t3.pullRequests.list:env-1",
       JSON.stringify({ scope: "s", data: { entries: [{ host: "github.com" }] } }),
     );
-    expect(readPullRequestListSnapshot(storage, "env-1")).toBeNull();
+    expect(readSnapshot(storage, "env-1")).toBeNull();
   });
 
   it("shrugs off corrupt storage and no storage at all", () => {
     const storage = makeStorage();
     storage.setItem("t3.pullRequests.list:env-1", "{not json");
-    expect(readPullRequestListSnapshot(storage, "env-1")).toBeNull();
-    expect(readPullRequestListSnapshot(undefined, "env-1")).toBeNull();
+    expect(readSnapshot(storage, "env-1")).toBeNull();
+    expect(readSnapshot(undefined, "env-1")).toBeNull();
   });
 
   it("caps the accumulated rows but keeps the whole host set", () => {
@@ -1007,8 +1289,8 @@ describe("the list snapshot across a reload", () => {
       truncated: true,
       nextCursors: {},
     } as never;
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data: accumulated });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
+    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data: accumulated }, NOW);
+    const snapshot = readSnapshot(storage, "env-1", viewers);
     expect(snapshot?.data.entries).toHaveLength(99);
     expect(snapshot?.data.viewers).toEqual(viewers);
     expect(snapshot?.data.providers).toEqual(providers);
@@ -1085,6 +1367,32 @@ describe("remembered pull request list controls", () => {
 
 const ENV_1 = "env-1" as EnvironmentId;
 const ENV_2 = "env-2" as EnvironmentId;
+
+describe("viewer verification gating", () => {
+  it("withholds a capable server while account verification races an in-flight list", () => {
+    const gate = resolvePullRequestViewerGate([ENV_1], new Set([ENV_1]), [ENV_1], true);
+
+    expect(gate.listEnvironmentIds).toEqual([]);
+    expect(gate.canHydrateSnapshot).toBe(false);
+    expect(gate.shouldClearRetainedRows).toBe(false);
+  });
+
+  it("keeps live lists working on old servers without trusting their snapshots", () => {
+    const gate = resolvePullRequestViewerGate([ENV_1], new Set(), [], false);
+
+    expect(gate.listEnvironmentIds).toEqual([ENV_1]);
+    expect(gate.canHydrateSnapshot).toBe(false);
+    expect(gate.shouldClearRetainedRows).toBe(false);
+  });
+
+  it("clears retained rows once viewer verification has actually failed", () => {
+    const gate = resolvePullRequestViewerGate([ENV_1], new Set([ENV_1]), [], false);
+
+    expect(gate.listEnvironmentIds).toEqual([]);
+    expect(gate.canHydrateSnapshot).toBe(false);
+    expect(gate.shouldClearRetainedRows).toBe(true);
+  });
+});
 
 describe("merging the environments' own listings", () => {
   const answer = (
