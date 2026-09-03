@@ -397,6 +397,14 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
       Effect.gen(function* () {
         const stamp = yield* makeEventStamp();
         const turnId = ctx.activeTurnId;
+        const activeTurn = turnId ? ctx.turns.find((turn) => turn.id === turnId) : undefined;
+
+        const appendToActiveTurn = (item: unknown) => {
+          if (activeTurn) {
+            activeTurn.items.push(item);
+          }
+        };
+
         switch (event._tag) {
           case "ModeChanged":
             yield* offerRuntimeEvent({
@@ -409,6 +417,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             return;
           case "AssistantItemStarted":
             ctx.activeItemId = event.itemId;
+            appendToActiveTurn(event);
             yield* offerRuntimeEvent(
               makeAcpAssistantItemEvent({
                 stamp,
@@ -422,6 +431,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             return;
           case "AssistantItemCompleted":
             ctx.activeItemId = undefined;
+            appendToActiveTurn(event);
             yield* offerRuntimeEvent(
               makeAcpAssistantItemEvent({
                 stamp,
@@ -434,6 +444,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             );
             return;
           case "ContentDelta":
+            appendToActiveTurn(event);
             yield* offerRuntimeEvent(
               makeAcpContentDeltaEvent({
                 stamp,
@@ -447,6 +458,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             );
             return;
           case "ToolCallUpdated":
+            appendToActiveTurn(event);
             yield* offerRuntimeEvent(
               makeAcpToolCallEvent({
                 stamp,
@@ -459,6 +471,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             );
             return;
           case "PlanUpdated":
+            appendToActiveTurn(event);
             yield* offerRuntimeEvent(
               makeAcpPlanUpdatedEvent({
                 stamp,
@@ -962,6 +975,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
           ctx.activeTurnId = turnId;
           ctx.session = { ...ctx.session, status: "running", activeTurnId: turnId };
           ctx.turns.push({ id: turnId, items: [] });
+          ctx.turns.at(-1)?.items.push({ role: "user", content: prompt });
 
           yield* offerRuntimeEvent({
             type: "turn.started",
@@ -1030,6 +1044,23 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                 },
               });
             }
+            const turn = ctx.turns.find((t) => t.id === turnId);
+            if (turn) {
+              if (Result.isSuccess(promptResult)) {
+                Option.match(promptResult.success, {
+                  onNone: () => {
+                    turn.items.push({ state: "timeout" });
+                  },
+                  onSome: (response) => {
+                    turn.items.push(response);
+                  },
+                });
+              } else {
+                const error = promptResult.failure;
+                turn.items.push({ state: "failed", errorMessage: error.message });
+              }
+            }
+
             if (!ctx.stopped && ctx.activeTurnId === turnId) {
               ctx.activeTurnId = undefined;
               ctx.session = { ...ctx.session, status: "ready", activeTurnId: undefined };
@@ -1078,10 +1109,10 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
     ) =>
       Effect.gen(function* () {
         const pending = pendingApprovalsByRequestId.get(_requestId);
-        if (!pending) {
+        if (!pending || pending.threadId !== _threadId) {
           return;
         }
-        const ctx = sessions.get(pending.threadId);
+        const ctx = sessions.get(_threadId);
         if (ctx?.stopped) {
           pendingApprovalsByRequestId.delete(_requestId);
           return;
@@ -1096,10 +1127,10 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
     ) =>
       Effect.gen(function* () {
         const pending = pendingUserInputsByRequestId.get(_requestId);
-        if (!pending) {
+        if (!pending || pending.threadId !== _threadId) {
           return;
         }
-        const ctx = sessions.get(pending.threadId);
+        const ctx = sessions.get(_threadId);
         if (ctx?.stopped) {
           pendingUserInputsByRequestId.delete(_requestId);
           return;
