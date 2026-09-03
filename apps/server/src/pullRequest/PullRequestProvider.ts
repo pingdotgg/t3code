@@ -26,6 +26,7 @@ import type {
   PullRequestReviewVerdict,
   PullRequestReviewerCandidateList,
   PullRequestReviewerKind,
+  PullRequestLabelCandidateList,
   PullRequestState,
   PullRequestUpdateMethod,
   PullRequestViewerPermissions,
@@ -177,6 +178,10 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly behindBy?: number;
   /** Absent from a host that does not report whether it is armed to merge this on its own. */
   readonly autoMergeEnabled?: boolean;
+  /** The strategy stored with an armed auto-merge, where the host reports it. */
+  readonly autoMergeMethod?: PullRequestMergeMethod;
+  /** Workflow runs on this head commit that still need a maintainer's approval. */
+  readonly workflowApprovalsRequired?: number;
 }
 
 /** The conversation-shaped half of a detail, loaded after the core can already render. */
@@ -462,6 +467,23 @@ export interface PullRequestProviderApi {
         readonly kind: PullRequestReviewerKind;
       }>;
       readonly requested: boolean;
+    },
+  ) => Effect.Effect<void, PullRequestProviderError>;
+
+  /**
+   * The repository's labels, with the ones already on the change request marked. Present with
+   * `setLabels` only where `capabilities.labels` is true; the service refuses both without it.
+   */
+  readonly listLabelCandidates?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<PullRequestLabelCandidateList, PullRequestProviderError>;
+
+  /** Puts labels on the change request, or takes them off. One call for both directions. */
+  readonly setLabels?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly labels: ReadonlyArray<string>;
+      readonly applied: boolean;
     },
   ) => Effect.Effect<void, PullRequestProviderError>;
 

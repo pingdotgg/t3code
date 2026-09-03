@@ -23,6 +23,7 @@ import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
+import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import {
   WorkspaceBreadcrumb,
@@ -585,8 +586,9 @@ function UsageDeviceStrip({
 }
 
 /**
- * Static stand-in with the loaded page's shape. No shimmer; blocks fill in
- * exactly once when the last device answers.
+ * Stand-in with the loaded page's shape, using the shared `Skeleton` bars so it
+ * breathes with the same `animate-skeleton` pulse as every other loading state.
+ * Blocks fill in exactly once when the last device answers.
  */
 function UsageSkeleton() {
   return (
@@ -594,29 +596,29 @@ function UsageSkeleton() {
       <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-1">
-            <div className="h-10 w-36 rounded-sm bg-muted" />
-            <div className="h-4 w-32 rounded-sm bg-muted" />
+            <Skeleton className="h-10 w-36" />
+            <Skeleton className="h-4 w-32" />
           </div>
           {PROVIDER_ORDER.map((provider) => (
             <div key={provider} className="flex flex-col gap-1">
               <div className="flex min-h-5 items-center justify-between gap-4">
                 <span className="flex items-center gap-2">
-                  <span className="size-2 shrink-0 rounded-full bg-muted" />
-                  <span className="size-4 shrink-0 rounded-full bg-muted" />
-                  <div className="h-3.5 w-20 rounded-sm bg-muted" />
+                  <Skeleton className="size-2 shrink-0 rounded-full" />
+                  <Skeleton className="size-4 shrink-0 rounded-full" />
+                  <Skeleton className="h-3.5 w-20" />
                 </span>
-                <div className="h-3.5 w-14 rounded-sm bg-muted" />
+                <Skeleton className="h-3.5 w-14" />
               </div>
-              <div className="h-4 w-36 rounded-sm bg-muted" />
+              <Skeleton className="h-4 w-36" />
             </div>
           ))}
         </div>
 
         <div className="flex flex-col gap-3">
-          <div className="h-5 w-24 rounded-sm bg-muted" />
+          <Skeleton className="h-5 w-24" />
           <div className="flex flex-col gap-1">
-            <div className="ml-16 h-56 rounded-sm bg-muted/35" />
-            <div className="ml-16 h-4 rounded-sm bg-muted/35" />
+            <Skeleton className="ml-16 h-56 bg-muted-foreground/10" />
+            <Skeleton className="ml-16 h-4 bg-muted-foreground/10" />
           </div>
         </div>
       </section>
@@ -628,7 +630,7 @@ function UsageSkeleton() {
             (label) => (
               <div key={label} className="flex flex-col gap-0.5">
                 <span className="text-xs text-muted-foreground">{label}</span>
-                <div className="h-6 w-16 rounded-sm bg-muted" />
+                <Skeleton className="h-6 w-16" />
               </div>
             ),
           )}
@@ -638,9 +640,9 @@ function UsageSkeleton() {
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
-          <div className="h-7 w-28 rounded-lg bg-input/40" />
+          <Skeleton className="h-7 w-28 rounded-lg" />
         </div>
-        <div className="h-44 rounded-sm bg-muted/35" />
+        <Skeleton className="h-44 bg-muted-foreground/10" />
       </section>
     </>
   );

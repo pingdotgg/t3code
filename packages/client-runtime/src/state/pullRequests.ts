@@ -204,6 +204,18 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),
+    /** Read when the label menu opens, and kept for a minute, like the reviewer candidates. */
+    labelCandidates: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:label-candidates",
+      tag: WS_METHODS.pullRequestsLabelCandidates,
+      staleTimeMs: 60_000,
+    }),
+    setLabels: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:set-labels",
+      tag: WS_METHODS.pullRequestsSetLabels,
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+    }),
     setThreadResolution: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:set-thread-resolution",
       tag: WS_METHODS.pullRequestsSetThreadResolution,

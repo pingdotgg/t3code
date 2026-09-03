@@ -49,11 +49,24 @@ export function HostedBrowserWebview(props: {
   readonly initialUrl: string | null;
   readonly viewport: PreviewViewportSetting;
   readonly pictureInPicture: boolean;
+  /**
+   * Fixed for the tab's lifetime: Electron only honours `partition` before the
+   * guest attaches, so a live change here would not move the tab anyway.
+   */
+  readonly profileId: string | undefined;
   readonly zoomFactor: number;
 }) {
-  const { threadRef, tabId, runtimeTabId, initialUrl, viewport, pictureInPicture, zoomFactor } =
-    props;
-  const config = usePreviewWebviewConfig(threadRef.environmentId);
+  const {
+    threadRef,
+    tabId,
+    runtimeTabId,
+    initialUrl,
+    viewport,
+    pictureInPicture,
+    zoomFactor,
+    profileId,
+  } = props;
+  const config = usePreviewWebviewConfig(threadRef.environmentId, profileId);
   const [initialSrc] = useState(() => initialUrl ?? "about:blank");
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -302,7 +315,7 @@ export function HostedBrowserWebview(props: {
           }
           aria-hidden={active ? undefined : true}
           className={cn(
-            "absolute flex overflow-hidden bg-background",
+            "absolute flex overflow-hidden bg-white",
             active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
           )}
           style={{

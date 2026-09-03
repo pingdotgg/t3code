@@ -145,11 +145,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 @theme inline {
   --color-zinc-25: oklch(99.2% 0 0);
-  --animate-skeleton: skeleton 2s infinite linear;
+  --animate-skeleton: skeleton 2.4s infinite;
   /* Duty-cycled indicator animations: long holds with stepped ramps, so the
      compositor updates discrete frames instead of every vsync. */
   --animate-status-pulse: status-pulse 2s infinite;
-  --animate-ghost-pulse: ghost-pulse 2.4s infinite;
   --animate-status-ping: status-ping 2s infinite;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
@@ -207,20 +206,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   @keyframes skeleton {
-    /* Transform-only so the highlight sweep stays on the compositor, then a
-       long hold with the band parked off-screen instead of a constant shimmer. */
-    0% {
-      transform: translateX(-100%);
-    }
-    60%,
-    100% {
-      transform: translateX(100%);
-    }
-  }
-  @keyframes ghost-pulse {
-    /* The loading ghosts' breath. Stepped like the status indicators, so however many bars a
-       ghost holds, the compositor draws a handful of discrete frames per cycle rather than one
-       per vsync — which on a 120Hz display is the difference between ~14 and ~288 updates. */
+    /* The single loading-bar breath used by every skeleton: one opacity pulse
+       per container, stepped so however many bars sit under it, the compositor
+       draws a handful of discrete frames per cycle rather than one per vsync —
+       which on a 120Hz display is the difference between ~14 and ~288 updates. */
     0%,
     42% {
       opacity: 1;
