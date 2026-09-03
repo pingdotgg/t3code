@@ -167,7 +167,7 @@ describe("buildUnavailableModelOptionDescriptors", () => {
     ).toEqual([
       {
         id: "variant",
-        label: "Variant",
+        label: "Reasoning",
         type: "select",
         options: [{ id: "max", label: "max" }],
         currentValue: "max",
