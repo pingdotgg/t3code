@@ -248,7 +248,11 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
       });
 
+      // Kick the TTL-gated manifest refresh alongside the health check, as
+      // Codex and Claude do. Without it an environment that only runs
+      // Antigravity would keep classifying against a stale disk cache.
       const probe = Effect.gen(function* () {
+        yield* modelManifest.refreshInBackground;
         const processScope = yield* Scope.make();
         yield* Effect.addFinalizer((exit) => Scope.close(processScope, exit));
         return yield* authFlow
