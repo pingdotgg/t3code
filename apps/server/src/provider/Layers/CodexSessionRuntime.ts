@@ -38,6 +38,11 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
+import {
+  hasCodexSkillMention,
+  resolveCodexSkillMentions,
+  type CodexSkillInput,
+} from "../Drivers/CodexSkillDispatch.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
@@ -127,10 +132,23 @@ const McpElicitationForm = Schema.Struct({
 const isMcpElicitationMetadata = Schema.is(McpElicitationMetadata);
 const isMcpElicitationForm = Schema.is(McpElicitationForm);
 
+// The vendored schema predates typed skill invocations: Codex 0.152 accepts
+// `{ type: "skill", name, path }` beside `mention`, and only that item makes
+// the app server load the SKILL.md body (see CodexSkillDispatch).
+const CodexSkillUserInput = Schema.Struct({
+  type: Schema.Literal("skill"),
+  name: Schema.String,
+  path: Schema.String,
+});
+const CodexTurnStartUserInput = Schema.Union([
+  EffectCodexSchema.V2TurnStartParams__UserInput,
+  CodexSkillUserInput,
+]);
 // TODO: Verify `packages/effect-codex-app-server/scripts/generate.ts` so the generated
-// `V2TurnStartParams` schema includes `collaborationMode` directly.
+// `V2TurnStartParams` schema includes `collaborationMode` and the skill input directly.
 const CodexTurnStartParamsWithCollaborationMode = EffectCodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
+    input: Schema.Array(CodexTurnStartUserInput),
     collaborationMode: Schema.optionalKey(EffectCodexSchema.V2TurnStartParams__CollaborationMode),
   }),
 );
@@ -593,6 +611,8 @@ export function buildTurnStartParams(input: {
   readonly threadId: string;
   readonly runtimeMode: RuntimeMode;
   readonly prompt?: string;
+  /** Skills the prompt names, sent as typed items so the app server loads them. */
+  readonly skills?: ReadonlyArray<CodexSkillInput>;
   readonly attachments?: ReadonlyArray<{
     readonly type: "image";
     readonly url: string;
@@ -607,12 +627,15 @@ export function buildTurnStartParams(input: {
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
 > {
-  const turnInput: Array<EffectCodexSchema.V2TurnStartParams__UserInput> = [];
+  const turnInput: Array<typeof CodexTurnStartUserInput.Type> = [];
   if (input.prompt) {
     turnInput.push({
       type: "text",
       text: input.prompt,
     });
+  }
+  for (const skill of input.skills ?? []) {
+    turnInput.push({ type: "skill", name: skill.name, path: skill.path });
   }
   for (const attachment of input.attachments ?? []) {
     turnInput.push(attachment);
@@ -2290,6 +2313,29 @@ export const makeCodexSessionRuntime = (
       yield* Queue.shutdown(events);
     });
 
+    // Only a prompt that names a skill pays for the catalog read, and the app
+    // server answers it from its own cache. A failed read sends the mention as
+    // text, which is what every turn did before typed skill input.
+    const resolveSkillsForPrompt = (
+      prompt: string | undefined,
+    ): Effect.Effect<ReadonlyArray<CodexSkillInput>> =>
+      prompt !== undefined && hasCodexSkillMention(prompt)
+        ? client.request("skills/list", { cwds: [options.cwd] }).pipe(
+            Effect.map((response) => {
+              const entry = response.data.find((candidate) => candidate.cwd === options.cwd);
+              return resolveCodexSkillMentions(
+                prompt,
+                entry ? entry.skills : response.data.flatMap((candidate) => candidate.skills),
+              );
+            }),
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not read Codex skills before the turn.", { cause }).pipe(
+                Effect.as([] as ReadonlyArray<CodexSkillInput>),
+              ),
+            ),
+          )
+        : Effect.succeed([]);
+
     return {
       start,
       getSession: Ref.get(sessionRef),
@@ -2308,10 +2354,12 @@ export const makeCodexSessionRuntime = (
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
+          const skills = yield* resolveSkillsForPrompt(input.input);
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
             ...(input.input ? { prompt: input.input } : {}),
+            ...(skills.length > 0 ? { skills } : {}),
             ...(input.attachments ? { attachments: input.attachments } : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),

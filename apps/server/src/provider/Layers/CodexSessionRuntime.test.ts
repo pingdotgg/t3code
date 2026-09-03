@@ -134,6 +134,22 @@ describe("buildTurnStartParams", () => {
     });
   });
 
+  it.effect("sends each named skill as a typed item beside the prompt", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "$ask-matt which flow fits?",
+        skills: [{ name: "ask-matt", path: "/home/theo/.agents/skills/ask-matt/SKILL.md" }],
+      });
+
+      NodeAssert.deepStrictEqual(params.input, [
+        { type: "text", text: "$ask-matt which flow fits?" },
+        { type: "skill", name: "ask-matt", path: "/home/theo/.agents/skills/ask-matt/SKILL.md" },
+      ]);
+    }),
+  );
+
   it("includes default collaboration mode and image attachments", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
