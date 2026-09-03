@@ -5,9 +5,12 @@
  * with no newline or other framing that could change the derived cookie key. */
 enum { KEY_MISSING = 2, KEY_LOCKED = 3, READ_FAILED = 4 };
 
+/* Chromium looks its key up by attributes alone: items written by older
+ * libgnome-keyring builds carry no schema name, and SECRET_SCHEMA_NONE would
+ * refuse them. DONT_MATCH_NAME keeps the attribute match and drops the name. */
 static const SecretSchema chromium_schema = {
     .name = "chrome_libsecret_os_crypt_password_v2",
-    .flags = SECRET_SCHEMA_NONE,
+    .flags = SECRET_SCHEMA_DONT_MATCH_NAME,
     .attributes = {{"application", SECRET_SCHEMA_ATTRIBUTE_STRING}, {NULL, 0}},
 };
 

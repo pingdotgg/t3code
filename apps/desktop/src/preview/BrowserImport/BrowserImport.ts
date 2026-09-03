@@ -206,13 +206,10 @@ export const make = Effect.gen(function* BrowserImportMake() {
       return yield* new BrowserImportFailedError({ sourceId: definition.id, reason: blocked });
     }
 
-    // macOS attributes the Keychain prompt and the resulting ACL grant to the
-    // executable that asks, so record which one that was — in a packaged build
-    // it is the signed app, in dev whatever binary hosts the main process.
-    // Only Chromium reads a key; a Firefox import touches no keychain, and
-    // logging that it did would put a false security-sensitive event in the
-    // audit trail.
-    if (definition.engine === "chromium") {
+    if (platform === "darwin" && definition.engine === "chromium") {
+      // macOS attributes the Keychain prompt and the resulting ACL grant to the
+      // executable that asks, so record which one that was — in a packaged build
+      // it is the signed app, in dev whatever binary hosts the main process.
       yield* Effect.logInfo("Reading browser cookie key from the keychain", {
         sourceId: definition.id,
         executablePath,

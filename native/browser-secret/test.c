@@ -11,7 +11,7 @@ GList *__wrap_secret_service_search_sync(SecretService *service, const SecretSch
     g_assert_null(service);
     g_assert_null(cancellable);
     g_assert_cmpstr(schema->name, ==, "chrome_libsecret_os_crypt_password_v2");
-    g_assert_cmpint(schema->flags, ==, SECRET_SCHEMA_NONE);
+    g_assert_cmpint(schema->flags, ==, SECRET_SCHEMA_DONT_MATCH_NAME);
     g_assert_cmpint(flags, ==, SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS);
     g_assert_cmpuint(g_hash_table_size(attributes), ==, 1);
     scenario = g_intern_string(g_hash_table_lookup(attributes, "application"));
