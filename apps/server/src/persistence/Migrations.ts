@@ -10,6 +10,7 @@
 
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -58,6 +59,7 @@ import Migration0043 from "./Migrations/043_ProjectionThreadsUnsettledAt.ts";
 import Migration0044 from "./Migrations/044_ClearAutomaticProjectModelDefaults.ts";
 import Migration0045 from "./Migrations/045_ProjectionProjectsAutoPull.ts";
 import Migration0046 from "./Migrations/046_RepairAutomaticSettlementTimestamps.ts";
+import Migration0047 from "./Migrations/047_EnsureProjectionProjectsAutoPull.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -116,6 +118,7 @@ export const migrationEntries = [
   [44, "ClearAutomaticProjectModelDefaults", Migration0044],
   [45, "ProjectionProjectsAutoPull", Migration0045],
   [46, "RepairAutomaticSettlementTimestamps", Migration0046],
+  [47, "EnsureProjectionProjectsAutoPull", Migration0047],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -140,6 +143,40 @@ export interface RunMigrationsOptions {
 }
 
 /**
+ * Warn about migration slots the journal recorded under a different name.
+ *
+ * effect's Migrator skips every migration at or below the highest recorded ID
+ * without comparing names, so a slot claimed by another line (fork, nightly,
+ * renumbered branch) silently disables this checkout's migration and leaves
+ * the schema behind the code (#8896). This is the production counterpart of
+ * the hard failure in scripts/migrate-dev-db.ts: loud, but non-fatal, because
+ * refusing to start would brick databases that are otherwise healed (e.g. by
+ * repair migrations like 047).
+ */
+const warnOnMigrationSlotCollisions = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const applied = yield* sql<{ readonly migration_id: number; readonly name: string }>`
+    SELECT migration_id, name FROM effect_sql_migrations
+  `;
+  const appliedById = new Map(applied.map((row) => [Number(row.migration_id), row.name]));
+  const collisions = migrationManifest
+    .filter(([slot, codeName]) => {
+      const appliedName = appliedById.get(slot);
+      return appliedName !== undefined && appliedName !== codeName;
+    })
+    .map(
+      ([slot, codeName]) => `${slot} (journal: '${appliedById.get(slot)}', code: '${codeName}')`,
+    );
+  if (collisions.length > 0) {
+    yield* Effect.logWarning(
+      `Migration slot collision: this database recorded different migrations under ${collisions.join(
+        ", ",
+      )}. The affected migrations were skipped; the schema may be behind the code. See https://github.com/pingdotgg/t3code/issues/8896`,
+    );
+  }
+});
+
+/**
  * Run all pending migrations.
  *
  * Creates the migrations tracking table (effect_sql_migrations) if it doesn't exist,
@@ -153,6 +190,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+  yield* warnOnMigrationSlotCollisions;
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")
