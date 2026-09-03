@@ -2504,6 +2504,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             }),
           ]);
           if (replaced) yield* replaced.cancel;
+          // A newer pick may have cancelled this session while the previous
+          // one was torn down. Cleanup already ran, so attaching listeners now
+          // would leak them and start an overlay nobody is waiting on.
+          if (settled) return;
           yield* attempt({ operation: "pickElement.register", tabId, webContentsId: wc.id }, () => {
             wc.ipc.on(ELEMENT_PICKED_CHANNEL, onMessage);
             wc.once("destroyed", onDestroyed);
