@@ -28,7 +28,7 @@ const makeWorkspace = Effect.fn("makeWorkspace")(function* () {
 });
 
 it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
-  it.effect("reads skill names, descriptions and paths from all four native roots", () =>
+  it.effect("reads skill names, descriptions and paths from the current native roots", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const input = yield* makeWorkspace();
@@ -63,6 +63,27 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
+  it.effect("discovers skills from the legacy workspace root", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const skillPath = yield* writeSkill(
+        path.join(input.cwd, ".agent", "skills", "review"),
+        "---\nname: review\ndescription: Review changes.\n---\n",
+      );
+
+      assert.deepEqual(yield* discoverAntigravitySkills(input), [
+        {
+          name: "review",
+          description: "Review changes.",
+          path: skillPath,
+          scope: "project",
+          enabled: true,
+        },
+      ]);
+    }),
+  );
+
   it.effect("uses native root order for duplicate names", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -73,6 +94,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         path.join(input.cwd, ".gemini", "skills"),
         path.join(input.profileDirectory, "antigravity-cli", "skills"),
         path.join(input.cwd, ".agents", "skills"),
+        path.join(input.cwd, ".agent", "skills"),
       ];
       for (const [index, root] of roots.entries()) {
         yield* writeSkill(
