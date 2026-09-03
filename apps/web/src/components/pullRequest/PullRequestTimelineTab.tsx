@@ -256,6 +256,7 @@ function ConversationCard({
             value={editable.body}
             cwd={cwd}
             environmentId={reactions.environmentId}
+            threadRef={reactions.threadRef}
             label="Edit comment"
             saving={saving}
             onSave={(body) => void save(body)}
