@@ -7,8 +7,9 @@
  * an arbitrary IANA zone, and it takes a `Date`. That is why the raw `Date`
  * construction is allowed here; nothing in this module reads the clock.
  *
- * Pure, so the bucketing and de-duplication rules are testable without touching
- * the filesystem or the network.
+ * Pure, so the bucketing and accumulation rules are testable without touching
+ * the filesystem or the network. Callers apply any source-scoped deduplication
+ * before adding transcript records.
  *
  * @module usageAggregation
  */
@@ -185,9 +186,9 @@ export class UsageAggregator {
   }
 
   /**
-   * Folds one normalized UTC cell into a requested view. Ledger cells have
-   * already been globally de-duplicated, so this updates the counters in one
-   * step and does not need a synthetic record per transcript event.
+   * Folds one normalized UTC cell into a requested view. The caller has already
+   * deduplicated ledger cells within each transcript-directory scope, so this
+   * updates the counters in one step without a synthetic record per event.
    */
   addAggregate(aggregate: NormalizedUsageAggregate): boolean {
     if (
