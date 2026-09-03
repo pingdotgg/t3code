@@ -3049,16 +3049,17 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   const previewText = displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot);
   const displayText =
     !toolPresentation && expanded && workEntry.command?.trim() ? "Command" : previewText;
+  const viewedImagePath = workEntryViewedImagePath(workEntry);
   const canExpand =
     (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) ||
     Boolean(
       workEntryRawCommand(workEntry) ||
       workEntry.command?.trim() ||
       workEntry.detail?.trim() ||
-      workEntry.changedFiles?.length,
+      workEntry.changedFiles?.length ||
+      viewedImagePath,
     );
   const expandedBody = expanded ? buildToolCallExpandedBody(workEntry, workspaceRoot) : null;
-  const viewedImagePath = workEntryViewedImagePath(workEntry);
   const viewedImage =
     viewedImagePath && threadRef
       ? resolveViewedImageAsset(viewedImagePath, {
@@ -3159,7 +3160,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           </span>
         </div>
       </div>
-      {viewedImage && threadRef ? (
+      {expanded && viewedImage && threadRef ? (
         <div
           className="mt-1 ms-7 cursor-default"
           onClick={stopRowToggle}
