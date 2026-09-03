@@ -360,6 +360,23 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
           return;
         }
         ctx.stopped = true;
+
+        for (const [requestId, { decision, threadId }] of Array.from(pendingApprovalsByRequestId)) {
+          if (threadId === ctx.threadId) {
+            yield* Deferred.interrupt(decision).pipe(Effect.ignore);
+            pendingApprovalsByRequestId.delete(requestId);
+          }
+        }
+        ctx.pendingApprovals.clear();
+
+        for (const [requestId, { answers, threadId }] of Array.from(pendingUserInputsByRequestId)) {
+          if (threadId === ctx.threadId) {
+            yield* Deferred.interrupt(answers).pipe(Effect.ignore);
+            pendingUserInputsByRequestId.delete(requestId);
+          }
+        }
+        ctx.pendingUserInputs.clear();
+
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
