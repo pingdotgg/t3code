@@ -105,6 +105,7 @@ import { resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
 import { useMediaActions, type MediaActionsSource } from "../../lib/mediaActions";
 import { MediaActionsMenu } from "../../components/MediaActionsMenu";
 import {
+  attachmentVideoPreviewSource,
   mediaVideoPreviewUri,
   mediaVideoThumbnailKey,
   type MediaVideoPreviewSource,
@@ -251,14 +252,21 @@ function MessageAttachmentImage(props: {
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
   readonly name: string;
+  readonly mimeType: string;
   readonly className: string;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
   const sourceIdentifier = useId();
-  const uri = useAssetUrl(props.environmentId, {
-    _tag: "attachment",
-    attachmentId: props.attachmentId,
-  });
+  const resource = useMemo(
+    () => ({
+      _tag: "attachment" as const,
+      attachmentId: props.attachmentId,
+      fileName: props.name,
+      mimeType: props.mimeType,
+    }),
+    [props.attachmentId, props.name, props.mimeType],
+  );
+  const uri = useAssetUrl(props.environmentId, resource);
 
   if (uri === null) {
     return (
@@ -274,7 +282,20 @@ function MessageAttachmentImage(props: {
         accessibilityRole="imagebutton"
         accessibilityLabel={`Open ${props.name}`}
         onPress={() =>
-          props.onPressPreview({ kind: "image", uri, name: props.name, sourceIdentifier })
+          // The viewer mints its own URL from the resource so the image survives a refresh.
+          props.onPressPreview({
+            kind: "image",
+            environmentId: props.environmentId,
+            resource,
+            name: props.name,
+            sourceIdentifier,
+            actionsSource: {
+              name: props.name,
+              mimeType: props.mimeType,
+              environmentId: props.environmentId,
+              resource,
+            },
+          })
         }
       >
         <Image source={{ uri }} className={props.className} resizeMode="cover" />
@@ -389,14 +410,18 @@ function MessageAttachmentFile(props: {
   };
 
   if (videoType !== null) {
+    const sourceIdentifier = `attachment:${props.environmentId}:${attachment.id}`;
     return (
       <VideoAttachmentTile
         name={attachment.name}
-        sourceIdentifier={`attachment:${props.environmentId}:${attachment.id}`}
+        sourceIdentifier={sourceIdentifier}
         thumbnailSource={thumbnailUrl}
+        actionsSource={
+          attachmentVideoPreviewSource(props.environmentId, attachment, sourceIdentifier)
+            .actionsSource
+        }
         disabled={opening || httpBaseUrl === null}
         onPress={(sourceIdentifier) => props.onPressVideo(attachment, sourceIdentifier)}
-        onShare={() => shareFile(`attachment:${props.environmentId}:${attachment.id}`)}
         className="my-1 rounded-2xl"
         style={{ width: 224, maxWidth: "100%", aspectRatio: 16 / 9 }}
       />
@@ -520,62 +545,60 @@ function ThreadMarkdownImageView(props: {
       style={{ alignSelf: "stretch", gap: 6 }}
     >
       {props.uri === null || failed ? (
-        <View
-          className="items-center justify-center rounded-[10px] bg-md-code-bg"
-          style={{
-            ...frameStyle,
-          }}
-        >
-          {failed ? (
-            <Text className="text-xs text-foreground-muted">Image unavailable</Text>
-          ) : (
-            <ActivityIndicator />
-          )}
-          {props.actionsSource ? (
-            <View className="absolute right-1 top-1">
-              <MediaActionsMenu media={mediaActions} />
-            </View>
-          ) : null}
-        </View>
+        <MediaActionsMenu media={mediaActions}>
+          <Pressable
+            accessibilityRole="imagebutton"
+            accessibilityLabel={props.alt ?? "Markdown image"}
+            accessibilityHint={
+              mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+            }
+            className="items-center justify-center rounded-[10px] bg-md-code-bg"
+            style={frameStyle}
+          >
+            {failed ? (
+              <Text className="text-xs text-foreground-muted">Image unavailable</Text>
+            ) : (
+              <ActivityIndicator />
+            )}
+          </Pressable>
+        </MediaActionsMenu>
       ) : (
         <PresentationSource identifier={sourceIdentifier} style={{ alignSelf: "flex-start" }}>
-          <View>
-            <MediaActionsMenu media={mediaActions}>
-              <Pressable
-                accessibilityRole="imagebutton"
-                accessibilityLabel={props.alt ?? "Markdown image"}
-                onPress={() =>
-                  props.onPressPreview({
-                    kind: "image",
-                    uri: props.uri!,
-                    name: props.alt ?? "Image",
-                    sourceIdentifier,
-                    actionsSource: props.actionsSource,
-                  })
-                }
-                style={{ alignSelf: "flex-start" }}
+          <MediaActionsMenu media={mediaActions}>
+            <Pressable
+              accessibilityRole="imagebutton"
+              accessibilityLabel={props.alt ?? "Markdown image"}
+              accessibilityHint={
+                mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+              }
+              onPress={() =>
+                // Quick Look picks the viewer from the name's extension, so it needs the
+                // file name rather than the alt text.
+                props.onPressPreview({
+                  kind: "image",
+                  uri: props.uri!,
+                  name: props.actionsSource?.name ?? props.alt ?? "Image",
+                  sourceIdentifier,
+                  actionsSource: props.actionsSource,
+                })
+              }
+              style={{ alignSelf: "flex-start" }}
+            >
+              <View
+                className="items-center justify-center overflow-hidden rounded-[10px] bg-md-code-bg"
+                style={{
+                  ...frameStyle,
+                }}
               >
-                <View
-                  className="items-center justify-center overflow-hidden rounded-[10px] bg-md-code-bg"
-                  style={{
-                    ...frameStyle,
-                  }}
-                >
-                  <ThreadMarkdownImageRequest
-                    key={props.uri}
-                    uri={props.uri}
-                    onLoad={setSourceSize}
-                    onError={() => setFailedUri(props.uri)}
-                  />
-                </View>
-              </Pressable>
-            </MediaActionsMenu>
-            {props.actionsSource ? (
-              <View className="absolute right-1 top-1">
-                <MediaActionsMenu media={mediaActions} />
+                <ThreadMarkdownImageRequest
+                  key={props.uri}
+                  uri={props.uri}
+                  onLoad={setSourceSize}
+                  onError={() => setFailedUri(props.uri)}
+                />
               </View>
-            ) : null}
-          </View>
+            </Pressable>
+          </MediaActionsMenu>
         </PresentationSource>
       )}
       {props.alt ? (
@@ -658,10 +681,7 @@ function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
   return <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>;
 }
 
-function ThreadMarkdownVideo(props: {
-  readonly source: MediaVideoPreviewSource;
-  readonly onExpand: (source: MediaVideoPreviewSource) => void;
-}) {
+function ThreadMarkdownVideo(props: { readonly source: MediaVideoPreviewSource }) {
   const { source } = props;
   const visible = useContext(ThreadMediaVisibleContext);
   const thumbnailKey = mediaVideoThumbnailKey(source);
@@ -688,7 +708,6 @@ function ThreadMarkdownVideo(props: {
       thumbnailVisible={visible}
       unavailable={"resource" in source && asset._tag === "Failure"}
       actionsSource={source.actionsSource}
-      onExpand={() => props.onExpand(source)}
     />
   );
 }
@@ -1593,6 +1612,7 @@ function renderFeedEntry(
                   environmentId={props.environmentId}
                   attachmentId={attachment.id}
                   name={attachment.name}
+                  mimeType={attachment.mimeType}
                   className="aspect-[1.3] w-full rounded-[14px] bg-white/15"
                   onPressPreview={props.onPressPreview}
                 />
@@ -1656,6 +1676,7 @@ function renderFeedEntry(
               environmentId={props.environmentId}
               attachmentId={attachment.id}
               name={attachment.name}
+              mimeType={attachment.mimeType}
               className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-adaptive-neutral-200-800"
               onPressPreview={props.onPressPreview}
             />
@@ -2218,7 +2239,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           <ThreadMarkdownVideo
             key={image.href}
             source={{ ...media.source, name: image.alt ?? media.source.name }}
-            onExpand={(source) => setExpandedVideo((current) => current ?? source)}
           />
         );
       }
@@ -2667,12 +2687,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (attachment: ChatFileAttachment, sourceIdentifier: string) => {
       setExpandedVideo(
         (current) =>
-          current ?? {
-            type: "remote",
-            environmentId: props.environmentId,
-            attachment,
-            sourceIdentifier,
-          },
+          current ??
+          attachmentVideoPreviewSource(props.environmentId, attachment, sourceIdentifier),
       );
     },
     [props.environmentId],

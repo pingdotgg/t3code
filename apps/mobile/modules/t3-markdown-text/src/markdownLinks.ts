@@ -1,31 +1,15 @@
 import {
+  fileBasename,
+  formatFilePathPosition,
   inlineCodeFilePathCandidate,
-  isConventionalFilePosition,
+  normalizeMarkdownLinkDestination,
+  parseMarkdownFileLink,
 } from "@t3tools/client-runtime/markdown-links";
 import { videoMimeType } from "@t3tools/shared/video";
 
 import type { MARKDOWN_FILE_ICON_SOURCES } from "./markdownFileIcons.generated";
 
-const WINDOWS_DRIVE_PATH_PATTERN = /^[A-Za-z]:[\\/]/;
-const WINDOWS_UNC_PATH_PATTERN = /^\\\\/;
-const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
-const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2}$/;
-const RELATIVE_FILE_NAME_PATTERN =
-  /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
-const POSIX_FILE_ROOT_PREFIXES = [
-  "/Users/",
-  "/home/",
-  "/tmp/",
-  "/var/",
-  "/etc/",
-  "/opt/",
-  "/mnt/",
-  "/Volumes/",
-  "/private/",
-  "/root/",
-] as const;
 
 export type MarkdownLinkPresentation =
   | {
@@ -246,112 +230,13 @@ const FILE_ICON_BY_EXTENSION: Readonly<Record<string, MarkdownFileIcon>> = {
   zsh: "bash",
 };
 
-function safeDecode(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-function normalizeDestination(value: string): string {
-  const trimmed = value.trim();
-  return trimmed.startsWith("<") && trimmed.endsWith(">") ? trimmed.slice(1, -1) : trimmed;
-}
-
 /** Native link and media APIs have no document scheme to inherit from protocol-relative URLs. */
 export function normalizeNativeMarkdownUrl(value: string): string {
   return value.startsWith("//") ? `https:${value}` : value;
 }
 
-function fileUrlTarget(href: string): { readonly path: string; readonly hash: string } | null {
-  try {
-    const parsed = new URL(href);
-    if (parsed.protocol.toLowerCase() !== "file:") {
-      return null;
-    }
-    const uncHostname = parsed.hostname.toLowerCase() === "localhost" ? "" : parsed.hostname;
-    const rawPath = uncHostname
-      ? `\\\\${uncHostname}${parsed.pathname.replaceAll("/", "\\")}`
-      : parsed.pathname;
-    const path = /^\/[A-Za-z]:[\\/]/.test(rawPath) ? rawPath.slice(1) : rawPath;
-    return { path, hash: parsed.hash };
-  } catch {
-    return null;
-  }
-}
-
-function stripSearchAndHash(value: string): { readonly path: string; readonly hash: string } {
-  const hashIndex = value.indexOf("#");
-  const pathWithSearch = hashIndex >= 0 ? value.slice(0, hashIndex) : value;
-  const hash = hashIndex >= 0 ? value.slice(hashIndex) : "";
-  const queryIndex = pathWithSearch.indexOf("?");
-  return {
-    path: queryIndex >= 0 ? pathWithSearch.slice(0, queryIndex) : pathWithSearch,
-    hash,
-  };
-}
-
-function splitFilePosition(
-  path: string,
-  hash: string,
-): { readonly path: string; readonly line?: number; readonly column?: number } {
-  const suffixMatch = path.match(/:(\d+)(?::(\d+))?$/);
-  const hashMatch = suffixMatch ? null : hash.match(/^#L(\d+)(?:C(\d+))?$/i);
-  const match = suffixMatch ?? hashMatch;
-  if (!match?.[1]) {
-    return { path };
-  }
-
-  const line = Number.parseInt(match[1], 10);
-  const column = match[2] ? Number.parseInt(match[2], 10) : undefined;
-  const pathWithoutPosition = suffixMatch ? path.slice(0, -suffixMatch[0].length) : path;
-  return {
-    path: pathWithoutPosition,
-    ...(line > 0 ? { line } : {}),
-    ...(column !== undefined && column > 0 ? { column } : {}),
-  };
-}
-
-function looksLikePosixFilesystemPath(path: string): boolean {
-  if (!path.startsWith("/")) {
-    return false;
-  }
-  if (POSIX_FILE_ROOT_PREFIXES.some((prefix) => path.startsWith(prefix))) {
-    return true;
-  }
-  if (POSITION_SUFFIX_PATTERN.test(path)) {
-    return true;
-  }
-  const basename = path.slice(path.lastIndexOf("/") + 1);
-  return /\.[A-Za-z0-9_-]+$/.test(basename);
-}
-
-function looksLikeFilePath(value: string): boolean {
-  if (WINDOWS_DRIVE_PATH_PATTERN.test(value) || WINDOWS_UNC_PATH_PATTERN.test(value)) {
-    return true;
-  }
-  if (RELATIVE_PATH_PREFIX_PATTERN.test(value)) {
-    return true;
-  }
-  if (value.startsWith("/")) {
-    return looksLikePosixFilesystemPath(value);
-  }
-  if (FILE_ICON_BY_NAME[value.replace(POSITION_SUFFIX_PATTERN, "").toLowerCase()]) {
-    return true;
-  }
-  if (isConventionalFilePosition(value)) return true;
-  return RELATIVE_FILE_PATH_PATTERN.test(value) || RELATIVE_FILE_NAME_PATTERN.test(value);
-}
-
-function fileLabel(value: string): string {
-  const normalized = value.replaceAll("\\", "/");
-  const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
-  return basename || normalized;
-}
-
 export function resolveMarkdownFileIcon(value: string): MarkdownFileIcon {
-  const basename = fileLabel(value).replace(POSITION_SUFFIX_PATTERN, "").toLowerCase();
+  const basename = fileBasename(value).replace(POSITION_SUFFIX_PATTERN, "").toLowerCase();
   if (videoMimeType({ name: basename, mimeType: "" }) !== null) return "video";
   const exactIcon = FILE_ICON_BY_NAME[basename];
   if (exactIcon) return exactIcon;
@@ -367,7 +252,7 @@ export function resolveMarkdownFileIcon(value: string): MarkdownFileIcon {
 }
 
 export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPresentation {
-  const normalized = normalizeDestination(href);
+  const normalized = normalizeMarkdownLinkDestination(href);
   try {
     const parsed = new URL(normalizeNativeMarkdownUrl(normalized));
     if (parsed.protocol === "http:" || parsed.protocol === "https:") {
@@ -381,31 +266,16 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
     // Relative paths and non-URL link destinations are handled below.
   }
 
-  const source = normalized.toLowerCase().startsWith("file:")
-    ? fileUrlTarget(normalized)
-    : stripSearchAndHash(normalized);
-  const decodedSource = source
-    ? { path: safeDecode(source.path.trim()), hash: safeDecode(source.hash.trim()) }
-    : null;
-  const fileTarget = decodedSource
-    ? splitFilePosition(decodedSource.path, decodedSource.hash)
-    : null;
-  const targetWithPosition = fileTarget
-    ? `${fileTarget.path}${
-        fileTarget.line
-          ? `:${fileTarget.line}${fileTarget.column ? `:${fileTarget.column}` : ""}`
-          : ""
-      }`
-    : null;
-  if (fileTarget && targetWithPosition && looksLikeFilePath(targetWithPosition)) {
+  const target = parseMarkdownFileLink(normalized);
+  if (target) {
     return {
       kind: "file",
       href: normalized,
-      icon: resolveMarkdownFileIcon(fileTarget.path),
-      label: fileLabel(targetWithPosition),
-      path: fileTarget.path,
-      ...(fileTarget.line ? { line: fileTarget.line } : {}),
-      ...(fileTarget.column ? { column: fileTarget.column } : {}),
+      icon: resolveMarkdownFileIcon(target.path),
+      label: fileBasename(formatFilePathPosition(target)),
+      path: target.path,
+      ...(target.line ? { line: target.line } : {}),
+      ...(target.column ? { column: target.column } : {}),
     };
   }
 

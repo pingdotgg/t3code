@@ -1,20 +1,16 @@
-import { splitPathAndPosition } from "./terminal-links";
+import {
+  fileBasename,
+  formatFilePathPosition,
+  splitFilePathPosition,
+  stripSlashPrefixedWindowsDrive,
+} from "@t3tools/client-runtime/markdown-links";
 
 function normalizePathSeparators(path: string): string {
   return path.replaceAll("\\", "/");
 }
 
-function canonicalizeWindowsDrivePath(path: string): string {
-  return /^\/[A-Za-z]:\//.test(path) ? path.slice(1) : path;
-}
-
 function trimTrailingPathSeparators(path: string): string {
   return path.replace(/[\\/]+$/, "");
-}
-
-function basenameOfPath(path: string): string {
-  const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
 }
 
 function stripRelativePrefixes(path: string): string {
@@ -25,15 +21,15 @@ export function formatWorkspaceRelativePath(
   pathWithPosition: string,
   workspaceRoot: string | undefined,
 ): string {
-  const { path, line, column } = splitPathAndPosition(pathWithPosition);
-  const normalizedPath = canonicalizeWindowsDrivePath(normalizePathSeparators(path));
+  const position = splitFilePathPosition(pathWithPosition);
+  const normalizedPath = stripSlashPrefixedWindowsDrive(normalizePathSeparators(position.path));
 
   let displayPath = normalizedPath;
   if (workspaceRoot) {
-    const normalizedWorkspaceRoot = canonicalizeWindowsDrivePath(
+    const normalizedWorkspaceRoot = stripSlashPrefixedWindowsDrive(
       normalizePathSeparators(trimTrailingPathSeparators(workspaceRoot)),
     );
-    const workspaceLabel = basenameOfPath(normalizedWorkspaceRoot);
+    const workspaceLabel = fileBasename(normalizedWorkspaceRoot);
     const pathForCompare = normalizedPath.toLowerCase();
     const workspaceForCompare = normalizedWorkspaceRoot.toLowerCase();
     const workspaceWithSeparator = `${workspaceForCompare}/`;
@@ -52,6 +48,5 @@ export function formatWorkspaceRelativePath(
     }
   }
 
-  if (!line) return displayPath;
-  return `${displayPath}:${line}${column ? `:${column}` : ""}`;
+  return formatFilePathPosition({ ...position, path: displayPath });
 }

@@ -24,7 +24,6 @@ import {
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getStartedThreadModelChangeBlockReason,
-  isVideoPreviewRequestCurrent,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
@@ -127,14 +126,6 @@ describe("proactive panels", () => {
         turnCompleted: false,
       }),
     ).toBe(false);
-  });
-});
-
-describe("isVideoPreviewRequestCurrent", () => {
-  it("rejects changed threads and replaced previews", () => {
-    expect(isVideoPreviewRequestCurrent("thread-1", "thread-2", 1, 1)).toBe(false);
-    expect(isVideoPreviewRequestCurrent("thread-1", "thread-1", 1, 2)).toBe(false);
-    expect(isVideoPreviewRequestCurrent("thread-1", "thread-1", 2, 2)).toBe(true);
   });
 });
 

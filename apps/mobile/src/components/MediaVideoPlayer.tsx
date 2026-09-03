@@ -101,8 +101,8 @@ interface MediaVideoPlayerProps {
   readonly thumbnailVisible?: boolean;
   readonly unavailable?: boolean;
   readonly expanded?: boolean;
+  readonly autoPlay?: boolean;
   readonly paused?: boolean;
-  readonly onExpand?: () => void;
   readonly actionsSource?: MediaActionsSource;
 }
 
@@ -122,62 +122,51 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
         <LoadedMediaVideo
           uri={props.uri ?? playbackUri}
           resolvePlaybackUri={props.resolvePlaybackUri}
-          playRequested={!props.expanded}
+          playRequested={!props.expanded || props.autoPlay === true}
           paused={(props.paused ?? false) || mediaActions.sharing}
         />
       ) : (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Play ${props.name}`}
-          accessibilityState={{ disabled: props.uri === null || props.unavailable === true }}
-          disabled={props.uri === null || props.unavailable === true}
-          onPress={() => setPlaybackUri(props.uri)}
-          className="flex-1 items-center justify-center gap-2 px-4"
-        >
-          {!props.unavailable ? (
-            <VideoThumbnailImage
-              cacheKey={props.thumbnailKey}
-              source={props.thumbnailVisible === false ? null : props.uri}
-              contentFit="contain"
-            />
-          ) : null}
-          {props.unavailable ? (
-            <AppText className="text-sm text-white/80">Video unavailable</AppText>
-          ) : props.uri === null ? (
-            <ActivityIndicator color="#ffffff" accessibilityLabel="Loading video" />
-          ) : (
-            <>
+        <MediaActionsMenu media={mediaActions} inModal={props.expanded} style={{ flex: 1 }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Play ${props.name}`}
+            accessibilityHint={
+              mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+            }
+            accessibilityState={{ disabled: props.uri === null || props.unavailable === true }}
+            // Stays pressable so the long-press menu still opens on a failed or unsigned tile.
+            onPress={() => {
+              if (props.uri !== null && !props.unavailable) setPlaybackUri(props.uri);
+            }}
+            className="flex-1 items-center justify-center px-4"
+          >
+            {!props.unavailable ? (
+              <VideoThumbnailImage
+                cacheKey={props.thumbnailKey}
+                source={props.thumbnailVisible === false ? null : props.uri}
+                contentFit="contain"
+              />
+            ) : null}
+            {props.unavailable ? (
+              <AppText className="text-sm text-white/80">Video unavailable</AppText>
+            ) : props.uri === null ? (
+              <ActivityIndicator color="#ffffff" accessibilityLabel="Loading video" />
+            ) : (
               <View className="size-12 items-center justify-center rounded-full bg-black/60">
                 <SymbolView name="play" size={28} tintColor="#ffffff" type="monochrome" />
               </View>
+            )}
+            {props.uri !== null && !props.unavailable ? (
               <AppText
-                className="rounded bg-black/60 px-2 py-1 text-center text-xs text-white"
-                numberOfLines={2}
+                className="absolute right-2 bottom-2 max-w-[75%] rounded bg-black/60 px-2 py-1 text-right text-xs text-white"
+                numberOfLines={1}
               >
                 {props.name}
               </AppText>
-            </>
-          )}
-        </Pressable>
+            ) : null}
+          </Pressable>
+        </MediaActionsMenu>
       )}
-      {props.onExpand ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Expand ${props.name}`}
-          onPress={() => {
-            setPlaybackUri(null);
-            props.onExpand?.();
-          }}
-          className="absolute right-1 top-1 min-h-11 min-w-11 items-center justify-center rounded-md bg-black/60 px-2"
-        >
-          <AppText className="text-xs text-white">Expand</AppText>
-        </Pressable>
-      ) : null}
-      {props.actionsSource ? (
-        <View className="absolute left-1 top-1">
-          <MediaActionsMenu media={mediaActions} inModal={props.expanded} />
-        </View>
-      ) : null}
     </View>
   );
 }

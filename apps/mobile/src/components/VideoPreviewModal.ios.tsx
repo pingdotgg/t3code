@@ -1,14 +1,12 @@
 import { useIsFocused } from "@react-navigation/native";
-import { videoMimeType } from "@t3tools/shared/video";
 import { requireNativeModule } from "expo";
 import { useEffect, useEffectEvent, useId, useState } from "react";
 import { Alert, Keyboard } from "react-native";
 
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
-import { useAssetUrlState } from "../state/assets";
+import { mediaVideoPreviewUri, type VideoPreviewSource } from "../lib/videoPreviewSource";
+import { useAssetUrlState, useRefreshAssetUrl } from "../state/assets";
 import { usePreparedConnection } from "../state/session";
-import type { AttachmentVideoPreviewSource, VideoPreviewSource } from "../lib/videoPreviewSource";
-import { MediaVideoPreviewModal } from "./MediaVideoPreviewModal";
 
 export type { VideoPreviewSource } from "../lib/videoPreviewSource";
 
@@ -23,27 +21,28 @@ const NativeControls = requireNativeModule<{
 }>("T3NativeControls");
 
 function NativeVideoPreview(props: {
-  readonly source: AttachmentVideoPreviewSource;
+  readonly source: VideoPreviewSource;
   readonly onRequestClose: () => void;
 }) {
   const { source } = props;
-  const { attachment } = source;
+  const localAttachment = source.type === "local" ? source.attachment : null;
   const identifier = useId();
   const onRequestClose = useEffectEvent(props.onRequestClose);
-  const environmentId = source.type === "remote" ? source.environmentId : null;
+  const environmentId =
+    source.type === "media" && "environmentId" in source ? source.environmentId : null;
+  const resource = source.type === "media" && "resource" in source ? source.resource : null;
   const preparedConnection = usePreparedConnection(environmentId);
-  const mimeType = videoMimeType(attachment) ?? attachment.mimeType;
-  const assetUrl = useAssetUrlState(
-    environmentId,
-    source.type === "remote"
-      ? { _tag: "attachment", attachmentId: attachment.id, fileName: attachment.name, mimeType }
-      : null,
-  );
-  const [playbackUrl, setPlaybackUrl] = useState<string | null>(() =>
-    assetUrl._tag === "Success" ? assetUrl.url : null,
-  );
+  const assetUrl = useAssetUrlState(environmentId, resource);
+  const refreshAssetUrl = useEffectEvent(useRefreshAssetUrl(environmentId, resource));
+  const name = source.type === "media" ? source.name : source.attachment.name;
+  // The first minted URL is kept so a background refresh does not restart playback.
+  const resolvedUrl =
+    source.type === "media"
+      ? mediaVideoPreviewUri(source, assetUrl._tag === "Success" ? assetUrl.url : null)
+      : null;
+  const [playbackUrl, setPlaybackUrl] = useState<string | null>(resolvedUrl);
   const loadError =
-    source.type === "remote" && playbackUrl === null
+    resource !== null && playbackUrl === null
       ? preparedConnection._tag === "None"
         ? "Reconnect to this environment and open the video again."
         : assetUrl._tag === "Failure"
@@ -53,8 +52,8 @@ function NativeVideoPreview(props: {
 
   useEffect(() => Keyboard.dismiss(), []);
   useEffect(() => {
-    if (playbackUrl === null && assetUrl._tag === "Success") setPlaybackUrl(assetUrl.url);
-  }, [playbackUrl, assetUrl]);
+    if (playbackUrl === null && resolvedUrl !== null) setPlaybackUrl(resolvedUrl);
+  }, [playbackUrl, resolvedUrl]);
   useEffect(() => {
     if (!loadError) return;
     Alert.alert("Could not open video", loadError);
@@ -62,21 +61,21 @@ function NativeVideoPreview(props: {
   }, [loadError]);
 
   useEffect(() => {
-    if (source.type === "remote" && playbackUrl === null) return;
+    if (localAttachment === null && playbackUrl === null) return;
     const controller = new AbortController();
     let ready = false;
     void (async () => {
       const file =
-        source.type === "local"
-          ? await loadLocalAttachmentPreview(source.attachment, controller.signal)
+        localAttachment !== null
+          ? await loadLocalAttachmentPreview(localAttachment, controller.signal)
           : null;
-      if (source.type === "local" && !file) return;
+      if (localAttachment !== null && !file) return;
       try {
         if (controller.signal.aborted) return;
         ready = true;
         await NativeControls.presentVideo(
           file?.uri ?? playbackUrl!,
-          attachment.name,
+          name,
           source.sourceIdentifier ?? "",
           identifier,
         );
@@ -87,10 +86,12 @@ function NativeVideoPreview(props: {
       }
     })().catch((error: unknown) => {
       if (controller.signal.aborted) return;
+      // AVKit gives no retry, so re-mint now; the cached URL may simply have expired.
+      if (ready) void refreshAssetUrl();
       Alert.alert(
         "Could not open video",
         ready
-          ? "This video couldn't be loaded or played. Check the connection, or touch and hold the attachment to save or share the original."
+          ? "This video couldn't be loaded or played. Check the connection, or touch and hold the video to save or share the original."
           : error instanceof Error
             ? error.message
             : "Could not load this video.",
@@ -101,7 +102,7 @@ function NativeVideoPreview(props: {
       controller.abort();
       void NativeControls.dismissVideo(identifier).catch(() => undefined);
     };
-  }, [source, attachment.name, playbackUrl, identifier]);
+  }, [localAttachment, name, source.sourceIdentifier, playbackUrl, identifier]);
 
   return null;
 }
@@ -118,8 +119,5 @@ export function VideoPreviewModal(props: {
   }, [isFocused, hasSource]);
 
   if (!props.source || !isFocused) return null;
-  if (props.source.type === "media") {
-    return <MediaVideoPreviewModal source={props.source} onRequestClose={props.onRequestClose} />;
-  }
   return <NativeVideoPreview source={props.source} onRequestClose={props.onRequestClose} />;
 }

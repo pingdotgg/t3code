@@ -1,4 +1,5 @@
 import { useNavigation } from "@react-navigation/native";
+import type { MediaActionId } from "@t3tools/client-runtime/media-actions";
 import type { MediaReference } from "@t3tools/client-runtime/media-reference";
 import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { normalizeNativeMarkdownUrl } from "@t3tools/mobile-markdown-text/links";
@@ -7,18 +8,23 @@ import { Alert } from "react-native";
 
 import { useRefreshAssetUrl } from "../state/assets";
 import { downloadAndShareAttachment, shareLocalAttachment } from "./attachmentDownload";
+import type { DraftComposerFileAttachment } from "./composerImages";
 import { copyTextWithHaptic } from "./copyTextWithHaptic";
+import { loadLocalAttachmentPreview } from "./localAttachmentPreview";
 
 /** Authored source metadata is kept separate from temporary preview/download URLs. */
 export type MediaActionsSource = {
   readonly reference?: MediaReference;
   readonly name: string;
   readonly mimeType: string;
+  /** Anchors the iOS share sheet to the view that opened the menu. */
+  readonly sourceIdentifier?: string;
 } & (
   | { readonly uri: string }
+  | { readonly attachment: DraftComposerFileAttachment }
   | {
       readonly environmentId: EnvironmentId;
-      readonly threadId: ThreadId;
+      readonly threadId?: ThreadId;
       readonly resource: AssetResource;
     }
 );
@@ -39,12 +45,23 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
     controller.current = request;
     setSharing(true);
     void (async () => {
+      if ("attachment" in source) {
+        const preview = await loadLocalAttachmentPreview(source.attachment, request.signal);
+        if (!preview) return;
+        try {
+          await preview.share(request.signal, source.sourceIdentifier);
+        } finally {
+          preview.dispose();
+        }
+        return;
+      }
       const uri = "uri" in source ? normalizeNativeMarkdownUrl(source.uri) : await refresh();
       if (request.signal.aborted) return;
       if (uri === null) throw new Error("The file could not be loaded. Reconnect and try again.");
       const input = {
         attachment: { name: source.name, mimeType: source.mimeType },
         signal: request.signal,
+        sourceIdentifier: source.sourceIdentifier,
       };
       if (/^(file|content):/i.test(uri)) await shareLocalAttachment({ ...input, uri });
       else await downloadAndShareAttachment({ ...input, url: uri });
@@ -66,52 +83,62 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
   };
 
   const reference = source?.reference;
-  const actions: { id: string; title: string; run: () => void; disabled?: boolean }[] = source
-    ? [
-        ...(reference?.kind === "file"
-          ? [
-              {
-                id: "copy-path",
-                title: "Copy full path",
-                run: () => copyTextWithHaptic(reference.path),
-              },
-              ...(reference.relativePath
-                ? [
-                    {
-                      id: "copy-relative-path",
-                      title: "Copy relative path",
-                      run: () => copyTextWithHaptic(reference.relativePath!),
-                    },
-                  ]
-                : []),
-              ...(reference.relativePath && source && "environmentId" in source
-                ? [
-                    {
-                      id: "open-file",
-                      title: "Open in file viewer",
-                      run: () => {
-                        onOpenFile?.();
-                        navigation.navigate("ThreadFile", {
-                          environmentId: String(source.environmentId),
-                          threadId: String(source.threadId),
-                          path: reference.relativePath!.split("/"),
-                        });
-                      },
-                    },
-                  ]
-                : []),
-            ]
-          : reference
-            ? [{ id: "copy-url", title: "Copy URL", run: () => copyTextWithHaptic(reference.url) }]
+  const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
+  const threadId = source && "threadId" in source ? source.threadId : undefined;
+  const actions: { id: MediaActionId; title: string; run: () => void; disabled?: boolean }[] =
+    source
+      ? [
+          ...(reference?.kind === "file"
+            ? [
+                {
+                  id: "copy-full-path" as const,
+                  title: "Copy full path",
+                  run: () => copyTextWithHaptic(reference.path),
+                },
+              ]
             : []),
-        {
-          id: "share",
-          title: sharing ? "Opening share sheet…" : "Save or share",
-          run: share,
-          disabled: sharing,
-        },
-      ]
-    : [];
+          ...(relativePath
+            ? [
+                {
+                  id: "copy-relative-path" as const,
+                  title: "Copy relative path",
+                  run: () => copyTextWithHaptic(relativePath),
+                },
+              ]
+            : []),
+          ...(reference?.kind === "url"
+            ? [
+                {
+                  id: "copy-url" as const,
+                  title: "Copy URL",
+                  run: () => copyTextWithHaptic(reference.url),
+                },
+              ]
+            : []),
+          ...(relativePath && "environmentId" in source && threadId !== undefined
+            ? [
+                {
+                  id: "open-file" as const,
+                  title: "Open in file viewer",
+                  run: () => {
+                    onOpenFile?.();
+                    navigation.navigate("ThreadFile", {
+                      environmentId: String(source.environmentId),
+                      threadId: String(threadId),
+                      path: relativePath.split("/"),
+                    });
+                  },
+                },
+              ]
+            : []),
+          {
+            id: "save" as const,
+            title: sharing ? "Opening share sheet…" : "Save or share",
+            run: share,
+            disabled: sharing,
+          },
+        ]
+      : [];
   return {
     title: reference?.kind === "file" ? reference.path : reference?.url,
     actions,

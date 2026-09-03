@@ -399,15 +399,6 @@ export async function resolveFileAttachmentUrl(input: {
   return url;
 }
 
-export function isVideoPreviewRequestCurrent(
-  requestThreadKey: string,
-  currentThreadKey: string,
-  requestId: number,
-  currentRequestId: number,
-): boolean {
-  return requestThreadKey === currentThreadKey && requestId === currentRequestId;
-}
-
 export function revokeUserMessagePreviewUrls(message: ChatMessage): void {
   if (message.role !== "user" || !message.attachments) {
     return;

@@ -1,4 +1,5 @@
 import type { AssetResource, ChatFileAttachment, EnvironmentId } from "@t3tools/contracts";
+import { videoMimeType } from "@t3tools/shared/video";
 
 import type { DraftComposerFileAttachment } from "./composerImages";
 import type { MediaActionsSource } from "./mediaActions";
@@ -14,7 +15,7 @@ export type MediaVideoPreviewSource = {
   | { readonly uri: string }
   | {
       readonly environmentId: EnvironmentId;
-      readonly resource: Extract<AssetResource, { readonly _tag: "media-file" }>;
+      readonly resource: Extract<AssetResource, { readonly _tag: "attachment" | "media-file" }>;
     }
 );
 
@@ -32,23 +33,51 @@ export function mediaVideoThumbnailKey(source: MediaVideoPreviewSource): string 
   return JSON.stringify(
     "uri" in source
       ? ["media-video", source.uri]
-      : [
-          "media-video",
-          source.environmentId,
-          source.resource.threadId,
-          source.resource.path,
-          source.srcFragment ?? "",
-        ],
+      : source.resource._tag === "attachment"
+        ? ["media-video", source.environmentId, "attachment", source.resource.attachmentId]
+        : [
+            "media-video",
+            source.environmentId,
+            source.resource.threadId,
+            source.resource.path,
+            source.srcFragment ?? "",
+          ],
   );
 }
 
-export type AttachmentVideoPreviewSource = (
-  | { readonly type: "local"; readonly attachment: DraftComposerFileAttachment }
-  | {
-      readonly type: "remote";
-      readonly environmentId: EnvironmentId;
-      readonly attachment: ChatFileAttachment;
-    }
-) & { readonly sourceIdentifier?: string };
+export interface LocalVideoPreviewSource {
+  readonly type: "local";
+  readonly attachment: DraftComposerFileAttachment;
+  readonly sourceIdentifier?: string;
+}
 
-export type VideoPreviewSource = AttachmentVideoPreviewSource | MediaVideoPreviewSource;
+export type VideoPreviewSource = LocalVideoPreviewSource | MediaVideoPreviewSource;
+
+export function attachmentVideoPreviewSource(
+  environmentId: EnvironmentId,
+  attachment: ChatFileAttachment,
+  sourceIdentifier?: string,
+): MediaVideoPreviewSource {
+  const mimeType = videoMimeType(attachment) ?? attachment.mimeType;
+  const resource = {
+    _tag: "attachment" as const,
+    attachmentId: attachment.id,
+    fileName: attachment.name,
+    mimeType,
+  };
+  return {
+    type: "media",
+    name: attachment.name,
+    mimeType,
+    ...(sourceIdentifier ? { sourceIdentifier } : {}),
+    environmentId,
+    resource,
+    actionsSource: {
+      name: attachment.name,
+      mimeType,
+      ...(sourceIdentifier ? { sourceIdentifier } : {}),
+      environmentId,
+      resource,
+    },
+  };
+}

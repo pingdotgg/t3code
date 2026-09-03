@@ -270,8 +270,15 @@ describe("resolveMarkdownFileLinkTarget", () => {
     ).toBe("D:/Programme/t3code/apps/web/src/components/ChatMarkdown.tsx:1");
   });
 
-  it("does not treat app routes as file links", () => {
+  it("does not treat app routes as file links, even with a line anchor", () => {
     expect(resolveMarkdownFileLinkTarget("/chat/settings")).toBeNull();
+    expect(resolveMarkdownFileLinkTarget("/chat/settings#L3", "/repo")).toBeNull();
+  });
+
+  it("decodes an encoded drive colon in a file uri before dropping its slash", () => {
+    expect(resolveMarkdownFileLinkTarget("file:///c%3A/Users/x/shot.png")).toBe(
+      "c:/Users/x/shot.png",
+    );
   });
 });
 

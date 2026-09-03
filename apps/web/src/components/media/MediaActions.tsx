@@ -1,3 +1,4 @@
+import type { MediaActionId } from "@t3tools/client-runtime/media-actions";
 import {
   mediaReferenceFileName,
   type MediaReference,
@@ -68,8 +69,6 @@ export function useMediaActions(source: MediaActionSource) {
   return { save, copyImage };
 }
 
-type MediaAction = "copy-full" | "copy-relative" | "copy-url" | "save" | "copy-image" | "open-file";
-
 /** Adds source-aware actions and a tooltip to the existing media element without a layout wrapper. */
 export function MediaActions({
   source,
@@ -82,8 +81,6 @@ export function MediaActions({
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const menuOpen = useRef(false);
   const reference = source.reference;
-  const hasActions =
-    source.kind === "image" || reference !== undefined || source.onOpenFile !== undefined;
   const tooltip = reference?.kind === "file" ? reference.path : (reference?.url ?? source.name);
 
   const showMenu = async (position: { x: number; y: number }) => {
@@ -94,28 +91,37 @@ export function MediaActions({
     let failureTitle = "Could not open media menu";
     let progressToast: ReturnType<typeof toastManager.add> | undefined;
     try {
-      const items: ContextMenuItem<MediaAction>[] = [];
+      const noun = source.kind === "image" ? "image" : "video";
+      const unavailable = source.src === null && source.asset === undefined;
+      const canCopyImage =
+        typeof navigator !== "undefined" &&
+        Boolean(navigator.clipboard?.write) &&
+        typeof ClipboardItem !== "undefined";
+      const items: ContextMenuItem<MediaActionId>[] = [];
       if (reference?.kind === "file") {
-        items.push({ id: "copy-full", label: "Copy full path" });
+        items.push({ id: "copy-full-path", label: "Copy full path" });
         if (reference.relativePath)
-          items.push({ id: "copy-relative", label: "Copy relative path" });
+          items.push({ id: "copy-relative-path", label: "Copy relative path" });
       } else if (reference?.kind === "url") {
         items.push({ id: "copy-url", label: "Copy URL" });
       }
-      if (source.kind === "image") {
-        const unavailable = source.src === null && source.asset === undefined;
-        items.push({ id: "save", label: "Save image", disabled: unavailable });
-        items.push({ id: "copy-image", label: "Copy image", disabled: unavailable });
-      }
       if (source.onOpenFile) items.push({ id: "open-file", label: "Open in file viewer" });
+      items.push({ id: "save", label: `Save ${noun}`, disabled: unavailable });
+      if (source.kind === "image") {
+        items.push({
+          id: "copy-image",
+          label: "Copy image",
+          disabled: unavailable || !canCopyImage,
+        });
+      }
 
       const action = await api.contextMenu.show(items, position);
       if (!action) return;
       failureTitle = `Could not ${items.find((item) => item.id === action)?.label.toLowerCase() ?? "complete media action"}`;
       const text =
-        action === "copy-full" && reference?.kind === "file"
+        action === "copy-full-path" && reference?.kind === "file"
           ? reference.path
-          : action === "copy-relative" && reference?.kind === "file"
+          : action === "copy-relative-path" && reference?.kind === "file"
             ? reference.relativePath
             : action === "copy-url" && reference?.kind === "url"
               ? reference.url
@@ -131,7 +137,7 @@ export function MediaActions({
       } else if (action === "save" || action === "copy-image") {
         progressToast = toastManager.add({
           type: "loading",
-          title: action === "save" ? "Preparing image download…" : "Copying image…",
+          title: action === "save" ? `Preparing ${noun} download…` : "Copying image…",
         });
         await (action === "save" ? save() : copyImage());
         toastManager.update(progressToast, {
@@ -158,7 +164,7 @@ export function MediaActions({
         render={children}
         tabIndex={0}
         onContextMenu={(event) => {
-          if (!hasActions || event.defaultPrevented) return;
+          if (event.defaultPrevented) return;
           event.preventDefault();
           event.stopPropagation();
           const bounds = event.currentTarget.getBoundingClientRect();
@@ -170,7 +176,6 @@ export function MediaActions({
         }}
         onKeyDown={(event) => {
           if (
-            !hasActions ||
             event.defaultPrevented ||
             !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))
           )

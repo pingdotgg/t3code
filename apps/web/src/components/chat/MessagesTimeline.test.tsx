@@ -147,7 +147,6 @@ function buildProps() {
     revertTurnCountByUserMessageId: new Map(),
     onRevertUserMessage: () => {},
     isRevertingCheckpoint: false,
-    openingVideoAttachmentId: null,
     onImageExpand: () => {},
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,
     markdownCwd: undefined,
@@ -465,7 +464,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('alt="report.pdf"');
   });
 
-  it("renders video attachments as play buttons", () => {
+  it("renders video attachments with the shared video player", () => {
     const entry = {
       ...buildUserTimelineEntry("Watch the demo."),
       message: {
@@ -477,6 +476,7 @@ describe("MessagesTimeline", () => {
             name: "demo.mp4",
             mimeType: "video/mp4",
             sizeBytes: 42,
+            previewUrl: "https://environment.test/api/assets/demo.mp4",
           },
         ],
       },
@@ -485,22 +485,37 @@ describe("MessagesTimeline", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
     );
-    const busyMarkup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[entry]}
-        openingVideoAttachmentId="attachment-demo-mp4"
-      />,
+
+    expect(markup).toContain("<video");
+    expect(markup).toContain('aria-label="demo.mp4"');
+    expect(markup).toContain('controls=""');
+    expect(markup).not.toContain("Expand demo.mp4");
+  });
+
+  it("shows the filename while an optimistic video is unavailable", () => {
+    const entry = {
+      ...buildUserTimelineEntry("Uploading the demo."),
+      message: {
+        ...buildUserTimelineEntry("Uploading the demo.").message,
+        attachments: [
+          {
+            type: "file" as const,
+            id: "optimistic-demo-mp4",
+            name: "pending-demo.mp4",
+            mimeType: "video/mp4",
+            sizeBytes: 42,
+            downloadable: false,
+          },
+        ],
+      },
+    };
+
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
     );
 
-    expect(markup).toContain('aria-label="Play demo.mp4"');
-    expect(markup).toContain("min-h-[72px]");
-    expect(markup).toContain(">demo.mp4</span>");
-    expect(markup).not.toContain('aria-label="Download demo.mp4"');
-    expect(busyMarkup).toContain('aria-busy="true"');
-    expect(busyMarkup).toContain('aria-disabled="true"');
-    expect(busyMarkup).not.toContain('disabled=""');
-    expect(busyMarkup).toContain(">Loading…</span>");
+    expect(markup).not.toContain("<video");
+    expect(markup).toContain(">pending-demo.mp4</div>");
   });
   it("renders an ordinary file download button without creating its URL in advance", () => {
     const entry = {
