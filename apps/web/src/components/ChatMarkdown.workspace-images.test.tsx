@@ -145,6 +145,25 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).not.toContain("Image unavailable");
   });
 
+  it("loads a POSIX absolute path and file URI through a signed asset URL", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/workspace/project"
+        threadRef={threadRef}
+        text={[
+          "![absolute](/tmp/embed-test/2.png)",
+          "![file URL](file:///tmp/embed-test/5.png)",
+        ].join("\n\n")}
+      />,
+    );
+
+    expect(testState.resources).toEqual([
+      { _tag: "media-file", threadId: threadRef.threadId, path: "/tmp/embed-test/2.png" },
+      { _tag: "media-file", threadId: threadRef.threadId, path: "/tmp/embed-test/5.png" },
+    ]);
+    expect(html).not.toContain("Image unavailable");
+  });
+
   it("normalizes a drive-absolute src in raw image HTML", () => {
     const html = render(String.raw`<img src="D:\screens\workspace-image.svg" alt="raw">`);
 
