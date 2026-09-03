@@ -1635,6 +1635,12 @@ const make = Effect.gen(function* () {
               : status === "ready"
                 ? null
                 : (thread.session?.lastError ?? null);
+        // The class only travels with the message it describes; a new message
+        // (or a cleared one) drops it.
+        const lastErrorClass =
+          lastError !== null && lastError === thread.session?.lastError
+            ? thread.session.lastErrorClass
+            : undefined;
 
         if (shouldApplyThreadLifecycle) {
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
@@ -1671,6 +1677,7 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
+              ...(lastErrorClass !== undefined ? { lastErrorClass } : {}),
               updatedAt: now,
             },
             createdAt: now,
@@ -1921,6 +1928,7 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: eventTurnId ?? null,
               lastError: runtimeErrorMessage,
+              ...(event.payload.class !== undefined ? { lastErrorClass: event.payload.class } : {}),
               updatedAt: now,
             },
             createdAt: now,

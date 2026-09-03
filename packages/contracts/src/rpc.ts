@@ -170,6 +170,13 @@ import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   ServerConfig,
+  ServerProviderReauthenticateBeginInput,
+  ServerProviderReauthenticateCancelInput,
+  ServerProviderReauthenticateCodeInput,
+  ServerProviderReauthenticateError,
+  ServerProviderReauthenticateInput,
+  ServerProviderReauthenticateStatusInput,
+  ServerProviderReauthenticateStatusResult,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
   ServerLifecycleStreamEvent,
@@ -277,6 +284,11 @@ export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
+  serverReauthenticateProvider: "server.reauthenticateProvider",
+  serverBeginProviderReauthentication: "server.beginProviderReauthentication",
+  serverSubmitProviderReauthenticationCode: "server.submitProviderReauthenticationCode",
+  serverGetProviderReauthenticationStatus: "server.getProviderReauthenticationStatus",
+  serverCancelProviderReauthentication: "server.cancelProviderReauthentication",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
   serverCommitDesktopUpdate: "server.commitDesktopUpdate",
@@ -382,6 +394,48 @@ export const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvide
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([ServerProviderUpdateError, EnvironmentAuthorizationError]),
 });
+
+export const WsServerReauthenticateProviderRpc = Rpc.make(WS_METHODS.serverReauthenticateProvider, {
+  payload: ServerProviderReauthenticateInput,
+  success: ServerProviderUpdatedPayload,
+  error: Schema.Union([ServerProviderReauthenticateError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerBeginProviderReauthenticationRpc = Rpc.make(
+  WS_METHODS.serverBeginProviderReauthentication,
+  {
+    payload: ServerProviderReauthenticateBeginInput,
+    success: ServerProviderReauthenticateStatusResult,
+    error: Schema.Union([ServerProviderReauthenticateError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerSubmitProviderReauthenticationCodeRpc = Rpc.make(
+  WS_METHODS.serverSubmitProviderReauthenticationCode,
+  {
+    payload: ServerProviderReauthenticateCodeInput,
+    success: ServerProviderReauthenticateStatusResult,
+    error: Schema.Union([ServerProviderReauthenticateError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerGetProviderReauthenticationStatusRpc = Rpc.make(
+  WS_METHODS.serverGetProviderReauthenticationStatus,
+  {
+    payload: ServerProviderReauthenticateStatusInput,
+    success: ServerProviderReauthenticateStatusResult,
+    error: Schema.Union([ServerProviderReauthenticateError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerCancelProviderReauthenticationRpc = Rpc.make(
+  WS_METHODS.serverCancelProviderReauthentication,
+  {
+    payload: ServerProviderReauthenticateCancelInput,
+    success: ServerProviderReauthenticateStatusResult,
+    error: Schema.Union([ServerProviderReauthenticateError, EnvironmentAuthorizationError]),
+  },
+);
 
 export const WsServerUpdateServerRpc = Rpc.make(WS_METHODS.serverUpdateServer, {
   payload: ServerSelfUpdateInput,
@@ -1049,6 +1103,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
+  WsServerReauthenticateProviderRpc,
+  WsServerBeginProviderReauthenticationRpc,
+  WsServerSubmitProviderReauthenticationCodeRpc,
+  WsServerGetProviderReauthenticationStatusRpc,
+  WsServerCancelProviderReauthenticationRpc,
   WsServerUpdateServerRpc,
   WsServerUpdateServerWithProgressRpc,
   WsServerCommitDesktopUpdateRpc,

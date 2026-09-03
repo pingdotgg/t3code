@@ -39,6 +39,7 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
+import { continueProviderThread } from "./provider/providerThreadContinuation.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -305,7 +306,6 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
 const ORPHANED_PROVIDER_SESSION_ERROR =
   "Provider session did not survive a server restart. Send a new message to continue.";
 const SERVER_UPDATE_CONTINUATION_KEY = "continueAfterServerUpdate";
-const SERVER_UPDATE_CONTINUATION_PROMPT = "Continue where you left off.";
 
 class ProviderSessionContinuationError extends Schema.TaggedErrorClass<ProviderSessionContinuationError>()(
   "ProviderSessionContinuationError",
@@ -584,13 +584,12 @@ export const reconcileProviderSessions = Effect.gen(function* () {
                 threadId: thread.id,
               });
             }
-            const capabilities = yield* providerService.getCapabilities(providerInstanceId);
-            yield* providerService.sendTurn({
+            yield* continueProviderThread({
               threadId: thread.id,
-              ...(capabilities.promptlessTurnContinuation === true
-                ? { continuation: true }
-                : { input: SERVER_UPDATE_CONTINUATION_PROMPT }),
+              instanceId: providerInstanceId,
               interactionMode: thread.interactionMode,
+              getCapabilities: providerService.getCapabilities,
+              sendTurn: providerService.sendTurn,
             });
           });
           const continuationExit = yield* Effect.exit(continuation);

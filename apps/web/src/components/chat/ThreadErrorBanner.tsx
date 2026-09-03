@@ -1,3 +1,4 @@
+import type { RuntimeErrorClass } from "@t3tools/contracts";
 import { memo } from "react";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -14,6 +15,13 @@ export function shouldShowThreadErrorBanner(
   isDismissed: boolean,
 ): boolean {
   return getThreadErrorBannerKey(threadKey, error) !== null && !isDismissed;
+}
+
+export function shouldShowThreadReauthenticateAction(
+  errorClass: RuntimeErrorClass | undefined,
+  provider: string | null,
+): boolean {
+  return errorClass === "auth_error" && provider === "claudeAgent";
 }
 
 // Session-scoped (module-level so it survives ChatView remounts, e.g. route
@@ -35,9 +43,16 @@ export function isThreadErrorBannerDismissedForSession(bannerKey: string | null)
 
 export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
+  action,
   onDismiss,
 }: {
   error: string | null;
+  action?: {
+    label: string;
+    pendingLabel: string;
+    isPending: boolean;
+    onClick: () => void;
+  };
   onDismiss?: () => void;
 }) {
   if (!error) return null;
@@ -53,11 +68,23 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             </TooltipPopup>
           </Tooltip>
         </AlertDescription>
-        {onDismiss && (
+        {(action || onDismiss) && (
           <AlertAction>
-            <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
-              <XIcon className="text-destructive" />
-            </Button>
+            {action && (
+              <Button
+                variant="ghost"
+                size="xs"
+                disabled={action.isPending}
+                onClick={action.onClick}
+              >
+                {action.isPending ? action.pendingLabel : action.label}
+              </Button>
+            )}
+            {onDismiss && (
+              <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
+                <XIcon className="text-destructive" />
+              </Button>
+            )}
           </AlertAction>
         )}
       </Alert>

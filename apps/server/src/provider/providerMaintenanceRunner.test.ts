@@ -1,12 +1,15 @@
 import { describe, it, assert } from "@effect/vitest";
 import {
+  defaultInstanceIdForDriver,
   ProviderDriverKind,
   ProviderInstanceId,
+  ThreadId,
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import { ServerProviderUpdateError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -16,12 +19,14 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import * as NodePath from "@effect/platform-node/NodePath";
 
 import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   makeProviderMaintenanceCapabilities,
   ProviderVersionCache,
@@ -32,9 +37,12 @@ const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
 const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CODEX_INSTANCE_ID = ProviderInstanceId.make("codex");
 const CURSOR_INSTANCE_ID = ProviderInstanceId.make("cursor");
 const OPENCODE_INSTANCE_ID = ProviderInstanceId.make("opencode");
+const CLAUDE_INSTANCE_ID = ProviderInstanceId.make("claude-work");
+const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_DRIVER);
 const encoder = new TextEncoder();
 
 // Pin a non-win32 platform so `resolveSpawnCommand` is a no-op and the raw
@@ -203,21 +211,379 @@ function makeRegistry(
   });
 }
 
-const makeTestRunner = (registry: ProviderRegistryShape) =>
+const makeTestRunnerLayer = (
+  registry: ProviderRegistryShape,
+  settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
+) =>
+  ProviderMaintenanceRunner.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(ProviderRegistry, registry),
+        Layer.succeed(ProviderVersionCache, new Map()),
+        ServerSettings.layerTest(settings),
+        NodePath.layer,
+      ),
+    ),
+  );
+
+const makeTestRunner = (
+  registry: ProviderRegistryShape,
+  settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
+) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
-    Effect.provide(
-      ProviderMaintenanceRunner.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.succeed(ProviderRegistry, registry),
-            Layer.succeed(ProviderVersionCache, new Map()),
-          ),
+    Effect.provide(makeTestRunnerLayer(registry, settings)),
+  );
+
+describe("providerMaintenanceRunner", () => {
+  it.effect("rejects reauthentication for unsupported providers", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry();
+      const runner = yield* makeTestRunner(registry);
+
+      const error = yield* runner
+        .reauthenticateProvider({ provider: CODEX_DRIVER })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error.provider, CODEX_DRIVER);
+      assert.strictEqual(error.reason, "Reauthentication is not supported for codex");
+      assert.deepStrictEqual(calls, []);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command, args) => {
+            calls.push({ command, args });
+            return {};
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("keeps claude auth login output out of the user-facing failure reason", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        instanceId: CLAUDE_INSTANCE_ID,
+        driver: CLAUDE_DRIVER,
+      });
+      const runner = yield* makeTestRunner(registry);
+
+      const error = yield* runner
+        .reauthenticateProvider({ provider: CLAUDE_DRIVER })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error.reason, "claude auth login exited with code 1.");
+      assert.strictEqual(error.cause, undefined);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => ({ stderr: "OAuth login was rejected", code: 1 })),
         ),
       ),
     ),
   );
 
-describe("providerMaintenanceRunner", () => {
+  it.effect("runs claude auth login for the configured instance and refreshes it", () => {
+    const calls: Array<{
+      command: string;
+      args: ReadonlyArray<string>;
+      env: NodeJS.ProcessEnv | undefined;
+      stdin: ChildProcess.CommandInput | undefined;
+    }> = [];
+    const refreshedInstanceIds: Array<ProviderInstanceId> = [];
+    const claudeConfigDir = "/tmp/t3-claude-reauth";
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        instanceId: CLAUDE_INSTANCE_ID,
+        driver: CLAUDE_DRIVER,
+      });
+      const runner = yield* makeTestRunner(
+        {
+          ...registry,
+          refreshInstance: (instanceId) =>
+            registry.refreshInstance(instanceId).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  refreshedInstanceIds.push(instanceId);
+                }),
+              ),
+            ),
+        },
+        {
+          providerInstances: {
+            [CLAUDE_INSTANCE_ID]: {
+              driver: "claudeAgent",
+              config: {
+                binaryPath: "/opt/claude/bin/claude",
+                homePath: claudeConfigDir,
+              },
+            },
+          },
+        },
+      );
+
+      const result = yield* runner.reauthenticateProvider({
+        provider: CLAUDE_DRIVER,
+        instanceId: CLAUDE_INSTANCE_ID,
+      });
+
+      assert.strictEqual(result.providers[0]?.instanceId, CLAUDE_INSTANCE_ID);
+      assert.deepStrictEqual(refreshedInstanceIds, [CLAUDE_INSTANCE_ID]);
+      assert.strictEqual(calls.length, 1);
+      assert.strictEqual(calls[0]?.command, "/opt/claude/bin/claude");
+      assert.deepStrictEqual(calls[0]?.args, ["auth", "login"]);
+      assert.strictEqual(calls[0]?.stdin, "ignore");
+      assert.strictEqual(calls[0]?.env?.CLAUDE_CONFIG_DIR, claudeConfigDir);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          NodePath.layer,
+          latestVersionHttpClient("0.0.0"),
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              const childProcess = command as unknown as {
+                readonly command: string;
+                readonly args: ReadonlyArray<string>;
+                readonly options: {
+                  readonly env?: NodeJS.ProcessEnv;
+                  readonly stdin?: ChildProcess.CommandInput;
+                };
+              };
+              calls.push({
+                command: childProcess.command,
+                args: childProcess.args,
+                env: childProcess.options.env,
+                stdin: childProcess.options.stdin,
+              });
+              return Effect.succeed(mockHandle({ stdout: "Login successful." }));
+            }),
+          ),
+        ),
+      ),
+    );
+  });
+
+  it.effect("forces interactive Claude auth to print its browser URL", () => {
+    const calls: Array<{ env: NodeJS.ProcessEnv | undefined }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        instanceId: CLAUDE_INSTANCE_ID,
+        driver: CLAUDE_DRIVER,
+      });
+      yield* Effect.gen(function* () {
+        const runner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
+        const started = yield* runner.beginProviderReauthentication({
+          provider: CLAUDE_DRIVER,
+          instanceId: CLAUDE_INSTANCE_ID,
+          threadId: ThreadId.make("thread-claude-reauth"),
+        });
+
+        assert.strictEqual(started.status, "awaiting_code");
+        yield* runner.cancelProviderReauthentication({ attemptId: started.attemptId });
+        assert.strictEqual(calls[0]?.env?.BROWSER, "true");
+      }).pipe(
+        Effect.provide(
+          makeTestRunnerLayer(registry, {
+            providerInstances: {
+              [CLAUDE_INSTANCE_ID]: { driver: "claudeAgent" },
+            },
+          }),
+        ),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          NodePath.layer,
+          latestVersionHttpClient("0.0.0"),
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              const childProcess = command as unknown as {
+                readonly options: { readonly env?: NodeJS.ProcessEnv };
+              };
+              calls.push({ env: childProcess.options.env });
+              return Effect.gen(function* () {
+                const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+                return ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(1),
+                  exitCode: Deferred.await(exit),
+                  isRunning: Effect.succeed(true),
+                  kill: () =>
+                    Deferred.succeed(exit, ChildProcessSpawner.ExitCode(143)).pipe(Effect.asVoid),
+                  unref: Effect.succeed(Effect.void),
+                  stdin: Sink.drain,
+                  stdout: Stream.empty,
+                  stderr: Stream.empty,
+                  all: Stream.make(
+                    encoder.encode(
+                      "If the browser didn't open, visit: https://claude.ai/oauth/authorize?state=test\n",
+                    ),
+                  ),
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                });
+              });
+            }),
+          ),
+        ),
+      ),
+    );
+  });
+
+  it.effect("uses Claude defaults when an explicit instance omits config", () => {
+    const calls: Array<{
+      command: string;
+      env: NodeJS.ProcessEnv | undefined;
+    }> = [];
+    const refreshedInstanceIds: Array<ProviderInstanceId> = [];
+    const legacyConfigDir = "/tmp/t3-legacy-claude-reauth";
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        instanceId: CLAUDE_INSTANCE_ID,
+        driver: CLAUDE_DRIVER,
+      });
+      const runner = yield* makeTestRunner(
+        {
+          ...registry,
+          refreshInstance: (instanceId) =>
+            registry.refreshInstance(instanceId).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  refreshedInstanceIds.push(instanceId);
+                }),
+              ),
+            ),
+        },
+        {
+          providers: {
+            claudeAgent: {
+              binaryPath: "/opt/legacy/claude",
+              homePath: legacyConfigDir,
+            },
+          },
+          providerInstances: {
+            [CLAUDE_INSTANCE_ID]: {
+              driver: "claudeAgent",
+            },
+          },
+        },
+      );
+
+      yield* runner.reauthenticateProvider({
+        provider: CLAUDE_DRIVER,
+        instanceId: CLAUDE_INSTANCE_ID,
+      });
+
+      assert.deepStrictEqual(refreshedInstanceIds, [CLAUDE_INSTANCE_ID]);
+      assert.strictEqual(calls.length, 1);
+      assert.strictEqual(calls[0]?.command, "claude");
+      assert.strictEqual(calls[0]?.env?.CLAUDE_CONFIG_DIR, undefined);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          NodePath.layer,
+          latestVersionHttpClient("0.0.0"),
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              const childProcess = command as unknown as {
+                readonly command: string;
+                readonly options: { readonly env?: NodeJS.ProcessEnv };
+              };
+              calls.push({
+                command: childProcess.command,
+                env: childProcess.options.env,
+              });
+              return Effect.succeed(mockHandle({ stdout: "Login successful." }));
+            }),
+          ),
+        ),
+      ),
+    );
+  });
+
+  it.effect("uses legacy Claude settings for an absent canonical default instance", () => {
+    const calls: Array<{
+      command: string;
+      env: NodeJS.ProcessEnv | undefined;
+    }> = [];
+    const refreshedInstanceIds: Array<ProviderInstanceId> = [];
+    const legacyConfigDir = "/tmp/t3-legacy-default-claude-reauth";
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
+        driver: CLAUDE_DRIVER,
+      });
+      const runner = yield* makeTestRunner(
+        {
+          ...registry,
+          refreshInstance: (instanceId) =>
+            registry.refreshInstance(instanceId).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  refreshedInstanceIds.push(instanceId);
+                }),
+              ),
+            ),
+        },
+        {
+          providers: {
+            claudeAgent: {
+              binaryPath: "/opt/legacy/default-claude",
+              homePath: legacyConfigDir,
+            },
+          },
+        },
+      );
+
+      yield* runner.reauthenticateProvider({
+        provider: CLAUDE_DRIVER,
+        instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
+      });
+
+      assert.deepStrictEqual(refreshedInstanceIds, [CLAUDE_DEFAULT_INSTANCE_ID]);
+      assert.strictEqual(calls.length, 1);
+      assert.strictEqual(calls[0]?.command, "/opt/legacy/default-claude");
+      assert.strictEqual(calls[0]?.env?.CLAUDE_CONFIG_DIR, legacyConfigDir);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          NodePath.layer,
+          latestVersionHttpClient("0.0.0"),
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              const childProcess = command as unknown as {
+                readonly command: string;
+                readonly options: { readonly env?: NodeJS.ProcessEnv };
+              };
+              calls.push({
+                command: childProcess.command,
+                env: childProcess.options.env,
+              });
+              return Effect.succeed(mockHandle({ stdout: "Login successful." }));
+            }),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect("runs the allowlisted provider update command and records success", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {

@@ -14,7 +14,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
-import { ProviderApprovalOption } from "./orchestration.ts";
+import { ProviderApprovalOption, RuntimeErrorClass } from "./orchestration.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
@@ -92,15 +92,6 @@ export type RuntimeContentStreamKind = typeof RuntimeContentStreamKind.Type;
 
 const RuntimeSessionExitKind = Schema.Literals(["graceful", "error"]);
 export type RuntimeSessionExitKind = typeof RuntimeSessionExitKind.Type;
-
-const RuntimeErrorClass = Schema.Literals([
-  "provider_error",
-  "transport_error",
-  "permission_error",
-  "validation_error",
-  "unknown",
-]);
-export type RuntimeErrorClass = typeof RuntimeErrorClass.Type;
 
 export const TOOL_LIFECYCLE_ITEM_TYPES = [
   "command_execution",

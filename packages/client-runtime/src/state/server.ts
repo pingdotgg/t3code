@@ -1,4 +1,5 @@
 import {
+  defaultInstanceIdForDriver,
   type EnvironmentId,
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -851,6 +852,51 @@ export function createServerEnvironmentAtoms<R, E>(
         mode: "singleFlight",
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.instanceId ?? null, input.cwd ?? null]),
+      },
+    }),
+    reauthenticateProvider: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:reauthenticate-provider",
+      tag: WS_METHODS.serverReauthenticateProvider,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([
+            environmentId,
+            input.instanceId ?? defaultInstanceIdForDriver(input.provider),
+          ]),
+      },
+    }),
+    beginProviderReauthentication: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:begin-provider-reauthentication",
+      tag: WS_METHODS.serverBeginProviderReauthentication,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([
+            environmentId,
+            input.instanceId ?? defaultInstanceIdForDriver(input.provider),
+          ]),
+      },
+    }),
+    submitProviderReauthenticationCode: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:submit-provider-reauthentication-code",
+      tag: WS_METHODS.serverSubmitProviderReauthenticationCode,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.attemptId]),
+      },
+    }),
+    providerReauthenticationStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:provider-reauthentication-status",
+      tag: WS_METHODS.serverGetProviderReauthenticationStatus,
+      staleTimeMs: 0,
+    }),
+    cancelProviderReauthentication: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:cancel-provider-reauthentication",
+      tag: WS_METHODS.serverCancelProviderReauthentication,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.attemptId]),
       },
     }),
     updateProvider: createEnvironmentRpcCommand(runtime, {

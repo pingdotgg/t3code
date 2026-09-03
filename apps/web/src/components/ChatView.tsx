@@ -291,6 +291,11 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import {
+  ClaudeReauthenticationDialog,
+  type ClaudeReauthenticationActions,
+  type ClaudeReauthenticationRequest,
+} from "./chat/ClaudeReauthenticationDialog";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -318,6 +323,7 @@ import {
   getThreadErrorBannerKey,
   isThreadErrorBannerDismissedForSession,
   shouldShowThreadErrorBanner,
+  shouldShowThreadReauthenticateAction,
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
 import {
@@ -1297,6 +1303,13 @@ function chatActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
 }
 
+function unwrapAtomCommandResult<A, E>(result: AtomCommandResult<A, E>): A {
+  if (result._tag === "Failure") {
+    throw squashAtomCommandFailure(result);
+  }
+  return result.value;
+}
+
 /**
  * Drops the send-time anchored end space. That space is what holds a sent
  * message near the top while its turn streams, and it keeps LegendList's
@@ -1334,6 +1347,31 @@ function ChatViewContent(props: ChatViewProps) {
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
   });
+  const beginProviderReauthentication = useAtomCommand(
+    serverEnvironment.beginProviderReauthentication,
+    {
+      reportFailure: false,
+    },
+  );
+  const submitProviderReauthenticationCode = useAtomCommand(
+    serverEnvironment.submitProviderReauthenticationCode,
+    {
+      reportFailure: false,
+    },
+  );
+  const getProviderReauthenticationStatus = useAtomQueryRunner(
+    serverEnvironment.providerReauthenticationStatus,
+    {
+      reportFailure: false,
+      refresh: true,
+    },
+  );
+  const cancelProviderReauthentication = useAtomCommand(
+    serverEnvironment.cancelProviderReauthentication,
+    {
+      reportFailure: false,
+    },
+  );
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
@@ -1715,6 +1753,12 @@ function ChatViewContent(props: ChatViewProps) {
   // session.lastError. Bump a tick so the banner hides immediately. Mirrors
   // the branch mismatch banner.
   const [, setThreadErrorBannerDismissTick] = useState(0);
+  const [reauthenticatingThreadKey, setReauthenticatingThreadKey] = useState<string | null>(null);
+  const [claudeReauthenticationDialogOpen, setClaudeReauthenticationDialogOpen] = useState(false);
+  useEffect(() => {
+    setClaudeReauthenticationDialogOpen(false);
+    setReauthenticatingThreadKey(null);
+  }, [routeThreadKey]);
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   // Plan mode is legacy (Settings → Beta). With the flag off the effective
   // mode is forced to "default" — even for threads with a stored plan mode —
@@ -3148,6 +3192,98 @@ function ChatViewContent(props: ChatViewProps) {
     [activeServerThread, draftId, routeThreadKey, routeThreadRef],
   );
 
+  const dismissVisibleThreadError = useCallback(() => {
+    setThreadError(activeThread?.id ?? null, null);
+    dismissThreadErrorBannerForSession(threadErrorBannerKey);
+    setThreadErrorBannerDismissTick((tick) => tick + 1);
+  }, [activeThread?.id, setThreadError, threadErrorBannerKey]);
+
+  const showThreadReauthenticateAction =
+    visibleThreadError !== null &&
+    localServerError === null &&
+    shouldShowThreadReauthenticateAction(
+      activeServerThread?.session?.lastErrorClass,
+      lockedProvider,
+    );
+  const claudeReauthenticationRequest = useMemo<ClaudeReauthenticationRequest | null>(() => {
+    if (activeServerThread === null) return null;
+    const providerInstanceId = activeServerThread.session?.providerInstanceId;
+    return {
+      environmentId: activeServerThread.environmentId,
+      threadId: activeServerThread.id,
+      ...(providerInstanceId === undefined ? {} : { providerInstanceId }),
+    };
+  }, [activeServerThread]);
+  const claudeReauthenticationActions = useMemo<ClaudeReauthenticationActions>(
+    () => ({
+      begin: async (request) => {
+        const result = await beginProviderReauthentication({
+          environmentId: request.environmentId,
+          input: {
+            provider: ProviderDriverKind.make("claudeAgent"),
+            threadId: request.threadId,
+            ...(request.providerInstanceId === undefined
+              ? {}
+              : { instanceId: request.providerInstanceId }),
+          },
+        });
+        const value = unwrapAtomCommandResult(result);
+        return {
+          attemptId: value.attemptId,
+          authorizationUrl: value.authorizationUrl,
+        };
+      },
+      submitCode: async (request) => {
+        const result = await submitProviderReauthenticationCode({
+          environmentId: request.environmentId,
+          input: {
+            attemptId: request.attemptId,
+            code: request.code,
+          },
+        });
+        return unwrapAtomCommandResult(result);
+      },
+      getStatus: async ({ attemptId }) => {
+        const request = claudeReauthenticationRequest;
+        if (request === null) {
+          throw new Error("The Claude authentication environment is no longer active.");
+        }
+        const result = await getProviderReauthenticationStatus({
+          environmentId: request.environmentId,
+          input: { attemptId },
+        });
+        return unwrapAtomCommandResult(result);
+      },
+      cancel: async (request) => {
+        const result = await cancelProviderReauthentication({
+          environmentId: request.environmentId,
+          input: { attemptId: request.attemptId },
+        });
+        unwrapAtomCommandResult(result);
+      },
+    }),
+    [
+      beginProviderReauthentication,
+      cancelProviderReauthentication,
+      claudeReauthenticationRequest,
+      getProviderReauthenticationStatus,
+      submitProviderReauthenticationCode,
+    ],
+  );
+  const handleReauthenticateProvider = useCallback(() => {
+    if (!activeServerThread || !showThreadReauthenticateAction) return;
+    setReauthenticatingThreadKey(routeThreadKey);
+    setClaudeReauthenticationDialogOpen(true);
+  }, [activeServerThread, routeThreadKey, showThreadReauthenticateAction]);
+  const handleClaudeReauthenticationDialogOpenChange = useCallback(
+    (open: boolean) => {
+      setClaudeReauthenticationDialogOpen(open);
+      if (!open) {
+        setReauthenticatingThreadKey((current) => (current === routeThreadKey ? null : current));
+      }
+    },
+    [routeThreadKey],
+  );
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
   }, [composerRef]);
@@ -7461,12 +7597,27 @@ function ChatViewContent(props: ChatViewProps) {
 
         <ThreadErrorBanner
           error={visibleThreadError}
-          onDismiss={() => {
-            setThreadError(activeThread.id, null);
-            dismissThreadErrorBannerForSession(threadErrorBannerKey);
-            setThreadErrorBannerDismissTick((tick) => tick + 1);
-          }}
+          {...(showThreadReauthenticateAction
+            ? {
+                action: {
+                  label: "Reauthenticate",
+                  pendingLabel: "Reauthenticating…",
+                  isPending: reauthenticatingThreadKey === routeThreadKey,
+                  onClick: () => void handleReauthenticateProvider(),
+                },
+              }
+            : {})}
+          onDismiss={dismissVisibleThreadError}
         />
+        {claudeReauthenticationRequest !== null ? (
+          <ClaudeReauthenticationDialog
+            key={routeThreadKey}
+            open={claudeReauthenticationDialogOpen}
+            request={claudeReauthenticationRequest}
+            actions={claudeReauthenticationActions}
+            onOpenChange={handleClaudeReauthenticationDialogOpenChange}
+          />
+        ) : null}
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
           {/* Chat column */}

@@ -350,6 +350,22 @@ export const OrchestrationSessionStatus = Schema.Literals([
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
+/**
+ * Coarse classification of a provider runtime failure. Lives here (not in
+ * providerRuntime.ts) because the session read model carries it alongside
+ * `lastError` so clients can offer targeted recovery, e.g. a reauthenticate
+ * action for `auth_error`.
+ */
+export const RuntimeErrorClass = Schema.Literals([
+  "provider_error",
+  "transport_error",
+  "permission_error",
+  "validation_error",
+  "auth_error",
+  "unknown",
+]);
+export type RuntimeErrorClass = typeof RuntimeErrorClass.Type;
+
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
@@ -358,6 +374,8 @@ export const OrchestrationSession = Schema.Struct({
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
+  /** Classification of `lastError` when the failing runtime reported one. */
+  lastErrorClass: Schema.optional(RuntimeErrorClass),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;

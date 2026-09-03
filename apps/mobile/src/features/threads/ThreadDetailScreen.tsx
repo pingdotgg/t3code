@@ -57,6 +57,7 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { ErrorBanner } from "../../components/ErrorBanner";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
@@ -90,6 +91,12 @@ import {
 import { ThreadFeed } from "./ThreadFeed";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
+import {
+  ClaudeReauthenticationSheet,
+  type ClaudeReauthenticationActions,
+  type ClaudeReauthenticationRequest,
+} from "./ClaudeReauthenticationSheet";
+import { isClaudeAuthenticationError } from "./claudeReauthentication";
 
 export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThreadShell;
@@ -147,6 +154,9 @@ export interface ThreadDetailScreenProps {
     customAnswer: string,
   ) => void;
   readonly onSubmitUserInput: () => Promise<unknown>;
+  /** Optional server callbacks for Claude's remote-capable auth flow. */
+  readonly claudeReauthentication?: ClaudeReauthenticationActions;
+  readonly onClaudeReauthenticated?: () => Promise<void> | void;
   readonly showContent?: boolean;
 }
 
@@ -510,6 +520,41 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const isSplitLayout = layoutVariant === "split";
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
+  const selectedProvider = props.serverConfig?.providers.find(
+    (provider) => provider.instanceId === selectedInstanceId,
+  );
+  const isClaudeAuthError = isClaudeAuthenticationError({
+    errorClass: props.selectedThread.session?.lastErrorClass,
+    providerDriver: selectedProvider?.driver,
+    providerName: props.selectedThread.session?.providerName,
+  });
+  const [claudeReauthenticationVisible, setClaudeReauthenticationVisible] = useState(false);
+  const claudeReauthenticationRequest = useMemo<ClaudeReauthenticationRequest>(
+    () => ({
+      environmentId: props.environmentId,
+      threadId: props.selectedThread.id,
+      ...(props.selectedThread.session?.providerInstanceId === undefined
+        ? {}
+        : { providerInstanceId: props.selectedThread.session.providerInstanceId }),
+    }),
+    [
+      props.environmentId,
+      props.selectedThread.id,
+      props.selectedThread.session?.providerInstanceId,
+    ],
+  );
+  const openClaudeReauthentication = useCallback(() => {
+    if (props.claudeReauthentication === undefined || !isClaudeAuthError) {
+      return;
+    }
+    setClaudeReauthenticationVisible(true);
+  }, [isClaudeAuthError, props.claudeReauthentication]);
+  const closeClaudeReauthentication = useCallback(() => {
+    setClaudeReauthenticationVisible(false);
+  }, []);
+  useEffect(() => {
+    setClaudeReauthenticationVisible(false);
+  }, [selectedThreadKey]);
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
   const selectedProviderSkills = useMemo(() => {
     const provider = props.serverConfig?.providers.find(
@@ -682,6 +727,22 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   return (
     <View className="flex-1">
+      {props.selectedThread.session?.lastError ? (
+        <View className="px-4 pt-3">
+          <ErrorBanner
+            action={
+              props.claudeReauthentication !== undefined && isClaudeAuthError
+                ? {
+                    label: "Reauthenticate",
+                    onPress: openClaudeReauthentication,
+                    disabled: claudeReauthenticationVisible,
+                  }
+                : undefined
+            }
+            message={props.selectedThread.session.lastError}
+          />
+        </View>
+      ) : null}
       {showContent ? (
         <View
           className="flex-1"
@@ -832,6 +893,17 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             </View>
           </Animated.View>
         </KeyboardStickyView>
+      ) : null}
+
+      {props.claudeReauthentication !== undefined ? (
+        <ClaudeReauthenticationSheet
+          actions={props.claudeReauthentication}
+          onSuccess={props.onClaudeReauthenticated}
+          onRequestClose={closeClaudeReauthentication}
+          request={claudeReauthenticationRequest}
+          resolved={claudeReauthenticationVisible && !isClaudeAuthError}
+          visible={claudeReauthenticationVisible}
+        />
       ) : null}
     </View>
   );

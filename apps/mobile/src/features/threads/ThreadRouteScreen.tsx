@@ -7,11 +7,20 @@ import {
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
-import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ThreadId,
+  type ProjectScript,
+} from "@t3tools/contracts";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
+import {
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -50,6 +59,7 @@ import {
 } from "../terminal/terminalLaunchContext";
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import { ThreadDetailScreen } from "./ThreadDetailScreen";
+import type { ClaudeReauthenticationActions } from "./ClaudeReauthenticationSheet";
 import {
   ThreadGitControls,
   useThreadGitCenterHeaderItems,
@@ -57,6 +67,8 @@ import {
 } from "./ThreadGitControls";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
+import { serverEnvironment } from "../../state/server";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
@@ -96,6 +108,13 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
   return value ?? null;
 }
 
+function unwrapAtomCommandResult<A, E>(result: AtomCommandResult<A, E>): A {
+  if (result._tag === "Failure") {
+    throw squashAtomCommandFailure(result);
+  }
+  return result.value;
+}
+
 function OpeningThreadLoadingScreen() {
   return <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" />;
 }
@@ -108,6 +127,9 @@ type ThreadRouteScreenRouteProps = StaticScreenProps<{
 interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
   readonly onReturnToThread?: () => void;
   readonly renderInspector?: (headerInset: number) => ReactNode;
+  /** Optional server callbacks for Claude's remote-capable auth flow. */
+  readonly claudeReauthentication?: ClaudeReauthenticationActions;
+  readonly onClaudeReauthenticated?: () => Promise<void> | void;
 }
 
 function ThreadUnavailableScreen() {
@@ -214,6 +236,80 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const beginProviderReauthentication = useAtomCommand(
+    serverEnvironment.beginProviderReauthentication,
+    { reportFailure: false },
+  );
+  const submitProviderReauthenticationCode = useAtomCommand(
+    serverEnvironment.submitProviderReauthenticationCode,
+    { reportFailure: false },
+  );
+  const getProviderReauthenticationStatus = useAtomQueryRunner(
+    serverEnvironment.providerReauthenticationStatus,
+    { reportFailure: false, refresh: true },
+  );
+  const cancelProviderReauthentication = useAtomCommand(
+    serverEnvironment.cancelProviderReauthentication,
+    { reportFailure: false },
+  );
+  const claudeReauthenticationActions = useMemo<ClaudeReauthenticationActions>(
+    () => ({
+      begin: async (request) => {
+        const result = await beginProviderReauthentication({
+          environmentId: request.environmentId,
+          input: {
+            provider: ProviderDriverKind.make("claudeAgent"),
+            threadId: request.threadId,
+            ...(request.providerInstanceId === undefined
+              ? {}
+              : { instanceId: request.providerInstanceId }),
+          },
+        });
+        const value = unwrapAtomCommandResult(result);
+        return {
+          attemptId: value.attemptId,
+          authorizationUrl: value.authorizationUrl,
+        };
+      },
+      getStatus: async ({ attemptId }) => {
+        const statusEnvironmentId = selectedThread?.environmentId ?? null;
+        if (statusEnvironmentId === null) {
+          throw new Error("The Claude authentication environment is no longer active.");
+        }
+        const result = await getProviderReauthenticationStatus({
+          environmentId: statusEnvironmentId,
+          input: { attemptId },
+        });
+        return unwrapAtomCommandResult(result);
+      },
+      submitCode: async (request) => {
+        const result = await submitProviderReauthenticationCode({
+          environmentId: request.environmentId,
+          input: {
+            attemptId: request.attemptId,
+            code: request.code,
+          },
+        });
+        return unwrapAtomCommandResult(result);
+      },
+      cancel: async (request) => {
+        const result = await cancelProviderReauthentication({
+          environmentId: request.environmentId,
+          input: { attemptId: request.attemptId },
+        });
+        unwrapAtomCommandResult(result);
+      },
+    }),
+    [
+      beginProviderReauthentication,
+      cancelProviderReauthentication,
+      getProviderReauthenticationStatus,
+      selectedThread?.environmentId,
+      submitProviderReauthenticationCode,
+    ],
+  );
+  const activeClaudeReauthenticationActions =
+    props.claudeReauthentication ?? claudeReauthenticationActions;
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -808,6 +904,8 @@ function ThreadRouteContent(
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
           onSubmitUserInput={requests.onSubmitUserInput}
+          claudeReauthentication={activeClaudeReauthenticationActions}
+          onClaudeReauthenticated={props.onClaudeReauthenticated}
         />
       </View>
     </>

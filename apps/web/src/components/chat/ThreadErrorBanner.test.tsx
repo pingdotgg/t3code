@@ -6,6 +6,7 @@ import {
   getThreadErrorBannerKey,
   isThreadErrorBannerDismissedForSession,
   shouldShowThreadErrorBanner,
+  shouldShowThreadReauthenticateAction,
   ThreadErrorBanner,
 } from "./ThreadErrorBanner";
 
@@ -69,6 +70,13 @@ describe("ThreadErrorBanner", () => {
   it("never shows a null error", () => {
     expect(shouldShowThreadErrorBanner("env:thread-e", null, false)).toBe(false);
   });
+
+  it("offers reauthentication for Claude authentication errors on every client", () => {
+    expect(shouldShowThreadReauthenticateAction("auth_error", "claudeAgent")).toBe(true);
+    expect(shouldShowThreadReauthenticateAction("provider_error", "claudeAgent")).toBe(false);
+    expect(shouldShowThreadReauthenticateAction("auth_error", "codex")).toBe(false);
+  });
+
   it("aligns the warning and dismiss icons with the first line of a multi-line error", () => {
     const markup = renderToStaticMarkup(
       <ThreadErrorBanner

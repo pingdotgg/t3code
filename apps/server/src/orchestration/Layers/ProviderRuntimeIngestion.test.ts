@@ -358,7 +358,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(
+    let thread = await waitForThread(
       harness.readModel,
       (entry) =>
         entry.session?.status === "error" &&
@@ -2724,10 +2724,11 @@ describe("ProviderRuntimeIngestion", () => {
       turnId: asTurnId("turn-3"),
       payload: {
         message: "runtime exploded",
+        class: "auth_error",
       },
     });
 
-    const thread = await waitForThread(
+    let thread = await waitForThread(
       harness.readModel,
       (entry) =>
         entry.session?.status === "error" &&
@@ -2736,6 +2737,58 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime exploded");
+    expect(thread.session?.lastErrorClass).toBe("auth_error");
+
+    // The failed turn completion and session exit that follow a runtime error
+    // rewrite the session; the class must travel with the carried message.
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-runtime-error-turn-failed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-3"),
+      payload: {
+        state: "failed",
+        errorMessage: "runtime exploded",
+      },
+    });
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-runtime-error-session-exited"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        kind: "error",
+      },
+    });
+
+    thread = await waitForThread(harness.readModel, (entry) => entry.session?.status === "stopped");
+    expect(thread.session?.lastError).toBe("runtime exploded");
+    expect(thread.session?.lastErrorClass).toBe("auth_error");
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-runtime-error-recovered"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-3"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.session.lastError === null &&
+        entry.session.lastErrorClass === undefined,
+    );
+    expect(thread.session?.lastError).toBeNull();
+    expect(thread.session?.lastErrorClass).toBeUndefined();
   });
 
   it("records runtime.error activities from the typed payload message", async () => {
