@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createPullRequestEnvironmentAtoms } from "@t3tools/client-runtime/state/pull-requests";
+import {
+  createLinkedPullRequestSummaryAtomFamily,
+  createPullRequestEnvironmentAtoms,
+} from "@t3tools/client-runtime/state/pull-requests";
 import type {
   EnvironmentId,
   PullRequestListInput,
@@ -19,6 +22,8 @@ import {
 import { formatEnvironmentQueryError } from "./query";
 
 export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime);
+export const linkedPullRequestDetailAtom =
+  createLinkedPullRequestSummaryAtomFamily(connectionAtomRuntime);
 
 export interface EnvironmentQueryTarget<Input> {
   readonly environmentId: EnvironmentId;
@@ -26,7 +31,7 @@ export interface EnvironmentQueryTarget<Input> {
 }
 
 interface MergedEnvironmentQueryView<A> {
-  /** One entry per environment that has answered, in the order the targets were given. */
+  /** One entry per query target that has answered, in the order the targets were given. */
   readonly values: ReadonlyArray<readonly [EnvironmentId, A]>;
   /** The first environment that failed. Others may still have answered — this is not fatal. */
   readonly error: string | null;
@@ -73,11 +78,16 @@ function createMergedEnvironmentQuery<Input, A>(
   return function useMergedQuery(targets: ReadonlyArray<EnvironmentQueryTarget<Input>>) {
     const key = JSON.stringify(targets);
     const view = useAtomValue(targets.length === 0 ? empty : family(key));
-    const refresh = useCallback(() => {
-      for (const target of JSON.parse(key) as ReadonlyArray<EnvironmentQueryTarget<Input>>) {
-        appAtomRegistry.refresh(atomFor(target));
-      }
-    }, [key]);
+    const refresh = useCallback(
+      (override?: ReadonlyArray<EnvironmentQueryTarget<Input>>) => {
+        const refreshTargets =
+          override ?? (JSON.parse(key) as ReadonlyArray<EnvironmentQueryTarget<Input>>);
+        for (const target of refreshTargets) {
+          appAtomRegistry.refresh(atomFor(target));
+        }
+      },
+      [key],
+    );
     return { ...view, refresh };
   };
 }
@@ -113,7 +123,10 @@ export function usePullRequestListStats(
   targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListStatsInput>>,
 ): {
   readonly stats: ReadonlyArray<EnvironmentPullRequestStat> | null;
-  readonly refresh: () => void;
+  readonly isPending: boolean;
+  readonly refresh: (
+    targets?: ReadonlyArray<EnvironmentQueryTarget<PullRequestListStatsInput>>,
+  ) => void;
 } {
   const query = usePullRequestStatsQuery(targets);
   const stats = useMemo(
@@ -125,5 +138,5 @@ export function usePullRequestListStats(
           ),
     [query.values],
   );
-  return { stats, refresh: query.refresh };
+  return { stats, isPending: query.isPending, refresh: query.refresh };
 }

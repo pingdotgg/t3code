@@ -16,9 +16,10 @@ import {
   isTerminalPasteShortcut,
   loadTerminalFontFamily,
   primeTerminalCopyInput,
+  resolveTerminalMouseData,
+  resolveTerminalMouseTrackingState,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
-  shouldShowTerminalLinkHover,
   terminalGridCellAt,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
@@ -402,11 +403,39 @@ describe("application mouse reporting", () => {
     expect([0, 1, 2, 3, 4, 5].map(ghosttyMouseButton)).toEqual([1, 3, 2, 4, 5, null]);
   });
 
-  it("only shows link hover during mouse tracking when the link modifier is held", () => {
-    expect(shouldShowTerminalLinkHover(false, false)).toBe(true);
-    expect(shouldShowTerminalLinkHover(false, true)).toBe(true);
-    expect(shouldShowTerminalLinkHover(true, false)).toBe(false);
-    expect(shouldShowTerminalLinkHover(true, true)).toBe(true);
+  it("drops repeated motion reports until another mouse action resets the cell", () => {
+    const first = resolveTerminalMouseData("motion", "\u001b[<35;8;4M", "");
+    expect(first).toEqual({ send: true, nextMotionData: "\u001b[<35;8;4M" });
+
+    const duplicate = resolveTerminalMouseData("motion", "\u001b[<35;8;4M", first.nextMotionData);
+    expect(duplicate).toEqual({ send: false, nextMotionData: "\u001b[<35;8;4M" });
+
+    const press = resolveTerminalMouseData("press", "\u001b[<0;8;4M", duplicate.nextMotionData);
+    expect(press).toEqual({ send: true, nextMotionData: "" });
+
+    expect(resolveTerminalMouseData("motion", "\u001b[<35;8;4M", press.nextMotionData)).toEqual({
+      send: true,
+      nextMotionData: "\u001b[<35;8;4M",
+    });
+  });
+
+  it("clears the motion baseline when application mouse tracking changes", () => {
+    expect(resolveTerminalMouseTrackingState(true, false, "\u001b[<35;8;4M")).toEqual({
+      tracking: false,
+      motionData: "",
+    });
+    expect(resolveTerminalMouseTrackingState(false, true, "\u001b[<35;8;4M")).toEqual({
+      tracking: true,
+      motionData: "",
+    });
+    expect(resolveTerminalMouseTrackingState(true, true, "\u001b[<35;8;4M")).toEqual({
+      tracking: true,
+      motionData: "\u001b[<35;8;4M",
+    });
+    expect(resolveTerminalMouseTrackingState(false, false, "\u001b[<35;8;4M")).toEqual({
+      tracking: false,
+      motionData: "\u001b[<35;8;4M",
+    });
   });
 });
 

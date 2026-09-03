@@ -35,6 +35,7 @@ import {
   RelayMobileRegistrationScope,
   RelayAuthInvalidError,
   type RelayAuthInvalidReason,
+  type RelayDpopFailureReason,
   RelayEnvironmentAuth,
   RelayEnvironmentConnectNotAuthorizedError,
   RelayEnvironmentEndpointTimedOutError,
@@ -999,6 +1000,7 @@ class ClerkTokenVerificationFailed extends Schema.TaggedErrorClass<ClerkTokenVer
 }
 
 const isHttpUnauthorized = Schema.is(HttpApiError.Unauthorized);
+const isDpopProofRejected = Schema.is(DpopProofs.DpopProofRejected);
 
 const currentTraceId = Effect.currentParentSpan.pipe(
   Effect.map((span) => span.traceId),
@@ -1030,9 +1032,36 @@ type RelayCommonPersistenceError = typeof RelayCommonPersistenceError.Type;
 const isRelayCommonPersistenceError = Schema.is(RelayCommonPersistenceError);
 
 type MapRelayCommonApiError<E> =
-  | Exclude<E, HttpApiError.Unauthorized | RelayCommonPersistenceError>
+  | Exclude<
+      E,
+      HttpApiError.Unauthorized | DpopProofs.DpopProofRejected | RelayCommonPersistenceError
+    >
   | (Extract<E, HttpApiError.Unauthorized> extends never ? never : RelayAuthInvalidError)
+  | (Extract<E, DpopProofs.DpopProofRejected> extends never ? never : RelayAuthInvalidError)
   | (Extract<E, RelayCommonPersistenceError> extends never ? never : RelayInternalError);
+
+export function relayDpopFailureReason(
+  code: DpopProofs.DpopProofFailureCode,
+): RelayDpopFailureReason {
+  switch (code) {
+    case "time_window":
+      return "time_window";
+    case "key_mismatch":
+      return "key_mismatch";
+    case "method_mismatch":
+    case "url_mismatch":
+      return "request_mismatch";
+    case "access_token_hash_mismatch":
+      return "token_mismatch";
+    case "replayed":
+      return "replay";
+    case "missing_proof":
+    case "malformed_proof":
+    case "invalid_signature":
+    case "invalid_proof":
+      return "invalid_proof";
+  }
+}
 
 function relayInternalErrorResponse(reason: RelayInternalError["reason"]) {
   return currentTraceId.pipe(
@@ -1045,11 +1074,32 @@ function relayInternalErrorResponse(reason: RelayInternalError["reason"]) {
 function mapRelayCommonApiErrors(authReason: RelayAuthInvalidReason) {
   const mapError = Effect.fnUntraced(function* <E>(error: E) {
     const traceId = yield* currentTraceId;
-    if (isHttpUnauthorized(error)) {
+    if (isDpopProofRejected(error)) {
+      yield* Effect.annotateCurrentSpan({
+        "relay.dpop.failure_code": error.code,
+      });
       return yield* Effect.fail(
         new RelayAuthInvalidError({
           code: "auth_invalid",
           reason: authReason,
+          ...(authReason === "invalid_dpop"
+            ? { dpopFailureReason: relayDpopFailureReason(error.code) }
+            : {}),
+          traceId,
+        }) as MapRelayCommonApiError<E>,
+      );
+    }
+    if (isHttpUnauthorized(error)) {
+      if (authReason === "invalid_dpop") {
+        yield* Effect.annotateCurrentSpan({
+          "relay.dpop.failure_code": "invalid_proof",
+        });
+      }
+      return yield* Effect.fail(
+        new RelayAuthInvalidError({
+          code: "auth_invalid",
+          reason: authReason,
+          ...(authReason === "invalid_dpop" ? { dpopFailureReason: "invalid_proof" } : {}),
           traceId,
         }) as MapRelayCommonApiError<E>,
       );

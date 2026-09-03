@@ -1,0 +1,361 @@
+name: Desktop macOS Preview
+
+on:
+  pull_request:
+    types: [labeled, unlabeled, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+
+# Build events and cleanup events use separate groups: a push must cancel a
+# stale in-flight build, but must never cancel a cleanup run mid-delete. The
+# publish job re-checks PR state before uploading to cover the reverse race.
+concurrency:
+  group: desktop-macos-preview-${{ github.event.pull_request.number }}-${{ contains(fromJSON('["closed", "unlabeled"]'), github.event.action) && 'cleanup' || 'build' }}
+  # Cleanup runs must complete (a close event right after an unlabel queues
+  # behind the running cleanup instead of canceling it mid-delete), and events
+  # that skip the build job, such as adding an unrelated label, must not
+  # cancel an in-flight build either.
+  cancel-in-progress: ${{ !contains(fromJSON('["closed", "unlabeled"]'), github.event.action) && (github.event.action != 'labeled' || github.event.label.name == 'preview:mac') }}
+
+jobs:
+  # Builds run PR code, so this job keeps a read-only token. Publishing to the
+  # release happens in the publish job below, which never checks out PR code.
+  build:
+    name: Build macOS Apple Silicon preview
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.action != 'unlabeled' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'preview:mac') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'preview:mac')
+    runs-on: blacksmith-12vcpu-macos-26
+    timeout-minutes: 30
+    outputs:
+      dmg_name: ${{ steps.build.outputs.dmg_name }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache@v6
+        with:
+          path: native/resource-monitor/target/aarch64-apple-darwin/release/t3-resource-monitor
+          key: resource-monitor-aarch64-apple-darwin-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - id: version
+        name: Set preview version and public configuration
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          base_version="$(node -p "require('./apps/desktop/package.json').version")"
+          preview_version="${base_version}-pr.${PR_NUMBER}.${GITHUB_RUN_NUMBER}"
+          node scripts/update-release-package-versions.ts "$preview_version"
+          cp .env.example .env
+
+          echo "version=$preview_version" >> "$GITHUB_OUTPUT"
+
+      - id: build
+        name: Build unsigned macOS DMG
+        shell: bash
+        env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
+          PREVIEW_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          vp run dist:desktop:artifact \
+            --platform mac \
+            --target dmg \
+            --arch arm64 \
+            --build-version "$PREVIEW_VERSION" \
+            --verbose
+
+          shopt -s nullglob
+          dmg_files=(release/*.dmg)
+          if (( ${#dmg_files[@]} != 1 )); then
+            printf 'Expected one DMG, found %s.\n' "${#dmg_files[@]}" >&2
+            exit 1
+          fi
+          printf 'dmg_name=%s\n' "$(basename "${dmg_files[0]}")" >> "$GITHUB_OUTPUT"
+
+      # archive: false uploads the file as its own artifact named after the
+      # file, so the publish job downloads by *.dmg pattern, not by name.
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v7
+        with:
+          path: release/*.dmg
+          if-no-files-found: error
+          archive: false
+          overwrite: true
+          retention-days: 7
+
+  # Release assets download without a GitHub account, unlike workflow
+  # artifacts. All preview DMGs live on one rolling prerelease tagged
+  # "desktop-preview" (release.yml only matches v*.*.* tags), so publishing a
+  # build never notifies release watchers. This job holds the write token and
+  # only handles the artifact the build job produced; it never runs PR code.
+  publish:
+    name: Publish anonymous download
+    needs: build
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Download macOS DMG
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "*.dmg"
+          merge-multiple: true
+          path: release
+
+      - id: upload
+        name: Upload DMG to the rolling preview release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          tag="desktop-preview"
+
+          # True while the PR is open and still carries the preview label.
+          preview_eligible() {
+            [[ "$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+              --json state,labels \
+              --jq '.state + " " + (.labels | map(.name) | contains(["preview:mac"]) | tostring)')" == "OPEN true" ]]
+          }
+
+          # The build ran for many minutes. If the PR closed or lost the label
+          # meanwhile, cleanup already ran in its own concurrency group, so
+          # publishing now would resurrect a deleted download.
+          if ! preview_eligible; then
+            echo "PR closed or preview label removed while building. Skipping publish."
+            exit 0
+          fi
+
+          dmg_path="$(find release -type f -name '*.dmg' -print -quit)"
+          if [[ -z "$dmg_path" ]]; then
+            echo "No DMG found in the downloaded artifact." >&2
+            exit 1
+          fi
+
+          # The filename comes out of the build, which runs PR code. Requiring
+          # this PR's marker keeps a build from clobbering or deleting another
+          # PR's asset, since those names carry a different -pr.N. marker.
+          if [[ "$(basename "$dmg_path")" != *"-pr.${PR_NUMBER}."* ]]; then
+            echo "DMG name '$(basename "$dmg_path")' does not carry this PR's -pr.${PR_NUMBER}. marker. Refusing to publish." >&2
+            exit 1
+          fi
+
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # "|| true" tolerates a concurrent publish job creating the
+            # release between the check and the create.
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$DEFAULT_BRANCH" \
+              --prerelease \
+              --title "Desktop preview builds" \
+              --notes "Rolling unsigned desktop builds from pull requests with a preview label. Each download is removed when its pull request closes or loses the label. Install stable builds from the latest release instead." \
+              || true
+          fi
+
+          # Keep one DMG per PR: drop this PR's older builds first. The
+          # trailing dot keeps -pr.12. from matching -pr.123. builds.
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+            | { grep -F -- "-pr.${PR_NUMBER}." || true; } \
+            | while read -r asset; do
+                gh release delete-asset "$tag" "$asset" --repo "$GITHUB_REPOSITORY" --yes \
+                  || echo "Asset $asset was already removed by a concurrent run."
+              done
+
+          gh release upload "$tag" "$dmg_path" --repo "$GITHUB_REPOSITORY" --clobber
+
+          # Re-check after uploading. A cleanup run that started during the
+          # upload listed assets before ours existed, so it cannot delete it.
+          # Whichever writer acts last sees the final PR state; if the preview
+          # became ineligible, delete what we just uploaded.
+          if ! preview_eligible; then
+            gh release delete-asset "$tag" "$(basename "$dmg_path")" --repo "$GITHUB_REPOSITORY" --yes \
+              || echo "Asset was already removed by a concurrent run."
+            echo "PR closed or preview label removed during upload. Removed the download."
+            exit 0
+          fi
+
+          echo "download_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/$(basename "$dmg_path")" >> "$GITHUB_OUTPUT"
+
+      - name: Comment download link
+        if: steps.upload.outputs.download_url != ''
+        uses: actions/github-script@v8
+        env:
+          DOWNLOAD_URL: ${{ steps.upload.outputs.download_url }}
+          DMG_NAME: ${{ needs.build.outputs.dmg_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PREVIEW_VERSION: ${{ needs.build.outputs.version }}
+        with:
+          script: |
+            const { data: pullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            if (
+              pullRequest.head.sha !== process.env.HEAD_SHA ||
+              pullRequest.state !== "open" ||
+              !pullRequest.labels.some((label) => label.name === "preview:mac")
+            ) {
+              core.info("Skipping the outdated macOS preview comment.");
+              return;
+            }
+
+            const marker = "<!-- desktop-macos-preview -->";
+            const body = [
+              marker,
+              "### macOS preview",
+              "",
+              `[Download Apple Silicon DMG](${process.env.DOWNLOAD_URL})`,
+              "",
+              `Version: ${process.env.PREVIEW_VERSION}`,
+              `Commit: ${process.env.HEAD_SHA.slice(0, 7)}`,
+              "",
+              "Unsigned build. Clear quarantine before opening:",
+              "```sh",
+              `xattr -d com.apple.quarantine ~/Downloads/${process.env.DMG_NAME}`,
+              "```",
+              "",
+              "No GitHub sign-in is needed. The download stays available until this PR closes or the preview label is removed.",
+            ].join("\n");
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body?.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body,
+              });
+            }
+
+  # The way out: closing the PR or removing the label deletes its DMG from the
+  # rolling release and updates the PR comment to say so.
+  cleanup:
+    name: Remove preview download
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      ((github.event.action == 'closed' && contains(github.event.pull_request.labels.*.name, 'preview:mac')) ||
+      (github.event.action == 'unlabeled' && github.event.label.name == 'preview:mac'))
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - id: delete
+        name: Delete this PR's preview assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          tag="desktop-preview"
+
+          # A stale cleanup must not delete a download that became valid
+          # again. If the PR is open and labeled once more, the next publish
+          # owns this PR's assets and replaces them itself.
+          if [[ "$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json state,labels \
+            --jq '.state + " " + (.labels | map(.name) | contains(["preview:mac"]) | tostring)')" == "OPEN true" ]]; then
+            echo "PR is open and labeled again. Skipping cleanup."
+            echo "removed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "removed=true" >> "$GITHUB_OUTPUT"
+
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "No preview release exists. Nothing to clean up."
+            exit 0
+          fi
+
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+            | { grep -F -- "-pr.${PR_NUMBER}." || true; } \
+            | while read -r asset; do
+                gh release delete-asset "$tag" "$asset" --repo "$GITHUB_REPOSITORY" --yes \
+                  || echo "Asset $asset was already removed by a concurrent run."
+              done
+
+      - name: Mark the preview comment as removed
+        if: steps.delete.outputs.removed == 'true'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const marker = "<!-- desktop-macos-preview -->";
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body?.includes(marker));
+            if (!existing) {
+              return;
+            }
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body: [
+                marker,
+                "### macOS preview",
+                "",
+                "The preview download was removed because this PR closed or the preview label was removed.",
+              ].join("\n"),
+            });

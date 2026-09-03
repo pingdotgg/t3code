@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
+import { Badge } from "../ui/badge";
 import { buttonVariants } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -58,15 +59,15 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
   const activeInstanceId = props.activeInstanceId;
   const selectedInstanceOptions = props.modelOptionsByInstance.get(activeInstanceId) ?? [];
-  // If the current slug belongs to a different instance (for example after
-  // a provider switch or disable), prefer the active instance's first
-  // option so the trigger icon and label stay in sync instead of showing
-  // a stale foreign slug.
+  // OpenCode can keep a model through a transient catalog refresh. Other
+  // providers keep the active instance's first option as their normal fallback.
   const selectedModel =
     selectedInstanceOptions.find((option) => option.slug === props.model) ??
-    selectedInstanceOptions[0];
+    (activeEntry?.driverKind === "opencode" ? undefined : selectedInstanceOptions[0]);
   const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
-  const triggerLabel = selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model;
+  const triggerLabel = selectedModel
+    ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
+    : props.model;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
 
@@ -166,7 +167,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               showBadge={showInstanceBadge}
               className="size-4"
               iconClassName={cn("size-4", props.activeProviderIconClassName)}
-              indicatorBackground="var(--input)"
+              indicatorBackground="var(--contrast-input)"
               badgeClassName={cn(
                 "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3",
                 "px-0.5 text-[7px]",
@@ -179,6 +180,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
           </Tooltip>
+          {selectedModel?.isUnavailable ? (
+            <Badge variant="outline" size="sm">
+              Unavailable
+            </Badge>
+          ) : null}
         </span>
         <span aria-hidden="true" className="flex items-center">
           <ComposerControlChevron />
@@ -186,8 +192,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       </PopoverTrigger>
       <PopoverPopup
         align="start"
-        className="border-0 bg-transparent p-0 shadow-none before:hidden [-webkit-backdrop-filter:none]! [--viewport-inline-padding:0] [backdrop-filter:none]!"
-        viewportClassName="rounded-lg !overflow-hidden p-0"
+        className="before:hidden [--viewport-inline-padding:0]"
+        viewportClassName="!overflow-hidden rounded-[calc(var(--radius-lg)-1px)] p-0 [clip-path:inset(0_round_calc(var(--radius-lg)-1px))]"
       >
         <ModelPickerContent
           activeInstanceId={activeInstanceId}

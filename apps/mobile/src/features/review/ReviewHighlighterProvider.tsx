@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useContext, useMemo } from "react";
+import { createContext, type ReactNode, useMemo } from "react";
 
 import { type ReviewHighlighterState, useReviewHighlighterState } from "./reviewHighlighterState";
 
@@ -17,8 +17,4 @@ export function ReviewHighlighterProvider(props: { readonly children: ReactNode 
       {props.children}
     </ReviewHighlighterContext.Provider>
   );
-}
-
-export function useReviewHighlighterStatus(): ReviewHighlighterState {
-  return useContext(ReviewHighlighterContext);
 }

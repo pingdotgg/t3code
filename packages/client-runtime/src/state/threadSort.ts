@@ -1,4 +1,4 @@
-import type { ProjectId } from "@t3tools/contracts";
+import type { OrchestrationThreadShell, ProjectId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
@@ -17,6 +17,36 @@ export function toSortableTimestamp(iso: string | undefined): number | null {
   if (!iso) return null;
   const ms = Date.parse(iso);
   return Number.isFinite(ms) ? ms : null;
+}
+
+export type SettledThreadTimestampInput = Pick<
+  OrchestrationThreadShell,
+  "settledAt" | "latestUserMessageAt" | "latestTurn" | "updatedAt"
+>;
+
+/** The timestamp a settled row sorts and labels by on every client: settledAt
+    when stamped, otherwise the latest message or turn stamp, then updatedAt. */
+export function resolveSettledThreadTimestamp(thread: SettledThreadTimestampInput): string | null {
+  if (thread.settledAt != null && toSortableTimestamp(thread.settledAt) !== null) {
+    return thread.settledAt;
+  }
+
+  let latest: string | null = null;
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const candidate of [
+    thread.latestUserMessageAt,
+    thread.latestTurn?.requestedAt,
+    thread.latestTurn?.startedAt,
+    thread.latestTurn?.completedAt,
+  ]) {
+    const parsed = toSortableTimestamp(candidate ?? undefined);
+    if (candidate != null && parsed !== null && parsed > latestMs) {
+      latest = candidate;
+      latestMs = parsed;
+    }
+  }
+  if (latest !== null) return latest;
+  return toSortableTimestamp(thread.updatedAt) === null ? null : thread.updatedAt;
 }
 
 function getFirstSortableTimestamp(...values: Array<string | null | undefined>): number | null {
@@ -67,6 +97,24 @@ export function getThreadSortTimestamp(
     );
   }
   return getLatestUserMessageTimestamp(thread);
+}
+
+/**
+ * Sort anchor for the active thread list: creation time, re-anchored to
+ * unsettledAt when the thread last re-entered the active list (an explicit
+ * un-settle, or a settled thread waking on activity). The list stays static
+ * between lifecycle transitions, but an un-settled thread surfaces at the
+ * top instead of sinking back to its creation-order slot. Shared by web and
+ * mobile so both render the same order. Malformed timestamps sink to 0.
+ */
+export function activeThreadAnchorTimestampMs(thread: {
+  readonly createdAt: string;
+  readonly unsettledAt?: string | null | undefined;
+}): number {
+  return Math.max(
+    toSortableTimestamp(thread.createdAt) ?? 0,
+    toSortableTimestamp(thread.unsettledAt ?? undefined) ?? 0,
+  );
 }
 
 export function sortThreads<T extends { readonly id: string } & ThreadSortInput>(

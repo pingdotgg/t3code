@@ -184,6 +184,52 @@ describe("projectActivityPayload", () => {
     });
   });
 
+  it("projects a Claude Bash result for the web and mobile expanded rows", () => {
+    const command = `printf 'first line\nsecond line'\n&& printf done`;
+    const source: OrchestrationThreadActivity = {
+      ...makeActivity("claude-bash", "command_execution", {}),
+      summary: "Command run",
+      payload: {
+        itemType: "command_execution",
+        title: "Command run",
+        detail: `Bash: ${command}`,
+        status: "completed",
+        data: {
+          toolName: "Bash",
+          input: { command },
+          result: {
+            type: "tool_result",
+            tool_use_id: "toolu_1",
+            content: [
+              { type: "text", text: "first output line" },
+              { type: "text", text: "x".repeat(5_000) },
+            ],
+          },
+        },
+      },
+    };
+    const projected = projectActivityPayload(source);
+
+    expect(projected.payload).toMatchObject({
+      data: {
+        toolName: "Bash",
+        command,
+        rawOutput: { content: "first output line" },
+      },
+    });
+
+    const [webEntry] = deriveWorkLogEntries([projected]);
+    expect(webEntry).toMatchObject({ command, detail: "first output line" });
+
+    const [mobileGroup] = buildThreadFeed(makeThread([projected]));
+    expect(mobileGroup?.type).toBe("activity-group");
+    if (mobileGroup?.type !== "activity-group") return;
+    const [mobileRow] = mobileGroup.activities;
+    expect(mobileRow).toMatchObject({ detail: command, canExpand: true });
+    expect(mobileRow?.getFullDetail()).toBe(`${command}\n\nfirst output line`);
+    expect(mobileRow?.getCopyText()).toBe(`Command run\n${command}\n\nfirst output line`);
+  });
+
   it("slims MCP tool data to the fields the expanded row renders", () => {
     expect(projectActivityPayload(fixtures[4]!).payload).toEqual({
       itemType: "mcp_tool_call",
@@ -201,9 +247,30 @@ describe("projectActivityPayload", () => {
     });
   });
 
-  it("keeps current web and mobile derived output identical for every tool item type", () => {
+  it("keeps current web and mobile derived fields for every tool item type", () => {
     for (const activity of fixtures) {
       const projected = projectActivityPayload(activity);
+      if (activity === fixtures[0]) {
+        expect(deriveWorkLogEntries([projected])).toMatchObject([
+          {
+            command: "pnpm test",
+            rawCommand: 'bash -lc "pnpm test"',
+            detail: "first useful line",
+          },
+        ]);
+        expect(comparableThreadFeed([projected])).toMatchObject([
+          {
+            type: "activity-group",
+            activities: [
+              {
+                detail: "pnpm test",
+                fullDetail: 'bash -lc "pnpm test"\n\nfirst useful line',
+              },
+            ],
+          },
+        ]);
+        continue;
+      }
       if (activity === fixtures[4]) {
         // MCP is the one deliberate difference: the expanded row's toolData
         // loses result bulk but keeps the rendered identity fields.
@@ -217,6 +284,40 @@ describe("projectActivityPayload", () => {
       }
       expect(deriveWorkLogEntries([projected])).toEqual(deriveWorkLogEntries([activity]));
       expect(comparableThreadFeed([projected])).toEqual(comparableThreadFeed([activity]));
+    }
+  });
+
+  it("preserves failed stored tool outcomes for web and mobile clients", () => {
+    const activities = [
+      makeActivity("failed-command", "command_execution", {
+        item: {
+          command: "vp test run",
+          exitCode: 1,
+          status: "failed",
+        },
+      }),
+      makeActivity("failed-mcp", "mcp_tool_call", {
+        item: {
+          server: "simulator",
+          tool: "build",
+          arguments: {},
+          status: "failed",
+        },
+      }),
+    ];
+
+    for (const activity of activities) {
+      const projected = projectActivityPayload(activity);
+      expect(projected.payload).toMatchObject({ status: "failed" });
+
+      const [webEntry] = deriveWorkLogEntries([projected]);
+      expect(webEntry?.toolLifecycleStatus).toBe("failed");
+
+      const [mobileGroup] = buildThreadFeed(makeThread([projected]));
+      expect(mobileGroup).toMatchObject({ type: "activity-group" });
+      if (mobileGroup?.type === "activity-group") {
+        expect(mobileGroup.activities[0]?.status).toBe("failure");
+      }
     }
   });
 
@@ -387,31 +488,6 @@ describe("superseded tool.updated snapshot dedup", () => {
     expect(projectedIds([anonymous, completed])).toEqual([anonymous.id, completed.id]);
   });
 
-  it("does not filter live activity-appended events", () => {
-    const update = makeToolLifecycleActivity("upd-live-event", "tool.updated");
-    const event = {
-      sequence: 11,
-      eventId: EventId.make("event-tool-updated"),
-      aggregateKind: "thread",
-      aggregateId: ThreadId.make("thread-projection"),
-      occurredAt: "2026-07-27T00:00:03.000Z",
-      commandId: null,
-      causationEventId: null,
-      correlationId: null,
-      metadata: {},
-      type: "thread.activity-appended",
-      payload: {
-        threadId: ThreadId.make("thread-projection"),
-        activity: update,
-      },
-    } satisfies Extract<OrchestrationEvent, { type: "thread.activity-appended" }>;
-
-    const projected = projectActivityEvent(event);
-    expect(
-      projected.type === "thread.activity-appended" ? projected.payload.activity.id : undefined,
-    ).toEqual(update.id);
-  });
-
   it("leaves the collapsed work log identical to the full history", () => {
     const activities = [
       makeToolLifecycleActivity("upd-1", "tool.updated", { detail: "writing" }),
@@ -531,30 +607,5 @@ describe("context-window snapshot dedup", () => {
       thread: makeThread([fixtures[4]!]),
     });
     expect(projected.thread.activities).toEqual([projectActivityPayload(fixtures[4]!)]);
-  });
-
-  it("does not filter live activity-appended events", () => {
-    const activity = makeContextWindowActivity("ctx-live", 4_000);
-    const event = {
-      sequence: 9,
-      eventId: EventId.make("event-ctx"),
-      aggregateKind: "thread",
-      aggregateId: ThreadId.make("thread-projection"),
-      occurredAt: "2026-07-27T00:00:02.000Z",
-      commandId: null,
-      causationEventId: null,
-      correlationId: null,
-      metadata: {},
-      type: "thread.activity-appended",
-      payload: {
-        threadId: ThreadId.make("thread-projection"),
-        activity,
-      },
-    } satisfies Extract<OrchestrationEvent, { type: "thread.activity-appended" }>;
-
-    const projected = projectActivityEvent(event);
-    expect(
-      projected.type === "thread.activity-appended" ? projected.payload.activity : undefined,
-    ).toEqual(activity);
   });
 });

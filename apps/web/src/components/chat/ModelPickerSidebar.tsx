@@ -54,6 +54,8 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   showFavorites?: boolean;
   /** Instance ids shown in the rail but unavailable for the current picker context. */
   disabledInstanceIds?: ReadonlySet<ProviderInstanceId>;
+  /** Non-ready instances whose selected unavailable model remains reachable. */
+  selectableUnavailableInstanceIds?: ReadonlySet<ProviderInstanceId>;
   getDisabledInstanceTooltip?: (entry: ProviderInstanceEntry) => string;
   /**
    * Instance id values that should render the "new" sparkle badge. Callers
@@ -107,7 +109,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                     render={
                       <button
                         className={cn(
-                          "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] focus-visible:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] focus-visible:outline-none",
+                          "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] focus-visible:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] focus-visible:outline-none",
                         )}
                         onClick={() => handleSelect("favorites")}
                         type="button"
@@ -135,7 +137,10 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
           {props.instanceEntries.map((entry) => {
             const isUnavailable = !isProviderInstancePickerReady(entry);
             const isContextDisabled = props.disabledInstanceIds?.has(entry.instanceId) ?? false;
-            const isDisabled = isUnavailable || isContextDisabled;
+            const unavailableSelectionIsReachable =
+              props.selectableUnavailableInstanceIds?.has(entry.instanceId) ?? false;
+            const isDisabled =
+              (isUnavailable && !unavailableSelectionIsReachable) || isContextDisabled;
             const isSelected = props.selectedInstanceId === entry.instanceId;
             const isHovered = hoveredInstanceId === entry.instanceId;
             const showNewBadge = props.newBadgeInstanceIds?.has(entry.instanceId) ?? false;
@@ -152,7 +157,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
             const button = (
               <button
                 className={cn(
-                  "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] focus-visible:bg-[color-mix(in_srgb,var(--popover)_90%,var(--foreground))] focus-visible:outline-none",
+                  "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] focus-visible:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] focus-visible:outline-none",
                   isDisabled && "opacity-50 cursor-not-allowed hover:bg-transparent",
                 )}
                 data-provider-accent-color={entry.accentColor}
@@ -168,7 +173,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 disabled={isDisabled}
                 type="button"
                 aria-label={
-                  isDisabled
+                  isUnavailable || isContextDisabled
                     ? tooltip
                     : showNewBadge
                       ? `${entry.displayName}, new`

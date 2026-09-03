@@ -11,7 +11,7 @@ This document covers the unified release workflow for stable and nightly desktop
   - push tag matching `v*.*.*` for stable releases
   - scheduled nightly check every three hours
   - manual `workflow_dispatch` for either channel
-- Runs quality gates first: lint, typecheck, test.
+- Runs lint, typecheck, and tests alongside artifact builds. Publishing waits for every check.
 - Reads the shared production T3 Connect relay URL and Clerk client configuration before packaging clients.
 - Builds four artifacts in parallel for both channels:
   - macOS `arm64` DMG
@@ -188,10 +188,12 @@ the **Update server** action targeting a package version that does not exist yet
 
 For a release smoke test, confirm `npm view t3@<version> version` returns the expected version, then
 connect the new client to a server on the previous version and verify that the update action
-reconnects to the matching server. Use releases with identical migration manifests for the
-automatic path. When the manifest changed, verify that the remote action stops before restart and
-shows the exact local `npx t3@<version> service update` command. Also test the manual or
-desktop-managed guidance when those environments are available.
+reconnects to the matching server. When the release adds database migrations, verify that the
+remote update applies them and reconnects. A failed trial must restore the database snapshot and
+restart the previous server. If the installed launcher does not support the target protocol,
+verify that the update stops before restart and run `npx t3@<version> service update` once on the
+server machine. Also test the manual or desktop-managed guidance when those environments are
+available.
 
 ## Desktop auto-update notes
 
@@ -220,10 +222,12 @@ Windows packages the bundled server and only its runtime-external/native
 dependency closure in `resources/server.asar`. Native modules and helper
 executables declared as unpacked by that archive must be present at the matching
 paths below `resources/server.asar.unpacked`. The Windows-native backend reads
-the archive in place through Electron. WSL cannot read ASAR files, so enabling
-the WSL backend extracts the server tree once into the desktop state directory
-under `wsl-server-tree/<version>` and reuses the completed version until the app
-is updated.
+the archive in place through Electron. Packaged Windows builds also ship a
+Linux-only `resources/wsl-runtime.tar.gz` plus its SHA-256 sidecar. WSL verifies
+and extracts that archive into `~/.t3/wsl-runtime/sha256-<archive-digest>` inside
+the selected distro, then reuses it for later launches of the same update. The
+Windows-side `wsl-server-tree/<version>` extraction remains a fallback and is
+removed after the distro-local runtime passes preflight.
 
 The artifact builder rejects a Windows package when any of these invariants
 break:
@@ -234,6 +238,11 @@ break:
 - On same-architecture Windows builds, the packaged primary cannot load the fff
   native library from inside `server.asar` through its `.unpacked` sibling.
 - The isolated, extracted sidecar cannot load the server entry with plain Node.
+- A Windows build with a WSL node-pty prebuild omits the WSL archive or SHA-256
+  sidecar, the sidecar digest does not match the emitted archive, or required
+  Linux runtime members are absent.
+- The emitted WSL archive contains Windows/Darwin node-pty payloads, ConPTY,
+  pnpm install metadata, or Windows-only FFF, ffi-rs, or msgpackr bindings.
 - The external Windows resource monitor is absent.
 - The unpacked Windows application contains more than 80 files.
 
@@ -365,6 +374,7 @@ Checklist:
 4. Push tag.
 5. Verify workflow steps:
    - preflight passes
+   - release quality checks pass
    - all matrix builds pass
    - `publish_cli` publishes the exact release version before the release job
    - release job uploads expected files

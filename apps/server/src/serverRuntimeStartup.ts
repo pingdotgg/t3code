@@ -3,9 +3,11 @@ import {
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ModelSelection,
+  type OrchestrationProjectShell,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
@@ -39,6 +41,7 @@ import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDi
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -65,6 +68,13 @@ export class ServerRuntimeStartup extends Context.Service<
   {
     readonly awaitCommandReady: Effect.Effect<void, ServerRuntimeStartupError>;
     readonly markHttpListening: Effect.Effect<void>;
+    readonly markRunningProviderSessionsForContinuation: Effect.Effect<
+      ReadonlyArray<ThreadId>,
+      ServerUpdateThreadContinuationError
+    >;
+    readonly clearProviderSessionContinuationMarkers: (
+      threadIds: ReadonlyArray<ThreadId>,
+    ) => Effect.Effect<void, ServerUpdateThreadContinuationError>;
     readonly enqueueCommand: <A, E>(
       effect: Effect.Effect<A, E>,
     ) => Effect.Effect<A, E | ServerRuntimeStartupError>;
@@ -166,7 +176,7 @@ export const launchStartupHeartbeat = recordStartupHeartbeat.pipe(
   Effect.asVoid,
 );
 
-export const getAutoBootstrapDefaultModelSelection = (): ModelSelection => ({
+export const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({
   instanceId: ProviderInstanceId.make("codex"),
   model: DEFAULT_MODEL,
 });
@@ -199,26 +209,25 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
         serverConfig.cwd,
       );
       let nextProjectId: ProjectId;
-      let nextProjectDefaultModelSelection: ModelSelection;
+      let nextThreadModelSelection: ModelSelection;
 
       if (Option.isNone(existingProject)) {
         const createdAt = DateTime.formatIso(yield* DateTime.now);
         nextProjectId = ProjectId.make(yield* randomUUID);
         const bootstrapProjectTitle = path.basename(serverConfig.cwd) || "project";
-        nextProjectDefaultModelSelection = getAutoBootstrapDefaultModelSelection();
+        nextThreadModelSelection = getAutoBootstrapThreadModelSelection();
         yield* orchestrationEngine.dispatch({
           type: "project.create",
           commandId: CommandId.make(yield* randomUUID),
           projectId: nextProjectId,
           title: bootstrapProjectTitle,
           workspaceRoot: serverConfig.cwd,
-          defaultModelSelection: nextProjectDefaultModelSelection,
           createdAt,
         });
       } else {
         nextProjectId = existingProject.value.id;
-        nextProjectDefaultModelSelection =
-          existingProject.value.defaultModelSelection ?? getAutoBootstrapDefaultModelSelection();
+        nextThreadModelSelection =
+          existingProject.value.defaultModelSelection ?? getAutoBootstrapThreadModelSelection();
       }
 
       const existingThreadId =
@@ -232,7 +241,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
           threadId: createdThreadId,
           projectId: nextProjectId,
           title: "New thread",
-          modelSelection: nextProjectDefaultModelSelection,
+          modelSelection: nextThreadModelSelection,
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "full-access",
           branch: null,
@@ -295,6 +304,138 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
 
 const ORPHANED_PROVIDER_SESSION_ERROR =
   "Provider session did not survive a server restart. Send a new message to continue.";
+const SERVER_UPDATE_CONTINUATION_KEY = "continueAfterServerUpdate";
+const SERVER_UPDATE_CONTINUATION_PROMPT = "Continue where you left off.";
+
+class ProviderSessionContinuationError extends Schema.TaggedErrorClass<ProviderSessionContinuationError>()(
+  "ProviderSessionContinuationError",
+  {
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return `Could not continue thread '${this.threadId}': the provider instance is missing.`;
+  }
+}
+
+export class ServerUpdateThreadContinuationError extends Schema.TaggedErrorClass<ServerUpdateThreadContinuationError>()(
+  "ServerUpdateThreadContinuationError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Could not prepare running threads to continue after the update.";
+  }
+}
+
+function hasServerUpdateContinuationMarker(
+  runtimePayload: unknown,
+): runtimePayload is Record<string, unknown> {
+  return (
+    runtimePayload !== null &&
+    typeof runtimePayload === "object" &&
+    !Array.isArray(runtimePayload) &&
+    SERVER_UPDATE_CONTINUATION_KEY in runtimePayload
+  );
+}
+
+function readRuntimePayload(runtimePayload: unknown): Record<string, unknown> {
+  return runtimePayload !== null &&
+    typeof runtimePayload === "object" &&
+    !Array.isArray(runtimePayload)
+    ? (runtimePayload as Record<string, unknown>)
+    : {};
+}
+
+const isServerUpdateThreadContinuationError = Schema.is(ServerUpdateThreadContinuationError);
+
+function readServerUpdateContinuationTurnId(runtimePayload: unknown): TurnId | null {
+  if (!hasServerUpdateContinuationMarker(runtimePayload)) {
+    return null;
+  }
+  const value = runtimePayload[SERVER_UPDATE_CONTINUATION_KEY];
+  return typeof value === "string" && value.length > 0 ? TurnId.make(value) : null;
+}
+
+const toServerUpdateThreadContinuationError = (cause: unknown) =>
+  isServerUpdateThreadContinuationError(cause)
+    ? cause
+    : new ServerUpdateThreadContinuationError({ cause });
+
+export const markRunningProviderSessionsForContinuation = Effect.gen(function* () {
+  const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+  const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const { threads } = yield* query.getCommandReadModel();
+  const running = threads.filter(
+    (thread) =>
+      thread.archivedAt === null &&
+      thread.deletedAt === null &&
+      thread.session?.status === "running" &&
+      thread.session.activeTurnId !== null,
+  );
+
+  const marked: ThreadId[] = [];
+  return yield* Effect.gen(function* () {
+    for (const thread of running) {
+      const activeTurnId = thread.session?.activeTurnId;
+      if (activeTurnId === null || activeTurnId === undefined) {
+        continue;
+      }
+      const binding = yield* directory.getBinding(thread.id);
+      if (Option.isNone(binding)) {
+        continue;
+      }
+      if (binding.value.resumeCursor === null || binding.value.resumeCursor === undefined) {
+        continue;
+      }
+      yield* directory.upsert({
+        ...binding.value,
+        runtimePayload: {
+          ...readRuntimePayload(binding.value.runtimePayload),
+          [SERVER_UPDATE_CONTINUATION_KEY]: activeTurnId,
+        },
+      });
+      marked.push(thread.id);
+    }
+    return marked;
+  }).pipe(
+    Effect.catchCause((cause) =>
+      clearProviderSessionContinuationMarkers(marked).pipe(Effect.andThen(Effect.failCause(cause))),
+    ),
+  );
+}).pipe(Effect.mapError(toServerUpdateThreadContinuationError));
+
+const clearContinuationMarkers = (
+  directory: ProviderSessionDirectory.ProviderSessionDirectory["Service"],
+  threadIds: ReadonlyArray<ThreadId>,
+) =>
+  Effect.forEach(
+    threadIds,
+    (threadId) =>
+      directory.getBinding(threadId).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (binding) =>
+              directory.upsert({
+                ...binding,
+                runtimePayload: {
+                  ...readRuntimePayload(binding.runtimePayload),
+                  [SERVER_UPDATE_CONTINUATION_KEY]: null,
+                },
+              }),
+          }),
+        ),
+      ),
+    { concurrency: "unbounded", discard: true },
+  );
+
+export const clearProviderSessionContinuationMarkers = (threadIds: ReadonlyArray<ThreadId>) =>
+  Effect.gen(function* () {
+    const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+    yield* clearContinuationMarkers(directory, threadIds);
+  }).pipe(Effect.mapError(toServerUpdateThreadContinuationError));
 
 export const reconcileProviderSessions = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -321,52 +462,165 @@ export const reconcileProviderSessions = Effect.gen(function* () {
     if (session === null) {
       continue;
     }
-    yield* Effect.gen(function* () {
-      const binding = yield* directory.getBinding(thread.id);
-      if (Option.isSome(binding)) {
+    const binding = yield* directory.getBinding(thread.id).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterrupts(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("failed to read orphaned provider session directory binding", {
+              threadId: thread.id,
+              cause,
+            }).pipe(Effect.as(Option.none())),
+      ),
+    );
+    const continuationMarkerPresent =
+      Option.isSome(binding) && hasServerUpdateContinuationMarker(binding.value.runtimePayload);
+    const continuationTurnId = Option.isSome(binding)
+      ? readServerUpdateContinuationTurnId(binding.value.runtimePayload)
+      : null;
+    const continuationMarked =
+      continuationTurnId !== null &&
+      (session.activeTurnId === null || continuationTurnId === session.activeTurnId);
+    const settleAsError = (lastError: string) =>
+      Effect.gen(function* () {
+        yield* Effect.gen(function* () {
+          if (Option.isSome(binding)) {
+            yield* directory.upsert({
+              ...binding.value,
+              status: "stopped",
+              runtimePayload: {
+                ...readRuntimePayload(binding.value.runtimePayload),
+                activeTurnId: null,
+                ...(continuationMarkerPresent ? { [SERVER_UPDATE_CONTINUATION_KEY]: null } : {}),
+              },
+            });
+          }
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterrupts(cause)
+              ? Effect.failCause(cause)
+              : Effect.logWarning(
+                  "failed to reconcile orphaned provider session directory binding",
+                  { threadId: thread.id, cause },
+                ),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const reconciledAt = DateTime.formatIso(yield* DateTime.now);
+          yield* orchestrationEngine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(yield* crypto.randomUUIDv4),
+            threadId: thread.id,
+            session: {
+              ...session,
+              status: "error",
+              activeTurnId: null,
+              lastError,
+              updatedAt: reconciledAt,
+            },
+            createdAt: reconciledAt,
+          });
+        }).pipe(
+          Effect.retry({ times: 1 }),
+          Effect.catchCause((cause) =>
+            Cause.hasInterrupts(cause)
+              ? Effect.failCause(cause)
+              : Effect.logWarning("failed to settle orphaned provider session projection", {
+                  threadId: thread.id,
+                  cause,
+                }),
+          ),
+        );
+      });
+
+    if (
+      Option.isSome(binding) &&
+      continuationMarked &&
+      thread.archivedAt === null &&
+      thread.deletedAt === null
+    ) {
+      const prepared = yield* Effect.gen(function* () {
         yield* directory.upsert({
           ...binding.value,
-          status: "stopped",
-          runtimePayload: { activeTurnId: null },
+          status: "starting",
+          runtimePayload: {
+            ...readRuntimePayload(binding.value.runtimePayload),
+            activeTurnId: null,
+          },
         });
+        const resumedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* orchestrationEngine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(yield* crypto.randomUUIDv4),
+          threadId: thread.id,
+          session: {
+            ...session,
+            status: "starting",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: resumedAt,
+          },
+          createdAt: resumedAt,
+        });
+      }).pipe(Effect.retry({ times: 1 }), Effect.exit);
+      if (Exit.isFailure(prepared)) {
+        if (Cause.hasInterrupts(prepared.cause)) {
+          return yield* Effect.failCause(prepared.cause);
+        }
+        yield* Effect.logWarning("failed to prepare provider session continuation", {
+          threadId: thread.id,
+          cause: prepared.cause,
+        });
+        yield* settleAsError(ORPHANED_PROVIDER_SESSION_ERROR);
+        continue;
       }
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterrupts(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("failed to reconcile orphaned provider session directory binding", {
-              threadId: thread.id,
-              cause,
-            }),
-      ),
-    );
 
-    yield* Effect.gen(function* () {
-      const reconciledAt = DateTime.formatIso(yield* DateTime.now);
-      yield* orchestrationEngine.dispatch({
-        type: "thread.session.set",
-        commandId: CommandId.make(yield* crypto.randomUUIDv4),
-        threadId: thread.id,
-        session: {
-          ...session,
-          status: "error",
-          activeTurnId: null,
-          lastError: ORPHANED_PROVIDER_SESSION_ERROR,
-          updatedAt: reconciledAt,
-        },
-        createdAt: reconciledAt,
-      });
-    }).pipe(
-      Effect.retry({ times: 1 }),
-      Effect.catchCause((cause) =>
-        Cause.hasInterrupts(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("failed to settle orphaned provider session projection", {
+      yield* forkParked(
+        Effect.gen(function* () {
+          const continuation = Effect.gen(function* () {
+            const providerInstanceId = binding.value.providerInstanceId;
+            if (providerInstanceId === undefined) {
+              return yield* new ProviderSessionContinuationError({
+                threadId: thread.id,
+              });
+            }
+            const capabilities = yield* providerService.getCapabilities(providerInstanceId);
+            yield* providerService.sendTurn({
               threadId: thread.id,
-              cause,
-            }),
-      ),
-    );
+              ...(capabilities.promptlessTurnContinuation === true
+                ? { continuation: true }
+                : { input: SERVER_UPDATE_CONTINUATION_PROMPT }),
+              interactionMode: thread.interactionMode,
+            });
+          });
+          const continuationExit = yield* Effect.exit(continuation);
+          if (Exit.isSuccess(continuationExit) || Cause.hasInterrupts(continuationExit.cause)) {
+            if (Exit.isSuccess(continuationExit)) {
+              yield* clearContinuationMarkers(directory, [thread.id]).pipe(
+                Effect.uninterruptible,
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("failed to clear completed provider session continuation", {
+                    threadId: thread.id,
+                    cause,
+                  }),
+                ),
+              );
+            }
+            return;
+          }
+          yield* Effect.logWarning("failed to continue provider session after server update", {
+            threadId: thread.id,
+            cause: continuationExit.cause,
+          });
+          yield* settleAsError(
+            "Could not continue this thread after the server update. Send a new message to continue.",
+          ).pipe(Effect.ignoreCause);
+        }),
+      );
+      continue;
+    }
+
+    yield* settleAsError(ORPHANED_PROVIDER_SESSION_ERROR);
   }
 }).pipe(
   Effect.catchCause((cause) =>
@@ -382,6 +636,65 @@ interface StartupOptions {
   readonly abort?: (error: ServerRuntimeStartupError) => Effect.Effect<void>;
 }
 
+export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
+  projects: ReadonlyArray<OrchestrationProjectShell>,
+) {
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const workspaceRoots = [
+    ...new Set(
+      projects
+        .filter((project) => project.autoPull === true)
+        .map((project) => project.workspaceRoot),
+    ),
+  ];
+
+  yield* Effect.forEach(
+    workspaceRoots,
+    (cwd) =>
+      Effect.gen(function* () {
+        const status = yield* git.statusDetails(cwd);
+        if (
+          !status.isRepo ||
+          !status.isDefaultBranch ||
+          !status.hasUpstream ||
+          status.hasWorkingTreeChanges ||
+          status.aheadCount > 0
+        ) {
+          yield* Effect.logDebug("Skipped automatic project pull", {
+            cwd,
+            reason: !status.isRepo
+              ? "not-a-repository"
+              : !status.isDefaultBranch
+                ? "not-on-default-branch"
+                : !status.hasUpstream
+                  ? "no-upstream"
+                  : status.hasWorkingTreeChanges
+                    ? "working-tree-changes"
+                    : "local-commits",
+          });
+          return;
+        }
+
+        if (status.behindCount <= 0) return;
+
+        const result = yield* git.pullCurrentBranch(cwd);
+        yield* Effect.logDebug("Automatic project pull completed", {
+          cwd,
+          status: result.status,
+          refName: result.refName,
+        });
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Automatic project pull failed", {
+            cwd,
+            cause,
+          }),
+        ),
+      ),
+    { concurrency: 4, discard: true },
+  );
+});
+
 export const make = (options?: StartupOptions) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig.ServerConfig;
@@ -391,12 +704,21 @@ export const make = (options?: StartupOptions) =>
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+    const providerSessionDirectory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
     const crypto = yield* Crypto.Crypto;
     const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
 
     const commandGate = yield* makeCommandGate;
     const httpListening = yield* Deferred.make<void>();
     const reactorScope = yield* Scope.make("sequential");
+
+    const syncAutoPullProjects = projectionSnapshotQuery.getShellSnapshot().pipe(
+      Effect.flatMap((snapshot) => autoPullProjects(snapshot.projects)),
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to load projects for automatic pull", { cause }),
+      ),
+    );
 
     yield* Effect.addFinalizer(() => Scope.close(reactorScope, Exit.void));
 
@@ -441,6 +763,9 @@ export const make = (options?: StartupOptions) =>
       );
 
       yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
+
+      yield* Effect.logDebug("startup phase: syncing clean projects");
+      yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);
 
       const welcomeBase = yield* resolveWelcomeBase;
       const environment = yield* serverEnvironment.getDescriptor;
@@ -578,6 +903,23 @@ export const make = (options?: StartupOptions) =>
     return {
       awaitCommandReady: commandGate.awaitCommandReady,
       markHttpListening: Deferred.succeed(httpListening, undefined),
+      markRunningProviderSessionsForContinuation: markRunningProviderSessionsForContinuation.pipe(
+        Effect.provideService(
+          ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+          projectionSnapshotQuery,
+        ),
+        Effect.provideService(
+          ProviderSessionDirectory.ProviderSessionDirectory,
+          providerSessionDirectory,
+        ),
+      ),
+      clearProviderSessionContinuationMarkers: (threadIds) =>
+        clearProviderSessionContinuationMarkers(threadIds).pipe(
+          Effect.provideService(
+            ProviderSessionDirectory.ProviderSessionDirectory,
+            providerSessionDirectory,
+          ),
+        ),
       enqueueCommand: commandGate.enqueueCommand,
     } satisfies ServerRuntimeStartup["Service"];
   });
