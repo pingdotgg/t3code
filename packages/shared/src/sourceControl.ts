@@ -140,26 +140,20 @@ export function isSshRemoteUrl(remoteUrl: string): boolean {
   return SCP_SSH_REMOTE_PATTERN.test(trimmed) || trimmed.toLowerCase().startsWith("ssh://");
 }
 
+// The hosted providers whose SSH host commonly carries a `-<alias>` suffix.
+const SSH_ALIAS_HOSTS = ["github.com", "gitlab.com", "bitbucket.org", "ssh.dev.azure.com"];
+
 /**
- * SSH remotes often name a `~/.ssh/config` alias instead of the real host, and
- * the common multi-account convention appends the alias to it:
- * `git@github.com-work:org/repo.git`. No public host carries a hyphen in its
- * last DNS label (IDN `xn--` labels aside), so one there marks where the real
- * host ends. Only SSH transports consult the SSH config, so callers apply this
- * to SSH hosts alone and leave HTTPS hosts untouched.
+ * SSH remotes often name a `~/.ssh/config` alias instead of the real host. The
+ * common multi-account convention appends the alias to the hosted provider's
+ * domain, `git@github.com-work:org/repo.git`, so a hyphen right after one of
+ * those domains marks the alias. Only those domains are recognised: a
+ * self-hosted name is taken as written, since an internal zone may
+ * legitimately carry a hyphen there. Only SSH transports consult the SSH
+ * config, so callers apply this to SSH hosts alone and leave HTTPS untouched.
  */
 export function stripSshHostAlias(host: string): string {
-  const labels = host.split(".");
-  const lastLabel = labels.at(-1);
-  if (labels.length < 2 || lastLabel === undefined || lastLabel.startsWith("xn--")) {
-    return host;
-  }
-  const aliasStart = lastLabel.indexOf("-");
-  if (aliasStart <= 0) {
-    return host;
-  }
-  labels[labels.length - 1] = lastLabel.slice(0, aliasStart);
-  return labels.join(".");
+  return SSH_ALIAS_HOSTS.find((known) => host.startsWith(`${known}-`)) ?? host;
 }
 
 function parseRemoteHost(remoteUrl: string): string | null {

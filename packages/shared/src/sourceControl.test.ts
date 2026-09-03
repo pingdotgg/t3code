@@ -147,14 +147,16 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       baseUrl: "https://github.com",
     });
     expect(
-      detectSourceControlProviderFromRemoteUrl(
-        "ssh://git@gitlab.company.com-personal:2222/team/repo.git",
-      ),
+      detectSourceControlProviderFromRemoteUrl("ssh://git@gitlab.com-personal:2222/team/repo.git"),
     ).toEqual({
       kind: "gitlab",
-      name: "GitLab Self-Hosted",
-      baseUrl: "https://gitlab.company.com:2222",
+      name: "GitLab",
+      baseUrl: "https://gitlab.com:2222",
     });
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@ssh.dev.azure.com-work:v3/org/project/repo")
+        ?.baseUrl,
+    ).toBe("https://ssh.dev.azure.com");
     // HTTPS never consults the SSH config, so its host is taken literally.
     expect(
       detectSourceControlProviderFromRemoteUrl("https://github.com-work/owner/repo.git")?.baseUrl,
@@ -163,13 +165,15 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
 });
 
 describe("stripSshHostAlias", () => {
-  it("drops the alias suffix only from the last DNS label", () => {
+  it("drops the alias suffix only behind a hosted provider domain", () => {
     expect(stripSshHostAlias("github.com-work")).toBe("github.com");
+    expect(stripSshHostAlias("bitbucket.org-personal")).toBe("bitbucket.org");
+    // Self-hosted and internal names are taken as written, hyphens included.
+    expect(stripSshHostAlias("github.example-corp")).toBe("github.example-corp");
+    expect(stripSshHostAlias("gitlab.company.com-personal")).toBe("gitlab.company.com-personal");
     expect(stripSshHostAlias("gitlab.my-corp.com")).toBe("gitlab.my-corp.com");
-    expect(stripSshHostAlias("my-server.local")).toBe("my-server.local");
-    expect(stripSshHostAlias("git-server")).toBe("git-server");
-    expect(stripSshHostAlias("example.xn--p1ai")).toBe("example.xn--p1ai");
-    expect(stripSshHostAlias("192.168.1.10")).toBe("192.168.1.10");
+    expect(stripSshHostAlias("github.com")).toBe("github.com");
+    expect(stripSshHostAlias("github.community")).toBe("github.community");
   });
 });
 
