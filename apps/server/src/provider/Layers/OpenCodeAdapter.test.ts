@@ -19,6 +19,7 @@ import type { PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
 
 import {
   ApprovalRequestId,
+  MessageId,
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -1276,6 +1277,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         .sendTurn({
           threadId: asThreadId("thread-send-turn-failure"),
           input: "Fix it",
+          turnStartMessageId: MessageId.make("message-send-turn-failure"),
           modelSelection: {
             instanceId: ProviderInstanceId.make("opencode"),
             model: "openai/gpt-5",
@@ -1297,6 +1299,11 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(sessions[0]?.status, "ready");
       NodeAssert.equal(sessions[0]?.activeTurnId, undefined);
       NodeAssert.equal(sessions[0]?.lastError, "prompt failed");
+      NodeAssert.equal(typeof sessions[0]?.lastAbortedTurnId, "string");
+      NodeAssert.equal(
+        sessions[0]?.lastAbortedMessageId,
+        MessageId.make("message-send-turn-failure"),
+      );
     }),
   );
 
@@ -1336,6 +1343,156 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(session?.status, "running");
       NodeAssert.equal(String(session?.activeTurnId), String(turn.turnId));
       NodeAssert.equal(runtimeMock.state.promptCalls.length, 2);
+    }),
+  );
+
+  it.effect("uses the steering turn token through steering and abort", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-steer-abort-token");
+      const originalTurnStartMessageId = MessageId.make("message-original-turn");
+      const steeringTurnStartMessageId = MessageId.make("message-steering-turn");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "run 5 commands",
+        turnStartMessageId: originalTurnStartMessageId,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      const sessionAfterTurn = (yield* adapter.listSessions()).find(
+        (entry) => entry.threadId === threadId,
+      );
+      NodeAssert.equal(sessionAfterTurn?.activeTurnStartMessageId, originalTurnStartMessageId);
+
+      const steeredTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "actually run 15",
+        turnStartMessageId: steeringTurnStartMessageId,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      NodeAssert.equal(String(steeredTurn.turnId), String(turn.turnId));
+
+      const sessionAfterSteer = (yield* adapter.listSessions()).find(
+        (entry) => entry.threadId === threadId,
+      );
+      NodeAssert.equal(sessionAfterSteer?.activeTurnStartMessageId, steeringTurnStartMessageId);
+
+      yield* adapter.interruptTurn(threadId, turn.turnId);
+      const sessionAfterAbort = (yield* adapter.listSessions()).find(
+        (entry) => entry.threadId === threadId,
+      );
+      NodeAssert.equal(sessionAfterAbort?.lastAbortedTurnId, turn.turnId);
+      NodeAssert.equal(sessionAfterAbort?.lastAbortedMessageId, steeringTurnStartMessageId);
+    }),
+  );
+
+  it.effect("uses the steering turn token through a steering timeout", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-steer-timeout-token");
+      const originalTurnStartMessageId = MessageId.make("message-original-timeout-turn");
+      const steeringTurnStartMessageId = MessageId.make("message-steering-timeout-turn");
+      const promptStarted = promiseWithResolvers<void>();
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "run 5 commands",
+        turnStartMessageId: originalTurnStartMessageId,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      runtimeMock.state.promptAsyncImplementation = async () => {
+        promptStarted.resolve(undefined);
+        await new Promise<void>(() => {});
+      };
+
+      const steeringFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "actually run 15",
+          turnStartMessageId: steeringTurnStartMessageId,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("opencode"),
+            model: "openai/gpt-5",
+          },
+        })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Effect.promise(() => promptStarted.promise);
+      yield* advanceTestClock(10_000);
+
+      const steeringResult = yield* Fiber.join(steeringFiber);
+      NodeAssert.equal(steeringResult._tag, "Failure");
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+      NodeAssert.equal(session?.lastAbortedTurnId, turn.turnId);
+      NodeAssert.equal(session?.lastAbortedMessageId, steeringTurnStartMessageId);
+    }),
+  );
+
+  it.effect("preserves the original turn token through a tokenless steering timeout", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-steer-timeout-no-token");
+      const originalTurnStartMessageId = MessageId.make("message-original-timeout-no-token");
+      const promptStarted = promiseWithResolvers<void>();
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "run 5 commands",
+        turnStartMessageId: originalTurnStartMessageId,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      runtimeMock.state.promptAsyncImplementation = async () => {
+        promptStarted.resolve(undefined);
+        await new Promise<void>(() => {});
+      };
+
+      // A steer without its own turn token must keep the active turn's
+      // original token, so a later prompt timeout still correlates the abort
+      // to the running turn instead of persisting a missing token.
+      const steeringFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "actually run 15",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("opencode"),
+            model: "openai/gpt-5",
+          },
+        })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Effect.promise(() => promptStarted.promise);
+      yield* advanceTestClock(10_000);
+
+      const steeringResult = yield* Fiber.join(steeringFiber);
+      NodeAssert.equal(steeringResult._tag, "Failure");
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+      NodeAssert.equal(session?.lastAbortedTurnId, turn.turnId);
+      NodeAssert.equal(session?.lastAbortedMessageId, originalTurnStartMessageId);
     }),
   );
 
@@ -1383,6 +1540,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
       const threadId = asThreadId("thread-steer-idle-admission");
+      const activeTurnStartMessageId = MessageId.make("message-steer-idle-admission");
       const busyBeforeSteer = promiseWithResolvers<unknown>();
       const idleBeforeSteer = promiseWithResolvers<unknown>();
       const idleAfterSteer = promiseWithResolvers<unknown>();
@@ -1429,6 +1587,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const activeTurn = yield* adapter.sendTurn({
         threadId,
         input: "Start the next turn",
+        turnStartMessageId: activeTurnStartMessageId,
         modelSelection: createModelSelection(
           ProviderInstanceId.make("opencode"),
           "opencode/kimi-k3",
@@ -1451,6 +1610,12 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         },
       });
       yield* Effect.promise(() => statusStarted.promise);
+      yield* Effect.yieldNow;
+      const sessionAfterBusy = (yield* adapter.listSessions()).find(
+        (candidate) => candidate.threadId === threadId,
+      );
+      NodeAssert.equal(sessionAfterBusy?.activeTurnId, activeTurn.turnId);
+      NodeAssert.equal(sessionAfterBusy?.activeTurnStartMessageId, activeTurnStartMessageId);
       const steerFiber = yield* adapter
         .sendTurn({
           threadId,
@@ -3511,6 +3676,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const turn = yield* adapter.sendTurn({
         threadId,
         input: "Keep working",
+        turnStartMessageId: MessageId.make("message-interrupt-idle-race"),
         modelSelection: createModelSelection(
           ProviderInstanceId.make("opencode"),
           "opencode/kimi-k3",
@@ -3544,6 +3710,11 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const session = sessions.find((candidate) => candidate.threadId === threadId);
       NodeAssert.equal(session?.status, "ready");
       NodeAssert.equal(session?.activeTurnId, undefined);
+      NodeAssert.equal(session?.lastAbortedTurnId, turn.turnId);
+      NodeAssert.equal(
+        session?.lastAbortedMessageId,
+        MessageId.make("message-interrupt-idle-race"),
+      );
 
       yield* adapter.stopSession(threadId);
     }),

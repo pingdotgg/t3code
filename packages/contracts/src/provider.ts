@@ -4,6 +4,7 @@ import {
   ApprovalRequestId,
   EventId,
   IsoDateTime,
+  MessageId,
   ProviderItemId,
   ThreadId,
   TurnId,
@@ -44,6 +45,11 @@ export const ProviderSession = Schema.Struct({
   threadId: ThreadId,
   resumeCursor: Schema.optional(Schema.Unknown),
   activeTurnId: Schema.optional(TurnId),
+  activeTurnStartMessageId: Schema.optional(MessageId),
+  // Retained after a provider abort clears its active turn so consumers can
+  // correlate the terminal event with a pending durable turn start.
+  lastAbortedTurnId: Schema.optional(TurnId),
+  lastAbortedMessageId: Schema.optional(MessageId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastError: Schema.optional(TrimmedNonEmptyString),
@@ -78,6 +84,7 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  turnStartMessageId: Schema.optional(MessageId),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 

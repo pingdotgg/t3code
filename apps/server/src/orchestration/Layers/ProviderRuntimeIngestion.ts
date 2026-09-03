@@ -271,6 +271,24 @@ function normalizeRuntimeTurnState(
   }
 }
 
+function isOpenCodeUserAbort(
+  event: ProviderRuntimeEvent,
+): event is Extract<ProviderRuntimeEvent, { type: "turn.aborted" }> {
+  return (
+    event.type === "turn.aborted" &&
+    event.provider === "opencode" &&
+    event.payload.reason === "Interrupted by user."
+  );
+}
+
+function isOpenCodePromptFailureAbort(
+  event: ProviderRuntimeEvent,
+): event is Extract<ProviderRuntimeEvent, { type: "turn.aborted" }> {
+  return (
+    event.type === "turn.aborted" && event.provider === "opencode" && !isOpenCodeUserAbort(event)
+  );
+}
+
 function orchestrationSessionStatusFromRuntimeState(
   state: "starting" | "running" | "waiting" | "ready" | "interrupted" | "stopped" | "error",
 ): "starting" | "running" | "ready" | "interrupted" | "stopped" | "error" {
@@ -1455,13 +1473,22 @@ const make = Effect.gen(function* () {
     } as const;
   });
 
-  const getExpectedProviderTurnIdForThread = Effect.fn("getExpectedProviderTurnIdForThread")(
-    function* (threadId: ThreadId) {
-      const sessions = yield* providerService.listSessions();
-      const session = sessions.find((entry) => entry.threadId === threadId);
-      return session?.activeTurnId;
-    },
-  );
+  const getExpectedProviderTurnForThread = Effect.fn("getExpectedProviderTurnForThread")(function* (
+    threadId: ThreadId,
+  ) {
+    const sessions = yield* providerService.listSessions();
+    const session = sessions.find((entry) => entry.threadId === threadId);
+    return {
+      provider: session?.provider,
+      activeTurnId: session?.activeTurnId,
+      activeTurnStartMessageId:
+        session?.activeTurnId === undefined ? undefined : session?.activeTurnStartMessageId,
+      lastAbortedTurnId:
+        session?.activeTurnId === undefined ? session?.lastAbortedTurnId : undefined,
+      lastAbortedMessageId:
+        session?.activeTurnId === undefined ? session?.lastAbortedMessageId : undefined,
+    };
+  });
 
   const getSourceProposedPlanReferenceForAcceptedTurnStart = Effect.fn(
     "getSourceProposedPlanReferenceForAcceptedTurnStart",
@@ -1470,8 +1497,8 @@ const make = Effect.gen(function* () {
       return null;
     }
 
-    const expectedTurnId = yield* getExpectedProviderTurnIdForThread(threadId);
-    if (!sameId(expectedTurnId, eventTurnId)) {
+    const expectedTurn = yield* getExpectedProviderTurnForThread(threadId);
+    if (!sameId(expectedTurn.activeTurnId, eventTurnId)) {
       return null;
     }
 
@@ -1537,17 +1564,48 @@ const make = Effect.gen(function* () {
         event.type === "session.exited" ||
         event.type === "thread.started" ||
         event.type === "turn.started" ||
-        event.type === "turn.completed"
+        event.type === "turn.completed" ||
+        event.type === "turn.aborted"
           ? yield* projectionTurnRepository.getPendingTurnStartByThreadId({
               threadId: thread.id,
             })
           : Option.none();
-      const hasPendingTurnStart =
-        Option.isSome(pendingTurnStart) && thread.session?.status === "starting";
+      const hasPendingTurnStart = Option.isSome(pendingTurnStart);
+      const hasPendingTurnStartWhileStarting =
+        hasPendingTurnStart && thread.session?.status === "starting";
+      const expectedProviderTurn =
+        (event.type === "turn.aborted" && hasPendingTurnStart) ||
+        (event.type === "turn.started" && activeTurnId === null)
+          ? yield* getExpectedProviderTurnForThread(thread.id)
+          : undefined;
+
+      const turnStartedMatchesRetainedAbort =
+        event.type === "turn.started" &&
+        activeTurnId === null &&
+        eventTurnId !== undefined &&
+        expectedProviderTurn !== undefined &&
+        sameId(expectedProviderTurn.lastAbortedTurnId, eventTurnId);
+      const pendingTurnStartMatchesRetainedAbort =
+        event.type === "turn.aborted" &&
+        Option.isSome(pendingTurnStart) &&
+        expectedProviderTurn !== undefined &&
+        expectedProviderTurn.activeTurnId === undefined &&
+        eventTurnId !== undefined &&
+        sameId(expectedProviderTurn.lastAbortedTurnId, eventTurnId) &&
+        !sameId(expectedProviderTurn.lastAbortedMessageId, pendingTurnStart.value.messageId);
+      const pendingTurnStartConflictsWithActiveProviderTurn =
+        event.type === "turn.aborted" &&
+        Option.isSome(pendingTurnStart) &&
+        expectedProviderTurn?.activeTurnId !== undefined &&
+        !sameId(expectedProviderTurn.activeTurnId, eventTurnId);
 
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
       const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
+      const expectedProviderTurnForStart =
+        event.type === "turn.started" && conflictsWithActiveTurn
+          ? yield* getExpectedProviderTurnForThread(thread.id)
+          : undefined;
 
       // A turn.started that conflicts with the active turn is legitimate when
       // the server itself has a turn start pending for this thread AND the
@@ -1557,7 +1615,8 @@ const make = Effect.gen(function* () {
       // turn.started for some other turn id still gets rejected.
       const conflictingTurnStartIsPendingTurnStart =
         event.type === "turn.started" && conflictsWithActiveTurn
-          ? sameId(yield* getExpectedProviderTurnIdForThread(thread.id), eventTurnId) &&
+          ? expectedProviderTurnForStart !== undefined &&
+            sameId(expectedProviderTurnForStart.activeTurnId, eventTurnId) &&
             Option.isSome(pendingTurnStart)
           : false;
 
@@ -1572,22 +1631,54 @@ const make = Effect.gen(function* () {
           case "thread.started":
             return true;
           case "turn.started":
-            return !conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart;
+            return (
+              !turnStartedMatchesRetainedAbort &&
+              (!conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart)
+            );
           case "turn.completed":
+          case "turn.aborted":
             if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
               return false;
+            }
+            if (pendingTurnStartConflictsWithActiveProviderTurn) {
+              return false;
+            }
+            if (pendingTurnStartMatchesRetainedAbort) {
+              return false;
+            }
+            // A named abort may arrive after the server has requested a new
+            // turn but before its turn.started event. In that window there
+            // is no projected active turn to compare against, so only the
+            // provider's currently active turn can settle the pending start.
+            if (event.type === "turn.aborted" && hasPendingTurnStart && activeTurnId === null) {
+              return (
+                eventTurnId !== undefined &&
+                expectedProviderTurn !== undefined &&
+                sameId(
+                  expectedProviderTurn.activeTurnId ?? expectedProviderTurn.lastAbortedTurnId,
+                  eventTurnId,
+                ) &&
+                Option.isSome(pendingTurnStart) &&
+                (expectedProviderTurn.provider !== "opencode" ||
+                  sameId(
+                    expectedProviderTurn.activeTurnId !== undefined
+                      ? expectedProviderTurn.activeTurnStartMessageId
+                      : expectedProviderTurn.lastAbortedMessageId,
+                    pendingTurnStart.value.messageId,
+                  ))
+              );
             }
             // Only the active turn may close the lifecycle state.
             if (activeTurnId !== null && eventTurnId !== undefined) {
               return sameId(activeTurnId, eventTurnId);
             }
-            // No active turn tracked: accept only completions that name their
-            // turn (covers a real completion whose turn.started was lost). An
-            // untargeted completion cannot prove it belongs to any turn this
-            // thread ran — the known emitter was the Claude resume handshake
-            // (system/init + result(num_turns: 0)), which is not a turn at
-            // all — and applying it here stomps the "starting" lifecycle
-            // state while a turn start is pending.
+            // No active turn tracked: accept only terminal events that name
+            // their turn (covers a real completion/abort whose turn.started
+            // was lost). An untargeted terminal event cannot prove it belongs
+            // to any turn this thread ran — the known emitter was the Claude
+            // resume handshake (system/init + result(num_turns: 0)), which is
+            // not a turn at all — and applying it here stomps the "starting"
+            // lifecycle state while a turn start is pending.
             return eventTurnId !== undefined;
           default:
             return true;
@@ -1604,13 +1695,16 @@ const make = Effect.gen(function* () {
         event.type === "session.exited" ||
         event.type === "thread.started" ||
         event.type === "turn.started" ||
-        event.type === "turn.completed"
+        event.type === "turn.completed" ||
+        event.type === "turn.aborted"
       ) {
         const status = (() => {
           switch (event.type) {
             case "session.state.changed": {
               const runtimeStatus = orchestrationSessionStatusFromRuntimeState(event.payload.state);
-              return hasPendingTurnStart && runtimeStatus === "ready" ? "starting" : runtimeStatus;
+              return hasPendingTurnStartWhileStarting && runtimeStatus === "ready"
+                ? "starting"
+                : runtimeStatus;
             }
             case "turn.started":
               return "running";
@@ -1620,17 +1714,25 @@ const make = Effect.gen(function* () {
               return normalizeRuntimeTurnState(event.payload.state) === "failed"
                 ? "error"
                 : "ready";
+            case "turn.aborted":
+              return isOpenCodePromptFailureAbort(event) ? "error" : "interrupted";
             case "session.started":
             case "thread.started":
               // Provider thread/session start notifications can arrive during an
               // active or pending turn; preserve that lifecycle state.
-              return activeTurnId !== null ? "running" : hasPendingTurnStart ? "starting" : "ready";
+              return activeTurnId !== null
+                ? "running"
+                : hasPendingTurnStartWhileStarting
+                  ? "starting"
+                  : "ready";
           }
         })();
         const nextActiveTurnId =
           event.type === "turn.started"
             ? (eventTurnId ?? null)
-            : event.type === "turn.completed" || event.type === "session.exited"
+            : event.type === "turn.completed" ||
+                event.type === "turn.aborted" ||
+                event.type === "session.exited"
               ? null
               : event.type === "session.state.changed" &&
                   !sessionStatusAllowsActiveTurn(
@@ -1644,9 +1746,11 @@ const make = Effect.gen(function* () {
             : event.type === "turn.completed" &&
                 normalizeRuntimeTurnState(event.payload.state) === "failed"
               ? (event.payload.errorMessage ?? thread.session?.lastError ?? "Turn failed")
-              : status === "ready"
-                ? null
-                : (thread.session?.lastError ?? null);
+              : isOpenCodePromptFailureAbort(event)
+                ? event.payload.reason
+                : status === "ready" || status === "interrupted"
+                  ? null
+                  : (thread.session?.lastError ?? null);
 
         if (shouldApplyThreadLifecycle) {
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
@@ -1871,7 +1975,10 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (event.type === "turn.completed") {
+      if (
+        (event.type === "turn.completed" || event.type === "turn.aborted") &&
+        shouldApplyThreadLifecycle
+      ) {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const proposedPlans = detailedThread?.proposedPlans ?? [];
@@ -2001,7 +2108,9 @@ const make = Effect.gen(function* () {
       // active turn's progress; session.exited always clears.
       if (event.type === "session.exited") {
         threadPlanProgress.clearThreadPlanProgress(thread.id);
-      } else if (!conflictsWithActiveTurn) {
+      } else if (
+        event.type === "turn.aborted" ? shouldApplyThreadLifecycle : !conflictsWithActiveTurn
+      ) {
         if (event.type === "turn.plan.updated") {
           threadPlanProgress.recordPlanProgress(thread.id, event.payload.plan);
         } else if (event.type === "turn.completed" || event.type === "turn.aborted") {
