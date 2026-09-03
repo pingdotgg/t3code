@@ -19,9 +19,13 @@
  */
 
 /**
- * Same token shape the composer and timeline chips recognise
- * (`packages/shared/src/composerInlineTokens.ts`) and that Claude dispatch
- * uses, so a rendered chip and a dispatched skill are always the same set.
+ * Same token shape the timeline chip recognises on a sent message
+ * (`apps/web/src/components/chat/SkillInlineText.tsx`) and that Claude
+ * dispatch uses, so a rendered chip and a dispatched skill are always the same
+ * set. End of text counts as a boundary because the composer trims the prompt
+ * on send: a skill picked last arrives as `$name` with nothing after it. The
+ * editor's own regex (`packages/shared/src/composerInlineTokens.ts`) wants
+ * trailing whitespace only because the picker inserts one while typing.
  */
 const SKILL_MENTION_PATTERN = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 const SKILL_MENTION_TEST = /(^|\s)\$[a-zA-Z][a-zA-Z0-9:_-]*(?=\s|$)/;
