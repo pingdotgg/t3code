@@ -717,6 +717,24 @@ struct FeatureComposerPowerTests {
         )
     }
 
+    @Test
+    func composerInlineSkillsExcludeDisabledSkills() {
+        let powerFeatures = FeatureComposerPowerFeatures(
+            skills: [
+                FeatureProviderSkill(name: "file-pr", displayName: "File PR"),
+                FeatureProviderSkill(name: "disabled", isEnabled: false),
+            ]
+        )
+
+        let descriptors = FeatureInlineSkillParser.descriptors(
+            in: "$file-pr $disabled ",
+            skills: powerFeatures.enabledSkills,
+            allowsEndBoundary: false
+        )
+
+        #expect(descriptors.map(\.rawText) == ["$file-pr"])
+    }
+
     @Test @MainActor
     func inlineSkillAttachmentsRoundTripPlainTextAndSelectionOffsets() throws {
         let source = "Use $file-pr now"
