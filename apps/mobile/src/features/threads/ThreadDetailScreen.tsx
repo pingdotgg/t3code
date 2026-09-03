@@ -127,6 +127,8 @@ export interface ThreadDetailScreenProps {
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
+  /** Optimistic Stop feedback: set on press, cleared when work ends (#8618). */
+  readonly isStoppingThread: boolean;
   readonly onSendMessage: () => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
@@ -780,6 +782,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                         collapsed={userInputCollapsed}
                         onToggleCollapsed={handleToggleUserInputCollapsed}
                         onStopThread={props.onStopThread}
+                        isStoppingThread={props.isStoppingThread}
                         cardProgress={userInputCardProgress}
                         cardCoverage={userInputCardCoverage}
                         onInputFocusChange={handleOwnedInputFocusChange}
@@ -820,6 +823,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   onNativePasteImages={props.onNativePasteImages}
                   onRemoveDraftImage={props.onRemoveDraftImage}
                   onStopThread={props.onStopThread}
+                  isStoppingThread={props.isStoppingThread}
                   onSendMessage={handleSendMessage}
                   onReconnectEnvironment={props.onReconnectEnvironment}
                   onUpdateModelSelection={props.onUpdateThreadModelSelection}

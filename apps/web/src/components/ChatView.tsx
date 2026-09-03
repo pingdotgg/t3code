@@ -7611,6 +7611,7 @@ function ChatViewContent(props: ChatViewProps) {
                             phase={phase}
                             isConnecting={isConnecting}
                             isSendBusy={isSendBusy}
+                            isStoppingTurn={isStoppingTurn}
                             sendDisabledReason={
                               feedbackUploading
                                 ? "Sending feedback"

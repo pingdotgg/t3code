@@ -1472,12 +1472,25 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.turn-interrupt-requested": {
-          if (event.payload.turnId === undefined) {
+          // Remote snapshots lag, so Stop often arrives without a turnId
+          // (see buildThreadTurnInterruptInput). Fall back to the session's
+          // pinned turn instead of dropping the interrupt on the floor — a
+          // turnId-less interrupt must still settle the running turn (#8618).
+          let effectiveTurnId = event.payload.turnId;
+          if (effectiveTurnId === undefined) {
+            const session = yield* projectionThreadSessionRepository.getByThreadId({
+              threadId: event.payload.threadId,
+            });
+            if (Option.isSome(session) && session.value.activeTurnId !== null) {
+              effectiveTurnId = session.value.activeTurnId;
+            }
+          }
+          if (effectiveTurnId === undefined) {
             return;
           }
           const existingTurn = yield* projectionTurnRepository.getByTurnId({
             threadId: event.payload.threadId,
-            turnId: event.payload.turnId,
+            turnId: effectiveTurnId,
           });
           if (Option.isSome(existingTurn)) {
             yield* projectionTurnRepository.upsertByTurnId({
@@ -1490,7 +1503,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             return;
           }
           yield* projectionTurnRepository.upsertByTurnId({
-            turnId: event.payload.turnId,
+            turnId: effectiveTurnId,
             threadId: event.payload.threadId,
             pendingMessageId: null,
             sourceProposedPlanThreadId: null,
