@@ -1,4 +1,9 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import {
+  hasUnseenThreadCompletion,
+  resolveThreadUnreadAt,
+  resolveThreadVisitedAt,
+} from "@t3tools/client-runtime/state/thread-read-state";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback } from "react";
@@ -10,12 +15,6 @@ import {
   mobileThreadLastVisitedAtAtom,
   updateMobilePreferencesAtom,
 } from "../../state/preferences";
-import {
-  hasUnseenThreadCompletion,
-  setThreadUnreadAt,
-  setThreadVisitedAt,
-} from "./thread-read-state";
-
 function currentVisitedAtById() {
   const preferences = appAtomRegistry.get(mobilePreferencesAtom);
   return AsyncResult.isSuccess(preferences)
@@ -35,8 +34,10 @@ export function useThreadReadState(
   const markThreadUnread = useCallback(() => {
     const current = currentVisitedAtById();
     if (!preferencesReady || current === null) return;
-    const next = setThreadUnreadAt(current, threadKey, thread.latestTurn?.completedAt);
-    if (next !== current) savePreferences({ threadLastVisitedAtById: next });
+    const unreadAt = resolveThreadUnreadAt(thread.latestTurn?.completedAt);
+    if (unreadAt !== undefined && unreadAt !== current[threadKey]) {
+      savePreferences({ threadLastVisitedAtById: { ...current, [threadKey]: unreadAt } });
+    }
   }, [preferencesReady, savePreferences, thread.latestTurn?.completedAt, threadKey]);
 
   const markThreadVisited = useCallback(() => {
@@ -44,12 +45,13 @@ export function useThreadReadState(
     if (!preferencesReady || current === null) return;
     // A thread visited mid-turn has no completion to anchor to yet; stamp
     // the visit time so a later completion still reads as unseen.
-    const next = setThreadVisitedAt(
-      current,
-      threadKey,
+    const visitedAt = resolveThreadVisitedAt(
+      current[threadKey],
       thread.latestTurn?.completedAt ?? new Date().toISOString(),
     );
-    if (next !== current) savePreferences({ threadLastVisitedAtById: next });
+    if (visitedAt !== undefined && visitedAt !== current[threadKey]) {
+      savePreferences({ threadLastVisitedAtById: { ...current, [threadKey]: visitedAt } });
+    }
   }, [preferencesReady, savePreferences, thread.latestTurn?.completedAt, threadKey]);
 
   return {

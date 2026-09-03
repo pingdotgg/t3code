@@ -1,4 +1,4 @@
-export type ThreadLastVisitedAtById = Readonly<Record<string, string>>;
+import { DateTime } from "effect";
 
 export function hasUnseenThreadCompletion(
   thread: {
@@ -23,29 +23,25 @@ export function hasUnseenThreadCompletion(
   return completedAt > visitedAt;
 }
 
-export function setThreadVisitedAt(
-  current: ThreadLastVisitedAtById,
-  threadKey: string,
+export function resolveThreadVisitedAt(
+  previousVisitedAt: string | undefined,
   visitedAt: string | null | undefined,
-): ThreadLastVisitedAtById {
-  if (!visitedAt) return current;
+): string | undefined {
+  if (!visitedAt) return previousVisitedAt;
   const visitedAtMs = Date.parse(visitedAt);
-  if (!Number.isFinite(visitedAtMs)) return current;
-  const previousVisitedAt = current[threadKey];
+  if (!Number.isFinite(visitedAtMs)) return previousVisitedAt;
   const previousVisitedAtMs = previousVisitedAt ? Date.parse(previousVisitedAt) : NaN;
-  if (Number.isFinite(previousVisitedAtMs) && previousVisitedAtMs >= visitedAtMs) return current;
-  return { ...current, [threadKey]: visitedAt };
+  if (Number.isFinite(previousVisitedAtMs) && previousVisitedAtMs >= visitedAtMs) {
+    return previousVisitedAt;
+  }
+  return visitedAt;
 }
 
-export function setThreadUnreadAt(
-  current: ThreadLastVisitedAtById,
-  threadKey: string,
+export function resolveThreadUnreadAt(
   latestTurnCompletedAt: string | null | undefined,
-): ThreadLastVisitedAtById {
-  if (!latestTurnCompletedAt) return current;
+): string | undefined {
+  if (!latestTurnCompletedAt) return undefined;
   const completedAtMs = Date.parse(latestTurnCompletedAt);
-  if (Number.isNaN(completedAtMs)) return current;
-  const unreadVisitedAt = new Date(completedAtMs - 1).toISOString();
-  if (current[threadKey] === unreadVisitedAt) return current;
-  return { ...current, [threadKey]: unreadVisitedAt };
+  if (Number.isNaN(completedAtMs)) return undefined;
+  return DateTime.formatIso(DateTime.makeUnsafe(completedAtMs - 1));
 }

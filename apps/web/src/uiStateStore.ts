@@ -1,4 +1,8 @@
 import { Debouncer } from "@tanstack/react-pacer";
+import {
+  resolveThreadUnreadAt,
+  resolveThreadVisitedAt,
+} from "@t3tools/client-runtime/state/thread-read-state";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
@@ -232,24 +236,14 @@ export function persistState(state: UiState): void {
 const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
 
 export function markThreadVisited(state: UiState, threadId: string, visitedAt: string): UiState {
-  const visitedAtMs = Date.parse(visitedAt);
-  if (!Number.isFinite(visitedAtMs)) {
-    return state;
-  }
   const previousVisitedAt = state.threadLastVisitedAtById[threadId];
-  const previousVisitedAtMs = previousVisitedAt ? Date.parse(previousVisitedAt) : NaN;
-  if (
-    Number.isFinite(previousVisitedAtMs) &&
-    Number.isFinite(visitedAtMs) &&
-    previousVisitedAtMs >= visitedAtMs
-  ) {
-    return state;
-  }
+  const nextVisitedAt = resolveThreadVisitedAt(previousVisitedAt, visitedAt);
+  if (nextVisitedAt === undefined || nextVisitedAt === previousVisitedAt) return state;
   return {
     ...state,
     threadLastVisitedAtById: {
       ...state.threadLastVisitedAtById,
-      [threadId]: visitedAt,
+      [threadId]: nextVisitedAt,
     },
   };
 }
@@ -259,15 +253,11 @@ export function markThreadUnread(
   threadId: string,
   latestTurnCompletedAt: string | null | undefined,
 ): UiState {
-  if (!latestTurnCompletedAt) {
-    return state;
-  }
-  const latestTurnCompletedAtMs = Date.parse(latestTurnCompletedAt);
-  if (Number.isNaN(latestTurnCompletedAtMs)) {
-    return state;
-  }
-  const unreadVisitedAt = new Date(latestTurnCompletedAtMs - 1).toISOString();
-  if (state.threadLastVisitedAtById[threadId] === unreadVisitedAt) {
+  const unreadVisitedAt = resolveThreadUnreadAt(latestTurnCompletedAt);
+  if (
+    unreadVisitedAt === undefined ||
+    state.threadLastVisitedAtById[threadId] === unreadVisitedAt
+  ) {
     return state;
   }
   return {
