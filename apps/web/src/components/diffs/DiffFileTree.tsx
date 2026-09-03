@@ -109,10 +109,14 @@ export function DiffFileTree({
     }
     // A path list that changes under an already-revealed file (a refresh, a later slice) must
     // not pull the tree back to it over whatever the reader has picked since.
+    const item = model.getItem(selectedPath);
+    if (item === null || item.isDirectory()) {
+      // A file that left the diff has to be revealed again when it comes back.
+      handledRevealRef.current = null;
+      return;
+    }
     const handled = handledRevealRef.current;
     if (handled?.path === selectedPath && handled.revealRequestId === revealRequestId) return;
-    const item = model.getItem(selectedPath);
-    if (item === null || item.isDirectory()) return;
     handledRevealRef.current = { path: selectedPath, revealRequestId };
     syncingSelectionRef.current = true;
     for (const path of model.getSelectedPaths()) {
