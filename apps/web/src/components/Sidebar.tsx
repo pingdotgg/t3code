@@ -29,7 +29,12 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import {
+  resolveEnvironmentMachineKind,
+  type EnvironmentMachineKind,
+  type ScopedThreadRef,
+  type ThreadId,
+} from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
@@ -47,7 +52,6 @@ import {
   PinIcon,
   PlusIcon,
   SearchIcon,
-  ServerIcon,
   SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -121,6 +125,7 @@ import {
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
   animatePinnedLayoutChanges,
@@ -274,6 +279,7 @@ function SidebarThreadTooltip({
   projectCwd,
   projectFaviconPath,
   environmentLabel,
+  environmentMachine,
   providerEntry,
   showInstanceBadge,
   modelInstanceId,
@@ -287,6 +293,7 @@ function SidebarThreadTooltip({
   projectCwd: string | null;
   projectFaviconPath: string | null;
   environmentLabel: string | null;
+  environmentMachine: EnvironmentMachineKind;
   providerEntry: ProviderInstanceEntry | null;
   showInstanceBadge: boolean;
   modelInstanceId: string;
@@ -325,7 +332,10 @@ function SidebarThreadTooltip({
           ) : null}
           {environmentLabel ? (
             <div className="flex min-w-0 items-center gap-2">
-              <ServerIcon className="size-3 shrink-0 stroke-muted-foreground" />
+              <EnvironmentMachineIcon
+                kind={environmentMachine}
+                className="size-3 shrink-0 stroke-muted-foreground"
+              />
               <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
             </div>
           ) : null}
@@ -735,6 +745,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
+  environmentMachine: EnvironmentMachineKind;
   projectCwd: string | null;
   projectFaviconPath: string | null;
   projectTitle: string | null;
@@ -963,8 +974,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     ? getTriggerDisplayModelLabel(selectedModel)
     : thread.modelSelection.model;
 
-  const isRemote =
-    props.currentEnvironmentId !== null && thread.environmentId !== props.currentEnvironmentId;
+  // The local environment is "this machine" and needs no marker; every other
+  // one gets its machine glyph. With no local environment (the hosted app)
+  // that is every thread, which is the point: the glyph is what tells rows on
+  // different machines apart.
+  const isRemote = thread.environmentId !== props.currentEnvironmentId;
 
   const detailsTooltip = (
     <SidebarThreadTooltip
@@ -973,6 +987,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       projectCwd={props.projectCwd}
       projectFaviconPath={props.projectFaviconPath}
       environmentLabel={props.environmentLabel}
+      environmentMachine={props.environmentMachine}
       providerEntry={providerEntry}
       showInstanceBadge={showInstanceBadge}
       modelInstanceId={modelInstanceId}
@@ -1590,7 +1605,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               >
                 {isRemote ? (
                   <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-                    <ServerIcon aria-hidden className="size-3.5" />
+                    <EnvironmentMachineIcon
+                      aria-hidden
+                      kind={props.environmentMachine}
+                      className="size-3.5"
+                    />
                   </span>
                 ) : null}
                 {driverKind ? (
@@ -1636,6 +1655,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   projectFaviconPath: string | null;
   projectTitle: string | null;
   environmentLabel: string | null;
+  environmentMachine: EnvironmentMachineKind;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   isHighlighted: boolean;
   isRouteActive: boolean;
@@ -1731,6 +1751,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           projectCwd={props.projectCwd}
           projectFaviconPath={props.projectFaviconPath}
           environmentLabel={props.environmentLabel}
+          environmentMachine={props.environmentMachine}
           providerEntry={providerEntry}
           showInstanceBadge={showInstanceBadge}
           modelInstanceId={modelInstanceId}
@@ -1868,6 +1889,19 @@ export default function Sidebar() {
     () =>
       new Map(
         environments.map((environment) => [environment.environmentId, environment.label] as const),
+      ),
+    [environments],
+  );
+  const environmentMachineById = useMemo(
+    () =>
+      new Map(
+        environments.map(
+          (environment) =>
+            [
+              environment.environmentId,
+              resolveEnvironmentMachineKind(environment.serverConfig),
+            ] as const,
+        ),
       ),
     [environments],
   );
@@ -3717,6 +3751,9 @@ export default function Sidebar() {
                           ) ?? null
                         }
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
+                        environmentMachine={
+                          environmentMachineById.get(thread.environmentId) ?? "server"
+                        }
                         providerEntryByInstanceId={
                           providerEntriesByEnvironment.get(thread.environmentId) ??
                           EMPTY_PROVIDER_ENTRIES
@@ -3815,6 +3852,9 @@ export default function Sidebar() {
                         }
                         currentEnvironmentId={primaryEnvironmentId}
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
+                        environmentMachine={
+                          environmentMachineById.get(thread.environmentId) ?? "server"
+                        }
                         projectCwd={
                           projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
                         }

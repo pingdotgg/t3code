@@ -4,6 +4,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
+import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
@@ -14,6 +15,7 @@ import Svg, { Circle, Path } from "react-native-svg";
 
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { cn } from "../../lib/cn";
 import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
@@ -268,6 +270,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   readonly variant: ThreadListVariant;
   readonly pendingTask: PendingNewTask;
   readonly environmentLabel: string | null;
+  readonly environmentMachine?: EnvironmentMachineKind;
   readonly isLast: boolean;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
@@ -305,6 +308,13 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
           tintColorClassName={compact ? "accent-icon-subtle" : "accent-foreground-muted"}
           type="monochrome"
         />
+        {props.environmentLabel && props.environmentMachine ? (
+          <EnvironmentMachineSymbol
+            kind={props.environmentMachine}
+            size={compact ? 12 : 10}
+            tintColorClassName={compact ? "accent-icon-subtle" : "accent-foreground-muted"}
+          />
+        ) : null}
         <Text
           className={
             compact
@@ -416,6 +426,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly variant: ThreadListVariant;
   readonly thread: EnvironmentThreadShell;
   readonly environmentLabel: string | null;
+  readonly environmentMachine?: EnvironmentMachineKind;
   readonly projectCwd: string | null;
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
@@ -524,6 +535,19 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       <View className="mt-px flex-row items-center gap-1.5">
         {subtitleParts.length > 0 ? (
           <>
+            {props.environmentLabel && props.environmentMachine ? (
+              <EnvironmentMachineSymbol
+                kind={props.environmentMachine}
+                size={compact ? 12 : 10}
+                tintColorClassName={
+                  compact
+                    ? "accent-icon-subtle"
+                    : selected
+                      ? "accent-user-bubble-foreground-muted"
+                      : "accent-foreground-muted"
+                }
+              />
+            ) : null}
             <Text
               className={cn(
                 "shrink",

@@ -224,6 +224,22 @@ right action without making the transport responsible for process management. Th
 supervisor owns the resulting disconnect and reconnect like any other involuntary close. See
 [server-updates.md](./server-updates.md).
 
+## Machine identity
+
+Every environment is drawn with one of a fixed set of machine glyphs (`EnvironmentMachineKind` in
+contracts: server, cloud, desktop, laptop, mac-mini, mac-studio). Two inputs feed it, and the
+precedence lives in one helper, `resolveEnvironmentMachineKind`, so web and mobile cannot drift:
+
+1. `settings.environmentIcon`, a nullable server setting the user picks in Settings → Connections.
+   It is server state rather than client state so every device connecting to that server agrees.
+2. `environment.platform.machine`, detected once at startup by [ServerEnvironmentMachine.ts][machine]
+   (IOKit product name / `hw.model` on macOS, `/sys/class/dmi/id` on Linux with virtualization
+   markers mapped to "cloud"). Absent when there is no signal, so older servers, Windows hosts, and
+   containers decode without it.
+3. A generic server otherwise.
+
+Clients treat the field like any other capability: absent means "use the fallback", never "wait".
+
 ## Future work
 
 These remain unbuilt and are listed to keep the model honest:
@@ -237,3 +253,4 @@ These remain unbuilt and are listed to keep the model honest:
 [authremote]: ../../packages/client-runtime/src/authorization/remote.ts
 [sshenv]: ../../apps/desktop/src/ssh/DesktopSshEnvironment.ts
 [sshtunnel]: ../../packages/ssh/src/tunnel.ts
+[machine]: ../../apps/server/src/environment/ServerEnvironmentMachine.ts

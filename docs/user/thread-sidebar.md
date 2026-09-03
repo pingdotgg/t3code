@@ -53,6 +53,21 @@ The main sidebar, right panel, and terminal drawer open and close immediately by
 The duration can be set up to 400 ms. Clicking the preview replays all three panel transitions; at
 0 ms, it snaps between the same open and closed states.
 
+## Environment icons
+
+When you are connected to more than one environment, every thread that lives somewhere other than
+the machine you are on wears a small icon for that machine at the end of its row: a server, a cloud
+VM, a desktop, a laptop, a Mac mini, or a Mac Studio. In the hosted web app and the mobile app,
+where every environment is remote, each row wears its machine so you can tell them apart at a
+glance. The same icon appears in the thread tooltip, the "Run on" picker, the pull request server
+filter, and the environment lists under **Settings → Connections**.
+
+Servers pick the icon themselves from the hardware they run on. A Mac reports its model, a Linux
+machine reports its chassis type and whether it is a virtual machine, and anything without a usable
+signal shows a generic server. To override it, open **Settings → Connections** and choose an icon
+for that environment; **Automatic** goes back to what the server detected. The choice is stored on
+that server, so every device that connects to it sees the same icon.
+
 ## Environment artwork
 
 Dev and Nightly environments can identify themselves with artwork at the top of the sidebar and in
