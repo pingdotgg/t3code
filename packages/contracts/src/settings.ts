@@ -188,6 +188,14 @@ export const BROWSER_RECORDING_FRAME_RATES = [30, 60] as const;
 export const BrowserRecordingFrameRate = Schema.Literals(BROWSER_RECORDING_FRAME_RATES);
 export type BrowserRecordingFrameRate = typeof BrowserRecordingFrameRate.Type;
 export const DEFAULT_BROWSER_RECORDING_FRAME_RATE: BrowserRecordingFrameRate = 30;
+/**
+ * Where a clicked link goes: the OS default browser, or a tab in the in-app
+ * browser beside the thread. "system" is the default because that is what
+ * every link did before the setting existed.
+ */
+export const BrowserLinkTarget = Schema.Literals(["system", "app"]);
+export type BrowserLinkTarget = typeof BrowserLinkTarget.Type;
+export const DEFAULT_BROWSER_LINK_TARGET: BrowserLinkTarget = "system";
 
 export const ClientSettingsSchema = Schema.Struct({
   appearanceContrast: AppearanceContrast.pipe(
@@ -209,6 +217,13 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   browserRecordingFrameRate: BrowserRecordingFrameRate.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_RECORDING_FRAME_RATE)),
+  ),
+  /**
+   * Where links clicked in a thread (chat markdown, terminal output) open.
+   * Only the desktop app has an in-app browser, so other clients ignore "app".
+   */
+  browserLinkTarget: BrowserLinkTarget.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_LINK_TARGET)),
   ),
   /**
    * Whether an agent opening a preview pops the floating mini player into
@@ -1003,6 +1018,7 @@ export const ClientSettingsPatch = Schema.Struct({
   browserDefaultZoomFactor: Schema.optionalKey(PreviewZoomFactor),
   browserDefaultAppearance: Schema.optionalKey(PreviewAppearancePreference),
   browserRecordingFrameRate: Schema.optionalKey(BrowserRecordingFrameRate),
+  browserLinkTarget: Schema.optionalKey(BrowserLinkTarget),
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
   browserProfiles: Schema.optionalKey(Schema.Array(BrowserProfile)),
   browserDefaultProfileId: Schema.optionalKey(BrowserProfileId),

@@ -1,11 +1,10 @@
-import type { LocalApi, PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
+import type { PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   openTerminalLinkInPreview,
-  TerminalLinkContextMenuShowError,
   TerminalLinkPreviewOpenError,
 } from "./openTerminalLinkInPreview";
 
@@ -30,6 +29,15 @@ vi.mock("~/browser/browserDefaults", () => ({
   browserDefaultOpenProfileId: (defaults: { profileId: string }) => defaults.profileId,
 }));
 
+const linkTargetMocks = vi.hoisted(() => ({
+  preference: vi.fn<() => "system" | "app">(),
+}));
+
+vi.mock("~/browser/browserLinkTarget", () => ({
+  resolveBrowserLinkTargetPreference: async () => linkTargetMocks.preference(),
+  isWebUrl: (url: string) => /^https?:/u.test(url),
+}));
+
 const hydratedDefaults = {
   viewport: { _tag: "fixed", width: 1280, height: 720 } as const,
   profileId: "work",
@@ -50,7 +58,9 @@ const snapshot: PreviewSessionSnapshot = {
 };
 
 beforeEach(() => {
+  browserDefaultsMocks.resolve.mockReset();
   browserDefaultsMocks.resolve.mockResolvedValue(hydratedDefaults);
+  linkTargetMocks.preference.mockReturnValue("app");
 });
 
 afterEach(() => {
@@ -58,6 +68,37 @@ afterEach(() => {
 });
 
 describe("openTerminalLinkInPreview", () => {
+  it("opens in the system browser while that is the configured target", async () => {
+    linkTargetMocks.preference.mockReturnValue("system");
+    const fallbackToBrowser = vi.fn();
+    const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+
+    await openTerminalLinkInPreview({
+      url: "http://localhost:3000/",
+      threadRef,
+      openPreview,
+      fallbackToBrowser,
+    });
+
+    expect(fallbackToBrowser).toHaveBeenCalledOnce();
+    expect(openPreview).not.toHaveBeenCalled();
+  });
+
+  it("opens public URLs in-app too, not only local servers", async () => {
+    const fallbackToBrowser = vi.fn();
+    const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+
+    await openTerminalLinkInPreview({
+      url: "https://example.com/docs",
+      threadRef,
+      openPreview,
+      fallbackToBrowser,
+    });
+
+    expect(openPreview).toHaveBeenCalledOnce();
+    expect(fallbackToBrowser).not.toHaveBeenCalled();
+  });
+
   it("waits for hydrated viewport and profile defaults before opening", async () => {
     let hydrate: ((defaults: typeof hydratedDefaults) => void) | undefined;
     browserDefaultsMocks.resolve.mockImplementationOnce(
@@ -70,14 +111,8 @@ describe("openTerminalLinkInPreview", () => {
 
     const opening = openTerminalLinkInPreview({
       url: "http://localhost:3000/",
-      position: { x: 12, y: 34 },
       threadRef,
       openPreview,
-      localApi: {
-        contextMenu: {
-          show: vi.fn(async () => "open-in-preview"),
-        },
-      } as unknown as LocalApi,
       fallbackToBrowser: vi.fn(),
     });
 
@@ -97,42 +132,6 @@ describe("openTerminalLinkInPreview", () => {
     });
   });
 
-  it("preserves context-menu failures with terminal link context before falling back", async () => {
-    const cause = new Error("menu unavailable");
-    const fallbackToBrowser = vi.fn();
-    const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
-    const reportError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    await openTerminalLinkInPreview({
-      url: "http://localhost:3000/path?token=secret",
-      position: { x: 12, y: 34 },
-      threadRef,
-      openPreview,
-      localApi: {
-        contextMenu: {
-          show: vi.fn(async () => {
-            throw cause;
-          }),
-        },
-      } as unknown as LocalApi,
-      fallbackToBrowser,
-    });
-
-    expect(fallbackToBrowser).toHaveBeenCalledOnce();
-    expect(openPreview).not.toHaveBeenCalled();
-    expect(reportError).toHaveBeenCalledOnce();
-    const error = reportError.mock.calls[0]?.[0];
-    expect(error).toBeInstanceOf(TerminalLinkContextMenuShowError);
-    expect(error).toMatchObject({
-      environmentId: "local",
-      threadId: "thread-1",
-      targetOrigin: "http://localhost:3000",
-      cause,
-    });
-    expect(error.message).not.toContain("menu unavailable");
-    expect(error.targetOrigin).not.toContain("secret");
-  });
-
   it("preserves the complete preview failure cause before falling back", async () => {
     const rpcError = new Error("preview unavailable");
     const cause = Cause.combine(Cause.fail(rpcError), Cause.die("preview defect"));
@@ -141,14 +140,8 @@ describe("openTerminalLinkInPreview", () => {
 
     await openTerminalLinkInPreview({
       url: "http://127.0.0.1:5173/",
-      position: { x: 12, y: 34 },
       threadRef,
       openPreview: async () => AsyncResult.failure(cause),
-      localApi: {
-        contextMenu: {
-          show: vi.fn(async () => "open-in-preview"),
-        },
-      } as unknown as LocalApi,
       fallbackToBrowser,
     });
 
@@ -171,14 +164,8 @@ describe("openTerminalLinkInPreview", () => {
 
     await openTerminalLinkInPreview({
       url: "http://localhost:5173/",
-      position: { x: 12, y: 34 },
       threadRef,
       openPreview: async () => AsyncResult.failure(Cause.interrupt()),
-      localApi: {
-        contextMenu: {
-          show: vi.fn(async () => "open-in-preview"),
-        },
-      } as unknown as LocalApi,
       fallbackToBrowser,
     });
 

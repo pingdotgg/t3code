@@ -207,4 +207,12 @@ describe("searchSettings", () => {
     });
     expect(result).not.toHaveProperty("targetId");
   });
+
+  it("routes where links open to integrations", () => {
+    expect(searchSettings("open links in")[0]).toMatchObject({
+      id: "browser-link-target",
+      to: "/settings/integrations",
+    });
+    expect(searchSettings("external links")[0]).toMatchObject({ id: "browser-link-target" });
+  });
 });
