@@ -26,11 +26,11 @@ The update does not remove saved threads, settings, or project files.
 
 ## Choose the Action You See
 
-| Action                     | What to do                                                                                                                                                                                                                                                                                                                                                                    |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Update server**          | Available for the T3 Code Linux background service and for servers run by a current T3 Code desktop app. Select the button and leave T3 Code open while it downloads, installs, restarts, and reconnects. For desktop-app servers this closes and relaunches the desktop app on that machine. If installation fails, the desktop app stays open and reconnects to its server. |
-| **Update the desktop app** | Shown for desktop apps that predate remote updates. Open the T3 Code desktop app on the machine that runs the server and install the app update there. Reopen it if needed.                                                                                                                                                                                                   |
-| **Copy update command**    | Copy the command and run it in a terminal on the server machine. It matches how that server was installed: a global install (npm, pnpm, or bun) is upgraded in place and started again as usual, while a server started through `npx`, `pnpm dlx`, or `bunx` is stopped and relaunched with the copied command and any startup options you normally use.                      |
+| Action                     | What to do                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Update server**          | Available for the T3 Code Linux background service and for servers run by a current T3 Code desktop app. Select the button and leave T3 Code open while it downloads, installs, restarts, and reconnects. For desktop-app servers this closes and relaunches the desktop app on that machine. If installation fails, the desktop app stays open and reconnects to its server.                                        |
+| **Update the desktop app** | Shown for desktop apps that predate remote updates. Open the T3 Code desktop app on the machine that runs the server and install the app update there. Reopen it if needed.                                                                                                                                                                                                                                          |
+| **Copy update command**    | Copy the command, open a terminal on the server machine, and stop the current T3 Code server first. Then run the copied command: it matches how that server was installed, so a global install (npm, pnpm, or bun) is upgraded in place and you start it again as usual, while a server started through `npx`, `pnpm dlx`, or `bunx` is relaunched by the command itself, with any startup options you normally use. |
 
 The available action depends on how that server was started. T3 Code does not update connected
 servers silently in the background.
@@ -84,8 +84,8 @@ If a step fails:
 
 1. Retry the offered action once.
 2. Make sure you updated the machine named in the warning, not only the device you are using.
-3. For a command-line server, run the copied update command, replacing `<client-version>` with the
-   client version shown in the warning, and make sure the server is started again on it.
+3. For a command-line server, stop it, run the copied update command with `<client-version>`
+   replaced by the client version shown in the warning, and make sure it is started again on it.
 
 ## The Mobile App
 
