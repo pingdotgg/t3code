@@ -805,7 +805,10 @@ export function createServerEnvironmentAtoms<R, E>(
     label: "environment-data:server:usage-summary",
     tag: WS_METHODS.serverGetUsageSummary,
     staleTimeMs: 60_000,
-    refreshIntervalMs: 30 * 60_000,
+    // A first canonical snapshot can fail or still be settling. Preset reads
+    // are ledger-only, so this short retry does not rescan transcripts. Once
+    // the snapshot exists it is a cheap bounded revalidation of its cutoff.
+    refreshIntervalMs: 5_000,
   });
 
   return {

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - the suite seeds and grows real
 // transcript trees on disk, outside the service's Effect FileSystem.
 // @effect-diagnostics preferSchemaOverJson:off
+// @effect-diagnostics globalDate:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -10,6 +11,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -67,6 +69,8 @@ const serviceLayers = (input: {
   readonly home: string;
   readonly settings: Parameters<typeof ServerSettings.layerTest>[0];
   readonly onRatesFetch?: () => void;
+  readonly ratesGate?: Deferred.Deferred<void, never>;
+  readonly ratesStarted?: Deferred.Deferred<void, never>;
 }) =>
   ServerConfig.layerTest(process.cwd(), input.baseDir ?? { prefix: input.prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -75,8 +79,14 @@ const serviceLayers = (input: {
       Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make((request) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             input.onRatesFetch?.();
+            if (input.ratesStarted !== undefined) {
+              yield* Deferred.succeed(input.ratesStarted, undefined);
+            }
+            if (input.ratesGate !== undefined) {
+              yield* Deferred.await(input.ratesGate);
+            }
             // Unparsable rates: every scan retries the fetch, which makes the
             // fetch count a boundary-level observation of how many scans ran.
             return HttpClientResponse.fromWeb(request, Response.json({}));
@@ -91,6 +101,18 @@ const serviceLayers = (input: {
 
 function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens: number } }[] }) {
   return summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
+}
+
+function currentCanonicalWindow(): UsageSummaryInput {
+  const untilMs = Date.parse(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+  return {
+    timeZone: "UTC",
+    sinceDay: UsageDay.make(
+      new Date(untilMs - 89 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+    ),
+    untilDay: UsageDay.make(new Date(untilMs).toISOString().slice(0, 10)),
+    resolution: "day",
+  };
 }
 
 describe("UsageService", () => {
@@ -198,6 +220,118 @@ describe("UsageService", () => {
       });
       assert.strictEqual(totalOutputTokens(remote), 5);
       assert.strictEqual(ratesFetches, fetchesAfterRefresh);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("lets a first preset read join the in-flight canonical background scan", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const ratesGate = yield* Deferred.make<void>();
+      const ratesStarted = yield* Deferred.make<void>();
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-canonical-wait-test",
+            home,
+            settings,
+            ratesGate,
+            ratesStarted,
+          }),
+        ),
+      );
+      const canonical = currentCanonicalWindow();
+      const background = yield* service.startBackgroundRefresh.pipe(Effect.forkChild);
+      yield* Deferred.await(ratesStarted);
+
+      const preset = yield* service.readSummary(canonical).pipe(Effect.forkChild);
+      yield* Deferred.succeed(ratesGate, undefined);
+      const result = yield* Fiber.join(preset);
+      assert.strictEqual(totalOutputTokens(result), 5);
+      yield* Fiber.interrupt(background);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("turns a failed canonical waiter into a typed not-ready result", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const unreadableHome = NodePath.join(home, "not-a-directory");
+      yield* Effect.promise(() => NodeFSP.writeFile(unreadableHome, "not a directory"));
+      const ratesGate = yield* Deferred.make<void>();
+      const ratesStarted = yield* Deferred.make<void>();
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-canonical-failure-wait-test",
+            home,
+            settings: {
+              ...settings,
+              providers: {
+                ...settings.providers,
+                claudeAgent: { homePath: unreadableHome },
+              },
+            },
+            ratesGate,
+            ratesStarted,
+          }),
+        ),
+      );
+      const background = yield* service.startBackgroundRefresh.pipe(Effect.forkChild);
+      yield* Deferred.await(ratesStarted);
+      const preset = yield* service
+        .readSummary(currentCanonicalWindow())
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.succeed(ratesGate, undefined);
+      const result = yield* Fiber.join(preset);
+      assert.isTrue(Exit.isFailure(result));
+      if (Exit.isFailure(result)) {
+        const error = result.cause.reasons[0];
+        assert.isTrue(error !== undefined && error._tag === "Fail");
+        if (error !== undefined && error._tag === "Fail") {
+          assert.strictEqual(error.error.reason, "scanFailed");
+        }
+      }
+      yield* Fiber.interrupt(background);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("derives an empty complete canonical scan as zero usage", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const layers = serviceLayers({
+        prefix: "usage-service-empty-canonical-test",
+        baseDir: NodePath.join(home, "empty-canonical-state"),
+        home,
+        settings,
+      });
+      const canonical = currentCanonicalWindow();
+      const first = yield* UsageService.make.pipe(Effect.provide(layers));
+      yield* first.refreshSummary(canonical);
+      const second = yield* UsageService.make.pipe(Effect.provide(layers));
+      const remote = yield* second.readSummary({ ...canonical, timeZone: "Pacific/Kiritimati" });
+      assert.strictEqual(totalOutputTokens(remote), 0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("does not advance the canonical ledger for a narrow manual refresh", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const baseDir = NodePath.join(home, "narrow-refresh-state");
+      const layers = serviceLayers({
+        prefix: "usage-service-narrow-refresh-test",
+        baseDir,
+        home,
+        settings,
+      });
+      const service = yield* UsageService.make.pipe(Effect.provide(layers));
+      const canonical = currentCanonicalWindow();
+      yield* service.refreshSummary(canonical);
+      const ledgerPath = NodePath.join(baseDir, "userdata", "usage-record-ledger.json");
+      const before = yield* Effect.promise(() => NodeFSP.readFile(ledgerPath, "utf8"));
+      yield* service.refreshSummary(WINDOW);
+      const after = yield* Effect.promise(() => NodeFSP.readFile(ledgerPath, "utf8"));
+      assert.strictEqual(after, before);
     }).pipe(Effect.scoped),
   );
 

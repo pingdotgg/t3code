@@ -34,6 +34,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -824,7 +825,10 @@ export const make = Effect.gen(function* () {
    * the same corpus twice.
    */
   const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
-  let canonicalRefreshWaiter: Deferred.Deferred<UsageSummary, UsageReadError> | null = null;
+  let canonicalRefreshWaiter: Deferred.Deferred<
+    Exit.Exit<UsageSummary, UsageReadError>,
+    never
+  > | null = null;
 
   const scanKey = snapshotKey;
 
@@ -868,16 +872,39 @@ export const make = Effect.gen(function* () {
 
   const runBackgroundRefresh = (input: UsageSummaryInput) => {
     if (!isCanonicalLedgerInput(input)) return scanAndPersist(input);
-    const waiter = Deferred.makeUnsafe<UsageSummary, UsageReadError>();
+    if (canonicalRefreshWaiter !== null) {
+      return awaitCanonicalRefresh().pipe(
+        Effect.flatMap((summary) =>
+          summary === null
+            ? Effect.fail(
+                new UsageReadError({
+                  reason: "scanFailed",
+                  detail: "The canonical usage refresh did not complete.",
+                }),
+              )
+            : Effect.succeed(summary),
+        ),
+      );
+    }
+    const waiter = Deferred.makeUnsafe<Exit.Exit<UsageSummary, UsageReadError>, never>();
     canonicalRefreshWaiter = waiter;
     return scanAndPersist(input).pipe(
       Effect.onExit((exit) =>
         Effect.sync(() => {
           if (canonicalRefreshWaiter === waiter) canonicalRefreshWaiter = null;
-        }).pipe(Effect.andThen(Deferred.done(waiter, exit))),
+        }).pipe(Effect.andThen(Deferred.succeed(waiter, exit))),
       ),
     );
   };
+
+  const awaitCanonicalRefresh = () =>
+    canonicalRefreshWaiter === null
+      ? Effect.succeed(null)
+      : Deferred.await(canonicalRefreshWaiter).pipe(
+          Effect.flatMap((exit) =>
+            Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.succeed(null),
+          ),
+        );
 
   /** Derives a requested preset from the durable normalized record ledger. */
   const readPresetFromLedger = Effect.fn("UsageService.readPresetFromLedger")(function* (
@@ -885,7 +912,7 @@ export const make = Effect.gen(function* () {
   ) {
     yield* ensureUsageLedgerLoaded;
     if (usageLedgerGeneratedAtMs <= 0 && canonicalRefreshWaiter !== null) {
-      yield* Deferred.await(canonicalRefreshWaiter);
+      yield* awaitCanonicalRefresh();
     }
     // `generatedAtMs` is the scan marker. An empty ledger is a valid complete
     // zero snapshot and must not be confused with a never-scanned ledger.
@@ -1021,7 +1048,7 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  const refreshSummary = (input: UsageSummaryInput) => scanAndPersist(input);
+  const refreshSummary = (input: UsageSummaryInput) => runBackgroundRefresh(input);
 
   const defaultDailyInputs = Effect.gen(function* () {
     const nowMs = yield* Clock.currentTimeMillis;
